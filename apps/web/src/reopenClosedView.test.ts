@@ -49,8 +49,14 @@ describe("reopenClosedView", () => {
     const store = useLayoutStore.getState();
     store.openTab({ kind: "chat", target: { kind: "server", threadRef } });
     const tab = selectFocusedTab(useLayoutStore.getState().layout)!;
-    const location = findLayoutTab(useLayoutStore.getState().layout, (candidate) => candidate.id === tab.id)!;
-    store.openTab({ kind: "launcher", id: "reopen-launcher", context: null }, { placement: "active-pane" });
+    const location = findLayoutTab(
+      useLayoutStore.getState().layout,
+      (candidate) => candidate.id === tab.id,
+    )!;
+    store.openTab(
+      { kind: "launcher", id: "reopen-launcher", context: null },
+      { placement: "active-pane" },
+    );
     store.closeTab(tab.id);
     const entry = {
       kind: "chat",
@@ -70,7 +76,10 @@ describe("reopenClosedView", () => {
     expect(planNextReopen([entry], () => owner).restore).toBe(entry);
     const openPreview = vi.fn();
     expect(await reopenClosedView(entry, { openPreview, workspaceAvailable: false })).toBe(true);
-    const restored = findLayoutTab(useLayoutStore.getState().layout, (candidate) => candidate.content.kind === "chat")!;
+    const restored = findLayoutTab(
+      useLayoutStore.getState().layout,
+      (candidate) => candidate.content.kind === "chat",
+    )!;
     expect(restored.pane.id).toBe(location.pane.id);
     expect(restored.tabIndex).toBe(0);
     expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(restored.tab.id);
