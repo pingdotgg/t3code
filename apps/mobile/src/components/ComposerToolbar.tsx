@@ -273,7 +273,7 @@ export function ComposerActionButton(props: {
           props.variant === "danger"
             ? "bg-danger"
             : props.disabled
-              ? "bg-primary/15"
+              ? "bg-foreground/12"
               : "bg-primary",
         )}
       >
@@ -282,7 +282,11 @@ export function ComposerActionButton(props: {
           size={props.size === "large" ? Math.round(20 * scale) : smallIconSize}
           weight="semibold"
           tintColorClassName={
-            props.variant === "danger" ? "accent-danger-foreground" : "accent-primary-foreground"
+            props.variant === "danger"
+              ? "accent-danger-foreground"
+              : props.disabled
+                ? "accent-foreground/38"
+                : "accent-primary-foreground"
           }
           type="monochrome"
         />
