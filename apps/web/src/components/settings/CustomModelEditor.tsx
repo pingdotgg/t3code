@@ -1,5 +1,5 @@
 import { PlusIcon, XIcon } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { ProviderDriverKind, ServerProviderModel } from "@t3tools/contracts";
 import type { CustomModelDefinition } from "@t3tools/shared/model";
 
@@ -42,13 +42,15 @@ export function CustomModelEditor({
   onSave,
   onCancel,
 }: CustomModelEditorProps) {
+  const editorId = useId();
   const [draft, setDraft] = useState<CustomModelDraft>(() => draftFromDefinition(entry));
   const [error, setError] = useState<string | null>(null);
   const presets = driverKind ? (DESCRIPTOR_PRESETS_BY_KIND[driverKind] ?? []) : [];
   const startFromCandidates = builtInModels.filter(
     (model) => (model.capabilities?.optionDescriptors?.length ?? 0) > 0,
   );
-  const domId = (suffix: string) => `provider-instance-${instanceId}-custom-model-${suffix}`;
+  const domId = (suffix: string) =>
+    `provider-instance-${instanceId}-custom-model-${editorId}-${suffix}`;
 
   const updateDescriptor = (key: string, patch: Partial<EditorDescriptor>) => {
     setError(null);

@@ -36,8 +36,9 @@ const DROP_OVER_ATTRIBUTE = "data-thread-context-over";
 export interface ThreadContextDragGhost {
   readonly x: number;
   readonly y: number;
-  readonly title: string;
   readonly count: number;
+  /** The sidebar row's width, so the lifted row keeps its size. */
+  readonly width: number;
 }
 
 let ghost: ThreadContextDragGhost | null = null;
@@ -62,18 +63,23 @@ export function useThreadContextDragGhost(): ThreadContextDragGhost | null {
 
 let overTarget: HTMLElement | null = null;
 
+// A layout drag covers the window with its own overlay while a thread is out
+// of the list; the composer is the first element under it.
 function findDropTarget(point: { x: number; y: number }): HTMLElement | null {
-  return (
-    document
-      .elementFromPoint(point.x, point.y)
-      ?.closest<HTMLElement>(`[${DROP_TARGET_ATTRIBUTE}]`) ?? null
-  );
+  const element = document
+    .elementsFromPoint(point.x, point.y)
+    .find((candidate) => !candidate.closest("[data-layout-drag-overlay]"));
+  return element?.closest<HTMLElement>(`[${DROP_TARGET_ATTRIBUTE}]`) ?? null;
 }
 
+/**
+ * Tracks the ghost and the highlighted drop target while the pointer is
+ * outside the list. True while a composer is under the pointer.
+ */
 export function moveThreadContextDrag(
   point: { x: number; y: number },
-  label: { title: string; count: number },
-) {
+  label: { count: number; width: number },
+): boolean {
   const target = findDropTarget(point);
   if (target !== overTarget) {
     overTarget?.removeAttribute(DROP_OVER_ATTRIBUTE);
@@ -81,6 +87,7 @@ export function moveThreadContextDrag(
     overTarget = target;
   }
   setGhost({ x: point.x, y: point.y, ...label });
+  return target !== null;
 }
 
 export function endThreadContextDrag() {

@@ -18,10 +18,11 @@ const shell = (id: string, parentThreadId: string | null = null) =>
 const threadId = "current" as OrchestrationV2ThreadShell["id"];
 
 describe("selectThreadRelationshipShells", () => {
-  it("keeps the thread, its parent, its children and the threads its projection names", () => {
+  it("keeps the thread, its parent, its siblings, its children and the threads its projection names", () => {
     const threads = [
       shell("current", "parent"),
       shell("parent"),
+      shell("sibling", "parent"),
       shell("child", "current"),
       shell("subagent-child"),
       shell("workflow-member"),
@@ -49,6 +50,7 @@ describe("selectThreadRelationshipShells", () => {
     ).toEqual([
       "current",
       "parent",
+      "sibling",
       "child",
       "subagent-child",
       "workflow-member",
@@ -57,11 +59,16 @@ describe("selectThreadRelationshipShells", () => {
   });
 
   it("finds the parent from the shell before the projection loads", () => {
-    const threads = [shell("current", "parent"), shell("parent"), shell("unrelated")];
+    const threads = [
+      shell("current", "parent"),
+      shell("parent"),
+      shell("sibling", "parent"),
+      shell("unrelated"),
+    ];
     expect(
       selectThreadRelationshipShells(threadId, null as Projection, threads).map(
         (thread) => thread.id,
       ),
-    ).toEqual(["current", "parent"]);
+    ).toEqual(["current", "parent", "sibling"]);
   });
 });
