@@ -6,9 +6,9 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "./Migrations.ts";
-import PluginInstallations from "./Migrations/076_PluginInstallations.ts";
-import PluginEventCursors from "./Migrations/077_PluginEventCursors.ts";
-import PluginSettings from "./Migrations/078_PluginSettings.ts";
+import PluginInstallations from "./Migrations/077_PluginInstallations.ts";
+import PluginEventCursors from "./Migrations/078_PluginEventCursors.ts";
+import PluginSettings from "./Migrations/079_PluginSettings.ts";
 
 const previews = [
   [67, "PluginInstallations", PluginInstallations],
@@ -82,7 +82,7 @@ const memory = <A, E, R>(test: Effect.Effect<A, E, R>) =>
   test.pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" })));
 
 describe("plugin preview upgrade", () => {
-  it.effect.each([0, 68, 75])("upgrades fresh/main %s with canonical migration ids", (main) =>
+  it.effect.each([0, 68, 75, 76])("upgrades fresh/main %s with canonical migration ids", (main) =>
     memory(
       Effect.gen(function* () {
         if (main) yield* runMigrations({ toMigrationInclusive: main });
@@ -101,6 +101,9 @@ describe("plugin preview upgrade", () => {
     [70, 69],
     [69, 67],
     [71, 69],
+    [76, 76],
+    [77, 76],
+    [78, 76],
   ] as const)("preserves preview %s data and timestamps and is reentrant", ([through, start]) =>
     memory(
       Effect.gen(function* () {
@@ -117,7 +120,7 @@ describe("plugin preview upgrade", () => {
             table,
           );
         assert.deepStrictEqual(
-          yield* sql`SELECT created_at FROM effect_sql_migrations WHERE migration_id BETWEEN 76 AND ${76 + through - start}`,
+          yield* sql`SELECT created_at FROM effect_sql_migrations WHERE migration_id BETWEEN 77 AND ${77 + through - start}`,
           Array.from({ length: through - start + 1 }, () => ({
             created_at: "2026-10-01 00:00:00",
           })),

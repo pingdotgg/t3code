@@ -269,6 +269,7 @@ export const make = Effect.gen(function* () {
       pluginSettings: true,
       pluginActions: true,
       pluginViews: true,
+      projectOrganization: true,
       ignoredFileListing: true,
       triage: true,
       npmReleaseLookup: true,
