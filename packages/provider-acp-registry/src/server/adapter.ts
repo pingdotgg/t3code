@@ -236,8 +236,12 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   // the unquoted "T3 Code (Beta).exe" path). Both take T3's MCP endpoint over ACP HTTP.
   const useHttpMcpServers =
     copilotRouting !== undefined || prefersHttpMcpTransport(options.settings);
+  const enablePostSettleContinuation =
+    options.settings.source === "local" && options.settings.enablePostSettleContinuation;
   const flavor: AcpAdapterV2Flavor = {
     driver: ACP_REGISTRY_PROVIDER,
+    enablePostSettleContinuation,
+    deferFinalizeForBackgroundWork: enablePostSettleContinuation,
     // Cancelling a Copilot prompt also kills the background agents it started.
     capabilities: isCopilot
       ? {
