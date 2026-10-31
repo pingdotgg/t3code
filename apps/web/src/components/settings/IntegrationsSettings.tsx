@@ -88,7 +88,6 @@ import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { NumberField, NumberFieldGroup, NumberFieldInput } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Group } from "../ui/group";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -114,7 +113,6 @@ import type { ImportOutcome } from "./browserImportWizard.logic";
 
 const FILL_VALUE = "fill";
 const RESPONSIVE_VALUE = "responsive";
-const STANDARD_VALUE = "standard";
 
 type BrowserProfileDataBridge = Pick<
   NonNullable<typeof previewBridge>,
@@ -315,10 +313,6 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
 
   const sized = viewport._tag === "fill" ? null : viewport;
   const selectedViewport = viewportSelectValue(viewport);
-  const viewportMode =
-    selectedViewport === FILL_VALUE || selectedViewport === RESPONSIVE_VALUE
-      ? selectedViewport
-      : STANDARD_VALUE;
   const presentedSize = {
     width: sized?.width ?? RESPONSIVE_SEED_SIZE.width,
     height: sized?.height ?? RESPONSIVE_SEED_SIZE.height,
@@ -374,50 +368,27 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
       }
       control={
         <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
-          <ToggleGroup
-            aria-label="Default browser viewport"
-            disabled={disabled}
-            value={[viewportMode]}
-            onValueChange={(values) => {
-              const next = values[0];
-              if (next === FILL_VALUE || next === RESPONSIVE_VALUE) selectViewport(next);
-              else if (next === STANDARD_VALUE && viewportMode !== STANDARD_VALUE)
-                selectViewport(PREVIEW_VIEWPORT_PRESETS[0]?.id ?? RESPONSIVE_VALUE);
-            }}
-          >
-            <Toggle value={FILL_VALUE}>Fill panel</Toggle>
-            <Toggle value={RESPONSIVE_VALUE}>Responsive</Toggle>
-            <Toggle value={STANDARD_VALUE}>Standard</Toggle>
-          </ToggleGroup>
-          {viewportMode === STANDARD_VALUE ? (
-            <Select
-              value={viewportSelectValue(viewport)}
-              onValueChange={selectViewport}
-              disabled={disabled}
-            >
-              <SelectTrigger
-                size="sm"
-                className="w-auto min-w-0"
-                aria-label="Standard viewport size"
-              >
-                <SelectValue>{viewportSelectLabel(viewport)}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {PREVIEW_VIEWPORT_PRESETS.map((preset) => (
-                  <SelectItem key={preset.id} value={preset.id}>
-                    <span className="flex w-full items-center justify-between gap-5">
-                      <span>{preset.label}</span>
-                      <span className="text-meta tabular-nums text-muted-foreground">
-                        {preset.detail}
-                      </span>
+          <Select value={selectedViewport} onValueChange={selectViewport} disabled={disabled}>
+            <SelectTrigger size="sm" aria-label="Default browser viewport">
+              <SelectValue>{viewportSelectLabel(viewport)}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem value={FILL_VALUE}>Fill panel</SelectItem>
+              <SelectItem value={RESPONSIVE_VALUE}>Responsive</SelectItem>
+              {PREVIEW_VIEWPORT_PRESETS.map((preset) => (
+                <SelectItem key={preset.id} value={preset.id}>
+                  <span className="flex w-full items-center justify-between gap-5">
+                    <span>{preset.label}</span>
+                    <span className="text-meta tabular-nums text-muted-foreground">
+                      {preset.detail}
                     </span>
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          ) : null}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
 
-          {sized && viewportMode === RESPONSIVE_VALUE ? (
+          {sized && selectedViewport === RESPONSIVE_VALUE ? (
             <div className="flex min-w-0 items-center gap-1">
               <NumberField
                 value={presentedSize.width}
@@ -541,25 +512,27 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
         ) : null
       }
       control={
-        <ToggleGroup
-          aria-label="Default browser appearance"
+        <Select
           disabled={disabled}
-          value={[appearance]}
-          onValueChange={(values) => {
-            const value = values[0];
-            if (value === "system" || value === "light" || value === "dark") {
+          value={appearance}
+          onValueChange={(value) => {
+            if (value === "system" || value === "light" || value === "dark")
               updateSettings({ browserDefaultAppearance: value });
-            }
           }}
         >
-          {(Object.keys(APPEARANCE_LABELS) as Array<keyof typeof APPEARANCE_LABELS>).map(
-            (value) => (
-              <Toggle key={value} value={value}>
-                {APPEARANCE_LABELS[value]}
-              </Toggle>
-            ),
-          )}
-        </ToggleGroup>
+          <SelectTrigger size="sm" aria-label="Default browser appearance">
+            <SelectValue>{APPEARANCE_LABELS[appearance]}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {(Object.keys(APPEARANCE_LABELS) as Array<keyof typeof APPEARANCE_LABELS>).map(
+              (value) => (
+                <SelectItem key={value} value={value}>
+                  {APPEARANCE_LABELS[value]}
+                </SelectItem>
+              ),
+            )}
+          </SelectPopup>
+        </Select>
       }
     />
   );
@@ -622,23 +595,25 @@ function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boo
         ) : null
       }
       control={
-        <ToggleGroup
-          aria-label="Browser recording frame rate"
+        <Select
           disabled={disabled}
-          value={[String(frameRate)]}
-          onValueChange={(values) => {
-            const next = BROWSER_RECORDING_FRAME_RATES.find((rate) => String(rate) === values[0]);
-            if (next !== undefined) {
-              updateSettings({ browserRecordingFrameRate: next });
-            }
+          value={String(frameRate)}
+          onValueChange={(value) => {
+            const next = BROWSER_RECORDING_FRAME_RATES.find((rate) => String(rate) === value);
+            if (next !== undefined) updateSettings({ browserRecordingFrameRate: next });
           }}
         >
-          {BROWSER_RECORDING_FRAME_RATES.map((rate) => (
-            <Toggle key={rate} value={String(rate)}>
-              {rate} fps
-            </Toggle>
-          ))}
-        </ToggleGroup>
+          <SelectTrigger size="sm" aria-label="Browser recording frame rate">
+            <SelectValue>{frameRate} fps</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {BROWSER_RECORDING_FRAME_RATES.map((rate) => (
+              <SelectItem key={rate} value={String(rate)}>
+                {rate} fps
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
       }
     />
   );
@@ -1325,7 +1300,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   return (
     <SettingsRow
       {...searchableSetting("browser-profiles")}
-      title="Import cookies and logins"
+      title="Browser profiles"
       description="Separate cookies and logins. Incognito clears on quit."
       control={
         <Group aria-label="Import cookies and logins">
