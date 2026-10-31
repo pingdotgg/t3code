@@ -1,0 +1,276 @@
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
+import { encodeSpeechProjectNameHeader, SPEECH_STREAM_PATH } from "@t3tools/contracts";
+import type {
+  SpeechAcceleration,
+  SpeechCustomWords,
+  SpeechLanguage,
+  SpeechModelUnloadTimeout,
+} from "@t3tools/contracts";
+import { RemoteEnvironmentAuthFetchError } from "../rpc/http.ts";
+
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
+import type { PreparedConnection } from "../connection/model.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
+import {
+  makeEnvironmentHttpApiGroupClient,
+  makeEnvironmentHttpApiUrlBuilder,
+} from "../rpc/http.ts";
+import { executeAuthenticatedEnvironmentHttpRequest } from "../state/environmentHttpAuth.ts";
+
+const VOICE_REQUEST_TIMEOUT_MS = 30 * 60_000;
+type EnvironmentApiClient<G extends "voice" | "auth"> = Effect.Success<
+  ReturnType<typeof makeEnvironmentHttpApiGroupClient<G>>
+>;
+
+const request = Effect.fn("clientRuntime.voiceInput.environmentRequest")(function* <
+  A,
+  E,
+  G extends "voice" | "auth",
+>(input: {
+  readonly group: G;
+  readonly prepared: PreparedConnection;
+  readonly method: "GET" | "POST" | "DELETE";
+  readonly path: (
+    urls: ReturnType<typeof makeEnvironmentHttpApiUrlBuilder>[G],
+    baseUrl: string,
+  ) => string;
+  readonly run: (input: {
+    readonly client: EnvironmentApiClient<G>;
+    readonly headers: { readonly authorization?: string; readonly dpop?: string };
+  }) => Effect.Effect<A, E>;
+}) {
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    group: input.group,
+    prepared: input.prepared,
+    signer: yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner),
+    remoteAuthorization: yield* Effect.serviceOption(
+      RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+    ),
+    method: input.method,
+    url: input.path,
+    timeoutMs: VOICE_REQUEST_TIMEOUT_MS,
+    requestInit: { redirect: "error" },
+    validateUrl: (baseUrl) =>
+      Effect.try({
+        try: () => {
+          const url = new URL(baseUrl);
+          const loopback =
+            url.hostname === "localhost" ||
+            url.hostname === "[::1]" ||
+            /^127\.\d+\.\d+\.\d+$/.test(url.hostname);
+          if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+            throw new Error("Voice input requires HTTPS for remote environments.");
+          }
+        },
+        catch: (cause) =>
+          new RemoteEnvironmentAuthFetchError({
+            message: "Voice input requires HTTPS for remote environments.",
+            cause,
+          }),
+      }),
+    request: input.run,
+  });
+});
+
+export const getEnvironmentSpeechStatus = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "GET",
+    path: (urls) => urls.status(),
+    run: ({ client, headers }) => client.status({ headers }),
+  });
+
+export const getEnvironmentSpeechStreamUrl = (
+  prepared: PreparedConnection,
+  projectName?: string,
+) => {
+  let endpoint = prepared.httpBaseUrl;
+  return request({
+    group: "auth",
+    prepared,
+    method: "POST",
+    path: (urls, baseUrl) => {
+      endpoint = baseUrl;
+      return urls.webSocketTicketFor({ params: { use: "media" } });
+    },
+    run: ({ client, headers }) => client.webSocketTicketFor({ headers, params: { use: "media" } }),
+  }).pipe(
+    Effect.map(({ ticket }) => {
+      const url = new URL(SPEECH_STREAM_PATH, endpoint);
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      url.searchParams.set("wsTicket", Redacted.value(ticket));
+      if (projectName) url.searchParams.set("projectName", projectName);
+      return url.toString();
+    }),
+  );
+};
+
+export const getEnvironmentSpeechModels = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "GET",
+    path: (urls) => urls.models(),
+    run: ({ client, headers }) => client.models({ headers }),
+  });
+
+export const prepareEnvironmentSpeechModel = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.prepareModel(),
+    run: ({ client, headers }) => client.prepareModel({ headers }),
+  });
+
+export const downloadEnvironmentSpeechModel = (prepared: PreparedConnection, modelId: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.downloadModel(),
+    run: ({ client, headers }) => client.downloadModel({ headers, payload: { modelId } }),
+  });
+
+export const selectEnvironmentSpeechModel = (prepared: PreparedConnection, modelId: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.selectModel(),
+    run: ({ client, headers }) => client.selectModel({ headers, payload: { modelId } }),
+  });
+
+export const cancelEnvironmentSpeechModelDownload = (
+  prepared: PreparedConnection,
+  modelId: string,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.cancelModelDownload(),
+    run: ({ client, headers }) => client.cancelModelDownload({ headers, payload: { modelId } }),
+  });
+
+export const transcribeEnvironmentPcm = (
+  prepared: PreparedConnection,
+  pcm: Uint8Array,
+  projectName?: string,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.transcribe(),
+    run: ({ client, headers }) =>
+      client.transcribe({
+        headers: {
+          ...headers,
+          ...(projectName
+            ? { "x-t3-project-name": encodeSpeechProjectNameHeader(projectName) }
+            : {}),
+        },
+        payload: pcm,
+      }),
+  });
+
+export const postProcessEnvironmentTranscript = (
+  prepared: PreparedConnection,
+  transcript: string,
+  draft: {
+    readonly text: string;
+    readonly selection: { readonly start: number; readonly end: number };
+  },
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.postProcess(),
+    run: ({ client, headers }) => client.postProcess({ headers, payload: { transcript, draft } }),
+  });
+
+export const updateEnvironmentSpeechCustomWords = (
+  prepared: PreparedConnection,
+  words: SpeechCustomWords,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.updateCustomWords(),
+    run: ({ client, headers }) => client.updateCustomWords({ headers, payload: { words } }),
+  });
+
+export const updateEnvironmentSpeechFillerWordRemoval = (
+  prepared: PreparedConnection,
+  enabled: boolean,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.updateFillerWordRemoval(),
+    run: ({ client, headers }) => client.updateFillerWordRemoval({ headers, payload: { enabled } }),
+  });
+
+export const updateEnvironmentSpeechAcceleration = (
+  prepared: PreparedConnection,
+  acceleration: SpeechAcceleration,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.updateAcceleration(),
+    run: ({ client, headers }) => client.updateAcceleration({ headers, payload: { acceleration } }),
+  });
+
+export const updateEnvironmentSpeechModelUnloadTimeout = (
+  prepared: PreparedConnection,
+  timeout: SpeechModelUnloadTimeout,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.updateModelUnloadTimeout(),
+    run: ({ client, headers }) =>
+      client.updateModelUnloadTimeout({ headers, payload: { timeout } }),
+  });
+
+export const updateEnvironmentSpeechLanguage = (
+  prepared: PreparedConnection,
+  language: SpeechLanguage,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.updateLanguage(),
+    run: ({ client, headers }) => client.updateLanguage({ headers, payload: { language } }),
+  });
+
+export const updateEnvironmentSpeechTranslation = (
+  prepared: PreparedConnection,
+  enabled: boolean,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.updateTranslation(),
+    run: ({ client, headers }) => client.updateTranslation({ headers, payload: { enabled } }),
+  });
+
+export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, modelId: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.removeModel(),
+    run: ({ client, headers }) => client.removeModel({ headers, payload: { modelId } }),
+  });

@@ -1,6 +1,9 @@
 import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
-import { useState, type Ref } from "react";
 import { textDirection } from "~/textDirection";
+import { useEffect, useRef, useState, use, type RefObject } from "react";
+
+import { ComposerContextActionsContext } from "../composerContextActions";
+import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
 
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
@@ -13,23 +16,50 @@ export function AssistantCitationCommentEditor({
   onCancel,
   onViewSource,
   onDraftChange,
+  onVoiceSetupOpenChange,
 }: {
   citation: AssistantCitation;
-  inputRef?: Ref<HTMLTextAreaElement>;
+  inputRef?: RefObject<HTMLTextAreaElement | null>;
   onSubmit: (comment: string) => boolean;
   onSubmitAndSend?: (comment: string) => boolean;
   /** Escape closes the editor; there is no Cancel button. */
   onCancel: () => void;
   onViewSource?: () => void;
   onDraftChange?: (comment: string) => void;
+  onVoiceSetupOpenChange: (open: boolean) => void;
 }) {
   const [comment, setComment] = useState(citation.comment ?? "");
+  const localInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const textareaRef = inputRef ?? localInputRef;
+  const { environmentId } = use(ComposerContextActionsContext);
+  const updateComment = (text: string) => {
+    setComment(text);
+    onDraftChange?.(text);
+  };
+  const speech = useTextFieldSpeech({
+    environmentId: environmentId ?? citation.environmentId,
+    ownerKey: JSON.stringify([
+      environmentId,
+      citation.threadId,
+      citation.messageId,
+      citation.start,
+      citation.end,
+    ]),
+    text: comment,
+    textareaRef,
+    onTextChange: updateComment,
+  });
   const commentTooLong = comment.length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the citation popover open while its external voice setup dialog owns focus.
+  useEffect(() => {
+    onVoiceSetupOpenChange(speech.setup.open);
+    return () => onVoiceSetupOpenChange(false);
+  }, [onVoiceSetupOpenChange, speech.setup.open]);
   const submit = () => {
-    if (!commentTooLong) onSubmit(comment);
+    if (!commentTooLong && !speech.blocksSubmission) onSubmit(comment);
   };
   const submitAndSend = () => {
-    if (commentTooLong) return;
+    if (commentTooLong || speech.blocksSubmission) return;
     if (onSubmitAndSend) {
       onSubmitAndSend(comment);
     } else {
@@ -58,7 +88,8 @@ export function AssistantCitationCommentEditor({
       </blockquote>
       <div className="rounded-control surface-well px-2.5 py-2 focus-within:surface-focus">
         <textarea
-          ref={inputRef}
+          ref={textareaRef}
+          readOnly={speech.freezesEditor}
           aria-label="Comment on selected text"
           aria-description="Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line."
           aria-invalid={commentTooLong || undefined}
@@ -68,8 +99,7 @@ export function AssistantCitationCommentEditor({
           className="field-sizing-content block max-h-40 min-h-10 w-full resize-none bg-transparent text-base/normal outline-none text-foreground placeholder:text-placeholder sm:text-sm/normal"
           value={comment}
           onChange={(event) => {
-            setComment(event.currentTarget.value);
-            onDraftChange?.(event.currentTarget.value);
+            updateComment(event.currentTarget.value);
           }}
           onKeyDown={(event) => {
             if (
@@ -94,7 +124,8 @@ export function AssistantCitationCommentEditor({
           characters.
         </p>
       ) : null}
-      <div className="flex items-center justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <TextFieldSpeechControls speech={speech} />
         {onViewSource ? (
           <Button
             variant="secondary"
@@ -107,7 +138,7 @@ export function AssistantCitationCommentEditor({
         ) : null}
         <Button
           size="xs"
-          disabled={commentTooLong}
+          disabled={commentTooLong || speech.blocksSubmission}
           aria-keyshortcuts="Enter"
           onPointerDown={(event) => event.preventDefault()}
           onClick={submit}

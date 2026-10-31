@@ -276,9 +276,11 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   onResume: () => void;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
+  onStopDictation?: (() => void) | undefined;
   onCompactContext?: (() => void) | undefined;
   compactDisabled: boolean;
   compactDisabledReason: string | null;
+  leadingAction?: React.ReactNode;
   compactBeforeSendTokens: number | null;
   keepFullHistory: boolean;
   onToggleKeepFullHistory: () => void;
@@ -320,6 +322,8 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         onResume={props.onResume}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
+        onStopDictation={props.onStopDictation}
+        leadingAction={props.leadingAction}
         compactBeforeSendTokens={props.compactBeforeSendTokens}
         keepFullHistory={props.keepFullHistory}
         onToggleKeepFullHistory={props.onToggleKeepFullHistory}
