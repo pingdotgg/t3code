@@ -24,7 +24,7 @@ function HintToggle({
             aria-checked={enabled}
             onClick={onToggle}
             className={cn(
-              "truncate rounded-sm px-0.5 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              "shrink-0 truncate rounded-sm px-0.5 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
               !enabled && "line-through opacity-60",
             )}
           />
@@ -46,26 +46,14 @@ export function LinearLaunchHint({ draftTarget }: { readonly draftTarget: Compos
   const launch = useComposerDraftStore(
     (state) => state.getDraftThread(draftTarget)?.linearIssue ?? null,
   );
-  const newWorktree = useComposerDraftStore((state) => {
-    const draft = state.getDraftThread(draftTarget);
-    return draft?.envMode === "worktree" && draft.worktreePath === null;
-  });
   const setDraftLinearIssue = useComposerDraftStore((state) => state.setDraftLinearIssue);
   if (launch === null) return null;
   const moveLabel = linearMoveHint(launch);
   return (
     <div
       data-chat-composer-linear-hint="true"
-      className="flex min-w-0 shrink items-center gap-1 text-xs text-muted-foreground"
+      className="flex min-w-0 max-w-80 shrink items-center gap-1 text-xs text-muted-foreground"
     >
-      {newWorktree ? (
-        <>
-          <span className="min-w-0 truncate max-sm:hidden">worktree on {launch.branchName}</span>
-          <span aria-hidden className="max-sm:hidden">
-            ·
-          </span>
-        </>
-      ) : null}
       {moveLabel !== null && launch.moveTo ? (
         <>
           <HintToggle
