@@ -1458,7 +1458,7 @@ export const make = Effect.gen(function* () {
                 ),
                 Effect.map((all) => ({
                   ...core,
-                  ...pullRequestChecksFromContexts(all.contexts),
+                  ...pullRequestChecksFromContexts(all.contexts, core.requiredCheckNames),
                   checksTruncated: all.truncated,
                 })),
               ),

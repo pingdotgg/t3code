@@ -114,9 +114,25 @@ query PullRequestCore(
       viewerCanUpdate
       viewerDidAuthor
       viewerCanUpdateBranch
+      # Required checks of branch protection and rulesets, on github.com only like `isRequired`. A
+      # required check not created on the head yet (a `needs:` job) is in no rollup context.
       baseRef {
         compare(headRef: $headRef) {
           behindBy
+        }
+        refUpdateRule @include(if: $required) {
+          requiredStatusCheckContexts
+        }
+        rules(first: 100) @include(if: $required) {
+          nodes {
+            parameters {
+              ... on RequiredStatusChecksParameters {
+                requiredStatusChecks {
+                  context
+                }
+              }
+            }
+          }
         }
       }
       reviewRequests(first: $requestedReviewers) {

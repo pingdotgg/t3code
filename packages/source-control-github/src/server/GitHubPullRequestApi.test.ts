@@ -3421,6 +3421,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
             output(
               encodeJson(
                 coreResponse({
+                  baseRef: {
+                    compare: null,
+                    refUpdateRule: { requiredStatusCheckContexts: ["Done"] },
+                  },
                   commits: {
                     nodes: [
                       {
@@ -3469,12 +3473,18 @@ layer("GitHubPullRequestApi.layer", (it) => {
           expect(variablesOf("PullRequestCore").map((v) => v["requestedReviewers"])).toEqual([
             100, 0,
           ]);
-        expect(detail.checks).toHaveLength(2);
+        expect(detail.checks.map((check) => [check.name, check.status])).toEqual([
+          ["last", "failure"],
+          ["first", "success"],
+          ["Done", "pending"],
+        ]);
         expect(detail.checksState).toBe("failing");
         expect(detail.checksTruncated).toBe(false);
         // The whole rollup is walked from its start, so no check is counted twice or skipped.
-        expect(variablesOf("CheckContexts")).toEqual([expect.objectContaining({ number: 7 })]);
-        expect(variablesOf("CheckContexts")[0]).not.toHaveProperty("after");
+        expect(variablesOf("PullRequestCheckContexts")).toEqual([
+          expect.objectContaining({ number: 7 }),
+        ]);
+        expect(variablesOf("PullRequestCheckContexts")[0]).not.toHaveProperty("after");
         expect(mockedExecute).toHaveBeenCalledTimes(refused ? 3 : 2);
 
         if (refused) {

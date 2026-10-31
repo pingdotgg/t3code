@@ -520,7 +520,10 @@ describe("pull request detail decoding", () => {
           nodes: [
             {
               type: "REQUIRED_STATUS_CHECKS",
-              parameters: { requiredStatusChecks: [{ context: "Done" }] },
+              parameters: {
+                __typename: "RequiredStatusChecksParameters",
+                requiredStatusChecks: [{ context: "Done" }],
+              },
             },
           ],
         },
@@ -536,6 +539,7 @@ describe("pull request detail decoding", () => {
       { name: "lint", status: "success", description: null, url: null, required: true },
       { name: "Done", status: "pending", description: null, url: null, required: true },
     ]);
+    expect(detail.checksState).toBe("pending");
   });
 
   it("reads an auto-merge request and strategy, and its null as off", () => {
