@@ -317,7 +317,7 @@ export const make = Effect.gen(function* () {
     // through on, and access granted or withdrawn within the minute must count.
     getViewerPermissions: (input) =>
       cli
-        .getMergeRequestDetail(input)
+        .getMergeRequestDetail({ ...input, downstreamChecks: false })
         .pipe(Effect.mapError(fail("getViewerPermissions")), Effect.map(gitLabViewerPermissions)),
 
     forgetChangeRequestReads: (scope) =>
