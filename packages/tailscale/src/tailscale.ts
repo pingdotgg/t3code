@@ -1,4 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -479,7 +480,9 @@ const TailscaleServeStatusJson = Schema.Struct({
 const decodeTailscaleServeStatusJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.NullOr(TailscaleServeStatusJson)),
 );
-const LOOPBACK_SERVE_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+// Any loopback address the server may bind, or an unspecified one, which connects to loopback.
+const forwardsToThisMachine = (hostname: string) =>
+  isLocalLoopbackHost(hostname) || hostname === "0.0.0.0" || hostname === "[::]";
 
 /** A Serve web handler: the HTTPS port it listens on and the path it is mounted at. */
 export interface TailscaleServeMount {
@@ -504,7 +507,7 @@ export const parseTailscaleServeMountsProxyingTo = (
       if (handler.Proxy === undefined || !URL.canParse(handler.Proxy)) return [];
       const target = new URL(handler.Proxy);
       const port = target.port || (target.protocol === "https:" ? "443" : "80");
-      return LOOPBACK_SERVE_HOSTS.has(target.hostname) && port === String(localPort)
+      return forwardsToThisMachine(target.hostname) && port === String(localPort)
         ? [{ servePort, mount }]
         : [];
     });

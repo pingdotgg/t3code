@@ -107,11 +107,20 @@ describe("tailscale", () => {
         },
         "box.tailnet.ts.net:8443": { Handlers: { "/": { Proxy: "http://127.0.0.1:5173" } } },
         "box.tailnet.ts.net:9443": { Handlers: { "/": { Proxy: "http://[::1]:3773" } } },
+        "box.tailnet.ts.net:10000": {
+          Handlers: {
+            "/a": { Proxy: "http://127.0.0.2:3773" },
+            "/b": { Proxy: "http://0.0.0.0:3773" },
+            "/c": { Proxy: "http://192.168.1.5:3773" },
+          },
+        },
       },
     });
     assert.deepEqual(parseTailscaleServeMountsProxyingTo(status, 3773), [
       { servePort: 443, mount: "/t3" },
       { servePort: 9443, mount: "/" },
+      { servePort: 10000, mount: "/a" },
+      { servePort: 10000, mount: "/b" },
     ]);
     assert.deepEqual(
       parseTailscaleServeMountsProxyingTo(
