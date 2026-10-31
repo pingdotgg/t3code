@@ -41,6 +41,8 @@ import {
   writePullRequestListPreferences,
 } from "./pullRequestListPreferences";
 
+import { pullRequestGroups } from "./pullRequestListGroups.logic";
+
 const VIEWERS = { "github.com": "Bilal" } as const;
 
 function entry(
@@ -405,6 +407,60 @@ describe("merging the environments' own listings", () => {
       nextCursors: {},
       ...overrides,
     }) as Parameters<typeof mergePullRequestLists>[0][number][1];
+
+  it("orders host timestamps by instant across merged feeds and recency rankings", () => {
+    const entries = [
+      entry({ number: 1, updatedAt: "2026-07-05T01:00:00+02:00" }),
+      entry({ number: 2, updatedAt: "2026-07-05T00:30:00Z" }),
+      entry({ number: 3, updatedAt: "2026-07-05T00:30:00.5Z" }),
+    ];
+    const merged = mergePullRequestLists([
+      [ENV_1, answer({ entries: entries.slice(0, 2) })],
+      [ENV_2, answer({ entries: entries.slice(2) })],
+    ]);
+    const groups = partitionPullRequestsWithPriority(entries, entries, []);
+
+    expect.soft(merged?.entries.map((row) => row.number)).toEqual([3, 2, 1]);
+    expect.soft(groups[0]?.entries.map((row) => row.number)).toEqual([3, 2, 1]);
+    expect
+      .soft(rankPullRequestMatches(entries, "pull").map((row) => row.number))
+      .toEqual([3, 2, 1]);
+    expect
+      .soft(rankPullRequestsByMergeReadiness(entries).map((row) => row.number))
+      .toEqual([3, 2, 1]);
+  });
+
+  it("orders host timestamps by instant in the Updated view with no search", () => {
+    const known = [
+      entry({ number: 1, updatedAt: "2026-07-05T01:00:00+02:00" }),
+      entry({ number: 2, updatedAt: "2026-07-05T00:30:00Z" }),
+      entry({ number: 3, updatedAt: "2026-07-05T00:30:00.5Z" }),
+    ];
+    for (const involvement of ["all", "authored", "reviewing"] as const) {
+      const { groups } = pullRequestGroups({
+        known: known.map((row) => ({ ...row, viewerReviewRequested: true })),
+        providers: [],
+        viewers: { "github.com": "octocat" },
+        involvement,
+        localFilters: {},
+        hasLocalFilters: false,
+        text: "",
+        answeredLocally: true,
+        baselineEmpty: false,
+        held: undefined,
+        authored: [],
+        reviewing: [],
+        partitionsWanted: true,
+      });
+      expect
+        .soft(
+          sortPullRequestGroups(groups, "updated", "").flatMap((group) =>
+            group.entries.map((row) => row.number),
+          ),
+        )
+        .toEqual([3, 2, 1]);
+    }
+  });
 
   it("tags every row with the environment that read it, newest first", () => {
     const merged = mergePullRequestLists([
