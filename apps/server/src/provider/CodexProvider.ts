@@ -643,8 +643,10 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
   // Keyring storage can leave a stale auth.json behind, so only the file store names the account in use.
   const credentialStore = config?.cli_auth_credentials_store ?? "file";
+  const usageAccountId =
+    rateLimits && "accountId" in rateLimits ? rateLimits.accountId?.trim() : undefined;
   const storedLogin =
-    accountResponse.account || !config || credentialStore !== "file"
+    accountResponse.account || !config || credentialStore !== "file" || !usageAccountId
       ? undefined
       : yield* withCodexDiscoveryDeadline(
           readCodexStoredChatGptLogin(initialize.codexHome),

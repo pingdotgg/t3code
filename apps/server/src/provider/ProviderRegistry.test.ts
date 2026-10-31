@@ -395,6 +395,19 @@ it.live("names a proxied login by its saved ChatGPT email only when Codex reads 
     const otherAccount = yield* proxied("acct-2", "file");
     assert.strictEqual(otherAccount.auth.email, undefined);
     assert.strictEqual(otherAccount.auth.workspaceId, "acct-2");
+    let savedLoginReads = 0;
+    const noUsageAccount = yield* proxied("  ", "file").pipe(
+      Effect.provideService(FileSystem.FileSystem, {
+        ...fileSystem,
+        readFileString: (file, ...options) => {
+          if (file === path.join(codexHome, "auth.json")) savedLoginReads++;
+          return fileSystem.readFileString(file, ...options);
+        },
+      }),
+    );
+    assert.strictEqual(noUsageAccount.status, "ready");
+    assert.strictEqual(noUsageAccount.auth.email, undefined);
+    assert.strictEqual(savedLoginReads, 0);
     const stalledLogin = yield* proxied("acct-1", "file").pipe(
       Effect.provideService(FileSystem.FileSystem, {
         ...fileSystem,
