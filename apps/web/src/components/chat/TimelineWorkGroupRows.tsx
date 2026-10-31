@@ -13,7 +13,6 @@ import {
   ActivityShimmerOverlay,
   MESSAGE_HEADING_LEVEL,
   SlashCommandChip,
-  TimelineRowTimestamp,
   WORKING_BAR_CLASS_NAME,
   WorkingBarControl,
 } from "./TimelineRowParts";
@@ -83,7 +82,6 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { cn } from "~/lib/utils";
-import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -159,10 +157,10 @@ export const WorkGroupSection = memo(function WorkGroupSection({
   );
 });
 
-function WorkingTimer({ createdAt }: { createdAt: string }) {
+function WorkingTimer({ createdAt, clock = false }: { createdAt: string; clock?: boolean }) {
   return (
     <span
-      ref={tickTextContent(() => formatWorkingTimerNow(createdAt), true)}
+      ref={tickTextContent(() => formatWorkingTimerNow(createdAt, clock), true)}
       className="tabular-nums"
     />
   );
@@ -440,14 +438,20 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
   if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
   // A failed group keeps this disclosure while an approval waits, but nothing is thinking then.
   const live = ctx.pendingApprovals.size === 0;
-  const activity = (
-    <LiveActivityRow label="Thinking" iconName="brain" active={live} shimmer={live} />
-  );
   const { groupId } = row;
+  const activity = (
+    <LiveActivityRow
+      label="Thinking"
+      iconName="brain"
+      active={live}
+      interruptible={groupId === undefined}
+    />
+  );
   if (groupId === undefined) return activity;
   return (
     <LiveWorkToggle
       aria-expanded={row.expanded === true}
+      trailing={live ? <LiveWorkControls /> : undefined}
       onClick={() => ctx.onToggleWorkGroup(groupId, row.id)}
     >
       {activity}
@@ -458,20 +462,46 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
 /** A live activity row that is its work group's disclosure: the whole row toggles it. */
 function LiveWorkToggle({
   stacked = false,
+  trailing,
   ...props
 }: Omit<ComponentProps<"button">, "type" | "className"> & {
   /** Stacks a thought line above the status row. */
   stacked?: boolean;
+  trailing?: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      className={cn(
-        "group/live-work flex w-full max-w-full cursor-pointer rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
-        stacked ? "flex-col items-start" : "min-h-6 items-center",
-      )}
-      {...props}
-    />
+    <div className="flex w-full min-w-0 items-end gap-2.5">
+      <button
+        type="button"
+        className={cn(
+          "group/live-work flex min-w-0 flex-1 cursor-pointer rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+          stacked ? "flex-col items-start" : "min-h-6 items-center",
+        )}
+        {...props}
+      />
+      {trailing}
+    </div>
+  );
+}
+
+/** Stop is a sibling of the fold toggle, so it never nests buttons or opens history. */
+function LiveWorkControls() {
+  const { onInterrupt } = use(TimelineRowCtx);
+  const { pendingRequest, turnEnded } = use(TimelineRowActivityCtx);
+  if (!onInterrupt || pendingRequest || turnEnded) return null;
+  return (
+    <span className="flex shrink-0 items-center gap-2.5 text-caption text-dim-foreground">
+      <Button
+        variant="ghost-muted"
+        size="xs"
+        onClick={(event) => {
+          event.stopPropagation();
+          onInterrupt();
+        }}
+      >
+        Stop
+      </Button>
+    </span>
   );
 }
 
@@ -481,24 +511,17 @@ function LiveActivityRow({
   toolIcon,
   failed = false,
   active = false,
-  shimmer = false,
   interruptible = false,
-  createdAt,
 }: {
   label: ReactNode;
   iconName?: WorkEntryIconName;
   toolIcon?: ToolActivityIcon | undefined;
   failed?: boolean;
   active?: boolean;
-  shimmer?: boolean;
   interruptible?: boolean;
-  createdAt?: string;
 }) {
-  const { onInterrupt } = use(TimelineRowCtx);
-  const { pendingRequest, turnEnded, activeTurnStartedAt } = use(TimelineRowActivityCtx);
-  const animated = active && !failed && !pendingRequest && !turnEnded;
-  const showShimmer = animated && shimmer;
-  const timerCreatedAt = createdAt ?? activeTurnStartedAt;
+  const { isWorking, pendingRequest, turnEnded } = use(TimelineRowActivityCtx);
+  const animated = isWorking && active && !failed && !pendingRequest && !turnEnded;
   return (
     <div
       ref={animated ? observeVisibleAnimation : undefined}
@@ -510,26 +533,9 @@ function LiveActivityRow({
         toolIcon={toolIcon}
         failed={failed}
         announceFailure={failed}
-        active={animated && !shimmer}
-        trailing={
-          interruptible && animated && onInterrupt ? (
-            <span className="flex shrink-0 items-center gap-2.5 text-caption text-dim-foreground">
-              {timerCreatedAt ? <WorkingTimer createdAt={timerCreatedAt} /> : null}
-              <Button
-                variant="ghost-muted"
-                size="xs"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onInterrupt();
-                }}
-              >
-                Stop
-              </Button>
-            </span>
-          ) : undefined
-        }
+        trailing={interruptible && animated ? <LiveWorkControls /> : undefined}
       />
-      {showShimmer ? (
+      {animated ? (
         <ActivityShimmerOverlay>
           <LiveActivityContent label={label} iconName={iconName} toolIcon={toolIcon} highlighted />
         </ActivityShimmerOverlay>
@@ -544,7 +550,6 @@ function LiveActivityContent({
   toolIcon,
   failed = false,
   announceFailure = false,
-  active = false,
   highlighted = false,
   trailing,
 }: {
@@ -553,7 +558,6 @@ function LiveActivityContent({
   toolIcon?: ToolActivityIcon | undefined;
   failed?: boolean;
   announceFailure?: boolean;
-  active?: boolean;
   highlighted?: boolean;
   trailing?: ReactNode;
 }) {
@@ -586,15 +590,7 @@ function LiveActivityContent({
         ) : null
       }
       label={
-        <span
-          className={cn(
-            "block truncate",
-            highlighted && "text-foreground",
-            active && "live-tool-shine",
-          )}
-        >
-          {label}
-        </span>
+        <span className={cn("block truncate", highlighted && "text-foreground")}>{label}</span>
       }
       trailing={
         showTrailingFailureMark ? (
@@ -629,6 +625,9 @@ export function LiveWorkEntryTimelineRow({
   return (
     <LiveWorkToggle
       stacked={thoughtLine !== ""}
+      trailing={
+        row.active && !failed ? <LiveWorkControls /> : undefined
+      }
       aria-label={
         failed
           ? `${thoughtLine ? `${thoughtLine} ` : ""}${threadLabel?.text ?? label}, tool call failed`
@@ -711,8 +710,6 @@ export function WorkGroupToggleTimelineRow({
       toolIcon={row.toolIcon}
       failed={row.hasFailure}
       expanded={row.expanded}
-      createdAt={row.createdAt}
-      timestampFormat={ctx.timestampFormat}
       onToggle={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
     />
   );
@@ -724,8 +721,6 @@ function WorkGroupHeader(props: {
   toolIcon?: ToolActivityIcon | undefined;
   failed?: boolean | undefined;
   expanded: boolean;
-  createdAt: string;
-  timestampFormat: TimestampFormat;
   onToggle: () => void;
 }) {
   return (
@@ -742,9 +737,6 @@ function WorkGroupHeader(props: {
         />
       }
       label={<span className="block truncate text-secondary-label">{props.label}</span>}
-      trailing={
-        <TimelineRowTimestamp createdAt={props.createdAt} timestampFormat={props.timestampFormat} />
-      }
     />
   );
 }
@@ -875,9 +867,13 @@ function WorkingWindowText({
 const WorkingWindowItemView = memo(function WorkingWindowItemView({
   item,
   itemKey,
+  current,
+  historyOpen,
 }: {
   item: WorkingWindowItem;
   itemKey: string;
+  current: boolean;
+  historyOpen: boolean;
 }) {
   const ctx = use(TimelineRowCtx);
   if (item.kind === "text") {
@@ -896,9 +892,8 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
         label={liveWorkEntryLabel(entry, ctx.workspaceRoot, true)}
         iconName={workEntryIconName(entry)}
         toolIcon={entry.toolIcon ?? entry.toolSource?.icon}
-        createdAt={entry.createdAt}
         interruptible
-        active
+        active={current}
       />
     );
   }
@@ -910,6 +905,7 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
     <SimpleWorkEntryRow
       workEntry={entry}
       workspaceRoot={ctx.workspaceRoot}
+      expandable={historyOpen}
       severeFailure={failedTestRun}
     />
   );
@@ -947,7 +943,7 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
   if (shown.length === 0 && !showThinking) return null;
   const openable = !open && shown.length > 0;
   const thinking = showThinking ? (
-    <LiveActivityRow label="Thinking" iconName="brain" active shimmer interruptible />
+    <LiveActivityRow label="Thinking" iconName="brain" active interruptible />
   ) : null;
   return (
     <WorkGroupViewCtx value={groupView}>
@@ -970,11 +966,11 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
         >
           {shown.map((item) => (
             <div key={item.id} inert={!open && !workingWindowItemIsLive(item)} className="min-w-0">
-              <WorkingWindowItemView item={item} />
+              <WorkingWindowItemView item={item} current={item === window.items.at(-1)} historyOpen={open} />
             </div>
           ))}
           {showThinking ? (
-            <LiveActivityRow label="Thinking" iconName="brain" active shimmer interruptible />
+            <LiveActivityRow label="Thinking" iconName="brain" active interruptible />
           ) : null}
         </div>
       </div>
