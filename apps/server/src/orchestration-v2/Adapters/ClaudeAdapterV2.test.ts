@@ -13851,6 +13851,122 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  // regression: #26082 a killed Claude process names its signal on the failed turn
+  it.effect("names the signal that killed the Claude process on the failed turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const changes = yield* makeChangeSignal;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-v2-process-signal-",
+        });
+        const sdkMessages = yield* Queue.unbounded<
+          SDKMessage,
+          ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError
+        >();
+        const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          path: yield* Path.Path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator,
+          queryRunner: {
+            allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
+            open: () =>
+              Effect.succeed({
+                messages: Stream.fromQueue(sdkMessages),
+                offer: () => Effect.void,
+                setModel: () => Effect.void,
+                applyFlagSettings: () => Effect.void,
+                setPermissionMode: () => Effect.void,
+                backgroundTasks: () => Effect.succeed(false),
+                stopTask: () => Effect.void,
+                interrupt: Effect.void,
+                close: Queue.shutdown(sdkMessages),
+              }),
+            forkSession: () => Effect.die("unused forkSession"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const threadId = ThreadId.make("thread-claude-process-signal");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-process-signal"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              events.push(event);
+            }).pipe(Effect.andThen(changes.notify)),
+          ),
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-process-signal"),
+            text: "Write a long reply.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000026082",
+            text: "Here is the first part",
+          }),
+        );
+        // Mirrors ProcessTransport.getProcessExitError in @anthropic-ai/claude-agent-sdk.
+        const processExit = Object.assign(
+          new Error(
+            "Claude Code process terminated by signal SIGABRT. stderr: fork failed: Resource temporarily unavailable",
+          ),
+          {
+            telemetryMessage: "Claude Code process terminated by signal SIGABRT",
+            errorClass: "process_killed_by_signal",
+            signal: "SIGABRT",
+          },
+        );
+        yield* Queue.fail(
+          sdkMessages,
+          new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+            method: "messages",
+            cause: processExit,
+          }),
+        );
+
+        yield* changes.until(() => events.some((event) => event.type === "turn.terminal"));
+        const terminal = events.find((event) => event.type === "turn.terminal");
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.include(
+          terminal.failure.message,
+          "Claude Code process terminated by signal SIGABRT",
+        );
+        assert.notInclude(terminal.failure.message, "stderr");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   const WORKFLOW_TASK_ID = "task-workflow-run";
   const WORKFLOW_TOOL_USE_ID = "toolu-workflow-run";
   const makeWorkflowHarnessWithOptions = (
