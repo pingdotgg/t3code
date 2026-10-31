@@ -694,7 +694,7 @@ export function SettingsRow({
               ) : null}
             </div>
             {description ? (
-              <p className="max-w-xl text-pretty text-meta font-normal leading-normal text-dim-foreground">
+              <p className="max-w-xl text-pretty text-meta leading-normal text-dim-foreground">
                 {description}
               </p>
             ) : null}
