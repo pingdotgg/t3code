@@ -4677,6 +4677,38 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const store = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
       const resetAt = DateTime.formatIso(DateTime.add(now, { hours: 1 }));
+      const threadPayload = (
+        threadId: ThreadId,
+        parentThreadId: ThreadId | null,
+        settledOverride: "settled" | null,
+      ) =>
+        ({
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:settled-parent-limit"),
+          title: "Settled parent limit recovery",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId,
+            relationshipToParent: parentThreadId === null ? null : "subagent",
+            rootThreadId: parentThreadId ?? threadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride,
+          settledAt: settledOverride === null ? null : now,
+          lastVisitedAt: null,
+          deletedAt: null,
+        }) as const;
       const createThread = (
         threadId: ThreadId,
         parentThreadId: ThreadId | null,
@@ -4687,33 +4719,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           type: "thread.created",
           threadId,
           occurredAt: now,
-          payload: {
-            createdBy: "user",
-            creationSource: "web",
-            id: threadId,
-            projectId: ProjectId.make("project:settled-parent-limit"),
-            title: "Settled parent limit recovery",
-            providerInstanceId,
-            modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: null,
-            activeProviderThreadId: null,
-            lineage: {
-              parentThreadId,
-              relationshipToParent: parentThreadId === null ? null : "subagent",
-              rootThreadId: parentThreadId ?? threadId,
-            },
-            forkedFrom: null,
-            createdAt: now,
-            updatedAt: now,
-            archivedAt: null,
-            settledOverride,
-            settledAt: settledOverride === null ? null : now,
-            lastVisitedAt: null,
-            deletedAt: null,
-          },
+          payload: threadPayload(threadId, parentThreadId, settledOverride),
         });
       const addLimitedChild = Effect.fnUntraced(function* (name: string, parentSettled: boolean) {
         const parentId = ThreadId.make(`thread:settled-parent-limit:${name}:parent`);
@@ -4806,6 +4812,40 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           `only the child of the unsettled parent is armed (${JSON.stringify(options)})`,
         );
       }
+      // A recovery armed before the parent settled still resumes at its reset.
+      yield* store.apply({
+        id: EventId.make("event:settled-parent-limit:settled:armed"),
+        type: "thread.metadata-updated",
+        threadId: settledParentChild,
+        occurredAt: now,
+        payload: {
+          ...threadPayload(
+            settledParentChild,
+            ThreadId.make("thread:settled-parent-limit:settled:parent"),
+            null,
+          ),
+          limitRecovery: {
+            runId: RunId.make("run:settled-parent-limit:settled"),
+            resetAt,
+            autoResume: true,
+          },
+        },
+      });
+      const afterReset = DateTime.add(now, { hours: 2 });
+      const resumed = (yield* store.getLimitRecoveryCandidates({
+        now: afterReset,
+        autoResume: true,
+        snooze: false,
+      })).find((row) => row.id === settledParentChild);
+      assert.isDefined(resumed);
+      assert.isTrue(
+        limitRecoveryCommand(
+          resumed,
+          true,
+          DateTime.toEpochMillis(afterReset),
+          false,
+        )?.commandId.startsWith("limit-resume:"),
+      );
     }),
   );
 
