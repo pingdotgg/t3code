@@ -9,23 +9,23 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { memo, useEffect } from "react";
-import { useComposerDraftStore } from "../composerDraftStore";
-import { useStableCallback } from "../hooks/useStableCallback";
-import type { TerminalContextSelection } from "../lib/terminalContext";
-import { focusActiveDrawerTerminal, focusTerminal } from "../lib/terminalFocus";
+import { useComposerDraftStore } from "~/composerDraftStore";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import type { TerminalContextSelection } from "~/lib/terminalContext";
+import { focusActiveDrawerTerminal, focusTerminal } from "~/lib/terminalFocus";
 import { cn } from "~/lib/utils";
 import {
   selectThreadRightPanelState,
   useRightPanelStore,
   type RightPanelSurface,
-} from "../rightPanelStore";
-import { useProject, useQuietThreadShell } from "../state/entities";
-import { useEnvironmentScope } from "../state/session";
-import { useKnownTerminalSessions } from "../state/terminalSessions";
-import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
-import { useThreadTerminalActions } from "./terminal/useThreadTerminalActions";
-import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { resolveTerminalWorktreePath } from "./ChatView.logic";
+} from "~/rightPanelStore";
+import { useProject, useQuietThreadShell } from "~/state/entities";
+import { useEnvironmentScope } from "~/state/session";
+import { useKnownTerminalSessions } from "~/state/terminalSessions";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "~/terminalUiStateStore";
+import { useThreadTerminalActions } from "~/components/terminal/useThreadTerminalActions";
+import ThreadTerminalDrawer from "~/components/ThreadTerminalDrawer";
+import { resolveTerminalWorktreePath } from "~/components/ChatView.logic";
 
 /** Where a drawer or panel opens new terminals when a script run overrides the thread's own. */
 export type PersistentTerminalLaunchContext = {
