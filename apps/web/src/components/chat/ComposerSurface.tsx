@@ -28,13 +28,13 @@ function Host({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-/** Its top corners sit 1px inside the r18 tray, so they take 18 - 1 to stay concentric. */
+/** The message surface keeps its 14px corners inside the tray. */
 function Main({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-chat-composer-main-surface="true"
       className={cn(
-        "group relative z-10 rounded-b-pane rounded-t-composer surface-composer",
+        "group relative z-10 rounded-pane surface-composer",
         className,
       )}
       {...props}
