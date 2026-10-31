@@ -361,6 +361,26 @@ function joinWithAnd(parts: ReadonlyArray<string>): string {
   return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
+// The Claude adapter forces a stuck query closed after 10 seconds.
+export const BACKGROUND_WORK_STOP_RETRY_AFTER_MS = 10_000;
+
+export interface BackgroundWorkStopRequest {
+  readonly threadKey: string;
+  readonly taskIds: ReadonlyArray<string>;
+  readonly retryAt: number | null;
+}
+
+/** Acceptance does not end the tasks, so an accepted Stop stays pending while they are listed. */
+export function isBackgroundWorkStopPending(
+  request: BackgroundWorkStopRequest | null,
+  threadKey: string,
+  tasks: ReadonlyArray<Pick<OrchestrationV2PendingBackgroundTask, "taskId">>,
+  retryExpired: boolean,
+): boolean {
+  if (request === null || request.threadKey !== threadKey || retryExpired) return false;
+  return request.retryAt === null || tasks.some((task) => request.taskIds.includes(task.taskId));
+}
+
 export function presentPendingBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
 ): PendingBackgroundWorkPresentation | null {
