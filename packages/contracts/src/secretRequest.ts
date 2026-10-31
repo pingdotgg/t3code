@@ -24,6 +24,8 @@ const SECRET_REQUEST_FAILURE_MESSAGES = {
   read_failed: "Could not read the secret.",
   ref_unavailable:
     "That secretRef was already used or does not exist. Ask the user again with request_secret.",
+  ref_wrong_project:
+    "That secretRef was entered in another project. Ask with request_secret from a thread in the project that uses it.",
   ref_expired: "That secretRef expired. Ask the user again with request_secret.",
   consume_failed: "Could not use that secretRef. Try again.",
   not_a_file_request:
