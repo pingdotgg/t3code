@@ -4398,12 +4398,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie),
         );
 
-        yield* client.handleServerNotification("account/rateLimits/updated", (payload) =>
-          Effect.gen(function* () {
-            const previous = yield* Ref.getAndUpdate(rateLimitSnapshot, (previous) =>
-              mergeCodexRateLimits(previous, payload.rateLimits),
-            );
-            const resetAt = codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot));
+        const backfillUsageLimitResetAt = Effect.fn("CodexAdapterV2.backfillUsageLimitResetAt")(
+          function* (resetAt: string | null) {
             for (const item of (yield* Ref.get(limitedTurnItems)).values()) {
               if (resetAt === null || item.failure.resetAt != null) continue;
               const updated = {
@@ -4420,6 +4416,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 turnItem: updated,
               });
             }
+          },
+        );
+
+        yield* client.handleServerNotification("account/rateLimits/updated", (payload) =>
+          Effect.gen(function* () {
+            const previous = yield* Ref.getAndUpdate(rateLimitSnapshot, (previous) =>
+              mergeCodexRateLimits(previous, payload.rateLimits),
+            );
+            yield* backfillUsageLimitResetAt(
+              codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
+            );
             const update = codexRateLimitsToUpdate(payload.rateLimits, previous);
             if (update && adapterOptions.onUsageLimits) {
               const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -5751,6 +5758,27 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           },
         );
 
+        const resolveUsageLimitResetAt = Effect.fn("CodexAdapterV2.resolveUsageLimitResetAt")(
+          function* () {
+            const cached = codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot));
+            if (cached !== null) return yield* backfillUsageLimitResetAt(cached);
+            // A rejected request may follow a stale percentage or an empty premium snapshot.
+            const response = yield* client
+              .request("account/rateLimits/read", null)
+              .pipe(Effect.timeout("3 seconds"), Effect.option);
+            if (Option.isSome(response)) {
+              const snapshot =
+                response.value.rateLimitsByLimitId?.codex ?? response.value.rateLimits;
+              yield* Ref.update(rateLimitSnapshot, (previous) =>
+                mergeCodexRateLimits(previous, snapshot),
+              );
+            }
+            yield* backfillUsageLimitResetAt(
+              codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
+            );
+          },
+        );
+
         const emitRootTerminal = Effect.fnUntraced(function* (
           context: ActiveCodexTurnContext,
           event: CodexRootTerminalEvent,
@@ -5800,6 +5828,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             yield* Ref.update(limitedTurnItems, (items) =>
               new Map(items).set(context.providerThread.id, item),
             );
+            // RPC responses use the notification reader, so refresh outside its handler.
+            if (item.failure.resetAt == null) {
+              yield* resolveUsageLimitResetAt().pipe(Effect.forkIn(scope));
+            }
           }
         });
 
