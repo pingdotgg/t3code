@@ -192,6 +192,8 @@ describe("extractTerminalLinks", () => {
     "connected to postgres://localhost:5432/app",
     "uploaded s3://bucket/reports/today.csv",
     "    at main (file:///Users/jane/app/src/index.mjs:3:7)",
+    "+redis://localhost:6379/0",
+    "-redis://localhost:6379/0",
   ])("does not turn part of a non-web URL into an editor link: %s", (line) => {
     expect(extractTerminalLinks(line)).toEqual([]);
   });
