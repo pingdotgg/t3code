@@ -139,33 +139,47 @@ describe("desktop SSH pairing", () => {
     }),
   );
 
-  it.effect("exchanges one setup credential after repeated interrupted provisions", () =>
-    Effect.gen(function* () {
-      const bridge = makeBridge([]);
-      const setup = pendingSetup();
-      const ensure = vi.spyOn(bridge, "ensureSshEnvironment").mockReturnValue(setup.promise);
-      const exchange = vi.spyOn(bridge, "bootstrapSshBearerSession");
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const interrupted = yield* Effect.forkChild(
-          provisionDesktopSshEnvironment(bridge, TARGET),
-          { startImmediately: true },
+  it.effect.each(["unchanged", "changed"] as const)(
+    "retries interrupted SSH provisions with %s overrides",
+    (scenario) =>
+      Effect.gen(function* () {
+        const bridge = makeBridge([]);
+        const setup = pendingSetup();
+        const ensure = vi
+          .spyOn(bridge, "ensureSshEnvironment")
+          .mockReturnValueOnce(setup.promise)
+          .mockImplementation(async (target) => ({
+            ...SSH_BOOTSTRAP,
+            target,
+            pairingToken: "fresh-token",
+          }));
+        const exchange = vi.spyOn(bridge, "bootstrapSshBearerSession");
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const interrupted = yield* Effect.forkChild(
+            provisionDesktopSshEnvironment(bridge, TARGET),
+            { startImmediately: true },
+          );
+          yield* Fiber.interrupt(interrupted);
+        }
+
+        const retryTarget =
+          scenario === "unchanged"
+            ? TARGET
+            : { ...TARGET, overrides: { username: null, port: null } };
+        const retry = yield* Effect.forkChild(provisionDesktopSshEnvironment(bridge, retryTarget), {
+          startImmediately: true,
+        });
+        setup.resolve(SSH_BOOTSTRAP);
+        const provisioned = yield* Fiber.join(retry);
+
+        expect(provisioned.bearerToken).toBe("bearer-token");
+        expect(provisioned.bootstrap.target).toEqual(retryTarget);
+        expect(ensure).toHaveBeenCalledTimes(scenario === "unchanged" ? 1 : 2);
+        expect(exchange).toHaveBeenCalledExactlyOnceWith(
+          SSH_BOOTSTRAP.httpBaseUrl,
+          scenario === "unchanged" ? "abandoned-token" : "fresh-token",
         );
-        yield* Fiber.interrupt(interrupted);
-      }
-
-      const retry = yield* Effect.forkChild(provisionDesktopSshEnvironment(bridge, TARGET), {
-        startImmediately: true,
-      });
-      setup.resolve(SSH_BOOTSTRAP);
-      const provisioned = yield* Fiber.join(retry);
-
-      expect(provisioned.bearerToken).toBe("bearer-token");
-      expect(ensure).toHaveBeenCalledExactlyOnceWith(TARGET, { issuePairingToken: true });
-      expect(exchange).toHaveBeenCalledExactlyOnceWith(
-        SSH_BOOTSTRAP.httpBaseUrl,
-        "abandoned-token",
-      );
-    }),
+      }),
   );
 
   it.effect("starts fresh after an abandoned setup settles in success or failure", () =>

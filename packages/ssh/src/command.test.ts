@@ -92,6 +92,25 @@ describe("ssh command", () => {
         }),
         "326264c4f08c8a0c",
       );
+      const inherited = {
+        alias: "devbox",
+        hostname: "127.0.0.1",
+        username: "developer",
+        port: 40001,
+        overrides: { username: null, port: null },
+      };
+      const owner = yield* remoteStateKey(inherited);
+      assert.equal(
+        yield* remoteStateKey({ ...inherited, username: "updated", port: 40002 }),
+        owner,
+      );
+      assert.notEqual(
+        yield* remoteStateKey({
+          ...inherited,
+          overrides: { username: "developer", port: 40001 },
+        }),
+        owner,
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

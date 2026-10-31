@@ -227,6 +227,12 @@ If SSH reconnecting fails after an app update, retry the launch once. Removing
 the connection stops a server that T3 Code launched; a server that was already
 running is left alone.
 
+Leave Username or Port blank to follow that value in your SSH config on each
+reconnect. Routes saved by older versions keep their saved values; re-add the
+route to inherit config changes. Disconnect the older route first if it still
+works. If its proxy is unavailable and its server is still running, the new
+route can reuse that server but will not stop it on disconnect.
+
 Each desktop app keeps one session on the host for its SSH connection and reuses
 it when it reconnects. Revoke sessions you no longer use in **Settings →
 Sharing & access** on the host, or on a headless host with `t3 auth session list` and
