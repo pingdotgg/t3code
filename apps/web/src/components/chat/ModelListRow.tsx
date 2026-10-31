@@ -1,7 +1,7 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
 import { memo } from "react";
 import { CheckIcon, StarIcon } from "lucide-react";
-import { getDisplayModelName, getProviderRowLabel } from "./providerIconUtils";
+import { getDisplayModelName } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
@@ -23,8 +23,11 @@ export const ModelListRow = memo(function ModelListRow(props: {
   acpRegistryAgentId?: string | undefined;
   acpRegistryIconUrl?: string | undefined;
   isFavorite: boolean;
+  /** In Favorites every row is starred, so the star shows only on hover. */
+  favoriteStarOnHover?: boolean;
   isSelected: boolean;
-  showProvider: boolean;
+  /** Marks this instance apart from another of the same provider. */
+  showInstanceBadge: boolean;
   showNewBadge?: boolean;
   unavailable?: boolean;
   jumpLabel?: string | null;
@@ -36,11 +39,11 @@ export const ModelListRow = memo(function ModelListRow(props: {
     name: props.name,
     subProvider: props.subProvider,
   };
-  const providerLabel = getProviderRowLabel(props.providerDisplayName, props.subProvider);
 
   const row = (
     <ComboboxItem
       hideIndicator
+      selectedFill={false}
       index={props.index}
       value={modelPickerModelKey(props.instanceId, props.slug)}
       disabled={Boolean(props.disabledReason)}
@@ -50,40 +53,43 @@ export const ModelListRow = memo(function ModelListRow(props: {
           "data-disabled:pointer-events-auto data-disabled:cursor-not-allowed",
       )}
     >
-      <div className="min-w-0 flex-1 text-left">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="min-w-0 truncate text-sm font-normal leading-snug">
-            {getDisplayModelName(model)}
-          </div>
-          {props.showNewBadge ? (
-            <span
-              className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-3xs font-bold uppercase leading-none tracking-wide text-update-foreground"
-              aria-label="New model"
-            >
-              New
-            </span>
-          ) : null}
-          {props.unavailable ? (
-            <Badge variant="outline" size="sm">
-              Unavailable
-            </Badge>
-          ) : null}
+      {/* One row shape in every tab: the logo names the provider, so Favorites needs no second line. */}
+      <ProviderInstanceIcon
+        driverKind={props.driverKind}
+        displayName={props.providerDisplayName}
+        accentColor={props.providerAccentColor}
+        acpRegistryAgentId={props.acpRegistryAgentId}
+        acpRegistryIconUrl={props.acpRegistryIconUrl}
+        showBadge={props.showInstanceBadge}
+        className="size-4"
+        iconClassName="size-4"
+        indicatorBackground="var(--popover)"
+        badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
+      />
+      <div className="flex min-w-0 flex-1 items-center gap-2 text-left">
+        <div className="min-w-0 truncate text-sm font-normal leading-snug">
+          {getDisplayModelName(model)}
+          {/* The logo is decorative, so name the provider for screen readers. */}
+          <span className="sr-only">, {props.providerDisplayName}</span>
         </div>
-        {props.showProvider && (
-          <div className="mt-1 flex items-center gap-1.5">
-            <ProviderInstanceIcon
-              driverKind={props.driverKind}
-              displayName={props.providerDisplayName}
-              acpRegistryAgentId={props.acpRegistryAgentId}
-              acpRegistryIconUrl={props.acpRegistryIconUrl}
-              className="size-3"
-              iconClassName="size-3"
-            />
-            <span className="truncate text-xs font-normal leading-snug text-muted-foreground/70">
-              {providerLabel}
-            </span>
-          </div>
-        )}
+        {props.subProvider ? (
+          <span className="min-w-0 shrink truncate text-xs text-muted-foreground/70">
+            {props.subProvider}
+          </span>
+        ) : null}
+        {props.showNewBadge ? (
+          <span
+            className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-3xs font-bold uppercase leading-none tracking-wide text-update-foreground"
+            aria-label="New model"
+          >
+            New
+          </span>
+        ) : null}
+        {props.unavailable ? (
+          <Badge variant="outline" size="sm">
+            Unavailable
+          </Badge>
+        ) : null}
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
@@ -108,9 +114,9 @@ export const ModelListRow = memo(function ModelListRow(props: {
                 <StarIcon
                   className={cn(
                     "size-3.5 sm:size-3",
-                    props.isFavorite
-                      ? "fill-current text-warning"
-                      : "opacity-0 group-hover:opacity-100 group-data-highlighted:opacity-100 in-focus-visible:opacity-100 pointer-coarse:opacity-100",
+                    props.isFavorite && "fill-current text-warning",
+                    (!props.isFavorite || props.favoriteStarOnHover) &&
+                      "opacity-0 group-hover:opacity-100 group-data-highlighted:opacity-100 in-focus-visible:opacity-100 pointer-coarse:opacity-100",
                   )}
                 />
               </Button>
