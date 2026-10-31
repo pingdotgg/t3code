@@ -115,6 +115,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   triggerVariant?: "toolbar" | "settings";
   triggerLabel?: string;
   triggerAriaLabel?: string;
+  /** Extra controls under the model list, such as the model's traits in settings. */
+  popupFooter?: ReactNode;
   onOpenChange?: (open: boolean) => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
@@ -506,6 +508,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         {props.selectedModels === undefined && !docked ? (
           <ChatGptSharingControl provider={activeEntry?.snapshot ?? null} />
         ) : null}
+        {props.popupFooter}
       </PopoverPopup>
     </Popover>
   );

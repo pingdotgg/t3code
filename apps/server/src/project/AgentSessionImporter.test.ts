@@ -18,6 +18,8 @@ import {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as Clock from "effect/Clock";
+import * as TestClock from "effect/testing/TestClock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -281,6 +283,7 @@ const makeImporter = Effect.fn(function* (
     run: importer.importRecentAgentThreads({ projectId }),
     importNativeHistory: importer.importNativeHistory,
     published,
+    importer,
   };
 });
 
@@ -1050,4 +1053,30 @@ it.effect("repeated imports reach linked-worktree sessions behind the scan budge
     );
     expect(oldest.worktreePath).toBe(worktree);
   }).pipe(Effect.scoped, Effect.provide(Layer.merge(persistence, NodeServices.layer))),
+);
+
+it.effect("paces progress per import while preserving processed counts", () =>
+  Effect.gen(function* () {
+    const { importer } = yield* makeImporter(
+      Array.from({ length: 5 }, (_, index) => candidate(CODEX_MODEL_SELECTION, `paced-${index}`)),
+      TestClock.adjust(125),
+    );
+    const progress: Array<{ processedCount: number; at: number }> = [];
+    const report = (processedCount: number) =>
+      Clock.currentTimeMillis.pipe(
+        Effect.tap((at) =>
+          Effect.sync(() => {
+            progress.push({ processedCount, at });
+          }),
+        ),
+        Effect.asVoid,
+      );
+    const result = yield* importer.importRecentAgentThreads({ projectId }, report);
+    expect(result).toEqual({ importedCount: 5, skippedCount: 0 });
+    expect(progress.map(({ processedCount }) => processedCount)).toEqual([1, 3, 5]);
+    expect(progress.slice(1).map(({ at }, index) => at - progress[index]!.at)).toEqual([250, 250]);
+    progress.length = 0;
+    yield* importer.importRecentAgentThreads({ projectId }, report);
+    expect(progress.map(({ processedCount }) => processedCount)).toEqual([1]);
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
