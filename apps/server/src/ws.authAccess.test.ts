@@ -244,6 +244,7 @@ it.effect(
             ),
           );
       const responses = yield* Queue.unbounded<AuthAccessStreamEvent>();
+      const chunkSizes = yield* Queue.unbounded<number>();
       const exited = yield* Deferred.make<void>();
       const server = yield* RpcServer.makeNoSerialization(group, {
         ...WS_RPC_SERVER_OPTIONS,
@@ -251,7 +252,7 @@ it.effect(
           response._tag === "Chunk"
             ? Effect.forEach(response.values, (event) => Queue.offer(responses, event), {
                 discard: true,
-              })
+              }).pipe(Effect.andThen(Queue.offer(chunkSizes, Array.from(response.values).length)))
             : response._tag === "Exit"
               ? Deferred.succeed(exited, undefined)
               : Effect.void,
@@ -303,6 +304,7 @@ it.effect(
       yield* Deferred.await(snapshotRead);
       yield* sessions.markConnected(current.sessionId);
       yield* Deferred.succeed(releaseSnapshot, undefined);
+      assert.equal(yield* Queue.take(chunkSizes), 1);
       const snapshot = yield* Queue.take(responses);
       assert.equal(snapshot.type, "snapshot");
       if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
