@@ -1,4 +1,4 @@
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import {
   EnvironmentId,
   EventId,
@@ -1607,6 +1607,95 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ),
         );
       assert.strictEqual(failure._tag, "ProjectionStoreReadError");
+    }),
+  );
+
+  // regression: #25157 streamed payloads are not re-parsed to read their indexed timestamps
+  it.effect("indexes streamed payload timestamps without parsing the payload JSON", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = yield* addRolledBackRecoveryCandidate("streamed-payload-parse");
+      const runId = RunId.make("run:streamed-payload-parse:rolled-back");
+      const createdAt = DateTime.makeUnsafe("2026-01-02T03:04:05.006Z");
+      const updatedAt = DateTime.makeUnsafe("2026-01-02T03:04:06.007Z");
+      const text = "x".repeat(128 * 1024);
+      const messageId = MessageId.make("message:streamed-payload-parse");
+      const itemId = TurnItemId.make("item:streamed-payload-parse");
+
+      const parsedPayloads = yield* Effect.acquireUseRelease(
+        Effect.sync(() => vi.spyOn(JSON, "parse")),
+        (parse) =>
+          Effect.gen(function* () {
+            yield* store.apply({
+              id: EventId.make("event:streamed-payload-parse:message"),
+              type: "message.updated",
+              threadId,
+              occurredAt: updatedAt,
+              payload: {
+                createdBy: "agent",
+                creationSource: "server",
+                id: messageId,
+                threadId,
+                runId,
+                nodeId: null,
+                role: "assistant",
+                text,
+                attachments: [],
+                streaming: true,
+                createdAt,
+                updatedAt,
+              },
+            });
+            yield* store.apply({
+              id: EventId.make("event:streamed-payload-parse:item"),
+              type: "turn-item.updated",
+              threadId,
+              runId,
+              occurredAt: updatedAt,
+              payload: {
+                id: itemId,
+                threadId,
+                runId,
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                type: "assistant_message",
+                status: "running",
+                title: "Assistant",
+                messageId,
+                text,
+                streaming: true,
+                startedAt: createdAt,
+                completedAt: null,
+                updatedAt,
+              },
+            });
+            return parse.mock.calls
+              .filter(([json]) => typeof json === "string" && json.includes(text))
+              .map(([json]) => (JSON.parse(json) as { readonly id: string }).id);
+          }),
+        (parse) => Effect.sync(() => parse.mockRestore()),
+      );
+
+      assert.deepStrictEqual(parsedPayloads, []);
+      assert.deepStrictEqual(
+        yield* sql`
+          SELECT created_at, updated_at FROM orchestration_v2_projection_messages
+          WHERE message_id = ${messageId}
+        `,
+        [{ created_at: DateTime.formatIso(createdAt), updated_at: DateTime.formatIso(updatedAt) }],
+      );
+      assert.deepStrictEqual(
+        yield* sql`
+          SELECT updated_at FROM orchestration_v2_projection_turn_items
+          WHERE turn_item_id = ${itemId}
+        `,
+        [{ updated_at: DateTime.formatIso(updatedAt) }],
+      );
     }),
   );
 
