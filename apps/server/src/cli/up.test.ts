@@ -2,11 +2,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
+import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Terminal from "effect/Terminal";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 import { afterEach, vi } from "vite-plus/test";
@@ -14,7 +17,7 @@ import { afterEach, vi } from "vite-plus/test";
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import { upsertServiceEnv } from "./service.ts";
-import { planRoutes, upCommand } from "./up.ts";
+import { connectEnabled, planRoutes, upCommand } from "./up.ts";
 
 const none = Option.none<boolean>();
 
@@ -61,6 +64,85 @@ const SERVICE = {
   logPath: "/home/me/.t3/userdata/logs/boot-service.log",
 } as const;
 
+it.each([
+  {
+    label: "a CLI managed link",
+    cliDesired: true,
+    cliMode: "managed",
+    managedTunnel: false,
+    revoked: false,
+    on: true,
+  },
+  {
+    label: "a link the app made",
+    cliDesired: false,
+    cliMode: "managed",
+    managedTunnel: true,
+    revoked: false,
+    on: true,
+  },
+  {
+    label: "a publish-only link",
+    cliDesired: true,
+    cliMode: "publish_only",
+    managedTunnel: false,
+    revoked: false,
+    on: false,
+  },
+  {
+    label: "a revoked link",
+    cliDesired: true,
+    cliMode: "managed",
+    managedTunnel: true,
+    revoked: true,
+    on: false,
+  },
+  {
+    label: "no link",
+    cliDesired: false,
+    cliMode: "managed",
+    managedTunnel: false,
+    revoked: false,
+    on: false,
+  },
+] as const)("T3 Connect is on for $label: $on", ({ label: _, on, ...link }) => {
+  expect(connectEnabled(link)).toBe(on);
+});
+
+// Prompts run only when both streams are terminals.
+const asTerminal = Effect.acquireRelease(
+  Effect.sync(() =>
+    [process.stdin, process.stdout].map((stream) => {
+      const descriptor = Object.getOwnPropertyDescriptor(stream, "isTTY");
+      Object.defineProperty(stream, "isTTY", { configurable: true, value: true });
+      return { stream, descriptor };
+    }),
+  ),
+  (saved) =>
+    Effect.sync(() => {
+      for (const { stream, descriptor } of saved) {
+        if (descriptor === undefined) Reflect.deleteProperty(stream, "isTTY");
+        else Object.defineProperty(stream, "isTTY", descriptor);
+      }
+    }),
+);
+
+const answering = (text: string) =>
+  Terminal.make({
+    columns: Effect.succeed(80),
+    rows: Effect.succeed(24),
+    readInput: Effect.gen(function* () {
+      const input = yield* Queue.unbounded<Terminal.UserInput, Cause.Done>();
+      yield* Queue.offer(input, {
+        input: Option.some(text),
+        key: { name: text, ctrl: false, meta: false, shift: false },
+      });
+      return input;
+    }),
+    readLine: Effect.succeed(text),
+    display: () => Effect.void,
+  });
+
 it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -70,6 +152,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     readonly status?: Partial<BootService.BootServiceStatus>;
     readonly installFails?: boolean;
     readonly restartFails?: boolean;
+    /** Runs as if in a terminal, answering each question with this text. */
+    readonly answer?: string;
     readonly env: string;
     readonly args: ReadonlyArray<string>;
     readonly installs: number;
@@ -134,13 +218,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       envAfter: "",
     },
     {
-      label: "a failed restart keeps service.env matching the running service",
+      label: "a failed restart puts service.env back and restarts on it",
       installed: true,
       restartFails: true,
       env: "T3CODE_LAN=false\n",
       args: ["--lan"],
       installs: 0,
-      restarts: 1,
+      restarts: 2,
+      envAfter: "T3CODE_LAN=false\n",
+    },
+    {
+      label: "declining an update changes nothing",
+      installed: true,
+      status: { current: false },
+      answer: "n",
+      env: "T3CODE_LAN=false\n",
+      args: ["--lan"],
+      installs: 0,
+      restarts: 0,
       envAfter: "T3CODE_LAN=false\n",
     },
     {
@@ -197,12 +292,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
         ),
       );
 
+      if (input.answer !== undefined) yield* asTerminal;
       const exit = yield* Command.runWith(upCommand, { version: packageJson.version })([
         "--base-dir",
         baseDir,
         ...input.args,
       ]).pipe(
         Effect.provideService(HostProcess.Environment, {}),
+        input.answer === undefined
+          ? (effect) => effect
+          : Effect.provideService(Terminal.Terminal, answering(input.answer)),
         Effect.provide(
           Layer.mergeAll(
             ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),

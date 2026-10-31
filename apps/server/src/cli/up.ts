@@ -11,7 +11,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BootService from "../cloud/bootService.ts";
 import * as CliState from "../cloud/CliState.ts";
-import { CLOUD_LINK_REVOKED } from "../cloud/config.ts";
+import { CLOUD_ENDPOINT_RUNTIME_CONFIG, CLOUD_LINK_REVOKED } from "../cloud/config.ts";
 import { hasCloudPublicConfig } from "../cloud/publicConfig.ts";
 import { compareExactServiceVersions } from "../cloud/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
@@ -43,6 +43,17 @@ interface Setup {
   readonly host: string | undefined;
 }
 
+/**
+ * T3 Connect is on when this CLI asked for a managed link, or when the desktop or
+ * web app made one: that saves the tunnel config but no CLI marker. Revoked is off.
+ */
+export const connectEnabled = (link: {
+  readonly cliDesired: boolean;
+  readonly cliMode: CliState.CliDesiredLinkMode;
+  readonly managedTunnel: boolean;
+  readonly revoked: boolean;
+}) => !link.revoked && ((link.cliDesired && link.cliMode === "managed") || link.managedTunnel);
+
 const readSetup = Effect.fn("cli.up.read_setup")(function* () {
   const { baseDir } = yield* ServerConfig.ServerConfig;
   const service = yield* (yield* BootService.BootService).status;
@@ -51,13 +62,16 @@ const readSetup = Effect.fn("cli.up.read_setup")(function* () {
   const lan = yield* Config.Boolean("T3CODE_LAN")
     .pipe(Config.option)
     .parse(ConfigProvider.fromEnv({ env: entries }));
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
   const connectRevoked =
-    hasCloudPublicConfig &&
-    Option.isSome(yield* (yield* ServerSecretStore.ServerSecretStore).get(CLOUD_LINK_REVOKED));
+    hasCloudPublicConfig && Option.isSome(yield* secrets.get(CLOUD_LINK_REVOKED));
   const connect = hasCloudPublicConfig
-    ? (yield* CliState.readCliDesiredCloudLink) &&
-      (yield* CliState.readCliDesiredLinkMode) === "managed" &&
-      !connectRevoked
+    ? connectEnabled({
+        cliDesired: yield* CliState.readCliDesiredCloudLink,
+        cliMode: yield* CliState.readCliDesiredLinkMode,
+        managedTunnel: Option.isSome(yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG)),
+        revoked: connectRevoked,
+      })
     : null;
   return {
     service,
@@ -279,6 +293,11 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
         ),
       )
     : Effect.void;
+  // A failed update or restart may still have started the service with the new
+  // settings, so restart it once more on the old ones.
+  const rollBack = before.service.installed
+    ? restoreServiceEnv.pipe(Effect.andThen(service.restart.pipe(Effect.ignore)))
+    : Effect.void;
   if (before.host !== undefined) {
     yield* Console.warn(
       `T3CODE_HOST=${before.host} in service.env overrides the network choice. Remove it to apply it.`,
@@ -310,7 +329,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
             BootServicePrerequisiteError: (error) => Effect.succeed({ failed: error.message }),
             BootServiceUnsupportedError: (error) => Effect.succeed({ failed: error.message }),
           }),
-          Effect.tapError(() => restoreServiceEnv),
+          Effect.tapError(() => rollBack),
         );
     if ("failed" in result) {
       yield* restoreServiceEnv;
@@ -335,7 +354,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
         if (!interactive && !stopped) {
           yield* Console.log("Restarting T3 Code. Running agent turns will stop.");
         }
-        const outcome = yield* service.restart.pipe(Effect.tapError(() => restoreServiceEnv));
+        const outcome = yield* service.restart.pipe(Effect.tapError(() => rollBack));
         if (outcome === "queued") {
           yield* Console.log("Restart queued. This session will disconnect.");
         }
