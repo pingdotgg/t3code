@@ -32,8 +32,7 @@ export function flattenStyles(rootStyle: TextStyle, style: StyleProp<TextStyle>)
   };
 }
 
-// Codegen doesn't like using integer values for enums (c++ L) so we'll conver them to the proper native prop
-// value before returning flattened styles.
+// Codegen cannot use integer enums; convert font weights to native props.
 function fontWeightToNativeProp(fontWeight: TextStyle["fontWeight"]): NativeFontWeight {
   switch (fontWeight) {
     case "normal":
@@ -65,7 +64,7 @@ function fontWeightToNativeProp(fontWeight: TextStyle["fontWeight"]): NativeFont
       return "semibold";
     case 700:
     case "700":
-      return "semibold";
+      return "bold";
     case 800:
     case "800":
       return "bold";
