@@ -89,7 +89,8 @@ export function WorktreeBaseBranchPicker({
       onLoadNext={branches.loadNext}
       statusText={statusText}
       originControl={{ checked: startFromOrigin, onCheckedChange: onStartFromOriginChange }}
-      popupProps={{ align: "start", side: "bottom", className: "flex w-80 flex-col" }}
+      popupProps={{ align: "start", side: "bottom", className: "flex w-90 flex-col" }}
+      getItemGroup={(name) => (branchByName.get(name)?.isRemote ? "Remote" : "Local")}
       renderItem={(name, index) => {
         const branch = branchByName.get(name);
         return branch ? (
