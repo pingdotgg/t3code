@@ -57,6 +57,7 @@ export const layer = Layer.effect(
           }
           const destination = new URL(location, originalUrl);
           if (destination.origin !== originalUrl.origin) {
+            if (request.body._tag !== "Empty") return response;
             request = request.pipe(
               HttpClientRequest.removeHeader("authorization"),
               HttpClientRequest.removeHeader("proxy-authorization"),
