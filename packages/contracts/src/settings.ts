@@ -676,6 +676,15 @@ export function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fi
   );
 }
 
+const MaintenanceBinaryPath = Schema.optionalKey(TrimmedString).pipe(
+  Schema.annotateKey({
+    title: "Maintenance binary path",
+    description:
+      "Underlying CLI to update when Binary path is a launcher. Leave empty to update the session binary.",
+    providerSettingsForm: { clearWhenEmpty: "omit" },
+  }),
+);
+
 export const CodexSettings = makeProviderSettingsSchema(
   {
     setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])).pipe(
@@ -692,6 +701,7 @@ export const CodexSettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "codex", clearWhenEmpty: "omit" },
       }),
     ),
+    maintenanceBinaryPath: MaintenanceBinaryPath,
     homePath: TrimmedString.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
@@ -728,7 +738,7 @@ export const CodexSettings = makeProviderSettingsSchema(
     ),
   },
   {
-    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
+    order: ["binaryPath", "maintenanceBinaryPath", "homePath", "shadowHomePath", "launchArgs"],
   },
 );
 export type CodexSettings = typeof CodexSettings.Type;
@@ -768,6 +778,7 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "claude", clearWhenEmpty: "omit" },
       }),
     ),
+    maintenanceBinaryPath: MaintenanceBinaryPath,
     homePath: TrimmedString.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
@@ -821,7 +832,14 @@ export const ClaudeSettings = makeProviderSettingsSchema(
     ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "idleCompaction", "launchArgs"],
+    order: [
+      "binaryPath",
+      "maintenanceBinaryPath",
+      "homePath",
+      "autoCompactWindow",
+      "idleCompaction",
+      "launchArgs",
+    ],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
