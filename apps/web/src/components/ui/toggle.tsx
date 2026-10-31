@@ -24,8 +24,6 @@ const toggleVariants = cva(
         sm: "h-8 min-w-8 px-[calc(--spacing(1.5)-1px)] sm:h-7 sm:min-w-7",
       },
       variant: {
-        "segmented-flat":
-          "border-transparent rounded-row text-muted-foreground hover:text-foreground data-pressed:[background:var(--raised-fill)] data-pressed:text-foreground",
         // Chrome-less like an icon button: a muted icon, the hover fill, and
         // the selected fill while pressed.
         default:

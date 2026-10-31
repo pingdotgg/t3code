@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
@@ -725,6 +725,7 @@ export function ProviderSettingsForm({
   managed,
   environmentId,
 }: ProviderSettingsFormProps) {
+  const formId = useId();
   const fields = deriveProviderSettingsFields(definition, value);
   const isLocalAcp =
     definition.driverKind === "acpRegistry" &&
@@ -741,7 +742,7 @@ export function ProviderSettingsForm({
           key={field.key}
           field={field}
           value={value}
-          idPrefix={idPrefix}
+          idPrefix={`${idPrefix}-${formId}`}
           variant={variant}
           onChange={onChange}
           managedReason={managed?.keys.has(field.key) ? managed.reason : undefined}
