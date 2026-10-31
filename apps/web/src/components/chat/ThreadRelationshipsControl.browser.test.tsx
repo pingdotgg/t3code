@@ -65,7 +65,12 @@ it.each([
   setup();
   await using screen = await render(
     <ToastProvider timeout={0}>
-      <ThreadRelationshipsPanel environmentId={environmentId} threadId={threadId} />
+      <ThreadRelationshipsPanel
+        environmentId={environmentId}
+        threadId={threadId}
+        showLineage
+        showSideChats
+      />
     </ToastProvider>,
   );
 
@@ -93,7 +98,12 @@ it.each([
   setup();
   await using screen = await render(
     <ToastProvider timeout={0}>
-      <ThreadRelationshipsPanel environmentId={environmentId} threadId={threadId} />
+      <ThreadRelationshipsPanel
+        environmentId={environmentId}
+        threadId={threadId}
+        showLineage
+        showSideChats
+      />
     </ToastProvider>,
     { router: "/environment/fork" },
   );

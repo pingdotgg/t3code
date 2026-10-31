@@ -240,6 +240,8 @@ type AppThreadLineage = {
   parentThreadId: ThreadId | null;
   relationshipToParent: "fork" | "subagent" | null;
   rootThreadId: ThreadId;
+  // A side chat: a fork shown only inside its parent. The fork planner sets it from `thread.fork`.
+  sideChat?: boolean;
 };
 ```
 
