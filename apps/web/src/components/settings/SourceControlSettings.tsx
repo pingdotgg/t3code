@@ -418,7 +418,7 @@ export function SourceControlSettingsPanel() {
 
   const providersTitle = `Source Control Providers${environmentSuffix}`;
   return (
-    <SettingsPageContainer>
+    <SettingsPageContainer className="max-w-[688px]">
       <ProjectDefaultsSettings category="source-control" />
       {environmentId === null ? (
         <SettingsSection
@@ -450,8 +450,8 @@ export function SourceControlSettingsPanel() {
               id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
               title={
                 hasVersionControlSystems
-                  ? "Source control providers"
-                  : `Source control providers${environmentSuffix}`
+                  ? "Source Control Providers"
+                  : `Source Control Providers${environmentSuffix}`
               }
               headerAction={hasVersionControlSystems ? null : scanButton}
             >
