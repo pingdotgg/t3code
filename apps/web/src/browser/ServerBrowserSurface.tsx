@@ -172,7 +172,6 @@ export function ServerBrowserSurface(props: {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const keySentRef = useRef(false);
-  const clipboardKeySentRef = useRef(false);
   const clientRef = useRef<PreviewStreamClient | null>(null);
   const viewportRef = useRef<PreviewStreamViewport | null>(null);
   const sizeRef = useRef<{ width: number; height: number } | null>(null);
@@ -235,7 +234,7 @@ export function ServerBrowserSurface(props: {
     mouseClicksRef.current = { left: 1, middle: 1, right: 1, none: 1 };
     lastClickRef.current = null;
     touchRef.current = probeRef.current = lastProbeRef.current = null;
-    keySentRef.current = clipboardKeySentRef.current = false;
+    keySentRef.current = false;
     if (inputRef.current) inputRef.current.value = INPUT_SENTINEL;
     inputRef.current?.blur();
   };
@@ -650,7 +649,6 @@ export function ServerBrowserSurface(props: {
 
   const resetInput = (textarea: HTMLTextAreaElement) => {
     keySentRef.current = false;
-    clipboardKeySentRef.current = false;
     textarea.value = INPUT_SENTINEL;
     textarea.setSelectionRange(INPUT_SENTINEL.length, INPUT_SENTINEL.length);
   };
@@ -667,17 +665,13 @@ export function ServerBrowserSurface(props: {
   const handleClipboard = (key: typeof COPY | typeof CUT, event: ClipboardEvent) => {
     // Keep the sentinel off the clipboard.
     event.preventDefault();
-    const keyWasSent = clipboardKeySentRef.current;
-    clipboardKeySentRef.current = false;
-    if (controlRef.current?.controller !== "you" || keyWasSent) return;
+    if (controlRef.current?.controller !== "you") return;
     sendKeyPress(key, CTRL);
   };
 
   const handleKey = (action: "down" | "up", event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (controlRef.current?.controller !== "you") return;
     keySentRef.current = false;
-    // macOS can fire the shortcut's copy or cut after its keyups, so only a new key ends it.
-    if (action === "down") clipboardKeySentRef.current = false;
     if (
       event.nativeEvent.isComposing ||
       event.keyCode === 229 ||
@@ -717,9 +711,14 @@ export function ServerBrowserSurface(props: {
       action === "down" &&
       !shortcut &&
       (text !== undefined || event.key === "Backspace" || event.key === "Delete");
-    // The browser fires copy or cut for this key too; the page already has it.
-    if (action === "down" && shortcut && ["c", "x"].includes(event.key.toLowerCase())) {
-      clipboardKeySentRef.current = true;
+    // The key copies or cuts in the page, so stop the browser's own copy or cut repeating it.
+    if (
+      event.ctrlKey !== event.metaKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      ["c", "x"].includes(event.key.toLowerCase())
+    ) {
+      event.preventDefault();
     }
     if (shortcut) return;
     event.preventDefault();

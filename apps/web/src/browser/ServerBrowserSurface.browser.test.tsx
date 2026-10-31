@@ -96,47 +96,44 @@ describe("ServerBrowserSurface clipboard commands", () => {
       { type: "key", action: "down", key: "x", code: "KeyX", keyCode: 88, modifiers: 2 },
       { type: "key", action: "up", key: "x", code: "KeyX", keyCode: 88, modifiers: 2 },
     ]);
-
-    input.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        key: "c",
-        code: "KeyC",
-        ctrlKey: true,
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
-    input.blur();
-    input.focus();
-    mocks.sent.length = 0;
-    expect(document.execCommand("copy")).toBe(true);
-    expect(keys()).toEqual([
-      { type: "key", action: "down", key: "c", code: "KeyC", keyCode: 67, modifiers: 2 },
-      { type: "key", action: "up", key: "c", code: "KeyC", keyCode: 67, modifiers: 2 },
-    ]);
   });
 
-  it("sends a keyboard Cut once even though the browser also fires cut", async () => {
+  it("sends a keyboard Copy or Cut once and leaves menu Copy working after any shortcut", async () => {
     setup();
-    const { screen, input } = await renderSurface("you");
+    const { screen, input, canvas } = await renderSurface("you");
     await using _screen = screen;
+    await userEvent.click(canvas);
     input.focus();
+    const prevented: boolean[] = [];
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (/^[cx]$/i.test(event.key)) prevented.push(event.defaultPrevented);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    using _listener = { [Symbol.dispose]: () => window.removeEventListener("keydown", onKeyDown) };
 
-    await userEvent.keyboard("{Control>}x{/Control}");
-    expect(keys().filter((key) => key.key === "x")).toEqual([
-      { type: "key", action: "down", key: "x", code: "KeyX", keyCode: 88, modifiers: 2 },
-      { type: "key", action: "up", key: "x", code: "KeyX", keyCode: 88, modifiers: 2 },
-    ]);
-    expect(input.value).toBe("\u200b");
+    // An unprevented copy or cut key also makes the browser fire copy or cut: here Chromium's
+    // Ctrl key binding, on macOS Electron's menu after the Meta keyup.
+    for (const [shortcut, cancels] of [
+      ["{Control>}x{/Control}", true],
+      ["{Control>}c{/Control}", true],
+      ["{Meta>}{x>}{/Meta}{/x}", true],
+      ["{Control>}{Shift>}c{/Shift}{/Control}", false],
+      ["{Control>}{Alt>}x{/Alt}{/Control}", false],
+    ] as const) {
+      mocks.sent.length = 0;
+      prevented.length = 0;
+      await userEvent.keyboard(shortcut);
+      expect(prevented, shortcut).toEqual([cancels]);
+      expect(keys().filter((key) => /^[cx]$/i.test(key.key)).length, shortcut).toBe(2);
+      expect(input.value).toBe("\u200b");
 
-    // macOS gives no letter keyup under Command, and Electron's menu can cut after Meta keyup.
-    mocks.sent.length = 0;
-    await userEvent.keyboard("{Meta>}{x>}{/Meta}");
-    expect(document.execCommand("cut")).toBe(true);
-    expect(keys().filter((key) => key.key === "x")).toEqual([
-      { type: "key", action: "down", key: "x", code: "KeyX", keyCode: 88, modifiers: 4 },
-    ]);
-    await userEvent.keyboard("{/x}");
+      mocks.sent.length = 0;
+      expect(document.execCommand("copy")).toBe(true);
+      expect(keys(), shortcut).toEqual([
+        { type: "key", action: "down", key: "c", code: "KeyC", keyCode: 67, modifiers: 2 },
+        { type: "key", action: "up", key: "c", code: "KeyC", keyCode: 67, modifiers: 2 },
+      ]);
+    }
   });
 
   it("sends nothing when another viewer controls the page", async () => {
