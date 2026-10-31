@@ -56,6 +56,7 @@ function fixture(
     >;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
     cooldownStatus?: number;
+    usageQueue?: ReadonlyArray<unknown>;
   } = {},
 ) {
   const requests: Array<{ path: string; body?: RequestBody }> = [];
@@ -73,6 +74,8 @@ function fixture(
           request,
           Response.json({ files: options.accounts ?? accounts }),
         );
+      if (path.endsWith("/usage-queue"))
+        return HttpClientResponse.fromWeb(request, Response.json(options.usageQueue ?? []));
       if (path.endsWith("/reset-quota"))
         return HttpClientResponse.fromWeb(
           request,
@@ -406,6 +409,25 @@ describe("CLIProxyAPI built-in management API", () => {
       });
       const result = yield* (yield* test.api).readAccounts(config);
       expect(result[0]?.usageLimits.windows.map((window) => window.id)).toEqual(["five_hour"]);
+    }),
+  );
+
+  it.effect("names the account that served each queued session by its auth index", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        usageQueue: [
+          { session_id: "session-1", auth_index: "b" },
+          { session_id: "session-2", auth_index: "unknown" },
+          { auth_index: "a" },
+          "not a record",
+          { session_id: "session-3", auth_index: "a" },
+        ],
+      });
+      const api = yield* test.api;
+      expect(yield* api.readSessionAccounts(config)).toEqual([
+        { sessionId: "session-1", accountId: "second.json" },
+        { sessionId: "session-3", accountId: "first.json" },
+      ]);
     }),
   );
 

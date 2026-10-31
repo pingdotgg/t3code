@@ -92,6 +92,7 @@ function hub(
     workspaceId?: string;
     driver?: ProviderDriverKind;
     limits: ServerProviderUsageLimits;
+    sessionIds?: string[];
   }>,
 ): UsageLimitSourceSnapshot {
   return {
@@ -104,6 +105,7 @@ function hub(
       driver: account.driver ?? claude,
       ...(account.email ? { email: account.email } : {}),
       ...(account.workspaceId ? { workspaceId: account.workspaceId } : {}),
+      ...(account.sessionIds ? { sessionIds: account.sessionIds } : {}),
       usageLimits: account.limits,
     })),
   };
@@ -122,19 +124,35 @@ describe("thread details limits", () => {
   });
 
   it("keeps the instance's own notice when several hub accounts could serve the thread", () => {
+    const sources = [
+      hub("hub", [
+        { id: "claude-a.json", limits: limitsAt(19), sessionIds: ["other-session"] },
+        {
+          id: "claude-b.json",
+          email: "b@example.com",
+          limits: limitsAt(60),
+          sessionIds: ["thread-session"],
+        },
+      ]),
+    ];
     const resolved = resolveThreadDetailsLimits(
       instanceId,
       [claudeInstance(unsupported)],
-      [
-        hub("hub", [
-          { id: "claude-a.json", limits: limitsAt(19) },
-          { id: "claude-b.json", limits: limitsAt(60) },
-        ]),
-      ],
+      sources,
       now,
     );
 
     expect(resolved).toEqual({ limits: unsupported, sourceLabel: null });
+    // The hub's routing names the account that served this thread's session.
+    expect(
+      resolveThreadDetailsLimits(
+        instanceId,
+        [claudeInstance(unsupported)],
+        sources,
+        now,
+        "thread-session",
+      ),
+    ).toEqual({ limits: limitsAt(60), sourceLabel: "hub" });
   });
 
   it("counts accounts across hubs, so one account on each of two hubs stays ambiguous", () => {

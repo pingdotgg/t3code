@@ -187,6 +187,11 @@ shows which hub they come from. A hub account signed in with a different email o
 instance is skipped. With several hub accounts, or while a hub cannot be read, the card keeps its notice, so
 check **Usage → Limits**.
 
+To show the right account when a hub has several, turn on **Thread accounts** for that hub. T3 then
+reads which account served each thread from the hub's usage queue and shows that account's limits. The
+hub needs `usage-statistics-enabled` and session affinity turned on. Reading the queue removes its
+records, so another tool or environment reading the same queue misses the ones T3 took.
+
 This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same
 settings section when you no longer need it.

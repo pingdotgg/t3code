@@ -3908,6 +3908,7 @@ export default function ChatView(props: ChatViewProps) {
                     providerInstanceId: activeProviderInstanceId,
                     providers: providerStatuses,
                     sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
+                    providerSessionId: activeProviderThread?.nativeThreadRef?.nativeId ?? null,
                     contextWindow: activeContextWindow,
                   }}
                 />
