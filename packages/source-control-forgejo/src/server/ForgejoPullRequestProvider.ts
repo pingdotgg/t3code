@@ -274,10 +274,8 @@ export const make = Effect.gen(function* () {
         const offset = input.cursor?.delivered ?? 0;
         const items: ReturnType<typeof forgejoChangeRequest>[] = [];
         // Forgejo lists merged pull requests as closed, so both views read the closed list and
-        // keep the rows whose merged flag matches.
+        // keep the rows whose mapped state matches.
         const state = input.state === "merged" ? "closed" : input.state;
-        const keeps = (row: typeof ForgejoPullRequest.Type) =>
-          input.state === "merged" ? row.merged : input.state !== "closed" || !row.merged;
         const params = new URLSearchParams({ state, sort: "recentupdate" });
         const filters = input.filters;
         // Several `labels` match a pull request holding any of them but list it once per label it
@@ -324,7 +322,9 @@ export const make = Effect.gen(function* () {
           for (const row of rows.slice(start)) {
             if (consumed >= input.limit) break;
             consumed++;
-            if (row && keeps(row)) items.push(forgejoChangeRequest(row));
+            if (!row) continue;
+            const item = forgejoChangeRequest(row);
+            if (input.state === "all" || item.state === input.state) items.push(item);
           }
           more = result.more || rows.length - start > consumed - countBefore;
         }
