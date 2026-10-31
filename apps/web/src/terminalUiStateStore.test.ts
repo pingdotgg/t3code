@@ -67,6 +67,34 @@ describe("terminalUiStateStore actions", () => {
     ).toEqual(["env-b-terminal"]);
   });
 
+  it("follows the default-height setting until a thread is resized", () => {
+    useTerminalUiStateStore.getState().setTerminalHeight(THREAD_REF, 520);
+
+    const state = useTerminalUiStateStore.getState().terminalUiStateByThreadKey;
+    expect(selectThreadTerminalUiState(state, THREAD_REF).terminalHeight).toBe(520);
+    expect(selectThreadTerminalUiState(state, OTHER_THREAD_REF).terminalHeight).toBeNull();
+  });
+
+  it("migrates the old fixed 280px default to follow the default-height setting", () => {
+    const entry = (terminalHeight: number) => ({
+      terminalOpen: true,
+      terminalHeight,
+      terminalIds: ["term-1"],
+      activeTerminalId: "term-1",
+      terminalGroups: [{ id: "group-term-1", terminalIds: ["term-1"] }],
+      activeTerminalGroupId: "group-term-1",
+    });
+    const threadKey = scopedThreadKey(THREAD_REF);
+    const otherKey = scopedThreadKey(OTHER_THREAD_REF);
+    const migrated = migratePersistedTerminalUiStateStoreState(
+      { terminalUiStateByThreadKey: { [threadKey]: entry(280), [otherKey]: entry(450) } },
+      4,
+    );
+
+    expect(migrated.terminalUiStateByThreadKey?.[threadKey]?.terminalHeight).toBeNull();
+    expect(migrated.terminalUiStateByThreadKey?.[otherKey]?.terminalHeight).toBe(450);
+  });
+
   it("drops persisted entries whose thread keys are not valid scoped keys", () => {
     const migrated = migratePersistedTerminalUiStateStoreState(
       {

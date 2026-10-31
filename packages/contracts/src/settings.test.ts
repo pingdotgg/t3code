@@ -291,6 +291,26 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings terminal drawer height", () => {
+  it("defaults to 30% of the window", () => {
+    expect(decodeClientSettings({}).terminalDrawerHeightPercent).toBe(30);
+  });
+
+  it.each([9, 76, 30.5])("rejects an invalid drawer height: %s", (value) => {
+    expect(() => decodeClientSettings({ terminalDrawerHeightPercent: value })).toThrow();
+    expect(() => decodeClientSettingsPatch({ terminalDrawerHeightPercent: value })).toThrow();
+  });
+
+  it.each([10, 50, 75])("accepts a drawer height within range: %s", (value) => {
+    expect(
+      decodeClientSettings({ terminalDrawerHeightPercent: value }).terminalDrawerHeightPercent,
+    ).toBe(value);
+    expect(
+      decodeClientSettingsPatch({ terminalDrawerHeightPercent: value }).terminalDrawerHeightPercent,
+    ).toBe(value);
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it.each([
     [true, "hold"],
