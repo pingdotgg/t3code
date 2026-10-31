@@ -2,6 +2,7 @@ import { codeToTokens } from "@pierre/highlights";
 import { pierreDark, pierreLight } from "@pierre/highlights/themes";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { resolveHighlightLanguage } from "./highlightLanguage";
 import { highlightCode, tokenizeCode } from "./highlights";
 
 vi.mock("expo", async () => {
@@ -56,4 +57,21 @@ it("normalizes only requested lines from full-source records, including CRLF and
   }
   expect(source.highlightLine(2, "dark")?.[0]?.color).toBe("#737373");
   expect(source.highlightLine(100, "dark")).toBeUndefined();
+});
+
+it.each([
+  "asm",
+  "assembly",
+  "s",
+  ...["asm", "ASM", "s", "S", "nasm", "NASM"].map((ext) => `src/start.${ext}`),
+])("highlights assembly in %s", (hint) => {
+  const language = resolveHighlightLanguage(
+    hint.includes("/") ? { path: hint } : { language: hint },
+  );
+  const code = "mov eax, 42 ; answer\nret";
+  for (const scheme of ["light", "dark"] as const) {
+    const tokens = highlightCode(code, language, scheme);
+    expect(tokens.map((line) => line.map((token) => token.content).join("")).join("\n")).toBe(code);
+    expect(new Set(tokens.flat().map((token) => token.color)).size).toBeGreaterThan(1);
+  }
 });

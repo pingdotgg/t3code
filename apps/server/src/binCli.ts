@@ -16,7 +16,6 @@ import { authCommand } from "./cli/auth.ts";
 import { environmentCommand } from "./cli/environment.ts";
 import { appCommand } from "./cli/app.ts";
 import { browserCommand } from "./cli/browser.ts";
-import { connectCommand } from "./cli/connect.ts";
 import { tryLaunchDesktopApp } from "./cli/desktopLaunch.ts";
 import { findAliveServerRuntimeCandidates, pairCommand } from "./cli/pair.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
@@ -35,6 +34,7 @@ import { themeCommand } from "./cli/theme.ts";
 import { threadCommand } from "./cli/thread.ts";
 import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
+import { connectCommand, statusCommand, upCommand } from "./cli/up.ts";
 import { resolveAppDisplayName } from "./appDisplayName.ts";
 
 const DESKTOP_OPEN_POLL_ATTEMPTS = 40;
@@ -108,7 +108,7 @@ const connectUnavailableCommand = Command.make("connect", {
 export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
   Command.make("t3", { ...sharedServerCommandFlags }).pipe(
     Command.withDescription(
-      `Run the ${resolveAppDisplayName()} server, or open a directory in the desktop app / a running server.`,
+      `Run ${resolveAppDisplayName()} in this terminal and open it in your browser, or open a directory in the desktop app / a running server. To use it from your other devices, run \`t3 up\`.`,
     ),
     Command.withHandler((flags) =>
       Effect.gen(function* () {
@@ -143,6 +143,8 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       browserCommand,
       projectCommand,
       threadCommand,
+      upCommand,
+      statusCommand,
       serviceCommand,
       updateCommand,
       uninstallCommand,

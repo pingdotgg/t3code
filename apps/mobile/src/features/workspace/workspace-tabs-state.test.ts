@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { act, createElement, createContext, useState, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
+import { WorkspaceRootScreen } from "./WorkspaceRootScreen.android";
 import {
   initialWorkspaceTabsState,
   workspaceTabsReducer,
@@ -161,3 +164,91 @@ describe("workspace root navigation", () => {
     expect(workspaceTabForNativeSlot(order, "removed")).toBeNull();
   });
 });
+
+const mocks = vi.hoisted(() => ({ split: false, floating: false }));
+
+vi.mock("../settings/appearance/AppearancePreferencesProvider", () => ({
+  useAndroidFloatingTabs: () => mocks.floating,
+}));
+vi.mock("react-native", () => ({
+  useWindowDimensions: () => ({ width: 400, height: 800 }),
+  View: ({ children }: { children: ReactNode }) => createElement("div", null, children),
+}));
+vi.mock("react-native-safe-area-context", () => ({
+  SafeAreaInsetsContext: createContext({ top: 0, right: 0, bottom: 24, left: 0 }),
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 24, left: 0 }),
+}));
+vi.mock("../layout/AdaptiveWorkspaceLayout", () => ({
+  useAdaptiveWorkspaceLayout: () => ({
+    layout: { usesSplitView: mocks.split },
+    startNewTask: () => undefined,
+  }),
+}));
+vi.mock("./navigation-tabs", () => ({
+  useEnabledNavigationTabs: () => ["threads", "pullRequests", "usage"],
+}));
+vi.mock("./WorkspaceTabsContext", () => ({
+  WorkspaceTabsContext: createContext(null),
+  useWorkspaceTabs: () => ({ state: { selectedTab: "usage" } }),
+}));
+vi.mock("./WorkspaceExtraTab", () => ({
+  WorkspaceExtraTab: function UsageProbe() {
+    const [tab, setTab] = useState("Limits");
+    return createElement("button", { onClick: () => setTab("Usage") }, tab);
+  },
+}));
+vi.mock("../../native/StackHeader", () => ({ NativeStackScreenOptions: () => null }));
+vi.mock("../../components/ui/AndroidScreenHeader", () => ({ AndroidScreenHeader: () => null }));
+vi.mock("../../components/ui/EmptyState", () => ({ EmptyState: () => null }));
+vi.mock("../../components/ui/ScreenContent", () => ({
+  ScreenContent: ({ children }: { children: ReactNode }) => createElement("div", null, children),
+}));
+vi.mock("../../components/ui/useAndroidControlSizing", () => ({
+  useAndroidControlSizing: () => ({ fabClearance: 64, scale: 1, fabSize: 56 }),
+}));
+vi.mock("../home/HomeRouteScreen", () => ({ HomeRouteScreen: () => null }));
+vi.mock("../pull-requests/PullRequestFilterMenuContext", () => ({
+  PullRequestFilterMenuProvider: ({ children }: { children: ReactNode }) =>
+    createElement("div", null, children),
+}));
+vi.mock("../pull-requests/PullRequestsScreen", () => ({ PullRequestsScreen: () => null }));
+vi.mock("../pull-requests/PullRequestToolbar.android", () => ({ PullRequestToolbar: () => null }));
+vi.mock("./AndroidWorkspaceNavigation", () => ({
+  AndroidWorkspaceNavigation: () => null,
+  FloatingWorkspaceTabs: () => null,
+}));
+vi.mock("./WorkspaceNoTabs", () => ({ WorkspaceNoTabs: () => null }));
+
+function setup(split: boolean, floating: boolean) {
+  mocks.split = split;
+  mocks.floating = floating;
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  return { [Symbol.dispose]: () => vi.unstubAllGlobals() };
+}
+
+it.each([
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+])(
+  "keeps the Usage page mounted through layout transitions (split: %s, floating: %s)",
+  async (split, floating) => {
+    using _actEnvironment = setup(split, floating);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+    await act(async () => root.render(createElement(WorkspaceRootScreen)));
+
+    const button = container.querySelector("button")!;
+    await act(async () => button.click());
+    expect(button.textContent).toBe("Usage");
+
+    for (const nextSplit of [!split, split, !split, split]) {
+      mocks.split = nextSplit;
+      await act(async () => root.render(createElement(WorkspaceRootScreen)));
+      expect(container.querySelector("button")?.textContent).toBe("Usage");
+      expect(container.querySelector("button")).toBe(button);
+    }
+  },
+);

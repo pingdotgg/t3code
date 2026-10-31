@@ -1,6 +1,8 @@
 import { assert, describe, it, vi } from "@effect/vitest";
 import {
   CommandId,
+  ChatAttachmentId,
+  type ChatAttachment,
   EventId,
   MessageId,
   ProjectId,
@@ -14,6 +16,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -79,6 +82,8 @@ function makeHarness(
               faviconPath: null,
               projectIcon: null,
               scripts: [],
+              pinnedAt: null,
+              archivedAt: null,
               createdAt: "2026-06-20T00:00:00.000Z",
               updatedAt: "2026-06-20T00:00:00.000Z",
               deletedAt: null,
@@ -134,6 +139,7 @@ function dispatchUserMessage(input: {
   readonly command: string;
   readonly threadId: ThreadId;
   readonly text: string;
+  readonly attachments?: ReadonlyArray<ChatAttachment>;
 }) {
   return Effect.gen(function* () {
     const threads = yield* ThreadManagement.ThreadManagementService;
@@ -143,7 +149,7 @@ function dispatchUserMessage(input: {
       threadId: input.threadId,
       messageId: MessageId.make(`${input.command}:message`),
       text: input.text,
-      attachments: [],
+      attachments: input.attachments ?? [],
       modelSelection,
       dispatchMode: { type: "defer_start" },
       createdBy: "user",
@@ -270,6 +276,44 @@ describe("formatThreadTitleContext", () => {
 });
 
 describe("ThreadTitleRegenerationService", () => {
+  it.effect(
+    "titles an image-only first message without sending bootstrap text to the title model",
+    () =>
+      Effect.gen(function* () {
+        for (const prefix of ["", "Ultrathink:\n"]) {
+          const harness = makeHarness();
+          yield* Effect.gen(function* () {
+            const threads = yield* ThreadManagement.ThreadManagementService;
+            const service = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+            const threadId = yield* createThread({
+              command: "image:create",
+              thread: "image:thread",
+            });
+            const text = prefix + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT;
+            const attachments = [
+              {
+                type: "image" as const,
+                id: ChatAttachmentId.make("diagram"),
+                name: "diagram.png",
+                mimeType: "image/png",
+                sizeBytes: 10,
+              },
+            ];
+            yield* dispatchUserMessage({ command: "image:message", threadId, text, attachments });
+            const requestId = yield* armRegeneration({ command: "image:title", threadId });
+            const messageId = MessageId.make("image:message:message");
+            yield* service.execute({ threadId, requestId, kind: { type: "initial", messageId } });
+            const call = harness.generateThreadTitle.mock.calls[0]?.[0];
+            assert.equal(call?.message, "");
+            assert.deepEqual(call?.attachments, attachments);
+            const projection = yield* threads.getThreadProjection(threadId);
+            assert.equal(projection.messages[0]?.text, text);
+            assert.equal(projection.thread.title, "Generated title");
+          }).pipe(Effect.provide(harness.layer));
+        }
+      }),
+  );
+
   it.effect("arms and clears the regeneration marker through metadata commands", () =>
     Effect.gen(function* () {
       const harness = makeHarness();

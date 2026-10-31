@@ -17,6 +17,7 @@ import {
   unwrapWindowsDpapiKey,
 } from "./ChromiumKeys.ts";
 import { LinuxBrowserSecretPath } from "./LinuxBrowserSecret.ts";
+import { BROWSER_IMPORT_SOURCES } from "./Sources.ts";
 
 const { getPassword } = vi.hoisted(() => ({ getPassword: vi.fn<() => string | null>() }));
 
@@ -146,12 +147,24 @@ describe("Linux Chromium secrets", () => {
     ),
   );
 
-  it.effect("preserves trailing whitespace in the stored secret", () =>
-    Effect.gen(function* () {
-      const secret = yield* readLinuxSecret("chrome");
-      expect(secret).toBe("linux-secret \t\n");
-    }).pipe(Effect.provide(layerHelper({ stdout: "linux-secret \t\n" }))),
-  );
+  it.effect("derives Vivaldi's Linux key while preserving whitespace in the stored secret", () => {
+    let captured: CapturedCommand | undefined;
+    return Effect.gen(function* () {
+      const source = BROWSER_IMPORT_SOURCES.find((source) => source.id === "vivaldi")!;
+      const keys = yield* resolveChromiumKeys({
+        platform: "linux",
+        keychainService: source.keychainService,
+        keychainAccount: source.keychainAccount,
+        linuxSecretApplication: source.linuxSecretApplication,
+      });
+      expect(captured?.args).toEqual(["chrome"]);
+      expect(keys.cbcV11?.toString("hex")).toBe("95aa769d6a5beca14d5d90ae655db112");
+    }).pipe(
+      Effect.provide(
+        layerHelper({ stdout: "linux-secret \t\n", capture: (value) => (captured = value) }),
+      ),
+    );
+  });
 
   it.effect("drains stdout and stderr concurrently", () =>
     Effect.gen(function* () {

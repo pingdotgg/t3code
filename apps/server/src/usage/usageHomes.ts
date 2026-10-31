@@ -91,7 +91,9 @@ export function listProviderHomeCandidates(
       if (variable.name !== homeVariable) continue;
       // An entry always overrides the inherited value, even to unusable: the
       // merge writes it into the spawn env verbatim.
-      homeEnvValue = usableHomePath(variable.value);
+      homeEnvValue = usableHomePath(
+        typeof variable.value === "string" ? variable.value : undefined,
+      );
     }
 
     candidates.push({

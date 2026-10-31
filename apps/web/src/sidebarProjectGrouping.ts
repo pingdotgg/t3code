@@ -24,6 +24,8 @@ export interface SidebarProjectSnapshot extends Project {
   memberProjects: readonly SidebarProjectGroupMember[];
   memberProjectRefs: readonly ScopedProjectRef[];
   remoteEnvironmentLabels: readonly string[];
+  pinned: boolean;
+  archived: boolean;
 }
 
 export function projectGroupsSpanEnvironments(
@@ -177,6 +179,8 @@ export function buildSidebarProjectSnapshots(input: {
       memberProjects: members,
       memberProjectRefs: group.memberProjectRefs,
       remoteEnvironmentLabels,
+      pinned: group.pinned,
+      archived: group.archived,
     };
   });
 }
@@ -214,12 +218,10 @@ export function buildSidebarProjectPickerEntries(input: {
 
     return [{ group, targetProject, isPreferred }];
   });
-  const preferredIndex = entries.findIndex((entry) => entry.isPreferred);
-  if (preferredIndex <= 0) return entries;
-
-  return [
-    entries[preferredIndex]!,
-    ...entries.slice(0, preferredIndex),
-    ...entries.slice(preferredIndex + 1),
-  ];
+  // The preferred project leads the unpinned ones; pinned projects stay first.
+  const preferred = entries.find((entry) => entry.isPreferred);
+  if (!preferred || preferred.group.pinned) return entries;
+  const rest = entries.filter((entry) => entry !== preferred);
+  const pinnedCount = rest.filter((entry) => entry.group.pinned).length;
+  return [...rest.slice(0, pinnedCount), preferred, ...rest.slice(pinnedCount)];
 }

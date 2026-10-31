@@ -12,7 +12,7 @@ import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
 import { serverEnvironment } from "./server";
 
 export function useSelectedThreadGitState() {
-  const { selectedThread, selectedThreadProject } = useThreadSelection();
+  const { selectedThread } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(selectedThread?.environmentId ?? null),
@@ -34,7 +34,7 @@ export function useSelectedThreadGitState() {
 
   const selectedThreadBranchTarget = {
     environmentId: selectedThread?.environmentId ?? null,
-    cwd: selectedThreadProject?.workspaceRoot ?? null,
+    cwd: selectedThreadCwd,
     query: null,
   };
   const selectedThreadBranchState = useBranches(selectedThreadBranchTarget);

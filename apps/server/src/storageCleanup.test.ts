@@ -112,14 +112,16 @@ describe("V2 storage cleanup eligibility", () => {
   const candidate = () => shell({ branch: "feature", worktreePath: "/worktrees/feature" });
 
   it("allows an idle worktree and rejects the project checkout", () => {
-    expect(storageCleanupThreadIdle(candidate(), NOW_MS)).toBe(true);
-    expect(storageCleanupThreadIdle(shell(), NOW_MS)).toBe(false);
+    expect(storageCleanupThreadIdle(candidate(), NOW_MS, DEFAULT_SERVER_SETTINGS)).toBe(true);
+    expect(storageCleanupThreadIdle(shell(), NOW_MS, DEFAULT_SERVER_SETTINGS)).toBe(false);
   });
 
   it.each(["running", "starting", "preparing", "waiting", "queued"] as const)(
     "retains a worktree while its thread is %s",
     (status) => {
-      expect(storageCleanupThreadIdle(candidateWithStatus(status), NOW_MS)).toBe(false);
+      expect(
+        storageCleanupThreadIdle(candidateWithStatus(status), NOW_MS, DEFAULT_SERVER_SETTINGS),
+      ).toBe(false);
     },
   );
 
@@ -133,6 +135,7 @@ describe("V2 storage cleanup eligibility", () => {
             pendingBackgroundTasks: [{ taskId: "task-1", kind: "command" }],
           },
           NOW_MS,
+          DEFAULT_SERVER_SETTINGS,
         ),
       ).toBe(false);
     },
@@ -152,6 +155,7 @@ describe("V2 storage cleanup eligibility", () => {
             },
           },
           NOW_MS,
+          DEFAULT_SERVER_SETTINGS,
         ),
       ).toBe(false);
     },
@@ -159,15 +163,82 @@ describe("V2 storage cleanup eligibility", () => {
 
   it("retains an active run even if the shell status is idle", () => {
     expect(
-      storageCleanupThreadIdle({ ...candidate(), activeRunId: RunId.make("run") }, NOW_MS),
+      storageCleanupThreadIdle(
+        { ...candidate(), activeRunId: RunId.make("run") },
+        NOW_MS,
+        DEFAULT_SERVER_SETTINGS,
+      ),
     ).toBe(false);
   });
 
   it("retains a queued prompt before the new run has been projected", () => {
     expect(
-      storageCleanupThreadIdle({ ...candidate(), latestUserMessageAt: at(-1_000) }, NOW_MS),
+      storageCleanupThreadIdle(
+        { ...candidate(), latestUserMessageAt: at(-1_000) },
+        NOW_MS,
+        DEFAULT_SERVER_SETTINGS,
+      ),
     ).toBe(false);
   });
+
+  it.each([
+    { name: "snoozed until a future reset", snooze: true, resetIn: DAY_MS, idle: false },
+    { name: "set to auto-resume", autoResume: true, resetIn: DAY_MS, idle: false },
+    { name: "with recovery turned off", resetIn: DAY_MS, idle: true },
+    { name: "auto-resuming after the reset", autoResume: true, resetIn: -1_000, idle: false },
+    { name: "snoozed past its reset", snooze: true, resetIn: -1_000, idle: true },
+    {
+      name: "settled with an auto-resume pending",
+      autoResume: true,
+      settled: true,
+      resetIn: -1_000,
+      idle: true,
+    },
+    { name: "not yet armed by the recovery worker", armed: false, resetIn: DAY_MS, idle: false },
+    {
+      name: "not yet armed, auto-resume after reset",
+      armed: false,
+      autoResumeSetting: true,
+      resetIn: -1_000,
+      idle: false,
+    },
+    {
+      name: "not armed with recovery settings off",
+      armed: false,
+      settingsOff: true,
+      resetIn: DAY_MS,
+      idle: true,
+    },
+  ])(
+    "treats a usage-limited thread $name as idle: $idle",
+    ({
+      autoResume = false,
+      snooze = false,
+      armed = true,
+      autoResumeSetting = false,
+      settled,
+      settingsOff,
+      resetIn,
+      idle,
+    }) => {
+      const runId = RunId.make("run-1");
+      const resetAt = DateTime.formatIso(at(resetIn));
+      expect(
+        storageCleanupThreadIdle(
+          {
+            ...candidateWithStatus("failed"),
+            latestRunId: runId,
+            lastErrorClass: "usage_limit",
+            usageLimitResetAt: resetAt,
+            settledOverride: settled ? "settled" : null,
+            limitRecovery: armed ? { runId, resetAt, autoResume, snooze } : null,
+          },
+          NOW_MS,
+          { autoResumeLimitedThreads: autoResumeSetting, snoozeLimitedThreads: !settingsOff },
+        ),
+      ).toBe(idle);
+    },
+  );
 
   it("uses V2 run activity instead of metadata refreshes for retention", () => {
     const thread = candidate();
@@ -461,6 +532,22 @@ const cleanupFixture = (
       setOpenSessionCwd: (cwd: string | null) => {
         openSessionCwd = cwd;
       },
+      openTerminal: (paths: { cwd: string; worktreePath: string | null }) =>
+        terminalListener?.({
+          type: "upsert",
+          terminal: {
+            threadId: "thread-1",
+            terminalId: "terminal-1",
+            status: "running",
+            pid: 1,
+            exitCode: null,
+            exitSignal: null,
+            hasRunningSubprocess: false,
+            label: "Terminal",
+            updatedAt: "2026-06-10T12:00:00.000Z",
+            ...paths,
+          },
+        }) ?? Effect.void,
       fullStatusCalls: () => fullStatusCalls,
       snapshotReads: () => snapshotReads,
       activate: (domainEvents: Stream.Stream<OrchestrationV2DomainEvent>) => {
@@ -705,6 +792,7 @@ describe("subagent worktree ownership", () => {
     "pending",
     "unrelated",
     "fork",
+    "side-chat",
     "recent-activity",
     "recent-inactive",
     "recent-grace",
@@ -758,7 +846,12 @@ describe("subagent worktree ownership", () => {
           rootThreadId:
             scenario === "wrong-root" ? ThreadId.make("other-root") : root.lineage.rootThreadId,
           relationshipToParent:
-            scenario === "fork" ? "fork" : scenario === "unrelated" ? null : "subagent",
+            scenario === "fork" || scenario === "side-chat"
+              ? "fork"
+              : scenario === "unrelated"
+                ? null
+                : "subagent",
+          ...(scenario === "side-chat" ? { sideChat: true } : {}),
         },
         status: scenario === "running" ? "running" : "completed",
         pendingBackgroundTasks: scenario === "pending" ? [{ taskId: "task", kind: "command" }] : [],
@@ -792,7 +885,9 @@ describe("subagent worktree ownership", () => {
           root,
         ]);
       const report = yield* fixture.service.runNow;
-      const removed = ["idle", "grandchild", "isolated-owner", "fork-owner"].includes(scenario);
+      const removed = ["idle", "grandchild", "isolated-owner", "fork-owner", "side-chat"].includes(
+        scenario,
+      );
       const shared = [
         "unrelated",
         "fork",
@@ -1594,6 +1689,54 @@ describe("orphan worktree reports", () => {
         }),
       ),
   );
+
+  it.live.each([
+    ["win32", "cwd"],
+    ["win32", "worktreePath"],
+    ["linux", "cwd"],
+    ["linux", "worktreePath"],
+  ] as const)(
+    "matches a terminal at the worktree root with host casing rules (%s, %s)",
+    ([platform, field]) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fixture = yield* cleanupFixture().pipe(
+            Effect.provideService(HostProcess.Platform, platform),
+          );
+          const upper = fixture.worktree.toUpperCase();
+          yield* fixture.openTerminal(
+            field === "cwd"
+              ? { cwd: upper, worktreePath: null }
+              : { cwd: fixture.repo, worktreePath: upper },
+          );
+          const report = yield* fixture.service.runNow;
+          expect(report.entries[0]).toMatchObject(
+            platform === "win32"
+              ? { outcome: "kept", reason: "Open terminal" }
+              : { outcome: "removed" },
+          );
+        }),
+      ),
+  );
+
+  it.live.each(["win32", "linux"] as const)(
+    "matches a provider session at the worktree root with host casing rules (%s)",
+    (platform) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fixture = yield* cleanupFixture().pipe(
+            Effect.provideService(HostProcess.Platform, platform),
+          );
+          fixture.setOpenSessionCwd(fixture.worktree.toUpperCase());
+          const report = yield* fixture.service.runNow;
+          expect(report.entries[0]).toMatchObject(
+            platform === "win32"
+              ? { outcome: "kept", reason: "Provider session is still open" }
+              : { outcome: "removed" },
+          );
+        }),
+      ),
+  );
 });
 
 describe("storage cleanup reports and local file policies", () => {
@@ -2211,6 +2354,33 @@ describe("storage cleanup reports and local file policies", () => {
 });
 
 describe("settled worktree rechecks", () => {
+  it.live.each(["autoResumeLimitedThreads", "snoozeLimitedThreads"] as const)(
+    "keeps a usage-limited checkout when %s is enabled during measurement",
+    (preference) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fixture = yield* pausedMeasurementFixture();
+          fixture.setSettings({ autoResumeLimitedThreads: false, snoozeLimitedThreads: false });
+          fixture.setThreads([
+            shell({
+              branch: "feature",
+              worktreePath: fixture.worktree,
+              status: "failed",
+              latestRunId: RunId.make("limited-run"),
+              lastErrorClass: "usage_limit",
+              usageLimitResetAt: DateTime.formatIso(at(DAY_MS)),
+            }),
+          ]);
+          const run = yield* fixture.service.runNow.pipe(Effect.forkChild);
+          yield* Deferred.await(fixture.measuring);
+          fixture.setSettings({ [preference]: true });
+          yield* Deferred.succeed(fixture.resume, undefined);
+          const report = yield* Fiber.join(run);
+          expect(report.entries[0]?.outcome).toBe("kept");
+          expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+        }),
+      ),
+  );
   it.live.each([{ settledAt: null }, { settledAt: at(DAY_MS) }])(
     "keeps a checkout changed during measurement (%j)",
     (change) =>

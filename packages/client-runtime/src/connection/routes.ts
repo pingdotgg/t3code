@@ -422,6 +422,22 @@ export function routesAfterRemoving(
   });
 }
 
+/**
+ * A dragged route order shows until the saved routes catch up with it. It is
+ * stale, and returns null, once the saved order matches it or the saved routes
+ * are no longer the same set: kept any longer, it would hide a route added
+ * later whenever the count happened to match again.
+ */
+export function pendingRouteOrder(
+  pending: ReadonlyArray<string> | null,
+  savedIds: ReadonlyArray<string>,
+): ReadonlyArray<string> | null {
+  if (pending === null || pending.length !== savedIds.length) return null;
+  const saved = new Set(savedIds);
+  if (!pending.every((id) => saved.has(id))) return null;
+  return pending.some((id, index) => id !== savedIds[index]) ? pending : null;
+}
+
 export function removedWithRelay(entry: ConnectionCatalogEntry): boolean {
   return routesAfterRemoving(connectionRoutes(entry), RELAY_ROUTE_ID).length === 0;
 }

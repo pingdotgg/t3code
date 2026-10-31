@@ -148,6 +148,26 @@ function sameVisibleTurnItemStructure(before: VisibleTurnItem, after: VisibleTur
   );
 }
 
+function isStreamingAssistantMessage(visibleItem: VisibleTurnItem): boolean {
+  return visibleItem.item.type === "assistant_message" && visibleItem.item.streaming;
+}
+
+/** Whether `next` only streams more text into assistant messages that were already streaming. */
+function sameApartFromStreamedAssistantText(
+  previous: OrchestrationV2ThreadProjection["visibleTurnItems"],
+  next: OrchestrationV2ThreadProjection["visibleTurnItems"],
+): boolean {
+  return sameProjectionArray(
+    previous,
+    next,
+    (before, after) =>
+      before === after ||
+      (isStreamingAssistantMessage(before) &&
+        isStreamingAssistantMessage(after) &&
+        sameVisibleTurnItemStructure(before, after)),
+  );
+}
+
 /**
  * Whether `previous` and `next` have the same ThreadStructure: they differ
  * only by text streamed into existing assistant and reasoning items or by a
@@ -265,6 +285,32 @@ export function createEnvironmentThreadDetailAtoms<E>(
       Atom.setIdleTTL(0),
       Atom.withLabel(`environment-quiet-thread-visible-turn-items:${key}`),
     );
+  });
+
+  // Holds while only streamed assistant text moves, so the timeline re-renders on structure;
+  // each streaming message reads its text through assistantMessageTextAtom.
+  const timelineVisibleTurnItemsAtomFamily = Atom.family((key: string) => {
+    let previous = EMPTY_VISIBLE_TURN_ITEMS;
+    return Atom.make((get) => {
+      const next = get(visibleTurnItemsAtomFamily(key));
+      if (!sameApartFromStreamedAssistantText(previous, next)) previous = next;
+      return previous;
+    }).pipe(
+      Atom.setIdleTTL(0),
+      Atom.withLabel(`environment-thread-timeline-visible-turn-items:${key}`),
+    );
+  });
+
+  const assistantMessageTextAtomFamily = Atom.family((key: string) => {
+    const separator = key.lastIndexOf("\u0000");
+    const thread = key.slice(0, separator);
+    const itemId = key.slice(separator + 1);
+    return Atom.make((get) => {
+      const item = get(visibleTurnItemsAtomFamily(thread)).find(
+        (visibleItem) => visibleItem.item.id === itemId,
+      )?.item;
+      return item?.type === "assistant_message" ? item.text : null;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-assistant-message-text:${key}`));
   });
 
   const queueWorkflowAtomFamily = Atom.family((key: string) => {
@@ -472,6 +518,10 @@ export function createEnvironmentThreadDetailAtoms<E>(
     visibleTurnItemsAtom: (ref: ScopedThreadRef) => visibleTurnItemsAtomFamily(threadKey(ref)),
     quietVisibleTurnItemsAtom: (ref: ScopedThreadRef) =>
       quietVisibleTurnItemsAtomFamily(threadKey(ref)),
+    timelineVisibleTurnItemsAtom: (ref: ScopedThreadRef) =>
+      timelineVisibleTurnItemsAtomFamily(threadKey(ref)),
+    assistantMessageTextAtom: (ref: ScopedThreadRef, itemId: string) =>
+      assistantMessageTextAtomFamily(`${threadKey(ref)}\u0000${itemId}`),
     statusAtom: (ref: ScopedThreadRef) => statusAtomFamily(threadKey(ref)),
     sequenceAtom: (ref: ScopedThreadRef) => sequenceAtomFamily(threadKey(ref)),
     errorAtom: (ref: ScopedThreadRef) => errorAtomFamily(threadKey(ref)),

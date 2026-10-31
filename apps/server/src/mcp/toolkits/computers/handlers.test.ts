@@ -52,6 +52,8 @@ const project: ProjectStore.ProjectRow = {
   scripts: [],
   createdAt: now,
   updatedAt: now,
+  pinnedAt: null,
+  archivedAt: null,
   deletedAt: null,
 };
 

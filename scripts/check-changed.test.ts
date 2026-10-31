@@ -1,13 +1,26 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Option from "effect/Option";
 import { assert, describe, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 
-import { defaultConcurrency, gitLines, runSteps, type Step } from "./check-changed.ts";
+import {
+  comparisonBase,
+  defaultConcurrency,
+  gitLines,
+  runSteps,
+  type Step,
+} from "./check-changed.ts";
 
 const GiB = 1024 ** 3;
 
@@ -151,4 +164,90 @@ describe("check:changed", () => {
       );
     });
   });
+});
+
+// Hooks export GIT_DIR and GIT_INDEX_FILE, and user config or the default
+// ~/.config/git/ignore can ignore or sign fixture files.
+const fixtureConfig = {
+  "core.excludesFile": NodeOS.devNull,
+  "user.name": "Fixture",
+  "user.email": "fixture@example.invalid",
+};
+const env = {
+  ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))),
+  GIT_CONFIG_GLOBAL: NodeOS.devNull,
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_CONFIG_COUNT: String(Object.keys(fixtureConfig).length),
+  ...Object.fromEntries(
+    Object.entries(fixtureConfig).flatMap(([key, value], index) => [
+      [`GIT_CONFIG_KEY_${index}`, key],
+      [`GIT_CONFIG_VALUE_${index}`, value],
+    ]),
+  ),
+};
+
+// History A -> B -> C, with HEAD at C. Each remote's main points at A or B.
+function fixture(remotes: Record<string, "A" | "B">) {
+  const root = NodeFS.realpathSync(
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-check-changed-")),
+  );
+  const commits: Record<string, string> = {};
+  try {
+    const write = (file: string, content: string) => {
+      const path = NodePath.join(root, file);
+      NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
+      NodeFS.writeFileSync(path, content);
+    };
+    const git = (...args: Array<string>) =>
+      NodeChildProcess.execFileSync("git", args, { cwd: root, encoding: "utf8", env }).trim();
+    git("init");
+    for (const name of ["A", "B", "C"]) {
+      write(`${name}.txt`, name);
+      git("add", ".");
+      git("commit", "-m", name);
+      commits[name] = git("rev-parse", "HEAD");
+    }
+    for (const [remote, commit] of Object.entries(remotes)) {
+      git("remote", "add", remote, NodePath.join(root, "missing"));
+      git("update-ref", `refs/remotes/${remote}/main`, commits[commit]!);
+    }
+  } catch (error) {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
+  return {
+    commits,
+    root,
+    [Symbol.dispose]() {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+const compare = (root: string, ref: Option.Option<string>) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    return yield* comparisonBase(root, ref).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => spawner.spawn(ChildProcess.setEnv(command, env))),
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.runPromise);
+
+it.each(["upstream", "team/upstream"])(
+  "compares against %s/main when the fork's origin/main lags it",
+  async (remote) => {
+    using project = fixture({ origin: "A", [remote]: "B" });
+    const result = await compare(project.root, Option.none());
+    assert.strictEqual(result.base, project.commits.B);
+    assert.strictEqual(result.ref, remote + "/main");
+  },
+);
+
+it("compares against an explicit ref instead of the closest remote main", async () => {
+  using project = fixture({ origin: "A", upstream: "B" });
+  const result = await compare(project.root, Option.some("origin/main"));
+  assert.strictEqual(result.base, project.commits.A);
+  assert.strictEqual(result.ref, "origin/main");
 });

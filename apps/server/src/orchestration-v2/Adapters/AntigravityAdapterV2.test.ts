@@ -128,6 +128,49 @@ const layerSession = Layer.mergeAll(
   TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
 );
 
+describe("AntigravityAdapterV2 compaction", () => {
+  it.effect("does not expose unsupported manual compaction on the provider session", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const crypto = yield* Crypto.Crypto;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("antigravity-compaction-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: { T3_ACP_ANTIGRAVITY: "1" },
+            },
+          }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+        withProcess: (_stop, task) => task,
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
+        defaultModel: Effect.succeed(undefined),
+      });
+      const session = yield* adapter.openSession({
+        threadId: ThreadId.make("thread-antigravity-compaction"),
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-compaction"),
+        modelSelection: { instanceId, model: "gemini-test-low" },
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        }),
+      });
+      assert.isUndefined(session.compactThread);
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+});
+
 describe("AntigravityAdapterV2 session open", () => {
   it.effect.each([
     {
@@ -289,6 +332,25 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       );
       assert.equal(pasted.content, "pasted");
+      yield* fileSystem.writeFileString(insidePath, "\uFEFFfirst\né中🙂\nlast");
+      const sliced = yield* readTextFile(
+        { sessionId: "mock-session-1", path: insidePath, line: 2, limit: 1 },
+        context("fs/read_text_file"),
+      );
+      assert.equal(sliced.content, "é中🙂");
+      yield* fileSystem.writeFileString(insidePath, "inside");
+      for (const [name, bytes] of [
+        ["image.png", new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+        ["data.bin", new Uint8Array([0x61, 0, 0x62])],
+      ] as const) {
+        const binaryPath = path.join(workspace, name);
+        yield* fileSystem.writeFile(binaryPath, bytes);
+        const binaryRead = yield* readTextFile(
+          { sessionId: "mock-session-1", path: binaryPath },
+          context("fs/read_text_file"),
+        ).pipe(Effect.flip);
+        assert.propertyVal(binaryRead, "code", -32602, `${name} is refused as binary`);
+      }
 
       const outsideRead = yield* readTextFile(
         { sessionId: "mock-session-1", path: outsideFile },

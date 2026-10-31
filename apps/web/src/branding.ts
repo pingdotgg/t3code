@@ -43,4 +43,5 @@ export const APP_DISPLAY_VERSION = formatDisplayedAppVersion({
   version: APP_VERSION,
   stripNightlyPrerelease: !APP_HAS_UPDATE_TRACKS,
 });
-export const DESKTOP_DOWNLOAD_URL = "https://github.com/munimtechnologies/mtcode/releases/latest";
+export const APP_GITHUB_REPOSITORY = "munimtechnologies/mtcode";
+export const DESKTOP_DOWNLOAD_URL = `https://github.com/${APP_GITHUB_REPOSITORY}/releases/latest`;

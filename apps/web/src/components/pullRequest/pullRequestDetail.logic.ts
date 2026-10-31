@@ -646,7 +646,7 @@ export interface PullRequestTimelineThread
   readonly replies: ReadonlyArray<PullRequestTimelineEvent>;
 }
 
-type PullRequestTimelineRow =
+export type PullRequestTimelineRow =
   | { readonly kind: "event"; readonly event: PullRequestTimelineEvent }
   | { readonly kind: "comments"; readonly events: ReadonlyArray<PullRequestTimelineEvent> };
 

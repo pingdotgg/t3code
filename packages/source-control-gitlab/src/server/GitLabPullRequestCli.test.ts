@@ -963,6 +963,122 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("shows a failed child pipeline that left the head pipeline green", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              mergeRequestJson({
+                // A fork's pipeline runs in the source project, so its id is not the target's.
+                head_pipeline: {
+                  id: 31,
+                  project_id: 12,
+                  status: "success",
+                  web_url: "https://gitlab.com/bilal/web/-/pipelines/31",
+                },
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              JSON.stringify([
+                {
+                  name: "deploy",
+                  status: "success",
+                  downstream_pipeline: {
+                    status: "failed",
+                    web_url: "https://gitlab.com/bilal/web/-/pipelines/32",
+                  },
+                },
+                { name: "docs", status: "created", downstream_pipeline: null },
+              ]),
+            ),
+          ),
+        );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(detail.checks.map((check) => [check.name, check.status, check.url])).toEqual([
+        ["Pipeline", "success", "https://gitlab.com/bilal/web/-/pipelines/31"],
+        ["deploy", "failure", "https://gitlab.com/bilal/web/-/pipelines/32"],
+      ]);
+      expect(argsOfCall(1)[1]).toBe("projects/12/pipelines/31/bridges?per_page=100");
+    }),
+  );
+
+  it.effect("keeps the one pipeline check when the trigger jobs cannot be read whole", () =>
+    Effect.gen(function* () {
+      const detailOutput = output(
+        mergeRequestJson({ head_pipeline: { id: 31, project_id: 12, status: "success" } }),
+      );
+      const failedChild = { name: "deploy", downstream_pipeline: { status: "failed" } };
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(detailOutput))
+        .mockReturnValueOnce(
+          Effect.fail(
+            new GitLabCli.GitLabCliCommandError({
+              operation: "execute",
+              command: "glab",
+              cwd: "/w",
+              cause: new Error("403 Forbidden"),
+            }),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(detailOutput))
+        // A full page may have left out the trigger job whose pipeline failed.
+        .mockReturnValueOnce(
+          Effect.succeed(output(JSON.stringify(Array.from({ length: 100 }, () => failedChild)))),
+        );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      for (const scenario of ["read fails", "page is full"]) {
+        const detail = yield* cli.getMergeRequestDetail({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+        });
+        expect(
+          detail.checks.map((check) => [check.name, check.status]),
+          scenario,
+        ).toEqual([["Pipeline", "success"]]);
+      }
+    }),
+  );
+
+  it.effect("reads merge permissions without reading the trigger jobs", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            mergeRequestJson({
+              head_pipeline: { id: 31, project_id: 12, status: "success" },
+              user: { can_merge: false },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        downstreamChecks: false,
+      });
+
+      expect(detail.viewerCanMerge).toBe(false);
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+    }),
+  );
+
   it.effect("reads who has access to the project and who is already on the merge request", () =>
     Effect.gen(function* () {
       mockedExecute
@@ -1182,6 +1298,94 @@ layer("GitLabPullRequestCli.layer", (it) => {
       assert.strictEqual(revisions.size, 150);
       assert.strictEqual(revisions.get("src/149.ts"), "oid-src/149.ts");
       assert.strictEqual(mockedExecute.mock.calls.length, 3);
+    }),
+  );
+
+  it.effect(
+    "reads line counts a hundred at a time per project, keeping the reads that answered",
+    () =>
+      Effect.gen(function* () {
+        const variablesOf = (stdin: string | undefined) =>
+          (
+            JSON.parse(stdin ?? "{}") as {
+              readonly variables: {
+                readonly fullPath: string;
+                readonly iids: ReadonlyArray<string>;
+              };
+            }
+          ).variables;
+        mockedExecute.mockImplementation((request) => {
+          const { fullPath, iids } = variablesOf(request.stdin);
+          // GitLab answers only what it has (iid 3 is missing), and one project's read fails.
+          const nodes = iids
+            .filter((iid) => iid !== "3")
+            .map((iid) => ({ iid, diffStatsSummary: { additions: Number(iid), deletions: 1 } }));
+          return Effect.succeed(
+            output(
+              JSON.stringify(
+                fullPath === "acme/api"
+                  ? { errors: [{ message: "Query timed out" }] }
+                  : { data: { project: { mergeRequests: { nodes } } } },
+              ),
+            ),
+          );
+        });
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+        const stats = yield* cli.listMergeRequestStats({
+          cwd: "/w",
+          changeRequests: [
+            ...Array.from({ length: 150 }, (_, index) => ({
+              repository: "acme/web",
+              number: index + 1,
+            })),
+            { repository: "acme/api", number: 9 },
+          ],
+        });
+
+        expect(stats).toHaveLength(149);
+        expect(stats).toContainEqual({
+          repository: "acme/web",
+          number: 150,
+          additions: 150,
+          deletions: 1,
+        });
+        expect(stats.some((stat) => stat.number === 3 || stat.repository === "acme/api")).toBe(
+          false,
+        );
+        expect(
+          mockedExecute.mock.calls.map(([request]) => {
+            const { fullPath, iids } = variablesOf(request.stdin);
+            return [fullPath, iids.length];
+          }),
+        ).toEqual([
+          ["acme/web", 100],
+          ["acme/web", 50],
+          ["acme/api", 1],
+        ]);
+      }),
+  );
+  it.effect.each([
+    GitLabCli.GitLabCliUnavailableError,
+    GitLabCli.GitLabCliAuthenticationError,
+    GitLabCli.GitLabCliRateLimitError,
+  ])("propagates unusable CLI and account failures from stats (%s)", (ErrorType) =>
+    Effect.gen(function* () {
+      const error = new ErrorType({
+        operation: "execute",
+        command: "glab",
+        cwd: "/w",
+        cause: null,
+      });
+      mockedExecute.mockReturnValueOnce(Effect.fail(error));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const result = yield* Effect.result(
+        cli.listMergeRequestStats({
+          cwd: "/w",
+          changeRequests: [{ repository: "acme/web", number: 7 }],
+        }),
+      );
+      expect(result).toMatchObject({ _tag: "Failure", failure: error });
     }),
   );
 });

@@ -111,6 +111,9 @@ export function useComposerResume(input: ComposerResumeInput) {
       if (resumableRunId === null) {
         return resumeThreadQueue({ environmentId, input: { threadId } });
       }
+      // Read before the first await: the composer follows the route, so after the user switches
+      // threads it holds the other thread's model.
+      const modelSelection = composerRef.current?.getSendContext().selectedModelSelection;
       const createdAt = new Date().toISOString();
       const settingsResult = await persistThreadSettingsForNextTurn({
         threadId,
@@ -126,7 +129,6 @@ export function useComposerResume(input: ComposerResumeInput) {
       // the provider gets the T3-authored prompt and the timeline hides the
       // message. A usage-limit resume keeps upstream's visible prompt.
       const continuesStoppedRun = resumableRunInterrupted;
-      const modelSelection = composerRef.current?.getSendContext().selectedModelSelection;
       const turnResult = await startThreadTurn({
         environmentId,
         input: {

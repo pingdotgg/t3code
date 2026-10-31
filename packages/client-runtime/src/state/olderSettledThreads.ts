@@ -1,4 +1,5 @@
 import {
+  isListedThreadLineage,
   isOlderSettledThreadShell,
   ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
@@ -77,7 +78,7 @@ export function olderSettledCountKey(
   for (const sequence of removedAt.values()) lastRemoval = Math.max(lastRemoval, sequence);
   const rows: string[] = [];
   for (const thread of threads) {
-    if (thread.lineage.relationshipToParent === "subagent") continue;
+    if (!isListedThreadLineage(thread.lineage)) continue;
     const older = isOlderSettledThreadShell(thread, beforeMs);
     if (older || DateTime.toEpochMillis(thread.createdAt) < beforeMs) {
       rows.push(`${thread.id}:${older ? 1 : 0}`);

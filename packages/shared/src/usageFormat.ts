@@ -9,6 +9,7 @@ import {
   UsageDay,
   type UsagePricingStatus,
   type UsageResolution,
+  type UsageSource,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 
@@ -22,6 +23,45 @@ const CURRENCY = new Intl.NumberFormat("en-US", {
 });
 
 const INTEGER = new Intl.NumberFormat("en-US");
+
+export function formatMalformedUsageWarning(count: number): string {
+  return `${count} malformed or inconsistent usage record(s) were skipped; usage may be incomplete.`;
+}
+
+export function usageSourceMessages(sources: readonly UsageSource[]): readonly string[] {
+  const messages = new Set<string>();
+  const malformedBySource = new Map<string, number>();
+  for (const source of sources) {
+    if (
+      source.action ||
+      (source.status !== "partial" &&
+        source.status !== "failed" &&
+        source.fingerprint.provider !== "cursor" &&
+        !(source.status === "missing" && source.malformedRecords > 0))
+    ) {
+      continue;
+    }
+    let message = source.message;
+    if (source.malformedRecords > 0) {
+      const { hostId, provider, resolvedHomePath, volumeId } = source.fingerprint;
+      const key = JSON.stringify([hostId, provider, resolvedHomePath, volumeId]);
+      malformedBySource.set(
+        key,
+        Math.max(malformedBySource.get(key) ?? 0, source.malformedRecords),
+      );
+      // Servers also append this warning to message; retain any preceding read failure.
+      const warning = formatMalformedUsageWarning(source.malformedRecords);
+      if (message?.endsWith(warning)) message = message.slice(0, -warning.length).trim();
+    }
+    if (message) messages.add(message);
+  }
+  const malformedRecords = [...malformedBySource.values()].reduce(
+    (total, count) => total + count,
+    0,
+  );
+  if (malformedRecords > 0) messages.add(formatMalformedUsageWarning(malformedRecords));
+  return [...messages];
+}
 
 export function formatUsd(value: number): string {
   return CURRENCY.format(value);

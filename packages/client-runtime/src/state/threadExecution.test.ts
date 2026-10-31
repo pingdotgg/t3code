@@ -25,6 +25,7 @@ import {
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadRuntime,
+  presentProviderGoal,
   presentRunStop,
   threadRuntimeHasInterruptibleRun,
 } from "./threadExecution.ts";
@@ -460,5 +461,30 @@ describe("provider-reported model selection", () => {
         ],
       }),
     ).toBeNull();
+  });
+});
+
+describe("presentProviderGoal", () => {
+  it("rolls token counts that round to 1000k over to 1m", () => {
+    const usage = (tokensUsed: number) =>
+      presentProviderGoal(
+        { objective: "Ship the feature", status: "active", tokensUsed, tokenBudget: 2_000_000 },
+        true,
+      ).usage;
+    expect(usage(999_499)).toBe("999k / 2m tokens");
+    expect(usage(999_500)).toBe("1m / 2m tokens");
+    expect(usage(999_999)).toBe("1m / 2m tokens");
+    expect(usage(1_000_000)).toBe("1m / 2m tokens");
+    expect(
+      presentProviderGoal(
+        {
+          objective: "Ship the feature",
+          status: "paused",
+          tokensUsed: 999_500,
+          tokenBudget: 999_500,
+        },
+        false,
+      ).usage,
+    ).toBe("1m / 1m tokens");
   });
 });

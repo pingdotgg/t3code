@@ -110,6 +110,11 @@ import Migration0080 from "./Migrations/071_PeerLinkFence.ts";
 import Migration0081 from "./Migrations/072_WaitingLinkRequestIndex.ts";
 // Upstream 073 (active turn item indexes); registered as the next free fork id.
 import Migration0082 from "./Migrations/073_ActiveTurnItemIndexes.ts";
+// Upstream 074-076 (search placeholders, subagent delivery state, project pin/archive);
+// registered as the next free fork ids.
+import Migration0083 from "./Migrations/074_ExcludeAttachmentPlaceholdersFromSearch.ts";
+import Migration0084 from "./Migrations/075_SubagentDeliveryState.ts";
+import Migration0085 from "./Migrations/076_ProjectionProjectsPinArchive.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -207,6 +212,10 @@ const migrationEntries = [
   [81, "WaitingLinkRequestIndex", Migration0081],
   // Upstream 073 (active turn item indexes); next free fork id.
   [82, "ActiveTurnItemIndexes", Migration0082],
+  // Upstream 074-076; next free fork ids.
+  [83, "ExcludeAttachmentPlaceholdersFromSearch", Migration0083],
+  [84, "SubagentDeliveryState", Migration0084],
+  [85, "ProjectionProjectsPinArchive", Migration0085],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

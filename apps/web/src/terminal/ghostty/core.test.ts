@@ -13,6 +13,7 @@ import { writeTerminalOutputUpdate } from "../../components/ThreadTerminalDrawer
 import { GHOSTTY_CELL_WIDE, GhosttyTerminalCore, ghosttyCellText } from "./core";
 import { loadGhosttyRuntime } from "./runtime";
 import { findTerminalSearchMatches } from "./search";
+import { terminalNavigationShortcutData } from "../../keybindings";
 
 vi.mock("./vendor/ghostty-vt.wasm?url", async () => ({
   default: (await import("./vendor/ghostty-vt.wasm?inline")).default,
@@ -100,6 +101,26 @@ describe("GhosttyTerminalCore snapshots", () => {
     for (const core of cores) core.dispose();
     cores.clear();
     vi.restoreAllMocks();
+  });
+
+  it.each([
+    { key: "ArrowLeft", expected: "\x1b[1;5D" },
+    { key: "ArrowRight", expected: "\x1b[1;5C" },
+  ])("sends Ctrl+$key as a modified arrow instead of Alt+B/F", async ({ key, expected }) => {
+    const core = await createCore();
+    const event = {
+      code: key,
+      key,
+      repeat: false,
+      shiftKey: false,
+      ctrlKey: true,
+      altKey: false,
+      metaKey: false,
+      isComposing: false,
+      getModifierState: () => false,
+    } as unknown as KeyboardEvent;
+
+    expect(terminalNavigationShortcutData(event, "Win32") ?? core.encodeKey(event)).toBe(expected);
   });
 
   it.each([
