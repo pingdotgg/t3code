@@ -201,51 +201,6 @@ export function keybindingConflictLabels(
   return [...new Set(conflicts)].toSorted();
 }
 
-export interface KeybindingGroup {
-  readonly id: string;
-  readonly title: string;
-  readonly rows: ReadonlyArray<KeybindingRow>;
-}
-
-const KEYBINDING_GROUPS = [
-  {
-    id: "navigation",
-    title: "Navigation",
-    prefixes: ["sidebar", "rightPanel", "commandPalette", "filePicker", "projectSearch", "editor"],
-  },
-  { id: "threads", title: "Threads", prefixes: ["thread", "chat", "pullRequest"] },
-  { id: "composer", title: "Composer", prefixes: ["composer", "modelPicker"] },
-  { id: "terminal", title: "Terminal", prefixes: ["terminal"] },
-  { id: "preview", title: "Preview & diff", prefixes: ["preview", "diff"] },
-  { id: "appearance", title: "Appearance", prefixes: ["theme", "appearance", "themeEditor"] },
-  { id: "scripts", title: "Project scripts", prefixes: ["script"] },
-] as const;
-const OTHER_KEYBINDING_GROUP = { id: "other", title: "Other" } as const;
-
-function keybindingGroupFor(command: KeybindingCommand): { id: string; title: string } {
-  const prefix = String(command).split(".")[0] ?? "";
-  return (
-    KEYBINDING_GROUPS.find((group) => (group.prefixes as ReadonlyArray<string>).includes(prefix)) ??
-    OTHER_KEYBINDING_GROUP
-  );
-}
-
-export function groupKeybindingRows(
-  rows: ReadonlyArray<KeybindingRow>,
-): ReadonlyArray<KeybindingGroup> {
-  const rowsByGroup = new Map<string, Array<KeybindingRow>>();
-  for (const row of rows) {
-    const group = keybindingGroupFor(row.command);
-    const bucket = rowsByGroup.get(group.id);
-    if (bucket) bucket.push(row);
-    else rowsByGroup.set(group.id, [row]);
-  }
-  return [...KEYBINDING_GROUPS, OTHER_KEYBINDING_GROUP].flatMap((group) => {
-    const groupRows = rowsByGroup.get(group.id);
-    return groupRows ? [{ id: group.id, title: group.title, rows: groupRows }] : [];
-  });
-}
-
 export function buildKeybindingRows(
   keybindings: ResolvedKeybindingsConfig,
   platform = navigator.platform,
@@ -367,25 +322,86 @@ export function buildKeybindingCommandOptions(
   return [...commands].toSorted((left, right) => compareCommands(left, right, commandLabel));
 }
 
+/** Friendly names for built-in commands, shown in the Shortcuts table and settings search. */
+const COMMAND_LABELS: Partial<Record<string, string>> = {
+  "workspace.focusNext": "Focus next workspace area",
+  "workspace.focusPrevious": "Focus previous workspace area",
+  "sidebar.toggle": "Toggle sidebar",
+  "navigation.back": "Go back",
+  "navigation.forward": "Go forward",
+  "terminal.toggle": "Toggle terminal",
+  "terminal.split": "Split terminal",
+  "terminal.splitVertical": "Split terminal vertically",
+  "terminal.new": "New terminal",
+  "terminal.close": "Close terminal",
+  "rightPanel.toggle": "Toggle right panel",
+  "threadPanel.toggle": "Toggle thread panel",
+  "rightPanel.close": "Close right panel",
+  "rightPanel.new": "New right panel tab",
+  "view.reopenClosed": "Reopen closed tab",
+  "pullRequest.copyNumber": "Copy pull request number",
+  "diff.toggle": "Toggle diff panel",
+  "preview.toggle": "Toggle browser",
+  "preview.refresh": "Reload browser",
+  "preview.focusUrl": "Focus browser address",
+  "preview.zoomIn": "Zoom in browser",
+  "preview.zoomOut": "Zoom out browser",
+  "preview.resetZoom": "Reset browser zoom",
+  "commandPalette.toggle": "Command palette",
+  "filePicker.toggle": "Open file",
+  "projectSearch.toggle": "Search in project",
+  "theme.select": "Select theme",
+  "appearance.cycle": "Cycle appearance",
+  "themeEditor.toggle": "Toggle theme editor",
+  "composer.stash": "Stash prompt",
+  "composer.sendAlternate": "Send with the opposite queue or steer action",
+  "composer.sendBackground": "Start in background",
+  "composer.sendAndNewThread": "Send and start a new thread",
+  "composer.host": "Choose machine",
+  "composer.effort": "Choose effort",
+  "composer.mode": "Choose access mode",
+  "composer.workspace": "Choose workspace",
+  "composer.previousWorktree": "Use previous worktree",
+  "composer.branch": "Choose branch",
+  "chat.new": "New thread",
+  "chat.newLocal": "New local thread",
+  "chat.newWithoutProject": "New thread without a project",
+  "chat.citeSelection": "Cite selection in composer",
+  "chat.find": "Find in thread",
+  "editor.openFavorite": "Open in editor",
+  "modelPicker.toggle": "Choose model",
+  "modelPicker.previousProvider": "Previous model provider",
+  "modelPicker.nextProvider": "Next model provider",
+  "thread.stop": "Stop run",
+  "thread.steerQueuedMessage": "Send first queued message",
+  "thread.editQueuedMessage": "Edit last queued message",
+  "thread.previous": "Previous thread",
+  "thread.next": "Next thread",
+  "thread.copyReference": "Copy link to pull request or thread",
+  "thread.settle": "Settle thread",
+  "thread.pin": "Pin thread",
+  "thread.undo": "Undo last thread action",
+  "git.commitPush": "Commit and push",
+  "usage.open": "Open usage",
+  "usage.cost": "Show usage by cost",
+  "usage.tokens": "Show usage by tokens",
+  "usage.limits": "Show usage limits",
+  "usage.period.day": "Show usage for the past 24 hours",
+  "usage.period.week": "Show usage for the past 7 days",
+  "usage.period.month": "Show usage for the past 30 days",
+  "usage.period.quarter": "Show usage for the past 90 days",
+};
+
 export function commandLabel(command: KeybindingCommand): string {
-  if (command === "workspace.focusNext") return "Focus Next Workspace Area";
-  if (command === "workspace.focusPrevious") return "Focus Previous Workspace Area";
-  if (command === "composer.sendAlternate") return "Composer: Opposite Queue or Steer Action";
-  if (command === "composer.sendBackground") return "Composer: Start in Background";
-  if (command === "composer.sendAndNewThread") return "Composer: Send and Start New Thread";
-  if (command === "thread.steerQueuedMessage") return "Queue: Send First Queued Message";
-  if (command === "thread.editQueuedMessage") return "Queue: Edit Last Queued Message";
-  if (command === "thread.copyReference") return "Pull Request: Copy Link or Thread";
-  if (command === "chat.citeSelection") return "Chat: Cite Selection in Composer";
-  const usageMetric = METRIC_OPTIONS.find((option) => option.command === command);
-  if (usageMetric) return `Usage: ${usageMetric.label}`;
-  const usagePeriod = WINDOW_OPTIONS.find((option) => option.command === command);
-  if (usagePeriod) return `Usage: Period: ${usagePeriod.label}`;
-  if (command === "view.reopenClosed") return "Reopen Closed Tab";
-  if (command === "preview.focusUrl") return "Preview: Focus URL";
   const raw = String(command);
+  const known = COMMAND_LABELS[raw];
+  if (known) return known;
+  const threadJump = /^thread\.jump\.(\d)$/.exec(raw);
+  if (threadJump) return `Jump to thread ${threadJump[1]}`;
+  const modelJump = /^modelPicker\.jump\.(\d)$/.exec(raw);
+  if (modelJump) return `Pick model ${modelJump[1]}`;
   if (raw.startsWith("script.") && raw.endsWith(".run")) {
-    return `Run Script: ${titleCaseCommandSegment(raw.slice("script.".length, -".run".length))}`;
+    return `Run script: ${titleCaseCommandSegment(raw.slice("script.".length, -".run".length))}`;
   }
   return raw.split(".").map(titleCaseCommandSegment).join(": ");
 }

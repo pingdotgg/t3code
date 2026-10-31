@@ -105,6 +105,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "chat.citeSelection",
   "chat.find",
   "editor.openFavorite",
+  "git.commitPush",
   "usage.cost",
   "usage.tokens",
   "usage.limits",
