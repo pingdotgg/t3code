@@ -1,5 +1,6 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { Profiler } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
@@ -20,17 +21,20 @@ it("keeps draft previews current through edits, promotion and removal", async ()
   const projectRef = scopeProjectRef(environmentId, ProjectId.make("draft-preview-project"));
   const draftId = DraftId.make("draft-preview");
   const threadId = ThreadId.make("draft-preview-thread");
+  const onRender = vi.fn();
   await using screen = await render(
-    <ul>
-      <SidebarDraftBlock
-        projectByKey={new Map()}
-        projectDisplayNameByKey={new Map()}
-        scopedProjectKeys={null}
-        routeDraftId={null}
-        onNavigateToDraft={vi.fn()}
-        onDraftContextMenu={vi.fn()}
-      />
-    </ul>,
+    <Profiler id="draft-block" onRender={onRender}>
+      <ul>
+        <SidebarDraftBlock
+          projectByKey={new Map()}
+          projectDisplayNameByKey={new Map()}
+          scopedProjectKeys={null}
+          routeDraftId={null}
+          onNavigateToDraft={vi.fn()}
+          onDraftContextMenu={vi.fn()}
+        />
+      </ul>
+    </Profiler>,
   );
   const row = screen.getByTestId("sidebar-draft-row");
   await expect.element(row).not.toBeInTheDocument();
@@ -41,9 +45,11 @@ it("keeps draft previews current through edits, promotion and removal", async ()
   });
   await expect.element(row).toHaveAccessibleName("First draft preview, Unsent draft");
 
+  const rendersBeforeOtherComposer = onRender.mock.calls.length;
   await act(() =>
     initial.setPrompt(scopeThreadRef(environmentId, ThreadId.make("other")), "Other composer"),
   );
+  expect(onRender).toHaveBeenCalledTimes(rendersBeforeOtherComposer);
   await act(() => initial.setPrompt(draftId, "Updated draft preview"));
   await expect.element(row).toHaveAccessibleName("Updated draft preview, Unsent draft");
 
