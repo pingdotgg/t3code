@@ -408,7 +408,8 @@ export const directLinkTargets = Effect.fn("cloud.pinned_runtime.direct_link_tar
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const text = yield* fs.readLink(link).pipe(Effect.option);
-  if (Option.isNone(text)) return [];
+  // A target naming a folder (`t3/`, `t3/.`) never runs the file it would resolve to.
+  if (Option.isNone(text) || /(?:^|[\\/])\.{0,2}$/.test(text.value)) return [];
   const raw = path.isAbsolute(text.value)
     ? text.value
     : `${path.dirname(link)}${path.sep}${text.value}`;
