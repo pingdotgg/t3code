@@ -71,7 +71,6 @@ export function blockTextDirections(tree: HastNode) {
   }
 }
 
-
 /** "rtl" when any prose letter is right-to-left; otherwise what textDirection would say. */
 function scriptOf(node: HastNode): "rtl" | "ltr" | undefined {
   let found: "ltr" | undefined;
