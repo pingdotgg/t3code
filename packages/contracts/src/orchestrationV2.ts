@@ -1676,6 +1676,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("run_interrupt_request"),
     message: Schema.String,
+    /** Set when the provider did not confirm the stop in time; clients then offer Force stop. */
+    unresponsiveAt: Schema.optionalKey(Schema.DateTimeUtc),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2500,6 +2502,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("run_interrupt_request"),
     message: Schema.String,
+    unresponsiveAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -3436,12 +3439,22 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     requestId: RuntimeRequestId,
   }),
+  /** The provider did not confirm a Stop of this turn in time. */
+  Schema.Struct({
+    type: Schema.Literal("thread.interrupt.unresponsive"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    providerThreadId: ProviderThreadId,
+    providerTurnId: ProviderTurnId,
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.background-work.settle"),
     commandId: CommandId,
     threadId: ThreadId,
     providerThreadId: ProviderThreadId,
     providerTurnId: ProviderTurnId,
+    /** Replaces the Stop's own reason on the result, as Force stop does. */
+    reason: Schema.optional(Schema.String),
     subagent: Schema.optional(
       Schema.Struct({
         id: NodeId,
@@ -3521,6 +3534,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
   stopWorkflow: "orchestration.stopWorkflow",
+  forceStopThread: "orchestration.forceStopThread",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
   subscribeShell: "orchestration.subscribeShell",
@@ -3908,6 +3922,41 @@ export class OrchestrationV2StopWorkflowError extends Schema.TaggedError<Orchest
   }
 }
 
+export const OrchestrationV2ForceStopThreadInput = Schema.Struct({
+  threadId: ThreadId,
+  /** The run the user saw ignore Stop; Force stop refuses once a newer run has started. */
+  runId: Schema.optionalKey(RunId),
+});
+export type OrchestrationV2ForceStopThreadInput = typeof OrchestrationV2ForceStopThreadInput.Type;
+
+export const OrchestrationV2ForceStopThreadResult = Schema.Struct({
+  /**
+   * `killed`: the thread's own agent processes were killed. `released`: its provider session
+   * was torn down, which kills the agent's process group. `releasing`: that teardown has not
+   * finished yet and continues on the server. `shared`: the agent process also works for
+   * `sharedWithThreadIds`, so only this thread's turn was ended.
+   */
+  outcome: Schema.Literals(["killed", "released", "releasing", "shared"]),
+  sharedWithThreadIds: Schema.Array(ThreadId),
+});
+export type OrchestrationV2ForceStopThreadResult = typeof OrchestrationV2ForceStopThreadResult.Type;
+
+export class OrchestrationV2ForceStopThreadError extends Schema.TaggedError<OrchestrationV2ForceStopThreadError>()(
+  "OrchestrationV2ForceStopThreadError",
+  {
+    threadId: ThreadId,
+    /** `superseded`: a newer run started since the user asked; nothing was stopped. */
+    reason: Schema.optional(Schema.Literal("superseded")),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.reason === "superseded"
+      ? "A new turn started, so nothing was force stopped."
+      : "Failed to force stop the agent.";
+  }
+}
+
 export const OrchestrationV2GetWorkflowScriptInput = Schema.Struct({
   threadId: ThreadId,
   scriptPath: TrimmedNonEmptyString,
@@ -4093,6 +4142,10 @@ export const OrchestrationV2RpcSchemas = {
   stopWorkflow: {
     input: OrchestrationV2StopWorkflowInput,
     output: Schema.Void,
+  },
+  forceStopThread: {
+    input: OrchestrationV2ForceStopThreadInput,
+    output: OrchestrationV2ForceStopThreadResult,
   },
   getWorkflowScript: {
     input: OrchestrationV2GetWorkflowScriptInput,
