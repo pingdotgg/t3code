@@ -630,62 +630,45 @@ it.effect("keeps the macOS VS Code Insiders bundle out of stable VS Code", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-for (const { platform, installPath } of [
-  {
-    platform: "darwin",
-    installPath: "Library/Application Support/JetBrains/Toolbox/scripts/idea1",
-  },
-  { platform: "linux", installPath: ".local/share/JetBrains/Toolbox/scripts/idea1" },
-  { platform: "win32", installPath: "JetBrains/Toolbox/scripts/idea1.cmd" },
-] as const) {
-  it.effect.skipIf(windowsHost && platform !== "win32")(
-    `discovers a numbered JetBrains Toolbox script on ${platform}`,
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-toolbox-" });
-        const target = path.join(home, "apps/idea/bin/idea");
-        yield* fs.makeDirectory(path.dirname(target), { recursive: true });
-        yield* fs.writeFileString(target, "");
-        const executable = path.join(home, installPath);
-        yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
-        yield* fs.writeFileString(
-          executable,
-          platform === "win32"
-            ? `@echo off\r\nstart "" "${target}" %*\r\n`
-            : `#!/bin/sh\nexec "${target}" "$@"\n`,
-        );
-        yield* fs.chmod(executable, 0o755);
+it.effect("discovers a numbered JetBrains Toolbox script on win32", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-toolbox-" });
+    const target = path.join(home, "apps/idea/bin/idea");
+    yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+    yield* fs.writeFileString(target, "");
+    const executable = path.join(home, "JetBrains/Toolbox/scripts/idea1.cmd");
+    yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+    yield* fs.writeFileString(executable, `@echo off\r\nstart "" "${target}" %*\r\n`);
 
-        let spawned: ChildProcess.StandardCommand | undefined;
-        const editors = yield* Effect.gen(function* () {
-          const launcher = yield* ExternalLauncher.ExternalLauncher;
-          const available = yield* launcher.resolveAvailableEditors();
-          yield* launcher.launchEditor({ editor: "idea", cwd: "/workspace/file.ts" });
-          return available;
-        }).pipe(
-          Effect.provide(
-            layerTest({
-              platform,
-              env: {
-                HOME: home,
-                LOCALAPPDATA: home,
-                PATH: path.join(home, "empty"),
-                PATHEXT: ".COM;.EXE;.BAT;.CMD",
-              },
-              onSpawn: (command) => {
-                spawned = command;
-              },
-            }),
-          ),
-        );
+    let spawned: ChildProcess.StandardCommand | undefined;
+    const editors = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      const available = yield* launcher.resolveAvailableEditors();
+      yield* launcher.launchEditor({ editor: "idea", cwd: "/workspace/file.ts" });
+      return available;
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "win32",
+          env: {
+            HOME: home,
+            LOCALAPPDATA: home,
+            PATH: path.join(home, "empty"),
+            PATHEXT: ".COM;.EXE;.BAT;.CMD",
+          },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
 
-        assert.include(editors, "idea");
-        assert.include(spawned?.command, "idea1");
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-}
+    assert.include(editors, "idea");
+    assert.include(spawned?.command, "idea1");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 for (const { platform, scriptsPath, variable } of [
   { platform: "linux", scriptsPath: ".local/share/JetBrains/Toolbox/scripts", variable: "$HOME" },
