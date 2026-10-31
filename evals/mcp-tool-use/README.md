@@ -26,7 +26,7 @@ Cases are JSON lines in `cases/`, one file per area. The case schema in `run.ts`
 - `kind`: `bad` reproduces a mistake, `guard` protects correct behavior, `control` is ordinary work.
 - `experience`: the real mistake, in a sentence. `source`: where it happened.
 - `setup`: the fake thread, its `world` (repo, branch, files, PRs, pages), `priorTurns`, and `mocks` for tool results.
-- `expect`: the checks, such as `calls`, `callsMustNot`, `maxCalls`, `order`, `textMust`, and `linked`. Device cases also use `device` to check every child brief, forbid raw UI commands, bound failed device actions per user turn, and require artifact paths in completed final answers.
+- `expect`: the checks, such as `calls`, `callsMustNot`, `maxCalls`, `order`, `textMust`, and `linked`. Device cases also use `device` to check every child brief, forbid raw UI commands, bound failed device actions per user turn, and require artifact paths in completed final answers. Preview cases use `webmcp` to replay each tab's `preview_evaluate` expressions in order against one page per tab whose `document.modelContext` registers the case's tools, and grade the tools they actually execute and their inputs. `webmcp.results` supplies tool return values, serialized as native `executeTool` strings.
 
 Check that the case builds with `--dry-run --case <id>`. Then run it on the text before your fix, where it must fail, and on the text after, where it must pass.
 
