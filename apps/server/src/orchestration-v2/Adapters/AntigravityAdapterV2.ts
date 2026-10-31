@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
+import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as EffectAcpErrors from "effect-acp/errors";
 
@@ -33,6 +34,7 @@ import {
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
+import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
@@ -131,20 +133,40 @@ export function makeAntigravityAcpAdapterFlavor(
         .pipe(Effect.provideService(Scope.Scope, scope));
       // Repair keeps state across updates, so each runtime must have one session-update handler.
       const reads = makeAntigravityReadRepair();
+      // Served reads are reported from the read handler, so they take turns with agent updates.
+      const updates = yield* Semaphore.make(1);
+      let projectUpdate: Parameters<typeof runtime.handleSessionUpdate>[0] | undefined;
       return {
         ...runtime,
         handleReadTextFile: (handler) =>
           runtime.handleReadTextFile((request, context) =>
             handler(request, context).pipe(
-              Effect.onExit((exit) =>
-                Effect.sync(() => reads.attempted(request.path, Exit.isSuccess(exit))),
-              ),
+              Effect.onExit((exit) => {
+                const served = reads.attempted(request.path, Exit.isSuccess(exit));
+                if (served === undefined || projectUpdate === undefined) return Effect.void;
+                return updates
+                  .withPermit(
+                    projectUpdate({
+                      sessionId: served.sessionId,
+                      update: {
+                        sessionUpdate: "tool_call_update",
+                        toolCallId: served.toolCallId,
+                        status: "completed",
+                      },
+                    }),
+                  )
+                  .pipe(Effect.ignore);
+              }),
             ),
           ),
         prompt: (payload, promptOptions) =>
           Effect.sync(reads.reset).pipe(Effect.andThen(runtime.prompt(payload, promptOptions))),
-        handleSessionUpdate: (handler) =>
-          runtime.handleSessionUpdate((notification) => handler(reads.repair(notification))),
+        handleSessionUpdate: (handler) => {
+          projectUpdate = handler;
+          return runtime.handleSessionUpdate((notification) =>
+            updates.withPermit(handler(reads.repair(notification))),
+          );
+        },
         start: () =>
           runtime
             .start()
@@ -216,7 +238,9 @@ export function makeAntigravityAcpAdapterFlavor(
     normalizeToolCall: normalizeAntigravityToolCall,
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
-    supportsCompaction: true,
+    // ACP 1.3.0 treats /compact as ordinary model input.
+    supportsCompaction: false,
+    requiresSignIn: isAntigravitySignInRequiredError,
   };
 }
 

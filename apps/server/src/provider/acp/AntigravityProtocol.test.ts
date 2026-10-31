@@ -430,7 +430,7 @@ describe("Antigravity served reads", () => {
   it("credits a read T3 served before the agent announced it", () => {
     const reads = makeAntigravityReadRepair();
     reads.attempted("/repo/a.ts", true);
-    reads.repair({
+    const announced = reads.repair({
       sessionId: "session-1",
       update: {
         sessionUpdate: "tool_call",
@@ -441,6 +441,7 @@ describe("Antigravity served reads", () => {
         locations: [{ path: "/repo/a.ts" }],
       },
     });
+    expect(announced.update).toMatchObject({ status: "completed" });
     expect(flush(reads, "call_late")).toEqual({
       sessionUpdate: "tool_call_update",
       toolCallId: "call_late",

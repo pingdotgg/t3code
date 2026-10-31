@@ -215,6 +215,25 @@ describe("Antigravity model catalog", () => {
     );
   });
 
+  it("labels models that share a display name with their IDs", () => {
+    const models = buildAntigravityModelsFromSession({
+      configOptions: [
+        {
+          ...modelConfig,
+          currentValue: "gemini-3.8-flash",
+          options: [
+            { value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" },
+            { value: "gemini-3.8-flash-preview", name: "Gemini 3.8 Flash" },
+          ],
+        },
+      ],
+    });
+    expect(models.map((model) => model.name)).toEqual([
+      "Gemini 3.8 Flash",
+      "Gemini 3.8 Flash (gemini-3.8-flash-preview)",
+    ]);
+  });
+
   it("offers each model the thinking levels it reported when selected", () => {
     const thinking = (currentValue: string) =>
       ({

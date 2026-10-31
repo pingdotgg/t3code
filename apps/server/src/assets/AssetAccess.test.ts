@@ -1199,6 +1199,33 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.skipIf(!symlinksSupported)(
+    "reports image attachment dimensions when the attachments directory is a symlink",
+    () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-attachments-link-" });
+        const realAttachmentsDir = path.join(root, "real");
+        const linkedAttachmentsDir = path.join(root, "linked");
+        yield* fs.makeDirectory(realAttachmentsDir);
+        yield* fs.symlink(realAttachmentsDir, linkedAttachmentsDir);
+        const attachmentId = "thread-1-00000000-0000-4000-8000-000000000041";
+        yield* fs.writeFile(path.join(realAttachmentsDir, `${attachmentId}.png`), screenshotPng);
+
+        const result = yield* issueAssetUrl({
+          resource: { _tag: "attachment", attachmentId },
+        }).pipe(
+          Effect.provideService(ServerConfig.ServerConfig, {
+            ...config,
+            attachmentsDir: linkedAttachmentsDir,
+          }),
+        );
+        expect(result.imageDimensions).toEqual({ width: 390, height: 844 });
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("serves document attachments inline when a viewer requests it", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

@@ -82,15 +82,20 @@ export function buildAntigravityModelsFromSession(
         : [];
   const currentThinking = antigravityThinkingConfig(setup.configOptions);
   const seen = new Set<string>();
+  // The agent can list two IDs under one name; label the later ones so the picker tells them apart.
+  const names = new Set<string>();
   return entries.flatMap((entry): ServerProviderModel[] => {
     if (!entry.value.trim() || seen.has(entry.value)) return [];
     seen.add(entry.value);
+    const baseName = entry.name.trim() ? entry.name : entry.value;
+    const name = names.has(baseName) ? `${baseName} (${entry.value})` : baseName;
+    names.add(baseName);
     const observed =
       entry.value === currentValue ? (currentThinking ?? null) : thinkingLevels.get(entry.value);
     return [
       {
         slug: entry.value,
-        name: entry.name.trim() ? entry.name : entry.value,
+        name,
         isCustom: false,
         ...(entry.value === currentValue
           ? { isDefault: true, aliases: [ANTIGRAVITY_DEFAULT_MODEL] }
@@ -220,7 +225,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         : failure?._tag === "ProviderSetupError"
           ? failure.detail.trim() || "Antigravity could not complete its local health check."
           : missingInstallation
-            ? "Antigravity is not installed or its executable could not be found."
+            ? "Antigravity ACP runtime is not installed or its executable could not be found."
             : failure
               ? "Antigravity could not complete its local health check."
               : `Antigravity did not respond to its local health check within ${HEALTH_CHECK_TIMEOUT}.`;
