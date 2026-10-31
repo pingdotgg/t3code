@@ -9,7 +9,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { Suspense, type ComponentProps, type ReactElement, type ReactNode } from "react";
+import { use, Suspense, type ComponentProps, type ReactElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { useComposerDraftStore } from "~/composerDraftStore";
@@ -166,8 +166,13 @@ vi.mock("~/components/pullRequest/PullRequestGuideTab", () => ({
   PullRequestGuideTab: () => null,
 }));
 vi.mock("./PullRequestSidePanel", async (importOriginal) => {
-  await bodyImport.promise;
-  return importOriginal();
+  const { default: Body } = await importOriginal<typeof import("./PullRequestSidePanel")>();
+  return {
+    default: function DeferredBody(props: ComponentProps<typeof Body>) {
+      use(bodyImport.promise);
+      return <Body {...props} />;
+    },
+  };
 });
 
 import { RegisteredSidePanel } from "../bundledPanels";
@@ -286,7 +291,7 @@ const isLoading = (screen: Screen) =>
 
 describe("pull request side panel", () => {
   // Runs first, while the body's code is still held back.
-  it("shows the pull request loading state until its code arrives", async () => {
+  it("shows the pull request loading state until its body is ready", async () => {
     resetFixture();
     await using screen = await renderScreen(null, { router: false });
     await renderFor(screen, refOn("environment-new"));
