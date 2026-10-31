@@ -7,9 +7,11 @@ import { cn } from "~/lib/utils";
 // key hint: the kbd recipe with a muted label.
 function Kbd({
   className,
+  size = "default",
   variant = "default",
   ...props
 }: React.ComponentProps<"kbd"> & {
+  size?: "default" | "sm";
   /** `outline` always draws the standalone key, so the hint stays distinct inside surrounding text. */
   variant?: "default" | "outline";
 }) {
@@ -20,6 +22,7 @@ function Kbd({
         variant === "outline"
           ? "px-1.5 [background:var(--kbd-fill)] [box-shadow:var(--kbd-shadow)]"
           : "[background:var(--kbd-background,var(--kbd-fill))] [box-shadow:var(--kbd-box-shadow,var(--kbd-shadow))]",
+        size === "sm" && "h-4.5 min-w-0 gap-0 px-1.25",
         className,
       )}
       data-slot="kbd"
