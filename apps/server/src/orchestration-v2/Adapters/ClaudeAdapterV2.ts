@@ -24,6 +24,13 @@ import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
 import { toMcpElicitationResponse } from "../../provider/CodexMcpElicitation.ts";
 import {
+  AGENTCAST_MCP_SERVER,
+  AGENTCAST_READ_ONLY_TOOLS,
+  agentcastStdioServer,
+  resolveAgentcastLauncher,
+  type AgentcastLauncher,
+} from "../../provider/agentcastMcp.ts";
+import {
   type CanUseTool,
   type ElicitationRequest,
   type ElicitationResult,
@@ -1717,6 +1724,9 @@ export const CLAUDE_T3_MCP_TOOL_TIMEOUT_MS = 65 * 60 * 1_000;
 export function claudeMcpQueryOverrides(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly readOnlySandbox: boolean;
+  /** agentcast's write tools are pre-approved only in full-access; elsewhere canUseTool asks. */
+  readonly agentcast?: AgentcastLauncher | undefined;
+  readonly fullAccess?: boolean;
   readonly allowedTools?: ReadonlyArray<string>;
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
@@ -1729,8 +1739,17 @@ export function claudeMcpQueryOverrides(input: {
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
+  const agentcast = agentcastStdioServer(session.threadId, input.agentcast);
+  const agentcastAllowedTools =
+    agentcast === undefined
+      ? []
+      : input.fullAccess === true && !input.readOnlySandbox
+        ? [`mcp__${AGENTCAST_MCP_SERVER}__*`]
+        : AGENTCAST_READ_ONLY_TOOLS.map((tool) => `mcp__${AGENTCAST_MCP_SERVER}__${tool}`);
   return {
-    allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
+    allowedTools: Array.from(
+      new Set([...(input.allowedTools ?? []), ...mcpAllowedTools, ...agentcastAllowedTools]),
+    ),
     mcpServers: {
       "t3-code": {
         type: "http",
@@ -1740,6 +1759,16 @@ export function claudeMcpQueryOverrides(input: {
         },
         timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
       },
+      ...(agentcast === undefined
+        ? {}
+        : {
+            [AGENTCAST_MCP_SERVER]: {
+              type: "stdio",
+              command: agentcast.command,
+              args: [...agentcast.args],
+              env: { ...agentcast.env },
+            },
+          }),
     },
   };
 }
@@ -4499,6 +4528,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const { attachmentsDir, fileSystem, path, crypto, idAllocator, queryRunner } = adapterOptions;
+  const agentcastLauncher = yield* resolveAgentcastLauncher();
   const subagentModelCatalog = scopeClaudeModelCatalog(
     BUNDLED_CLAUDE_MODEL_CATALOG,
     adapterOptions.settings.customModels,
@@ -10090,9 +10120,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const queryPolicy = yield* queryPolicyForTurn(turnInput);
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
           const mcpOverrides = claudeMcpQueryOverrides({
+            agentcast: agentcastLauncher,
             mcpSession,
             readOnlySandbox:
               sandboxPolicyKindForClaudeRuntimePolicy(turnInput.runtimePolicy) === "readOnly",
+            fullAccess: turnInput.runtimePolicy.runtimeMode === "full-access",
             ...(queryPolicy.allowedTools === undefined
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
