@@ -58,11 +58,8 @@ const PI_PRESENTATION = {
 
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const PI_RPC_DISCOVERY_TIMEOUT_MS = 30_000;
-/**
- * get_entries arrived in 0.80.3 and agent_settled landed in source at 0.80.4.
- * Version 0.80.5 was the first published package containing both hooks.
- */
-export const MINIMUM_PI_VERSION = "0.80.5";
+// Earlier releases persist background set_thinking_level requests as the user's global default.
+export const MINIMUM_PI_VERSION = "0.84.3";
 /** `pi auth check --json --no-refresh` arrived in 0.84.1. */
 const PI_AUTH_CHECK_VERSION = "0.84.1";
 
@@ -224,9 +221,10 @@ export const discoverPiCommandsForCwd = Effect.fn("discoverPiCommandsForCwd")(
   }),
 );
 
-const runPiVersionCommand = Effect.fn("PiProviderStatus.runPiVersionCommand")(function* (
+export const runPiVersionCommand = Effect.fn("PiProviderStatus.runPiVersionCommand")(function* (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv,
+  cwd?: string,
 ) {
   const command = piSettings.binaryPath || "pi";
   const spawnCommand = yield* resolveSpawnCommand(command, ["--version"], {
@@ -237,6 +235,7 @@ const runPiVersionCommand = Effect.fn("PiProviderStatus.runPiVersionCommand")(fu
     ChildProcess.make(spawnCommand.command, spawnCommand.args, {
       env: environment,
       shell: spawnCommand.shell,
+      ...(cwd === undefined ? {} : { cwd }),
     }),
   );
 });
