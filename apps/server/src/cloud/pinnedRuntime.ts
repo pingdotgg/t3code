@@ -394,6 +394,32 @@ export function launcherOwnsVersionsDir(
   return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
+/**
+ * Where the symlink at `link` points, not following that target any further: its text, and the
+ * same with its folder resolved on disk, which sees through a symlinked T3 home. Empty for a
+ * non-link, or a target with `.` or `..`: Node resolves those as text, but the OS after a
+ * symlinked folder, and t3 never writes them.
+ */
+export const directLinkTargets = Effect.fn("cloud.pinned_runtime.direct_link_targets")(function* (
+  link: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const text = yield* fs.readLink(link).pipe(Effect.option);
+  if (
+    Option.isNone(text) ||
+    text.value.split(/[\\/]/).some((part) => part === "." || part === "..")
+  ) {
+    return [];
+  }
+  const target = path.resolve(path.dirname(link), text.value);
+  const physical = yield* fs.realPath(path.dirname(target)).pipe(
+    Effect.map((directory) => [path.join(directory, path.basename(target))]),
+    Effect.orElseSucceed(() => []),
+  );
+  return [target, ...physical];
+});
+
 /** Whether `candidate` is a version's own executable, `<versionsDir>/<version>/t3[.exe]`. */
 export function isVersionExecutable(
   path: Path.Path,

@@ -14,6 +14,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import packageJson from "../../package.json" with { type: "json" };
 import {
+  directLinkTargets,
   generatedWindowsShimTarget,
   isVersionExecutable,
   pinnedRuntimeCommandLink,
@@ -62,21 +63,19 @@ const classifyCommandLink = Effect.fn("cli.install.classify_command_link")(funct
   const commandLink = pinnedRuntimeCommandLink(path, baseDir);
   const realCommandLink = yield* real(commandLink);
   if ((yield* real(link)) === realCommandLink) return "current";
-  const text = yield* fs.readLink(link).pipe(Effect.option);
-  if (Option.isNone(text)) {
+  // Only the direct target: a chain through another tool's link is that tool's.
+  const targets = yield* directLinkTargets(link);
+  if (targets.length === 0 && Option.isNone(yield* fs.readLink(link).pipe(Effect.option))) {
     return (yield* fs.exists(link).pipe(Effect.orElseSucceed(() => true))) ? "foreign" : "missing";
   }
-  const target = path.resolve(path.dirname(link), text.value);
-  const realTarget = yield* real(target);
-  if (target === commandLink || realTarget === realCommandLink) return "current";
+  if (targets.includes(commandLink) || targets.includes(realCommandLink)) return "current";
   const versionsDir = pinnedRuntimeVersionsDir(path, baseDir);
   const realVersionsDir = yield* fs
     .realPath(versionsDir)
     .pipe(Effect.orElseSucceed(() => versionsDir));
   const desktopLauncher = path.join(baseDir, "bin", "t3");
   const realDesktopLauncher = yield* real(desktopLauncher);
-  // Only the direct target: a chain through another tool's link is that tool's.
-  const older = [target, realTarget].some(
+  const older = targets.some(
     (candidate) =>
       isVersionExecutable(path, versionsDir, candidate) ||
       isVersionExecutable(path, realVersionsDir, candidate) ||

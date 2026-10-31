@@ -14,6 +14,7 @@ import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
 import * as BootService from "../cloud/bootService.ts";
 import {
+  directLinkTargets,
   generatedWindowsShimTarget,
   isVersionExecutable,
   pinnedRuntimeVersionsDir,
@@ -71,9 +72,7 @@ const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
   const realVersionsDir = yield* fs
     .realPath(versionsDir)
     .pipe(Effect.orElseSucceed(() => versionsDir));
-  const linkText = yield* fs.readLink(launcher).pipe(Effect.option);
-  // The link's own text keeps a pruned (dangling) target; its real folder sees through a
-  // symlinked T3 home. Only a direct link counts: a chain through another tool's link is theirs.
+  // Only a direct link counts: a chain through another tool's link is theirs.
   const targets =
     platform === "win32"
       ? [
@@ -82,17 +81,7 @@ const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
             Effect.orElseSucceed(() => undefined),
           ),
         ]
-      : Option.isNone(linkText)
-        ? []
-        : [
-            path.resolve(path.dirname(launcher), linkText.value),
-            yield* fs
-              .realPath(path.dirname(path.resolve(path.dirname(launcher), linkText.value)))
-              .pipe(
-                Effect.map((directory) => path.join(directory, path.basename(linkText.value))),
-                Effect.orElseSucceed(() => undefined),
-              ),
-          ];
+      : yield* directLinkTargets(launcher);
   // The command link sits beside versions; a link to it may dangle after a prune.
   const commandLinks = [versionsDir, realVersionsDir].map((dir) =>
     path.join(path.dirname(dir), "t3"),

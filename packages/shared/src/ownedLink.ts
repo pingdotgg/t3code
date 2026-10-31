@@ -2,12 +2,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Random from "effect/Random";
 
 /**
  * Replaces `link` with a symlink to `target`, or removes it without a `target`, when `owns` holds
  * for what is there. Another program can write `link` after any earlier check, so the entry is
  * moved aside and checked there. Returns false when it was not ours; it is then put back without
- * overwriting anything newer, or left in a `<link>.<random>` folder beside `link` if that fails.
+ * overwriting anything newer, or left beside `link` as `.<name>.<pid>.<n>.old` if that fails.
  */
 export const replaceOwnedLink = Effect.fn("ownedLink.replace")(function* <E, R>(input: {
   readonly link: string;
@@ -16,16 +17,15 @@ export const replaceOwnedLink = Effect.fn("ownedLink.replace")(function* <E, R>(
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  // A new folder of its own, so nothing already there is ever replaced by the move.
-  const folder = yield* fs.makeTempDirectory({
-    directory: path.dirname(input.link),
-    prefix: `${path.basename(input.link)}.`,
-  });
-  const aside = path.join(folder, path.basename(input.link));
-  const discard = fs.remove(aside).pipe(Effect.andThen(fs.remove(folder, { recursive: true })));
-  yield* fs
-    .rename(input.link, aside)
-    .pipe(Effect.tapError(() => fs.remove(folder, { recursive: true }).pipe(Effect.ignore)));
+  // A sibling, so a relative link resolves the same there, reserved so nothing left by an
+  // earlier run is replaced. A directory cannot be renamed over it, so one fails here.
+  const aside = path.join(
+    path.dirname(input.link),
+    `.${path.basename(input.link)}.${process.pid}.${yield* Random.nextIntBetween(0, 0x7fffffff)}.old`,
+  );
+  yield* fs.writeFileString(aside, "", { flag: "wx" });
+  const discard = fs.remove(aside);
+  yield* fs.rename(input.link, aside).pipe(Effect.tapError(() => discard.pipe(Effect.ignore)));
   if (!(yield* input.owns(aside))) {
     const text = yield* fs.readLink(aside).pipe(Effect.option);
     yield* (

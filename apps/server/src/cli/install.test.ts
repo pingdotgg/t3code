@@ -94,6 +94,13 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       yield* fs.symlink(path.join(runtimeDir, "versions/0.0.1/node"), link);
       const sibling = yield* provide(installCli()).pipe(Effect.flip);
       assert.include(sibling.message, "Another t3 is already at");
+      // A relative older link still resolves the same once moved aside.
+      const rootLink = path.join(root, "t3");
+      yield* fs.symlink(`.t3/runtime/versions/${VERSION}/t3`, rootLink);
+      yield* provide(installCli(), { T3CODE_INSTALL_BIN_DIR: root });
+      assert.equal(yield* fs.readLink(rootLink), commandLink);
+      yield* fs.remove(rootLink);
+
       // This home's desktop launcher is replaced, as install.sh does.
       yield* fs.remove(link);
       yield* fs.symlink(path.join(root, ".t3/bin/t3"), link);

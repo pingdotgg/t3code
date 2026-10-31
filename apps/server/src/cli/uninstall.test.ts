@@ -49,6 +49,13 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       yield* fs.symlink(exe, managed);
       yield* fs.symlink(managed, managedBin);
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: managedBin, versionsDir }));
+      // `..` after a symlinked folder leads where the folder does, not back into this home.
+      const hop = path.join(root, "runtime/hop");
+      const hopped = path.join(root, "bin/t3-hopped");
+      yield* fs.makeDirectory(path.join(root, "other/runtime/inner"), { recursive: true });
+      yield* fs.symlink(path.join(root, "other/runtime/inner"), hop);
+      yield* fs.symlink(`${hop}/../versions/1.0.0/t3`, hopped);
+      assert.isUndefined(yield* findOwnedLauncher({ launchedAs: hopped, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: theirs, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: copy, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: undefined, versionsDir }));
