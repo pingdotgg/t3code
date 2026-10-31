@@ -98,8 +98,11 @@ server headers or token.
 ### Cursor Agent SDK V2
 
 Cursor receives the same authenticated HTTP MCP endpoint through the SDK's
-`mcpServers` agent and send options. The adapter passes the authorization header
-to the SDK but projects only redacted option metadata into protocol diagnostics.
+`mcpServers` on `Agent.create` / `Agent.resume` and each `send`. With
+`@cursor/sdk` 1.0.39+, send-level servers replace only the create-time inline
+set; ambient servers from `settingSources` (`project`, `user`, `team`, `mdm`,
+`plugins`) stay available. The adapter passes the authorization header to the
+SDK but projects only redacted option metadata into protocol diagnostics.
 
 ### Grok ACP V2
 
