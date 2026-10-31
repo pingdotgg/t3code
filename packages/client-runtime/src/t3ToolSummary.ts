@@ -391,9 +391,15 @@ export function summarizeT3ToolCalls(
     case "link-pr":
       label = phrase("Linked", "link", quantity(selected.length, "pull request"));
       break;
-    case "unlink-pr":
-      label = phrase("Unlinked", "unlink", quantity(selected.length, "pull request"));
+    case "unlink-pr": {
+      const count = selected.reduce(
+        (sum, call) =>
+          sum + (typeof call.output?.unlinkedCount === "number" ? call.output.unlinkedCount : 1),
+        0,
+      );
+      label = phrase("Unlinked", "unlink", quantity(count, "pull request"));
       break;
+    }
     case "watch-pr":
       label = phrase("Watching", "watch", quantity(selected.length, "pull request"));
       break;
