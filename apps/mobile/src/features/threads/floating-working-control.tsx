@@ -184,7 +184,7 @@ export function FloatingWorkingControl(props: {
     props.status !== null ? (
       <View
         pointerEvents={statusInteractive ? "box-none" : "none"}
-        className="h-11 items-center justify-center"
+        className={`h-11 items-center justify-center ${extensionOnly ? "bg-black" : ""}`}
       >
         <Animated.View className="h-11" style={capsuleSizerStyle} />
         <View
@@ -342,7 +342,7 @@ export function FloatingWorkingControl(props: {
         <View pointerEvents="box-none" className="flex-row items-center gap-4">
           <Animated.View
             pointerEvents={capsuleInteractive ? "box-none" : "none"}
-            className={`h-11 items-center justify-center overflow-hidden rounded-full border border-border shadow-md shadow-black/10 ${extensionOnly ? "bg-black" : "bg-glass-fallback"}`}
+            className="h-11 items-center justify-center overflow-hidden rounded-full border border-border bg-glass-fallback shadow-md shadow-black/10"
             style={capsuleStyle}
           >
             {capsuleContent}
