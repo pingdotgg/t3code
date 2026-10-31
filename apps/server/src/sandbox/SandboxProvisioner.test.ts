@@ -638,6 +638,7 @@ describe("provider limits", () => {
         concurrency: { active: 1, max: 300 },
         startCost: "included",
         maxTtlMinutes: 43200,
+        canSaveTemplates: true,
         sizes: [
           { id: "default", available: true },
           { id: "xlarge", available: false, reason: "Needs the $500 plan." },
@@ -668,6 +669,8 @@ describe("provider limits", () => {
         startCost: "paid",
         startDollars: 0.03,
         maxTtlMinutes: 120,
+        // Boat refuses saved snapshots on a trial, but only after T3 would have been reset.
+        canSaveTemplates: false,
         plan: "Trial",
       });
       expect(yield* readLimits(boatLimitsFixture({ nextStartDollars: null }))).toMatchObject({
@@ -1565,7 +1568,12 @@ describe("SandboxProvisioner lifecycle", () => {
   // second poll, and a fresh environment id once T3's state is gone.
   const templateClient = (
     requests: Array<string>,
-    options: { readonly saveStatus?: "ready" | "failed"; readonly commands?: Array<string> } = {},
+    options: {
+      readonly saveStatus?: "ready" | "failed";
+      readonly commands?: Array<string>;
+      /** `GET /limits` answers with this; without it the provider fails to report limits. */
+      readonly limits?: () => unknown;
+    } = {},
   ) => {
     let stopped = false;
     let scrubbed = false;
@@ -1574,7 +1582,10 @@ describe("SandboxProvisioner lifecycle", () => {
       Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body, { status })));
     return HttpClient.make((request) => {
       requests.push(`${request.method} ${request.url}`);
-      if (request.url.endsWith("/limits")) return json(request, { ok: false }, 500);
+      if (request.url.endsWith("/limits")) {
+        const limits = options.limits?.();
+        return limits === undefined ? json(request, { ok: false }, 500) : json(request, limits);
+      }
       if (request.url.endsWith("/commands")) {
         const command =
           request.body._tag === "Uint8Array"
@@ -1627,8 +1638,18 @@ describe("SandboxProvisioner lifecycle", () => {
     const requests: Array<string> = [];
     const commands: Array<string> = [];
     const repository = memoryRepository([runningRecord]);
+    let limits: unknown = trialLimits;
     return Effect.gen(function* () {
       const provisioner = yield* SandboxProvisioner.SandboxProvisioner;
+      // A plan that cannot save is refused before anything on the machine changes.
+      const refused = yield* provisioner
+        .saveTemplate({ environmentId: testEnvironmentId, name: "web-stack" })
+        .pipe(Effect.flip);
+      expect(refused.code).toBe("templates_unavailable");
+      expect(requests).toEqual(["GET https://boat.dev/api/v1/limits"]);
+      limits = undefined;
+      requests.length = 0;
+
       const fiber = yield* provisioner
         .saveTemplate({ environmentId: testEnvironmentId, name: "web-stack" })
         .pipe(Effect.forkChild);
@@ -1644,6 +1665,7 @@ describe("SandboxProvisioner lifecycle", () => {
       // The snapshot copies the disk, so T3's identity and sessions are gone before the stop that
       // the save captures, and the save waits for the stop to finish.
       expect(requests).toEqual([
+        "GET https://boat.dev/api/v1/limits",
         `POST https://boat.dev/api/v1/sandboxes/${boatSandboxId}/commands`,
         `POST https://boat.dev/api/v1/sandboxes/${boatSandboxId}/stop`,
         `GET https://boat.dev/api/v1/sandboxes/${boatSandboxId}`,
@@ -1661,7 +1683,10 @@ describe("SandboxProvisioner lifecycle", () => {
       Effect.provide(
         provisionerLayer({ sandboxProviders: { boat: { apiKey: "boat_test" } } }, repository.layer),
       ),
-      Effect.provideService(HttpClient.HttpClient, templateClient(requests, { commands })),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        templateClient(requests, { commands, limits: () => limits }),
+      ),
     );
   });
 

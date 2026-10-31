@@ -787,6 +787,20 @@ const make = Effect.gen(function* () {
     }
     const apiKey = yield* resolveApiKey(record.provider, undefined);
     const config = { apiKey };
+    // The provider refuses a save only after the reset would have run, so a plan that cannot save
+    // is refused here first. Unknown limits let the save through, as with starts.
+    const limits =
+      driver.limits === undefined
+        ? null
+        : yield* onHttp(driver.limits({ config })).pipe(Effect.orElseSucceed(() => null));
+    if (limits?.canSaveTemplates === false) {
+      return yield* new SandboxProviderError({
+        provider: record.provider,
+        stage: "config",
+        code: "templates_unavailable",
+        detail: `Your ${driver.info.label} plan cannot save templates. Nothing on this sandbox changed.`,
+      });
+    }
     yield* onHttp(
       driver.execute({
         config,

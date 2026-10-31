@@ -246,6 +246,8 @@ const toLimits = (raw: typeof BoatLimits.Type): SandboxProviderLimits => {
           ? { startCost: "paid" as const, startDollars: raw.nextStartDollars }
           : { startCost: "included" as const }),
     maxTtlMinutes: isTrial ? TRIAL_MAX_TTL_MINUTES : MAX_TTL_MINUTES,
+    // Trials get `403 trial_saved_snapshots_not_allowed`.
+    canSaveTemplates: !isTrial,
     ...(raw.machineTypes === undefined || raw.machineTypes === null
       ? {}
       : {

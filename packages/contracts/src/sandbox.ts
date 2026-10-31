@@ -93,6 +93,8 @@ export const SandboxProviderLimits = Schema.Struct({
   startCost: Schema.optionalKey(Schema.Literals(["included", "paid", "refused"])),
   startDollars: Schema.optionalKey(Schema.Number),
   maxTtlMinutes: Schema.optionalKey(Schema.Int),
+  /** False when the plan refuses to save templates, so a save is refused before T3 is reset. */
+  canSaveTemplates: Schema.optionalKey(Schema.Boolean),
   sizes: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
