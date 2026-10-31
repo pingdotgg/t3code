@@ -288,6 +288,6 @@ describe("workspace area focus", () => {
     expect(outline()).toBe("solid");
 
     await userEvent.click(home);
-    expect(outline(), "clicking the ringed area keeps its ring").toBe("none");
+    expect(outline(), "clicking the ringed area removes its ring").toBe("none");
   });
 });
