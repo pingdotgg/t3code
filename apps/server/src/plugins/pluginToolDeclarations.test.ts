@@ -191,6 +191,17 @@ describe("compileInputSchema", () => {
   describe("the subset boundary", () => {
     const object = (properties: Record<string, unknown>) => ({ type: "object", properties });
     const property = (schema: unknown) => object({ x: schema });
+    const repeatedReferences = Object.fromEntries([
+      ["Leaf", { type: "string" }],
+      ...Array.from({ length: 13 }, (_, index) => [
+        `Level${index}`,
+        {
+          anyOf: Array.from({ length: 2 }, () => ({
+            $ref: `#/$defs/${index === 0 ? "Leaf" : `Level${index - 1}`}`,
+          })),
+        },
+      ]),
+    ]);
 
     it.each<Record<string, unknown>>([
       { type: "object" },
@@ -266,6 +277,11 @@ describe("compileInputSchema", () => {
         "an unused definition with an unguarded cycle",
         { type: "object", $defs: { A: { anyOf: [{ $ref: "#/$defs/A" }] } } },
         "reference cycle",
+      ],
+      [
+        "exponentially repeated acyclic references",
+        { ...property({ $ref: "#/$defs/Level12" }), $defs: repeatedReferences },
+        "references expand beyond",
       ],
       ["a bad definition name", { type: "object", $defs: { "a b": {} } }, "#/$defs/a b"],
       ["nested $defs", property({ $defs: {} }), "only supported at the root"],

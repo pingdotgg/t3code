@@ -5,11 +5,12 @@ export interface NavigationFrame {
   readonly url: string;
   readonly origin: string;
   readonly frameToken: string;
+  readonly name: string;
   readonly parent: NavigationFrame | null;
 }
 
 const isViewDocument = (frame: NavigationFrame) =>
-  frame.url === "about:srcdoc" && frame.origin === "null";
+  frame.name === "t3-plugin-view" && frame.url === "about:srcdoc" && frame.origin === "null";
 
 export function shouldVetoViewFrameNavigation(input: {
   readonly url: string;

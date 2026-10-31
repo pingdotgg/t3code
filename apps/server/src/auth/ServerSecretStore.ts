@@ -150,8 +150,11 @@ export class ServerSecretStore extends Context.Service<
   }
 >()("t3/auth/ServerSecretStore") {}
 
-// Signal 0 checks ownership without delivering a signal. Unknown errors retain the temporary.
-const isWriterAlive = (pid: number) => {
+let processInstance: string | undefined;
+
+// A restarted container often reuses its own PID; its old temporaries belong to a different instance.
+const isWriterAlive = (pid: number, instance: string | undefined) => {
+  if (pid === process.pid) return instance === processInstance;
   try {
     process.kill(pid, 0);
     return true;
@@ -163,6 +166,7 @@ const isWriterAlive = (pid: number) => {
 /** @public */
 export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
+  processInstance ??= (crypto.nextIntUnsafe() >>> 0).toString(16).padStart(8, "0");
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
@@ -183,13 +187,13 @@ export const make = Effect.gen(function* () {
   const removeTemporaryFiles = Effect.fnUntraced(function* (name?: string) {
     for (const file of yield* fileSystem.readDirectory(serverConfig.secretsDir)) {
       const match =
-        /^(.*\.bin)\.(?:(\d+)\.)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/i.exec(
+        /^(.*\.bin)\.(?:(\d+)(?:-([0-9a-f]{8}))?\.)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/i.exec(
           file,
         );
       if (
         match !== null &&
         (name === undefined || match[1] === `${name}.bin`) &&
-        (match[2] === undefined || !isWriterAlive(Number(match[2])))
+        (match[2] === undefined || !isWriterAlive(Number(match[2]), match[3]))
       ) {
         yield* fileSystem.remove(path.join(serverConfig.secretsDir, file), { force: true });
       }
@@ -231,7 +235,7 @@ export const make = Effect.gen(function* () {
           }),
       ),
       Effect.flatMap((uuid) => {
-        const tempPath = `${secretPath}.${process.pid}.${uuid}.tmp`;
+        const tempPath = `${secretPath}.${process.pid}-${processInstance}.${uuid}.tmp`;
         return Effect.gen(function* () {
           yield* fileSystem.writeFile(tempPath, value);
           yield* fileSystem.chmod(tempPath, 0o600);
@@ -261,7 +265,7 @@ export const make = Effect.gen(function* () {
           }),
       ),
       Effect.flatMap((uuid) => {
-        const tempPath = `${secretPath}.${process.pid}.${uuid}.tmp`;
+        const tempPath = `${secretPath}.${process.pid}-${processInstance}.${uuid}.tmp`;
         return Effect.gen(function* () {
           yield* Effect.scoped(
             Effect.gen(function* () {
