@@ -19,20 +19,24 @@ const LINEAR_IDLE_TTL_MS = 30_000;
  * Keeps the previous answer on screen while a re-read is in flight or has failed
  * (stale-while-revalidate); a Linear outage must not blank the page.
  */
-function keepPrevious<Target, A, E>(
+export function keepPrevious<Target, A, E>(
   family: (target: Target) => Atom.Atom<AsyncResult.AsyncResult<A, E>>,
 ): (target: Target) => Atom.Atom<AsyncResult.AsyncResult<A, E>> {
   const wrapped = Atom.family((source: Atom.Atom<AsyncResult.AsyncResult<A, E>>) =>
-    Atom.readable((get) => {
-      const result = get(source);
-      if (result._tag === "Success" && !result.waiting) return result;
-      const previous = get.self<AsyncResult.AsyncResult<A, E>>();
-      const value = Option.flatMap(previous, AsyncResult.value);
-      if (Option.isNone(value)) return result;
-      return result._tag === "Failure"
-        ? AsyncResult.failureWithPrevious(result.cause, { previous, waiting: result.waiting })
-        : AsyncResult.success<A, E>(value.value, result);
-    }),
+    Atom.readable(
+      (get) => {
+        const result = get(source);
+        if (result._tag === "Success" && !result.waiting) return result;
+        const previous = get.self<AsyncResult.AsyncResult<A, E>>();
+        const value = Option.flatMap(previous, AsyncResult.value);
+        if (Option.isNone(value)) return result;
+        return result._tag === "Failure"
+          ? AsyncResult.failureWithPrevious(result.cause, { previous, waiting: result.waiting })
+          : AsyncResult.success<A, E>(value.value, result);
+      },
+      // Without this a refresh only re-derives the wrapper and never re-runs the query.
+      (refresh) => refresh(source),
+    ),
   );
   return (target) => wrapped(family(target));
 }
@@ -78,8 +82,8 @@ export function createLinearEnvironmentAtoms<R, E>(
   );
   const refreshStatus = (
     registry: AtomRegistry.AtomRegistry,
-    target: Parameters<typeof status>[0],
-  ) => registry.refresh(status(target));
+    { environmentId }: { readonly environmentId: EnvironmentId },
+  ) => registry.refresh(status({ environmentId, input: {} }));
 
   return {
     refreshes,
