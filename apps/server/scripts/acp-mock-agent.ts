@@ -38,6 +38,7 @@ const omitInitializeModelState = process.env.T3_ACP_OMIT_INITIALIZE_MODEL_STATE 
 const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
 const floodStderr = process.env.T3_ACP_FLOOD_STDERR === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
+const emitTrackedToolCallKindThenHang = process.env.T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG;
 const clientFsProbePath = process.env.T3_ACP_CLIENT_FS_PROBE_PATH;
 const clientFsProbeLogPath = process.env.T3_ACP_CLIENT_FS_PROBE_LOG_PATH;
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -1263,6 +1264,21 @@ const program = Effect.gen(function* () {
 
       if (failPrompt || promptCount === failPromptOrdinal) {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
+      }
+
+      if (emitTrackedToolCallKindThenHang !== undefined) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tracked-tool-call",
+            title: "git status",
+            kind: emitTrackedToolCallKindThenHang as AcpSchema.ToolKind,
+            status: "pending",
+            rawInput: { command: "git status" },
+          },
+        });
+        return yield* Effect.never;
       }
 
       if (hangPromptForever || (emitEmptySuccessfulBashThenHang && promptCount === 2)) {
