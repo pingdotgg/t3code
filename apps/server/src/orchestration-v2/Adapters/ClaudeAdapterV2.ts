@@ -3985,6 +3985,10 @@ interface ActiveClaudeTurnContext {
     emittedNativeItemIds: Set<string>;
     // The CLI repeats a notice that ends a prompt as the turn's result text.
     noticeTexts: Set<string>;
+    // The CLI reports an API failure as an assistant frame and again as the
+    // turn's result. The frame waits for the turn's end so the failure can
+    // show it once.
+    apiErrorFrame: { readonly nativeItemId: string; readonly text: string } | null;
   };
   readonly reasoning: {
     messageId: string | null;
@@ -7416,6 +7420,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             subagentToolCalls.delete(toolCall.nativeItemId);
           }
 
+          const apiErrorFrame = input.context.assistant.apiErrorFrame;
+          input.context.assistant.apiErrorFrame = null;
+          if (
+            apiErrorFrame !== null &&
+            (input.status !== "failed" ||
+              input.failure?.message !==
+                makeProviderFailure({ message: apiErrorFrame.text }).message.slice(0, 500).trim())
+          ) {
+            yield* emitAssistantTextArtifacts({ context: input.context, ...apiErrorFrame });
+          }
+
           if (
             input.context.assistant.emittedNativeItemIds.size === 0 &&
             input.context.assistant.fallbackText.length > 0
@@ -9256,6 +9271,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           if (assistantText !== null && assistantText.text.length > 0) {
+            const heldApiError = context.assistant.apiErrorFrame;
+            context.assistant.apiErrorFrame = null;
+            if (heldApiError !== null) {
+              yield* emitAssistantTextArtifacts({ context, ...heldApiError });
+            }
+            if (message.type === "assistant" && message.error !== undefined) {
+              context.assistant.apiErrorFrame = assistantText;
+              return;
+            }
             yield* emitAssistantTextArtifacts({
               context,
               nativeItemId: assistantText.nativeItemId,
@@ -10447,6 +10471,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 fallbackNativeItemId: `assistant:${turnInput.runId}`,
                 emittedNativeItemIds: new Set(),
                 noticeTexts: new Set(),
+                apiErrorFrame: null,
               },
               reasoning: {
                 messageId: null,
