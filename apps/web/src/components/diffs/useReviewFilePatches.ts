@@ -7,10 +7,13 @@ import type {
 } from "@t3tools/contracts";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { useContext, useState } from "react";
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
+import { resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
 import { reviewEnvironment } from "~/state/review";
+import { parsePatchOffMainThread } from "./parsePatchOffMainThread";
 
 const filePathCollator = new Intl.Collator(undefined, {
   numeric: true,
@@ -214,13 +217,25 @@ function sortedReviewFiles(source: ReviewDiffPreviewSource | null) {
 
 type ReviewPatchTarget = Parameters<typeof reviewEnvironment.diffFilePatch>[0];
 
+type ParsedPatch = { source: ReviewDiffPreviewSource; patch: RenderablePatch | null };
+
+// Parses outlive the panel like their source queries, and a revalidation that returns the same
+// text keeps the previous parse, so reopening the panel parses nothing.
 const parsedPatchAtom = Atom.family((key: string) => {
   const [theme, target] = JSON.parse(key) as ["light" | "dark", ReviewPatchTarget];
-  return Atom.map(reviewEnvironment.diffFilePatch(target), (result) =>
-    AsyncResult.map(result, (source) => {
-      let patch = getRenderablePatch(source.diff, `diff-panel:${theme}`, {
-        compactPartialHunkOffsets: true,
+  return Atom.make((get) =>
+    Effect.gen(function* () {
+      // Waiting out a revalidation keeps the previous parse visible and the refresh pending.
+      const source = yield* get.result(reviewEnvironment.diffFilePatch(target), {
+        suspendOnWaiting: true,
       });
+      const previous = Option.getOrUndefined(
+        Option.flatMap(get.self<AsyncResult.AsyncResult<ParsedPatch>>(), AsyncResult.value),
+      );
+      if (previous?.source.diff === source.diff) return { source, patch: previous.patch };
+      let patch = yield* Effect.promise(() =>
+        parsePatchOffMainThread(source.diff, `diff-panel:${theme}`),
+      );
       if (patch?.kind === "files" && patch.files.length === 1 && source.files?.length === 1) {
         const stat = source.files[0]!;
         const file = { ...patch.files[0]!, name: stat.path };
@@ -230,7 +245,7 @@ const parsedPatchAtom = Atom.family((key: string) => {
       }
       return { source, patch };
     }),
-  );
+  ).pipe(Atom.setIdleTTL(5 * 60_000));
 });
 
 const reviewPatchesAtom = Atom.family((key: string) => {
