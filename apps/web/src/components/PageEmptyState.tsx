@@ -12,6 +12,7 @@ export const PAGE_EMPTY_GHOST_OPACITY = ["opacity-70", "opacity-45", "opacity-25
  */
 export function PageEmptyState({
   fill = false,
+  align = "center",
   icon,
   ghostRows = 0,
   ghost,
@@ -20,6 +21,7 @@ export function PageEmptyState({
   children,
 }: {
   fill?: boolean;
+  align?: "center" | "start";
   icon?: ReactNode;
   ghostRows?: number;
   ghost?: ReactNode;
@@ -32,6 +34,7 @@ export function PageEmptyState({
       className={cn(
         "mx-auto flex w-full max-w-150 flex-col items-center gap-7 pt-8 text-center",
         fill && "flex-1 justify-center pb-16",
+        align === "start" && "max-w-105 items-start text-left",
       )}
     >
       {ghost !== undefined ? (
