@@ -12,10 +12,14 @@ const searchBar = vi.hoisted(() => ({
 vi.mock("react-native", () => ({ Platform: { OS: "ios" } }));
 // On a phone the Settings route sits above Home and only selects what Home draws, so Home,
 // which hosts this toolbar, is not the focused route.
-vi.mock("@react-navigation/native", () => ({
-  useIsFocused: () => false,
-  useFocusEffect: () => {},
-}));
+vi.mock("@react-navigation/native", () => {
+  const state = { index: 1, routes: [{ name: "Home" }, { name: "Settings" }] };
+  return {
+    useIsFocused: () => false,
+    useFocusEffect: () => {},
+    useNavigationState: <T,>(selector: (value: typeof state) => T) => selector(state),
+  };
+});
 vi.mock("../../native/native-glass", () => ({ NATIVE_LIQUID_GLASS_SUPPORTED: true }));
 vi.mock("../../native/native-layout-metrics", () => ({ useDeviceType: () => "phone" }));
 vi.mock("../../native/StackHeader", () => ({
