@@ -8,6 +8,7 @@ import { resolvePullRequestAuthorFilter, VcsProcessExitError } from "@t3tools/co
 import type {
   PullRequestAction,
   PullRequestActor,
+  PullRequestCheck,
   PullRequestComment,
   PullRequestCommit,
   PullRequestInvolvement,
@@ -45,6 +46,7 @@ import {
   decodeProjectLabelsJson,
   decodeProjectUsersJson,
   decodeRepositoryBlobsJson,
+  decodeTriggerJobChecksJson,
   decodeViewerJson,
   gitLabAwardName,
   MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
@@ -245,6 +247,8 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly host?: string | undefined;
       readonly repository: string;
       readonly number: number;
+      /** `false` skips the trigger job read; the permission check before every write does. */
+      readonly downstreamChecks?: boolean;
     }) => Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError>;
 
     /** Line counts for the given merge requests; one with no answer is left out. */
@@ -996,6 +1000,29 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // Best-effort: a trigger job read that fails, or a full page that may have left out the one
+  // whose pipeline failed, adds no rows and leaves the detail as it was.
+  const triggerJobChecks = (input: {
+    readonly cwd: string;
+    readonly pipeline: { readonly id: number; readonly projectId: number };
+  }): Effect.Effect<ReadonlyArray<PullRequestCheck>> =>
+    api({
+      cwd: input.cwd,
+      // `bridges` rather than `trigger_jobs`: GitLab 19.2 deprecates it but still serves it, and
+      // older self-managed installs know no other name.
+      path: `projects/${input.pipeline.projectId}/pipelines/${input.pipeline.id}/bridges?${query([
+        ["per_page", String(MAX_PAGE_SIZE)],
+      ])}`,
+    }).pipe(
+      Effect.map((result) => {
+        const decoded = decodeTriggerJobChecksJson(result.stdout.trim());
+        return Result.isSuccess(decoded) && decoded.success.rawCount < MAX_PAGE_SIZE
+          ? decoded.success.checks
+          : [];
+      }),
+      Effect.orElseSucceed((): ReadonlyArray<PullRequestCheck> => []),
+    );
+
   const projectUsers = (input: {
     readonly cwd: string;
     readonly host?: string | undefined;
@@ -1297,7 +1324,19 @@ export const make = Effect.gen(function* () {
       return listPage({ ...input, page, collected: [], cursorAdvance: 0 });
     }),
 
-    getMergeRequestDetail: mergeRequestDetail,
+    getMergeRequestDetail: Effect.fn("GitLabPullRequestCli.getMergeRequestDetail")(
+      function* (input) {
+        const detail = yield* mergeRequestDetail(input);
+        if (input.downstreamChecks === false || detail.headPipeline === undefined) return detail;
+        const downstream = yield* triggerJobChecks({
+          cwd: input.cwd,
+          pipeline: detail.headPipeline,
+        });
+        return downstream.length === 0
+          ? detail
+          : { ...detail, checks: [...detail.checks, ...downstream] };
+      },
+    ),
 
     listMergeRequestStats,
 
