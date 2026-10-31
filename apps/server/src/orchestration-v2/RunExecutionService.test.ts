@@ -3631,6 +3631,9 @@ function runBackgroundItemScenario(
     readonly onInterruptTurn?: (input: {
       readonly requestRuntimeRestart?: boolean;
     }) => Effect.Effect<void>;
+    readonly onGuardedWrite?: (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+    ) => Effect.Effect<void>;
   },
 ) {
   return Effect.gen(function* () {
@@ -3662,7 +3665,16 @@ function runBackgroundItemScenario(
                 }
                 return [];
               }),
-            writeIfRunCurrent: () => Effect.succeed({ committed: true, storedEvents: [] }),
+            writeIfRunCurrent: (input) =>
+              Effect.as(options?.onGuardedWrite?.(input.events) ?? Effect.void, {
+                committed: true,
+                storedEvents: [],
+              }),
+            writeIfProviderThreadOwner: (input) =>
+              Effect.as(options?.onGuardedWrite?.(input.events) ?? Effect.void, {
+                committed: true,
+                storedEvents: [],
+              }),
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
@@ -3771,10 +3783,11 @@ function runBackgroundItemScenario(
           },
         },
       });
+      // Ingestion recovery forks into the service scope, which lives as long as the server.
+      const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
+      assert.isTrue(Option.isSome(closed), "event ingestion fiber did not finish");
     }).pipe(Effect.provide(layerTest));
 
-    const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
-    assert.isTrue(Option.isSome(closed), "event ingestion fiber did not finish");
     return yield* Ref.get(observed);
   });
 }
@@ -4052,6 +4065,9 @@ it.effect("fails the run through ingestion recovery when an idle flush cannot wr
     const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
     const subagentIngested = yield* Deferred.make<void>();
     const interrupts = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
+    const guardedWrites = yield* Ref.make<ReadonlyArray<ReadonlyArray<OrchestrationV2DomainEvent>>>(
+      [],
+    );
     const scenario = yield* runBackgroundItemScenario(
       "idle-flush-write-failure",
       () => Stream.fromQueue(events),
@@ -4064,15 +4080,168 @@ it.effect("fails the run through ingestion recovery when an idle flush cannot wr
               : Effect.void,
         onInterruptTurn: (interrupt) =>
           Ref.update(interrupts, (current) => [...current, interrupt.requestRuntimeRestart]),
+        onGuardedWrite: (written) => Ref.update(guardedWrites, (current) => [...current, written]),
       },
     ).pipe(Effect.forkChild);
 
     yield* holdChildSnapshot(ids, events, subagentIngested);
     yield* TestClock.adjust("1 second");
+    // The subscription closes only after recovery has persisted its write.
     const observed = yield* Fiber.join(scenario);
 
     assert.deepEqual(observed, ["subagent:running"]);
     // The recovery a failed stream write takes: stop the turn and fail the run.
+    assert.deepEqual(yield* Ref.get(interrupts), [true]);
+    assert.deepEqual(
+      (yield* Ref.get(guardedWrites)).map((written) =>
+        written.flatMap((event) =>
+          event.type === "run.updated" || event.type === "subagent.updated"
+            ? [`${event.type}:${event.payload.status}`]
+            : [],
+        ),
+      ),
+      [["subagent.updated:failed", "run.updated:failed"]],
+    );
+  }),
+);
+
+function streamedMessageEvent(input: {
+  readonly id: string;
+  readonly threadId: ThreadId;
+  readonly runId: RunId | null;
+  readonly role: "assistant" | "user";
+  readonly text: string;
+  readonly streaming: boolean;
+}): ProviderAdapter.ProviderAdapterV2Event {
+  const now = DateTime.makeUnsafe("2026-07-21T12:00:00.000Z");
+  return {
+    type: "message.updated",
+    driver,
+    message: {
+      createdBy: input.role === "user" ? "user" : "agent",
+      creationSource: "provider",
+      id: MessageId.make(input.id),
+      threadId: input.threadId,
+      runId: input.runId,
+      nodeId: null,
+      role: input.role,
+      text: input.text,
+      attachments: [],
+      streaming: input.streaming,
+      createdAt: now,
+      updatedAt: now,
+    },
+  } as ProviderAdapter.ProviderAdapterV2Event;
+}
+
+it.effect("drops a child's held text once the child is handed to another run", () =>
+  Effect.gen(function* () {
+    const key = "idle-child-handoff";
+    const ids = backgroundScenarioIds(key);
+    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
+    const subagentIngested = yield* Deferred.make<void>();
+    const handoffRead = yield* Deferred.make<void>();
+    const rootFlushed = yield* Deferred.make<void>();
+    const staleWrites = yield* Ref.make<ReadonlyArray<string>>([]);
+    const scenario = yield* runBackgroundItemScenario(key, () => Stream.fromQueue(events), {
+      onIngest: (event) => {
+        if (event.type === "subagent.updated") return Deferred.succeed(subagentIngested, undefined);
+        if (event.type !== "message.updated" && event.type !== "turn_item.updated")
+          return Effect.void;
+        const message = event.type === "message.updated" ? event.message : event.turnItem;
+        if (message.threadId === ids.childThreadId)
+          return Ref.update(staleWrites, (current) => [...current, event.type]);
+        if (event.type === "message.updated" && event.message.role === "user")
+          return Deferred.succeed(handoffRead, undefined);
+        return Deferred.succeed(rootFlushed, undefined);
+      },
+    }).pipe(Effect.forkChild);
+
+    yield* holdChildSnapshot(ids, events, subagentIngested);
+    const handoff = linkedSubagentEvent(ids, "running");
+    yield* Queue.offerAll(events, [
+      streamedMessageEvent({
+        id: `message:${key}:child`,
+        threadId: ids.childThreadId,
+        runId: null,
+        role: "assistant",
+        text: heldChildText,
+        streaming: true,
+      }),
+      handoff.type === "subagent.updated"
+        ? { ...handoff, subagent: { ...handoff.subagent, runId: RunId.make(`run:${key}:next`) } }
+        : handoff,
+      // Due in the same flush as the child's text, after it.
+      streamedMessageEvent({
+        id: `message:${key}:root`,
+        threadId: ids.threadId,
+        runId: ids.runId,
+        role: "assistant",
+        text: "Root partial",
+        streaming: true,
+      }),
+      streamedMessageEvent({
+        id: `message:${key}:marker`,
+        threadId: ids.threadId,
+        runId: ids.runId,
+        role: "user",
+        text: "marker",
+        streaming: false,
+      }),
+    ]);
+    yield* Deferred.await(handoffRead);
+    yield* TestClock.adjust("1 second");
+    yield* Deferred.await(rootFlushed);
+    yield* Queue.end(events);
+    yield* Fiber.join(scenario);
+
+    assert.deepEqual(yield* Ref.get(staleWrites), []);
+  }),
+);
+
+it.effect("settles and stops a continuing child when an idle flush fails after the root", () =>
+  Effect.gen(function* () {
+    const key = "idle-flush-failure-after-root";
+    const ids = backgroundScenarioIds(key);
+    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
+    const subagentIngested = yield* Deferred.make<void>();
+    const rootFinalized = yield* Deferred.make<void>();
+    const interrupts = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
+    const guardedWrites = yield* Ref.make<ReadonlyArray<ReadonlyArray<OrchestrationV2DomainEvent>>>(
+      [],
+    );
+    const scenario = yield* runBackgroundItemScenario(key, () => Stream.fromQueue(events), {
+      onIngest: (event) =>
+        event.type === "subagent.updated"
+          ? Deferred.succeed(subagentIngested, undefined)
+          : isHeldChildSnapshot(event)
+            ? Effect.die(new Error("disk I/O error"))
+            : Effect.void,
+      onFinalized: () => Deferred.succeed(rootFinalized, undefined),
+      onInterruptTurn: (interrupt) =>
+        Ref.update(interrupts, (current) => [...current, interrupt.requestRuntimeRestart]),
+      onGuardedWrite: (written) => Ref.update(guardedWrites, (current) => [...current, written]),
+    }).pipe(Effect.forkChild);
+
+    yield* holdChildSnapshot(ids, events, subagentIngested);
+    yield* Queue.offer(events, rootTerminalEvent(ids, "completed"));
+    yield* Deferred.await(rootFinalized);
+    yield* TestClock.adjust("1 second");
+    // The subscription closes only after recovery has persisted its write.
+    const observed = yield* Fiber.join(scenario);
+
+    assert.deepEqual(observed, ["subagent:running", "root-finalized"]);
+    // The completed root stays as written; only the child it left running is settled.
+    assert.deepEqual(
+      (yield* Ref.get(guardedWrites)).map((written) =>
+        written.map((event) =>
+          event.type === "subagent.updated"
+            ? `${event.type}:${event.payload.id}:${event.payload.status}`
+            : event.type,
+        ),
+      ),
+      [[`subagent.updated:${ids.subagentNodeId}:failed`]],
+    );
     assert.deepEqual(yield* Ref.get(interrupts), [true]);
   }),
 );

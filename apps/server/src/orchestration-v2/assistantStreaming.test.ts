@@ -49,6 +49,18 @@ it("delivers held text once idle, never after its final, and never in turn mode"
   assert.isNotNull(paragraph.filter(snapshot("A\n\n```ts\nx()\n```\n\nB and C.", false), 1_600));
   assert.deepEqual(paragraph.flushIdle(5_000), []);
 
+  // Provider rewrites replace delivered text: shorter at once, same-length after the throttle.
+  const rewrite = makeAssistantStreamingFilter("paragraph", 800);
+  assert.equal(
+    text(rewrite.filter(snapshot("Original long paragraph.\n\n"), 0) ?? undefined),
+    "Original long paragraph.\n\n",
+  );
+  assert.equal(text(rewrite.filter(snapshot("New.\n\n"), 1_000) ?? undefined), "New.\n\n");
+  assert.isNull(rewrite.filter(snapshot("Old.\n\n"), 1_100));
+  assert.equal(text(rewrite.flushIdle(1_900)[0]), "Old.\n\n");
+  assert.isNull(rewrite.filter(snapshot("Old"), 2_500));
+  assert.equal(text(rewrite.flushIdle(3_300)[0]), "Old");
+
   const turn = makeAssistantStreamingFilter("turn", 800);
   assert.isNull(turn.filter(snapshot("A\n\nB"), 0));
   assert.isNull(turn.nextIdleFlushAt());

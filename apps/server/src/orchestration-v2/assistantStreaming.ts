@@ -144,19 +144,20 @@ export function makeAssistantStreamingFilter(
         tracks.set(key, {
           text: delivered,
           at: previous?.at ?? Number.NEGATIVE_INFINITY,
-          held: message.text.length > delivered.length ? event : null,
+          held: message.text !== delivered ? event : null,
           heldAt: now,
         });
         return null;
       };
       if (previous && now - previous.at < 400) return hold();
       const { ready } = splitBufferedAssistantText(message.text);
-      // An idle delivery may already show more than the next boundary; never shrink it.
-      if (ready.length <= delivered.length) return hold();
+      // An idle delivery may already show more than the next boundary; never shrink it. A
+      // provider rewrite or truncation is not a prefix and replaces it.
+      if (delivered.startsWith(ready)) return hold();
       tracks.set(key, {
         text: ready,
         at: now,
-        held: ready.length < message.text.length ? event : null,
+        held: ready !== message.text ? event : null,
         heldAt: now,
       });
       return withText(event, ready);
