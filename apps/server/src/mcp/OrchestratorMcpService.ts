@@ -2353,21 +2353,31 @@ const make = Effect.gen(function* () {
             (task) => task.id === acceptedTaskId,
           )
         : undefined;
-      const committedThread = acceptedTask?.childThreadId
+      const committedChild = acceptedTask?.childThreadId
         ? yield* threadManagement
-            .getThreadShell(acceptedTask.childThreadId)
+            .getThreadRecords(acceptedTask.childThreadId, ["runs", "contextTransfers"])
             .pipe(Effect.mapError(threadManagementFailure))
         : null;
+      const committedSelection =
+        acceptedTask?.modelSelection ??
+        (acceptedTask && committedChild
+          ? delegatedTaskRun(
+              {
+                ...committedChild,
+                runs: committedChild.runs.toSorted((a, b) => a.ordinal - b.ordinal),
+              },
+              acceptedTask,
+            )?.modelSelection
+          : undefined);
       const target = yield* resolveTargetRechecking({
         parent,
         target:
-          committedThread === null
+          committedSelection === undefined
             ? input.target
             : {
-                providerInstanceId:
-                  acceptedTask?.providerInstanceId ?? committedThread.modelSelection.instanceId,
-                model: acceptedTask?.model ?? committedThread.modelSelection.model,
-                options: committedThread.modelSelection.options ?? [],
+                providerInstanceId: committedSelection.instanceId,
+                model: committedSelection.model,
+                options: committedSelection.options ?? [],
               },
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,

@@ -2220,6 +2220,8 @@ describe("OrchestratorMcpService provider resolution", () => {
       const dispatches = yield* Ref.make<ReadonlyArray<unknown>>([]);
       let accepted = false;
       let projectedTask = task;
+      const [originalRun] = parentProjection([], fallbackModelSelection).runs;
+      assert.isDefined(originalRun);
       const exhaustedProvider: ServerProvider = {
         ...providerSnapshot({
           instanceId: codexInstanceId,
@@ -2251,14 +2253,19 @@ describe("OrchestratorMcpService provider resolution", () => {
             Effect.succeed(
               threadId === parentThreadId
                 ? parentProjection([projectedTask], parentModelSelection)
-                : childProjection,
+                : {
+                    ...childProjection,
+                    thread: { ...childProjection.thread, modelSelection: parentModelSelection },
+                    runs: [
+                      {
+                        ...originalRun,
+                        modelSelection: fallbackModelSelection,
+                        delegatedTaskId: projectedTask.id,
+                      },
+                    ],
+                  },
             ),
           hasReceipt: () => Effect.sync(() => accepted),
-          getThreadShell: () =>
-            Effect.succeed({
-              ...liveThreadShell(childThreadId),
-              modelSelection: fallbackModelSelection,
-            }),
           isProviderInstanceEnabledForProject: () => Effect.succeed(true),
           assertProviderInstanceEnabled: () => Effect.void,
           dispatch: (command) =>
@@ -2358,6 +2365,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         };
         assert.equal(retried.modelSelection.instanceId, fallbackInstanceId);
         assert.equal(retried.modelSelection.model, fallbackModelSelection.model);
+        assert.deepEqual(retried.modelSelection, fallbackModelSelection);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
     }),
   );
