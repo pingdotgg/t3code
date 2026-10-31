@@ -840,7 +840,7 @@ const make = Effect.gen(function* () {
         client: toClientMetadata(row.value.client),
         expiresAt: expiresAt.value,
         subject: claims.sub,
-        scopes: claims.scopes,
+        scopes: row.value.scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
         ...(claims.rtc ? { runtimeModeCeiling: claims.rtc } : {}),
         ...(claims.plk === 1 ? { peerLink: true as const } : {}),

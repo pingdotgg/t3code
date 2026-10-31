@@ -45,7 +45,7 @@ const layerTest = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
-  Layer.provide(
+  Layer.provideMerge(
     ServerConfig.ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-workspace-files-test-",
     }),
@@ -203,6 +203,25 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           byteLength: 8,
           truncated: false,
         });
+      }),
+    );
+
+    it.effect("does not read server state files", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const config = yield* ServerConfig.ServerConfig;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(config.secretsDir, "example.bin", "example\n");
+        yield* writeTextFile(config.stateDir, "statev2.sqlite", "example\n");
+
+        for (const input of [
+          { cwd, relativePath: path.join(config.secretsDir, "example.bin") },
+          { cwd: config.stateDir, relativePath: "statev2.sqlite" },
+        ]) {
+          const error = yield* workspaceFileSystem.readFile(input).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+        }
       }),
     );
 
