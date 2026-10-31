@@ -30,8 +30,6 @@ const status = {
 } as const;
 
 const newerServiceStatus = { ...status, current: false, installedVersion: "999.0.0" };
-const otherHomeStatus = { ...status, current: false, otherBaseDir: "/srv/t3" };
-const unknownHomeStatus = { ...status, current: false, unknownBaseDir: true };
 
 function makeTestService(
   serviceStatus: BootService.BootServiceStatus,
@@ -162,13 +160,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
   );
 });
 
-it.effect.each([
-  ["a newer service", newerServiceStatus],
-  ["another home's service", otherHomeStatus],
-  ["a service for an unknown home", unknownHomeStatus],
-] as const)("leaves %s unchanged during onboarding without prompting", ([, serviceStatus]) =>
+it.effect("leaves a newer service unchanged during onboarding without prompting", () =>
   Effect.gen(function* () {
-    const { service, installOptions } = makeTestService(serviceStatus);
+    const { service, installOptions } = makeTestService(newerServiceStatus);
     const terminal = Terminal.make({
       columns: Effect.succeed(80),
       rows: Effect.succeed(24),

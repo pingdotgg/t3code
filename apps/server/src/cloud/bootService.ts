@@ -55,84 +55,14 @@ function quoteSystemdValue(value: string): string {
 
 const unquoteSystemdValue = (raw: string) =>
   (raw.startsWith('"') && raw.endsWith('"')
-    ? raw.slice(1, -1).replace(/\\(["\\])/g, "$1")
+    ? raw.slice(1, -1).replaceAll('\\"', '"').replaceAll("\\\\", "\\")
     : raw
   ).replaceAll("%%", "%");
 
-const XML_ENTITIES = new Map([
-  ["lt", "<"],
-  ["gt", ">"],
-  ["amp", "&"],
-  ["quot", '"'],
-  ["apos", "'"],
-]);
+const unescapeXmlText = (value: string) =>
+  value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 
-const isXmlChar = (codePoint: number) =>
-  codePoint === 0x9 ||
-  codePoint === 0xa ||
-  codePoint === 0xd ||
-  (codePoint >= 0x20 && codePoint <= 0xd7ff) ||
-  (codePoint >= 0xe000 && codePoint <= 0xfffd) ||
-  (codePoint >= 0x10000 && codePoint <= 0x10ffff);
-
-const decodeXmlEntity = (entity: string | undefined) => {
-  if (entity === undefined) return undefined;
-  if (!entity.startsWith("#")) return XML_ENTITIES.get(entity);
-  const codePoint = entity[1] === "x" ? parseInt(entity.slice(2), 16) : Number(entity.slice(1));
-  return isXmlChar(codePoint) ? String.fromCodePoint(codePoint) : undefined;
-};
-
-/** One pass, so `&amp;#32;` stays `&#32;`. Returns undefined for text XML would reject. */
-const unescapeXmlText = (value: string) => {
-  let valid = true;
-  const decoded = value.replace(
-    /&(?:(#x[0-9a-fA-F]+|#[0-9]+|[a-z]+);)?/g,
-    (_, entity: string | undefined) => {
-      const text = decodeXmlEntity(entity);
-      if (text === undefined) valid = false;
-      return text ?? "";
-    },
-  );
-  return valid ? decoded : undefined;
-};
-
-/** Values exactly as `quoteSystemdValue` writes them; `%` must be the `%%` escape. */
-const SYSTEMD_BASE_DIR =
-  /^Environment=T3CODE_HOME=((?:[^\s"'\\%]|%%)+|"(?:\\["\\]|[^"\\%]|%%)*")[ \t]*$/;
-
-/** systemd allows blanks around `=`; an empty `Environment=` resets earlier assignments. */
-const SYSTEMD_HOME_SOURCE =
-  /^[ \t]*[A-Za-z]*Environment(?:File[ \t]*=.*|[ \t]*=(?:[ \t]*|.*T3CODE_HOME.*))$/gm;
-
-/**
- * The T3 home a unit or plist serves, or undefined when it cannot be known.
- * Only the shapes this file renders count. Anything else that could set the
- * home (another assignment, an EnvironmentFile, a reset, a line continuation,
- * a comment) makes it unknown.
- */
 export function bootServiceBaseDirOf(contents: string): string | undefined {
-  const [line, ...moreLines] = contents.match(SYSTEMD_HOME_SOURCE) ?? [];
-  if (line !== undefined) {
-    // A trailing backslash joins the next line, which can carry an assignment.
-    const value =
-      moreLines.length === 0 && !/\\[ \t]*$/m.test(contents)
-        ? SYSTEMD_BASE_DIR.exec(line)?.[1]
-        : undefined;
-    return value === undefined ? undefined : unquoteSystemdValue(value);
-  }
-  const [, afterKey, ...moreKeys] = contents.split("<key>T3CODE_HOME</key>");
-  const value =
-    afterKey !== undefined && moreKeys.length === 0
-      ? /^\s*<string>([^<]*)<\/string>/.exec(afterKey)?.[1]
-      : undefined;
-  return value === undefined ? undefined : unescapeXmlText(value);
-}
-
-/**
- * A home the unit or plist may serve, read past hand edits. For checks that must
- * not miss a running service; install and status need `bootServiceBaseDirOf`.
- */
-export function bootServiceBaseDirHintOf(contents: string): string | undefined {
   const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];
   if (systemd !== undefined) return unquoteSystemdValue(systemd.trim());
   const plist = /<key>T3CODE_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
@@ -554,22 +484,9 @@ export class BootServiceOtherBaseDirError extends Schema.TaggedError<BootService
   }
 }
 
-export class BootServiceUnknownBaseDirError extends Schema.TaggedError<BootServiceUnknownBaseDirError>()(
-  "BootServiceUnknownBaseDirError",
-  {
-    unitPath: Schema.String,
-    baseDir: Schema.String,
-  },
-) {
-  override get message(): string {
-    return `Left the T3 Code service at ${this.unitPath} unchanged: this CLI cannot tell which T3 home it serves. To replace it with a service for ${this.baseDir}, run \`t3 service uninstall\`, then install again. Uninstalling keeps every T3 data directory.`;
-  }
-}
-
 export type BootServiceError =
   | BootServiceUnsupportedError
   | BootServiceOtherBaseDirError
-  | BootServiceUnknownBaseDirError
   | BootServiceCommandError
   | BootServiceInstallError
   | BootServicePrerequisiteError
@@ -584,8 +501,6 @@ export interface BootServiceStatus {
   readonly installedBaseDir?: string;
   /** Set when the installed unit serves a different T3 home than this CLI. */
   readonly otherBaseDir?: string;
-  /** Set when the installed unit's T3 home cannot be read; install leaves it alone. */
-  readonly unknownBaseDir?: boolean;
   readonly problems?: ReadonlyArray<BootServiceProblem>;
   readonly unitPath: string;
   readonly logPath: string;
@@ -678,6 +593,13 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
   const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion, platform);
+  const otherBaseDirOf = (unit: string) => {
+    const installedBaseDir = bootServiceBaseDirOf(unit);
+    return installedBaseDir !== undefined &&
+      path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
+      ? installedBaseDir
+      : undefined;
+  };
   const writeDurably = (filePath: string, contents: string) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -822,22 +744,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const manager = yield* requireManager;
     // The unit is per user. Rewriting one that serves another home moves the
     // service onto this home's data, which looks like every thread vanished.
-    const existingUnit = yield* fs.readFileString(unitPath).pipe(
-      Effect.asSome,
-      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
-      Effect.mapError((cause) => new BootServiceInstallError({ cause })),
-    );
-    if (Option.isSome(existingUnit)) {
-      const installedBaseDir = bootServiceBaseDirOf(existingUnit.value);
-      if (installedBaseDir === undefined) {
-        return yield* new BootServiceUnknownBaseDirError({ unitPath, baseDir: input.baseDir });
-      }
-      if (path.resolve(installedBaseDir) !== path.resolve(input.baseDir)) {
-        return yield* new BootServiceOtherBaseDirError({
-          installedBaseDir,
-          baseDir: input.baseDir,
-        });
-      }
+    const existingUnit = yield* fs.readFileString(unitPath).pipe(Effect.option);
+    const installedBaseDir = Option.isSome(existingUnit)
+      ? otherBaseDirOf(existingUnit.value)
+      : undefined;
+    if (installedBaseDir !== undefined) {
+      return yield* new BootServiceOtherBaseDirError({ installedBaseDir, baseDir: input.baseDir });
     }
     yield* fs
       .makeDirectory(input.logsDir, { recursive: true })
@@ -1106,6 +1018,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ? serviceStateActiveVersion(stateText.value)
       : undefined;
     const installedBaseDir = bootServiceBaseDirOf(unit);
+    const otherBaseDir = otherBaseDirOf(unit);
     const normalizeUnit = (contents: string) =>
       detectedManager.kind === "launchd"
         ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
@@ -1117,11 +1030,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       supported: true,
       installed: true,
       ...(installedVersion === undefined ? {} : { installedVersion }),
-      ...(installedBaseDir === undefined
-        ? { unknownBaseDir: true }
-        : path.resolve(installedBaseDir) === path.resolve(input.baseDir)
-          ? { installedBaseDir }
-          : { installedBaseDir, otherBaseDir: installedBaseDir }),
+      ...(installedBaseDir === undefined ? {} : { installedBaseDir }),
+      ...(otherBaseDir === undefined ? {} : { otherBaseDir }),
       problems,
       current:
         problems.length === 0 &&
