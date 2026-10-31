@@ -1,0 +1,32 @@
+diff --git a/dist/render/focusHelpers.js b/dist/render/focusHelpers.js
+index 285d149..ae9e355 100644
+--- a/dist/render/focusHelpers.js
++++ b/dist/render/focusHelpers.js
+@@ -17,11 +17,16 @@ function getActiveTreeElement(rootElement) {
+ 	const activeElement = document.activeElement;
+ 	return activeElement instanceof HTMLElement && rootElement.contains(activeElement) ? activeElement : null;
+ }
++// T3 Code: the scroller's top padding is chrome its rows scroll under, so it is not viewport.
++function readScrollTopInset(scrollElement) {
++	return Number.parseFloat(getComputedStyle(scrollElement).paddingTop) || 0;
++}
+ function readMeasuredViewportHeight(scrollElement, fallbackViewportHeight) {
+ 	if (scrollElement == null) return fallbackViewportHeight;
++	const inset = readScrollTopInset(scrollElement);
+ 	const rectHeight = scrollElement.getBoundingClientRect().height;
+-	if (rectHeight > 0) return rectHeight;
+-	return scrollElement.clientHeight > 0 ? scrollElement.clientHeight : fallbackViewportHeight;
++	if (rectHeight > 0) return Math.max(1, rectHeight - inset);
++	return scrollElement.clientHeight > 0 ? Math.max(1, scrollElement.clientHeight - inset) : fallbackViewportHeight;
+ }
+ function getCachedViewportHeight(cachedViewportHeight, fallbackViewportHeight) {
+ 	return cachedViewportHeight != null && cachedViewportHeight > 0 ? cachedViewportHeight : fallbackViewportHeight;
+@@ -29,7 +34,7 @@ function getCachedViewportHeight(cachedViewportHeight, fallbackViewportHeight) {
+ function getResizeObserverViewportHeight(entry) {
+ 	const borderBoxSize = entry.borderBoxSize;
+ 	const firstBorderBoxSize = Array.isArray(borderBoxSize) ? borderBoxSize[0] : borderBoxSize;
+-	if (firstBorderBoxSize != null && Number.isFinite(firstBorderBoxSize.blockSize) && firstBorderBoxSize.blockSize > 0) return firstBorderBoxSize.blockSize;
++	if (firstBorderBoxSize != null && Number.isFinite(firstBorderBoxSize.blockSize) && firstBorderBoxSize.blockSize > 0) return Math.max(1, firstBorderBoxSize.blockSize - readScrollTopInset(entry.target));
+ 	return entry.contentRect.height > 0 ? entry.contentRect.height : null;
+ }
+ function scrollFocusedRowIntoView(scrollElement, focusedIndex, itemHeight, viewportHeight, topInset = 0) {

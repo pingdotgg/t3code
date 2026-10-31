@@ -75,6 +75,7 @@ const SCROLLBAR_HIT_PX = 16;
 export function attachTimelineViewport(
   scrollNode: HTMLElement,
   onFrameResize?: (frame: HTMLIFrameElement) => void,
+  ownsDocumentKeys?: () => boolean,
 ): TimelineViewport & {
   readonly dispose: () => void;
 } {
@@ -110,6 +111,7 @@ export function attachTimelineViewport(
       !(event.target instanceof Node) ||
       (!scrollNode.contains(event.target) &&
         ((event.target !== document.body && event.target !== document.documentElement) ||
+          ownsDocumentKeys?.() === false ||
           isInSideChatPane(scrollNode))) ||
       event.isComposing ||
       event.altKey ||
