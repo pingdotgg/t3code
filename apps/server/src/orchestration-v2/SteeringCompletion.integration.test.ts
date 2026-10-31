@@ -877,6 +877,58 @@ it.effect(
     ),
 );
 
+it.effect("preserves a queued message's model options when promoting it to a steer", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+        "steering-queued-selection",
+        true,
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        const queuedSelection = {
+          ...runSelection,
+          options: [{ id: "effort", value: "medium" }],
+        };
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("queued"),
+          threadId,
+          messageId: MessageId.make("message:queued"),
+          text: "queued with medium effort",
+          attachments: [],
+          modelSelection: queuedSelection,
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const queued = before.runs.find((run) => run.status === "queued")!;
+        assert.deepEqual(queued.modelSelection, queuedSelection);
+        assert.deepEqual(before.thread.modelSelection, runSelection);
+
+        yield* orchestrator.dispatch({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make("promote"),
+          threadId,
+          queuedRunId: queued.id,
+          targetRunId: started[0]!.runId,
+        });
+        yield* worker.drain();
+
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(steered, ["queued with medium effort"]);
+        assert.lengthOf(started, 1);
+        assert.deepEqual(after.thread.modelSelection, queuedSelection);
+        assert.deepEqual(after.runs[0]?.modelSelection, runSelection);
+        assert.equal(after.runs.find((run) => run.id === queued.id)?.status, "cancelled");
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
 it.effect("starts a steer that missed the turn on the saved next-turn selection", () =>
   Effect.scoped(
     Effect.gen(function* () {
