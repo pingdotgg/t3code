@@ -33,10 +33,7 @@ function Main({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-chat-composer-main-surface="true"
-      className={cn(
-        "group relative z-10 rounded-pane surface-composer",
-        className,
-      )}
+      className={cn("group relative z-10 rounded-pane surface-composer", className)}
       {...props}
     />
   );
