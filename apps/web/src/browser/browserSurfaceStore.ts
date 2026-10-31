@@ -53,6 +53,8 @@ export interface BrowserSurfaceLease {
     cornerRadius?: number,
     zIndex?: number,
   ) => boolean;
+  /** Moves the webview to where the slot shows now; false once another slot owns the tab. */
+  readonly place: (placement: BrowserSurfacePlacement) => boolean;
   readonly release: () => void;
 }
 
@@ -222,10 +224,77 @@ export function acquireBrowserSurface(
       useBrowserSurfaceStore.getState().present(tabId, owner, rect, visible, cornerRadius, zIndex);
       return true;
     },
+    place: (placement) => {
+      if (released) return false;
+      if (useBrowserSurfaceStore.getState().byTabId[tabId]?.owner !== owner) return false;
+      place(tabId, placement);
+      return true;
+    },
     release: () => {
       if (released) return;
       released = true;
+      if (useBrowserSurfaceStore.getState().byTabId[tabId]?.owner === owner) place(tabId, null);
       useBrowserSurfaceStore.getState().release(tabId, owner);
     },
   };
+}
+
+/** Placement changes every animation frame, so apply it directly to the webview wrapper instead of
+ * rerendering React. */
+export interface BrowserSurfacePlacement {
+  readonly x: number;
+  readonly y: number;
+  readonly scale: number;
+  /** A CSS `clip-path` in the wrapper's own pixels; empty when nothing is cut. */
+  readonly clipPath: string;
+  readonly interactive: boolean;
+}
+
+const placements = new Map<string, BrowserSurfacePlacement>();
+const wrappers = new Map<string, HTMLElement>();
+/** What each wrapper was last given; the style reads back normalized. */
+const written = new WeakMap<HTMLElement, BrowserSurfacePlacement | null>();
+
+function writePlacement(element: HTMLElement, placement: BrowserSurfacePlacement | null): void {
+  const last = written.get(element) ?? null;
+  if (last === placement) return;
+  written.set(element, placement);
+  const transform = placement
+    ? `translate(${placement.x}px, ${placement.y}px) scale(${placement.scale})`
+    : "";
+  const lastTransform = last ? `translate(${last.x}px, ${last.y}px) scale(${last.scale})` : "";
+  if (transform !== lastTransform) element.style.transform = transform;
+  const clipPath = placement?.clipPath ?? "";
+  if (clipPath !== (last?.clipPath ?? "")) element.style.clipPath = clipPath;
+  if (placement && placement.interactive !== last?.interactive) {
+    element.style.pointerEvents = placement.interactive ? "auto" : "none";
+  }
+}
+
+/**
+ * The webview's wrapper for a tab, kept by `HostedBrowserWebview`, which
+ * calls this after every render: an active wrapper takes the tab's latest
+ * placement, an inactive one drops it.
+ */
+export function syncBrowserSurfaceWrapper(
+  tabId: string,
+  element: HTMLElement | null,
+  active: boolean,
+): void {
+  if (!element) {
+    wrappers.delete(tabId);
+    return;
+  }
+  wrappers.set(tabId, element);
+  // React may have restyled it (pointer events): write it all again.
+  written.delete(element);
+  writePlacement(element, active ? (placements.get(tabId) ?? null) : null);
+}
+
+function place(tabId: string, placement: BrowserSurfacePlacement | null): void {
+  if (placement) placements.set(tabId, placement);
+  else placements.delete(tabId);
+  const element = wrappers.get(tabId);
+  const current = useBrowserSurfaceStore.getState().byTabId[tabId];
+  if (element) writePlacement(element, current?.visible ? placement : null);
 }

@@ -129,7 +129,11 @@ export function focusTerminalOnNavigation(threadRef: ScopedThreadRef, terminalId
 /** Restores composer or terminal focus; explicit terminal navigation takes precedence. */
 export function restoreFocusOnThreadEnter(
   threadRef: ScopedThreadRef,
-  content: { readonly root: HTMLElement; readonly focusComposer: () => void },
+  content: {
+    readonly root: HTMLElement;
+    readonly focusComposer: () => void;
+    readonly preserveFocus?: boolean;
+  },
 ): () => void {
   const threadKey = scopedThreadKey(threadRef);
   const requestedByHandler =
@@ -156,7 +160,8 @@ export function restoreFocusOnThreadEnter(
     }
   };
   content.root.ownerDocument.addEventListener("focusin", remember);
-  if (!requestedByHandler) {
+  if (content.preserveFocus) remember();
+  if (!requestedByHandler && !content.preserveFocus) {
     const drawer = selectThreadTerminalUiState(
       useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
       threadRef,
