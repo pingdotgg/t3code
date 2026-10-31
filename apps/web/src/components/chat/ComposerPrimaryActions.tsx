@@ -86,7 +86,7 @@ const messageActionPillClassName =
 
 // The mic + send pill: light gray in light mode, black in dark mode.
 const COMPOSER_PILL_CLASS_NAME =
-  "relative isolate inline-flex h-8 shrink-0 items-center rounded-[10px] surface-pill";
+  "relative isolate inline-flex h-8 shrink-0 items-center rounded-lg surface-pill";
 
 // One 32px button slot inside the pill (send, stop, and later the mic), concentric
 // with the pill inside its 1px rim.
