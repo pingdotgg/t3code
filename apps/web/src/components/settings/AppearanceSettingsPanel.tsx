@@ -1,6 +1,5 @@
 import { isElectron } from "../../env";
 import { isMacPlatform } from "../../lib/utils";
-import { setDevArtworkPreview } from "../../devArtworkPreview";
 import { RestoreDeviceDefaultsButton } from "./SettingsPanels";
 import type { CSSProperties } from "react";
 import { useState } from "react";
@@ -403,7 +402,6 @@ export function AppearanceSettingsPanel() {
                 <SettingResetButton
                   label="environment identification"
                   onClick={() => {
-                    setDevArtworkPreview(null);
                     updateSettings({
                       environmentIdentificationMode: DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
                     });
@@ -419,7 +417,6 @@ export function AppearanceSettingsPanel() {
                     ([optionValue]) => optionValue === value,
                   );
                   if (option) {
-                    setDevArtworkPreview(null);
                     updateSettings({ environmentIdentificationMode: option[0] });
                   }
                 }}
