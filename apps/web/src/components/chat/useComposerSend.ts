@@ -24,6 +24,8 @@ import {
   type PreviewAnnotationPayload,
   type ScopedThreadRef,
   type ThreadId,
+  type RunId,
+  type ChatAttachment as ContractChatAttachment,
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
@@ -44,7 +46,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { createModelSelection } from "@t3tools/shared/model";
-import { type SetStateAction, useLayoutEffect, useRef } from "react";
+import { type SetStateAction, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
@@ -183,6 +185,8 @@ interface ComposerSendInput {
   readonly isLocalDraftThread: boolean;
   readonly isGitRepo: boolean;
   readonly phase: SessionPhase;
+  readonly failedRunId: RunId | null;
+  readonly failedRunMessage: ChatMessage | null;
   readonly runtimeMode: RuntimeMode;
   readonly sendEnvMode: DraftThreadEnvMode;
   readonly startFromOrigin: boolean;
@@ -284,6 +288,8 @@ export function useComposerSend(input: ComposerSendInput) {
     isLocalDraftThread,
     isGitRepo,
     phase,
+    failedRunId,
+    failedRunMessage,
     runtimeMode,
     sendEnvMode,
     startFromOrigin,
@@ -1547,6 +1553,97 @@ export function useComposerSend(input: ComposerSendInput) {
     }
   };
 
+  const [retryingFailedRunId, setRetryingFailedRunId] = useState<RunId | null>(null);
+  async function onRetryFailedRun() {
+    if (
+      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
+      !activeThread ||
+      !isServerThread ||
+      failedRunId === null ||
+      retryingFailedRunId === failedRunId ||
+      failedRunMessage === null ||
+      isSendBusy ||
+      isRevertingCheckpoint ||
+      threadDetailLoading ||
+      !clientSettingsHydrated ||
+      activeEnvironmentUnavailable ||
+      sendInFlightRef.current
+    ) {
+      return;
+    }
+    const sendCtx = composerRef.current?.getSendContext();
+    if (!sendCtx?.providerAvailable) return;
+
+    const threadIdForSend = activeThread.id;
+    const messageIdForSend = newMessageId();
+    const messageCreatedAt = new Date().toISOString();
+    const attachments = (failedRunMessage.attachments ?? []).map((attachment) => {
+      const {
+        previewUrl: _previewUrl,
+        downloadable: _downloadable,
+        ...stored
+      } = attachment as typeof attachment & { previewUrl?: string; downloadable?: boolean };
+      return stored as ContractChatAttachment;
+    });
+
+    sendInFlightRef.current = true;
+    setRetryingFailedRunId(failedRunId);
+    beginLocalDispatch({ preparingWorktree: false });
+    setThreadError(threadIdForSend, null);
+
+    anchorNewTurn(
+      scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
+      messageIdForSend,
+    );
+    setOptimisticUserMessages((existing) => [
+      ...existing,
+      {
+        id: messageIdForSend,
+        role: "user",
+        text: failedRunMessage.text,
+        ...(failedRunMessage.context ? { context: failedRunMessage.context } : {}),
+        ...(failedRunMessage.attachments ? { attachments: failedRunMessage.attachments } : {}),
+        runId: null,
+        createdAt: messageCreatedAt,
+        updatedAt: messageCreatedAt,
+        streaming: false,
+      },
+    ]);
+
+    const startResult = await startThreadTurn({
+      environmentId,
+      input: {
+        threadId: threadIdForSend,
+        message: {
+          messageId: messageIdForSend,
+          role: "user",
+          text: failedRunMessage.text,
+          attachments,
+          ...(failedRunMessage.context ? { context: failedRunMessage.context } : {}),
+        },
+        modelSelection: sendCtx.selectedModelSelection,
+        titleSeed: activeThread.title,
+        runtimeMode,
+        interactionMode: DEFAULT_INTERACTION_MODE,
+        createdAt: messageCreatedAt,
+      },
+    });
+    sendInFlightRef.current = false;
+    if (startResult._tag === "Success") {
+      clearUsageLimitsFor(routeThreadKey);
+      return;
+    }
+    setRetryingFailedRunId(null);
+    resetLocalDispatch();
+    setOptimisticUserMessages((existing) =>
+      existing.filter((message) => message.id !== messageIdForSend),
+    );
+    if (!isAtomCommandInterrupted(startResult)) {
+      const error = squashAtomCommandFailure(startResult);
+      setThreadError(threadIdForSend, error instanceof Error ? error.message : "Retry failed.");
+    }
+  }
+
   const onSendLatest = useStableCallback(onSend);
   const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
     args[0]?.preventDefault();
@@ -1561,5 +1658,9 @@ export function useComposerSend(input: ComposerSendInput) {
     });
     if (ready) return onSendLatest(...args);
   };
-  return { onSend: onSendWithRouting };
+  return {
+    onSend: onSendWithRouting,
+    onRetryFailedRun,
+    retryingFailedRunId: retryingFailedRunId === failedRunId ? retryingFailedRunId : null,
+  };
 }

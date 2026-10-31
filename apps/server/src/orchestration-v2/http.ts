@@ -37,7 +37,7 @@ import {
   projectIdentitiesDigest,
 } from "./ShellStream.ts";
 import { boundedSnapshotResponseFields } from "./ThreadStream.ts";
-import { projectThreadProjectionForWire } from "./WireProjection.ts";
+import { projectThreadProjectionForWire } from "@t3tools/shared/wireProjection";
 
 const isInvalidThreadHistoryCursorError = Schema.is(InvalidThreadHistoryCursorError);
 
