@@ -44,6 +44,7 @@ vi.mock(import("../../hooks/useSettings"), async (original) => ({
 }));
 
 import { AddCodexAccountDialog } from "./AddCodexAccountDialog";
+import { CodexSetupSection } from "./CodexSetupSection";
 
 const environmentId = EnvironmentId.make("local");
 
@@ -87,6 +88,32 @@ function Owner({ onClose }: { readonly onClose: () => void }) {
     />
   ) : null;
 }
+
+describe("Codex onboarding", () => {
+  it("lets a fresh onboarding account enter managed setup with ChatGPT", async () => {
+    function SetupChoice() {
+      const [mode, setMode] = useState<"managed" | "existing">("existing");
+      return (
+        <CodexSetupSection
+          environmentId={environmentId}
+          instanceId={ProviderInstanceId.make("codex")}
+          provider={undefined}
+          mode={mode}
+          enabled
+          onboarding
+          onModeChange={setMode}
+        />
+      );
+    }
+    await using screen = await render(<SetupChoice />);
+    await expect.element(screen.getByRole("button", { name: "Use existing CLI" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Continue with ChatGPT" }));
+    await expect.element(screen.getByText("Preparing sign-in.")).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Use existing CLI" }))
+      .not.toBeInTheDocument();
+  });
+});
 
 describe("AddCodexAccountDialog", () => {
   it("plays its close animation before the owner unmounts it once the account connects", async () => {
