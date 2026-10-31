@@ -1,6 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useId, useState } from "react";
 import {
@@ -110,10 +109,9 @@ export function AcpRegistryAgentIcon({
   const iconUrl = resolveOfficialAcpRegistryIconUrl(icon);
   // Render only after the load pipeline resolves, so the fallback icon does
   // not flash a broken image.
-  const source = Option.getOrNull(
-    AsyncResult.value(
-      useAtomValue(iconUrl === null ? NO_ICON_SOURCE_ATOM : acpRegistryIconSourceAtom(iconUrl)),
-    ),
+  const source = AsyncResult.getOrElse(
+    useAtomValue(iconUrl === null ? NO_ICON_SOURCE_ATOM : acpRegistryIconSourceAtom(iconUrl)),
+    () => null,
   );
   const [image, setImage] = useState<{
     readonly source: string;

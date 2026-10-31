@@ -354,7 +354,9 @@ jobs:
       id-token: write
     name: Test Server ${{ matrix.shard }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 10
+    # Shards take 2-5 minutes. When the shared task cache throttles reads, each
+    # failed fetch stalls vp for 15-90s, which pushed shards past 10 minutes.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:

@@ -145,7 +145,7 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("grants clipboard-sanitized-write through both the request and check handlers", () =>
+  it.effect("grants preview permissions through both the request and check handlers", () =>
     Effect.gen(function* () {
       const browserSessions = yield* BrowserSession.BrowserSession;
       const partition = yield* browserSessions.getPartition("scope-a");
@@ -168,7 +168,12 @@ describe("BrowserSession", () => {
         return granted;
       };
 
-      for (const permission of ["clipboard-sanitized-write", "geolocation", "fullscreen"]) {
+      for (const permission of [
+        "clipboard-sanitized-write",
+        "geolocation",
+        "fullscreen",
+        "loopback-network",
+      ]) {
         assert.isTrue(requestAllows(permission), `request handler should allow ${permission}`);
         assert.isTrue(
           checkHandler(null, permission) as boolean,
@@ -179,7 +184,13 @@ describe("BrowserSession", () => {
       // `clipboard-write` is not a real Electron permission — the async write API
       // uses `clipboard-sanitized-write` — so the stale name must not be granted,
       // and unrelated permissions stay denied.
-      for (const permission of ["clipboard-write", "notifications", "midi"]) {
+      for (const permission of [
+        "clipboard-write",
+        "notifications",
+        "midi",
+        "local-network",
+        "local-network-access",
+      ]) {
         assert.isFalse(requestAllows(permission), `request handler should deny ${permission}`);
         assert.isFalse(
           checkHandler(null, permission) as boolean,
@@ -280,11 +291,16 @@ describe("BrowserSession", () => {
       assert.isUndefined(sessions.get(partition));
 
       yield* browserSessions.getSession("scope-untouched");
+      const other = yield* browserSessions.getSession("scope-other");
       yield* browserSessions.clearCookies([partition]);
 
       const created = sessions.get(partition);
       assert.isDefined(created);
       assert.strictEqual(created.clearStorageData.mock.calls.length, 1);
+      assert.deepStrictEqual(created.clearStorageData.mock.calls[0]?.[0], {
+        storages: ["cookies", "localstorage", "indexdb", "serviceworkers", "cachestorage"],
+      });
+      assert.strictEqual(vi.mocked(other.clearStorageData).mock.calls.length, 0);
     }).pipe(Effect.provide(layer)),
   );
 });

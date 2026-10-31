@@ -55,7 +55,9 @@ export function ReviewGuideExcerpt({
   const [NativeDiff] = useState(() => resolveNativeReviewDiffView());
   return (
     <View className="gap-3">
-      {excerpt.caption.trim() ? <PullRequestMarkdown markdown={excerpt.caption} /> : null}
+      {excerpt.caption.trim() ? (
+        <PullRequestMarkdown lineBreaks={false} markdown={excerpt.caption} />
+      ) : null}
       <View className="overflow-hidden rounded-lg border border-border-subtle">
         <Pressable
           accessibilityRole="button"

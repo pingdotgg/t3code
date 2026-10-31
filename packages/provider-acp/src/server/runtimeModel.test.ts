@@ -17,6 +17,7 @@ import {
   sessionUpdateIsReplay,
   syntheticLoadSessionResponseFromInitialize,
   toolCallProgressLength,
+  withTrackedPermissionToolCall,
   type AcpToolCallState,
 } from "./runtimeModel.ts";
 
@@ -295,6 +296,38 @@ describe("AcpRuntimeModel", () => {
     }
   });
 
+  it("ends a tool call that ACP reports as cancelled", () => {
+    const toolCall = (status: EffectAcpSchema.ToolCallStatus) => {
+      const parsed = parseSessionUpdateEvent({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: status === "in_progress" ? "tool_call" : "tool_call_update",
+          toolCallId: "tool-1",
+          title: "Run `sleep 60`",
+          kind: "execute",
+          status,
+        },
+      } as EffectAcpSchema.SessionNotification);
+      const event = parsed.events[0];
+      if (event?._tag !== "ToolCallUpdated") {
+        throw new Error("expected a tool call update");
+      }
+      return event.toolCall;
+    };
+
+    const running = toolCall("in_progress");
+    const cancelled = mergeToolCallState(running, toolCall("cancelled"));
+    expect(cancelled.status).toBe("failed");
+    expect(
+      decideToolCallUpdateEmission({
+        previous: running,
+        next: cancelled,
+        lastEmittedDetailLength: 0,
+        skippedSinceEmit: 0,
+      }).emit,
+    ).toBe(true);
+  });
+
   it("clears prior ACP locations when an update explicitly replaces them", () => {
     const toolCall = (locations?: EffectAcpSchema.ToolCallLocation[] | null) => {
       const parsed = parseSessionUpdateEvent({
@@ -326,6 +359,35 @@ describe("AcpRuntimeModel", () => {
         skippedSinceEmit: 0,
       }).emit,
     ).toBe(true);
+  });
+
+  it("forwards an empty ACP v1 plan to clear previous entries", () => {
+    const entries = [
+      [{ content: "Inspect state", priority: "high", status: "pending" }],
+      [],
+    ] as const;
+    const updates = entries.flatMap(
+      (plan) =>
+        parseSessionUpdateEvent({
+          sessionId: "session-1",
+          update: { sessionUpdate: "plan", entries: plan },
+        }).events,
+    );
+
+    expect(updates).toMatchObject([
+      {
+        _tag: "PlanUpdated",
+        payload: {
+          nativePlanId: "legacy",
+          kind: "items",
+          plan: [{ step: "Inspect state", status: "pending" }],
+        },
+      },
+      {
+        _tag: "PlanUpdated",
+        payload: { nativePlanId: "legacy", kind: "items", plan: [] },
+      },
+    ]);
   });
 
   it("projects typed ACP plan and content updates", () => {
@@ -430,6 +492,40 @@ describe("AcpRuntimeModel", () => {
         command: "cat package.json",
       },
     });
+  });
+
+  it("keeps an explicit permission request kind over the tracked tool call's kind", () => {
+    const request = withTrackedPermissionToolCall(
+      {
+        sessionId: "session-1",
+        options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
+        toolCall: { toolCallId: "tool-1", kind: "read" },
+      },
+      {
+        toolCallId: "tool-1",
+        kind: "execute",
+        data: { toolCallId: "tool-1", title: "git status", rawInput: { command: "git status" } },
+      },
+    );
+
+    expect(parsePermissionRequest(request)).toMatchObject({ kind: "read", detail: "git status" });
+  });
+
+  it("keeps explicitly cleared permission request fields over the tracked tool call", () => {
+    const request = withTrackedPermissionToolCall(
+      {
+        sessionId: "session-1",
+        options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
+        toolCall: { toolCallId: "tool-1", kind: null, title: null, rawInput: null },
+      },
+      {
+        toolCallId: "tool-1",
+        kind: "execute",
+        data: { toolCallId: "tool-1", title: "git status", rawInput: { command: "git status" } },
+      },
+    );
+
+    expect(parsePermissionRequest(request).kind).toBe("unknown");
   });
 
   it("bounds an oversized cumulative tool_call_update content buffer to a tail window", () => {

@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
+import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -15,12 +16,56 @@ export function LabsSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="beta" title="Beta">
+        <BoringSidebarRow />
+        <BoringSidebarMultilineRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
+        <SimlockHostsRow />
       </SettingsSection>
       <LegacyFeaturesSection />
     </SettingsPageContainer>
+  );
+}
+
+function BoringSidebarRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("boring-sidebar")}
+      description="Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders."
+      control={
+        <Switch
+          checked={settings.boringSidebarEnabled || settings.legacySidebarEnabled}
+          // Turning it off also clears the opt-in of the removed legacy sidebar.
+          onCheckedChange={(checked) =>
+            updateSettings({ boringSidebarEnabled: Boolean(checked), legacySidebarEnabled: false })
+          }
+          aria-label="Boring sidebar (group by project)"
+        />
+      }
+    />
+  );
+}
+
+function BoringSidebarMultilineRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("boring-sidebar-multiline")}
+      description="In the boring sidebar, show folder threads on two lines: the title, then the branch, pull request, and agent."
+      control={
+        <Switch
+          checked={settings.boringSidebarMultilineRows}
+          onCheckedChange={(checked) =>
+            updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
+          }
+          aria-label="Two-line folder rows"
+        />
+      }
+    />
   );
 }
 
@@ -99,6 +144,46 @@ function LinkedEnvironmentsRow() {
             updateSettings({ linkedEnvironmentsEnabled: Boolean(checked) })
           }
           aria-label="Linked environments"
+        />
+      }
+    />
+  );
+}
+
+function SimlockHostsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("simlock-hosts")}
+      settingKeys={["simlockDeviceHostsEnabled"]}
+      description={
+        <>
+          Let the Device panel lease simulators and emulators from your own{" "}
+          <a
+            href="https://incubator.callstack.com/simlock/"
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2"
+          >
+            Simlock
+          </a>{" "}
+          pool, added in{" "}
+          <Link to="/settings/devices" className="underline underline-offset-2">
+            Devices
+          </Link>
+          . An alpha that may change or break. T3 Code never installs Simlock.
+        </>
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["simlockDeviceHostsEnabled"]}
+          checked={settings.simlockDeviceHostsEnabled}
+          onCheckedChange={(checked) =>
+            updateSettings({ simlockDeviceHostsEnabled: Boolean(checked) })
+          }
+          aria-label="Simlock device hosts"
         />
       }
     />

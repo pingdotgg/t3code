@@ -1718,6 +1718,10 @@ body {
   padding: 0;
 }
 
+[data-preview-url-input] {
+  font-variant-ligatures: none;
+}
+
 /* Lighter default icon stroke. In the base layer so stroke-* utilities still win; any
    CSS beats lucide's stroke-width="2" attribute. */
 @layer base {
@@ -2065,8 +2069,13 @@ code {
   margin: 0.65rem 0;
 }
 
-/* Preflight already draws the 1px rule, as it does in chat; only the block
-   spacing needs to match. */
+/* Surface borders can blend into dark message bubbles; rules need a readable color. */
+:is(.chat-markdown, .composer-tiptap) hr {
+  @variant dark {
+    border-color: var(--contrast-muted-foreground);
+  }
+}
+
 .composer-tiptap hr {
   margin: 0.65rem 0;
 }
@@ -2176,6 +2185,20 @@ code {
   background: transparent !important;
 }
 
+/* Plain-text fences override the highlighter's inline foreground colors. */
+:is(.chat-markdown, .composer-tiptap)
+  .chat-markdown-codeblock:is(
+    [data-language="text" i],
+    [data-language="txt" i],
+    [data-language="plain" i],
+    [data-language="plaintext" i]
+  ) {
+  &,
+  & :is(pre, pre *) {
+    color: inherit !important;
+  }
+}
+
 /* Paragraphs and code blocks arrive in chunks while a response streams. Fade
    each new block in so the chunk does not pop. @starting-style only applies
    when an element is first inserted, and the rule is gated on data-streaming,
@@ -2193,14 +2216,13 @@ code {
   }
 }
 
-/* Diagnostics-style tables: row separators only, uppercase headers, and a
-   scroll-fade container for horizontal overflow. The root chat-markdown
-   wrapping rules (overflow-wrap: anywhere) would let columns shrink to single
-   characters and defeat the overflow — restore word-boundary wrapping so the
-   min column width is the longest word. */
+/* Diagnostics-style tables: row separators only, and a scroll-fade container
+   for horizontal overflow. Cells wrap and the table fits its lane. The root
+   chat-markdown wrapping rules (overflow-wrap: anywhere) would let columns
+   shrink to single characters, so restore word-boundary wrapping: the min
+   column width is the longest word, and only wider content scrolls. */
 .chat-markdown table {
   width: 100%;
-  min-width: max-content;
   border-collapse: collapse;
   overflow-wrap: normal;
   word-break: normal;
@@ -2230,48 +2252,21 @@ code {
   border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
   padding-block: 0.55rem;
   font-weight: 600;
-  white-space: nowrap;
 }
 
 .chat-markdown tbody td {
   border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
 }
 
-/* Collapsed (default): single-line cells truncate so arbitrary chat content
-   cannot blow the column out; the footer toggle expands cells to wrap. */
-.chat-markdown .chat-markdown-table-container[data-expanded="false"] th,
-.chat-markdown .chat-markdown-table-container[data-expanded="false"] td {
-  overflow: hidden;
+/* Caps a long path, URL, or chip at 24rem; text past the cap wraps. */
+.chat-markdown :is(th, td) {
   max-width: 24rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chat-markdown .chat-markdown-table-container[data-expanded="true"] td {
-  max-width: 24rem;
-  overflow-wrap: anywhere;
-}
-
-/* Fit expanded tables to wide timeline lanes; narrow lanes keep horizontal
-   scrolling so prose columns remain readable. */
-@container chat-lane (min-width: 36rem) {
-  .chat-markdown .chat-markdown-table-container[data-expanded="true"] table {
-    min-width: 0;
-  }
-
-  .chat-markdown .chat-markdown-table-container[data-expanded="true"] th {
-    white-space: normal;
-  }
-
-  .chat-markdown .chat-markdown-table-container[data-expanded="true"] td {
-    overflow-wrap: break-word;
-  }
+  overflow-wrap: break-word;
 }
 
 /* Formula cells keep their natural width and scroll with the table. */
-.chat-markdown .chat-markdown-table-container td:has([data-markdown-math]) {
+.chat-markdown :is(th, td):has([data-markdown-math]) {
   max-width: none;
-  overflow: visible;
 }
 
 :root {
