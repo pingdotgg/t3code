@@ -1,6 +1,12 @@
 import { pipe } from "effect/Function";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
-import type { EnvironmentId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ScopedThreadRef,
+  ThreadPullRequestLink,
+  VcsStatusResult,
+} from "@t3tools/contracts";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   pullRequestListLines,
   resolveThreadPullRequestChains,
@@ -13,12 +19,17 @@ import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } fro
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { findProjectOnChangeRequestHost } from "@t3tools/client-runtime/change-request-links";
 
-import { useProjects } from "~/state/entities";
+import { useProjects, useQuietThreadShell } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { MorphIcon } from "~/components/MorphIcon";
-import { linkedPullRequestSnapshotStatus, prStatusIndicator } from "../ThreadStatusIndicators";
+import { useOpenPrLink } from "../../lib/openPullRequestLink";
+import {
+  linkedPullRequestSnapshotStatus,
+  prStatusIndicator,
+  useThreadDisplayedPullRequest,
+} from "../ThreadStatusIndicators";
 
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
 
@@ -63,7 +74,7 @@ function ThreadDetailsPrLinkRow({
   );
 }
 
-export function ThreadDetailsPrRows({
+function ThreadDetailsPrRows({
   threadRef,
   links,
   currentLink,
@@ -134,5 +145,49 @@ export function ThreadDetailsPrRows({
         {expanded ? "Show less" : `Show ${rest.length} more`}
       </ThreadDetailsControl>
     </>
+  );
+}
+
+/** Linked pull requests need no repository; only the branch's own pull request comes from git. */
+export function ThreadDetailsThreadPrRows({
+  threadRef,
+  project,
+  branchPr = null,
+  branchSourceControlProvider,
+  onActed,
+}: {
+  threadRef: ScopedThreadRef;
+  project: EnvironmentProject | null;
+  branchPr?: VcsStatusResult["pr"];
+  branchSourceControlProvider?: VcsStatusResult["sourceControlProvider"];
+  onActed?: () => void;
+}) {
+  const thread = useQuietThreadShell(threadRef);
+  const displayed = useThreadDisplayedPullRequest(
+    threadRef.environmentId,
+    thread,
+    branchPr,
+    branchSourceControlProvider,
+  );
+  const openPrLink = useOpenPrLink(threadRef);
+  const { currentLink, pr, number, url } = displayed;
+  if (number === undefined || url === undefined) return null;
+  return (
+    <ThreadDetailsPrRows
+      threadRef={threadRef}
+      links={thread?.pullRequests ?? []}
+      currentLink={currentLink}
+      onOpenLink={openPrLink}
+      environmentId={threadRef.environmentId}
+      pr={pr}
+      number={number}
+      reference={currentLink}
+      status={displayed.status}
+      project={project}
+      label={`#${number}${pr?.title.trim() ? `: ${pr.title}` : ""}`}
+      openAriaLabel={url}
+      onOpen={(event) => openPrLink(event, url)}
+      {...(onActed ? { onActed } : {})}
+    />
   );
 }
