@@ -68,7 +68,7 @@ The default matrix is:
 | `apple/iphone-6.9/dark/t3-code/`        | disposable iPhone 17 Pro Max   | 1320×2868         | App Store Connect iPhone 6.9-inch         |
 | `apple/iphone-6.5/dark/t3-code/`        | disposable iPhone 14 Plus      | 1284×2778         | App Store Connect iPhone 6.5-inch         |
 | `apple/iphone-duo-closed/dark/t3-code/` | iPhone Duo, folded portrait    | 1398×2034         | App Store Connect iPhone Duo              |
-| `apple/iphone-duo-open/dark/t3-code/`   | iPhone Duo, unfolded landscape | 2853×2007         | App Store Connect iPhone Duo              |
+| `apple/iphone-duo-open/dark/t3-code/`   | iPhone Duo, unfolded portrait  | 2007×2853         | App Store Connect iPhone Duo              |
 | `apple/ipad-13/dark/t3-code/`           | iPad Pro 13-inch (M5)          | 2752×2064         | App Store Connect iPad 13-inch, landscape |
 | `google-play/phone/dark/t3-code/`       | Pixel AVD at 420 dpi           | 1080×1920         | Google Play phone, portrait 9:16          |
 | `google-play/tablet-7/dark/t3-code/`    | Pixel AVD at 600dp width       | 1080×1920         | Google Play 7-inch tablet, portrait 9:16  |

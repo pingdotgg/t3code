@@ -1230,7 +1230,7 @@ async function captureIos(
       // Headless displays stay portrait despite app rotation; post-rotate only captures still in portrait.
       const { width, height } = readPngDimensions(await NodeFSP.readFile(destination));
       if (height > width) {
-        await runCommand("sips", ["--rotate", capture.device.fold ? "90" : "270", destination]);
+        await runCommand("sips", ["--rotate", "270", destination]);
       }
     }
     if (scene === "agent-activity") await unlockIosSimulator(simulator.udid);
