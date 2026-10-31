@@ -159,15 +159,16 @@ in a text field such as the composer. Once you type or press another key, the
 field gets its own undo back. Terminals always keep their native shortcut.
 
 `thread.next` and `thread.previous` (default `mod+shift+]` and `mod+shift+[`) move
-to the next or previous thread in the current sidebar order, including any active
-search or filter. They stop at the ends of the list.
+to the next or previous thread in the sidebar's active order and stop at the
+ends of the list.
 
-`thread.cycleNext` and `thread.cyclePrevious` move the same way but wrap around:
+`thread.cycleNext` and `thread.cyclePrevious` move through the threads the
+sidebar is showing, including the results of an active search, and wrap around:
 `thread.cycleNext` goes from the last thread back to the first, and
 `thread.cyclePrevious` from the first back to the last. They have no default
 shortcut. Bind them in **Settings → Keybindings** for browser-style rotation, such
 as `ctrl+tab` for `thread.cycleNext` and `ctrl+shift+tab` for
-`thread.cyclePrevious`. A sidebar with a single visible thread stays where it is.
+`thread.cyclePrevious`. A list with a single thread stays where it is.
 
 `navigation.back` (`mod+[` by default) and `navigation.forward` (`mod+]`) move
 through the pages you have visited, like a browser's back and forward buttons.
