@@ -1386,6 +1386,79 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live.each([true, false])(
+    "counts archived Codex usage on a cold scan with active sessions present: %s",
+    (includeActive) =>
+      Effect.gen(function* () {
+        const { home, settings } = yield* setup;
+        const sharedHome = NodePath.join(home, "shared-codex");
+        yield* Effect.promise(async () => {
+          for (const [directory, inputTokens, outputTokens] of [
+            ["sessions", 100, 20],
+            ["archived_sessions", 300, 60],
+          ] as const) {
+            if (directory === "sessions" && !includeActive) continue;
+            const dir = NodePath.join(sharedHome, directory);
+            await NodeFSP.mkdir(dir, { recursive: true });
+            await NodeFSP.writeFile(
+              NodePath.join(dir, "rollout.jsonl"),
+              [
+                { type: "session_meta", payload: { id: directory } },
+                { type: "turn_context", payload: { model: "gpt-5.6-sol" } },
+                {
+                  type: "event_msg",
+                  timestamp: "2026-08-01T10:00:00Z",
+                  payload: {
+                    type: "token_count",
+                    info: {
+                      last_token_usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+                    },
+                  },
+                },
+              ]
+                .map((line) => encodeUnknownJsonString(line))
+                .join("\n") + "\n",
+            );
+          }
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          const summary = yield* service.readSummary(WINDOW);
+          const codex = summary.buckets.filter((bucket) => bucket.provider === "codex");
+          assert.strictEqual(
+            codex.reduce((sum, bucket) => sum + totalTokens(bucket.totals), 0),
+            includeActive ? 480 : 360,
+          );
+          assert.strictEqual(
+            codex.reduce((sum, bucket) => sum + bucket.sessions, 0),
+            includeActive ? 2 : 1,
+          );
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            layerService({
+              prefix: "usage-codex-archived",
+              home,
+              settings: {
+                ...settings,
+                providerInstances: {
+                  ...settings.providerInstances,
+                  [ProviderInstanceId.make("codex")]: {
+                    driver: ProviderDriverKind.make("codex"),
+                    config: {
+                      setupMode: "managed",
+                      homePath: sharedHome,
+                      shadowHomePath: NodePath.join(home, "shadow-codex"),
+                    },
+                  },
+                },
+              },
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.live("keeps Cursor credential errors visible when a saved login cannot be read", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;

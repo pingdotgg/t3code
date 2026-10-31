@@ -51,6 +51,8 @@
         "scripts/probe-claude-fork-local-rollback-replay.ts",
         "scripts/update-test-shard-weights.ts",
         "scripts/verify-background-live.ts",
+        // PR evidence drivers are run by hand against a checkout.
+        "scripts/evidence/**/*.mjs",
         "src/provider/testFixtures/*.mjs",
         // graphqlgen reads its config.
         "graphql.config.ts",
