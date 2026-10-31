@@ -1,7 +1,12 @@
-import { ProjectId, type ThreadPullRequestLink } from "@t3tools/contracts";
+import {
+  ProjectId,
+  SourceControlProviderKind,
+  type ThreadPullRequestLink,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  knownPullRequestSummary,
   presentThreadLinkedPullRequests,
   rememberBounded,
   resolveThreadPrSource,
@@ -110,6 +115,66 @@ describe("resolveThreadPrSource compatibility", () => {
         true,
       ),
     ).toMatchObject({ linkedPresentation: { number: 3, state: null }, pullRequestRef: null });
+  });
+});
+
+describe("knownPullRequestSummary", () => {
+  it("seeds only the same host, repository and number, preferring the newest summary", () => {
+    const projectId = ProjectId.make("project");
+    const withUpdate = (number: number, overrides: Partial<ThreadPullRequestLink> = {}) => {
+      const link = linkedPr(number, overrides);
+      return { ...link, snapshot: { ...link.snapshot!, updatedAt: "2026-09-08T00:00:00.000Z" } };
+    };
+    const threads = [
+      {
+        projectId,
+        pullRequests: [
+          withUpdate(7),
+          withUpdate(8),
+          withUpdate(7, {
+            host: "gitlab.com",
+            url: "https://gitlab.com/t3tools/t3code/-/merge_requests/7",
+          }),
+        ],
+      },
+    ];
+    const newer = {
+      provider: SourceControlProviderKind.make("github"),
+      projectId,
+      repository: "t3tools/t3code",
+      number: 7,
+      title: "Newer title",
+      url: "https://github.com/t3tools/t3code/pull/7",
+      state: "open" as const,
+      headBranch: "change-7",
+      baseBranch: "main",
+      updatedAt: "2026-09-09T00:00:00.000Z",
+    };
+    const otherRepository = { ...newer, repository: "t3tools/other", title: "Other repo" };
+    const lookup = (host: string, number: number) =>
+      knownPullRequestSummary({ host, repository: "t3tools/t3code", number }, threads, [
+        otherRepository,
+      ]);
+
+    expect(lookup("github.com", 7)).toMatchObject({ title: "Change 7", provider: "github" });
+    expect(lookup("gitlab.com", 7)).toMatchObject({ title: "Change 7", provider: "gitlab" });
+    expect(lookup("github.com", 9)).toBeUndefined();
+    expect(
+      knownPullRequestSummary(
+        { host: "github.com", repository: "t3tools/t3code", number: 7 },
+        threads,
+        [otherRepository, newer],
+      )?.title,
+    ).toBe("Newer title");
+    const sameUpdate = { ...newer, updatedAt: "2026-09-08T00:00:00.000Z", title: "Same update" };
+    const seed = (observedAt: number) =>
+      knownPullRequestSummary(
+        { host: "github.com", repository: "t3tools/t3code", number: 7 },
+        threads,
+        [{ ...sameUpdate, observedAt }],
+      )?.title;
+    expect(seed(Date.parse("2026-09-07T00:00:00.000Z"))).toBe("Change 7");
+    expect(seed(Date.parse("2026-09-09T00:00:00.000Z"))).toBe("Same update");
   });
 });
 

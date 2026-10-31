@@ -8,6 +8,7 @@ import { pullRequestStatus } from "./pullRequestStatus";
 import type { PullRequestParams } from "./usePullRequestDiff";
 import type { PullRequestStackState } from "./usePullRequestStack";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
+import { withKnownPullRequestSummary } from "../../state/use-thread-pr";
 
 export function PullRequestStackCard(props: {
   readonly params: PullRequestParams;
@@ -66,7 +67,10 @@ export function PullRequestStackCard(props: {
                     selected
                       ? undefined
                       : () => {
-                          const params = { ...props.params, number: layer.number };
+                          const params = withKnownPullRequestSummary({
+                            ...props.params,
+                            number: layer.number,
+                          });
                           if (Platform.OS === "android")
                             selectDetail({ name: "PullRequest", params });
                           else navigation.dispatch(StackActions.push("PullRequest", params));

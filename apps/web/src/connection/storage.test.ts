@@ -4,6 +4,7 @@ import {
 } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { ConnectionCatalogDocument, Persistence } from "@t3tools/client-runtime/platform";
+import { EnvironmentQueryStore } from "@t3tools/client-runtime/state/query-persistence";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -192,6 +193,21 @@ describe("IndexedDB connection closed without a close event", () => {
         const loaded = yield* cache.loadThread(EnvironmentId.make("env"), ThreadId.make("thread"));
         expect(Option.isNone(loaded)).toBe(true);
         expect(open).toHaveBeenCalledTimes(2);
+      }).pipe(Effect.provide(ConnectionStorage.layer));
+    }),
+  );
+});
+
+describe("IndexedDB query cache without IndexedDB", () => {
+  it.effect("misses loads and drops saves", () =>
+    Effect.gen(function* () {
+      vi.stubGlobal("window", {});
+      vi.stubGlobal("indexedDB", undefined);
+      yield* Effect.gen(function* () {
+        const store = (yield* EnvironmentQueryStore)!;
+        const environmentId = EnvironmentId.make("env");
+        yield* store.save(environmentId, "key", "value");
+        expect(yield* store.load(environmentId, "key")).toEqual(Option.none());
       }).pipe(Effect.provide(ConnectionStorage.layer));
     }),
   );

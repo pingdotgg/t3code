@@ -201,6 +201,39 @@ it.effect("does not wait for an in-flight detail read to display a preview", () 
   }),
 );
 
+it.effect("shows a listed pull request's preview without asking the host again", () =>
+  Effect.gen(function* () {
+    let previewReads = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: () =>
+            Effect.succeed({
+              items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+              truncated: false,
+              continues: false,
+            }),
+          getChangeRequestPreview: () =>
+            Effect.sync(() => {
+              previewReads++;
+              return { ...changeRequest(1, "2026-07-02T00:00:00Z"), title: "Renamed" };
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    yield* service.list({ state: "open" });
+    assert.strictEqual((yield* service.preview(ref)).title, "Change request 1");
+    assert.strictEqual(previewReads, 0);
+    yield* service.refreshAfterTurn(ref.projectId);
+    assert.strictEqual((yield* service.preview(ref)).title, "Renamed");
+    assert.strictEqual(previewReads, 1);
+    yield* service.list({ state: "open", limit: 1 });
+    assert.strictEqual((yield* service.preview(ref)).title, "Renamed");
+  }),
+);
+
 function unusable(provider: SourceControlProviderKind, reason: "missing-tool" | "unauthenticated") {
   return new PullRequestProviderError({
     provider,

@@ -46,7 +46,11 @@ import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-na
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
-import { type PullRequestDetail, type PullRequestListEntry } from "@t3tools/contracts";
+import {
+  type PullRequestDetail,
+  type PullRequestListEntry,
+  type PullRequestSummary,
+} from "@t3tools/contracts";
 import { PullRequestOverviewLoading } from "./PullRequestOverviewLoading";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestStatus } from "./pullRequestStatus";
@@ -179,11 +183,11 @@ function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityF
 }
 
 function PullRequestIdentity(props: {
-  readonly pr: PullRequestDetail | PullRequestListEntry;
+  readonly pr: PullRequestDetail | PullRequestListEntry | PullRequestSummary;
   readonly params: PullRequestParams;
 }) {
   const { pr } = props;
-  const status = pullRequestStatus(pr);
+  const status = pullRequestStatus({ state: pr.state, isDraft: pr.isDraft === true });
   return (
     <View className="gap-3">
       <View className="flex-row flex-wrap items-center gap-2">
@@ -195,8 +199,8 @@ function PullRequestIdentity(props: {
             <Text className={`text-xs font-t3-medium ${status.text}`}>{status.label}</Text>
           </View>
         )}
-        <PullRequestDiffStats additions={pr.additions} deletions={pr.deletions} compact />
-        {"changedFiles" in pr ? (
+        <PullRequestDiffStats additions={pr.additions ?? 0} deletions={pr.deletions ?? 0} compact />
+        {"changedFiles" in pr && pr.changedFiles !== undefined ? (
           <Text className="text-2xs text-foreground-muted">
             {pr.changedFiles} {pr.changedFiles === 1 ? "file" : "files"}
           </Text>
@@ -208,7 +212,7 @@ function PullRequestIdentity(props: {
         {pr.title}
       </Text>
       <View className="flex-row items-center gap-2">
-        <PullRequestAvatar actor={pr.author} size={20} />
+        <PullRequestAvatar actor={pr.author ?? null} size={20} />
         <Text className="min-w-0 flex-1 text-xs font-t3-medium" numberOfLines={1}>
           {pr.author?.login ?? "Unknown author"}
         </Text>

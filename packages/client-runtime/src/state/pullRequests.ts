@@ -21,7 +21,7 @@ import {
   type PullRequestRef,
   type PullRequestMergeMethod,
   PullRequestOperationError,
-  type PullRequestSummary,
+  PullRequestSummary,
   type VcsStatusResult,
 } from "@t3tools/contracts";
 import * as Data from "effect/Data";
@@ -147,6 +147,7 @@ export function createLinkedPullRequestSummaryAtomFamily<R, E>(
   const routedRequest = createPullRequestRouter();
   return createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:pull-requests:linked-summary",
+    persistence: persistQuery(PullRequestSummary),
     tag: WS_METHODS.pullRequestsSummary,
     execute: (input) => routedRequest(WS_METHODS.pullRequestsSummary, input),
     staleTimeMs: 60_000,
