@@ -681,12 +681,17 @@ function useKeybindingRowEditor({
   row,
   allRows,
   onSave,
+  initialRecording = false,
 }: {
   row: KeybindingRow;
   allRows: ReadonlyArray<KeybindingRow>;
   onSave: (input: ServerUpsertKeybindingInput) => void;
+  initialRecording?: boolean;
 }) {
-  const [draft, setDraft] = useReducer(keybindingRowDraftReducer, row, createKeybindingRowDraft);
+  const [draft, setDraft] = useReducer(keybindingRowDraftReducer, {
+    ...createKeybindingRowDraft(row),
+    isRecording: initialRecording,
+  });
   const pillRef = useRef<HTMLButtonElement>(null);
   const { keyDraft, whenDraft, isRecording, isWhenDraftValid } = draft;
   const whenDraftExpression = whenAstToExpression(whenDraft);
@@ -802,6 +807,7 @@ function WhenClauseControl({
   variables,
   onChange,
   onValidityChange,
+  defaultOpen = false,
 }: {
   label: string;
   expression: string;
@@ -809,6 +815,7 @@ function WhenClauseControl({
   variables: ReadonlyArray<WhenVariableOption>;
   onChange: (value: KeybindingWhenNode | undefined) => void;
   onValidityChange: (valid: boolean) => void;
+  defaultOpen?: boolean;
 }) {
   // Closing unmounts the builder, which drops an unparsed draft and keeps the last valid value.
   const handleOpenChange = (open: boolean) => {
@@ -816,7 +823,7 @@ function WhenClauseControl({
   };
 
   return (
-    <Popover onOpenChange={handleOpenChange}>
+    <Popover defaultOpen={defaultOpen} onOpenChange={handleOpenChange}>
       <PopoverTrigger
         render={
           <Button
@@ -936,10 +943,10 @@ function KeybindingHoverRowMenu(props: {
  * narrow containers move Command above Keys and When and hide the header visually.
  */
 const KEYBINDING_TABLE_GRID =
-  "grid grid-cols-[minmax(0,1fr)_150px_140px_3rem] items-center gap-x-4 @max-xl/keybindings:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_3rem]";
+  "grid grid-cols-[minmax(0,1fr)_150px_140px] items-center gap-x-4 @max-lg/keybindings:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]";
 const KEYBINDING_TABLE_ROW = "col-span-full grid grid-cols-subgrid items-center gap-y-1 px-4";
-const KEYBINDING_TABLE_COMMAND = "min-w-0 @max-xl/keybindings:col-span-full";
-const KEYBINDING_TABLE_TAIL = "col-span-2 flex min-w-0 items-center gap-1";
+const KEYBINDING_TABLE_COMMAND = "min-w-0 @max-lg/keybindings:col-span-full";
+const KEYBINDING_TABLE_TAIL = "flex min-w-0 items-center gap-1";
 
 function KeybindingTableHead() {
   return (
@@ -947,29 +954,89 @@ function KeybindingTableHead() {
       role="row"
       className={cn(
         KEYBINDING_TABLE_ROW,
-        "py-2 text-meta text-dim-foreground @max-xl/keybindings:sr-only",
+        "py-2 text-meta text-dim-foreground @max-lg/keybindings:sr-only",
       )}
     >
       <span role="columnheader">Command</span>
       <span role="columnheader">Keys</span>
       <span role="columnheader">When</span>
-      <span role="columnheader" className="sr-only">
-        Actions
-      </span>
     </div>
   );
 }
 
-/** One binding as a table row; actions fade in at the end on hover. */
+/** Resting rows need only two triggers; mount capture and condition editors on demand. */
 function KeybindingSettingsRow(props: KeybindingRowProps) {
+  const [editing, setEditing] = useState<"shortcut" | "when" | null>(null);
+  if (editing) return <EditableKeybindingSettingsRow {...props} initialEditor={editing} />;
+  const { row, anchorId, allRows, isSaving, onReset, onRemove } = props;
+  return (
+    <SettingsSearchTarget
+      id={anchorId}
+      role="row"
+      className={cn(KEYBINDING_TABLE_ROW, "group/row min-h-9.5 py-1 outline-none")}
+    >
+      <span role="cell" className={KEYBINDING_TABLE_COMMAND}>
+        <KeybindingRowTitle row={row} />
+      </span>
+      <span role="cell" className="-ml-1.5 flex min-w-0 items-center">
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label={`Edit shortcut for ${commandLabel(row.command)}: ${formatShortcutLabel(row.binding.shortcut)}`}
+          onClick={() => setEditing("shortcut")}
+        >
+          {row.key ? <KeybindingPill value={row.key} /> : "Unassigned"}
+        </Button>
+      </span>
+      <div role="presentation" className={KEYBINDING_TABLE_TAIL}>
+        <span role="cell" className="-ml-1.5 flex min-w-0 flex-1 items-center">
+          <Button
+            variant={row.when ? "ghost" : "ghost-muted"}
+            size="micro"
+            className="min-w-0 shrink"
+            aria-label={`Edit when clause for ${commandLabel(row.command)}`}
+            onClick={() => setEditing("when")}
+          >
+            <span className="truncate font-mono font-normal">{row.when || "Always"}</span>
+            <ChevronDownIcon className="size-3.5 shrink-0 opacity-0 group-focus-within/row:opacity-60 group-hover/row:opacity-60 pointer-coarse:opacity-60" />
+          </Button>
+        </span>
+        <span role="cell" className="flex shrink-0 items-center gap-1">
+          <KeybindingConflictWarning
+            labels={keybindingConflictLabels(allRows, {
+              rowId: row.id,
+              key: row.key,
+              when: row.when,
+            })}
+          />
+          <KeybindingHoverRowMenu
+            row={row}
+            isSaving={isSaving}
+            onReset={onReset}
+            onRemove={onRemove}
+          />
+        </span>
+      </div>
+    </SettingsSearchTarget>
+  );
+}
+
+function EditableKeybindingSettingsRow(
+  props: KeybindingRowProps & { initialEditor: "shortcut" | "when" },
+) {
   const { row, isSaving, anchorId, allRows, variables, onSave, onReset, onRemove } = props;
-  const editor = useKeybindingRowEditor({ row, allRows, onSave });
+  const editor = useKeybindingRowEditor({
+    row,
+    allRows,
+    onSave,
+    initialRecording: props.initialEditor === "shortcut",
+  });
 
   return (
     <SettingsSearchTarget
       id={anchorId}
       role="row"
-      className={cn(KEYBINDING_TABLE_ROW, "group/row min-h-10 py-1.5 outline-none")}
+      className={cn(KEYBINDING_TABLE_ROW, "group/row min-h-9.5 py-1 outline-none")}
     >
       <span role="cell" className={KEYBINDING_TABLE_COMMAND}>
         <KeybindingRowTitle row={row} />
@@ -980,6 +1047,7 @@ function KeybindingSettingsRow(props: KeybindingRowProps) {
       <div role="presentation" className={KEYBINDING_TABLE_TAIL}>
         <span role="cell" className="-ml-1.5 flex min-w-0 flex-1 items-center">
           <WhenClauseControl
+            defaultOpen={props.initialEditor === "when"}
             label={commandLabel(row.command)}
             expression={editor.whenDraftExpression}
             value={editor.whenDraft}
