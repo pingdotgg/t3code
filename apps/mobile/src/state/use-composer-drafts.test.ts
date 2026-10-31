@@ -181,6 +181,7 @@ import {
   archiveCloudComposerDrafts,
   clearComposerDraftContent,
   clearComposerDraftContentState,
+  releaseDeliveredComposerModelPick,
   subscribeComposerDraftModelReconciliation,
   clearComposerDraftsEnvironment,
   ComposerDraftPersistenceError,
@@ -545,6 +546,23 @@ describe("mobile composer drafts", () => {
       },
     });
     expect(getComposerDraftSnapshot(key).modelSelection ?? h.model()).toEqual(h.model());
+    expect(getComposerDraftSnapshot(key)).toEqual({ ...before, modelSelection: undefined });
+  });
+
+  it("releases a pick once a message carrying it is delivered", async () => {
+    const key = "environment-1:thread-1";
+    const pick = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
+    setComposerDraftText(key, "next follow-up");
+    updateComposerDraftSettings(key, { modelSelection: pick, interactionMode: "plan" });
+    const before = getComposerDraftSnapshot(key);
+
+    await releaseDeliveredComposerModelPick(key, { ...pick, model: "claude-sonnet-5-5" });
+    expect(getComposerDraftSnapshot(key)).toEqual(before);
+
+    await releaseDeliveredComposerModelPick(key, {
+      ...pick,
+      options: [{ id: "fastMode", value: false }],
+    });
     expect(getComposerDraftSnapshot(key)).toEqual({ ...before, modelSelection: undefined });
   });
 

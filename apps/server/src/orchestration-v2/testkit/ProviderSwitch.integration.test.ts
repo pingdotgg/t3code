@@ -1884,6 +1884,188 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
+  it.live("queues an unpicked follow-up on the newest queued pick", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("queued-unpicked-follow-up");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const started = yield* Deferred.make<void>();
+        const threadId = ThreadId.make("thread:queued-unpicked-follow-up");
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            holdFirstTurn: started,
+          }),
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:queued-unpicked-follow-up:create"),
+            threadId,
+            projectId: ProjectId.make("project:queued-unpicked-follow-up"),
+            title: "Queued unpicked follow-up",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:queued-unpicked-follow-up:first"),
+            threadId,
+            messageId: MessageId.make("message:queued-unpicked-follow-up:first"),
+            text: "Current Codex turn",
+            attachments: [],
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* Deferred.await(started);
+          yield* worker.drain();
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "mobile",
+            commandId: CommandId.make("command:queued-unpicked-follow-up:pick"),
+            threadId,
+            messageId: MessageId.make("message:queued-unpicked-follow-up:pick"),
+            text: "Picked Claude",
+            attachments: [],
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            dispatchMode: { type: "queue_after_active" },
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "mobile",
+            commandId: CommandId.make("command:queued-unpicked-follow-up:follow-up"),
+            threadId,
+            messageId: MessageId.make("message:queued-unpicked-follow-up:follow-up"),
+            text: "Follow-up without a pick",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+          });
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(
+            projection.runs.map((run) => [run.status, run.modelSelection.instanceId]),
+            [
+              ["running", CODEX_MODEL_SELECTION.instanceId],
+              ["queued", CLAUDE_MODEL_SELECTION.instanceId],
+              ["queued", CLAUDE_MODEL_SELECTION.instanceId],
+            ],
+          );
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "agent",
+            creationSource: "server",
+            commandId: CommandId.make("command:queued-unpicked-follow-up:monitor"),
+            threadId,
+            messageId: MessageId.make("message:queued-unpicked-follow-up:monitor"),
+            text: "Monitor update",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            notification: { source: { kind: "monitor" }, outcome: "updated", summary: "Update" },
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "mobile",
+            commandId: CommandId.make("command:queued-unpicked-follow-up:after-monitor"),
+            threadId,
+            messageId: MessageId.make("message:queued-unpicked-follow-up:after-monitor"),
+            text: "Follow-up after a monitor update",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+          });
+          const afterMonitor = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(
+            afterMonitor.runs.find(
+              (run) => run.userMessageId === "message:queued-unpicked-follow-up:after-monitor",
+            )?.modelSelection.instanceId,
+            CLAUDE_MODEL_SELECTION.instanceId,
+          );
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "server",
+            commandId: CommandId.make("command:queued-unpicked-follow-up:server"),
+            threadId,
+            messageId: MessageId.make("message:queued-unpicked-follow-up:server"),
+            text: "Server-created answer",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+          });
+          const withServerMessage = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(
+            withServerMessage.runs.find(
+              (run) => run.userMessageId === "message:queued-unpicked-follow-up:server",
+            )?.modelSelection.instanceId,
+            CODEX_MODEL_SELECTION.instanceId,
+          );
+          yield* orchestrator.dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make("command:queued-unpicked-follow-up:stop"),
+            threadId,
+          });
+          yield* worker.drain();
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "mobile",
+            commandId: CommandId.make("command:queued-unpicked-follow-up:continue"),
+            threadId,
+            messageId: MessageId.make("message:queued-unpicked-follow-up:continue"),
+            text: "Continue without a pick",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+          });
+          const continued = yield* orchestrator.getThreadProjection(threadId);
+          const continuation = continued.runs.find(
+            (run) => run.userMessageId === "message:queued-unpicked-follow-up:continue",
+          );
+          assert.equal(continuation?.modelSelection.instanceId, CODEX_MODEL_SELECTION.instanceId);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "queued-unpicked-follow-up",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
   it.live("hands completed Grok steering context to earlier queued Codex and later Claude", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -1490,6 +1490,21 @@ export function updateComposerDraftSettings(
   });
 }
 
+export async function releaseDeliveredComposerModelPick(
+  draftKey: string,
+  delivered: ModelSelection,
+): Promise<void> {
+  await waitForComposerDraftsLoaded();
+  updateComposerDrafts((current) => {
+    const draft = current[draftKey];
+    if (!draft?.modelSelection || !draftModelPickMatchesThread(draft.modelSelection, delivered)) {
+      return current;
+    }
+    const { modelSelection: _modelSelection, ...rest } = draft;
+    return withComposerDraft(current, draftKey, rest);
+  });
+}
+
 export function subscribeComposerDraftModelReconciliation(input: {
   readonly registry: AtomRegistry.AtomRegistry;
   readonly threadRefsAtom: Atom.Atom<ReadonlyArray<ScopedThreadRef>>;
