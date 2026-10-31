@@ -84,6 +84,17 @@ describe("claudeUsageResponseToLimits", () => {
     ).toEqual({ overageIncluded: "Fable" });
   });
 
+  it("waits for a streamed reading from a setup token the probe cannot read, not from an API key", () => {
+    const response = { rate_limits_available: false, rate_limits: null };
+    expect(
+      claudeUsageResponseToLimits({ checkedAt, response, tokenSource: "CLAUDE_CODE_OAUTH_TOKEN" })
+        .limits.unavailable?.reason,
+    ).toBe("probeFailed");
+    expect(claudeUsageResponseToLimits({ checkedAt, response }).limits.unavailable?.reason).toBe(
+      "unsupported",
+    );
+  });
+
   it("skips a window the endpoint reports without a utilization", () => {
     expect(
       claudeUsageResponseToLimits({
@@ -246,6 +257,77 @@ describe("claudeRateLimitEventToUpdate", () => {
           resetsAt: "2026-07-14T03:33:20.000Z",
         },
       ],
+    });
+  });
+
+  it("reads every window from a setup-token event that has no top-level utilization", () => {
+    // Captured from `claude -p --output-format stream-json` under CLAUDE_CODE_OAUTH_TOKEN.
+    const event = {
+      status: "allowed",
+      rateLimitType: "five_hour",
+      unifiedWindows: {
+        five_hour: { utilization: 0.2, resetsAt: 1_792_759_800 },
+        seven_day: { utilization: 0.59, resetsAt: 1_792_760_400 },
+      },
+    } as const;
+    expect(claudeRateLimitEventToUpdate(event, noNames)).toEqual({
+      complete: true,
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          usedPercent: 20,
+          windowDurationMins: 300,
+          resetsAt: "2026-10-23T12:50:00.000Z",
+        },
+        {
+          id: "seven_day",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 59,
+          windowDurationMins: 10080,
+          resetsAt: "2026-10-23T13:00:00.000Z",
+        },
+      ],
+    });
+  });
+
+  it("prefers the event's own window over the per-window snapshot, which can lag it", () => {
+    const event = {
+      status: "allowed",
+      rateLimitType: "five_hour",
+      utilization: 0.75,
+      resetsAt: 1_792_759_810,
+      unifiedWindows: {
+        five_hour: { utilization: 0.25, resetsAt: 1_792_759_800 },
+        seven_day: { utilization: 0.5, resetsAt: 1_792_760_400 },
+      },
+    } as const;
+    expect(
+      claudeRateLimitEventToUpdate(event, noNames)?.windows.map(({ id, usedPercent, resetsAt }) => [
+        id,
+        usedPercent,
+        resetsAt,
+      ]),
+    ).toEqual([
+      ["five_hour", 75, "2026-10-23T12:50:10.000Z"],
+      ["seven_day", 50, "2026-10-23T13:00:00.000Z"],
+    ]);
+  });
+
+  it("skips a malformed snapshot window and keeps the rest", () => {
+    const event = {
+      status: "allowed",
+      unifiedWindows: {
+        five_hour: { utilization: 0.3, resetsAt: 1_792_759_800 },
+        seven_day: { utilization: Number.NaN },
+        seven_day_overage_included: null,
+      },
+    } as never;
+    expect(claudeRateLimitEventToUpdate(event, noNames)).toMatchObject({
+      complete: true,
+      windows: [{ id: "five_hour", usedPercent: 30 }],
     });
   });
 

@@ -643,10 +643,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       ? yield* recordClaudeUsageResponse(scopedLimitNames, {
           response: capabilities.usage,
           checkedAt: usageCheckedAt,
+          tokenSource: capabilities.tokenSource,
         })
       : claudeUsageResponseToLimits({
           response: capabilities.usage,
           checkedAt: usageCheckedAt,
+          tokenSource: capabilities.tokenSource,
         }).limits;
   const resetCredits =
     resolveResetCredits &&
