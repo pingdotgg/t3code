@@ -4,6 +4,7 @@ import * as React from "react";
 
 import { cn } from "~/lib/utils";
 import { Input } from "~/components/ui/input";
+import { MENU_ROW_TEXT_CLASS } from "./menu-row-text";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { RELAXED_PICKER_CLASS } from "./picker-styles";
 
@@ -144,7 +145,7 @@ function ComboboxSearchInput({
         />
         <ComboboxInput
           {...props}
-          className="flex w-full [&_input]:h-6.5 [&_input]:ps-6 [&_input]:font-sans [&_input]:leading-6.5"
+          className="flex w-full [&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
           showTrigger={false}
           size="sm"
           unstyled
@@ -233,7 +234,7 @@ function ComboboxItem({
   return (
     <ComboboxPrimitive.Item
       className={cn(
-        "flex min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-pointer items-center rounded-[8px] data-[radius=row]:rounded-row px-2.5 py-1 text-label text-foreground outline-none not-data-disabled:hover:surface-selected-soft data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-selected:text-strong-foreground data-highlighted:surface-selected-soft data-highlighted:text-strong-foreground [&[data-highlighted][data-selected]]:surface-selected-soft [&[data-highlighted][data-selected]]:text-strong-foreground data-disabled:opacity-45 sm:min-h-8 [&_svg:not([class*='size-'])]:size-[15px] [&_svg]:pointer-events-none [&_svg]:shrink-0",
+        `flex min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-pointer items-center rounded-[8px] data-[radius=row]:rounded-row px-2 py-1 ${MENU_ROW_TEXT_CLASS} text-foreground outline-none not-data-disabled:hover:surface-selected-soft data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-selected:text-strong-foreground data-highlighted:surface-selected-soft data-highlighted:text-strong-foreground [&[data-highlighted][data-selected]]:surface-selected-soft [&[data-highlighted][data-selected]]:text-strong-foreground data-disabled:opacity-45 sm:min-h-7 [&_svg:not([class*='size-'])]:size-[15px] [&_svg]:pointer-events-none [&_svg]:shrink-0`,
         selectedFill && "data-selected:surface-selected-soft",
         className,
       )}
@@ -242,7 +243,7 @@ function ComboboxItem({
       {...props}
     >
       <div
-        className="flex min-w-0 flex-1 items-center gap-2.5 [&_svg:not([class*='text-'])]:text-muted-foreground"
+        className="flex min-w-0 flex-1 items-center gap-2 [&_svg:not([class*='text-'])]:text-muted-foreground"
         data-slot="combobox-item-content"
       >
         {children}
