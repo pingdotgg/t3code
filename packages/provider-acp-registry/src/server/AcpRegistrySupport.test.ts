@@ -74,7 +74,7 @@ const makeFakeNpmToolchain = Effect.fn("AcpRegistrySupport.test.makeFakeNpmToolc
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const toolchainBin = path.join(rootDirectory, "fake-node", "bin");
-  const globalPrefix = path.join(rootDirectory, "tools", "example-agent", "1.2.3", "npm");
+  const globalPrefix = path.join(rootDirectory, "tools", "example-agent", "1.2.3", "npm-scripts");
   const globalBin = path.join(globalPrefix, "bin");
   const executablePath = path.join(globalBin, "example-agent");
   const npmPath = path.join(toolchainBin, "npm");
@@ -1504,8 +1504,8 @@ describe("AcpRegistrySupport", () => {
       const versionRoot = `${cacheDir}/tools/example-agent/1.2.3`;
       yield* fileSystem.makeDirectory(`${versionRoot}/linux-x86_64`, { recursive: true });
       yield* fileSystem.writeFileString(`${versionRoot}/linux-x86_64/agent`, "binary");
-      yield* fileSystem.makeDirectory(`${versionRoot}/npm/bin`, { recursive: true });
-      yield* fileSystem.writeFileString(`${versionRoot}/npm/bin/agent`, "package command");
+      yield* fileSystem.makeDirectory(`${versionRoot}/npm-scripts/bin`, { recursive: true });
+      yield* fileSystem.writeFileString(`${versionRoot}/npm-scripts/bin/agent`, "package command");
       const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
@@ -1516,7 +1516,7 @@ describe("AcpRegistrySupport", () => {
         removed: true,
       });
       expect(yield* fileSystem.exists(`${versionRoot}/linux-x86_64`)).toBe(false);
-      expect(yield* fileSystem.readFileString(`${versionRoot}/npm/bin/agent`)).toBe(
+      expect(yield* fileSystem.readFileString(`${versionRoot}/npm-scripts/bin/agent`)).toBe(
         "package command",
       );
       expect(yield* resolver.uninstallManagedBinary({ agentId: "example-agent" })).toEqual({
@@ -1758,7 +1758,7 @@ describe("acpRegistryManagedBinaryDirectories", () => {
       yield* install("kimi", "1.50.0", "linux-x86_64", "cmd");
       yield* install("kimi", "1.50.0", "darwin-aarch64");
       yield* install("other-agent", "0.2.0", "darwin-aarch64");
-      const globalBin = path.join(cacheDir, "tools", "gemini", "0.56.0", "npm", "bin");
+      const globalBin = path.join(cacheDir, "tools", "gemini", "0.56.0", "npm-scripts", "bin");
       const geminiCommand = path.join(globalBin, "gemini");
       const receiptsDirectory = path.join(cacheDir, "acp-registry", "package-installs");
       yield* fileSystem.makeDirectory(globalBin, { recursive: true });
@@ -1780,7 +1780,7 @@ describe("acpRegistryManagedBinaryDirectories", () => {
             "tools",
             "gemini",
             "0.56.0",
-            "npm",
+            "npm-scripts",
             "lib",
             "node_modules",
             "@google",
