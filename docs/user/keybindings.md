@@ -168,7 +168,9 @@ sidebar is showing, including the results of an active search, and wrap around:
 `thread.cyclePrevious` from the first back to the last. They have no default
 shortcut. Bind them in **Settings → Keybindings** for browser-style rotation, such
 as `ctrl+tab` for `thread.cycleNext` and `ctrl+shift+tab` for
-`thread.cyclePrevious`. A list with a single thread stays where it is.
+`thread.cyclePrevious` in the desktop app. A browser keeps those keys for its own
+tabs, so on the web choose chords the page receives, such as `ctrl+alt+arrowdown`
+and `ctrl+alt+arrowup`. A list with a single thread stays where it is.
 
 `navigation.back` (`mod+[` by default) and `navigation.forward` (`mod+]`) move
 through the pages you have visited, like a browser's back and forward buttons.
