@@ -376,6 +376,8 @@ patchedDependencies:
   # Exports the dependency-light subpaths mobile and the web diff parser import, and keeps
   # measured wrapped-row heights above an edit (fileEditorVirtualization.test.ts).
   "@pierre/diffs@1.6.1": patches/@pierre%2Fdiffs@1.6.1.patch
+  # Exclude overlaid chrome from the tree viewport; recheck the overlay offset if stickyFolders is enabled.
+  "@pierre/trees@1.0.0-beta.6": patches/@pierre%2Ftrees@1.0.0-beta.6.patch
   "@react-native-ai/apple@0.12.0": patches/@react-native-ai__apple@0.12.0.patch
   "@react-native-menu/menu@2.0.0": patches/@react-native-menu__menu@2.0.0.patch
   "@react-navigation/native-stack@7.21.0": patches/@react-navigation%2Fnative-stack@7.21.0.patch

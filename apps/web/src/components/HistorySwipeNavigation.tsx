@@ -116,7 +116,9 @@ export function HistorySwipeNavigation() {
     const onWheel = (event: WheelEvent) => {
       if (gesture === null) {
         gesture =
-          event.ctrlKey || event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL
+          event.ctrlKey ||
+          (event.metaKey && event.altKey) ||
+          event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL
             ? { kind: "ignored" }
             : { kind: "pending", path: event.composedPath(), y: event.clientY, sumX: 0, sumY: 0 };
       }

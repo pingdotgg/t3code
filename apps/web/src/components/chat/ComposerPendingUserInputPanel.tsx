@@ -11,6 +11,7 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { cn } from "~/lib/utils";
 import { isInSideChatPane } from "~/lib/sideChatPane";
+import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
 import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
 import { ComposerRequestCard, useRequestCardEnterShortcut } from "./ComposerRequestCard";
@@ -204,11 +205,14 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     onWriteAnswer?.();
   });
 
+  // Only the layout-focused pane's prompt answers number-key shortcuts.
+  const paneFocusedRef = useLayoutPaneFocusedRef();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for digit shortcuts while a question is answerable
   useEffect(() => {
     if (!activeQuestion || responseDisabled || isCollapsed || backgroundThread) return;
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (!paneFocusedRef.current) return;
       const target = event.target;
       if (isInSideChatPane(target)) return;
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
@@ -235,7 +239,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, backgroundThread, isCollapsed, responseDisabled]);
+  }, [activeQuestion, backgroundThread, isCollapsed, paneFocusedRef, responseDisabled]);
 
   if (!activeQuestion) {
     return null;

@@ -1,13 +1,19 @@
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
+import { AuthTerminalOperateScope } from "@t3tools/contracts";
+import { useEnvironmentScope } from "../../state/session";
+import { useEffect } from "react";
+import { useLayoutPane, useLayoutPaneOwnsThreadRef } from "../../layout/layoutPaneContext";
+import { registerLayoutOpenBesideAction, type LayoutBesideKind } from "../../layout/layoutActions";
+import { requestLayoutSurfacePlacement } from "../../layout/surfaceSync";
+import { getLayoutBehavior } from "../../layout/layoutBehavior";
+import { toggleThreadSidePane } from "../../layout/openRules";
+import type { useChatTerminalActions } from "./useChatTerminalActions";
+import { isPreviewSupportedInRuntime } from "../../previewStateStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { ThreadPreviewState } from "../../previewStateStore";
-import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
-import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
-import { resolveExplicitDiffOpenOnActivate } from "../ChatView.logic";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { type ScopedThreadRef, type RunId } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { useEffect } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -21,10 +27,8 @@ import {
   useRightPanelStore,
 } from "../../rightPanelStore";
 import { requestWorkspaceContentFocus, requestWorkspaceFocus } from "../../lib/workspaceFocus";
-import { setActivePreviewTab } from "../../previewStateStore";
 import { BrowserSettingsReadError } from "../../browser/openFileInPreview";
 import { addBrowserSurface } from "../preview/addBrowserSurface";
-import { focusActivePanelTerminal, focusTerminal } from "../../lib/terminalFocus";
 import { subscribePreviewAction } from "../preview/previewActionBus";
 import { floatDeviceSurface } from "../preview/agentOpenedPreviews";
 import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../../previewMiniPlayerStore";
@@ -36,6 +40,7 @@ import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
 interface RightPanelActionsInput {
+  readonly startTerminal: ReturnType<typeof useChatTerminalActions>["startTerminal"];
   readonly activeThreadRef: ScopedThreadRef | null;
   readonly activeProject: EnvironmentProject | null;
   readonly activeRightPanelSurface: RightPanelSurface | null;
@@ -52,23 +57,19 @@ interface RightPanelActionsInput {
   readonly canOperatePreview: boolean;
   readonly diffOpen: boolean;
   readonly previewPanelOpen: boolean;
-  readonly rightPanelOpen: boolean;
   readonly supportsPullRequests: boolean;
   readonly pullRequestsSurfaceAvailable: boolean;
-  readonly gitCwd: string | null;
-  readonly activeProjectCwd: string | null;
   readonly explicitDiffOpenRef: { current: ScopedThreadRef | null };
   readonly onDiffPanelOpen: (() => void) | undefined;
-  readonly closeRightPanelSurface: (surface: RightPanelSurface) => void;
 }
 
 /**
- * Opening, closing, and arranging the right panel's surfaces: browser, diff, files, pull
- * requests, device, and terminal tabs.
+ * Opens surface tabs beside the owning chat, including the palette's and header's
+ * open-beside actions. Surface tabs own their rendering, arrangement, and closing.
  */
 export function useRightPanelActions(input: RightPanelActionsInput) {
   const {
-    closeRightPanelSurface,
+    startTerminal,
     activeThreadRef,
     activeProject,
     activeRightPanelSurface,
@@ -84,15 +85,19 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     canOperatePreview,
     diffOpen,
     previewPanelOpen,
-    rightPanelOpen,
     supportsPullRequests,
     pullRequestsSurfaceAvailable,
-    gitCwd,
-    activeProjectCwd,
     explicitDiffOpenRef,
     onDiffPanelOpen,
   } = input;
 
+  const layoutPane = useLayoutPane();
+  const layoutPaneOwnsThreadRef = useLayoutPaneOwnsThreadRef();
+  const ownsThread = layoutPane.focused || layoutPane.related;
+  const canOperateTerminal = useEnvironmentScope(
+    activeThreadRef?.environmentId ?? null,
+    AuthTerminalOperateScope,
+  );
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const onToggleDiff = () => {
     if (!isServerThread) {
@@ -105,7 +110,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       useRightPanelStore.getState().toggle(activeThreadRef, "diff");
     }
   };
-  const onToggleDiffStable = useStableCallback(onToggleDiff);
   const createBrowserSurface = (profileId?: string) => {
     if (!activeThreadRef || !canOperatePreview) return;
     void addBrowserSurface({
@@ -126,14 +130,12 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       }
     });
   };
-  const createBrowserSurfaceStable = useStableCallback(createBrowserSurface);
   const addDiffSurface = () => {
     if (!activeThreadRef || !isServerThread || !isGitRepo) return;
     useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
   };
-  const addDiffSurfaceStable = useStableCallback(addDiffSurface);
   const openChangesFromThreadPanel = () => {
     addDiffSurface();
   };
@@ -142,12 +144,10 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   };
-  const addFilesSurfaceStable = useStableCallback(addFilesSurface);
   const addPullRequestsSurface = () => {
     if (!activeThreadRef || !pullRequestsSurfaceAvailable) return;
     useRightPanelStore.getState().open(activeThreadRef, "pull-requests");
   };
-  const addPullRequestsSurfaceStable = useStableCallback(addPullRequestsSurface);
   const addDeviceSurface = () => {
     if (!activeThreadRef) return;
     if (!deviceState.onboardingCompleted || deviceState.hostStatus === "disabled") {
@@ -156,12 +156,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     }
     useRightPanelStore.getState().open(activeThreadRef, "device");
   };
-  const addDeviceSurfaceStable = useStableCallback(addDeviceSurface);
-  const openFileSurface = (relativePath: string) => {
-    if (!activeThreadRef || !activeProject) return;
-    useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
-  };
-  const openFileSurfaceStable = useStableCallback(openFileSurface);
   const closePreviewPanel = () => {
     if (activeThreadRef) {
       if (activeRightPanelSurface?.kind === "preview" && activeRightPanelSurface.resourceId) {
@@ -178,7 +172,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       useRightPanelStore.getState().close(activeThreadRef);
     }
   };
-  const closePreviewPanelStable = useStableCallback(closePreviewPanel);
   const togglePreviewPanel = () => {
     if (!activeThreadRef || !browserAvailable) return;
     if (previewPanelOpen) {
@@ -194,35 +187,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     }
   };
   const togglePreviewPanelStable = useStableCallback(togglePreviewPanel);
-  const activateRightPanelSurface = (surface: RightPanelSurface) => {
-    if (!activeThreadRef) return;
-    explicitDiffOpenRef.current = resolveExplicitDiffOpenOnActivate({
-      surfaceKind: surface.kind,
-      diffOpen,
-      activeThreadRef,
-    });
-    useRightPanelStore.getState().activateSurface(activeThreadRef, surface.id);
-    if (surface.kind === "preview" && surface.resourceId) {
-      setActivePreviewTab(activeThreadRef, surface.resourceId);
-    }
-    if (surface.kind === "terminal") {
-      focusTerminal(activeThreadRef, surface.activeTerminalId);
-    }
-    if (surface.kind === "diff" && !diffOpen) {
-      onDiffPanelOpen?.();
-    }
-  };
-  const activateRightPanelSurfaceStable = useStableCallback(activateRightPanelSurface);
-  const toggleRightPanel = () => {
-    if (!activeThreadRef) return;
-    if (rightPanelOpen) {
-      closePreviewPanel();
-      return;
-    }
-    useRightPanelStore.getState().toggleVisibility(activeThreadRef);
-    focusActivePanelTerminal(activeThreadRef);
-  };
-  const toggleRightPanelStable = useStableCallback(toggleRightPanel);
   const toggleThreadPanel = () => {
     if (!activeThreadRef) return;
     const store = useRightPanelStore.getState();
@@ -239,53 +203,77 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     store.toggleThreadPanel(activeThreadRef, threadPanelPresentation);
   };
   const toggleThreadPanelStable = useStableCallback(toggleThreadPanel);
-  const moveRightPanelSurface = (surfaceId: string, toIndex: number) => {
-    if (activeThreadRef)
-      useRightPanelStore.getState().moveSurface(activeThreadRef, surfaceId, toIndex);
-  };
-  const moveRightPanelSurfaceStable = useStableCallback(moveRightPanelSurface);
-  const copyRightPanelFilePath = (relativePath: string) => {
-    if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to copy path",
-          description: "Clipboard API unavailable.",
-        }),
-      );
-      return;
-    }
-
-    const clipboardPath = formatFilePathForClipboard(
-      relativePath,
-      resolvePathLinkTarget(relativePath, gitCwd ?? activeProjectCwd ?? ""),
-    );
-    void navigator.clipboard.writeText(clipboardPath).then(
-      () => {
-        toastManager.add({
-          type: "success",
-          title: "Path copied",
-          description: clipboardPath,
-        });
-      },
-      (error) => {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to copy path",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      },
-    );
-  };
-  const copyRightPanelFilePathStable = useStableCallback(copyRightPanelFilePath);
   const addPullRequestSurface = () => {
     if (!supportsPullRequests || activeThreadRef === null || pullRequestPanelTarget === null)
       return;
     useRightPanelStore.getState().openPullRequest(activeThreadRef, pullRequestPanelTarget);
   };
-  const addPullRequestSurfaceStable = useStableCallback(addPullRequestSurface);
+  const pullRequestSurfaceAvailable = supportsPullRequests && pullRequestPanelTarget !== null;
+  // Settings › Layout › Side pane opens on: a set surface, or the last one
+  // used (pen hJiZ5). Returns whether it opened one; the caller shows a
+  // launcher otherwise, so you see what you are opening.
+  const openSidePaneDefault = (): boolean => {
+    if (!activeThreadRef) return false;
+    const opensOn = getLayoutBehavior().sidePaneOpensOn;
+    if (opensOn === "diff" && isServerThread && isGitRepo) return (addDiffSurface(), true);
+    if (opensOn === "files" && activeProject) return (addFilesSurface(), true);
+    if (opensOn === "browser" && isPreviewSupportedInRuntime()) {
+      createBrowserSurface();
+      return true;
+    }
+    if (opensOn === "pull-request" && pullRequestSurfaceAvailable) {
+      addPullRequestSurface();
+      return true;
+    }
+    return false;
+  };
+  const openSidePaneDefaultStable = useStableCallback(openSidePaneDefault);
+  // "Open beside…" (palette, new tab page) reaches the focused chat's side
+  // pane and terminal through this registration.
+  const browserBesideAvailable = canOperatePreview && browserAvailable;
+  const diffBesideAvailable = isServerThread && isGitRepo;
+  const projectBesideAvailable = activeProject !== null;
+  // Also what the header's "+" offers after a new thread.
+  const besideAvailable = (() => {
+    const available = new Set<LayoutBesideKind>();
+    if (diffBesideAvailable) available.add("diff");
+    if (projectBesideAvailable) available.add("files");
+    if (projectBesideAvailable && canOperateTerminal) available.add("terminal");
+    if (browserBesideAvailable) available.add("browser");
+    if (pullRequestSurfaceAvailable) available.add("pull-request");
+    if (pullRequestsSurfaceAvailable) available.add("pull-requests");
+    if (activeThreadRef !== null) available.add("device");
+    return available;
+  })();
+  const openBeside = (
+    kind: LayoutBesideKind,
+    paneId?: string | null,
+    browserProfileId?: string,
+  ) => {
+    if (activeThreadRef === null) return;
+    const targetPaneId = paneId === undefined ? layoutPane.paneId : paneId;
+    // The palette and the "+" menu open the surface as a tab of their pane.
+    if (targetPaneId !== null) {
+      requestLayoutSurfacePlacement(activeThreadRef, { kind: "pane", paneId: targetPaneId });
+    }
+    if (kind === "diff") addDiffSurface();
+    else if (kind === "files") addFilesSurface();
+    else if (kind === "browser") createBrowserSurface(browserProfileId);
+    else if (kind === "pull-request") addPullRequestSurface();
+    else if (kind === "pull-requests") addPullRequestsSurface();
+    else if (kind === "device") addDeviceSurface();
+    else
+      startTerminal((threadRef, terminalId) =>
+        useRightPanelStore.getState().openTerminal(threadRef, terminalId),
+      );
+  };
+  const openBesideStable = useStableCallback(openBeside);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Expose only the focused pane actions to the imperative layout launcher and palette.
+  useEffect(() => {
+    if (!ownsThread) return;
+    return registerLayoutOpenBesideAction({ available: besideAvailable, open: openBesideStable });
+  }, [besideAvailable, ownsThread, openBesideStable]);
+
   const onOpenTurnDiff = (runId: RunId, filePath?: string) => {
     if (!isServerThread || !activeThreadRef) return;
     const diffOpen =
@@ -308,43 +296,29 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the preview action bus to toggle the preview panel
   useEffect(
     () =>
-      embedded
-        ? undefined
-        : subscribePreviewAction((action) => {
-            if (action === "toggle-panel") togglePreviewPanelStable();
-          }),
-    [embedded, togglePreviewPanelStable],
+      subscribePreviewAction((action) => {
+        if (embedded || !layoutPaneOwnsThreadRef.current) return;
+        if (action === "toggle-panel") togglePreviewPanelStable();
+      }),
+    [embedded, togglePreviewPanelStable, layoutPaneOwnsThreadRef],
   );
 
+  const toggleSidePane = () => {
+    if (activeThreadRef !== null) toggleThreadSidePane(activeThreadRef, openSidePaneDefaultStable);
+  };
   const shortcuts = {
-    "rightPanel.toggle": () => toggleRightPanel(),
+    "rightPanel.toggle": () => toggleSidePane(),
     "threadPanel.toggle": () => toggleThreadPanel(),
-    "rightPanel.close": ({ event }) => {
-      if (!activeRightPanelSurface) return false;
-      if (!event.repeat) closeRightPanelSurface(activeRightPanelSurface);
-    },
     "diff.toggle": () => onToggleDiff(),
   } satisfies ChatShortcutCommands;
 
   return {
     shortcuts,
-    activateRightPanelSurfaceStable,
-    addDeviceSurfaceStable,
-    addDiffSurfaceStable,
-    addFilesSurfaceStable,
-    addPullRequestSurfaceStable,
-    addPullRequestsSurfaceStable,
-    closePreviewPanelStable,
-    copyRightPanelFilePathStable,
-    createBrowserSurface,
-    createBrowserSurfaceStable,
-    moveRightPanelSurfaceStable,
+    besideAvailable,
+    openBesideStable,
     onOpenToolDiffStable,
     onOpenTurnDiffStable,
-    onToggleDiffStable,
     openChangesFromThreadPanelStable,
-    openFileSurfaceStable,
-    toggleRightPanelStable,
     toggleThreadPanelStable,
   };
 }

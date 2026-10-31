@@ -1,4 +1,6 @@
 import { type CSSProperties, type ReactNode, useLayoutEffect, useRef, useState } from "react";
+
+import { returnKeyboardToFocusedPane } from "~/layout/layoutPaneContext";
 import {
   type PreviewPanelInlineSize,
   usePreviewPanelInlineSize,
@@ -22,7 +24,21 @@ interface PreviewPanelShellProps {
   /** Use a distinct key per surface to keep remembered widths independent. */
   widthStorageKey?: string;
   defaultWidth?: number;
+  /**
+   * Inline only: the panel is its own inset pane, 8px of window chrome from the pane beside
+   * it (the layout's gap), with the resize handle in that gap. Below md panes are full-bleed.
+   */
+  pane?: boolean;
   children: ReactNode;
+}
+
+function returnPanelFocus(scope: Document | HTMLElement): boolean {
+  const target = scope.querySelector<HTMLElement>(
+    '[data-right-panel-toggle], button[data-layout-coach="tab"], button[data-layout-coach="new-tab"]',
+  );
+  if (!target) return returnKeyboardToFocusedPane();
+  target.focus({ preventScroll: true });
+  return target.ownerDocument.activeElement === target;
 }
 
 export function PreviewPanelShell(props: PreviewPanelShellProps) {
@@ -47,6 +63,7 @@ function PreviewPanelShellFrame(
 ) {
   const panelArea = workspaceAreaProps("panel", 4, props.workspaceLabel ?? "Workspace panel");
   const isInline = props.mode === "inline";
+  const pane = isInline && props.pane === true;
   const collapsible = isInline && props.open !== undefined;
   const open = props.open ?? true;
   const maximized = props.maximized ?? false;
@@ -88,12 +105,13 @@ function PreviewPanelShellFrame(
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host || !collapsible) return;
+    const focusScope = host.closest<HTMLElement>("[data-layout-pane-id]") ?? host.ownerDocument;
     return () => {
       if (!host.contains(host.ownerDocument.activeElement) && !returnedFocus.current) return;
-      // Unmount moves the toggle; restore focus at its committed location if removal sent focus to body.
+      // Capture the pane before unmount; restore focus only if removal sent it to body.
       queueMicrotask(() => {
         if (host.ownerDocument.activeElement === host.ownerDocument.body) {
-          host.ownerDocument.querySelector<HTMLButtonElement>("[data-right-panel-toggle]")?.focus();
+          returnPanelFocus(focusScope);
         }
       });
     };
@@ -104,13 +122,10 @@ function PreviewPanelShellFrame(
     if (!host) return;
     const collapsed = collapsible && !open;
     if (!collapsed) returnedFocus.current = false;
-    // Move focus before making its current owner inert, while the toggle is reachable.
+    // Move focus before making its current owner inert, using its owning pane.
     if (collapsed && host.contains(host.ownerDocument.activeElement)) {
-      const toggle = host.ownerDocument.querySelector<HTMLButtonElement>(
-        "[data-right-panel-toggle]",
-      );
-      toggle?.focus();
-      returnedFocus.current = toggle !== null && host.ownerDocument.activeElement === toggle;
+      const focusScope = host.closest<HTMLElement>("[data-layout-pane-id]") ?? host.ownerDocument;
+      returnedFocus.current = returnPanelFocus(focusScope);
     }
     host.toggleAttribute("inert", collapsed);
   }, [collapsible, open, hostRef]);
@@ -121,13 +136,13 @@ function PreviewPanelShellFrame(
       data-workspace-focus-key={props.workspaceFocusKey}
       data-workspace-unavailable={collapsible && !open ? "true" : undefined}
       className={cn(
-        "relative flex h-full min-h-0 min-w-0 max-w-full flex-col self-stretch bg-background",
-        isInline
-          ? maximized
-            ? // Maximizing meets the sidebar border or window edge; omit the duplicate border.
-              "flex-1"
-            : "shrink-0 border-l border-border"
-          : "w-full",
+        "relative flex h-full min-h-0 min-w-0 max-w-full flex-col self-stretch",
+        pane
+          ? cn("[--preview-panel-gap:0px]", open && "md:ps-2 md:[--preview-panel-gap:0.5rem]")
+          : // A sheet shows its popover surface, the lift the narrow sidebar sheet has.
+            cn("[--preview-panel-gap:1px]", props.mode !== "sheet" && "bg-background"),
+        isInline ? (maximized ? "flex-1" : "shrink-0") : "w-full",
+        isInline && !pane && !maximized && "border-l border-border",
         collapsible &&
           "[[data-panel-animations=true]_&]:transition-[width] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out",
         collapsible && open && "[[data-panel-animations=true]_&]:starting:w-0!",
@@ -149,14 +164,16 @@ function PreviewPanelShellFrame(
       data-preview-panel-mode={props.mode}
       data-preview-panel-maximized={maximized ? "true" : "false"}
     >
-      {isInline && !maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
-      {/* Content stays pinned to the right edge, so closing uncovers the chat
-          instead of sliding the tab bar under the title bar controls. */}
+      {isInline && !maximized ? (
+        <RightPanelResizeHandle handlers={handlers} {...(pane ? { className: "md:left-0" } : {})} />
+      ) : null}
       <div
+        data-pane-notch-host={pane ? "" : undefined}
         className={cn(
           "h-full min-h-0 w-full",
           collapsible && "overflow-clip",
           collapsible && !maximized && "flex justify-end",
+          pane && "overflow-hidden bg-background surface-grain md:rounded-pane",
         )}
       >
         <div
@@ -166,7 +183,7 @@ function PreviewPanelShellFrame(
           )}
           style={
             collapsible && !maximized
-              ? { width: `calc(var(${RESIZABLE_WIDTH_PROPERTY}) - 1px)` }
+              ? { width: `calc(var(${RESIZABLE_WIDTH_PROPERTY}) - var(--preview-panel-gap))` }
               : undefined
           }
         >

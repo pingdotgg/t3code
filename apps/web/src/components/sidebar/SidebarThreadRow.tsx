@@ -659,6 +659,11 @@ type SidebarThreadRowProps = {
   // Unlike isActive, never true for the ancestor standing in for an open
   // subagent: drafts and PR clicks care about which composer is on screen.
   isRouteThread: boolean;
+  /**
+   * The thread shows in a pane on screen (pen r45lm): it takes the selected
+   * fill like the focused one, which alone keeps the strong title.
+   */
+  isOnScreen: boolean;
   openPullRequestsInRightPanel: boolean;
   jumpLabel: string | null;
   currentEnvironmentId: string | null;
@@ -734,7 +739,7 @@ function ThreadRenameInput(props: {
   );
 }
 
-const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
+export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
   const {
     isRenaming,
     onCancelRename,
@@ -824,7 +829,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     status,
     isUnread,
     isWoke,
-    isActive: props.isActive,
+    isActive: props.isActive || props.isOnScreen,
     isSelected,
   });
   // Merged comes from the shell PR snapshots, so rows without a live status
@@ -1037,11 +1042,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         ? "surface-sidebar-row-selected text-strong-foreground"
         : isSelected || props.sweepAction !== null
           ? "surface-sidebar-row-selected text-strong-foreground"
-          : hasUnsentDraft
-            ? cn(draftSurfaceClassName, "text-sidebar-foreground")
-            : shouldRecede
-              ? "text-dim-foreground hover:surface-sidebar-row-hover hover:text-sidebar-foreground"
-              : "bg-transparent text-sidebar-foreground hover:surface-sidebar-row-hover",
+          : props.isOnScreen
+            ? "surface-sidebar-row-selected text-sidebar-foreground"
+            : hasUnsentDraft
+              ? cn(draftSurfaceClassName, "text-sidebar-foreground")
+              : shouldRecede
+                ? "text-dim-foreground hover:surface-sidebar-row-hover hover:text-sidebar-foreground"
+                : "bg-transparent text-sidebar-foreground hover:surface-sidebar-row-hover",
     shouldRecede &&
       status === "working" &&
       "opacity-70 transition-opacity hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none",
@@ -1518,7 +1525,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ) : (
                 <span
                   className={cn(
-                    "group/sidebar-status-slot relative ml-auto flex h-5 min-w-8 shrink-0 items-stretch justify-end text-caption font-normal",
+                    "relative ml-auto flex h-5 min-w-8 shrink-0 items-stretch justify-end text-caption font-normal",
                     props.sweepAction !== null && "hidden",
                     jumpHintLabel && JUMP_HINT_SLOT_CLASS_NAME,
                   )}
@@ -1527,7 +1534,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     className={cn(
                       isWokeStatus
                         ? "pointer-events-auto"
-                        : "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:right-0 group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-any-hover/sidebar-row:absolute group-any-hover/sidebar-row:right-0 group-any-hover/sidebar-row:opacity-0",
+                        : "pointer-events-none has-[+*_:focus-visible]:absolute has-[+*_:focus-visible]:right-0 has-[+*_:focus-visible]:opacity-0 group-any-hover/sidebar-row:absolute group-any-hover/sidebar-row:right-0 group-any-hover/sidebar-row:opacity-0",
                       "flex items-center self-center justify-self-end tabular-nums text-dim-foreground transition-opacity",
                       snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                     )}

@@ -55,8 +55,10 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
+import { forgetThreadSettledByUser, markThreadSettledByUser } from "../layout/settledByUser";
 import { showThreadUndoNotice } from "./showThreadUndoNotice";
 import { useAtomCommand } from "../state/use-atom-command";
+import { discardThreadSurfaces } from "../components/ThreadSurfaceTab";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 
@@ -570,6 +572,8 @@ export function useThreadActions() {
       scopeProjectRef(threadRef.environmentId, thread.projectId),
       threadRef,
     );
+    // Its surface tabs go with it: browsers and terminals end, the tabs close.
+    discardThreadSurfaces(threadRef);
     clearTerminalUiState(threadRef);
     clearDeletedThreadPanelState(threadRef);
 
@@ -662,6 +666,7 @@ export function useThreadActions() {
       );
     }
     ThreadUndo.invalidate("settle", scopedThreadKey(target));
+    forgetThreadSettledByUser(scopedThreadKey(target));
     // reason "user" pins active until real activity, suppressing auto-settle.
     return unsettleThreadMutation({
       environmentId: target.environmentId,
@@ -763,6 +768,8 @@ export function useThreadActions() {
     ThreadUndo.invalidate("pin", scopedThreadKey(target));
     ThreadUndo.invalidate("snooze", scopedThreadKey(target));
     const action = ThreadUndo.begin("settle", scopedThreadKey(target));
+    // An explicit settlement leaves the active list even while its tab stays open.
+    markThreadSettledByUser(scopedThreadKey(target));
     const result = await settleThreadMutation({
       environmentId: target.environmentId,
       input: { threadId: target.threadId },

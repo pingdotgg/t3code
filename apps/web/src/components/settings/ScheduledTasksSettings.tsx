@@ -1094,7 +1094,7 @@ function WebhookDeliveriesDialog({
               Loading deliveries…
             </p>
           ) : deliveries.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No requests yet.</p>
+            <p className="text-body text-muted-foreground">No requests yet.</p>
           ) : (
             <ul className="divide-y divide-border">
               {deliveries.map((delivery) => (

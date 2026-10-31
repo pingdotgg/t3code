@@ -39,6 +39,7 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { toastManager } from "~/components/ui/toast";
 import { cn } from "~/lib/utils";
+import { setWheelScroller } from "~/motion/gesture";
 import { refreshPreviewStreamAccess, usePreviewStreamAccess } from "~/state/previewStream";
 import { observeResize } from "~/lib/observeResize";
 
@@ -51,6 +52,8 @@ export interface ServerBrowserHandle {
 }
 
 const RESIZE_THROTTLE_MS = 150;
+// How long a page this viewer resized may take to send a frame at its new size.
+const RESIZE_HOLD_MS = 1_000;
 // Reuse nearby probes when a slow link would return the tap's answer after it ends.
 const PROBE_REUSE_PX = 24;
 const PROBE_REUSE_MS = 10_000;
@@ -175,6 +178,7 @@ export function ServerBrowserSurface(props: {
   const clientRef = useRef<PreviewStreamClient | null>(null);
   const viewportRef = useRef<PreviewStreamViewport | null>(null);
   const sizeRef = useRef<{ width: number; height: number } | null>(null);
+  const placementRef = useRef<FramePlacement | null>(null);
   const hasFrameRef = useRef(false);
   const controlRef = useRef<PreviewStreamControl | null>(null);
   const [control, setControl] = useState<PreviewStreamControl | null>(null);
@@ -352,7 +356,17 @@ export function ServerBrowserSurface(props: {
       if (capTimer !== null) clearTimeout(capTimer);
       capTimer = setTimeout(growCap, previous === null ? 0 : RESIZE_THROTTLE_MS * 2);
     };
-    const stopObserving = observeResize(element, () => {
+    const stopObserving = observeResize(element, (entries) => {
+      const entry = entries.at(-1);
+      // A page that follows this viewer's size is about to be resized.
+      const resizing = followSize && controlRef.current?.controller === "you";
+      if (entry) {
+        placementRef.current?.resized(
+          entry.contentRect.width,
+          entry.contentRect.height,
+          resizing ? RESIZE_THROTTLE_MS + RESIZE_HOLD_MS : 0,
+        );
+      }
       if (timer !== null) return;
       timer = setTimeout(measure, sizeRef.current === null ? 0 : RESIZE_THROTTLE_MS);
     });
@@ -368,7 +382,10 @@ export function ServerBrowserSurface(props: {
     const canvas = canvasRef.current;
     if (!visible || accessDenied || hostSetup || !access || !cap || !canvas) return;
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const placement = createFramePlacement(canvas);
+    placementRef.current = placement;
     const painter = createPreviewFramePainter(canvas, () => {
+      placement.painted(sizeRef.current);
       if (hasFrameRef.current) return;
       hasFrameRef.current = true;
       firstFrame();
@@ -447,6 +464,8 @@ export function ServerBrowserSurface(props: {
     clientRef.current = client;
     return () => {
       painter.stop();
+      placement.stop();
+      if (placementRef.current === placement) placementRef.current = null;
       if (refreshTimer !== null) clearTimeout(refreshTimer);
       client.stop();
       if (clientRef.current === client) clientRef.current = null;
@@ -486,7 +505,13 @@ export function ServerBrowserSurface(props: {
       queueWheel(point, event.deltaX * unit, event.deltaY * unit, previewStreamModifiers(event));
     };
     canvas.addEventListener("wheel", onWheel, { passive: false });
-    return () => canvas.removeEventListener("wheel", onWheel);
+    // The page takes the wheel while you control it, so a swipe over it
+    // scrolls the page instead of switching workspaces.
+    setWheelScroller(canvas, () => controlRef.current?.controller === "you");
+    return () => {
+      canvas.removeEventListener("wheel", onWheel);
+      setWheelScroller(canvas, null);
+    };
   }, [pagePoint, queueWheel]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending input animation frame when the component unmounts
@@ -955,4 +980,93 @@ function placeAgentCursor(
     left: (box.width - width) / 2 + (pointer.x * width) / viewport.width,
     top: (box.height - height) / 2 + (pointer.y * height) / viewport.height,
   };
+}
+
+type Size = { width: number; height: number };
+
+/** Hold a matching frame at native size during viewport resizing to avoid rescaling into bars; fit
+ * other sizes once the bounded hold expires. */
+interface FramePlacement {
+  /** A frame was painted; `size` is the surface size last sent to the page. */
+  readonly painted: (size: Size | null) => void;
+  /** The surface resized; `holdMs` is how long a resize of the page may take. */
+  readonly resized: (width: number, height: number, holdMs: number) => void;
+  readonly stop: () => void;
+}
+
+function createFramePlacement(canvas: HTMLCanvasElement): FramePlacement {
+  let drawn: Size | null = null;
+  // The surface's size as last seen; the frame shown may predate this placement.
+  let box: Size | null = canvas.parentElement
+    ? { width: canvas.parentElement.clientWidth, height: canvas.parentElement.clientHeight }
+    : null;
+  let holdUntil = 0;
+  let fallback: ReturnType<typeof setTimeout> | null = null;
+  // The painted frame's corner color, read at most once per frame.
+  let corner: string | null = null;
+  const setRoom = (color: string) => {
+    if (canvas.parentElement) canvas.parentElement.style.backgroundColor = color;
+  };
+  const place = (next: Size | null) => {
+    if (next?.width !== drawn?.width || next?.height !== drawn?.height) {
+      canvas.style.width = next ? `${next.width}px` : "";
+      canvas.style.height = next ? `${next.height}px` : "";
+    }
+    drawn = next;
+    // Room the frame leaves uncovered takes its far corner's color.
+    const uncovered =
+      next !== null &&
+      box !== null &&
+      (box.width > next.width + 0.5 || box.height > next.height + 0.5);
+    setRoom(uncovered ? (corner ??= frameCornerColor(canvas)) : "");
+  };
+  const fits = (size: Size | null) =>
+    size !== null &&
+    canvas.width > 1 &&
+    Math.abs(canvas.width / canvas.height - size.width / size.height) < 0.01;
+  const settle = () => {
+    holdUntil = 0;
+    if (fallback !== null) clearTimeout(fallback);
+    fallback = null;
+  };
+  return {
+    painted: (size) => {
+      corner = null;
+      if (fits(size)) {
+        settle();
+        place(size);
+      } else if (!drawn || performance.now() >= holdUntil) {
+        place(null);
+      }
+    },
+    resized: (width, height, holdMs) => {
+      // A frame drawn before this placement was made, at the old size.
+      if (!drawn && fits(box)) place(box);
+      box = { width, height };
+      if (!drawn) return;
+      if (holdMs <= 0) {
+        // Nothing will redraw the page at this size: fit the frame shown.
+        settle();
+        place(null);
+        return;
+      }
+      holdUntil = performance.now() + holdMs;
+      if (fallback !== null) clearTimeout(fallback);
+      // The page never came back at the new size: fit what it last sent.
+      fallback = setTimeout(() => {
+        fallback = null;
+        if (drawn && !fits(box)) place(null);
+      }, holdMs);
+      place(drawn);
+    },
+    stop: settle,
+  };
+}
+
+/** The color at the frame's bottom-right corner, where a page's own background usually shows. */
+function frameCornerColor(canvas: HTMLCanvasElement): string {
+  const pixel = canvas
+    .getContext("2d")
+    ?.getImageData(canvas.width - 1, canvas.height - 1, 1, 1).data;
+  return pixel ? `rgb(${pixel[0]} ${pixel[1]} ${pixel[2]})` : "";
 }

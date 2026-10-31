@@ -362,6 +362,20 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL, { environmentId, profileId }),
     getPreviewConfig: (environmentId, profileId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, { environmentId, profileId }),
+    setForwardedKeyChords: (shortcuts) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_SET_FORWARDED_KEY_CHORDS_CHANNEL, { shortcuts }),
+    onForwardedKeyChord: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, input: unknown) => {
+        if (typeof input !== "object" || input === null) return;
+        listener(input as Parameters<typeof listener>[0]);
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_FORWARDED_KEY_CHORD_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(
+          IpcChannels.PREVIEW_FORWARDED_KEY_CHORD_CHANNEL,
+          wrappedListener,
+        );
+    },
     setAnnotationTheme: (theme) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL, { theme }),
     annotationVoice: {

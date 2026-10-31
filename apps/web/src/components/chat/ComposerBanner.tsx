@@ -174,7 +174,8 @@ function Content({ className, ...props }: ComponentProps<"span">) {
       className={cn(
         "col-start-2 row-start-1 flex min-w-0 items-center gap-2 *:data-[slot=composer-banner-separator]:mx-0",
         "@max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4",
-        "group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:col-[1/3]",
+        // Without an icon before it, the content takes the icon's column too.
+        "[&:not([data-slot=composer-banner-icon]~*)]:col-[1/3]",
         className,
       )}
       {...props}

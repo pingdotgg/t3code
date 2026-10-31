@@ -18,6 +18,8 @@ import {
 
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
 import { isWindowsPlatform } from "../lib/utils";
+import { selectVisibleLayoutTabs } from "../layout/layoutModel";
+import { useLayoutStore } from "../layout/layoutStore";
 import { environmentSummaries } from "../state/presentation";
 import { environmentShell } from "../state/shell";
 import { environmentThreadShells } from "../state/threads";
@@ -84,7 +86,17 @@ export function startThreadNotifications(
     const active = (router.state.matches.at(-1)?.params ?? {}) as {
       environmentId?: string;
       threadId?: string;
+      draftId?: string;
     };
+    const threadVisible =
+      (active.threadId !== undefined || active.draftId !== undefined) &&
+      selectVisibleLayoutTabs(useLayoutStore.getState().layout).some(
+        (tab) =>
+          tab.content.kind === "chat" &&
+          tab.content.target.kind === "server" &&
+          tab.content.target.threadRef.environmentId === environmentId &&
+          tab.content.target.threadRef.threadId === thread.id,
+      );
     const title =
       kind === "completion"
         ? "Thread completed"
@@ -106,7 +118,8 @@ export function startThreadNotifications(
       inAppNotificationsEnabled &&
       document.visibilityState === "visible" &&
       document.hasFocus() &&
-      (active.environmentId !== environmentId || active.threadId !== thread.id)
+      (active.environmentId !== environmentId || active.threadId !== thread.id) &&
+      !threadVisible
     ) {
       const toastId = toastManager.add({
         type: kind === "completion" ? "success" : status === "failed" ? "error" : "warning",

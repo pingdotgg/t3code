@@ -37,6 +37,16 @@ import type { RunAttemptId } from "@t3tools/contracts";
 // Match the titlebar fade inset so draft promotion preserves the first row's position.
 export const CHAT_TIMELINE_ANCHOR_OFFSET = 24;
 
+/**
+ * How far the timeline's viewport reaches up under its pane header. The
+ * header's controls float over that band, so scroll targets measure from its
+ * foot. Read from the scroller's scroll-padding-top.
+ */
+export function readTimelineTopInset(scroller: Element | null | undefined): number {
+  const style = scroller?.ownerDocument?.defaultView?.getComputedStyle(scroller);
+  return Number.parseFloat(style?.scrollPaddingTop ?? "") || 0;
+}
+
 export type TimelineScrollMode = "following-end" | "anchoring-new-turn" | "free-scrolling";
 
 interface TimelineListMeasurementState {

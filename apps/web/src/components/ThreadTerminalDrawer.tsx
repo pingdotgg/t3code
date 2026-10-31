@@ -12,7 +12,7 @@ import {
   type TerminalOutputUpdate,
   type TerminalSessionState,
 } from "@t3tools/client-runtime/state/terminal";
-import { Copy, MessageSquarePlus, Plus, SquareTerminal, Trash2 } from "lucide-react";
+import { ChevronDown, Copy, MessageSquarePlus, Plus, SquareTerminal, Trash2 } from "lucide-react";
 import {
   AuthPreviewOperateScope,
   AuthOrchestrationOperateScope,
@@ -26,8 +26,10 @@ import {
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
 import {
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type RefObject,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -38,11 +40,17 @@ import { createPortal } from "react-dom";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
+import { PaneNotch } from "~/components/PaneNotch";
+import { beginLayoutTabDrag } from "~/layout/layoutDrag";
+import { useLayoutPane, useLayoutPaneFocusedRef } from "~/layout/layoutPaneContext";
+import { LayoutPaneTab, useLayoutPaneSiblingTabs } from "~/layout/PaneTabs";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
+import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import {
   observeSelectionActions,
@@ -64,16 +72,20 @@ import {
   isTerminalSplitShortcut,
   isTerminalSplitVerticalShortcut,
   isTerminalToggleShortcut,
+  resolveShortcutCommand,
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
 } from "../keybindings";
 import { DEFAULT_THREAD_TERMINAL_HEIGHT, type ThreadTerminalGroup } from "../types";
 import { readLocalApi } from "~/localApi";
-import { confirmTerminalClose } from "~/lib/terminalCloseConfirm";
+import { confirmTerminalClose, isTerminalCloseConfirmPending } from "~/lib/terminalCloseConfirm";
+import { getTerminalFocusOwner } from "~/lib/terminalFocus";
 import { useClientSettings } from "../hooks/useSettings";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { attachedTerminalSessionAtom } from "../state/terminalSessions";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { useRevealActiveTab } from "../hooks/useRevealActiveTab";
+import { FOLDED_TAB_CLASS, usePaneTabStripFit } from "../hooks/usePaneTabStripFit";
 import { serverEnvironment } from "../state/server";
 import { previewEnvironment } from "../state/preview";
 import { readEnvironmentScope } from "../state/session";
@@ -467,7 +479,9 @@ interface TerminalViewportProps {
   runtimeEnv?: Record<string, string>;
   providerInstanceId?: ProviderInstanceId;
   onSessionExited: () => void;
-  onAddTerminalContext?: (selection: TerminalContextSelection) => void;
+  onAddTerminalContext?:
+    | ((selection: TerminalContextSelection) => void | Promise<boolean>)
+    | undefined;
   /** Focuses the viewport when it mounts; otherwise focus arrives through `focusTerminal`. */
   autoFocus?: boolean;
   visible: boolean;
@@ -512,6 +526,7 @@ function TerminalSessionViewport({
   const autoFocusedRef = useRef(false);
   const terminalRef = useRef<GhosttyTerminalSurface | null>(null);
   const visibleRef = useRef(visible);
+  const paneFocusedRef = useLayoutPaneFocusedRef();
   const environmentId = threadRef.environmentId;
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const hasTerminalWriteAccess = useEffectEvent(() =>
@@ -549,7 +564,7 @@ function TerminalSessionViewport({
     if (hasTerminalWriteAccess()) onSessionExited();
   });
   const handleAddTerminalContext = useEffectEvent((selection: TerminalContextSelection) => {
-    onAddTerminalContext?.(selection);
+    return onAddTerminalContext?.(selection);
   });
   const canAddSelectionToChat = useEffectEvent(() => onAddTerminalContext !== undefined);
   const readTerminalLabel = useEffectEvent(() => terminalLabel);
@@ -800,14 +815,21 @@ function TerminalSessionViewport({
         };
       };
 
-      const addSelectionToChat = (clipboardText: string) => {
+      const addSelectionToChat = async (clipboardText: string) => {
         // Output keeps moving the selected rows while a menu is open, so take
         // the line numbers now, and only if the same text is still selected.
         const current = readSelectionAction();
         if (current?.clipboardText !== clipboardText) return;
-        handleAddTerminalContext(current.selection);
-        terminalRef.current?.clearSelection();
-        terminalRef.current?.focus();
+        const activeTerminal = terminalRef.current;
+        const added = await handleAddTerminalContext(current.selection);
+        if (
+          added === false ||
+          terminalRef.current !== activeTerminal ||
+          activeTerminal?.getSelection() !== clipboardText
+        )
+          return;
+        activeTerminal.clearSelection();
+        activeTerminal.focus();
       };
 
       const reportIfCurrent = (requestId: number, error: unknown, fallback: string) => {
@@ -878,7 +900,7 @@ function TerminalSessionViewport({
         switch (clicked) {
           case "add-to-chat":
             if (selectionAction && canAddSelectionToChat()) {
-              addSelectionToChat(selectionAction.clipboardText);
+              await addSelectionToChat(selectionAction.clipboardText);
             }
             return;
           case "copy":
@@ -922,7 +944,7 @@ function TerminalSessionViewport({
             openSelectionMenuRequestIdRef.current = null;
             setSelectionToolbar(null);
             if (canAddSelectionToChat()) {
-              addSelectionToChat(nextAction.clipboardText);
+              void addSelectionToChat(nextAction.clipboardText);
             } else {
               void copySelection(nextAction.clipboardText, requestId);
             }
@@ -959,6 +981,9 @@ function TerminalSessionViewport({
         ) {
           return false;
         }
+        // Tab switching belongs to the layout, so it bubbles to the app's handler.
+        const command = resolveShortcutCommand(event, currentKeybindings, options);
+        if (command === "tab.next" || command === "tab.previous") return false;
 
         const navigationData = terminalNavigationShortcutData(event);
         if (navigationData !== null) {
@@ -1145,7 +1170,8 @@ function TerminalSessionViewport({
       focusTerminalViewport({
         mount,
         surface: terminalRef.current,
-        canOperate: readEnvironmentScope(environmentId, AuthTerminalOperateScope),
+        canOperate:
+          paneFocusedRef.current && readEnvironmentScope(environmentId, AuthTerminalOperateScope),
         visible: visibleRef.current,
       });
     // Once per viewport: a re-attached ref (a fresh callback identity) must not
@@ -1215,7 +1241,8 @@ interface TerminalSelectionToolbarState {
 }
 
 interface ThreadTerminalDrawerProps {
-  mode?: "drawer" | "panel";
+  /** "pane" fills a layout pane (cmd+J) and still owns the drawer's terminals. */
+  mode?: "drawer" | "panel" | "pane";
   threadRef: ScopedThreadRef;
   threadId: ThreadId;
   cwd: string;
@@ -1239,56 +1266,16 @@ interface ThreadTerminalDrawerProps {
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string, threadRef?: ScopedThreadRef) => void;
   onHeightChange: (height: number) => void;
-  onAddTerminalContext: (selection: TerminalContextSelection) => void;
+  onAddTerminalContext:
+    | ((selection: TerminalContextSelection) => void | Promise<boolean>)
+    | undefined;
   keybindings: ResolvedKeybindingsConfig;
   terminalLabelsById?: ReadonlyMap<string, string>;
   /** Run status per terminal for the tab's tooltip; missing ids read as an idle shell. */
   terminalStatusById?: ReadonlyMap<string, TerminalActivityStatus>;
   terminalLaunchLocationsById?: ReadonlyMap<string, TerminalLaunchLocation>;
-}
-
-interface TerminalActionButtonProps {
-  label: string;
-  onClick: () => void;
-  /** Keeps the tooltip reachable (it explains the limit), unlike `disabled`. */
-  unavailable?: boolean;
-  children: ReactNode;
-  disabled?: boolean;
-}
-
-function TerminalActionButton({
-  label,
-  onClick,
-  unavailable,
-  children,
-}: TerminalActionButtonProps) {
-  return (
-    <Popover>
-      <PopoverTrigger
-        openOnHover
-        render={
-          <Button
-            size="icon-xs"
-            variant="ghost-muted"
-            onClick={onClick}
-            aria-label={label}
-            aria-disabled={unavailable || undefined}
-          />
-        }
-      >
-        {children}
-      </PopoverTrigger>
-      <PopoverPopup
-        tooltipStyle
-        side="bottom"
-        sideOffset={6}
-        align="center"
-        className="pointer-events-none select-none"
-      >
-        {label}
-      </PopoverPopup>
-    </Popover>
-  );
+  /** Its sessions are still loading: with none to show yet, it draws just its background. */
+  attaching?: boolean;
 }
 
 function TerminalSplitPanes({
@@ -1316,7 +1303,9 @@ function TerminalSplitPanes({
   advancedTypography: boolean;
   threadRef: ScopedThreadRef;
   threadId: ThreadId;
-  onAddTerminalContext: (selection: TerminalContextSelection) => void;
+  onAddTerminalContext:
+    | ((selection: TerminalContextSelection) => void | Promise<boolean>)
+    | undefined;
   visible: boolean;
   keybindings: ResolvedKeybindingsConfig;
 }) {
@@ -1376,6 +1365,112 @@ function TerminalSplitPanes({
   );
 }
 
+interface TerminalActionButtonProps {
+  label: string;
+  onClick: () => void;
+  /** Keeps the tooltip reachable (it explains the limit), unlike `disabled`. */
+  unavailable?: boolean;
+  children: ReactNode;
+  disabled?: boolean;
+}
+
+/**
+ * The terminal pane's tabs: in a layout pane they sit in the pane's notch with
+ * "+" as its last child, like a chat's tabs; the drawer keeps a plain row.
+ */
+function TerminalTabsNotch({
+  notch,
+  newTerminalButton,
+  children,
+}: {
+  notch: boolean;
+  newTerminalButton: ReactNode;
+  children: ReactNode;
+}) {
+  if (!notch) return children;
+  return (
+    <PaneNotch>
+      {children}
+      <span data-pane-notch-add="" className="flex shrink-0">
+        {newTerminalButton}
+      </span>
+    </PaneNotch>
+  );
+}
+
+/**
+ * The terminal tabs' row: in a pane's notch it clips and the tabs fit it
+ * (usePaneTabStripFit); the drawer's row scrolls.
+ */
+function TerminalTabStrip({
+  notch,
+  ref,
+  children,
+}: {
+  notch: boolean;
+  ref: RefObject<HTMLDivElement | null>;
+  children: ReactNode;
+}) {
+  if (notch) {
+    return (
+      <div
+        ref={ref}
+        className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden"
+        role="tablist"
+        aria-label="Terminals"
+      >
+        {children}
+      </div>
+    );
+  }
+  return (
+    <ScrollArea radius="none" ref={ref} hideScrollbars scrollFade className="min-w-0 flex-1">
+      <div
+        className="flex h-full w-max min-w-full items-center gap-1"
+        role="tablist"
+        aria-label="Terminals"
+      >
+        {children}
+      </div>
+    </ScrollArea>
+  );
+}
+
+function TerminalActionButton({
+  label,
+  onClick,
+  unavailable,
+  children,
+}: TerminalActionButtonProps) {
+  return (
+    <Popover>
+      <PopoverTrigger
+        openOnHover
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            onClick={onClick}
+            aria-label={label}
+            aria-disabled={unavailable || undefined}
+          />
+        }
+      >
+        {children}
+      </PopoverTrigger>
+      <PopoverPopup
+        tooltipStyle
+        side="bottom"
+        sideOffset={6}
+        align="center"
+        className="pointer-events-none select-none"
+      >
+        {label}
+      </PopoverPopup>
+    </Popover>
+  );
+}
+
 export default function ThreadTerminalDrawer({
   mode = "drawer",
   threadRef,
@@ -1390,6 +1485,8 @@ export default function ThreadTerminalDrawer({
   activeTerminalId,
   terminalGroups,
   activeTerminalGroupId,
+  onSplitTerminal,
+  onSplitTerminalVertical,
   onNewTerminal,
   newShortcutLabel,
   closeShortcutLabel,
@@ -1401,10 +1498,16 @@ export default function ThreadTerminalDrawer({
   terminalLabelsById,
   terminalStatusById,
   terminalLaunchLocationsById,
+  attaching = false,
 }: ThreadTerminalDrawerProps) {
   const canOperateTerminal = useEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
   const terminalArea = workspaceAreaProps("terminal", 5, "Terminal");
   const isPanel = mode === "panel";
+  const fillsContainer = mode !== "drawer";
+  const terminalOwner = mode === "panel" ? "right-panel" : "drawer";
+  // As a pane, this is a layout tab: dragging one of its terminals moves it.
+  const { tabId: layoutTabId, leadingEdge } = useLayoutPane();
+  const siblingTabs = useLayoutPaneSiblingTabs();
   const [advancedTypography] = useLocalStorage(
     TYPOGRAPHY_ADVANCED_STORAGE_KEY,
     false,
@@ -1544,6 +1647,17 @@ export default function ThreadTerminalDrawer({
   const splitDirection =
     resolvedTerminalGroups[resolvedActiveGroupIndex]?.splitDirection ?? "horizontal";
   const isSplitView = visibleTerminalIds.length > 1;
+  const tabStripRef = useRef<HTMLDivElement>(null);
+  useRevealActiveTab(tabStripRef, resolvedActiveTerminalId);
+  const fitTabs = resolvedTerminalGroups.flatMap((group) =>
+    group.terminalIds.map((terminalId) => ({
+      key: terminalId,
+      title: terminalLabelById.get(terminalId) ?? "Terminal",
+    })),
+  );
+  // In a pane's notch the tabs fold and overflow into a menu instead of scrolling.
+  const tabFit = usePaneTabStripFit(tabStripRef, fitTabs, resolvedActiveTerminalId);
+  const hiddenTerminalTabs = fitTabs.filter((tab) => tabFit.hidden.has(tab.key));
   const resolveTerminalLaunchLocation = (terminalId: string): TerminalLaunchLocation =>
     terminalLaunchLocationsById?.get(terminalId) ?? {
       cwd,
@@ -1568,6 +1682,31 @@ export default function ThreadTerminalDrawer({
         onCloseTerminal(terminalId, threadRef);
       }
     });
+  };
+
+  // The terminal's own keys answer here, so they work whether or not its
+  // thread's chat is open. Without operate access they keep their native meaning.
+  const onShortcutKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (!canOperateTerminal || getTerminalFocusOwner() === null) return;
+    const command = resolveShortcutCommand(event.nativeEvent, keybindings, {
+      context: { terminalFocus: true, terminalOpen: true },
+    });
+    if (
+      command !== "terminal.split" &&
+      command !== "terminal.splitVertical" &&
+      command !== "terminal.new" &&
+      command !== "terminal.close"
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (command === "terminal.split") onSplitTerminal();
+    else if (command === "terminal.splitVertical") onSplitTerminalVertical();
+    else if (command === "terminal.new") onNewTerminalAction();
+    else if (!event.repeat && !isTerminalCloseConfirmPending()) {
+      confirmCloseTerminal(resolvedActiveTerminalId);
+    }
   };
 
   const handleResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1646,7 +1785,7 @@ export default function ThreadTerminalDrawer({
     }
     // The column and window may have resized while the drawer was hidden and
     // not listening, so measure before the first visible paint.
-    const column = isPanel ? null : chatColumnOf(drawerRef.current);
+    const column = fillsContainer ? null : chatColumnOf(drawerRef.current);
     const onWindowResize = () => updateDrawerLayout(column, "window");
     onWindowResize();
     const header = column?.querySelector<HTMLElement>("[data-chat-header]");
@@ -1660,9 +1799,9 @@ export default function ThreadTerminalDrawer({
       stopObserving?.();
       window.removeEventListener("resize", onWindowResize);
     };
-  }, [isPanel, visible]);
+  }, [fillsContainer, visible]);
 
-  const resizeHandle = isPanel ? null : (
+  const resizeHandle = fillsContainer ? null : (
     <div
       className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
       onPointerDown={handleResizePointerDown}
@@ -1674,9 +1813,9 @@ export default function ThreadTerminalDrawer({
   );
   const drawerClassName = cn(
     "relative flex min-w-0 flex-col overflow-hidden bg-background",
-    isPanel ? "h-full flex-1" : "z-45 shrink-0 border-t border-border",
+    fillsContainer ? "h-full flex-1" : "z-45 shrink-0 border-t border-border",
   );
-  const drawerStyle = isPanel
+  const drawerStyle = fillsContainer
     ? undefined
     : { height: `var(${DRAG_HEIGHT_PROPERTY}, ${drawerHeight}px)` };
 
@@ -1686,22 +1825,25 @@ export default function ThreadTerminalDrawer({
         ref={drawerRef}
         {...(!isPanel && visible ? terminalArea : {})}
         data-thread-terminal-drawer
-        data-terminal-owner={isPanel ? "right-panel" : "drawer"}
+        data-terminal-owner={terminalOwner}
         className={drawerClassName}
         style={drawerStyle}
+        onKeyDown={onShortcutKeyDown}
       >
         {resizeHandle}
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 py-6 text-center text-sm text-muted-foreground">
-          <p>No terminal sessions for this thread yet.</p>
-          <Button
-            size="xs"
-            variant="secondary"
-            onClick={onNewTerminalAction}
-            disabled={!canOperateTerminal}
-          >
-            {newTerminalActionLabel}
-          </Button>
-        </div>
+        {attaching ? null : (
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 py-6 text-center text-sm text-muted-foreground">
+            <p>No terminal sessions for this thread yet.</p>
+            <Button
+              size="xs"
+              variant="secondary"
+              onClick={onNewTerminalAction}
+              disabled={!canOperateTerminal}
+            >
+              {newTerminalActionLabel}
+            </Button>
+          </div>
+        )}
       </aside>
     );
   }
@@ -1721,13 +1863,14 @@ export default function ThreadTerminalDrawer({
       ref={drawerRef}
       {...(!isPanel && visible ? terminalArea : {})}
       data-thread-terminal-drawer
-      data-terminal-owner={isPanel ? "right-panel" : "drawer"}
+      data-terminal-owner={terminalOwner}
       className={drawerClassName}
       style={drawerStyle}
+      onKeyDown={onShortcutKeyDown}
     >
       {resizeHandle}
 
-      {isPanel ? (
+      {mode === "panel" ? (
         // A side panel terminal is a panel tab already, so it draws no strip of
         // its own; its actions float over the terminal's top-right corner.
         <div className="pointer-events-none absolute right-2 top-2 z-20">
@@ -1745,16 +1888,29 @@ export default function ThreadTerminalDrawer({
       ) : (
         // The terminal pane's header (pen bKxd4): one tab per terminal, "+"
         // after the last tab.
-        <div className="flex h-11 shrink-0 items-center gap-1 px-1.5 pt-1" data-terminal-tab-strip>
-          <ScrollArea radius="none" hideScrollbars scrollFade className="min-w-0 flex-1">
-            <div
-              className="flex h-full w-max min-w-full items-center gap-1"
-              role="tablist"
-              aria-label="Terminals"
-            >
+        <div
+          className={cn(
+            "flex h-11 shrink-0 items-center gap-1",
+            // A layout pane's tabs sit in its notch (pen hRbzg), from the pane's
+            // edge; the notch stops short of the pane's top-right corner.
+            mode === "pane" ? "relative pe-10 ps-1.5 md:ps-0" : "px-1.5 pt-1",
+            mode === "pane" && leadingEdge && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+          )}
+          data-terminal-tab-strip
+          // In a pane the strip is the pane's header: the shared rule centers its tabs on
+          // the chrome row's line like every other pane header.
+          data-pane-header={mode === "pane" ? "" : undefined}
+        >
+          <TerminalTabsNotch notch={mode === "pane"} newTerminalButton={newTerminalButton}>
+            {mode === "pane"
+              ? siblingTabs.before.map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
+              : null}
+            <TerminalTabStrip notch={mode === "pane"} ref={tabStripRef}>
               {resolvedTerminalGroups.flatMap((terminalGroup, groupIndex) =>
                 terminalGroup.terminalIds.map((terminalId) => {
+                  if (tabFit.hidden.has(terminalId)) return null;
                   const isActive = terminalId === resolvedActiveTerminalId;
+                  const folded = tabFit.folded && !isActive;
                   // Split siblings of the active tab are on screen too.
                   const isOnScreen = isSplitView && groupIndex === resolvedActiveGroupIndex;
                   const terminalLabel = terminalLabelById.get(terminalId) ?? "Terminal";
@@ -1772,52 +1928,119 @@ export default function ThreadTerminalDrawer({
                   return (
                     <div
                       key={terminalId}
+                      data-active-tab={isActive}
+                      data-tab-key={terminalId}
                       data-terminal-tab-status={status}
+                      onPointerDown={
+                        mode === "pane" && layoutTabId !== null
+                          ? (event) => beginLayoutTabDrag(event, layoutTabId)
+                          : undefined
+                      }
                       className={cn(
-                        "group/tab flex h-7 shrink-0 items-center gap-1.5 rounded-item px-2.5 text-label",
+                        "group/tab flex h-7 items-center gap-1.75 rounded-control px-2.5 text-label",
+                        isActive && tabFit.squeezed ? "min-w-0" : "shrink-0",
+                        folded && FOLDED_TAB_CLASS,
                         isActive
                           ? "text-strong-foreground"
                           : isOnScreen
                             ? "text-foreground hover:surface-ghost-hover"
-                            : "text-dim-foreground hover:surface-ghost-hover hover:text-foreground",
+                            : "text-muted-foreground hover:surface-ghost-hover hover:text-foreground",
                       )}
                     >
-                      {/* The terminal icon turns into the close button on hover, like the panel tabs. */}
-                      <PanelTabCloseButton
-                        label={closeTerminalLabel}
-                        onClick={() => confirmCloseTerminal(terminalId)}
-                      >
-                        <SquareTerminal
-                          aria-hidden
-                          className={cn("size-3.5 shrink-0", isActive && "text-foreground")}
-                        />
-                      </PanelTabCloseButton>
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <button
-                              type="button"
-                              role="tab"
-                              aria-selected={isActive}
-                              className="flex min-w-0 cursor-pointer items-center rounded-kbd outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring"
-                              onClick={() => onActiveTerminalChange(terminalId)}
+                      {folded ? (
+                        // A folded tab is its icon alone, so a click shows it
+                        // rather than turning the icon into its close button.
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <button
+                                type="button"
+                                role="tab"
+                                aria-selected={false}
+                                aria-label={
+                                  statusLabel ? `${terminalLabel}, ${statusLabel}` : terminalLabel
+                                }
+                                className="flex size-full cursor-pointer items-center justify-center rounded-[inherit] outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-ring"
+                                onClick={() => onActiveTerminalChange(terminalId)}
+                              />
+                            }
+                          >
+                            <SquareTerminal aria-hidden className="size-3.5 shrink-0" />
+                          </TooltipTrigger>
+                          <TooltipPopup>
+                            {[terminalLabel, statusLabel, splitLabel].filter(Boolean).join(" · ")}
+                          </TooltipPopup>
+                        </Tooltip>
+                      ) : (
+                        <>
+                          {/* The terminal icon turns into the close button on hover, like the panel tabs. */}
+                          <PanelTabCloseButton
+                            label={closeTerminalLabel}
+                            onClick={() => confirmCloseTerminal(terminalId)}
+                          >
+                            <SquareTerminal
+                              aria-hidden
+                              className={cn("size-3.5 shrink-0", isActive && "text-foreground")}
                             />
-                          }
-                        >
-                          <span className="max-w-40 truncate">{terminalLabel}</span>
-                          {statusLabel ? <span className="sr-only">, {statusLabel}</span> : null}
-                        </TooltipTrigger>
-                        <TooltipPopup>
-                          {[terminalLabel, statusLabel, splitLabel].filter(Boolean).join(" · ")}
-                        </TooltipPopup>
-                      </Tooltip>
+                          </PanelTabCloseButton>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <button
+                                  type="button"
+                                  role="tab"
+                                  aria-selected={isActive}
+                                  className="flex min-w-0 cursor-pointer items-center rounded-kbd outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring"
+                                  onClick={() => onActiveTerminalChange(terminalId)}
+                                />
+                              }
+                            >
+                              <span className="max-w-40 truncate">{terminalLabel}</span>
+                              {statusLabel ? (
+                                <span className="sr-only">, {statusLabel}</span>
+                              ) : null}
+                            </TooltipTrigger>
+                            <TooltipPopup>
+                              {[terminalLabel, statusLabel, splitLabel].filter(Boolean).join(" · ")}
+                            </TooltipPopup>
+                          </Tooltip>
+                        </>
+                      )}
                     </div>
                   );
                 }),
               )}
-              {newTerminalButton}
-            </div>
-          </ScrollArea>
+              {hiddenTerminalTabs.length > 0 ? (
+                <Menu>
+                  <MenuTrigger
+                    render={
+                      <Button
+                        aria-label="More terminals"
+                        className="shrink-0"
+                        data-tab-overflow=""
+                        size="icon-xs"
+                        variant="ghost-muted"
+                      />
+                    }
+                  >
+                    <ChevronDown className="size-3.5" />
+                  </MenuTrigger>
+                  <MenuPopup align="start" side="bottom" sideOffset={6} className="max-w-64">
+                    {hiddenTerminalTabs.map((tab) => (
+                      <MenuItem key={tab.key} onClick={() => onActiveTerminalChange(tab.key)}>
+                        <SquareTerminal aria-hidden />
+                        <span className="min-w-0 truncate">{tab.title}</span>
+                      </MenuItem>
+                    ))}
+                  </MenuPopup>
+                </Menu>
+              ) : null}
+              {mode === "pane" ? null : newTerminalButton}
+            </TerminalTabStrip>
+            {mode === "pane"
+              ? siblingTabs.after.map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
+              : null}
+          </TerminalTabsNotch>
         </div>
       )}
 
@@ -1825,9 +2048,9 @@ export default function ThreadTerminalDrawer({
         <div
           className={cn(
             "flex h-full min-h-0 bg-(--terminal-background)",
-            // The side panel runs edge to edge, below its floating actions; the
-            // drawer lines text up with its tabs.
-            isPanel ? "pt-11" : "px-4 pt-1 pb-1",
+            // Text sits 16px in from the pane's edge, in line with its tabs; a
+            // panel terminal's starts below its floating actions.
+            mode === "panel" ? "px-4 pt-11" : "px-4 pt-1 pb-1",
           )}
         >
           <div className="min-w-0 flex-1">

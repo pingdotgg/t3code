@@ -162,6 +162,8 @@ import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { dispatchPreviewAction } from "./previewActionBus";
 import { PreviewView } from "./PreviewView";
 import { ToastProvider } from "~/components/ui/toast";
+import { useLayoutStore } from "~/layout/layoutStore";
+import { createLayoutState } from "~/layout/layoutModel";
 
 const TEST_THREAD_REF = {
   environmentId: EnvironmentId.make("environment-1"),
@@ -216,9 +218,35 @@ function setup() {
   });
   usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
   useBrowserPointerStore.setState({ byTabId: {} });
+  useLayoutStore.setState({ layout: createLayoutState() });
 }
 
 describe("PreviewView", () => {
+  it("offers floating only while the owning chat is open", async () => {
+    setup();
+    await using _screen = await render(view());
+    const float = page.getByRole("button", { name: "Float preview over chat" });
+    await expect.element(float).not.toBeInTheDocument();
+
+    await act(() => {
+      useLayoutStore.getState().openTab({
+        kind: "chat",
+        target: { kind: "server", threadRef: TEST_THREAD_REF },
+      });
+    });
+    await expect.element(float).toBeVisible();
+    await userEvent.click(float);
+    await expect
+      .element(page.getByRole("button", { name: "Close floating preview" }))
+      .toBeVisible();
+    expect(usePreviewMiniPlayerStore.getState().byThreadKey).not.toEqual({});
+
+    await act(() => useLayoutStore.setState({ layout: createLayoutState() }));
+    await expect
+      .element(page.getByRole("button", { name: "Close floating preview" }))
+      .not.toBeInTheDocument();
+  });
+
   it.each(["mailto:alice@example.com", "http://"])(
     "reports rejected address %s without navigating or recording it",
     async (address) => {

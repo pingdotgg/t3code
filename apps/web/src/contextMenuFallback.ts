@@ -134,6 +134,35 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
       },
     },
   ],
+  terminal: [
+    { tag: "polyline", attrs: { points: "4 17 10 11 4 5" } },
+    { tag: "line", attrs: { x1: "12", x2: "20", y1: "19", y2: "19" } },
+  ],
+  globe: [
+    { tag: "circle", attrs: { cx: "12", cy: "12", r: "10" } },
+    { tag: "path", attrs: { d: "M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" } },
+    { tag: "path", attrs: { d: "M2 12h20" } },
+  ],
+  "file-diff": [
+    { tag: "path", attrs: { d: "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" } },
+    { tag: "path", attrs: { d: "M9 10h6" } },
+    { tag: "path", attrs: { d: "M12 13V7" } },
+    { tag: "path", attrs: { d: "M9 17h6" } },
+  ],
+  "layers-2": [
+    {
+      tag: "path",
+      attrs: {
+        d: "M13 13.74a2 2 0 0 1-2 0L2.5 8.87a1 1 0 0 1 0-1.74L11 2.26a2 2 0 0 1 2 0l8.5 4.87a1 1 0 0 1 0 1.74z",
+      },
+    },
+    {
+      tag: "path",
+      attrs: {
+        d: "m20 14.285 1.5.845a1 1 0 0 1 0 1.74L13 21.74a2 2 0 0 1-2 0l-8.5-4.87a1 1 0 0 1 0-1.74l1.5-.845",
+      },
+    },
+  ],
   "folder-tree": [
     {
       tag: "path",
@@ -156,6 +185,38 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "path", attrs: { d: "M10 19H3" } },
     { tag: "circle", attrs: { cx: "17", cy: "15", r: "3" } },
     { tag: "path", attrs: { d: "m21 19-1.9-1.9" } },
+  ],
+  "panel-right": [
+    { tag: "rect", attrs: { width: "18", height: "18", x: "3", y: "3", rx: "2" } },
+    { tag: "path", attrs: { d: "M15 3v18" } },
+  ],
+  "panel-bottom": [
+    { tag: "rect", attrs: { width: "18", height: "18", x: "3", y: "3", rx: "2" } },
+    { tag: "path", attrs: { d: "M3 15h18" } },
+  ],
+  "columns-2": [
+    { tag: "rect", attrs: { width: "18", height: "18", x: "3", y: "3", rx: "2" } },
+    { tag: "path", attrs: { d: "M12 3v18" } },
+  ],
+  maximize: [
+    { tag: "path", attrs: { d: "M8 3H5a2 2 0 0 0-2 2v3" } },
+    { tag: "path", attrs: { d: "M21 8V5a2 2 0 0 0-2-2h-3" } },
+    { tag: "path", attrs: { d: "M3 16v3a2 2 0 0 0 2 2h3" } },
+    { tag: "path", attrs: { d: "M16 21h3a2 2 0 0 0 2-2v-3" } },
+  ],
+  link: [
+    { tag: "path", attrs: { d: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" } },
+    { tag: "path", attrs: { d: "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" } },
+  ],
+  x: [
+    { tag: "path", attrs: { d: "M18 6 6 18" } },
+    { tag: "path", attrs: { d: "m6 6 12 12" } },
+  ],
+  "copy-x": [
+    { tag: "line", attrs: { x1: "12", x2: "18", y1: "12", y2: "18" } },
+    { tag: "line", attrs: { x1: "12", x2: "18", y1: "18", y2: "12" } },
+    { tag: "rect", attrs: { width: "14", height: "14", x: "8", y: "8", rx: "2", ry: "2" } },
+    { tag: "path", attrs: { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" } },
   ],
   trash: [
     { tag: "path", attrs: { d: "M3 6h18" } },
@@ -488,6 +549,13 @@ export function showContextMenuFallback<T extends string>(
         label.className = "min-w-0 flex-1 truncate";
         label.textContent = item.label;
         button.appendChild(label);
+
+        if (item.shortcut && !hasChildren) {
+          const shortcut = document.createElement("span");
+          shortcut.className = "ms-auto shrink-0 ps-4 text-meta text-dim-foreground";
+          shortcut.textContent = item.shortcut;
+          button.appendChild(shortcut);
+        }
 
         if (hasChildren) {
           button.setAttribute("aria-haspopup", "menu");

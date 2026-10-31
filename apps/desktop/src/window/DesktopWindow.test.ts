@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
-import { DesktopSnapShotId } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS, DesktopSnapShotId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -45,7 +45,7 @@ import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { SNAP_SHOT_EVENT_CHANNEL } from "../ipc/channels.ts";
+import { MENU_ACTION_CHANNEL, SNAP_SHOT_EVENT_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as PreviewManager from "../preview/Manager.ts";
@@ -156,9 +156,7 @@ function makeFakeBrowserWindow() {
   };
 }
 
-const layerDesktopClientSettings = Layer.mock(DesktopClientSettings.DesktopClientSettings)({
-  get: Effect.succeedNone,
-});
+const layerDesktopClientSettings = DesktopClientSettings.layerTest();
 
 const layerElectronApp = Layer.mock(ElectronApp.ElectronApp)({
   quit: Effect.void,
@@ -351,6 +349,7 @@ function layerTest(input: {
       ),
     ),
     Layer.merge(DesktopState.layer),
+    Layer.merge(layerDesktopClientSettings),
   );
 }
 
@@ -958,18 +957,35 @@ describe("DesktopWindow", () => {
         if (!swipe) return;
         const history = fakeWindow.navigationHistory;
 
-        swipe({}, "left");
+        yield* Effect.promise(() => Promise.resolve(swipe({}, "left")));
         assert.equal(history.goBack.mock.calls.length, 1);
         assert.equal(history.goForward.mock.calls.length, 0);
-        swipe({}, "right");
+        yield* Effect.promise(() => Promise.resolve(swipe({}, "right")));
         assert.equal(history.goForward.mock.calls.length, 1);
 
-        swipe({}, "up");
-        swipe({}, "down");
+        yield* Effect.promise(() => Promise.resolve(swipe({}, "up")));
+        yield* Effect.promise(() => Promise.resolve(swipe({}, "down")));
         history.canGoBack.mockReturnValue(false);
         history.canGoForward.mockReturnValue(false);
-        swipe({}, "left");
-        swipe({}, "right");
+        yield* Effect.promise(() => Promise.resolve(swipe({}, "left")));
+        yield* Effect.promise(() => Promise.resolve(swipe({}, "right")));
+        assert.equal(history.goBack.mock.calls.length, 1);
+        assert.equal(history.goForward.mock.calls.length, 1);
+        assert.equal(
+          fakeWindow.send.mock.calls.filter(([channel]) => channel === MENU_ACTION_CHANNEL).length,
+          0,
+        );
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        yield* settings.set({ ...DEFAULT_CLIENT_SETTINGS, layoutThreeFingerSwipe: true });
+        history.canGoBack.mockReturnValue(true);
+        history.canGoForward.mockReturnValue(true);
+        for (const direction of ["left", "right", "up", "down"]) {
+          yield* Effect.promise(() => Promise.resolve(swipe({}, direction)));
+          assert.deepEqual(fakeWindow.send.mock.lastCall, [
+            MENU_ACTION_CHANNEL,
+            `layout-swipe-${direction}`,
+          ]);
+        }
         assert.equal(history.goBack.mock.calls.length, 1);
         assert.equal(history.goForward.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));

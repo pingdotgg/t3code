@@ -1,4 +1,4 @@
-import { DeviceHostUpdates } from "./DeviceHostUpdates";
+import { DeviceHostUpdates, hasDeviceHostUpdates } from "./DeviceHostUpdates";
 import type {
   DeviceHostSummary,
   DevicePlatform,
@@ -30,6 +30,9 @@ import {
   useRightPanelStore,
   type RightPanelSurface,
 } from "~/rightPanelStore";
+import { isThreadlessSurfacesRef } from "~/threadlessSurfaces";
+import { useLayoutStore } from "~/layout/layoutStore";
+import { findThreadChat } from "~/layout/surfaceSync";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import {
@@ -43,6 +46,7 @@ import {
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { DiscoveryList } from "~/components/ui/discovery-list";
+import { LabeledSection } from "~/components/ui/labeled-section";
 import {
   Select,
   SelectItem,
@@ -106,6 +110,12 @@ export function DevicePanel(props: {
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
   // Persistent: when on, a device opened from this list floats over chat
   // instead of taking the panel. The workspace's own Float action still works.
+  // Its mini player shows over the thread's chat: with no chat tab open (or no
+  // thread), the device opens in its tab instead.
+  const chatShown = useLayoutStore(
+    (layoutState) => findThreadChat(layoutState.layout, props.threadRef) !== null,
+  );
+  const canFloat = !isThreadlessSurfacesRef(props.threadRef) && chatShown;
   const [floatOverChat, setFloatOverChat] = useLocalStorage(
     FLOAT_OVER_CHAT_STORAGE_KEY,
     false,
@@ -185,7 +195,7 @@ export function DevicePanel(props: {
         platform: device.platform,
         name: device.name,
       };
-      if (floatOverChat) {
+      if (floatOverChat && canFloat) {
         usePreviewMiniPlayerStore.getState().open(props.threadRef, { kind: "device", ...target });
         useRightPanelStore.getState().close(props.threadRef);
       } else {
@@ -206,6 +216,7 @@ export function DevicePanel(props: {
     });
   };
 
+  // Its mini player shows over a chat, so a threadless device has nowhere to float.
   const floatActive = () => {
     if (!activeDevice) return;
     usePreviewMiniPlayerStore.getState().open(props.threadRef, {
@@ -249,7 +260,6 @@ export function DevicePanel(props: {
   const bootingDevices =
     state.bootingDevices?.filter((device) => device.threadId === threadId) ?? [];
   const { ready: hostReady, busy: hostBusy } = deviceHubReadiness(state);
-  const loading = !activeDevice && (pendingDevice !== null || hostBusy || !loaded);
   // Without a first snapshot a failed subscription never settles on its own.
   const loadError = loaded ? null : stateError;
   const diagnostics = state.hosts.flatMap((host) => {
@@ -288,16 +298,27 @@ export function DevicePanel(props: {
     );
   }
 
+  const showsWorkspace = activeDevice !== undefined && activeSession !== undefined;
+  const showsLoading = !showsWorkspace && (pendingDevice !== null || hostBusy || !loaded);
+  const hasNoticeAbove =
+    diagnostics.length > 0 ||
+    hasDeviceHostUpdates(state) ||
+    bootingDevices.length > 0 ||
+    operationError !== null;
+  // The device list scrolls up under a pane's tab row (--surface-top-inset). The live screen,
+  // the loading view and any notice above them keep below it.
+  const listReachesUnderHeader = !showsWorkspace && !showsLoading && !hasNoticeAbove;
+
   return (
     <PreviewPanelShell mode={props.mode}>
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           className={cn(
             "shrink-0 bg-background",
-            loading && "absolute inset-x-0 top-0 z-10 max-h-[40%] overflow-y-auto",
+            showsLoading && "absolute inset-x-0 top-0 z-10 max-h-[40%] overflow-y-auto",
           )}
         >
-          <div hidden={!!activeDevice}>
+          <div hidden={showsWorkspace}>
             {diagnostics.map((diagnostic) => (
               <DeviceDiscoveryWarning
                 key={`${environmentId}\u0000${diagnostic.hostId}\u0000${diagnostic.detail}`}
@@ -335,8 +356,11 @@ export function DevicePanel(props: {
             </div>
           ) : null}
         </div>
-        <div className="@container relative flex min-h-0 flex-1">
-          {activeDevice && activeSession ? (
+        <div
+          className="@container relative flex min-h-0 flex-1"
+          data-surface-reaches-under-header={listReachesUnderHeader ? "" : undefined}
+        >
+          {showsWorkspace ? (
             <DeviceWorkspace
               key={`${environmentId}\u0000${deviceKey(activeDevice)}`}
               environmentId={environmentId}
@@ -347,11 +371,11 @@ export function DevicePanel(props: {
                 diagnostics.find(({ hostId }) => hostId === activeDevice.hostId)?.detail
               }
               visible={props.visible}
-              onFloat={floatActive}
+              onFloat={canFloat ? floatActive : undefined}
               onClose={() => closeActive(false)}
               onPowerOff={() => closeActive(true)}
             />
-          ) : loading ? (
+          ) : showsLoading ? (
             <DeviceLoadingView
               name={pendingDevice?.name ?? "Devices"}
               description={
@@ -379,7 +403,7 @@ export function DevicePanel(props: {
               ) : null}
             </DeviceLoadingView>
           ) : (
-            <div className="scrollbar-gutter-both flex size-full flex-col overflow-y-auto px-4 py-3.5 text-sm text-muted-foreground">
+            <div className="scrollbar-gutter-both flex size-full scroll-pt-[var(--surface-top-inset,0px)] flex-col overflow-y-auto px-4 py-3.5 pt-under-header-3.5 text-sm text-muted-foreground">
               <div className="mx-auto flex w-full max-w-xl flex-col gap-3.5">
                 <div className="flex items-center gap-2">
                   {selectedHost ? (
@@ -457,10 +481,7 @@ export function DevicePanel(props: {
                 ) : null}
                 {hostReady && grouped.length > 0
                   ? grouped.map((group) => (
-                      <section key={group.platform} className="flex flex-col gap-2">
-                        <h3 className="text-xs font-medium text-dim-foreground">
-                          {platformLabel(group.platform)}
-                        </h3>
+                      <LabeledSection key={group.platform} label={platformLabel(group.platform)}>
                         <DiscoveryList>
                           {group.devices.map((device) => (
                             <DeviceRow
@@ -477,7 +498,7 @@ export function DevicePanel(props: {
                             />
                           ))}
                         </DiscoveryList>
-                      </section>
+                      </LabeledSection>
                     ))
                   : null}
                 {hostReady &&

@@ -12,7 +12,9 @@ import {
   useProjectGroupUpdate,
   type ProjectGroupUpdate,
 } from "../../hooks/useProjectGroupUpdate";
-import { Navigate, useLocation, useNavigate } from "@tanstack/react-router";
+import { Navigate, useNavigate } from "@tanstack/react-router";
+import { useLayoutPageLocation } from "../../layout/pageNavigation";
+import { useLayoutPane } from "../../layout/layoutPaneContext";
 import { SmileIcon, Trash2Icon, UploadIcon } from "lucide-react";
 import { lazy, Suspense, useRef, useState, type ReactNode } from "react";
 
@@ -94,7 +96,8 @@ export function ProjectSettingsPanel({
   unavailable?: ReactNode;
 }) {
   const groups = useSettingsProjectGroups();
-  const pathname = useLocation({ select: (location) => location.pathname });
+  const { pathname, search } = useLayoutPageLocation();
+  const { focused } = useLayoutPane();
 
   const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
   const members =
@@ -127,11 +130,12 @@ export function ProjectSettingsPanel({
           ),
         )
       : undefined;
-  if (successor) {
+  if (focused && successor) {
     return (
       <Navigate
         to={pathname}
         search={{
+          ...(search.pane === 1 ? { pane: 1 as const } : {}),
           project: successor.projectKey,
           machine: environmentId ?? undefined,
           checkout: checkoutKey ?? undefined,
