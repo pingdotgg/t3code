@@ -93,13 +93,19 @@ export function getFilesystemBrowseTabCompletion(
   const [first, ...rest] = visibleEntries;
   if (first === undefined) return null;
   if (rest.length === 0) return { name: first.name, isComplete: true };
-  let prefix = first.name;
+  let prefix = Array.from(first.name);
   for (const entry of rest) {
+    const characters = Array.from(entry.name);
     let length = 0;
-    while (length < prefix.length && prefix[length] === entry.name[length]) length += 1;
+    while (
+      length < prefix.length &&
+      prefix[length]?.toLowerCase() === characters[length]?.toLowerCase()
+    )
+      length += 1;
     prefix = prefix.slice(0, length);
   }
-  return prefix.length > filterQuery.length ? { name: prefix, isComplete: false } : null;
+  const name = prefix.join("");
+  return name.length > filterQuery.length ? { name, isComplete: false } : null;
 }
 
 export function createBrowseNavigationCoordinator() {

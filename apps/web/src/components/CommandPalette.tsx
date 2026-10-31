@@ -2495,8 +2495,13 @@ function OpenCommandPaletteDialog(props: {
     if (event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return;
 
     if (event.key === "Tab" && isBrowsing && !relativePathNeedsActiveProject) {
+      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
       (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
       event.preventDefault();
+      if (highlightedItemValue === "browse:up") {
+        void browseUp();
+        return;
+      }
       const highlightedEntry = visibleBrowseEntries.find(
         (entry) => `browse:${entry.fullPath}` === highlightedItemValue,
       );

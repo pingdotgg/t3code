@@ -91,6 +91,15 @@ describe("filesystem browse model", () => {
       { name: "Open", isComplete: false },
     );
     expect(getFilesystemBrowseTabCompletion([entry("Open"), entry("Opal")], "Op")).toBeNull();
+    expect(getFilesystemBrowseTabCompletion([entry("openAI"), entry("OpenSource")], "o")).toEqual({
+      name: "open",
+      isComplete: false,
+    });
+    expect(getFilesystemBrowseTabCompletion([entry("😀one"), entry("😁two")], "")).toBeNull();
+    expect(getFilesystemBrowseTabCompletion([entry("😀one"), entry("😀other")], "😀")).toEqual({
+      name: "😀o",
+      isComplete: false,
+    });
     expect(getFilesystemBrowseTabCompletion([], "x")).toBeNull();
   });
 });
