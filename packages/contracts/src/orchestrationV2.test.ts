@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
+  OrchestrationV2AppThreadJson,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
@@ -33,6 +34,49 @@ const decodeOrchestrationV2ProviderThread = Schema.decodeUnknownSync(Orchestrati
 const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
   OrchestrationV2ProviderCapabilities,
 );
+const decodeStoredThreadJson = Schema.decodeUnknownSync(
+  Schema.fromJsonString(OrchestrationV2AppThreadJson),
+);
+const decodeOrchestrationV2ThreadShellJson = Schema.decodeUnknownSync(
+  OrchestrationV2ThreadShellJson,
+);
+const decodeOrchestrationV2AppThreadJson = Schema.decodeUnknownSync(OrchestrationV2AppThreadJson);
+const encodeOrchestrationV2AppThreadJson = Schema.encodeSync(OrchestrationV2AppThreadJson);
+const encodeUnknownOrchestrationV2AppThreadJson = Schema.encodeUnknownSync(
+  OrchestrationV2AppThreadJson,
+);
+
+const threadShellJson = {
+  id: "thread-test",
+  projectId: "project-test",
+  title: "Thread",
+  providerInstanceId: "codex",
+  modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  branch: null,
+  worktreePath: null,
+  activeProviderThreadId: null,
+  lineage: { rootThreadId: "thread-test", parentThreadId: null, relationshipToParent: null },
+  forkedFrom: null,
+  createdBy: "user",
+  creationSource: "mobile",
+  latestRunId: null,
+  activeRunId: null,
+  status: "idle",
+  pendingRuntimeRequest: null,
+  latestVisibleMessage: null,
+  latestUserMessageAt: null,
+  hasActionableProposedPlan: false,
+  itemCount: 0,
+  visibleItemCount: 0,
+  createdAt: "2026-10-01T00:00:00.000Z",
+  updatedAt: "2026-10-01T00:00:00.000Z",
+  archivedAt: null,
+  settledOverride: "settled",
+  settledAt: null,
+  deletedAt: null,
+} as const;
 
 describe("orchestration V2 contracts", () => {
   it("decodes thread event types from a newer server as skippable items", () => {
@@ -449,41 +493,41 @@ describe("orchestration V2 contracts", () => {
 
 describe("thread open stats", () => {
   it("reads a thread whose open stats this build cannot read, without them", () => {
-    const shell = {
-      id: "thread-test",
-      projectId: "project-test",
-      title: "Thread",
-      providerInstanceId: "codex",
-      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-      activeProviderThreadId: null,
-      lineage: { rootThreadId: "thread-test", parentThreadId: null, relationshipToParent: null },
-      forkedFrom: null,
-      createdBy: "user",
-      creationSource: "mobile",
-      latestRunId: null,
-      activeRunId: null,
-      status: "idle",
-      pendingRuntimeRequest: null,
-      latestVisibleMessage: null,
-      latestUserMessageAt: null,
-      hasActionableProposedPlan: false,
-      itemCount: 0,
-      visibleItemCount: 0,
-      createdAt: "2026-10-01T00:00:00.000Z",
-      updatedAt: "2026-10-01T00:00:00.000Z",
-      archivedAt: null,
-      settledOverride: null,
-      settledAt: null,
-      deletedAt: null,
-    };
     const decode = Schema.decodeUnknownSync(OrchestrationV2ThreadShellJson);
     const opens = { openedAt: 1, score: 1, picks: [{ query: "upl", at: 1 }] };
-    expect(decode({ ...shell, opens }).opens).toEqual(opens);
-    expect(decode({ ...shell, opens: { openedAt: "2026-10-01", score: 1 } }).opens).toBeNull();
+    expect(decode({ ...threadShellJson, opens }).opens).toEqual(opens);
+    expect(
+      decode({ ...threadShellJson, opens: { openedAt: "2026-10-01", score: 1 } }).opens,
+    ).toBeNull();
+  });
+});
+
+describe("thread settled override", () => {
+  it("reads an override another build stored as a JSON boolean", () => {
+    expect(
+      decodeStoredThreadJson(JSON.stringify({ ...threadShellJson, settledOverride: true }))
+        .settledOverride,
+    ).toBe("settled");
+    expect(
+      decodeStoredThreadJson(JSON.stringify({ ...threadShellJson, settledOverride: false }))
+        .settledOverride,
+    ).toBeNull();
+    expect(decodeStoredThreadJson(JSON.stringify(threadShellJson)).settledOverride).toBe("settled");
+    expect(
+      decodeOrchestrationV2ThreadShellJson({ ...threadShellJson, settledOverride: "active" })
+        .settledOverride,
+    ).toBe("active");
+  });
+
+  it("still encodes the override as a literal", () => {
+    const thread = decodeOrchestrationV2AppThreadJson(threadShellJson);
+    expect(encodeOrchestrationV2AppThreadJson(thread).settledOverride).toBe("settled");
+    expect(() =>
+      encodeUnknownOrchestrationV2AppThreadJson({
+        ...threadShellJson,
+        settledOverride: true,
+      }),
+    ).toThrow();
   });
 });
 

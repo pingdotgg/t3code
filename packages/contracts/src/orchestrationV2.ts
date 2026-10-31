@@ -438,6 +438,20 @@ const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
   Schema.catchDecoding(() => Effect.succeedSome(null)),
 );
 
+// A payload written by another build may store the override as a JSON boolean
+// (pingdotgg/t3code#28279): true named a settlement, false no override.
+const LenientSettledOverride = Schema.NullOr(
+  Schema.Union([Schema.Literals(["settled", "active"]), Schema.Boolean]),
+).pipe(
+  Schema.decodeTo(
+    Schema.NullOr(Schema.Literals(["settled", "active"])),
+    SchemaTransformation.transform({
+      decode: (raw) => (raw === true ? "settled" : raw === false ? null : raw),
+      encode: (value) => value,
+    }),
+  ),
+);
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -471,9 +485,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
   archivedAt: Schema.NullOr(Schema.DateTimeUtc),
-  settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])).pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
+  settledOverride: LenientSettledOverride.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   settledAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -2111,7 +2123,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
   archivedAt: Schema.NullOr(Schema.DateTimeUtc),
-  settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])),
+  settledOverride: LenientSettledOverride,
   settledAt: Schema.NullOr(Schema.DateTimeUtc),
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
