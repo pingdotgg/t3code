@@ -2287,6 +2287,67 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("fails a MiniMax Code continuation whose process exits while it drains", () =>
+    Effect.gen(function* () {
+      const { update } = claudeFrames;
+      const gate = makeProviderReplayGate(["late", "after-exit"]);
+      const burst = Array.from({ length: 300 }, (_, index) =>
+        update(MINIMAX_ROOT_SESSION, {
+          sessionUpdate: "tool_call",
+          toolCallId: `tool-${index}`,
+          title: `Tool ${index}`,
+          kind: "execute",
+          status: "in_progress",
+        }),
+      );
+      const minimax = yield* openClaudeReplaySession(
+        [
+          ...minimaxResolvedPrompt,
+          { ...burst[0], label: "late" },
+          ...burst.slice(1),
+          update(MINIMAX_ROOT_SESSION, { sessionUpdate: "session_info_update", title: "burst" }),
+          {
+            ...update(MINIMAX_ROOT_SESSION, {
+              sessionUpdate: "session_info_update",
+              title: "after exit",
+            }),
+            label: "after-exit",
+          },
+        ],
+        gate,
+        true,
+        "minimax-code",
+      );
+      yield* minimax.runtime.startTurn(minimax.turnInput(1));
+      assert.equal((yield* minimax.terminal).status, "completed");
+      gate.release("late");
+      yield* minimax.throughMarker("burst");
+      yield* minimax.offers[0]!.dispatchIfCurrent!(Effect.void);
+      const draining = yield* minimax.runtime
+        .startTurn(minimax.turnInput(2, { continuation: true }))
+        .pipe(Effect.forkScoped);
+      yield* minimax.until(
+        (event) => event.type === "provider_turn.updated" && event.providerTurn.ordinal === 2,
+      );
+      yield* minimax.terminate();
+      yield* Fiber.join(draining);
+      yield* TestClock.adjust("10 seconds");
+      gate.release("after-exit");
+      const seen = yield* minimax.until(
+        (event) =>
+          event.type === "turn.terminal" ||
+          (event.type === "provider_thread.updated" &&
+            event.providerThread.nativeMetadata?.title === "after exit"),
+      );
+      const terminal = seen.at(-1)!;
+      if (terminal.type !== "turn.terminal")
+        throw new Error("Exit during the drain left the run open");
+      assert.equal(terminal.status, "failed");
+      assert.equal(terminal.runOrdinal, 2);
+      assert.lengthOf(minimax.offers, 1, "a dead process must not offer another continuation");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect.each([
     {
       kind: "approval",

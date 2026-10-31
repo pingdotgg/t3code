@@ -2033,7 +2033,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 // A held native turn has no prompt fiber left to fail it.
                 if (flavor.ownsNativeTurnAfterPrompt !== true) return;
                 const context = yield* Ref.get(activeTurn);
-                if (context === null || !context.promptSettled || context.finalized) return;
+                if (context === null || context.finalized) return;
+                if (
+                  !context.promptSettled &&
+                  !acpIsProviderContinuationMessage(context.input.message)
+                )
+                  return;
                 yield* cancelPendingRuntimeRequests();
                 yield* terminalizeOpenForegroundTools(context, "failed");
                 yield* finalizeTurn(
@@ -7750,10 +7755,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               const drainedWakeCount = yield* takeWakeBuffer.pipe(
                 Effect.tap((drained) =>
-                  Effect.forEach(drained, handleSessionUpdate, {
-                    concurrency: 1,
-                    discard: true,
-                  }),
+                  Effect.forEach(
+                    drained,
+                    // A process exit can finalize the run mid-drain; its rest must not offer again.
+                    (notification) =>
+                      flavor.ownsNativeTurnAfterPrompt === true && context.finalized
+                        ? Effect.void
+                        : handleSessionUpdate(notification),
+                    { concurrency: 1, discard: true },
+                  ),
                 ),
                 Effect.map((drained) => drained.length),
               );
