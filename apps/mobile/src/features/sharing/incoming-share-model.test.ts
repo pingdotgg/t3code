@@ -7,6 +7,7 @@ import type { ResolvedSharePayload, SharePayload } from "expo-sharing";
 
 import {
   buildIncomingShareDraft,
+  decodeIncomingShareDraft,
   hasIncomingShareContent,
   isShareFileUriUnderOwnedRoots,
   selectIncomingShareAttachments,
@@ -48,7 +49,7 @@ describe("incoming native shares", () => {
     });
 
     expect(result).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: "share-1",
       createdAt: "2026-07-15T10:00:00.000Z",
       text: "Please explain this error\n\nhttps://example.com/issue/1",
@@ -64,6 +65,11 @@ describe("incoming native shares", () => {
         },
       ],
       warnings: [],
+    });
+    expect(decodeIncomingShareDraft(result)).toEqual(result);
+    expect(decodeIncomingShareDraft({ ...result, schemaVersion: 1 })).toEqual({
+      ...result,
+      schemaVersion: 1,
     });
     expect(removeOwnedFile).toHaveBeenCalledWith(image.value);
     expect(hasIncomingShareContent(result)).toBe(true);

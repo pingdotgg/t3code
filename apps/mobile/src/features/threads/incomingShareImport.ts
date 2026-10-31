@@ -94,7 +94,7 @@ export interface ShareImportDeps {
       readonly text: string;
       readonly attachments: ReadonlyArray<DraftComposerAttachment>;
       readonly sourceShareId: string;
-      readonly sourceShareCreatedAt: string;
+      readonly sourceShareCreatedAt?: string;
     },
   ) => Promise<{ readonly skippedAttachmentCount: number }>;
   readonly selectAttachments: (
@@ -229,7 +229,7 @@ export function makeIncomingShareImports(deps: ShareImportDeps) {
           text: template === undefined ? share.text : applyShareTemplate(template, share.text),
           attachments: selected.attachments,
           sourceShareId: shareId,
-          sourceShareCreatedAt: share.createdAt,
+          ...(share.schemaVersion === 2 ? { sourceShareCreatedAt: share.createdAt } : {}),
         }));
       } finally {
         // The merge publishes before it persists, so read it back even when

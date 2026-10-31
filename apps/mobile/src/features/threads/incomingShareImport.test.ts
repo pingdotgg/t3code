@@ -59,7 +59,7 @@ function fileAttachment(id: string): DraftComposerAttachment {
 
 function share(attachments: ReadonlyArray<DraftComposerAttachment> = []): IncomingShareDraft {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: "share-1",
     createdAt: "2026-01-01T00:00:00.000Z",
     text: "shared text",
@@ -168,6 +168,23 @@ describe("incoming share imports", () => {
         return { skippedAttachmentCount: 0 };
       },
     });
+    const legacyDraft: ComposerDraft = {
+      text: "User edited the imported context",
+      attachments: [],
+      importedShareIds: ["share-1"],
+    };
+    drafts.set("draft-a", legacyDraft);
+    const legacyCreatedAt = "2025-12-31T00:00:00.000Z";
+    inbox.set("share-1", {
+      ...share(),
+      schemaVersion: 1,
+      createdAt: legacyCreatedAt,
+      destination,
+    });
+    const legacyTarget = importTarget({ createdAt: legacyCreatedAt });
+    watch(legacyTarget);
+    await imports.settled(legacyTarget);
+    expect(drafts.get("draft-a")).toEqual(legacyDraft);
     for (const [createdAt, template] of [
       ["2026-01-01T00:00:00.000Z", "Review {{shared}} for bugs."],
       ["2026-01-02T00:00:00.000Z", "Summarize {{shared}}."],
@@ -182,9 +199,9 @@ describe("incoming share imports", () => {
       drafts.set("draft-a", { ...draft, text: `${draft.text}\nuser edit` });
     }
     expect(drafts.get("draft-a")?.text).toBe(
-      "mine\n\nReview shared text for bugs.\nuser edit\n\nSummarize shared text.\nuser edit\n\nSummarize shared text.\nuser edit",
+      "User edited the imported context\n\nReview shared text for bugs.\nuser edit\n\nSummarize shared text.\nuser edit\n\nSummarize shared text.\nuser edit",
     );
-    expect(deps.consume).toHaveBeenCalledTimes(3);
+    expect(deps.consume).toHaveBeenCalledTimes(4);
   });
 
   it("runs once when its atom node is removed and rebuilt", async () => {
