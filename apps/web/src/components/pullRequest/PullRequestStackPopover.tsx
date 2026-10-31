@@ -1,3 +1,4 @@
+import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import type { EnvironmentId, PullRequestRef, PullRequestStackMembership } from "@t3tools/contracts";
 import { useState } from "react";
@@ -13,11 +14,13 @@ function StackBody({
   reference,
   onSelect,
   stackNumber,
+  terminology,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   onSelect: (reference: PullRequestRef) => void;
   stackNumber: number;
+  terminology: ChangeRequestTerminology;
 }) {
   const query = usePullRequestStack(environmentId, reference);
   if (query.data !== null) {
@@ -25,20 +28,30 @@ function StackBody({
       <>
         <PullRequestStackHeader
           number={query.data.number}
+          terminology={terminology}
+          size={query.data.layers.length}
           notice={query.notice}
           stale={!!query.error}
         />
         {query.error ? <MenuItem onClick={query.refresh}>Retry stack refresh</MenuItem> : null}
-        <PullRequestStackLayers stack={query.data} reference={reference} onSelect={onSelect} />
+        <PullRequestStackLayers
+          stack={query.data}
+          terminology={terminology}
+          reference={reference}
+          onSelect={onSelect}
+          syncedAt={query.dataUpdatedAt}
+        />
       </>
     );
   }
   return (
     <>
-      <PullRequestStackHeader number={stackNumber} />
+      <PullRequestStackHeader number={stackNumber} terminology={terminology} />
       <MenuGroupLabel>
         {query.error ??
-          (query.isPending ? "Loading stack…" : "This pull request is no longer in a stack.")}
+          (query.isPending
+            ? "Loading stack…"
+            : `This ${terminology.singular} is no longer in a stack.`)}
       </MenuGroupLabel>
     </>
   );
@@ -48,11 +61,13 @@ export function PullRequestStackPopover({
   environmentId,
   reference,
   membership,
+  terminology,
   onSelect,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   membership: PullRequestStackMembership;
+  terminology: ChangeRequestTerminology;
   onSelect: (reference: PullRequestRef) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -67,7 +82,7 @@ export function PullRequestStackPopover({
                 <span
                   role="button"
                   tabIndex={0}
-                  className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-xs font-normal text-muted-foreground"
+                  className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-meta text-muted-foreground"
                 />
               }
               aria-label={`Stack ${membership.number}, layer ${membership.position} of ${membership.size}`}
@@ -94,6 +109,7 @@ export function PullRequestStackPopover({
               environmentId={environmentId}
               reference={reference}
               stackNumber={membership.number}
+              terminology={terminology}
               onSelect={(target) => {
                 setOpen(false);
                 onSelect(target);
