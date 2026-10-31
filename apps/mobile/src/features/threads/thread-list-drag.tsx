@@ -362,9 +362,12 @@ export function useThreadListDrag(props: {
   const listVersion = props.items
     .map((item) => (isThreadListV2ListItem(item) ? `${item.key}:${dragSection(item)}` : item.key))
     .join("|");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A changed native list invalidates its active gesture and preview.
   useEffect(() => {
     cancel();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Section/order changes invalidate the gesture even when its controller is unchanged.
   }, [listVersion, cancel]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Release the native gesture and animation frame when its list unmounts.
   useEffect(() => cancel, [cancel]);
 
   const previewStyle = useAnimatedStyle(() => ({ transform: [{ translateY: previewTop.value }] }));
@@ -448,6 +451,7 @@ export function useThreadListDragTarget(input: {
 
   const { gesture, release } = useMemo(() => {
     const release = () => finish(itemKey, false);
+    // oxlint-disable-next-line react/capitalized-calls -- Gesture.Pan is a gesture factory, not a React component.
     const gesture = Gesture.Pan()
       .enabled(enabled)
       .manualActivation(true)
@@ -462,6 +466,7 @@ export function useThreadListDragTarget(input: {
         owner.set(itemKey);
         menuOpen.set(false);
         touch.set({
+          // oxlint-disable-next-line react/purity -- The native touch callback reads the clock after render.
           startedAt: Date.now(),
           x: point.absoluteX,
           y: point.absoluteY,
@@ -483,6 +488,7 @@ export function useThreadListDragTarget(input: {
         const state = touch.value;
         if (state.active) return;
         const distance = Math.hypot(point.absoluteX - state.x, point.absoluteY - state.y);
+        // oxlint-disable-next-line react/purity -- The native touch callback reads the clock after render.
         if (Date.now() - state.startedAt < HOLD_MS) {
           if (distance > PRESS_SLOP) manager.fail();
         } else if (distance > LIFT_SLOP) {
@@ -504,7 +510,7 @@ export function useThreadListDragTarget(input: {
     return { gesture, release };
   }, [enabled, finish, itemKey, menuOpen, move, owner, prepare, start, touch]);
 
-  // A recycled or unmounted row must release its own press only.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Release a native press when its row is recycled or unmounted.
   useEffect(() => release, [release]);
 
   const style = useAnimatedStyle(() => {
