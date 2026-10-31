@@ -59,20 +59,34 @@ function fillSolidPowerlineSeparator(
   context.fill();
 }
 
+// Snapshots decode `wide` only for empty cells, so a wide glyph is known by its spacer tail.
+function isWideGlyph(cells: readonly GhosttyCell[], index: number): boolean {
+  return cells[index + 1]?.wide === GHOSTTY_CELL_WIDE.spacerTail;
+}
+
 function ghosttyTextRunEnd(
   cells: readonly GhosttyCell[],
   start: number,
   sameStyle: (cell: GhosttyCell) => boolean,
 ): number {
   let end = start + 1;
+  // Wide glyphs rarely advance exactly two cells, so each one is its own run
+  // and never pushes the glyphs after it off the grid.
+  if (isWideGlyph(cells, start)) {
+    while (cells[end]?.wide === GHOSTTY_CELL_WIDE.spacerTail) end += 1;
+    return end;
+  }
   while (end < cells.length) {
     const next = cells[end];
-    if (!next) break;
-    if (next.wide === GHOSTTY_CELL_WIDE.spacerTail) {
-      end += 1;
-      continue;
+    if (
+      !next ||
+      next.text.length === 0 ||
+      isWideGlyph(cells, end) ||
+      isSolidPowerlineSeparator(next.text) ||
+      !sameStyle(next)
+    ) {
+      break;
     }
-    if (next.text.length === 0 || isSolidPowerlineSeparator(next.text) || !sameStyle(next)) break;
     end += 1;
   }
   return end;
@@ -230,29 +244,25 @@ export function renderGhosttySnapshot(options: {
         runStart += 1;
         continue;
       }
+      const wide = isWideGlyph(row.cells, runStart);
       const runEnd = ghosttyTextRunEnd(row.cells, runStart, (cell) => sameTextStyle(cell, first));
-      const text = row.cells
-        .slice(runStart, runEnd)
-        .map((cell) => cell.text)
-        .join("");
+      const text = wide
+        ? first.text
+        : row.cells
+            .slice(runStart, runEnd)
+            .map((cell) => cell.text)
+            .join("");
       if (!first.invisible && text.trim().length > 0) {
+        const left = padding + runStart * metrics.width;
+        const width = (runEnd - runStart) * metrics.width;
         context.save();
         context.beginPath();
-        context.rect(
-          padding + runStart * metrics.width,
-          top,
-          (runEnd - runStart) * metrics.width,
-          metrics.height,
-        );
+        context.rect(left, top, width, metrics.height);
         context.clip();
         context.font = fontForCell(first, fontSize, fontFamily);
         context.fillStyle = cssColor(first.foreground);
-        context.fillText(
-          text,
-          padding + runStart * metrics.width,
-          top + metrics.baseline,
-          (runEnd - runStart) * metrics.width,
-        );
+        if (wide) context.textAlign = "center";
+        context.fillText(text, wide ? left + width / 2 : left, top + metrics.baseline, width);
         context.restore();
       }
       runStart = runEnd;
