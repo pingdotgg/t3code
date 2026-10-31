@@ -122,6 +122,7 @@ const bearerAuthorization = Effect.gen(function* () {
     ),
     authorizeDpop: Effect.fn("T3Client.authorizeDpop")(() => relayUnsupported),
     authorizeDpopHttp: Effect.fn("T3Client.authorizeDpopHttp")(() => relayUnsupported),
+    renewDpopBeforeExpiry: Effect.fn("T3Client.renewDpopBeforeExpiry")(() => relayUnsupported),
   });
 });
 
