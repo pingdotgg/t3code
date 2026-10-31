@@ -121,6 +121,7 @@ beforeEach(() => {
   });
 });
 
+const decodeClaudeSettings = Schema.decodeEffect(ClaudeSettings);
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 const AUTO_COMPACT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
   autoCompactWindow: "300000",
@@ -142,6 +143,28 @@ const CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
               { id: "brutal", label: "Brutal" },
             ],
           },
+        ],
+      },
+    },
+  ],
+});
+const CUSTOM_THINKING_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
+  customModels: [
+    {
+      slug: "claude-sonnet-4-5-20250929",
+      name: "Dated Sonnet",
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Effort",
+            type: "select",
+            options: [
+              { id: "low", label: "Low" },
+              { id: "high", label: "High" },
+            ],
+          },
+          { id: "thinking", label: "Thinking", type: "boolean" },
         ],
       },
     },
@@ -3116,6 +3139,303 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  describe("custom Claude Thinking", () => {
+    const selection = (thinking: boolean): ModelSelection => ({
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      model: "claude-sonnet-4-5-20250929",
+      options: [
+        { id: "effort", value: "high" },
+        { id: "thinking", value: thinking },
+      ],
+    });
+
+    it.effect("forwards custom Thinking false and explicit effort to SDK launch", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          settings: CUSTOM_THINKING_CLAUDE_SETTINGS,
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("custom-thinking-launch"),
+            text: "Hello",
+            attachments: [],
+            modelSelection: selection(false),
+          }),
+        );
+        const options = harness.getOpenedOptions();
+        assert.equal(options?.model, "claude-sonnet-4-5-20250929");
+        assert.equal(options?.effort, "high");
+        assert.deepInclude(options?.settings, { alwaysThinkingEnabled: false });
+        assert.notDeepInclude(options?.settings, { showThinkingSummaries: true });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    it.effect(
+      "reuses unchanged custom Thinking and replaces the query when toggled both ways",
+      () =>
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarnessWithOptions({
+            settings: CUSTOM_THINKING_CLAUDE_SETTINGS,
+            freshQueueOnReopen: true,
+          });
+          const now = yield* DateTime.now;
+          for (const [index, thinking] of [false, false, true, false].entries()) {
+            yield* harness.runtime.startTurn(
+              makeClaudeTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now,
+                attemptId: RunAttemptId.make(`custom-thinking-reuse-${index}`),
+                text: "Continue",
+                attachments: [],
+                providerTurnOrdinal: index + 1,
+                modelSelection: selection(thinking),
+              }),
+            );
+            assert.lengthOf(harness.processQueues, Math.max(1, index));
+            if (index >= 2) {
+              assert.deepInclude(harness.getOpenedOptions()?.settings, {
+                alwaysThinkingEnabled: thinking,
+              });
+              assert.equal(harness.getOpenedOptions()?.effort, "high");
+            }
+            yield* harness.offerAndWait(
+              makeResultFrame({ uuid: `custom-thinking-result-${index}`, result: "Done." }),
+            );
+            yield* Queue.take(harness.terminalReceipts);
+          }
+          assert.lengthOf(harness.offeredMessages, 4);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
+  });
+
+  describe("custom Claude parent capability boundaries", () => {
+    it.effect.each([
+      { model: "claude-custom-tuned", effort: undefined, expected: "gentle" },
+      { model: "claude-custom-tuned", effort: "bogus", expected: "gentle" },
+      { model: "claude-custom-tuned", effort: "brutal", expected: "brutal" },
+      { model: "opus", effort: undefined, expected: undefined },
+      { model: "sonnet", effort: "max", expected: "max" },
+      { model: "claude-opus-4-6", effort: "max", expected: "max" },
+    ])("launches parent effort with catalog precedence: %j", ({ model, effort, expected }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          settings: yield* decodeClaudeSettings({
+            customModels: [
+              ...CUSTOM_MODEL_CLAUDE_SETTINGS.customModels,
+              { slug: "sonnet", name: "Opaque alias" },
+              {
+                slug: "claude-opus-4-6",
+                name: "Collision",
+                capabilities: {
+                  optionDescriptors: [
+                    {
+                      id: "effort",
+                      label: "Effort",
+                      type: "select",
+                      options: [{ id: "gentle", label: "Gentle", isDefault: true }],
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("parent-effort"),
+            text: "Hello",
+            attachments: [],
+            modelSelection: {
+              instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+              model,
+              options: effort === undefined ? [] : [{ id: "effort", value: effort }],
+            },
+          }),
+        );
+        assert.equal(
+          harness.getOpenedOptions()?.model,
+          model === "claude-opus-4-6" ? "claude-opus-4-6[1m]" : model,
+        );
+        assert.equal(harness.getOpenedOptions()?.effort, expected);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    it.effect(
+      "keeps custom Fast changes live and ignores omitted Thinking and unsupported booleans",
+      () =>
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarnessWithOptions({
+            settings: yield* decodeClaudeSettings({
+              customModels: [
+                {
+                  slug: "custom-booleans",
+                  name: "Booleans",
+                  capabilities: {
+                    optionDescriptors: [
+                      { id: "fastMode", label: "Fast", type: "boolean" },
+                      { id: "thinking", label: "Thinking", type: "boolean" },
+                      { id: "unsupported", label: "Unsupported", type: "boolean" },
+                    ],
+                  },
+                },
+              ],
+            }),
+          });
+          const now = yield* DateTime.now;
+          for (const [index, fastMode] of [undefined, false, true, false, undefined].entries()) {
+            yield* harness.runtime.startTurn(
+              makeClaudeTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now,
+                attemptId: RunAttemptId.make(`parent-booleans-${index}`),
+                providerTurnOrdinal: index + 1,
+                text: "Continue",
+                attachments: [],
+                modelSelection: {
+                  instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+                  model: "custom-booleans",
+                  options: [
+                    { id: "unsupported", value: index % 2 === 0 },
+                    ...(fastMode === undefined ? [] : [{ id: "fastMode", value: fastMode }]),
+                  ],
+                },
+              }),
+            );
+            assert.lengthOf(harness.processQueues, 1);
+            assert.deepEqual(harness.getOpenedOptions()?.settings, {
+              fastMode: false,
+              showThinkingSummaries: true,
+            });
+            yield* harness.offerAndWait(
+              makeResultFrame({ uuid: `boolean-result-${index}`, result: "Done." }),
+            );
+            yield* Queue.take(harness.terminalReceipts);
+          }
+          assert.deepEqual(harness.liveSelectionChanges, [
+            { model: "custom-booleans" },
+            { fastMode: true, ultracode: null },
+            { model: "custom-booleans" },
+            { fastMode: false, ultracode: null },
+          ]);
+          assert.lengthOf(harness.offeredMessages, 5);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
+
+    it.effect.each([
+      { effort: "ultrathink", text: "Explain", expected: "Ultrathink:\nExplain" },
+      { effort: "ultrathink", text: "Ultrathink:\nExplain", expected: "Ultrathink:\nExplain" },
+      { effort: "ultrathink", text: "/review", expected: "/review" },
+      { effort: "high", text: "Explain", expected: "Explain" },
+    ])(
+      "uses custom prompt effort on send and steer with attachments: %j",
+      ({ effort, text, expected }) =>
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarnessWithOptions({
+            settings: yield* decodeClaudeSettings({
+              customModels: [
+                {
+                  slug: "custom-prompt",
+                  name: "Prompt",
+                  capabilities: {
+                    optionDescriptors: [
+                      {
+                        id: "effort",
+                        label: "Effort",
+                        type: "select",
+                        options: [{ id: "high", label: "High", isDefault: true }],
+                        promptInjectedValues: ["ultrathink"],
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+          });
+          const attachment = ChatFileAttachment.make({
+            type: "file",
+            id: ChatAttachmentId.make("custom-prompt-12345678-1234-1234-1234-123456789abc"),
+            name: "requirements.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 4,
+          });
+          const input = makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("custom-prompt"),
+            text,
+            attachments: [attachment],
+            modelSelection: {
+              instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+              model: "custom-prompt",
+              options: [{ id: "effort", value: effort }],
+            },
+          });
+          yield* harness.runtime.startTurn(input);
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          yield* harness.runtime.steerTurn({
+            threadId: harness.threadId,
+            runId: input.runId,
+            providerThread: harness.providerThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: `turn:${input.attemptId}`,
+            }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make("custom-prompt-steer"),
+              text,
+              attachments: [attachment],
+            },
+          });
+          const path = yield* Path.Path;
+          const note = `\n\n[Attached file "requirements.pdf" is saved at: ${path.join(harness.attachmentsDir, attachmentRelativePath(attachment)!)}]`;
+          assert.lengthOf(harness.offeredMessages, 2);
+          for (const message of harness.offeredMessages) {
+            assert.deepEqual(message.message.content, [
+              { type: "text", text: `${expected}${note}` },
+            ]);
+          }
+          assert.equal(harness.offeredMessages[1]?.priority, "now");
+          assert.equal(harness.getOpenedOptions()?.effort, "high");
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
+  });
 
   it.effect.each(["release-after", "cancel-after", "release-before", "resume-pending"] as const)(
     "keeps attachment reservations across compaction: %s boundary",
