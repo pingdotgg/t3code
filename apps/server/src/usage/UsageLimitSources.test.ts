@@ -166,8 +166,11 @@ it.effect("refreshes once at startup and again when managed proxy status changes
     const initialStatusRead = yield* Deferred.make<void>();
     const changedStatusRead = yield* Deferred.make<void>();
     const statuses = yield* Queue.unbounded<{ readonly status: "running" }>();
+    const baseline = yield* ManagedProviderProxy.ManagedProviderProxy.pipe(
+      Effect.provide(ManagedProviderProxy.layerTest()),
+    );
     const managed = Layer.succeed(ManagedProviderProxy.ManagedProviderProxy, {
-      status: Effect.succeed({ status: "stopped" } as const),
+      ...baseline,
       statusChanges: Stream.concat(
         Stream.make({ status: "stopped" } as const),
         Stream.concat(
@@ -175,8 +178,6 @@ it.effect("refreshes once at startup and again when managed proxy status changes
           Stream.fromQueue(statuses),
         ),
       ),
-      endpoint: Effect.void,
-      endpointChanges: Stream.empty,
     });
     const http = HttpClient.make((request) =>
       Ref.updateAndGet(refreshes, (count) => count + 1).pipe(
