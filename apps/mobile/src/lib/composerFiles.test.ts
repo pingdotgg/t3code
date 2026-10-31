@@ -590,6 +590,9 @@ describe("composer file attachments", () => {
       header.writeUInt32BE(3000, 20);
       const original = header.toString("base64");
       mocks.readBase64.mockResolvedValue(original);
+      const readBytes = vi.fn().mockResolvedValueOnce(header).mockResolvedValue(new Uint8Array());
+      const close = vi.fn();
+      mocks.open.mockReturnValue({ readBytes, close });
       const resize = vi.fn();
       const renderAsync = vi.fn(async () => ({
         width: 4000,
@@ -620,6 +623,16 @@ describe("composer file attachments", () => {
       const result = await pickComposerFiles({ existingCount: 0 });
 
       expect(resize).toHaveBeenCalledWith({ width: 2000, height: 1500 });
+      expect(mocks.readBase64).toHaveBeenCalledTimes(oversized ? 1 : 0);
+      expect(readBytes.mock.calls.map((call) => call[0])).toEqual([
+        256 * 1024,
+        256 * 1024 - header.length,
+      ]);
+      expect(close).toHaveBeenCalledExactlyOnceWith();
+      expect(mocks.delete.mock.calls.map(([uri]) => uri)).toEqual([
+        ...(oversized ? Array.from({ length: 3 }, () => "file:///cache/fitted.png") : []),
+        "file:///documents/t3-composer-attachments/attachment-id-photo.png",
+      ]);
       expect(result).toEqual({
         files: [
           expect.objectContaining({
