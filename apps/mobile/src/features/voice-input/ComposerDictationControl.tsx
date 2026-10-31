@@ -1,6 +1,13 @@
 import type { VoiceInputPhase, VoiceInputState } from "@t3tools/client-runtime/voice-input";
-import { memo, useCallback, useMemo, useState, type ReactNode } from "react";
-import { Linking, Pressable, Text as SystemText, View, type LayoutChangeEvent } from "react-native";
+import { memo, useMemo, useState, type ReactNode } from "react";
+import {
+  Platform,
+  Linking,
+  Pressable,
+  Text as SystemText,
+  View,
+  type LayoutChangeEvent,
+} from "react-native";
 import Animated, {
   Easing,
   ReduceMotion,
@@ -12,10 +19,10 @@ import Animated, {
   type SharedValue,
 } from "react-native-reanimated";
 
-import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { cn } from "../../lib/cn";
 import type { VoiceComposerPresentation } from "./voiceInputPresentation";
 import { VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
@@ -215,7 +222,7 @@ const VoiceWaveform = memo(function VoiceWaveform(props: {
   readonly audioLevels: SharedValue<ReadonlyArray<number>>;
 }) {
   const [barCount, setBarCount] = useState(0);
-  const handleLayout = useCallback((event: LayoutChangeEvent) => {
+  const handleLayout = (event: LayoutChangeEvent) => {
     setBarCount(
       Math.max(
         1,
@@ -225,7 +232,7 @@ const VoiceWaveform = memo(function VoiceWaveform(props: {
         ),
       ),
     );
-  }, []);
+  };
 
   return (
     <View
@@ -273,9 +280,13 @@ function VoiceActionButton(props: {
 }) {
   const { scale, composerControlSize } = useAndroidControlSizing();
   const height = props.size === "large" ? composerControlSize : 44;
-  const circleSize = props.size === "large" ? height : 30;
   const variant = props.variant ?? "plain";
   const loading = props.loading === true;
+  const large = props.size === "large";
+  const circleSize = Math.round((large ? 44 : 30) * scale);
+  const iconSize = Math.round(
+    (variant === "primary" ? (large ? 20 : 16) : large ? 24 : 20) * scale,
+  );
   const primaryStyle = useAnimatedStyle(() => ({
     opacity: withTiming(loading ? 0 : 1, DICTATION_TIMING),
   }));
@@ -288,7 +299,11 @@ function VoiceActionButton(props: {
       className="size-[44px] shrink-0 items-center justify-center active:opacity-70"
       disabled={props.disabled}
       onPress={props.onPress}
-      style={{ width: height, height, opacity: props.disabled && !props.loading ? 0.4 : 1 }}
+      style={{
+        width: large && variant === "primary" && Platform.OS !== "android" ? 62 : height,
+        height,
+        opacity: props.disabled && !props.loading ? 0.4 : 1,
+      }}
     >
       <View
         className={cn(
@@ -312,9 +327,7 @@ function VoiceActionButton(props: {
           ) : (
             <SymbolView
               name={props.icon}
-              size={
-                props.size === "large" ? Math.round(24 * scale) : variant === "primary" ? 16 : 20
-              }
+              size={iconSize}
               weight={variant === "primary" ? "semibold" : "regular"}
               tintColorClassName={
                 variant === "primary" ? "accent-primary-foreground" : "accent-icon"
