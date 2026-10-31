@@ -1,7 +1,6 @@
 // Generate endpoints return 403 on the free tier; use and remove a temporary prompt session.
 import { AbsolutePath, Location, Model, Provider, Session } from "@opencode/client/effect";
 import { TextGenerationError } from "@t3tools/contracts";
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -37,7 +36,7 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
       detail: "OpenCode model selection must use the 'provider/model' format.",
     });
   }
-  const variant = getModelSelectionStringOptionValue(input.modelSelection, "variant");
+  const variant = OpenCodeRuntime.openCodeVariant(input.modelSelection);
   const outcome = yield* Deferred.make<Outcome>();
   let sessionId: string | undefined;
   const texts = new Map<string, string>();

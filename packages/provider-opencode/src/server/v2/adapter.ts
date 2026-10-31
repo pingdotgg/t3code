@@ -61,7 +61,7 @@ import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeI
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
-import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
 
 import {
@@ -596,7 +596,7 @@ const isProviderAdapterError = Schema.is(ProviderAdapter.ProviderAdapterV2Error)
 const modelRef = (selection: ProviderAdapter.ProviderAdapterV2TurnInput["modelSelection"]) => {
   const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(selection.model);
   if (parsed === null) return undefined;
-  const variant = getModelSelectionStringOptionValue(selection, "variant");
+  const variant = OpenCodeRuntime.openCodeVariant(selection);
   return Model.Ref.make({
     providerID: Provider.ID.make(parsed.providerID),
     id: Model.ID.make(parsed.modelID),

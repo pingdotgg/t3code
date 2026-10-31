@@ -208,7 +208,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           });
         }
         const selectedAgent = getModelSelectionStringOptionValue(input.modelSelection, "agent");
-        const selectedVariant = getModelSelectionStringOptionValue(input.modelSelection, "variant");
+        const selectedVariant = OpenCodeRuntime.openCodeVariant(input.modelSelection);
         const promptContext = {
           operation: input.operation,
           cwd: input.cwd,
