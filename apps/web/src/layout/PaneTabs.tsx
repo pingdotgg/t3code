@@ -80,10 +80,10 @@ export function LayoutPaneTabStrip({ children }: { children: ReactNode }) {
   useLayoutEffect(() => {
     const strip = stripRef.current;
     if (!strip) return;
+    const tab = [...strip.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")].find(
+      (candidate) => candidate.dataset.layoutPaneTab === tabId,
+    );
     const reveal = () => {
-      const tab = [...strip.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")].find(
-        (candidate) => candidate.dataset.layoutPaneTab === tabId,
-      );
       if (!tab) return;
       const bounds = strip.getBoundingClientRect();
       const rect = tab.getBoundingClientRect();
@@ -105,7 +105,7 @@ export function LayoutPaneTabStrip({ children }: { children: ReactNode }) {
     };
     setWheelScroller(strip, () => strip.scrollWidth > strip.clientWidth);
     strip.addEventListener("wheel", wheel, { passive: false });
-    const stop = observeResize([strip], reveal);
+    const stop = observeResize(tab ? [strip, tab] : [strip], reveal);
     reveal();
     return () => {
       stop();
