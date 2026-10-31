@@ -379,7 +379,7 @@ describe("checkCursorProviderStatus", () => {
           ),
         readModels: () => Effect.succeed([sdkParameterizedModel]),
       });
-      const provider = yield* checkCursorProviderStatus(baseCursorSettings, {
+      const { provider } = yield* checkCursorProviderStatus(baseCursorSettings, {
         CURSOR_API_KEY: "enterprise-key",
       }).pipe(Effect.provideService(CursorSdkCatalog.CursorSdkCatalog, catalog));
 
