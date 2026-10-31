@@ -161,4 +161,22 @@ describe("HostResources.layer", () => {
       assert.strictEqual(snapshot.availableMemoryBytes, 2 * GiB);
     }).pipe(Effect.provide(linuxHost(unlimitedCgroup))),
   );
+
+  it.effect("falls back to host load when the cgroup's cpu.stat is unreadable", () =>
+    Effect.gen(function* () {
+      setup(0.9);
+      const snapshot = yield* read;
+
+      assert.strictEqual(snapshot.cpuCount, 2);
+      assert.closeTo(snapshot.cpuUtilization ?? Number.NaN, 0.6, 1e-9);
+    }).pipe(
+      Effect.provide(
+        linuxHost({
+          ...unlimitedCgroup,
+          [`${cgroup}/cpu.max`]: ["200000 100000\n"],
+          [`${cgroup}/cpu.stat`]: [""],
+        }),
+      ),
+    ),
+  );
 });

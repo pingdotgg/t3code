@@ -90,14 +90,17 @@ const make = Effect.fn("makeHostResources")(function* () {
         NodeOS.availableParallelism(),
       );
       cpuCount = Math.max(1, Math.floor(capacity));
-      if (previousUsage !== null && usage !== null && elapsedMicros > 0 && capacity > 0) {
-        const cgroupIdle = capacity - (usage - previousUsage) / elapsedMicros;
-        // Agents can run in sibling cgroups (agentScope.ts), so a busy host still counts.
-        const hostIdle = hostUtilization === null ? capacity : cpu.count * (1 - hostUtilization);
-        cpuUtilization = Math.min(1, Math.max(0, 1 - Math.min(cgroupIdle, hostIdle) / capacity));
-      } else {
-        cpuUtilization = null;
-      }
+      const cgroupIdle =
+        previousUsage !== null && usage !== null && elapsedMicros > 0
+          ? capacity - (usage - previousUsage) / elapsedMicros
+          : null;
+      // Agents can run in sibling cgroups (agentScope.ts), so a busy host still counts.
+      const hostIdle = hostUtilization === null ? null : cpu.count * (1 - hostUtilization);
+      const idle =
+        cgroupIdle === null || hostIdle === null
+          ? (cgroupIdle ?? hostIdle)
+          : Math.min(cgroupIdle, hostIdle);
+      cpuUtilization = idle === null ? null : Math.min(1, Math.max(0, 1 - idle / capacity));
     }
 
     let totalMemoryBytes = NodeOS.totalmem();
