@@ -288,6 +288,102 @@ describe("GitHubSourceControlProvider repository resolution", () => {
       assert.deepStrictEqual(paths, ["github.com repos/acme/web"]);
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect.each([
+    ["github", "git@github:acme/web.git"],
+    ["github.com-scale", "git@github.com-scale:acme/web.git"],
+    ["github.com-scale", "ssh://git@github.com-scale:22/acme/web.git"],
+  ] as const)("reads an SSH alias on %s through github.com (%s)", ([host, remoteUrl]) => {
+    const hosts: string[] = [];
+    const { layer } = harness({
+      remotes: remotesOutput(["origin", remoteUrl]),
+      api: {
+        rest: (input) =>
+          Effect.sync(() => {
+            hosts.push(`${input.host} ${input.path}`);
+            return restResponse({
+              full_name: "acme/web",
+              html_url: "https://github.com/acme/web",
+              ssh_url: "git@github.com:acme/web.git",
+              default_branch: "main",
+            });
+          }),
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      const resolveWebHost = gh.resolveRemoteWebHost;
+      assert.ok(resolveWebHost);
+      assert.strictEqual(
+        yield* resolveWebHost({
+          cwd: "/repo",
+          context: { ...githubContext(host), remoteUrl },
+          resolveContext: () => Effect.succeed(null),
+        }),
+        "github.com",
+      );
+      yield* gh.getDefaultBranch({ cwd: "/repo" });
+      yield* gh.getDefaultBranch({
+        cwd: "/repo",
+        context: { ...githubContext(host), remoteUrl },
+      });
+      assert.deepStrictEqual(hosts, ["github.com repos/acme/web", "github.com repos/acme/web"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect.each(["sole", "upstream", "missing"])(
+    "preserves an HTTPS context host with %s remotes",
+    (mode) => {
+      const paths: string[] = [];
+      const remoteUrl = "https://github.com-scale/me/web.git";
+      const { layer } = harness({
+        remotes:
+          mode === "missing"
+            ? ""
+            : remotesOutput(
+                ["origin", remoteUrl],
+                ...(mode === "upstream"
+                  ? ([["upstream", "https://github.com/acme/web.git"]] as const)
+                  : []),
+              ),
+        api: {
+          rest: (input) =>
+            Effect.sync(() => {
+              paths.push(`${input.host} ${input.path}`);
+              return restResponse({
+                full_name: "me/web",
+                html_url: "https://github.com-scale/me/web",
+                ssh_url: "git@github.com-scale:me/web.git",
+                default_branch: "trunk",
+              });
+            }),
+        },
+      });
+      return Effect.gen(function* () {
+        const gh = yield* GitHubSourceControlProvider.make;
+        const resolveWebHost = gh.resolveRemoteWebHost;
+        assert.ok(resolveWebHost);
+        for (const url of [remoteUrl, "git@github.com-evil.example:me/web.git"]) {
+          assert.strictEqual(
+            yield* resolveWebHost({
+              cwd: "/repo",
+              context: { ...githubContext("github.com-scale"), remoteUrl: url },
+              resolveContext: () => Effect.succeed(null),
+            }),
+            url === remoteUrl ? "github.com-scale" : "github.com-evil.example",
+          );
+        }
+        assert.strictEqual(
+          yield* gh.getDefaultBranch({
+            cwd: "/repo",
+            context: { ...githubContext("github.com-scale"), remoteUrl },
+          }),
+          "trunk",
+        );
+        assert.deepStrictEqual(paths, ["github.com-scale repos/me/web"]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });
 
 describe("GitHubSourceControlProvider change request lookups by head", () => {
