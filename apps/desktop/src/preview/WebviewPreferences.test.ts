@@ -19,9 +19,13 @@ function parseWebPreferences(input: string): Record<string, unknown> {
 describe("PREVIEW_WEBVIEW_PREFERENCES", () => {
   const parsed = parseWebPreferences(PREVIEW_WEBVIEW_PREFERENCES);
 
+  it("disables unsupported FedCM in preview guests", () => {
+    expect(parsed["disableBlinkFeatures"]).toBe("FedCm");
+  });
+
   it("uses canonical JS-boolean string literals (not yes/no, on/off, 1/0)", () => {
-    for (const value of Object.values(parsed)) {
-      expect(value).toMatch(/^(true|false)$/);
+    for (const key of ["contextIsolation", "nodeIntegration", "sandbox"]) {
+      expect(parsed[key]).toMatch(/^(true|false)$/);
     }
   });
 
