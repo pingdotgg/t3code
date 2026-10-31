@@ -33,6 +33,7 @@ import {
 } from "react";
 import { isElectron } from "~/env";
 import { FileSurfaceLoading } from "./fileSurfaceChrome";
+import type { PdfViewState } from "./PdfViewer";
 
 import { useOpenLink } from "~/browser/useOpenLink";
 import { ExpandedImageDialog } from "~/components/chat/ExpandedImageDialog";
@@ -73,7 +74,27 @@ export const isPdfPreviewFile = (path: string): boolean =>
 
 const PdfViewer = lazy(() => import("./PdfViewer"));
 
-function PdfDocument(props: { src: string; title: string }) {
+// The document stays mounted while each revision gets a fresh PDF.js document.
+function PdfDocument(props: { src: string; title: string; documentKey: string }) {
+  const [view, setView] = useState<PdfViewState>({ page: 0, offset: 0, zoom: null, left: 0 });
+  return (
+    <PdfDocumentRevision
+      key={props.documentKey}
+      src={props.src}
+      title={props.title}
+      initialView={view}
+      onViewChange={setView}
+    />
+  );
+}
+
+// Keep signed URL renewals from reloading the same revision.
+function PdfDocumentRevision(props: {
+  src: string;
+  title: string;
+  initialView: PdfViewState;
+  onViewChange: (view: PdfViewState) => void;
+}) {
   const [src] = useState(props.src);
   // The Electron shell does not enable PDF plugins. WebKit embeds on iOS
   // expose only the first page, even when pdfViewerEnabled reports support.
@@ -91,7 +112,12 @@ function PdfDocument(props: { src: string; title: string }) {
     />
   ) : (
     <Suspense fallback={<FileSurfaceLoading />}>
-      <PdfViewer src={src} title={props.title} />
+      <PdfViewer
+        src={src}
+        title={props.title}
+        initialView={props.initialView}
+        onViewChange={props.onViewChange}
+      />
     </Suspense>
   );
 }
@@ -108,10 +134,17 @@ export function BrowserDocumentFrame(props: {
   readonly threadRef?: ScopedThreadRef | undefined;
   /** Stable resource identity and revision; defaults to src for callers that reload on URL changes. */
   readonly documentKey?: string | undefined;
+  /** Resource identity without its revision, so PDF reloads can retain the reading position. */
+  readonly documentId?: string | undefined;
 }) {
   const key = props.documentKey ?? props.src;
   return props.pdf ? (
-    <PdfDocument key={key} src={props.src} title={props.title} />
+    <PdfDocument
+      key={props.documentId ?? key}
+      documentKey={key}
+      src={props.src}
+      title={props.title}
+    />
   ) : props.htmlRender ? (
     <HtmlRenderDocument
       key={key}
@@ -156,6 +189,7 @@ export function HtmlRenderDocument(props: {
   const postTheme = () => {
     frameRef.current?.contentWindow?.postMessage(htmlRenderThemeMessage(theme), "*");
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- posts the current theme to the sandboxed iframe's window
   useEffect(postTheme, [theme]);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const environmentKeybindings = useAtomValue(
@@ -190,6 +224,7 @@ export function HtmlRenderDocument(props: {
       "*",
     );
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- posts allowed and blocked shortcuts to the sandboxed iframe's window
   useEffect(postShortcuts, [blocked, shortcuts]);
   // Pages can forge key/code pairs; reject pairs matching other bindings and require named keys to match the
   // shortcut.
@@ -230,6 +265,7 @@ export function HtmlRenderDocument(props: {
     void openLink(url, { event: modifiers }).catch((cause: unknown) => console.error(cause));
   });
   const { onFullscreenChange } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports fullscreen to the parent while the image viewer is open, and clears it on unmount
   useEffect(() => {
     if (expandedImage === null) return;
     onFullscreenChange?.(true);
@@ -266,6 +302,7 @@ export function HtmlRenderDocument(props: {
     }
   });
   // Attach at commit because a fast page may post its initial height before passive effects run.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches a window message listener for the iframe at commit, before its first height post
   useLayoutEffect(() => {
     const frame = frameRef.current;
     if (frame === null) return;
@@ -283,6 +320,8 @@ export function HtmlRenderDocument(props: {
         title={props.title}
         // Never allow-same-origin: the opaque origin keeps the page out of the app's session.
         sandbox="allow-scripts allow-forms"
+        // Lets a page's video or image viewer take the screen.
+        allow="fullscreen"
         loading="lazy"
         onLoad={() => {
           setLoaded(true);

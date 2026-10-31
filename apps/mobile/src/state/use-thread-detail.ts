@@ -28,10 +28,6 @@ export interface ThreadDetailTarget {
   readonly threadId: ThreadId | null;
 }
 
-export function useThreadDetail(target: ThreadDetailTarget) {
-  return useEnvironmentThread(target.environmentId, target.threadId);
-}
-
 export function useSelectedThreadDetailState() {
   const { selectedThreadDetailRef } = useThreadSelection();
   return useEnvironmentThread(
@@ -40,7 +36,7 @@ export function useSelectedThreadDetailState() {
   );
 }
 
-export function useThreadProjection(target: ThreadDetailTarget): EnvironmentThread | null {
+function useThreadProjection(target: ThreadDetailTarget): EnvironmentThread | null {
   return useAtomValue(
     target.environmentId === null || target.threadId === null
       ? EMPTY_THREAD_PROJECTION_ATOM
@@ -68,7 +64,7 @@ export function useSelectedThreadProjection(): EnvironmentThread | null {
   });
 }
 
-export function useThreadVisibleTurnItems(
+function useThreadVisibleTurnItems(
   target: ThreadDetailTarget,
 ): OrchestrationV2ThreadProjection["visibleTurnItems"] {
   return useAtomValue(
@@ -92,13 +88,15 @@ export function useSelectedThreadVisibleTurnItems(): OrchestrationV2ThreadProjec
 const EMPTY_WORKTREE_PATH_ATOM = Atom.make<string | null>(null);
 const EMPTY_PENDING_REQUESTS_ATOM = Atom.make<PendingThreadRequests | null>(null);
 
+export function useThreadWorktreePath(ref: ScopedThreadRef | null) {
+  return useAtomValue(
+    ref === null ? EMPTY_WORKTREE_PATH_ATOM : environmentThreadDetails.worktreePathAtom(ref),
+  );
+}
+
 export function useSelectedThreadWorktreePath() {
   const { selectedThreadDetailRef } = useThreadSelection();
-  return useAtomValue(
-    selectedThreadDetailRef === null
-      ? EMPTY_WORKTREE_PATH_ATOM
-      : environmentThreadDetails.worktreePathAtom(selectedThreadDetailRef),
-  );
+  return useThreadWorktreePath(selectedThreadDetailRef);
 }
 
 export function useSelectedThreadPendingRequests() {

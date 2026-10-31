@@ -57,12 +57,9 @@ export function ArchivedThreadsRouteScreen() {
       }),
     [environmentLabels, searchQuery, selectedEnvironmentId, snapshots, sortOrder],
   );
-  const refreshChangedEnvironment = useCallback(
-    (thread: { readonly environmentId: EnvironmentId }) => {
-      refreshArchivedThreadsForEnvironment(thread.environmentId);
-    },
-    [],
-  );
+  const refreshChangedEnvironment = (thread: { readonly environmentId: EnvironmentId }) => {
+    refreshArchivedThreadsForEnvironment(thread.environmentId);
+  };
   const { unarchiveThread, confirmDeleteThread } =
     useArchivedThreadListActions(refreshChangedEnvironment);
 

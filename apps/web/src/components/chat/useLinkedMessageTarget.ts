@@ -78,7 +78,7 @@ export function useLinkedMessageTarget({
     : null;
 
   // Without a row yet, load history through the message or unfold what hides it.
-  // oxlint-disable-next-line t3code/react-effect-budget -- Load remote history and reveal a target before imperative list positioning.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load remote history and reveal a target before imperative list positioning.
   useEffect(() => {
     if (!request || !positioning || rowId !== null || !synced) return;
     if (progressRef.current?.key !== request.key) {
@@ -136,7 +136,7 @@ export function useLinkedMessageTarget({
   ]);
 
   // The user takes over at any step, including while history loads.
-  // oxlint-disable-next-line t3code/react-effect-budget -- Subscribe to native input that cancels pending list navigation.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe to native input that cancels pending list navigation.
   useEffect(() => {
     if (key === null || !viewport) return;
     const cancel = () => {
@@ -171,7 +171,7 @@ export function useLinkedMessageTarget({
   // Scroll the row to the top, then correct for measured row sizes until it holds still.
   // History lands in stages, so a row shown mid-load can still move: wait for the last stage.
   const historySettled = synced && !historyLoading && historyControls?.loading !== true;
-  // oxlint-disable-next-line t3code/react-effect-budget -- Position the virtual list and correct offsets after DOM measurement.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Position the virtual list and correct offsets after DOM measurement.
   useEffect(() => {
     const list = listRef.current;
     const scrollNode = list?.getScrollableNode();

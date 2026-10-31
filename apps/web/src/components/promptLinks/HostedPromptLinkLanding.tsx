@@ -10,7 +10,7 @@ import { useLocation } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
-import { APP_DISPLAY_NAME, DESKTOP_DOWNLOAD_URL } from "~/branding";
+import { DESKTOP_DOWNLOAD_URL } from "~/branding";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { isHostedStaticApp } from "~/hostedPairing";
 import { useEnvironments } from "~/state/environments";
@@ -107,6 +107,7 @@ function HostedPromptLinkLanding({
   const onPhone = /android|iphone|ipad/i.test(navigator.userAgent);
   const autoOpenedRef = useRef(false);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- redirects window.location to the app deep link once when the user chose to always open in the app
   useEffect(() => {
     if (!openInAppRemembered || !summary.ok || autoOpenedRef.current) return;
     autoOpenedRef.current = true;
@@ -115,12 +116,8 @@ function HostedPromptLinkLanding({
 
   if (!summary.ok) {
     return (
-      <StandalonePage tone="error">
-        <StandalonePageHeader
-          eyebrow={APP_DISPLAY_NAME}
-          title="Could not open the link"
-          description={summary.error}
-        />
+      <StandalonePage>
+        <StandalonePageHeader title="Could not open the link" description={summary.error} />
       </StandalonePage>
     );
   }
@@ -130,9 +127,8 @@ function HostedPromptLinkLanding({
   const opensDraft =
     prompt !== null || new URL(appPath, window.location.origin).pathname === "/new";
   return (
-    <StandalonePage tone="brand">
+    <StandalonePage>
       <StandalonePageHeader
-        eyebrow={APP_DISPLAY_NAME}
         title={opensDraft ? "Open this prompt" : "Open this thread"}
         description={
           opensDraft
