@@ -56,6 +56,10 @@ On web and desktop, choose **Settings → Chat → Follow-up behavior** to queue
 new messages for a later turn or steer the running turn immediately. The setting
 applies to this client; already queued messages keep their place. Queued messages
 are saved on the server and can be edited or removed before they send.
+Grok follow-ups wait for the current turn to finish, even when Steer is selected,
+so running tools are not cancelled. To cancel the current work, use Stop and then
+send a new message. Explicit Restart is not supported for Grok.
+
 When Enter sends, `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux uses
 the opposite action: it steers when your default is Queue and queues when your
 default is Steer.

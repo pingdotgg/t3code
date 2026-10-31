@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { CursorProviderCapabilitiesV2 } from "@t3tools/provider-cursor/testing";
 import * as CommandPolicy from "./CommandPolicy.ts";
+import { makeGrokAcpAdapterFlavor } from "@t3tools/provider-grok/testing";
 
 const commandId = CommandId.make("command-policy-test");
 const threadId = ThreadId.make("command-policy-thread");
@@ -164,9 +165,15 @@ it.each([
   );
 });
 
-// regression: #26695 an interrupt-restart steer cancels Copilot's background agents
-it("queues a steer for a provider that cannot steer either way", () => {
-  const projection = dispatchProjection(
+const grokCapabilities = makeGrokAcpAdapterFlavor(
+  { makeRuntime: () => Effect.never } as unknown as Parameters<typeof makeGrokAcpAdapterFlavor>[0],
+  "/home/ada",
+).capabilities;
+
+// Interrupt-and-restart cancels running tools and native background agents.
+it.each([
+  [
+    "generic",
     capabilities((current) => ({
       ...current,
       turns: {
@@ -176,7 +183,10 @@ it("queues a steer for a provider that cannot steer either way", () => {
         supportsQueuedMessages: true,
       },
     })),
-  );
+  ],
+  ["Grok", grokCapabilities],
+])("queues a steer for %s when it cannot steer either way", (_, providerCapabilities) => {
+  const projection = dispatchProjection(providerCapabilities);
   for (const deliveryIntent of ["auto", "steer"] as const) {
     assert.deepEqual(
       CommandPolicy.resolveMessageDispatchIntent(
@@ -247,6 +257,23 @@ it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) =
 const layer = it.layer(CommandPolicy.layer);
 
 layer("CommandPolicyV2", (it) => {
+  it.effect("allows Grok Stop but rejects explicit Restart", () =>
+    Effect.gen(function* () {
+      const policy = yield* CommandPolicy.CommandPolicyV2;
+      const input = {
+        commandId,
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("grok"),
+        capabilities: grokCapabilities,
+      };
+      yield* policy.ensureInterrupt(input);
+      const error = yield* policy
+        .decideSteeringExecution({ ...input, forceRestart: true })
+        .pipe(Effect.flip);
+      assert.equal(error.capability, "interrupt_restart_steering");
+    }),
+  );
+
   it.effect("falls back to portable context when Cursor cannot fork natively", () =>
     Effect.gen(function* () {
       const policy = yield* CommandPolicy.CommandPolicyV2;
