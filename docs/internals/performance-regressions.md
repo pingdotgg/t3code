@@ -140,6 +140,7 @@ so our builds run without it. Reanimated commits each animation frame to the sha
 without commit pausing those commits can starve React's: the JS thread keeps retrying its commit,
 the screen freezes, and back does nothing. Release builds retry forever; dev builds abort with
 `ShadowTree.cpp: assertion failed (attempts < 1024)`. Looping animations that stay on screen while
-heavy content renders should use React Native's `Animated` with `useNativeDriver: true`, which
-updates views without commits, not Reanimated's `withRepeat`. The running-thread shimmer in
-`thread-work-log.tsx` is the example.
+heavy content renders should use React Native's `Animated` with native-driven values, which
+update views without commits, not Reanimated's `withRepeat`. A native-driver loop still redraws
+every frame, so the running-thread shimmer in `thread-work-log.tsx` steps a native value from a
+timer and leaves the screen idle between steps.
