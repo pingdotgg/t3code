@@ -1,5 +1,6 @@
 import ExpoModulesCore
 import UIKit
+import UniformTypeIdentifiers
 
 private struct ComposerTokenPayload: Decodable {
   let type: String
@@ -75,6 +76,7 @@ private final class ComposerTextView: UITextView {
     "undo:",
   ])
 
+  var onImageLoadingChange: ((Bool) -> Void)?
   var onPasteImages: (([String]) -> Void)?
   var onPasteContext: (([String: String]) -> Void)?
   var onPasteText: ((String, NSRange) -> Void)?
@@ -271,16 +273,66 @@ private final class ComposerTextView: UITextView {
     replace(textRange, withText: "")
   }
 
-  func loadImages(from providers: [NSItemProvider]) {
+  func loadImages(from providers: [NSItemProvider], preferFileRepresentation: Bool = false) {
+    onImageLoadingChange?(true)
+    Self.loadImages(from: providers, preferFileRepresentation: preferFileRepresentation) { [weak self] images in
+      guard let self else { return }
+      if !self.isReadOnly {
+        self.onPasteImages?(images.compactMap(Self.writeTemporaryImage))
+      }
+      self.onImageLoadingChange?(false)
+    }
+  }
+
+  static func isImageProvider(_ provider: NSItemProvider) -> Bool {
+    imageTypeIdentifier(of: provider) != nil || provider.canLoadObject(ofClass: UIImage.self)
+  }
+
+  private static func imageTypeIdentifier(of provider: NSItemProvider) -> String? {
+    provider.registeredTypeIdentifiers.first { UTType($0)?.conforms(to: .image) == true }
+  }
+
+  private static func loadImage(
+    from provider: NSItemProvider,
+    preferFileRepresentation: Bool,
+    completion: @escaping (UIImage?) -> Void
+  ) {
+    let loadObject = {
+      provider.loadObject(ofClass: UIImage.self) { object, _ in
+        completion(object as? UIImage)
+      }
+    }
+
+    guard preferFileRepresentation, let type = imageTypeIdentifier(of: provider) else {
+      _ = loadObject()
+      return
+    }
+
+    // External drags can advertise public.image without offering a UIImage representation.
+    provider.loadFileRepresentation(forTypeIdentifier: type) { url, _ in
+      // Read inside the callback: the provider removes its temporary file when it returns.
+      if let url, let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
+        completion(image)
+      } else {
+        _ = loadObject()
+      }
+    }
+  }
+
+  static func loadImages(
+    from providers: [NSItemProvider],
+    preferFileRepresentation: Bool = false,
+    completion: @escaping ([UIImage]) -> Void
+  ) {
     let group = DispatchGroup()
     let lock = NSLock()
     var images = [UIImage?](repeating: nil, count: providers.count)
 
     for (index, provider) in providers.enumerated() {
       group.enter()
-      provider.loadObject(ofClass: UIImage.self) { object, _ in
+      loadImage(from: provider, preferFileRepresentation: preferFileRepresentation) { image in
         defer { group.leave() }
-        guard let image = object as? UIImage else {
+        guard let image else {
           return
         }
         lock.lock()
@@ -289,14 +341,8 @@ private final class ComposerTextView: UITextView {
       }
     }
 
-    group.notify(queue: .main) { [weak self] in
-      guard let self, !self.isReadOnly else {
-        return
-      }
-      let urls = images.compactMap { $0 }.compactMap(Self.writeTemporaryImage)
-      if !urls.isEmpty {
-        self.onPasteImages?(urls)
-      }
+    group.notify(queue: .main) {
+      completion(images.compactMap { $0 })
     }
   }
 
@@ -372,7 +418,7 @@ private final class ComposerTextView: UITextView {
     return sourceOffset
   }
 
-  private static func writeTemporaryImage(_ image: UIImage) -> String? {
+  static func writeTemporaryImage(_ image: UIImage) -> String? {
     guard let data = image.pngData() else {
       return nil
     }
@@ -453,6 +499,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   let onComposerFocus = EventDispatcher()
   let onComposerBlur = EventDispatcher()
   let onComposerSubmit = EventDispatcher()
+  let onComposerImageLoadingChange = EventDispatcher()
   let onComposerPasteImages = EventDispatcher()
   let onComposerContextPress = EventDispatcher()
   let onComposerPasteContext = EventDispatcher()
@@ -473,6 +520,9 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     textView.alwaysBounceVertical = false
     textView.showsVerticalScrollIndicator = true
     textView.adjustsFontForContentSizeCategory = true
+    textView.onImageLoadingChange = { [weak self] loading in
+      self?.onComposerImageLoadingChange(["loading": loading])
+    }
     textView.onPasteImages = { [weak self] urls in
       self?.onComposerPasteImages(["uris": urls])
     }
@@ -836,13 +886,13 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     guard let imageProviders = droppedImageProviders(in: drop) else {
       return
     }
-    textView.loadImages(from: imageProviders)
+    textView.loadImages(from: imageProviders, preferFileRepresentation: true)
   }
 
   private func droppedImageProviders(in drop: UITextDropRequest) -> [NSItemProvider]? {
     let providers = drop.dropSession.items.map(\.itemProvider)
     guard !providers.isEmpty,
-          providers.allSatisfy({ $0.canLoadObject(ofClass: UIImage.self) }) else {
+          providers.allSatisfy(ComposerTextView.isImageProvider) else {
       return nil
     }
     return providers
@@ -1269,6 +1319,41 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       }
     }
     return renderedSources == expectedSources
+  }
+}
+
+final class T3ComposerImageDropView: ExpoView, UIDropInteractionDelegate {
+  let onImageLoadingChange = EventDispatcher()
+  let onDropImages = EventDispatcher()
+  var enabled = true
+
+  required init(appContext: AppContext? = nil) {
+    super.init(appContext: appContext)
+    addInteraction(UIDropInteraction(delegate: self))
+  }
+
+  func dropInteraction(_ interaction: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
+    enabled && !session.items.isEmpty
+      && session.items.allSatisfy { ComposerTextView.isImageProvider($0.itemProvider) }
+  }
+
+  func dropInteraction(_ interaction: UIDropInteraction, sessionDidUpdate session: UIDropSession)
+    -> UIDropProposal {
+    UIDropProposal(operation: dropInteraction(interaction, canHandle: session) ? .copy : .cancel)
+  }
+
+  func dropInteraction(_ interaction: UIDropInteraction, performDrop session: UIDropSession) {
+    guard dropInteraction(interaction, canHandle: session) else { return }
+    let providers = session.items.map(\.itemProvider)
+
+    onImageLoadingChange(["loading": true])
+    ComposerTextView.loadImages(from: providers, preferFileRepresentation: true) { [weak self] images in
+      guard let self else { return }
+      if self.enabled {
+        self.onDropImages(["uris": images.compactMap(ComposerTextView.writeTemporaryImage)])
+      }
+      self.onImageLoadingChange(["loading": false])
+    }
   }
 }
 

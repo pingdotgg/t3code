@@ -6,6 +6,7 @@ import { requireNativeView } from "expo";
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -91,6 +92,9 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly spellCheck: boolean;
   readonly onComposerChange: (event: NativeEditorEvent) => void;
   readonly onComposerSelectionChange?: (event: NativeSelectionEvent) => void;
+  readonly onComposerImageLoadingChange?: (
+    event: NativeSyntheticEvent<{ loading: boolean }>,
+  ) => void;
   readonly onComposerPasteImages?: (event: NativePasteImagesEvent) => void;
   readonly onComposerContextPress?: (
     event: NativeSyntheticEvent<{ source: string; start: number; end: number }>,
@@ -131,6 +135,7 @@ export function ComposerEditor({
   textStyle,
   onChangeText,
   onSelectionChange,
+  onImageLoadingChange,
   onPasteImages,
   onPasteText,
   onFocus,
@@ -141,6 +146,15 @@ export function ComposerEditor({
   ...props
 }: ComposerEditorProps) {
   const nativeRef = useRef<NativeComposerEditorRef>(null);
+  const pendingImageLoadsRef = useRef(0);
+  const releaseImageLoads = useEffectEvent(() => {
+    while (pendingImageLoadsRef.current > 0) {
+      pendingImageLoadsRef.current -= 1;
+      onImageLoadingChange?.(false);
+    }
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases native loads when the hidden/visible editor is replaced before completion
+  useEffect(() => () => releaseImageLoads(), []);
   const mostRecentEventCountRef = useRef(0);
   const [mostRecentEventCount, setMostRecentEventCount] = useState(0);
   const [, forceNativeEventRender] = useState(0);
@@ -343,6 +357,11 @@ export function ComposerEditor({
         onSelectionChange?.(event.nativeEvent.selection);
         setMostRecentEventCount(acknowledgedEventCount);
         forceNativeEventRender((sequence) => sequence + 1);
+      }}
+      onComposerImageLoadingChange={(event) => {
+        const loading = event.nativeEvent.loading;
+        pendingImageLoadsRef.current += loading ? 1 : -1;
+        onImageLoadingChange?.(loading);
       }}
       onComposerPasteImages={(event) => onPasteImages?.(event.nativeEvent.uris)}
       onComposerContextPress={(event) => props.onContextPress?.(event.nativeEvent)}

@@ -59,6 +59,7 @@ export interface ComposerEditorProps {
   readonly textStyle?: StyleProp<TextStyle>;
   readonly onChangeText: (value: string) => void;
   readonly onSelectionChange?: (selection: ComposerEditorSelection) => void;
+  readonly onImageLoadingChange?: (loading: boolean) => void;
   readonly onPasteImages?: (uris: ReadonlyArray<string>) => void;
   readonly onContextPress?: (reference: {
     readonly source: string;

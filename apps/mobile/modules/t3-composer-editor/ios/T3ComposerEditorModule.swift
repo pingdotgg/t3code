@@ -111,6 +111,7 @@ public class T3ComposerEditorModule: Module {
         "onComposerFocus",
         "onComposerBlur",
         "onComposerSubmit",
+        "onComposerImageLoadingChange",
         "onComposerPasteImages",
         "onComposerContextPress",
         "onComposerPasteContext",
@@ -126,6 +127,15 @@ public class T3ComposerEditorModule: Module {
       }
       AsyncFunction("setSelection") { (view: T3ComposerEditorView, start: Int, end: Int) in
         view.setSelection(start: start, end: end)
+      }
+    }
+
+    // Expo exposes the first registered view as the module's default editor.
+    View(T3ComposerImageDropView.self) {
+      ViewName("ImageDropTarget")
+      Events("onDropImages", "onImageLoadingChange")
+      Prop("enabled") { (view: T3ComposerImageDropView, enabled: Bool) in
+        view.enabled = enabled
       }
     }
   }
