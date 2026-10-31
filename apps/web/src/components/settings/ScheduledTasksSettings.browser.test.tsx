@@ -1,4 +1,5 @@
-import { RegistryContext } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import {
   DEFAULT_UNIFIED_SETTINGS,
@@ -15,6 +16,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 import { act, render } from "../../../test/render";
 import { ScheduledTasksSettings } from "./ScheduledTasksSettings";
+import { resolveHour12 } from "../../timestampFormat";
 
 const environmentId = EnvironmentId.make("laptop");
 const projectId = ProjectId.make("project");
@@ -40,6 +42,10 @@ const task: ScheduledTask = {
   lastRunError: null,
   runCount: 0,
 };
+const fixedTask: ScheduledTask = {
+  ...task,
+  schedule: { type: "fixed_time", timeOfDay: "17:30" },
+};
 
 // Stands in for the thread family read the editor makes when the shell lacks the bound thread.
 const threadFamilyRead = {
@@ -47,7 +53,13 @@ const threadFamilyRead = {
   threads: [{ id: task.threadId, title: "Fix login bug" }],
 };
 
-const state = vi.hoisted(() => ({ connected: true, tasksLoaded: true, secondary: false }));
+const state = vi.hoisted(() => ({
+  connected: true,
+  tasksLoaded: true,
+  secondary: false,
+  fixed: false,
+}));
+const settingsAtom = Atom.make(DEFAULT_UNIFIED_SETTINGS);
 const secondaryId = EnvironmentId.make("secondary");
 const permissions = new Map<string, Atom.Writable<boolean>>();
 
@@ -55,6 +67,7 @@ function setup() {
   state.connected = true;
   state.tasksLoaded = true;
   state.secondary = false;
+  state.fixed = false;
   permissions.clear();
   permissions.set(environmentId, Atom.make(true));
   permissions.set(secondaryId, Atom.make(true));
@@ -125,7 +138,9 @@ vi.mock(import("../../state/query"), async (original) => ({
     data:
       request === null || request === threadFamilyRead
         ? request
-        : { tasks: state.tasksLoaded ? [task] : [] },
+        : {
+            tasks: state.tasksLoaded ? [state.fixed ? fixedTask : task] : [],
+          },
     error: null,
     isPending: false,
     refresh: vi.fn(),
@@ -142,10 +157,69 @@ vi.mock(import("../../state/entities"), async (original) => ({
 }));
 vi.mock(import("../../hooks/useSettings"), async (original) => ({
   ...(await original()),
-  useEnvironmentSettings: (() => DEFAULT_UNIFIED_SETTINGS) as never,
+  useEnvironmentSettings: (() => useAtomValue(settingsAtom)) as never,
 }));
 
 describe("ScheduledTasksSettings", () => {
+  it("honors time format while preserving the fixed time through noon and midnight", async () => {
+    setup();
+    state.fixed = true;
+    const registry = AtomRegistry.make();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    registry.set(settingsAtom, { ...DEFAULT_UNIFIED_SETTINGS, timestampFormat: "24-hour" });
+    await using _screen = await render(
+      <RegistryContext.Provider value={registry}>
+        <ScheduledTasksSettings taskId={task.id} />
+      </RegistryContext.Provider>,
+    );
+    const setFormat = (timestampFormat: TimestampFormat) =>
+      act(() => registry.set(settingsAtom, { ...DEFAULT_UNIFIED_SETTINGS, timestampFormat }));
+    const hours = page.getByRole("combobox", { name: "Run at hours", exact: true });
+    const minutes = page.getByRole("combobox", { name: "Run at minutes", exact: true });
+    const period = page.getByRole("combobox", { name: "Run at period", exact: true });
+    await expect.element(page.getByRole("dialog")).toBeVisible();
+    await expect.element(hours).toHaveTextContent("17");
+    await expect.element(minutes).toHaveTextContent("30");
+    await expect.element(period).not.toBeInTheDocument();
+
+    await setFormat("12-hour");
+    await expect.element(hours).toHaveTextContent("05");
+    await expect.element(period).toHaveTextContent("PM");
+    await hours.click();
+    await page.getByRole("option", { name: "12", exact: true }).click();
+    await minutes.click();
+    await page.getByRole("option", { name: "00", exact: true }).click();
+
+    await setFormat("24-hour");
+    await expect.element(hours).toHaveTextContent("12");
+    await expect.element(minutes).toHaveTextContent("00");
+
+    await setFormat("12-hour");
+    await period.click();
+    await page.getByRole("option", { name: "AM", exact: true }).click();
+    await setFormat("24-hour");
+    await expect.element(hours).toHaveTextContent("00");
+    await expect.element(minutes).toHaveTextContent("00");
+
+    await setFormat("locale");
+    await expect.element(hours).toHaveTextContent(resolveHour12("locale") ? "12" : "00");
+    if (resolveHour12("locale")) {
+      await expect.element(period).toHaveTextContent("AM");
+    } else {
+      await expect.element(period).not.toBeInTheDocument();
+    }
+
+    await setFormat("24-hour");
+    await hours.click();
+    await page.getByRole("option", { name: "23", exact: true }).click();
+    await minutes.click();
+    await page.getByRole("option", { name: "59", exact: true }).click();
+    await setFormat("12-hour");
+    await expect.element(hours).toHaveTextContent("11");
+    await expect.element(minutes).toHaveTextContent("59");
+    await expect.element(period).toHaveTextContent("PM");
+  });
+
   it("creates on a permitted secondary and reacts to permission changes", async () => {
     setup();
     state.secondary = true;
