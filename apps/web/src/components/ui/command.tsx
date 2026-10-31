@@ -186,11 +186,7 @@ function CommandListHeading({
   ...props
 }: React.ComponentProps<typeof AutocompleteListHeading>) {
   return (
-    <AutocompleteListHeading
-      className={cn("px-2.5 pt-2 pb-1 text-caption", className)}
-      data-slot="command-group-label"
-      {...props}
-    />
+    <AutocompleteListHeading className={className} data-slot="command-group-label" {...props} />
   );
 }
 
