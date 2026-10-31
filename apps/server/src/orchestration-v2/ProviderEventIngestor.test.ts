@@ -575,6 +575,147 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
+  // regression: #24690 an answer commits before its outbox delivery reaches the provider
+  it.effect.each([
+    { decision: "decline", feedback: "Use a safer command." },
+    { decision: "accept" },
+  ] as const)("keeps a committed $decision when the provider withdraws the approval", (answer) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const threadId = threadEvent.threadId;
+      yield* eventSink.write({ events: [threadEvent] });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const nodeId = NodeId.make(`${threadId}:approval`);
+      const request: OrchestrationV2RuntimeRequest = {
+        id: RuntimeRequestId.make(`${threadId}:approval`),
+        nodeId,
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: "command",
+        status: "pending",
+        responseCapability: { type: "live", providerSessionId, supportsFeedback: true },
+        createdAt: now,
+        resolvedAt: null,
+      };
+      const node: OrchestrationV2ExecutionNode = {
+        id: nodeId,
+        threadId,
+        runId: null,
+        parentNodeId: null,
+        rootNodeId: nodeId,
+        kind: "approval_request",
+        status: "waiting",
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: request.id,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      };
+      const item: OrchestrationV2TurnItem = {
+        id: TurnItemId.make(`${threadId}:approval`),
+        threadId,
+        runId: null,
+        nodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 0,
+        status: "waiting",
+        title: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        type: "approval_request",
+        requestId: request.id,
+        requestKind: "command",
+      };
+      const ingest = (status: "waiting" | "cancelled") =>
+        Effect.forEach(
+          [
+            {
+              type: "node.updated" as const,
+              driver: CODEX_DRIVER,
+              node: status === "waiting" ? node : { ...node, status, completedAt: now },
+            },
+            {
+              type: "runtime_request.updated" as const,
+              driver: CODEX_DRIVER,
+              runtimeRequest:
+                status === "waiting" ? request : { ...request, status, resolvedAt: now },
+            },
+            {
+              type: "turn_item.updated" as const,
+              driver: CODEX_DRIVER,
+              turnItem: status === "waiting" ? item : { ...item, status, completedAt: now },
+            },
+          ],
+          (event) =>
+            ingestor.ingestNormalized({
+              providerSessionId,
+              providerInstanceId: modelSelection.instanceId,
+              threadId,
+              event,
+            }),
+          { concurrency: 1 },
+        );
+      yield* ingest("waiting");
+
+      // The orchestrator's response transaction; its outbox delivery never runs here.
+      const outcome = answer.decision === "accept" ? "completed" : "cancelled";
+      const resolved = { ...request, status: "resolved" as const, resolvedAt: now, ...answer };
+      const answeredNode: OrchestrationV2ExecutionNode = {
+        ...node,
+        status: outcome,
+        completedAt: now,
+      };
+      const answeredItem: OrchestrationV2TurnItem = { ...item, status: outcome, completedAt: now };
+      const base = { threadId, nodeId, occurredAt: now };
+      yield* eventSink.write({
+        events: [
+          {
+            ...base,
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "runtime-request.updated",
+            payload: resolved,
+          },
+          {
+            ...base,
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "node.updated",
+            payload: answeredNode,
+          },
+          {
+            ...base,
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "turn-item.updated",
+            payload: answeredItem,
+          },
+        ],
+      });
+
+      yield* ingest("cancelled");
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      const stored = projection.runtimeRequests.find((entry) => entry.id === request.id);
+      assert.equal(stored?.status, "resolved");
+      assert.equal(stored?.decision, answer.decision);
+      assert.equal(stored?.feedback, "feedback" in answer ? answer.feedback : undefined);
+      assert.equal(projection.nodes.find((entry) => entry.id === nodeId)?.status, outcome);
+      assert.equal(projection.turnItems.find((entry) => entry.id === item.id)?.status, outcome);
+    }),
+  );
+
   it.effect("rolls back runs a provider rewound off its active branch", () =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
