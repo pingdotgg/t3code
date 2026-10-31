@@ -9,7 +9,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Schema from "effect/Schema";
 
 import * as Electron from "electron";
@@ -115,6 +116,7 @@ export class ElectronWindow extends Context.Service<
       behavior?: { readonly auxiliary?: boolean },
     ) => Effect.Effect<Electron.BrowserWindow, ElectronWindowCreateError>;
     readonly main: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
+    readonly waitForMain: Effect.Effect<Electron.BrowserWindow>;
     readonly currentMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly focusedMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly setMain: (window: Electron.BrowserWindow) => Effect.Effect<void>;
@@ -142,7 +144,9 @@ export const make = Effect.gen(function* () {
   };
   const captureRevealWindows = new Set<number>();
   yield* Effect.addFinalizer(() => Effect.sync(() => windowsForegroundFocus?.close()));
-  const mainWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+  const mainWindowRef = yield* SubscriptionRef.make<Option.Option<Electron.BrowserWindow>>(
+    Option.none(),
+  );
   const auxiliaryWindows = new WeakSet<Electron.BrowserWindow>();
 
   const listWindows = Effect.try({
@@ -171,7 +175,7 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.orDie);
 
   const liveMain = Effect.gen(function* () {
-    const main = yield* Ref.get(mainWindowRef);
+    const main = yield* SubscriptionRef.get(mainWindowRef);
     if (Option.isNone(main) || (yield* isWindowDestroyed(main.value))) {
       return Option.none<Electron.BrowserWindow>();
     }
@@ -246,13 +250,22 @@ export const make = Effect.gen(function* () {
       });
     }),
     main: liveMain,
+    waitForMain: SubscriptionRef.changes(mainWindowRef).pipe(
+      Stream.filter(Option.isSome),
+      Stream.map((window) => window.value),
+      Stream.filterEffect((window) =>
+        liveMain.pipe(Effect.map((main) => Option.isSome(main) && main.value === window)),
+      ),
+      Stream.runHead,
+      Effect.map(Option.getOrThrow),
+    ),
     currentMainOrFirst,
     focusedMainOrFirst,
     setMain: Effect.fn("ElectronWindow.setMain")(function (window) {
-      return Ref.set(mainWindowRef, Option.some(window));
+      return SubscriptionRef.set(mainWindowRef, Option.some(window));
     }),
     clearMain: Effect.fn("ElectronWindow.clearMain")(function (window) {
-      return Ref.update(mainWindowRef, (current) => {
+      return SubscriptionRef.update(mainWindowRef, (current) => {
         if (Option.isNone(current)) {
           return current;
         }
