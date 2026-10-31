@@ -655,7 +655,9 @@ export function ThemeEditorPanel({
     };
     const cancelInspection = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      // Esc leaves inspection only; Settings must not see it and close too.
       event.preventDefault();
+      event.stopImmediatePropagation();
       clearHover();
       clearInspectorSelection();
     };
@@ -1086,6 +1088,13 @@ export function ThemeEditorPanel({
         isMinimized && "max-h-none",
       )}
       data-theme-editor-panel
+      onKeyDown={(event) => {
+        // Popups opened from the editor are portaled outside it and handle their own Esc.
+        if (event.key !== "Escape" || event.defaultPrevented) return;
+        if (!event.currentTarget.contains(event.target as Node)) return;
+        event.stopPropagation();
+        onOpenChange(false);
+      }}
       ref={panelRef}
       role="dialog"
       style={{
