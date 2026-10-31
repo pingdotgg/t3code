@@ -20,7 +20,7 @@ it("steps the sweep, stays quiet through the pause, and stops on cleanup", () =>
   const sweep = valuesDuring(SHIMMER_SWEEP_MS);
   expect(sweep).toHaveLength(SHIMMER_STEPS);
   expect(sweep.at(-1)).toBe(1);
-  expect(sweep).toEqual([...sweep].sort((a, b) => a - b));
+  expect(sweep).toEqual(Array.from({ length: SHIMMER_STEPS }, (_, i) => (i + 1) / SHIMMER_STEPS));
   expect(valuesDuring(SHIMMER_PAUSE_MS)).toEqual([]);
   expect(valuesDuring(SHIMMER_SWEEP_MS)).toEqual(sweep);
 
