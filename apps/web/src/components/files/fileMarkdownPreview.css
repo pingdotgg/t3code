@@ -19,3 +19,73 @@
 [data-file-markdown-preview] .chat-markdown > :first-child {
   margin-top: 0;
 }
+
+/* Keep document code compact; copy and wrap remain available on hover and keyboard focus. */
+[data-file-markdown-preview] .chat-markdown-codeblock {
+  position: relative;
+  border-radius: 10px;
+}
+
+[data-file-markdown-preview] .chat-markdown-codeblock-header {
+  position: absolute;
+  inset-block-start: 2px;
+  inset-inline-end: 2px;
+  z-index: 1;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: var(--code-background);
+  opacity: 0;
+}
+
+[data-file-markdown-preview] .chat-markdown-codeblock-header > span:first-child {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+[data-file-markdown-preview]
+  .chat-markdown-codeblock:is(:hover, :focus-within)
+  .chat-markdown-codeblock-header {
+  opacity: 1;
+}
+
+[data-file-markdown-preview] .chat-markdown-codeblock pre {
+  padding: 10px 12px;
+}
+
+[data-file-markdown-preview] .chat-markdown [role="note"] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: var(--type-control);
+  line-height: 20px;
+}
+
+[data-file-markdown-preview] .chat-markdown [role="note"]:has(.text-info-foreground) {
+  background: color-mix(in srgb, var(--info-foreground) 8%, transparent);
+}
+
+[data-file-markdown-preview] .chat-markdown [role="note"] > p {
+  margin: 0;
+}
+
+/* The alert kind remains in the accessible text beside its visible icon. */
+[data-file-markdown-preview] .chat-markdown [role="note"] > p:first-child {
+  flex-shrink: 0;
+  font-size: 0;
+  line-height: 0;
+}
+
+@media (pointer: coarse) {
+  [data-file-markdown-preview] .chat-markdown-codeblock-header {
+    position: static;
+    min-height: 32px;
+    justify-content: flex-end;
+    opacity: 1;
+  }
+}
