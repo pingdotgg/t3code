@@ -267,6 +267,8 @@ interface MessagesTimelineProps {
   threadErrorMessage?: string | null;
   /** Takes the user to a pending question in the composer. */
   onFocusComposer?: () => void;
+  /** Uses the same turn interrupt as the composer and keybinding. */
+  onInterrupt?: TimelineRowSharedState["onInterrupt"];
 
   footer?: ReactNode;
 
@@ -393,6 +395,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   usageLimit = null,
   threadErrorMessage = null,
   onFocusComposer,
+  onInterrupt,
 
   listRef,
   timelineEntries,
@@ -1236,6 +1239,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
     onToggleWorkingHistory,
     onFocusComposer: onFocusComposer ?? null,
+    onInterrupt: onInterrupt ?? null,
     workGroupViewState,
   };
   const compactionAwaitingRow =
