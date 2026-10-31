@@ -1807,21 +1807,23 @@ function ScheduledTaskEditorForm({
                 </div>
               </div>
             ) : (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <Label htmlFor="scheduled-task-interval">Run every</Label>
-                <Input
-                  type="number"
-                  id="scheduled-task-interval"
-                  nativeInput
-                  min={1}
-                  step="any"
-                  className="w-24"
-                  value={draft.intervalMinutes}
-                  onChange={(event) =>
-                    setDraft((current) => ({ ...current, intervalMinutes: event.target.value }))
-                  }
-                />
-                <span className="text-xs text-muted-foreground">minutes</span>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    id="scheduled-task-interval"
+                    nativeInput
+                    min={1}
+                    step="any"
+                    className="w-24"
+                    value={draft.intervalMinutes}
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, intervalMinutes: event.target.value }))
+                    }
+                  />
+                  <span className="text-xs text-muted-foreground">minutes</span>
+                </div>
               </div>
             )}
           </div>
