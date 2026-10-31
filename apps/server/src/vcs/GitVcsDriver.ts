@@ -242,6 +242,14 @@ export interface GitFetchRemoteTrackingBranchInput {
   remoteBranch: string;
 }
 
+export interface GitFetchRemoteRefInput {
+  cwd: string;
+  remoteName: string;
+  remoteRef: string;
+  localBranch: string;
+  force?: boolean;
+}
+
 export interface GitFetchRemoteInput {
   cwd: string;
   remoteName: string;
@@ -402,6 +410,9 @@ export class GitVcsDriver extends Context.Service<
     ) => Effect.Effect<void, GitCommandError>;
     readonly fetchRemoteTrackingBranch: (
       input: GitFetchRemoteTrackingBranchInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly fetchRemoteRef: (
+      input: GitFetchRemoteRefInput,
     ) => Effect.Effect<void, GitCommandError>;
     readonly setBranchUpstream: (
       input: GitSetBranchUpstreamInput,

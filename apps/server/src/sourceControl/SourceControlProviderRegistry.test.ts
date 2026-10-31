@@ -46,6 +46,7 @@ const PROVIDERS = [
   fakeSourceControlProvider("gitlab", { resolveLink: linkSubject("gitlab") }),
   fakeSourceControlProvider("forgejo"),
   fakeSourceControlProvider("bitbucket"),
+  fakeSourceControlProvider("bitbucket-server"),
   fakeSourceControlProvider("azure-devops"),
 ];
 
@@ -468,5 +469,38 @@ it.effect("answers discovery without waiting on a hosting API that stalls", () =
     assert.strictEqual(bitbucket?.status, "available");
     assert.strictEqual(bitbucket?.auth.status, "unknown");
     assert.strictEqual(items.find((item) => item.kind === "gitlab")?.status, "available");
+  }),
+);
+
+it.effect("refines a custom SSH host through configured API providers", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [],
+      discovery: [
+        {
+          type: "api",
+          kind: kind("bitbucket-server"),
+          label: "Bitbucket Data Center",
+          installHint: "unused",
+          probeAuth: Effect.never,
+          refineUnknownRemote: ({ context }) =>
+            Effect.succeed(
+              context.remoteUrl.includes("Git.Example.Internal")
+                ? {
+                    kind: kind("bitbucket-server"),
+                    name: "Bitbucket Data Center",
+                    baseUrl: "https://git.example.internal:8443/bitbucket",
+                  }
+                : null,
+            ),
+        },
+      ],
+    });
+    const handle = yield* resolveUnknown(registry, "repo");
+    assert.strictEqual(handle.provider.kind, "bitbucket-server");
+    assert.strictEqual(
+      handle.context?.provider.baseUrl,
+      "https://git.example.internal:8443/bitbucket",
+    );
   }),
 );

@@ -117,6 +117,13 @@ export class SourceControlHost extends Context.Service<
       readonly fetchRemoteTrackingBranch: (
         input: SourceControlGitRemoteBranch,
       ) => Effect.Effect<void, GitCommandError>;
+      readonly fetchRemoteRef: (input: {
+        readonly cwd: string;
+        readonly remoteName: string;
+        readonly remoteRef: string;
+        readonly localBranch: string;
+        readonly force?: boolean;
+      }) => Effect.Effect<void, GitCommandError>;
       readonly setBranchUpstream: (
         input: SourceControlGitRemoteBranch & { readonly branch: string },
       ) => Effect.Effect<void, GitCommandError>;

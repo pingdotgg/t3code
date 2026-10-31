@@ -386,3 +386,15 @@ describe("appSignInTargetForRemote", () => {
     expect(appSignInTargetForRemote("https://gitlab.com/acme/web.git")).toBeNull();
   });
 });
+
+it("routes Data Center clone and PR URLs separately from Bitbucket Cloud", () => {
+  const remote = sourceControlClients.recognizeRemote(
+    "https://code.example.test/stash/scm/PROJ/web.git",
+  );
+  expect(remote?.kind).toBe("bitbucket-server");
+  expect(
+    sourceControlClients.parseChangeRequestUrl(
+      "https://code.example.test/stash/projects/PROJ/repos/web/pull-requests/42",
+    )?.definition.kind,
+  ).toBe("bitbucket-server");
+});
