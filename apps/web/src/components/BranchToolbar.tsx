@@ -114,6 +114,7 @@ interface BranchToolbarProps {
 }
 
 interface WorkspaceMenuProps {
+  workspaceRoot: string | undefined;
   forceNewWorktree: boolean;
   autoEnvironmentLabel?: string | undefined;
   onAutoEnvironment?: (() => void) | undefined;
@@ -135,6 +136,7 @@ interface WorkspaceMenuProps {
 
 /** The workspace trigger stays separate from branch selection; only drafts expose workspace choices. */
 const WorkspaceMenu = memo(function WorkspaceMenu({
+  workspaceRoot,
   forceNewWorktree,
   autoEnvironmentLabel,
   onAutoEnvironment,
@@ -217,10 +219,11 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
         <TooltipPopup>{workspaceLabel}</TooltipPopup>
       </Tooltip>
       <MenuPopup
+        spacing="relaxed"
         align="start"
         side="top"
         // The trigger is a bare icon, so the popup cannot take its width from it.
-        className={previousWorktreeLabel ? "w-[min(21rem,calc(100vw-2rem))]" : "min-w-48"}
+        className="w-90"
         {...composerFloatingLayerProps}
       >
         {availableEnvironments &&
@@ -309,25 +312,38 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
             }}
           >
             <MenuRadioItem disabled={envModeLocked || forceNewWorktree} value="local" closeOnClick>
-              <span className="flex min-w-0 items-center gap-1.5">
+              <span className="flex min-w-0 items-center gap-2.5">
                 {activeWorktreePath ? (
-                  <FolderGitIcon className="size-3" />
+                  <FolderGitIcon className="size-[15px]" />
                 ) : (
-                  <FolderIcon className="size-3" />
+                  <FolderIcon className="size-[15px]" />
                 )}
                 <MiddleTruncate value={resolveCurrentWorkspaceLabel(activeWorktreePath)} />
+                {workspaceRoot ? (
+                  <span className="min-w-0 flex-1 truncate text-meta font-normal text-dim-foreground">
+                    {workspaceRoot}
+                  </span>
+                ) : null}
               </span>
             </MenuRadioItem>
             <MenuRadioItem disabled={envModeLocked} value="worktree" closeOnClick>
-              <span className="flex min-w-0 items-center gap-1.5">
-                <FolderGit2Icon className="size-3" />
-                <span className="min-w-0 truncate">{resolveEnvModeLabel("worktree")}</span>
+              <span className="flex min-w-0 items-center gap-2.5">
+                <FolderGit2Icon className="size-[15px]" />
+                <span className="shrink-0">Worktree</span>
+                <span className="min-w-0 flex-1 truncate text-meta font-normal text-dim-foreground">
+                  {forceNewWorktree
+                    ? "Each model starts in its own worktree."
+                    : "Start in a new worktree"}
+                </span>
               </span>
             </MenuRadioItem>
             {previousWorktreeLabel ? (
-              <MenuRadioItem disabled={envModeLocked} value="previous-worktree" closeOnClick>
-                <PreviousWorktreeItemContent branch={previousWorktreeBranch} />
-              </MenuRadioItem>
+              <>
+                <MenuGroupLabel>Previous worktree</MenuGroupLabel>
+                <MenuRadioItem disabled={envModeLocked} value="previous-worktree" closeOnClick>
+                  <PreviousWorktreeItemContent branch={previousWorktreeBranch} />
+                </MenuRadioItem>
+              </>
             ) : null}
           </MenuRadioGroup>
         </MenuGroup>
@@ -998,6 +1014,7 @@ export const BranchToolbar = memo(function BranchToolbar({
 
   const workspaceMenu = (
     <WorkspaceMenu
+      workspaceRoot={activeProject?.workspaceRoot}
       forceNewWorktree={forceNewWorktree}
       autoEnvironmentLabel={autoEnvironmentLabel}
       onAutoEnvironment={onAutoEnvironment}
