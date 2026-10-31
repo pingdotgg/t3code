@@ -387,11 +387,13 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   DeviceToolkit,
   HtmlToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
-// T3 decodes arguments with each tool's schema, which drops keys the tool does not declare.
+// McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
 const t3InputDecoders = new Map(
   t3SourceTools.map((tool) => [
     tool.name,
-    Schema.decodeUnknownOption(tool.parametersSchema as Schema.Codec<unknown, unknown>),
+    Schema.decodeUnknownOption(
+      Schema.toCodecJson(tool.parametersSchema as Schema.Codec<unknown, unknown>),
+    ),
   ]),
 );
 const t3Tools: ReadonlyArray<ApiTool> = t3SourceTools.map((tool) => ({
