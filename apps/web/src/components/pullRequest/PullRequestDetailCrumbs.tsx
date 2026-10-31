@@ -114,14 +114,29 @@ export function PullRequestDetailCrumbs({
       {detail && toneClassName && state ? (
         <>
           {onBack ? (
-            <BackButton onBack={onBack} focusable plural={sourceControlClients.get(detail.provider).changeRequest.plural} />
+            <BackButton
+              onBack={onBack}
+              focusable
+              plural={sourceControlClients.get(detail.provider).changeRequest.plural}
+            />
           ) : null}
-          <NumberLink detail={detail} toneClassName={toneClassName} openOnHostText={openOnHostText} focusable />
+          <NumberLink
+            detail={detail}
+            toneClassName={toneClassName}
+            openOnHostText={openOnHostText}
+            focusable
+          />
           {detail.state !== "open" || detail.isDraft ? (
-            <span className={cn(
-              "inline-flex h-5 shrink-0 items-center gap-1 rounded-md border px-[7px] text-caption",
-              detail.state === "merged" ? "border-merged-foreground/25 bg-merged-tint text-merged-foreground" : detail.state === "closed" ? "border-error-foreground/25 bg-error-tint text-error-foreground" : "border-border bg-badge-neutral text-muted-foreground",
-            )}>
+            <span
+              className={cn(
+                "inline-flex h-5 shrink-0 items-center gap-1 rounded-md border px-[7px] text-caption",
+                detail.state === "merged"
+                  ? "border-merged-foreground/25 bg-merged-tint text-merged-foreground"
+                  : detail.state === "closed"
+                    ? "border-error-foreground/25 bg-error-tint text-error-foreground"
+                    : "border-border bg-badge-neutral text-muted-foreground",
+              )}
+            >
               <state.Icon aria-hidden className="size-[11px]" />
               {state.label}
             </span>
