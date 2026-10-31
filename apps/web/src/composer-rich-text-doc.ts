@@ -1,4 +1,5 @@
 import { joinBackward, joinTextblockBackward, joinTextblockForward } from "@tiptap/pm/commands";
+import { isHistoryTransaction } from "@tiptap/pm/history";
 import {
   Fragment,
   Mark,
@@ -270,6 +271,79 @@ function codeBlockSource(
   return { open: `${fence}${language}${content ? "\n" : ""}`, content, close };
 }
 
+const HORIZONTAL_RULE_LINE = /^([-*_])(?:[ \t]*\1){2,}[ \t]*\r?$/;
+
+function editedParagraphStart(state: EditorState): number | null {
+  const { $from } = state.selection;
+  return $from.depth === 1 && $from.parent.type.name === "paragraph" ? $from.before() : null;
+}
+
+const listLineEditedKey = new PluginKey<number | null>("listLineEdited");
+
+/**
+ * Wraps a top-level paragraph that reads as a list line once the caret leaves it. The `- ` input
+ * rule only fires while the marker is typed, so a dash added in front of existing text would stay a
+ * paragraph that the stored draft already reads as a list. Waiting for the caret to leave keeps the
+ * `- [ ] ` task gesture intact. Only a line the user edited converts: a line brought back by undo
+ * stays as it is, so leaving it does not wipe the redo stack.
+ */
+const listLineOnLeavePlugin = new Plugin<number | null>({
+  key: listLineEditedKey,
+  state: {
+    init: () => null,
+    apply(tr, edited, _oldState, state) {
+      if (isHistoryTransaction(tr)) return null;
+      if (tr.docChanged) return editedParagraphStart(state);
+      return edited;
+    },
+  },
+  appendTransaction(transactions, oldState, state) {
+    const edited = listLineEditedKey.getState(oldState);
+    if (typeof edited !== "number") return null;
+    if (transactions.some(isHistoryTransaction)) return null;
+    const pos = transactions.reduce((mapped, tr) => tr.mapping.map(mapped), edited);
+    const $now = state.selection.$from;
+    if ($now.depth === 1 && $now.before() === pos) return null;
+    const paragraph = state.doc.nodeAt(pos);
+    if (paragraph?.type.name !== "paragraph" || state.doc.resolve(pos).depth !== 0) return null;
+    if (HORIZONTAL_RULE_LINE.test(paragraph.textContent)) return null;
+    const first = paragraph.firstChild;
+    if (!first?.isText || first.marks.length > 0) return null;
+    const parsed = parseListPrefix(first.text!);
+    if (!parsed || parsed.prefix.kind === "task" || parsed.prefix.indent || !parsed.prefix.space) {
+      return null;
+    }
+    if (paragraph.content.size <= parsed.markerLength) return null;
+    const { marker, space } = parsed.prefix;
+    const ordered = parsed.prefix.kind === "ordered";
+    const tr = state.tr.delete(pos + 1, pos + 1 + parsed.markerLength);
+    const range = tr.doc.resolve(pos + 1).blockRange();
+    if (!range) return null;
+    tr.wrap(range, [
+      {
+        type: state.schema.nodes[ordered ? "orderedList" : "bulletList"]!,
+        attrs: ordered ? { start: Number.parseInt(marker, 10) || 1 } : null,
+      },
+      { type: state.schema.nodes.listItem!, attrs: { marker, space } },
+    ]);
+    // The stored draft reads neighbouring lines with the same marker as one list.
+    const list = tr.doc.nodeAt(pos)!;
+    const end = pos + list.nodeSize;
+    if (sameMarkdownList(list, tr.doc.nodeAt(end))) tr.join(end);
+    if (sameMarkdownList(list, tr.doc.resolve(pos).nodeBefore)) tr.join(pos);
+    return tr;
+  },
+});
+
+/** Whether two lists would parse back as one list: same kind and same bullet or delimiter. */
+function sameMarkdownList(list: ProseMirrorNode, other: ProseMirrorNode | null | undefined) {
+  if (other?.type !== list.type) return false;
+  const marker = (node: ProseMirrorNode) => String(node.firstChild?.attrs.marker ?? "");
+  return list.type.name === "orderedList"
+    ? marker(list).slice(-1) === marker(other).slice(-1)
+    : marker(list) === marker(other);
+}
+
 const ComposerListItemExtension = ListItem.extend({
   content: LIST_ITEM_CONTENT,
   addAttributes() {
@@ -286,6 +360,9 @@ const ComposerListItemExtension = ListItem.extend({
       Backspace: () => backspaceAcrossList(this.editor),
       Delete: () => deleteAcrossList(this.editor),
     };
+  },
+  addProseMirrorPlugins() {
+    return [...(this.parent?.() ?? []), listLineOnLeavePlugin];
   },
   // ProseMirror can reuse the parent list when only an item's marker changes.
   // Item metadata lets CSS resize its gutter through CommonMark's nine-digit limit.
@@ -645,7 +722,7 @@ export function buildTiptapContent(
     }
     const opening = blockSyntax ? parseOpeningFence(line) : null;
     if (!opening) {
-      if (blockSyntax && /^([-*_])(?:[ \t]*\1){2,}[ \t]*\r?$/.test(line)) {
+      if (blockSyntax && HORIZONTAL_RULE_LINE.test(line)) {
         entries.push({ rule: line });
         continue;
       }
