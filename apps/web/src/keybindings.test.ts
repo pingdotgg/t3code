@@ -767,14 +767,22 @@ describe("isRichTextBoldShortcut", () => {
 });
 
 describe("composer and pull request shortcuts", () => {
-  it("uses the dictation chord outside the terminal and preserves terminal split", () => {
+  it("uses the dictation chord outside the terminal, splits a pane down on its own chord, and preserves terminal split", () => {
     const chord = event({ key: "d", ctrlKey: true, shiftKey: true });
+    const splitDown = event({ key: "d", ctrlKey: true, altKey: true, shiftKey: true });
     assert.strictEqual(
       resolveShortcutCommand(chord, DEFAULT_RESOLVED_KEYBINDINGS, {
         platform: "Linux",
         context: { terminalFocus: false },
       }),
       "composer.dictation",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(splitDown, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "layout.splitDown",
     );
     assert.strictEqual(
       resolveShortcutCommand(chord, DEFAULT_RESOLVED_KEYBINDINGS, {
