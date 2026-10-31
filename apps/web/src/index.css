@@ -557,17 +557,19 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     padding-block-end: calc(var(--pane-notch-height) - var(--workspace-topbar-height));
   }
 
-  /* The chat's timeline scrolls up under its header (MessagesTimeline's
-     --timeline-top-inset), and so may the body under a floating pane header
-     (data-floating-pane-header: surface tabs, the launcher, Settings), so the
-     header has no surface of its own: content hides only behind the
-     chrome-colored notches. The row still takes the pointer, like a toolbar
-     over a scroll view (and Electron's drag region): content passing under
-     it can't be hovered or clicked there. */
+  /* The conversation scrolls through the header, hiding only behind its
+     chrome-colored notches. The header still owns pointer and drag handling. */
+  [data-slot="sidebar"][data-variant="inset"] ~ [data-slot="sidebar-inset"] [data-chat-header] {
+    background: none;
+  }
+
+  /* Other pane headers keep their surface above their scrolling bodies. */
   [data-slot="sidebar"][data-variant="inset"]
     ~ [data-slot="sidebar-inset"]
-    :is([data-chat-header], [data-floating-pane-header]) {
-    background: none;
+    [data-floating-pane-header] {
+    background-color: var(--background);
+    background-image: var(--surface-grain);
+    background-size: var(--surface-grain-size);
   }
 
   /* A split layout's panes square the corner under their notch too. */
