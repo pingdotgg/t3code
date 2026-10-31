@@ -36,6 +36,7 @@ export function QuestionAttachments(props: {
   questions: ReadonlyArray<UserInputQuestion>;
   disabled: boolean;
   value: string;
+  outsideChange: number;
   onChangeText: (value: string) => void;
   onInputFocusChange?: ((focused: boolean) => void) | undefined;
 }) {
@@ -64,6 +65,17 @@ export function QuestionAttachments(props: {
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases keyboard ownership on unmount, since an unmounted native input never emits blur
   useEffect(() => () => releaseFocus(), []);
+  // Only option selection resets the local text; draft echoes can lag native composition.
+  const [text, setText] = useState(props.value);
+  const [previousOutsideChange, setPreviousOutsideChange] = useState(props.outsideChange);
+  if (props.outsideChange !== previousOutsideChange) {
+    setPreviousOutsideChange(props.outsideChange);
+    setText(props.value);
+  }
+  const changeText = (value: string) => {
+    setText(value);
+    props.onChangeText(value);
+  };
   const append = (
     key: string,
     attachments: Parameters<typeof appendComposerDraftAttachments>[1],
@@ -195,11 +207,11 @@ export function QuestionAttachments(props: {
       <VideoPreviewModal source={previewVideo} onRequestClose={() => setPreviewVideo(null)} />
       <TextInputWrapper onPaste={paste}>
         <TextInput
-          value={props.value}
+          value={text}
           multiline={props.question.initialAnswer !== undefined}
           submitBehavior={props.question.initialAnswer !== undefined ? "newline" : undefined}
           editable={!props.disabled}
-          onChangeText={props.onChangeText}
+          onChangeText={changeText}
           onFocus={() => {
             focusedRef.current = true;
             onInputFocusChange?.(true);

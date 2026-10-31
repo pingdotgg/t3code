@@ -24,10 +24,8 @@ import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { useLiveThreadLinkLabels } from "../../state/entities";
-import {
-  isPendingUserInputOptionSelected,
-  type PendingUserInputDraftAnswer,
-} from "@t3tools/client-runtime/state/pending-user-input";
+import { isPendingUserInputOptionSelected } from "@t3tools/client-runtime/state/pending-user-input";
+import type { PendingUserInputDraftAnswer } from "../../state/use-selected-thread-requests";
 import type { PendingUserInput } from "../../lib/threadActivity";
 
 export interface PendingUserInputCardProps {
@@ -272,6 +270,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   questions={props.pendingUserInput.questions}
                   disabled={responseDisabled}
                   value={draft?.customAnswer ?? ""}
+                  outsideChange={draft?.customAnswerResetVersion ?? 0}
                   onChangeText={(value) =>
                     props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
                   }
