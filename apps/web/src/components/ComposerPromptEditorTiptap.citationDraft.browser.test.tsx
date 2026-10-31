@@ -152,19 +152,24 @@ it.each(["save", "send", "question"] as const)(
     } else {
       await userEvent.keyboard(action === "send" ? "{Control>}{Enter}{/Control}" : "{Enter}");
     }
-    const savedPrompt = screen.container.querySelector("output")?.dataset.prompt;
-    expect(savedPrompt === prompt, "Rejected comments must leave the saved prompt unchanged").toBe(
-      true,
-    );
-    expect(onSend).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      const savedPrompt = screen.container.querySelector("output")?.dataset.prompt;
+      expect(
+        savedPrompt === prompt,
+        "Rejected comments must leave the saved prompt unchanged",
+      ).toBe(true);
+      expect(onSend).not.toHaveBeenCalled();
+    });
     if (action !== "question") {
       await expect.element(comment).toHaveValue(oversizedComment);
       await comment.fill("ok");
       await userEvent.keyboard(action === "send" ? "{Control>}{Enter}{/Control}" : "{Enter}");
-      expect(screen.container.querySelector("output")?.dataset.prompt).toBe(
-        `See ${serializeAssistantCitation(withAssistantCitationComment(sourceCitation, "ok"))} `,
-      );
-      expect(onSend).toHaveBeenCalledTimes(action === "send" ? 1 : 0);
+      await vi.waitFor(() => {
+        expect(screen.container.querySelector("output")?.dataset.prompt).toBe(
+          `See ${serializeAssistantCitation(withAssistantCitationComment(sourceCitation, "ok"))} `,
+        );
+        expect(onSend).toHaveBeenCalledTimes(action === "send" ? 1 : 0);
+      });
     }
   },
 );
