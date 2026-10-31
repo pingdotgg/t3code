@@ -26,3 +26,18 @@ export function usableShareTemplates(
 ): ReadonlyArray<ShareTemplate> {
   return (templates ?? []).filter((template) => template.prompt.trim().length > 0);
 }
+
+export interface ShareTemplateChoice {
+  readonly shareId: string;
+  readonly createdAt: string;
+  readonly template: string | null;
+}
+
+export function selectedShareTemplate(
+  share: { readonly id: string; readonly createdAt: string } | null,
+  choice: ShareTemplateChoice | null,
+): ShareTemplateChoice | null {
+  return share && choice?.shareId === share.id && choice.createdAt === share.createdAt
+    ? choice
+    : null;
+}

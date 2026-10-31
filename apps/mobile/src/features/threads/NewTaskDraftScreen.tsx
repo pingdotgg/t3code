@@ -92,7 +92,12 @@ import {
   resolveNewTaskWorkspaceLabel,
 } from "./new-task-context-presentation";
 import { incomingShareImports, useIncomingShare } from "../sharing/IncomingShareProvider";
-import { shareTemplateLabel, usableShareTemplates } from "../sharing/share-templates";
+import {
+  selectedShareTemplate,
+  type ShareTemplateChoice,
+  shareTemplateLabel,
+  usableShareTemplates,
+} from "../sharing/share-templates";
 import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImport";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { newTaskFlowKey } from "./new-task-flow-state";
@@ -275,12 +280,8 @@ export function NewTaskDraftScreen(props: {
     : AsyncResult.isFailure(preferences)
       ? []
       : null;
-  const [shareTemplateChoice, setShareTemplateChoice] = useState<{
-    readonly shareId: string;
-    readonly template: string | null;
-  } | null>(null);
-  const chosenShareTemplate =
-    incomingShare && shareTemplateChoice?.shareId === incomingShare.id ? shareTemplateChoice : null;
+  const [shareTemplateChoice, setShareTemplateChoice] = useState<ShareTemplateChoice | null>(null);
+  const chosenShareTemplate = selectedShareTemplate(incomingShare, shareTemplateChoice);
   // Null templates means preferences are still loading, so the choice is not known yet.
   const isIncomingShareAwaitingTemplate = Boolean(
     incomingShare &&
@@ -768,13 +769,23 @@ export function NewTaskDraftScreen(props: {
               key={template.id}
               label={shareTemplateLabel(template.prompt)}
               onPress={() =>
-                setShareTemplateChoice({ shareId: incomingShare.id, template: template.prompt })
+                setShareTemplateChoice({
+                  shareId: incomingShare.id,
+                  createdAt: incomingShare.createdAt,
+                  template: template.prompt,
+                })
               }
             />
           ))}
           <Chip
             label="No template"
-            onPress={() => setShareTemplateChoice({ shareId: incomingShare.id, template: null })}
+            onPress={() =>
+              setShareTemplateChoice({
+                shareId: incomingShare.id,
+                createdAt: incomingShare.createdAt,
+                template: null,
+              })
+            }
           />
         </View>
       </View>

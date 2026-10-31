@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { applyShareTemplate, shareTemplateLabel, usableShareTemplates } from "./share-templates";
+import {
+  applyShareTemplate,
+  selectedShareTemplate,
+  shareTemplateLabel,
+  usableShareTemplates,
+} from "./share-templates";
 
 describe("applyShareTemplate", () => {
   it.each([
@@ -64,5 +69,20 @@ describe("usableShareTemplates", () => {
         { id: "b", prompt: "  \n" },
       ]),
     ).toEqual([{ id: "a", prompt: "Review" }]);
+  });
+});
+
+describe("selectedShareTemplate", () => {
+  it.each([
+    { id: "same-content", createdAt: "2026-10-31T00:00:00Z", selected: true },
+    { id: "same-content", createdAt: "2026-10-31T00:01:00Z", selected: false },
+    { id: "other-content", createdAt: "2026-10-31T00:00:00Z", selected: false },
+  ])("matches the choice to handoff $id at $createdAt", ({ id, createdAt, selected }) => {
+    const choice = {
+      shareId: "same-content",
+      createdAt: "2026-10-31T00:00:00Z",
+      template: "Review {{shared}}",
+    };
+    expect(selectedShareTemplate({ id, createdAt }, choice)).toBe(selected ? choice : null);
   });
 });
