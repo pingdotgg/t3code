@@ -15,12 +15,10 @@ const BILLED_USAGE_FIELDS = [
 ] as const;
 
 function addKnownCount(finalCount: unknown, earlierCounts: ReadonlyArray<unknown>): unknown {
-  const known = finiteNonNegativeInteger(finalCount);
-  if (known === undefined) return finalCount;
-  return earlierCounts.reduce<number>(
-    (sum, count) => sum + (finiteNonNegativeInteger(count) ?? 0),
-    known,
-  );
+  const counts = [finalCount, ...earlierCounts]
+    .map(finiteNonNegativeInteger)
+    .filter((count) => count !== undefined);
+  return counts.length === 0 ? finalCount : counts.reduce((sum, count) => sum + count, 0);
 }
 
 // Steering aborts the current segment; each SDK result reports only that segment's usage.
@@ -38,18 +36,16 @@ function withEarlierSegmentUsage(
     );
   }
   const outputDetails = usage.output_tokens_details as Record<string, unknown> | undefined;
-  if (outputDetails != null) {
-    total.output_tokens_details = {
-      ...outputDetails,
-      thinking_tokens: addKnownCount(
-        outputDetails.thinking_tokens,
-        segments.map(
-          (segment) =>
-            (segment.output_tokens_details as Record<string, unknown> | undefined)?.thinking_tokens,
-        ),
+  total.output_tokens_details = {
+    ...outputDetails,
+    thinking_tokens: addKnownCount(
+      outputDetails?.thinking_tokens,
+      segments.map(
+        (segment) =>
+          (segment.output_tokens_details as Record<string, unknown> | undefined)?.thinking_tokens,
       ),
-    };
-  }
+    ),
+  };
   return total;
 }
 
@@ -60,15 +56,7 @@ export function normalizeClaudeTurnTokenUsage(
   earlierSegmentUsage: ReadonlyArray<unknown> = [],
 ): TurnTokenUsage {
   const finalUsage = result?.usage as Record<string, unknown> | undefined;
-  const usage = finalUsage && withEarlierSegmentUsage(finalUsage, earlierSegmentUsage);
-  if (!usage) {
-    return {
-      usageStatus: "unavailable",
-      usageScope: "main_agent",
-      hasSubagents,
-    };
-  }
-
+  const usage = withEarlierSegmentUsage(finalUsage ?? {}, earlierSegmentUsage);
   const uncachedInputTokens = finiteNonNegativeInteger(usage.input_tokens);
   const cachedInputTokens = finiteNonNegativeInteger(usage.cache_read_input_tokens);
   const cacheCreationTokens = finiteNonNegativeInteger(usage.cache_creation_input_tokens);
@@ -116,8 +104,14 @@ export function normalizeClaudeTurnTokenUsage(
   if (
     terminalStatus === "completed" &&
     result?.subtype === "success" &&
+    finiteNonNegativeInteger(finalUsage?.input_tokens) !== undefined &&
+    finiteNonNegativeInteger(finalUsage?.output_tokens) !== undefined &&
     inputTokens !== undefined &&
-    rawOutputTokens !== undefined
+    rawOutputTokens !== undefined &&
+    BILLED_USAGE_FIELDS.every(
+      (field) =>
+        finalUsage?.[field] == null || finiteNonNegativeInteger(finalUsage[field]) !== undefined,
+    )
   ) {
     return {
       ...commonUsage,

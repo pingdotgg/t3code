@@ -995,6 +995,92 @@ it.layer(
     }),
   );
 
+  it.effect("releases delivered output while the process queue stays busy", () =>
+    Effect.gen(function* () {
+      // Observe retained payloads, since delivery and bounded history alone cannot detect a leak.
+      let readState: Effect.Effect<unknown> = Effect.void;
+      const makeRef = vi.mocked(SynchronizedRef.make).getMockImplementation()!;
+      using _capture = vi.spyOn(SynchronizedRef, "make").mockImplementation(<A>(value: A) =>
+        makeRef(value).pipe(
+          Effect.tap((ref) =>
+            Effect.sync(() => {
+              if (typeof value === "object" && value !== null && "sessions" in value) {
+                readState = SynchronizedRef.get(ref);
+              }
+            }),
+          ),
+        ),
+      );
+      const { manager, ptyAdapter } = yield* createManager(5, { historyByteLimit: 1024 });
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const measured = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      const drained = yield* Deferred.make<void>();
+      yield* Effect.addFinalizer(() => Deferred.succeed(finish, undefined));
+      yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined));
+      const chunkBytes = 64 * 1024;
+      const chunkCount = 256;
+      let delivered = 0;
+      const unsubscribe = yield* manager.subscribe((event) =>
+        Effect.gen(function* () {
+          if (event.type !== "output") return;
+          delivered += 1;
+          expect(event.data).toBe(
+            delivered === 1
+              ? "start"
+              : (delivered === 2
+                  ? "queued-a"
+                  : delivered === 3
+                    ? "queued-b"
+                    : `${delivered - 3}`
+                ).padEnd(chunkBytes, "x"),
+          );
+          if (delivered === 1) {
+            yield* Deferred.succeed(entered, undefined);
+            yield* Deferred.await(release);
+          }
+          if (delivered === chunkCount) {
+            yield* Deferred.succeed(measured, undefined);
+            yield* Deferred.await(finish);
+          } else if (delivered < chunkCount) {
+            process.emitData(`${delivered}`.padEnd(chunkBytes, "x"));
+          } else if (delivered === chunkCount + 2) {
+            yield* Deferred.succeed(drained, undefined);
+          }
+        }),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      process.emitData("start");
+      yield* Deferred.await(entered);
+      process.emitData("queued-a".padEnd(chunkBytes, "x"));
+      process.emitData("queued-b".padEnd(chunkBytes, "x"));
+      yield* Deferred.succeed(release, undefined);
+      yield* Deferred.await(measured);
+
+      const state = (yield* readState) as {
+        sessions: ReadonlyMap<
+          string,
+          { pendingProcessEvents: ReadonlyArray<{ data?: string } | undefined> }
+        >;
+      };
+      const retained = [...state.sessions.values()].flatMap(
+        (session) => session.pendingProcessEvents,
+      );
+      const retainedBytes = retained.reduce(
+        (bytes, event) => bytes + (event?.data?.length ?? 0),
+        0,
+      );
+      expect(delivered).toBe(chunkCount);
+      expect(retainedBytes).toBeLessThanOrEqual(2 * chunkBytes);
+      expect(retained.length).toBeLessThanOrEqual(4);
+      yield* Deferred.succeed(finish, undefined);
+      yield* Deferred.await(drained);
+    }),
+  );
+
   it.effect("retains plain Unicode and control characters around a split query", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
