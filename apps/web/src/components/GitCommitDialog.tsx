@@ -185,7 +185,7 @@ export function GitCommitDialog({
                 No changed files.
               </p>
             ) : (
-              <div className="max-h-52 overflow-y-auto rounded-card surface-card-settings py-1">
+              <div className="max-h-52 overflow-y-auto">
                 {allFiles.map((file) => {
                   const isExcluded = excludedFiles.has(file.path);
                   const { name, directory } = splitFilePath(file.path);
@@ -193,7 +193,7 @@ export function GitCommitDialog({
                     <div
                       key={file.path}
                       className={cn(
-                        "flex h-8 min-w-0 items-center gap-2.5 px-3",
+                        "flex h-8 min-w-0 items-center gap-2.5 px-2",
                         isExcluded && "opacity-55",
                       )}
                     >
@@ -214,7 +214,7 @@ export function GitCommitDialog({
                             aria-hidden
                             className="size-3.5 shrink-0 text-diff-modified"
                           />
-                          <span className="shrink-0 truncate text-label text-foreground">
+                          <span className="min-w-0 shrink truncate text-body text-foreground">
                             {name}
                           </span>
                           {directory ? (
@@ -262,10 +262,10 @@ export function GitCommitDialog({
             </span>
             {excludedCount > 0 ? <span>{excludedCount} excluded</span> : null}
           </p>
-          <Button variant="secondary" size="sm" onClick={() => onOpenChange(false)}>
+          <Button variant="secondary" size="standard" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button size="sm" disabled={submitDisabled} onClick={submit}>
+          <Button size="standard" disabled={submitDisabled} onClick={submit}>
             {branchTarget === "new" ? "Commit on new branch" : "Commit"}
             <DialogSubmitKbd />
           </Button>
