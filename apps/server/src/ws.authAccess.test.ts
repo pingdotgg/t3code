@@ -1,3 +1,12 @@
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as DocumentText from "./provider/DocumentText.ts";
+import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
+import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
+import * as PeerLinks from "./peer/PeerLinks.ts";
+import * as GuestShareService from "./guest/GuestShareService.ts";
+import * as NpmRelease from "./cloud/npmRelease.ts";
+import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
+import * as TriageService from "./triage/TriageService.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -109,6 +118,16 @@ const group = WsRpcGroup.omit(
 
 // Build the production RPC layer; unrelated capabilities fail if this test calls them.
 const layerUnusedAuthAccessRpcServices = Layer.mergeAll(
+  Layer.mock(SecretResolver.SecretResolver)({}),
+  Layer.mock(DocumentText.DocumentText)({}),
+  Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+  Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+  Layer.mock(PeerLinks.PeerLinks)({}),
+  Layer.mock(GuestShareService.GuestShareService)({}),
+  Layer.mock(NpmRelease.NpmRelease)({}),
+  Layer.mock(SourceControlSignIn.SourceControlSignIn)({}),
+  Layer.mock(TriageService.TriageService)({}),
+
   Layer.mock(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator)({}),
   Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({}),
   Layer.mock(AgentSessionImporter.AgentSessionImporter)({}),
