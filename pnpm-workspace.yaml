@@ -237,9 +237,13 @@ patchedDependencies:
   expo-sharing@58.0.19: patches/expo-sharing@58.0.19.patch
   expo-widgets@58.0.20: patches/expo-widgets@58.0.20.patch
   "@ff-labs/fff-node@0.11.0": patches/@ff-labs__fff-node@0.11.0.patch
+  # Measures rows in layout pixels, so a list inside the scaled workspace overview keeps true sizes.
+  "@legendapp/list@3.7.2": patches/@legendapp__list@3.7.2.patch
   # Exports the dependency-light subpaths mobile and the web diff parser import, and keeps
   # measured wrapped-row heights above an edit (fileEditorVirtualization.test.ts).
   "@pierre/diffs@1.6.1": patches/@pierre%2Fdiffs@1.6.1.patch
+  # Exclude overlaid chrome from the tree viewport; recheck the overlay offset if stickyFolders is enabled.
+  "@pierre/trees@1.0.0-beta.6": patches/@pierre%2Ftrees@1.0.0-beta.6.patch
   "@react-native-ai/apple@0.12.0": patches/@react-native-ai__apple@0.12.0.patch
   "@react-native-menu/menu@2.0.0": patches/@react-native-menu__menu@2.0.0.patch
   "@react-navigation/native-stack@7.21.0": patches/@react-navigation%2Fnative-stack@7.21.0.patch
