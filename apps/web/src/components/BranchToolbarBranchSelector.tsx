@@ -20,6 +20,7 @@ import {
   useEffect,
   useImperativeHandle,
   useOptimistic,
+  useRef,
   useState,
   useTransition,
   type MouseEvent as ReactMouseEvent,
@@ -126,6 +127,7 @@ export function BranchToolbarBranchSelector({
   prRowsContainer,
 }: BranchToolbarBranchSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
+  const toolbarAnchorRef = useRef<HTMLDivElement>(null);
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, "thread session stop");
@@ -705,6 +707,7 @@ export function BranchToolbarBranchSelector({
           : undefined
       }
       popupProps={{
+        ...(displayMode === "toolbar" ? { anchor: toolbarAnchorRef } : {}),
         align: "start",
         side: displayMode === "panel" ? "right" : "top",
         className: cn("flex flex-col", displayMode === "panel" ? "w-(--anchor-width)" : "w-90"),
@@ -712,6 +715,7 @@ export function BranchToolbarBranchSelector({
       }}
     >
       <div
+        ref={toolbarAnchorRef}
         className={cn(
           "flex min-w-0",
           displayMode === "panel" ? "w-full flex-col items-stretch" : "items-center gap-1",
