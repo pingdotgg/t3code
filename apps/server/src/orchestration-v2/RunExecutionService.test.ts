@@ -1033,10 +1033,58 @@ it.effect(
       });
       const cases = [
         { text: " /compact ", attachments: [], expected: "compact" },
+        {
+          text: "/workspace/src/main.ts is the file to update.",
+          attachments: [],
+          expected: "prompt",
+        },
+        {
+          text: "/compact keep the tests",
+          attachments: [],
+          expected: "command",
+          driver: ProviderDriverKind.make("pi"),
+        },
+        {
+          text: "/compact keep the tests",
+          attachments: [attachment],
+          expected: "command",
+          driver: ProviderDriverKind.make("pi"),
+        },
+        {
+          text: "Continue the work",
+          attachments: [],
+          expected: "prompt",
+          driver: ProviderDriverKind.make("pi"),
+        },
+        {
+          text: "/review",
+          attachments: [attachment],
+          expected: "prompt",
+          driver: ProviderDriverKind.make("opencode"),
+        },
+        {
+          text: "/README.md is the file to update.",
+          attachments: [],
+          expected: "prompt",
+          driver: ProviderDriverKind.make("opencode"),
+        },
         { text: "/compact", attachments: [attachment], expected: "prompt" },
+        { text: "/goal finish the work", attachments: [], expected: "goal" },
+        { text: "/goal finish the work", attachments: [attachment], expected: "prompt" },
         { text: "Continue the work", attachments: [], expected: "prompt" },
-      ];
+      ]
+        .map((testCase) => ({ driver, ...testCase }))
+        .flatMap((testCase) =>
+          (
+            [
+              { createdBy: "user", senderThreadId: ThreadId.make("thread:sender") },
+              { createdBy: "agent", senderThreadId: ThreadId.make("thread:sender") },
+              { createdBy: "agent", senderThreadId: undefined },
+            ] as const
+          ).map((origin) => ({ ...testCase, ...origin })),
+        );
       for (const [index, testCase] of cases.entries()) {
+        const prompts: Array<ProviderAdapter.ProviderAdapterV2TurnInput> = [];
         const threadId = ThreadId.make(`thread:compact-routing:${index}`);
         const attemptId = RunAttemptId.make(`attempt:compact-routing:${index}`);
         yield* runExecution.startRootRun({
@@ -1044,13 +1092,16 @@ it.effect(
           appThread: rootAppThread(threadId),
           providerSessionId: ProviderSessionId.make(`session:compact-routing:${index}`),
           session: {
+            driver: testCase.driver,
             events: Stream.never,
-            startTurn: () =>
+            startTurn: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
               Effect.sync(() => {
+                prompts.push(input);
                 calls.push("prompt");
               }),
-            compactThread: () =>
+            compactThread: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
               Effect.sync(() => {
+                assert.equal(input.message.text, testCase.text);
                 calls.push("compact");
               }),
           } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
@@ -1068,7 +1119,7 @@ it.effect(
           } as OrchestrationV2CheckpointScope,
           providerThread: {
             id: ProviderThreadId.make(`provider-thread:compact-routing:${index}`),
-            driver,
+            driver: testCase.driver,
           } as OrchestrationV2ProviderThread,
           attempt: { id: attemptId, providerTurnId: null } as OrchestrationV2RunAttempt,
           attemptId,
@@ -1077,8 +1128,11 @@ it.effect(
             messageId: MessageId.make(`message:compact-routing:${index}`),
             text: testCase.text,
             attachments: testCase.attachments,
-            createdBy: "user",
+            createdBy: testCase.createdBy,
             creationSource: "web",
+            ...(testCase.senderThreadId === undefined
+              ? {}
+              : { senderThreadId: testCase.senderThreadId }),
           },
           modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
           runtimePolicy: {
@@ -1093,10 +1147,26 @@ it.effect(
             },
           },
         });
+        const prompt = prompts[0];
+        if (prompt !== undefined) {
+          if (
+            testCase.expected !== "goal" &&
+            testCase.expected !== "command" &&
+            testCase.createdBy === "agent" &&
+            testCase.senderThreadId !== undefined
+          ) {
+            assert.include(prompt.message.text, 'thread "thread:sender"');
+            assert.include(prompt.message.text, "not a message from the human user");
+            assert.isTrue(prompt.message.text.endsWith(`\n\n${testCase.text}`));
+          } else {
+            assert.equal(prompt.message.text, testCase.text);
+          }
+          assert.deepEqual(prompt.message.attachments, testCase.attachments);
+        }
       }
       assert.deepEqual(
         calls,
-        cases.map((testCase) => testCase.expected),
+        cases.map((testCase) => (testCase.expected === "compact" ? "compact" : "prompt")),
       );
     }).pipe(Effect.provide(layerRunExecutionTest)),
 );

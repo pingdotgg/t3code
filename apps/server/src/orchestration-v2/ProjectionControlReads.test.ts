@@ -214,9 +214,19 @@ it.effect.each(storageCases)(
       assert.isUndefined((yield* store.getRunningTurnContext(threadId)).providerTurn);
     }).pipe(Effect.provide(storeLayer)),
 );
-it.effect.each(storageCases)(
-  "$storage: controls and replies read only their exact durable targets",
-  ({ storage, storeLayer }) =>
+it.effect.each(
+  storageCases.flatMap((storageCase) => [
+    {
+      ...storageCase,
+      commandDriver: ProviderDriverKind.make("pi"),
+      commandText: "/compact keep the tests",
+    },
+    { ...storageCase, commandDriver: ProviderDriverKind.make("opencode"), commandText: "/review" },
+    { ...storageCase, commandDriver: driver, commandText: "/goal finish the work" },
+  ]),
+)(
+  "$storage: controls and replies read only their exact durable targets ($commandDriver)",
+  ({ storage, storeLayer, commandDriver, commandText }) =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
@@ -275,6 +285,7 @@ it.effect.each(storageCases)(
       const layerSessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
         get: () =>
           Effect.succeedSome({
+            driver: commandDriver,
             interruptTurn: () =>
               Effect.sync(() => {
                 calls.push("interrupt");
@@ -308,6 +319,68 @@ it.effect.each(storageCases)(
         });
         yield* reply.respond({ threadId, providerSessionId, requestId, decision: "accept" });
         assert.deepEqual(calls, ["interrupt", "Use the smaller fix.", "reply"]);
+        const messageEvent = events.find((event) => event.type === "message.updated")!;
+        yield* store.apply({
+          ...messageEvent,
+          id: EventId.make("control:agent-message"),
+          payload: {
+            ...messageEvent.payload,
+            createdBy: "agent",
+            creationSource: "mcp",
+            senderThreadId: ThreadId.make("thread:sender"),
+          },
+        });
+        yield* control.steer({
+          threadId,
+          providerThreadId,
+          providerTurnId,
+          providerSessionId,
+          messageId,
+        });
+        const agentText = calls.at(-1);
+        assert.include(agentText, 'thread "thread:sender"');
+        assert.include(agentText, "not a message from the human user");
+        assert.isTrue(agentText?.endsWith("\n\nUse the smaller fix."));
+        assert.equal(
+          (yield* store.getProviderControlContext(threadId, target)).message?.text,
+          "Use the smaller fix.",
+        );
+        yield* store.apply({
+          ...messageEvent,
+          id: EventId.make("control:agent-compact"),
+          payload: {
+            ...messageEvent.payload,
+            text: commandText,
+            attachments:
+              commandDriver === "codex"
+                ? []
+                : [
+                    {
+                      type: "file",
+                      id: "command-attachment",
+                      name: "notes.txt",
+                      mimeType: "text/plain",
+                      sizeBytes: 1,
+                    },
+                  ],
+            createdBy: "agent",
+            creationSource: "mcp",
+            senderThreadId: ThreadId.make("thread:sender"),
+          },
+        });
+        yield* control.steer({
+          threadId,
+          providerThreadId,
+          providerTurnId,
+          providerSessionId,
+          messageId,
+        });
+        const deliveredCommandText = calls.at(-1);
+        if (commandDriver === "pi") assert.equal(deliveredCommandText, commandText);
+        else {
+          assert.include(deliveredCommandText, "not a message from the human user");
+          assert.isTrue(deliveredCommandText?.endsWith(`\n\n${commandText}`));
+        }
         const wrongSession = ProviderSessionId.make("session:wrong");
         assert.equal(
           (yield* Effect.exit(
@@ -331,7 +404,7 @@ it.effect.each(storageCases)(
           ))._tag,
           "Failure",
         );
-        assert.lengthOf(calls, 3);
+        assert.lengthOf(calls, 5);
         const turn = context.providerTurn!;
         yield* store.apply({
           id: EventId.make("control:turn-completed"),
@@ -341,7 +414,14 @@ it.effect.each(storageCases)(
           payload: { ...turn, status: "completed", completedAt: now },
         });
         yield* control.interrupt({ threadId, providerThreadId, providerTurnId, providerSessionId });
-        assert.deepEqual(calls, ["interrupt", "Use the smaller fix.", "reply", "interrupt"]);
+        assert.deepEqual(calls, [
+          "interrupt",
+          "Use the smaller fix.",
+          "reply",
+          agentText,
+          deliveredCommandText,
+          "interrupt",
+        ]);
       }).pipe(
         Effect.provide(
           Layer.merge(ProviderTurnControlService.layer, RuntimeRequestService.layer).pipe(

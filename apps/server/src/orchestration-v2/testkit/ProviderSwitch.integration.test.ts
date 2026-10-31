@@ -1576,19 +1576,20 @@ describe("orchestration v2 provider switching", () => {
   it.live.each(
     (
       [
-        ["failed", false, false, false],
-        ["failed", true, true, true],
-        ["interrupted", false, true, false],
-        ["interrupted", true, false, true],
+        ["failed", false, false, false, false],
+        ["failed", true, true, true, false],
+        ["interrupted", false, true, false, false],
+        ["interrupted", true, false, true, false],
+        ["failed", false, false, false, true],
       ] as const
     ).map(
-      ([status, queued, returning, native]) =>
+      ([status, queued, returning, native, agent]) =>
         [
-          `${status} context ${queued ? "through the queue" : "immediately"} to ${returning ? "a returning" : "a new"} provider via ${native ? "native history" : "text"}`,
-          { status, queued, returning, native },
+          `${status} context ${queued ? "through the queue" : "immediately"} to ${returning ? "a returning" : "a new"} provider via ${native ? "native history" : "text"}${agent ? " for an agent message" : ""}`,
+          { status, queued, returning, native, agent },
         ] as const,
     ),
-  )("hands off %s", ([, { status, queued, returning, native }]) =>
+  )("hands off %s", ([, { status, queued, returning, native, agent }]) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace(`handoff-${status}-${queued}-${returning}`);
@@ -1661,7 +1662,10 @@ describe("orchestration v2 provider switching", () => {
               commandId: CommandId.make(`command:handoff:${key}`),
               threadId,
               messageId: MessageId.make(`message:handoff:${key}`),
-              createdBy: "user",
+              createdBy: key === "target" && agent ? "agent" : "user",
+              ...(key === "target" && agent
+                ? { senderThreadId: ThreadId.make("thread:agent-source") }
+                : {}),
               creationSource: "web",
               text,
               attachments: [],
@@ -1728,7 +1732,18 @@ describe("orchestration v2 provider switching", () => {
             assert.include(deliveredHistory, '"role":"user"');
             assert.equal(handoff?.delivery?.status, "injected");
           } else {
-            assert.include(delivered.text, "User message:\nContinue");
+            if (agent) {
+              assert.include(
+                delivered.text,
+                "Agent message:\n[Message from another thread's agent",
+              );
+              assert.notInclude(
+                delivered.text,
+                "User message:\n[Message from another thread's agent",
+              );
+            } else {
+              assert.include(delivered.text, "User message:\nContinue");
+            }
             assert.equal(handoff?.delivery?.status, "inline");
           }
           assert.notInclude(deliveredHistory, "Earlier successful request.");
