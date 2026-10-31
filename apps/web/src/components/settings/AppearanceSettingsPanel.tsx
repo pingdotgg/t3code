@@ -7,9 +7,11 @@ import {
   type EffortDisplay,
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
+  MAX_CHAT_CUSTOM_WIDTH_REM,
   MAX_GLASS_OPACITY,
   MAX_PANEL_ANIMATION_DURATION_MS,
   MIN_APPEARANCE_CONTRAST,
+  MIN_CHAT_CUSTOM_WIDTH_REM,
   MIN_GLASS_OPACITY,
   MIN_PANEL_ANIMATION_DURATION_MS,
 } from "@t3tools/contracts/settings";
@@ -76,6 +78,7 @@ const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
   comfortable: "Comfortable",
   wide: "Wide",
   full: "Full",
+  custom: "Custom",
 };
 
 const EFFORT_DISPLAY_LABELS: Record<EffortDisplay, string> = {
@@ -118,6 +121,14 @@ export function AppearanceSettingsPanel() {
   const appearanceContrastSliderStyle = {
     "--settings-slider-progress": `${appearanceContrastRatio * 100}%`,
     "--settings-slider-fill-offset": `${0.5 - appearanceContrastRatio}rem`,
+  } as CSSProperties;
+  const chatCustomWidthRatio =
+    (settings.chatCustomWidthRem - MIN_CHAT_CUSTOM_WIDTH_REM) /
+    (MAX_CHAT_CUSTOM_WIDTH_REM - MIN_CHAT_CUSTOM_WIDTH_REM);
+  const chatCustomWidthLabel = `${settings.chatCustomWidthRem * settings.fontSizeInterface} px`;
+  const chatCustomWidthSliderStyle = {
+    "--settings-slider-progress": `${chatCustomWidthRatio * 100}%`,
+    "--settings-slider-fill-offset": `${0.5 - chatCustomWidthRatio}rem`,
   } as CSSProperties;
   const panelAnimationDurationRatio =
     (settings.panelAnimationDurationMs - MIN_PANEL_ANIMATION_DURATION_MS) /
@@ -246,10 +257,16 @@ export function AppearanceSettingsPanel() {
           {...searchableSetting("chat-width")}
           description="Set how wide messages and the composer can grow on large screens."
           resetAction={
-            settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? (
+            settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ||
+            settings.chatCustomWidthRem !== DEFAULT_UNIFIED_SETTINGS.chatCustomWidthRem ? (
               <SettingResetButton
                 label="chat width"
-                onClick={() => updateSettings({ chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth })}
+                onClick={() =>
+                  updateSettings({
+                    chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
+                    chatCustomWidthRem: DEFAULT_UNIFIED_SETTINGS.chatCustomWidthRem,
+                  })
+                }
               />
             ) : null
           }
@@ -258,7 +275,12 @@ export function AppearanceSettingsPanel() {
               <Select
                 value={settings.chatWidth}
                 onValueChange={(value) => {
-                  if (value === "comfortable" || value === "wide" || value === "full")
+                  if (
+                    value === "comfortable" ||
+                    value === "wide" ||
+                    value === "full" ||
+                    value === "custom"
+                  )
                     updateSettings({ chatWidth: value });
                 }}
               >
@@ -269,11 +291,47 @@ export function AppearanceSettingsPanel() {
                   <SelectItem value="comfortable">Comfortable (default)</SelectItem>
                   <SelectItem value="wide">Wide</SelectItem>
                   <SelectItem value="full">Full</SelectItem>
+                  <SelectItem value="custom">Custom</SelectItem>
                 </SelectPopup>
               </Select>
             </div>
           }
-        />
+        >
+          {settings.chatWidth === "custom" ? (
+            <div className="flex justify-end pb-2">
+              <div className="flex w-full items-center gap-3 sm:w-52">
+                <output
+                  className="min-w-18 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+                  htmlFor="chat-custom-width"
+                >
+                  {chatCustomWidthLabel}
+                </output>
+                <input
+                  aria-label="Custom chat width"
+                  aria-valuetext={`${chatCustomWidthLabel}`}
+                  className="settings-slider min-w-0 flex-1"
+                  id="chat-custom-width"
+                  max={MAX_CHAT_CUSTOM_WIDTH_REM}
+                  min={MIN_CHAT_CUSTOM_WIDTH_REM}
+                  onChange={(event) => {
+                    const chatCustomWidthRem = Number(event.currentTarget.value);
+                    if (
+                      Number.isInteger(chatCustomWidthRem) &&
+                      chatCustomWidthRem >= MIN_CHAT_CUSTOM_WIDTH_REM &&
+                      chatCustomWidthRem <= MAX_CHAT_CUSTOM_WIDTH_REM
+                    ) {
+                      updateSettings({ chatCustomWidthRem });
+                    }
+                  }}
+                  step={2}
+                  style={chatCustomWidthSliderStyle}
+                  type="range"
+                  value={settings.chatCustomWidthRem}
+                />
+              </div>
+            </div>
+          ) : null}
+        </SettingsRow>
         <ThreadDetailsItemsRow />
         <SettingsRow
           {...searchableSetting("effort-display")}

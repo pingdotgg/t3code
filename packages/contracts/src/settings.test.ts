@@ -291,6 +291,15 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings chat width", () => {
+  it("keeps a saved preset when existing settings omit the custom width", () => {
+    expect(decodeClientSettings({ chatWidth: "wide" })).toMatchObject({
+      chatWidth: "wide",
+      chatCustomWidthRem: 60,
+    });
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it.each([
     [true, "hold"],
