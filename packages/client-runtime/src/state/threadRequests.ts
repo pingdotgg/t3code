@@ -1,4 +1,6 @@
 import type {
+  EnvironmentId,
+  ThreadId,
   OrchestrationV2ThreadProjection,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2UserInputQuestion,
@@ -104,6 +106,119 @@ export function seedUserInputDraftAnswers<Draft extends { readonly customAnswer?
     seeded[question.id] = { customAnswer: question.initialAnswer };
   }
   return seeded;
+}
+
+/** Keys a user-input draft by thread so a thread's resolved requests can be pruned together. */
+export function userInputDraftKey(
+  environmentId: string,
+  threadId: string | null,
+  requestId: string | undefined,
+): string {
+  return JSON.stringify([environmentId, threadId, requestId]);
+}
+
+/**
+ * Drops the thread's drafts for requests outside `pendingRequestIds`, leaving
+ * other threads alone. Returns the input itself when nothing is dropped.
+ */
+export function pruneResolvedUserInputDrafts<T>(
+  draftsByRequestKey: Record<string, T>,
+  environmentId: string,
+  threadId: string,
+  pendingRequestIds: ReadonlyArray<string>,
+): Record<string, T> {
+  const threadPrefix = JSON.stringify([environmentId, threadId]).slice(0, -1);
+  const pendingKeys = new Set(
+    pendingRequestIds.map((requestId) => userInputDraftKey(environmentId, threadId, requestId)),
+  );
+  const retained = Object.entries(draftsByRequestKey).filter(
+    ([key]) => !key.startsWith(threadPrefix) || pendingKeys.has(key),
+  );
+  return retained.length === Object.keys(draftsByRequestKey).length
+    ? draftsByRequestKey
+    : Object.fromEntries(retained);
+}
+
+/**
+ * Question attachment drafts are keyed `<thread prefix><encoded [requestId, questionId]>`.
+ * Returns the keys under `threadPrefix` whose request is outside `pendingRequestIds`.
+ */
+export function resolvedQuestionDraftKeys(
+  keys: Iterable<string>,
+  threadPrefix: string,
+  pendingRequestIds: ReadonlyArray<string>,
+): string[] {
+  // encodeURIComponent is per character, so an encoded JSON prefix prefixes the encoded key.
+  const pendingPrefixes = pendingRequestIds.map(
+    (requestId) =>
+      `${threadPrefix}${encodeURIComponent(`${JSON.stringify([requestId]).slice(0, -1)},`)}`,
+  );
+  const resolved: string[] = [];
+  for (const key of keys) {
+    if (key.startsWith(threadPrefix) && !pendingPrefixes.some((prefix) => key.startsWith(prefix)))
+      resolved.push(key);
+  }
+  return resolved;
+}
+
+export interface ThreadRequestsResolved {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  /** Every request the thread still waits on; drafts for any other request are stale. */
+  readonly pendingRequestIds: ReadonlyArray<RuntimeRequestId>;
+}
+
+const threadRequestsResolvedListeners = new Set<(event: ThreadRequestsResolved) => void>();
+
+/**
+ * Clients register draft pruners once at module level. Thread state announces
+ * when its synchronized projection first lands and whenever a request leaves
+ * pending, wherever the resolution came from (another device, interrupt, turn end).
+ */
+export function onThreadRequestsResolved(
+  listener: (event: ThreadRequestsResolved) => void,
+): () => void {
+  threadRequestsResolvedListeners.add(listener);
+  return () => threadRequestsResolvedListeners.delete(listener);
+}
+
+function notifyThreadRequestsResolved(event: ThreadRequestsResolved): void {
+  for (const listener of threadRequestsResolvedListeners) {
+    try {
+      listener(event);
+    } catch (error) {
+      // A failing pruner must neither stop the others nor break thread sync.
+      queueMicrotask(() => {
+        throw error;
+      });
+    }
+  }
+}
+
+/**
+ * Tracks one thread's announced pending requests. Feed it the pending ids of
+ * each authoritative projection; it notifies on the first one and whenever an
+ * announced request is no longer pending. New requests alone stay quiet.
+ */
+export function makeThreadRequestsResolvedAnnouncer(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+) {
+  let announced: ReadonlySet<RuntimeRequestId> | null = null;
+  return (pendingRequestIds: ReadonlyArray<RuntimeRequestId>) => {
+    const pending = new Set(pendingRequestIds);
+    const resolvedSome = announced === null || [...announced].some((id) => !pending.has(id));
+    announced = pending;
+    if (resolvedSome) notifyThreadRequestsResolved({ environmentId, threadId, pendingRequestIds });
+  };
+}
+
+export function pendingRuntimeRequestIds(
+  projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests">,
+): RuntimeRequestId[] {
+  return projection.runtimeRequests.flatMap((request) =>
+    request.status === "pending" ? [request.id] : [],
+  );
 }
 
 export function derivePendingThreadRequests(
