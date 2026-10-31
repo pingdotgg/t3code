@@ -348,11 +348,15 @@ function groupByDirectory(
   files: ReadonlyArray<ReviewRenderableFile>,
   collapsed: ReadonlySet<string>,
 ) {
-  const sorted = files
-    .map((file) => ({ file, directory: fileDirectory(file.path) }))
-    .sort(
-      (a, b) => a.directory.localeCompare(b.directory) || a.file.path.localeCompare(b.file.path),
-    );
+  // Files arrive in review order; group each directory where it first appears to keep that order.
+  const entries = files.map((file) => ({ file, directory: fileDirectory(file.path) }));
+  const firstIndex = new Map<string, number>();
+  entries.forEach(({ directory }, index) => {
+    if (!firstIndex.has(directory)) firstIndex.set(directory, index);
+  });
+  const sorted = [...entries].sort(
+    (a, b) => firstIndex.get(a.directory)! - firstIndex.get(b.directory)!,
+  );
   const items: SheetItem[] = [];
   sorted.forEach(({ file, directory }, index) => {
     if (directory !== sorted[index - 1]?.directory) {

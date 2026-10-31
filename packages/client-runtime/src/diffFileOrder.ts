@@ -1,8 +1,9 @@
-import type { FileDiffMetadata } from "@pierre/diffs";
+interface OrderableDiffFile {
+  readonly additionLines: ReadonlyArray<string>;
+  readonly deletionLines: ReadonlyArray<string>;
+}
 
-import { resolveFileDiffPath } from "~/lib/diffRendering";
-
-export type DiffFileTier = "source" | "test" | "generated";
+type DiffFileTier = "source" | "test" | "generated";
 
 const GENERATED_FILE_NAMES = new Set([
   "pnpm-lock.yaml",
@@ -121,11 +122,16 @@ function testedBaseName(path: string): string {
   return (path.split("/").at(-1) ?? "").replace(/\.(?:test|spec)\..*$/, "").replace(/\.[^.]+$/, "");
 }
 
-export function orderDiffFiles(
-  files: ReadonlyArray<FileDiffMetadata>,
-): ReadonlyArray<FileDiffMetadata> {
-  const byPath = new Map<string, FileDiffMetadata>();
-  for (const file of files) byPath.set(resolveFileDiffPath(file), file);
+function orderByImportsAndTier<F extends OrderableDiffFile>(
+  files: ReadonlyArray<F>,
+  pathOf: (file: F) => string,
+): ReadonlyArray<F> {
+  // A type change (file to symlink) is a delete and an add under one path; keep both.
+  const byPath = new Map<string, F[]>();
+  for (const file of files) {
+    const path = pathOf(file);
+    byPath.set(path, [...(byPath.get(path) ?? []), file]);
+  }
   const tiers = new Map<string, DiffFileTier>();
   for (const path of byPath.keys()) tiers.set(path, diffFileTier(path));
 
@@ -143,11 +149,10 @@ export function orderDiffFiles(
 
   const imports = new Map<string, ReadonlySet<string>>();
   for (const path of sourcePaths) {
-    const file = byPath.get(path)!;
-    imports.set(
-      path,
-      importedPaths(path, [...file.additionLines, ...file.deletionLines], byModulePath, byBaseName),
-    );
+    const lines = byPath
+      .get(path)!
+      .flatMap((file) => [...file.additionLines, ...file.deletionLines]);
+    imports.set(path, importedPaths(path, lines, byModulePath, byBaseName));
   }
   const orderedSource = orderByImports(sourcePaths, imports);
 
@@ -168,5 +173,59 @@ export function orderDiffFiles(
     .filter((path) => tiers.get(path) === "generated")
     .sort((left, right) => left.localeCompare(right));
 
-  return [...orderedSource, ...orderedTests, ...orderedGenerated].map((path) => byPath.get(path)!);
+  return [...orderedSource, ...orderedTests, ...orderedGenerated].flatMap((path) =>
+    byPath.get(path)!,
+  );
+}
+
+/** Where each file, and each directory (with a trailing slash), first appears in `paths`. */
+export function diffFileTreePositions(paths: ReadonlyArray<string>): ReadonlyMap<string, number> {
+  const positions = new Map<string, number>();
+  paths.forEach((path, index) => {
+    positions.set(path, index);
+    let directory = "";
+    for (const segment of path.split("/").slice(0, -1)) {
+      directory += `${segment}/`;
+      if (!positions.has(directory)) positions.set(directory, index);
+    }
+  });
+  return positions;
+}
+
+function orderLikeTree<F>(files: ReadonlyArray<F>, pathOf: (file: F) => string): ReadonlyArray<F> {
+  const paths = files.map(pathOf);
+  const positions = diffFileTreePositions(paths);
+  const keys = paths.map((path) => {
+    const key: number[] = [];
+    let directory = "";
+    for (const segment of path.split("/").slice(0, -1)) {
+      directory += `${segment}/`;
+      key.push(positions.get(directory)!);
+    }
+    key.push(positions.get(path)!);
+    return key;
+  });
+  return files
+    .map((file, index) => ({ file, key: keys[index]! }))
+    .sort((left, right) => {
+      const length = Math.min(left.key.length, right.key.length);
+      for (let index = 0; index < length; index++) {
+        const difference = left.key[index]! - right.key[index]!;
+        if (difference !== 0) return difference;
+      }
+      return left.key.length - right.key.length;
+    })
+    .map(({ file }) => file);
+}
+
+/**
+ * Review order shared by every client: dependencies before dependents, tests after their source,
+ * generated files last, then regrouped so each directory stays contiguous and a file tree built
+ * from `diffFileTreePositions` lists files in the same order.
+ */
+export function orderDiffFilesForReview<F extends OrderableDiffFile>(
+  files: ReadonlyArray<F>,
+  pathOf: (file: F) => string,
+): ReadonlyArray<F> {
+  return orderLikeTree(orderByImportsAndTier(files, pathOf), pathOf);
 }

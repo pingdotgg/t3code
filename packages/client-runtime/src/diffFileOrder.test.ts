@@ -1,17 +1,22 @@
-import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import { orderDiffFiles } from "./pullRequestFileOrder.logic";
+import { orderDiffFilesForReview } from "./diffFileOrder.ts";
 
-function file(name: string, additionLines: ReadonlyArray<string> = []): FileDiffMetadata {
-  return { name, hunks: [], additionLines, deletionLines: [] } as unknown as FileDiffMetadata;
+interface TestFile {
+  readonly name: string;
+  readonly additionLines: ReadonlyArray<string>;
+  readonly deletionLines: ReadonlyArray<string>;
 }
 
-function order(files: ReadonlyArray<FileDiffMetadata>): Array<string> {
-  return orderDiffFiles(files).map((entry) => entry.name);
+function file(name: string, additionLines: ReadonlyArray<string> = []): TestFile {
+  return { name, additionLines, deletionLines: [] };
 }
 
-describe("orderDiffFiles", () => {
+function order(files: ReadonlyArray<TestFile>): Array<string> {
+  return orderDiffFilesForReview(files, (entry) => entry.name).map((entry) => entry.name);
+}
+
+describe("orderDiffFilesForReview", () => {
   it("places source before tests and generated files across path conventions", () => {
     const source = ["src/app.ts", "src/dist.ts", "src/testing.ts"];
     const tests = [
@@ -33,7 +38,42 @@ describe("orderDiffFiles", () => {
     ];
     expect(
       order([...generated, ...tests, ...source].toReversed().map((path) => file(path))),
-    ).toEqual([...source, ...tests, ...generated]);
+    ).toEqual([
+      ...source,
+      ...tests.slice(0, 3),
+      // Generated files under src/ stay in src/ so the list matches the tree.
+      "src/__snapshots__/app.ts",
+      "src/api.generated.ts",
+      "src/app.test.ts.snap",
+      ...tests.slice(3),
+      ...generated.slice(0, 5),
+    ]);
+  });
+
+  it("keeps both entries of a path that changed type, such as a file replaced by a symlink", () => {
+    const deleted = { ...file("AGENTS.md"), additionLines: [], deletionLines: ["# Agents"] };
+    const added = file("AGENTS.md", ["CLAUDE.md"]);
+    expect(
+      orderDiffFilesForReview([file("CLAUDE.md"), deleted, added], (entry) => entry.name),
+    ).toEqual([deleted, added, file("CLAUDE.md")]);
+  });
+
+  it("pulls a test listed last into its directory, keeping the first-seen order", () => {
+    expect(
+      order([
+        file("server/device/Host.ts"),
+        file("web/settings.ts"),
+        file("server/ws.ts"),
+        file("server/device/Host.test.ts"),
+        file("web/settings.test.ts"),
+      ]),
+    ).toEqual([
+      "server/device/Host.ts",
+      "server/device/Host.test.ts",
+      "server/ws.ts",
+      "web/settings.ts",
+      "web/settings.test.ts",
+    ]);
   });
 
   it("resolves a specifier that climbs out of the importer's directory", () => {

@@ -53,7 +53,7 @@ import {
   canResolvePullRequestThread,
 } from "@t3tools/client-runtime/pull-request-editing";
 import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
-import { orderDiffFiles } from "./pullRequestFileOrder.logic";
+import { orderDiffFilesForReview } from "@t3tools/client-runtime/diff-file-order";
 import {
   buildFileDiffRenderKey,
   fnv1a32,
@@ -83,7 +83,7 @@ import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { useHideTestFiles } from "../diffs/useHideTestFiles";
-import { diffFileTreeEntries, orderDiffFilesLikeTree } from "../diffs/diffFileTree.logic";
+import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -500,10 +500,9 @@ function PullRequestCodeTab({
       ignoreWhitespace,
     ),
   );
-  const loadedFiles = orderDiffFilesLikeTree(
-    parsedSlices.flatMap((parsed) =>
-      parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
-    ),
+  const loadedFiles = orderDiffFilesForReview(
+    parsedSlices.flatMap((parsed) => (parsed?.kind === "files" ? parsed.files : [])),
+    resolveFileDiffPath,
   );
   const testFileCount = loadedFiles.filter((file) =>
     isTestChangedFile(resolveFileDiffPath(file)),
