@@ -100,6 +100,10 @@ default, leaves the choice to Codex. Pick Daybreak Blue or another programme to
 send it with every turn in that thread. Models without Daybreak, including
 custom models, do not show the choice.
 
+If Codex reports that you are not logged in with a Daybreak key, sign in to
+Codex again using the appropriate Daybreak credentials for your account, then
+retry the turn. Use the same Codex home as the provider instance in T3 Code.
+
 ## Codex says I hit a usage limit
 
 When Codex stops on a usage limit, the thread names the window that ran out and
