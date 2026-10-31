@@ -104,6 +104,12 @@ describe("billable native turn usage", () => {
 
   it("does not turn a zeroed Claude crash result into a measured zero-cost turn", () => {
     expect(
+      normalizeClaudeTurnTokenUsage(undefined, false, "interrupted", [
+        { input_tokens: 10, output_tokens: 20 },
+        { input_tokens: 3, output_tokens: 4 },
+      ]),
+    ).toMatchObject({ usageStatus: "partial", inputTokens: 13, outputTokens: 24 });
+    expect(
       normalizeClaudeTurnTokenUsage(
         {
           subtype: "error_during_execution",
