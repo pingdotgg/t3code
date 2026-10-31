@@ -67,6 +67,7 @@
       // Electron loads these bundles by filename rather than importing them.
       "entry": [
         "gnome-extension/extension.js!",
+        "scripts/connection-catalog-native-fixture.cjs!",
         "src/electron/WindowsForegroundFocusWorker.ts!",
         "src/snapShot/GlobalShiftShortcutWorker.ts!",
         "src/snapShot/RegionSnapShotWorker.ts!",
