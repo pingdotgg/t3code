@@ -44,7 +44,7 @@ select known environment-local checkouts; the group itself does not store inheri
 
 ## Durable intent and side effects
 
-The event log is the source of truth for orchestration state. The
+Events record orchestration decisions, and persisted projections hold the current read state. The
 [v2 orchestrator](../../apps/server/src/orchestration-v2/Orchestrator.ts) serializes commands and
 decides events without performing provider or filesystem work.
 [EventSink](../../apps/server/src/orchestration-v2/EventSink.ts) commits events, persisted projections,
@@ -61,6 +61,13 @@ a lost provider process cannot simply replay; recovery retires them before admit
 Persisted events must remain decodable on replay. Changing a schema affects old environments at
 startup as well as live RPC traffic. Compatibility work must account for stored history, not just
 what the newest client sends.
+
+The log is not kept forever. [Compaction](../../apps/server/src/orchestration-v2/ProjectionMaintenance.ts)
+deletes thread events older than a day, except anchors that other readers need, and raises the
+thread's replay floor in the same transaction. A cursor below that floor gets a snapshot. Projections
+cannot be rebuilt from events once anything has been pruned, so future data migrations must update
+projections directly. Builds from before retention ignore replay floors and must not open a pruned
+database.
 
 ## Turn completion and checkpoints
 

@@ -93,6 +93,11 @@ export class OrchestrationEventStore extends Context.Service<
 
     readonly latestApplicationSequence: Effect.Effect<number, OrchestrationEventStoreError>;
 
+    /** Highest sequence removed from one thread, or any thread when omitted. */
+    readonly replayFloor: (
+      threadId?: ThreadId,
+    ) => Effect.Effect<number, OrchestrationEventStoreError>;
+
     /** Unknown event types fail unless skipUnknownEventTypes logs and drops them; only client replay may opt in. */
     readonly readApplicationEvents: (input: {
       readonly afterSequence: number;
@@ -450,7 +455,7 @@ const makeEventStore = Effect.gen(function* () {
           const promptKey = subagent === undefined ? undefined : `${event.type}:${subagent.id}`;
           const hint = promptKey === undefined ? undefined : promptHints.get(promptKey);
           const payloadJson = yield* encodeJson(encoded.payload);
-          // Deduplicate repeated progress prompts via anchor rows that ProjectionMaintenance never deletes.
+          // Deduplicate repeated progress prompts only while their full-prompt anchor exists.
           const storedPayload =
             hint !== undefined && subagent !== undefined
               ? sql`CASE WHEN EXISTS (
@@ -657,6 +662,20 @@ const makeEventStore = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.latestAgentSequence:query")),
     );
 
+  const replayFloor: OrchestrationEventStore["Service"]["replayFloor"] = Effect.fn(
+    "OrchestrationEventStore.replayFloor",
+  )(function* (threadId?: ThreadId) {
+    const rows = yield* sql<{ readonly floor: number | null }>`
+      SELECT MAX(replay_floor) AS floor
+      FROM orchestration_v2_event_retention
+      ${threadId === undefined ? sql`` : sql`WHERE thread_id = ${threadId}`}
+    `.pipe(
+      NodeSqliteClient.readOnly,
+      Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.replayFloor:query")),
+    );
+    return rows[0]?.floor ?? 0;
+  });
+
   // The OR planner otherwise scans every V2 event instead of seeking the final sequence.
   const latestApplicationSequence = sql<{ readonly sequence: number | null }>`
     SELECT MAX(sequence) AS sequence
@@ -747,6 +766,7 @@ const makeEventStore = Effect.gen(function* () {
     getReplayStats,
     latestAgentSequence,
     latestApplicationSequence,
+    replayFloor,
     readApplicationEvents: catchUpApplicationEvents,
     publishCommitted: (events) => PubSub.publishAll(committedEvents, events).pipe(Effect.asVoid),
     streamApplicationEvents,

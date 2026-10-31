@@ -726,6 +726,9 @@ const canReplayPersistedRange = Effect.fnUntraced(function* (
   if (replayGap < 0 || replayGap > maxGap) {
     return false;
   }
+  if ((yield* applicationEvents.replayFloor()) > afterSequence) {
+    return false;
+  }
   const stats = yield* applicationEvents.getReplayStats({
     afterSequence,
     throughSequence: headSequence,
@@ -917,6 +920,35 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       if (input.afterSequence > highWater) {
         return yield* snapshotThenLive();
       }
+      const threadShellExists = Effect.suspend(() =>
+        threadManagement.getThreadShell(input.threadId),
+      ).pipe(
+        Effect.map((shell) => shell !== null),
+        Effect.mapError(
+          (cause) =>
+            new OrchestrationV2GetThreadProjectionError({
+              threadId: input.threadId,
+              message: `Failed to locate orchestration V2 thread ${input.threadId}`,
+              cause,
+            }),
+        ),
+      );
+      const resumeAfter = input.afterSequence;
+      const replayExpired = applicationEvents.replayFloor(input.threadId).pipe(
+        Effect.map((floor) => floor > resumeAfter),
+        Effect.mapError(
+          (cause) =>
+            new OrchestrationV2GetThreadProjectionError({
+              threadId: input.threadId,
+              message: `Failed to read orchestration V2 thread ${input.threadId} replay floor`,
+              cause,
+            }),
+        ),
+      );
+      const expiredBeforeReplay = yield* replayExpired;
+      if (expiredBeforeReplay && (yield* threadShellExists)) {
+        return yield* snapshotThenLive();
+      }
       const stats = yield* applicationEvents
         .getAgentReplayStats({
           threadId: input.threadId,
@@ -941,23 +973,16 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       ) {
         return yield* snapshotThenLive();
       }
-      if (stats.hasCreateEvent) {
-        const shell = yield* threadManagement.getThreadShell(input.threadId).pipe(
-          Effect.mapError(
-            (cause) =>
-              new OrchestrationV2GetThreadProjectionError({
-                threadId: input.threadId,
-                message: `Failed to locate recreated orchestration V2 thread ${input.threadId}`,
-                cause,
-              }),
-          ),
-        );
+      if (stats.hasCreateEvent && (yield* threadShellExists)) {
         // Retained creation events may describe deleted threads; replace replay only if a snapshot exists.
-        if (shell !== null) return yield* snapshotThenLive();
+        return yield* snapshotThenLive();
       }
       const replay = coalesceLiveUpdatedEvents(
         yield* loadReplayThrough(input.afterSequence, highWater),
       );
+      if (!expiredBeforeReplay && (yield* replayExpired) && (yield* threadShellExists)) {
+        return yield* snapshotThenLive();
+      }
       const plan = decideThreadResume({
         afterSequence: input.afterSequence,
         highWater,
@@ -1159,40 +1184,40 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       Stream.concat(completionMarker, liveFrom(afterSequence));
 
     const stream = yield* Effect.gen(function* () {
-      if (input.afterSequence === undefined) {
+      const snapshotThenLive = Effect.gen(function* () {
         const loaded = yield* loadSnapshot();
         return composeShellStreamWithEnrichment({
           initial: initialSnapshotItems(loaded),
           tail: completionThenLive(loaded.snapshot.snapshotSequence),
           enrichment: enrichmentRefreshes,
         });
+      });
+      if (input.afterSequence === undefined) {
+        return yield* snapshotThenLive;
       }
 
       const highWater = yield* applicationEvents.latestApplicationSequence;
       if (!(yield* canReplayPersistedRange(input.afterSequence, highWater, SHELL_RESUME_MAX_GAP))) {
-        const loaded = yield* loadSnapshot();
-        return composeShellStreamWithEnrichment({
-          initial: initialSnapshotItems(loaded),
-          tail: completionThenLive(loaded.snapshot.snapshotSequence),
-          enrichment: enrichmentRefreshes,
-        });
+        return yield* snapshotThenLive;
       }
 
       subagentThreadIds = new Set(yield* threadManagement.listActiveSubagentThreadIds());
 
       const loaded = yield* loadProjectMetadataSnapshot(highWater);
-      const replay = toShellStream(
-        applicationEvents
-          .readApplicationEvents({
-            afterSequence: input.afterSequence,
-            throughSequence: highWater,
-            // A row a newer build wrote (e.g. after a downgrade) must not fail
-            // every shell resubscribe. The live tail below resumes from
-            // highWater, so a dropped row never hides later events.
-            skipUnknownEventTypes: true,
-          })
-          .pipe(Stream.filter(filterSubagentTranscript)),
-      );
+      const replayed = yield* applicationEvents
+        .readApplicationEvents({
+          afterSequence: input.afterSequence,
+          throughSequence: highWater,
+          // A row a newer build wrote (e.g. after a downgrade) must not fail
+          // every shell resubscribe. The live tail below resumes from
+          // highWater, so a dropped row never hides later events.
+          skipUnknownEventTypes: true,
+        })
+        .pipe(Stream.filter(filterSubagentTranscript), Stream.runCollect);
+      if ((yield* applicationEvents.replayFloor()) > input.afterSequence) {
+        return yield* snapshotThenLive;
+      }
+      const replay = toShellStream(Stream.fromIterable(replayed));
       return composeShellStreamWithEnrichment({
         initial: initialEnrichmentItems(loaded),
         tail: Stream.concat(Stream.concat(replay, completionMarker), liveFrom(highWater)),
