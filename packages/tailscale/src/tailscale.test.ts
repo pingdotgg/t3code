@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
@@ -13,6 +14,7 @@ import {
   parseTailscaleServeRoutesTo,
   parseTailscaleSshEnabled,
   parseTailscaleStatus,
+  readTailscaleServeRoutesTo,
   readTailscaleSshEnabled,
   readTailscaleStatus,
   TailscaleCommandExitError,
@@ -119,6 +121,9 @@ describe("tailscale", () => {
             "/d": { Proxy: "http://0.0.0.0:3773" },
             "/e": { Proxy: "http://[::ffff:127.0.0.1]:3773" },
             "/f": { Proxy: "http://localhost:3773" },
+            // Shorthand Tailscale expands when it proxies.
+            "/g": { Proxy: "3773" },
+            "/h": { Proxy: "localhost:3773" },
           },
         },
       },
@@ -136,9 +141,21 @@ describe("tailscale", () => {
     assert.deepEqual(parseTailscaleServeRoutesTo(status, { host: "127.0.0.1", port: 3773 }), [
       { servePort: 7000 },
       { servePort: 443, mount: "/t3", host: "box.tailnet.ts.net" },
-      ...["/d", "/e"].map((mount) => ({ servePort: 10000, mount, host: "box.tailnet.ts.net" })),
-      // `localhost` dials either loopback, so it might be another service's.
-      { servePort: 10000, mount: "/f", host: "box.tailnet.ts.net", ambiguous: true },
+      // `localhost` and `0.0.0.0` can dial either loopback, so they might be another service's.
+      ...(
+        [
+          ["/d", true],
+          ["/e", false],
+          ["/f", true],
+          ["/g", false],
+          ["/h", true],
+        ] as const
+      ).map(([mount, ambiguous]) => ({
+        servePort: 10000,
+        mount,
+        host: "box.tailnet.ts.net",
+        ...(ambiguous ? { ambiguous } : {}),
+      })),
       { servePort: 443, mount: "/", host: "t3.tailnet.ts.net", owner: "svc:t3" },
       { servePort: 9000, ambiguous: true, owner: "foreground" },
     ]);
@@ -155,6 +172,41 @@ describe("tailscale", () => {
     assert.deepEqual(parseTailscaleServeRoutesTo("null", { host: "127.0.0.1", port: 3773 }), []);
     assert.isUndefined(parseTailscaleServeRoutesTo("not json", { host: "127.0.0.1", port: 3773 }));
   });
+
+  it.effect("uses the CLI inside the Mac app when PATH has none", () =>
+    Effect.gen(function* () {
+      const commands: Array<string> = [];
+      const spawner = ChildProcessSpawner.make((command) => {
+        const { command: name } = command as unknown as { readonly command: string };
+        commands.push(name);
+        return name === "tailscale"
+          ? Effect.fail(
+              PlatformError.systemError({
+                _tag: "NotFound",
+                module: "ChildProcess",
+                method: "spawn",
+              }),
+            )
+          : Effect.succeed(mockHandle({ stdout: "{}" }));
+      });
+      const routesOn = (platform: NodeJS.Platform) =>
+        readTailscaleServeRoutesTo({ host: "127.0.0.1", port: 3773 }).pipe(
+          Effect.provide(
+            Layer.merge(
+              Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+              Layer.succeed(HostProcess.Platform, platform),
+            ),
+          ),
+        );
+      assert.deepEqual(yield* routesOn("darwin"), []);
+      assert.deepEqual(commands, [
+        "tailscale",
+        "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+      ]);
+      const elsewhere = yield* routesOn("linux").pipe(Effect.flip);
+      assert.equal(elsewhere._tag, "TailscaleCommandSpawnError");
+    }),
+  );
 
   it.effect("parses status facts", () =>
     Effect.gen(function* () {

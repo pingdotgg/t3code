@@ -3,6 +3,7 @@ import { normalizeHostname } from "@t3tools/shared/hostClassification";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest } from "effect/http";
@@ -229,6 +230,47 @@ export const parseTailscaleStatus = (
     }),
   );
 
+// The Mac app ships its CLI in the bundle, on PATH only if the user installs the launcher.
+const MACOS_APP_CLI = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
+
+// Node throws ENOTDIR, outside the spawner's error mapping, when PATH ends in a file.
+const isMissingCommand = (cause: unknown) =>
+  (PlatformError.isPlatformError(cause) && cause.reason._tag === "NotFound") ||
+  (cause instanceof Error && "code" in cause && cause.code === "ENOTDIR");
+
+/** Starts the CLI on PATH, or on macOS the one inside the Tailscale app when PATH has none. */
+const spawnTailscale = (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  platform: NodeJS.Platform,
+  args: readonly string[],
+  context: {
+    readonly executable: "tailscale" | "tailscale.exe";
+    readonly subcommand: "status" | "serve" | "debug";
+    readonly argumentCount: number;
+  },
+  options?: { readonly forceKillAfter?: Duration.Input },
+) => {
+  const spawn = (executable: string) =>
+    spawner.spawn(ChildProcess.make(executable, [...args], options ?? {})).pipe(
+      Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...context, cause })),
+      // Spawning can also fail as a defect rather than a typed error - a
+      // non-directory entry on PATH makes node throw ENOTDIR synchronously.
+      // `mapError` never sees that, so it would escape as an uncaught error.
+      Effect.catchDefect((cause) =>
+        Effect.fail(new TailscaleCommandSpawnError({ ...context, cause })),
+      ),
+    );
+  const onPath = spawn(tailscaleCommandForPlatform(platform));
+  return platform === "darwin"
+    ? onPath.pipe(
+        Effect.catchIf(
+          (error) => isMissingCommand(error.cause),
+          () => spawn(MACOS_APP_CLI),
+        ),
+      )
+    : onPath;
+};
+
 const readTailscaleOutput = Effect.fn("tailscale.readTailscaleOutput")(function* (
   subcommand: "status" | "serve" | "debug",
   args: readonly string[],
@@ -241,19 +283,10 @@ const readTailscaleOutput = Effect.fn("tailscale.readTailscaleOutput")(function*
     subcommand,
     argumentCount: args.length,
   };
-  const command = ChildProcess.make(executable, [...args], {
-    forceKillAfter: TAILSCALE_KILL_GRACE,
-  });
   return yield* Effect.gen(function* () {
-    const child = yield* spawner.spawn(command).pipe(
-      Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
-      // Spawning can also fail as a defect rather than a typed error - a
-      // non-directory entry on PATH makes node throw ENOTDIR synchronously.
-      // `mapError` never sees that, so it would escape as an uncaught error.
-      Effect.catchDefect((cause) =>
-        Effect.fail(new TailscaleCommandSpawnError({ ...commandContext, cause })),
-      ),
-    );
+    const child = yield* spawnTailscale(spawner, hostPlatform, args, commandContext, {
+      forceKillAfter: TAILSCALE_KILL_GRACE,
+    });
     const [stdout, stderr, exitCode] = yield* Effect.all(
       [
         collectStdout(child.stdout),
@@ -397,12 +430,7 @@ const runTailscaleCommand = Effect.fn("tailscale.runTailscaleCommand")(function*
   };
   const timeout = Duration.fromInputUnsafe(timeoutInput);
   return yield* Effect.gen(function* () {
-    const child = yield* spawner.spawn(ChildProcess.make(executable, args)).pipe(
-      Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
-      Effect.catchDefect((cause) =>
-        Effect.fail(new TailscaleCommandSpawnError({ ...commandContext, cause })),
-      ),
-    );
+    const child = yield* spawnTailscale(spawner, hostPlatform, args, commandContext);
     const [stderr, exitCode] = yield* Effect.all(
       [collectStderr(child.stderr), child.exitCode.pipe(Effect.map(Number))],
       { concurrency: "unbounded" },
@@ -524,8 +552,8 @@ const decodeTailscaleServeStatusJson = Schema.decodeUnknownOption(
 );
 
 /**
- * Whether a proxy to `hostname` dials `bindHost`: `0.0.0.0` and `[::]` reach the loopback of their
- * family, and `localhost` may reach either one.
+ * Whether a proxy to `hostname` dials `bindHost`. `localhost` and an unspecified address may reach
+ * either loopback, since the dialer can fall back from one family to the other.
  */
 const reaches = (hostname: string, bindHost: string): "exact" | "either" | undefined => {
   let address = normalizeHostname(hostname);
@@ -538,12 +566,21 @@ const reaches = (hostname: string, bindHost: string): "exact" | "either" | undef
   } else if (address.startsWith("::ffff:")) {
     address = address.slice("::ffff:".length);
   }
-  if (address === "localhost") {
+  if (address === "localhost" || address === "0.0.0.0" || address === "::") {
     return bindHost === "127.0.0.1" || bindHost === "::1" ? "either" : undefined;
   }
-  const dialed = address === "0.0.0.0" ? "127.0.0.1" : address === "::" ? "::1" : address;
-  return dialed === bindHost ? "exact" : undefined;
+  return address === bindHost ? "exact" : undefined;
 };
+
+/** The URL Tailscale's proxy dials for a handler's `Proxy`, expanded as its `expandProxyArg` does. */
+const expandProxy = (proxy: string) =>
+  /^\d+$/u.test(proxy)
+    ? `http://127.0.0.1:${proxy}`
+    : proxy.startsWith("https+insecure://")
+      ? `https://${proxy.slice("https+insecure://".length)}`
+      : /^(?:https?:\/\/|unix:)/u.test(proxy)
+        ? proxy
+        : `http://${proxy}`;
 
 const reachesTarget = (url: string, target: { readonly host: string; readonly port: number }) => {
   if (!URL.canParse(url)) return undefined;
@@ -584,7 +621,7 @@ export const parseTailscaleServeRoutesTo = (
       if (!Number.isInteger(servePort)) return [];
       const host = hostPort.slice(0, separator);
       return Object.entries(site.Handlers ?? {}).flatMap(([mount, handler]) => {
-        const reach = handler.Proxy === undefined ? undefined : reached(handler.Proxy);
+        const reach = handler.Proxy === undefined ? undefined : reached(expandProxy(handler.Proxy));
         return reach === undefined ? [] : [{ servePort, mount, host, ...reach, ...scope }];
       });
     });
