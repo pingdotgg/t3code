@@ -123,10 +123,25 @@ function TerminalHintPill({ hint }: { hint: Extract<LayoutHintState, { kind: "te
   const shortcut = shortcutLabelForCommand(keybindings, "terminal.toggle");
   const [placementRef, placement] = useHintPlacement();
   return (
-    <div ref={placementRef} style={placement} role="status" aria-live="polite" data-layout-hint="terminal"
-      className={cn("pointer-events-none absolute bottom-30 left-1/2 z-40 flex h-8.5 max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2.5 rounded-lg px-3 surface-tooltip transition-opacity duration-200 motion-reduce:transition-none", leaving && "opacity-0")}>
-      <span className="min-w-0 truncate text-meta text-foreground">Terminal for {thread?.title ?? "New thread"}</span>
-      {shortcut ? <span className="kbd-in-popover flex shrink-0"><Kbd>{shortcut}</Kbd></span> : null}
+    <div
+      ref={placementRef}
+      style={placement}
+      role="status"
+      aria-live="polite"
+      data-layout-hint="terminal"
+      className={cn(
+        "pointer-events-none absolute bottom-30 left-1/2 z-40 flex h-8.5 max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2.5 rounded-lg px-3 surface-tooltip transition-opacity duration-200 motion-reduce:transition-none",
+        leaving && "opacity-0",
+      )}
+    >
+      <span className="min-w-0 truncate text-meta text-foreground">
+        Terminal for {thread?.title ?? "New thread"}
+      </span>
+      {shortcut ? (
+        <span className="kbd-in-popover flex shrink-0">
+          <Kbd>{shortcut}</Kbd>
+        </span>
+      ) : null}
     </div>
   );
 }
