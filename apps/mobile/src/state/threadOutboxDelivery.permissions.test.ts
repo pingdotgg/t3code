@@ -377,12 +377,19 @@ describe("queued launch from a Linear issue", () => {
 
   it("records nothing while the thread could not be created", async () => {
     setOperateGrant("secondary", true);
-    await state.manager.enqueue(queuedLaunch());
+    const queued = queuedLaunch();
+    await state.manager.enqueue(queued);
     state.start.mockResolvedValueOnce(
       AsyncResult.failure(Cause.fail(new Error("Socket is not connected"))),
     );
     await runDrain();
     expect(state.recordLinearLaunch).not.toHaveBeenCalled();
+    expect(remaining()).toEqual([queued]);
+    // Step past the retry backoff instead of waiting for its timer.
+    using _now = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
+    await runDrain();
+    expect(remaining()).toEqual([]);
+    expect(state.recordLinearLaunch).toHaveBeenCalledOnce();
   });
 });
 

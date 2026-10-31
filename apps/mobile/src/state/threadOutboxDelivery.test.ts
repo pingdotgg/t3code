@@ -730,6 +730,16 @@ describe("thread outbox recovery rollback", () => {
         workspaceMode: "local",
         branch: null,
         worktreePath: null,
+        linearIssue: {
+          issueId: "issue-1",
+          identifier: "ATT-612",
+          teamId: "team-1",
+          branchName: "jan/att-612-fix",
+          mappedProjectId: null,
+          moveTo: null,
+          moveEnabled: false,
+          commentEnabled: true,
+        },
       },
     };
     await harness.manager.enqueue(message);
@@ -744,6 +754,7 @@ describe("thread outbox recovery rollback", () => {
       text: message.text,
       attachments: message.attachments,
       modelSelection: message.modelSelection,
+      linearIssue: message.creation!.linearIssue,
       project: {
         environmentId: message.environmentId,
         projectId: message.creation!.projectId,

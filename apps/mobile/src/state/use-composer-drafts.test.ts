@@ -1746,6 +1746,16 @@ describe("mobile composer drafts", () => {
   });
 
   it("hydrates selector state even when the message content is empty", () => {
+    // Drafts saved before Linear issues carried a team have no teamId.
+    const linearIssue = {
+      issueId: "issue-1",
+      identifier: "ATT-612",
+      branchName: "jan/att-612-fix",
+      mappedProjectId: null,
+      moveTo: { id: "state-started", name: "In Progress" },
+      moveEnabled: true,
+      commentEnabled: false,
+    };
     const hydrated = Object.entries(
       decodePersistedComposerState({
         schemaVersion: 1,
@@ -1753,6 +1763,7 @@ describe("mobile composer drafts", () => {
           "new-task:environment-1:project-1": {
             text: "",
             attachments: [],
+            linearIssue,
             modelSelection: {
               instanceId: "codex",
               model: "gpt-5.4",
@@ -1776,6 +1787,7 @@ describe("mobile composer drafts", () => {
     expect(draft).toEqual({
       text: "",
       attachments: [],
+      linearIssue,
       modelSelection: {
         instanceId: "codex",
         model: "gpt-5.4",
