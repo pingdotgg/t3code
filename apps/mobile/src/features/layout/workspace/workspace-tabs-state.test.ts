@@ -248,6 +248,8 @@ vi.mock("../../pull-requests/PullRequestFilterMenuContext", () => ({
 }));
 vi.mock("../../pull-requests/PullRequestsScreen", () => ({ PullRequestsScreen: () => null }));
 vi.mock("./PullRequestToolbar.android", () => ({ PullRequestToolbar: () => null }));
+vi.mock("../../linear/LinearTabScreen", () => ({ LinearTabScreen: () => null }));
+vi.mock("../../linear/LinearToolbar.android", () => ({ LinearToolbar: () => null }));
 vi.mock("./AndroidWorkspaceNavigation", () => ({
   AndroidWorkspaceNavigation: () => null,
   FloatingWorkspaceTabs: () => null,
