@@ -20,6 +20,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -29,13 +30,53 @@ import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import * as TurnItemContentStoreTestkit from "./TurnItemContentStore.testkit.ts";
+import * as TurnItemContentStore from "./TurnItemContentStore.ts";
 
 const layerTestDatabase = SqlitePersistence.layerMemory;
+const layerTestContentStore = Layer.effect(
+  TurnItemContentStore.TurnItemContentStore,
+  Effect.gen(function* () {
+    const contents = yield* Ref.make(new Map<string, string>());
+    const store: TurnItemContentStore.TurnItemContentStore["Service"]["store"] = (item) => {
+      if (
+        item.type !== "command_execution" ||
+        item.output === undefined ||
+        Buffer.byteLength(item.output, "utf8") <= 64 * 1024
+      ) {
+        return Effect.succeed(item);
+      }
+      const output = item.output;
+      const attachmentId = `stored-${item.threadId}-${item.id}`;
+      const sizeBytes = Buffer.byteLength(output, "utf8");
+      return Ref.update(contents, (stored) => new Map(stored).set(attachmentId, output)).pipe(
+        Effect.as({
+          ...item,
+          output: "stored output preview",
+          contentRef: { attachmentId, sizeBytes },
+        }),
+      );
+    };
+    const read: TurnItemContentStore.TurnItemContentStore["Service"]["read"] = (item) => {
+      const contentRef = item.type === "command_execution" ? item.contentRef : undefined;
+      if (item.type !== "command_execution" || contentRef === undefined) {
+        return Effect.succeed(item);
+      }
+      return Ref.get(contents).pipe(
+        Effect.map((stored) => {
+          const output = stored.get(contentRef.attachmentId);
+          if (output === undefined) return item;
+          const { contentRef: _contentRef, ...command } = item;
+          return { ...command, output };
+        }),
+      );
+    };
+    return TurnItemContentStore.TurnItemContentStore.of({ store, read });
+  }),
+);
 const layerTestStores = Layer.mergeAll(
   EventStore.layer,
   ProjectionStore.layer,
-  TurnItemContentStoreTestkit.layerPassthrough,
+  layerTestContentStore,
 ).pipe(Layer.provide(layerTestDatabase));
 const layerTestEventSink = EventSink.layer.pipe(
   Layer.provide(Layer.mergeAll(layerTestStores, layerTestDatabase)),

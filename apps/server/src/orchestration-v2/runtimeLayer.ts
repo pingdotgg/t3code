@@ -129,7 +129,7 @@ const layerProviderSwitchServiceProvided = ProviderSwitchService.layer.pipe(
 );
 
 const layerCommandOutputHubProvided = CommandOutputHub.layer.pipe(
-  Layer.provide(Layer.merge(layerEventSink, ProjectionStore.layer)),
+  Layer.provide(Layer.mergeAll(layerEventSink, ProjectionStore.layer, TurnItemContentStore.layer)),
 );
 
 const layerProviderSessionManagerProvided = ProviderSessionManager.layer.pipe(
