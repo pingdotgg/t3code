@@ -30,7 +30,7 @@ function CommandDialogTrigger(props: CommandDialogPrimitive.Trigger.Props) {
 function CommandDialogBackdrop({ className, ...props }: CommandDialogPrimitive.Backdrop.Props) {
   return (
     <CommandDialogPrimitive.Backdrop
-      className={cn(DIALOG_BACKDROP_CLASS, className)}
+      className={cn(DIALOG_BACKDROP_CLASS, "z-[80]", className)}
       data-slot="command-dialog-backdrop"
       {...props}
     />
@@ -50,7 +50,8 @@ function CommandDialogViewport({
   return (
     <CommandDialogPrimitive.Viewport
       className={cn(
-        "pointer-events-none fixed inset-0 z-50 flex flex-col items-center px-4 pt-[max(--spacing(4),4vh,calc(var(--command-titlebar-height)+--spacing(2)))] pb-[max(--spacing(4),4vh)]",
+        // Keep palette actions above the toast stack (z-70).
+        "pointer-events-none fixed inset-0 z-[80] flex flex-col items-center px-4 pt-[max(--spacing(4),4vh,calc(var(--command-titlebar-height)+--spacing(2)))] pb-[max(--spacing(4),4vh)]",
         size === "content"
           ? "sm:pt-[max(--spacing(22),calc(var(--command-titlebar-height)+--spacing(2)))] sm:pb-22"
           : "sm:pt-[max(--spacing(24),calc(var(--command-titlebar-height)+--spacing(2)))] sm:pb-24",
