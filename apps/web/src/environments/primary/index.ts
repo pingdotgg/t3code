@@ -1,4 +1,5 @@
 export {
+  isPrimaryEnvironmentRequestError,
   peekPairingTokenFromUrl,
   PrimaryEnvironmentPairingCredentialRejectedError,
   PrimaryEnvironmentRequestError,

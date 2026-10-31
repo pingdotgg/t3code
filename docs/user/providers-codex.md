@@ -4,7 +4,7 @@ Use your ChatGPT plan or an existing Codex CLI login to code in T3 Code.
 
 ## Connect with ChatGPT
 
-Connect during onboarding or in **Settings → Providers**. For a remote machine,
+Connect in **Settings → Providers**. For a remote machine,
 select that environment first. T3 Code handles Codex installation; sign in on
 OpenAI and allow sharing of your ChatGPT plan.
 

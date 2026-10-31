@@ -1,3 +1,5 @@
+import { HistoryIcon } from "lucide-react";
+import { createElement } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { primaryServerLegacyThreadMigrationAtom } from "../state/server";
 import { toastManager } from "./ui/toast";
@@ -16,10 +18,16 @@ export function startLegacyThreadMigrationToast(): () => void {
         toastId = toastManager.add({
           type: "loading",
           title: "Restoring your threads…",
-          description: `Migrating ${migration.totalThreadCount.toLocaleString()} ${
+          description: `Moving ${migration.totalThreadCount.toLocaleString()} ${
             migration.totalThreadCount === 1 ? "thread" : "threads"
-          } from the previous version. You can keep working while this finishes.`,
+          } from the old store. You can keep working.`,
           timeout: 0,
+          data: {
+            leadingIcon: createElement(HistoryIcon, {
+              "aria-hidden": true,
+              className: "size-[15px] text-info-foreground",
+            }),
+          },
         });
         return;
       }
