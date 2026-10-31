@@ -2280,6 +2280,10 @@ describe("AcpRegistryAdapterV2", () => {
       assert.equal(terminal.status, "failed");
       assert.equal(terminal.failure?.class, "transport_error");
       assert.equal(terminal.runOrdinal, 2);
+      assert.isTrue(
+        seen.some((event) => isCheckTool(event, "failed")),
+        "the tool cut off by the exit must not stay running",
+      );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

@@ -2035,6 +2035,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 const context = yield* Ref.get(activeTurn);
                 if (context === null || !context.promptSettled || context.finalized) return;
                 yield* cancelPendingRuntimeRequests();
+                yield* terminalizeOpenForegroundTools(context, "failed");
                 yield* finalizeTurn(
                   context,
                   "failed",
