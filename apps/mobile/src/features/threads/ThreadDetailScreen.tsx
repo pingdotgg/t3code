@@ -1607,7 +1607,10 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                       ) : null}
                       {props.activePendingUserInput ? (
                         <PendingUserInputCard
+                          key={props.activePendingUserInput.requestId}
                           environmentId={props.environmentId}
+                          threadId={props.selectedThread.id}
+                          workspaceRoot={props.threadCwd}
                           canOperateThread={props.canOperateThread}
                           pendingUserInput={props.activePendingUserInput}
                           maxHeight={pendingUserInputMaxHeight}
