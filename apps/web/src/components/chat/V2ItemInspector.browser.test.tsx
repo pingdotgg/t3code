@@ -14,14 +14,12 @@ import { render } from "../../../test/render";
 import { V2ItemInspector } from "./V2ItemInspector";
 
 const asset = vi.hoisted(() => ({ url: "" }));
-vi.mock(import("~/assets/assetUrls"), async (original) => ({
-  ...(await original()),
-  useAssetUrlState: () => ({
+vi.mock(import("~/assets/longLivedAssetUrls"), () => ({
+  useLongLivedAssetUrl: () => ({
     _tag: "Success",
     url: asset.url,
     expiresAt: Date.now() + 60 * 60_000,
   }),
-  useAssetUrlRefresh: () => vi.fn(),
 }));
 
 function setup() {
@@ -99,8 +97,6 @@ it("renders HTML tool details in the existing sandbox and fits the page", async 
     <V2ItemInspector
       projectedItem={projectedHtml(source, updatedAt)}
       environmentId={EnvironmentId.make("environment-html")}
-      onOpenThread={() => {}}
-      onOpenTurnDiff={() => {}}
     />
   );
   serve(html);
@@ -133,8 +129,6 @@ it.each([
     <V2ItemInspector
       projectedItem={projectedHtml(html, "2026-10-20T00:00:00Z", status, isError)}
       environmentId={EnvironmentId.make("environment-html")}
-      onOpenThread={() => {}}
-      onOpenTurnDiff={() => {}}
     />,
   );
   expect(screen.container.textContent).toContain(html);
