@@ -43,7 +43,7 @@ export function SecretsSettingsPanel() {
       environment.serverConfig !== null &&
       environment.serverConfig.secretProviderSettings !== true ? (
         <SettingsSection {...searchableSetting("secret-providers")}>
-          <p className="px-4 py-3 text-sm text-muted-foreground">
+          <p className="px-4 py-3 text-body text-muted-foreground">
             Update T3 Code on {environment.label} to manage its secret providers.
           </p>
         </SettingsSection>
@@ -55,7 +55,7 @@ export function SecretsSettingsPanel() {
         />
       ) : (
         <SettingsSection {...searchableSetting("secret-providers")}>
-          <p className="px-4 py-3 text-sm text-muted-foreground">
+          <p className="px-4 py-3 text-body text-muted-foreground">
             Connect an environment to manage the secret providers its provider variables read from.
           </p>
         </SettingsSection>
@@ -101,7 +101,7 @@ function EnvironmentSecretProviders({
         {...searchableSetting("secret-providers")}
         headerAction={
           !readOnly ? (
-            <Button size="xs" variant="outline" onClick={() => setDialog({ mode: "add" })}>
+            <Button size="xs" variant="secondary" onClick={() => setDialog({ mode: "add" })}>
               <PlusIcon className="size-3" aria-hidden />
               Add provider
             </Button>
@@ -109,7 +109,7 @@ function EnvironmentSecretProviders({
         }
       >
         {projectScoped ? (
-          <p className="px-4 pt-3 text-xs text-muted-foreground">
+          <p className="px-4 pt-3 text-meta text-muted-foreground">
             Environment-wide setting. Select an environment to change it.
           </p>
         ) : null}
@@ -138,8 +138,8 @@ function EnvironmentSecretProviders({
                 }
                 description={
                   classified.kind === "one_password" && kind ? (
-                    <span className="flex min-w-0 items-center gap-1">
-                      <span className="shrink-0">{kind.name} ·</span>
+                    <span className="grid min-w-0 justify-items-start gap-1">
+                      <span className="shrink-0">{kind.name}</span>
                       <RedactedSensitiveText
                         value={classified.account}
                         ariaLabel="Toggle account visibility"
@@ -215,7 +215,7 @@ function RemoveSecretProviderButton({
             <SecretProviderUses environmentId={environmentId} id={id} label={label} />
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="secondary" />}>Cancel</AlertDialogClose>
             <Button
               variant="destructive"
               onClick={() => {

@@ -70,7 +70,7 @@ export function HtmlRenderDialog(props: {
               </div>
             </div>
           </div>
-          <div className="mt-2 flex min-w-0 items-center justify-center gap-3 text-xs text-white/80">
+          <div className="mt-2 flex min-w-0 items-center justify-center gap-3 text-caption text-white/80">
             <span className="truncate">{title}</span>
             <div className="flex shrink-0 items-center gap-1">
               <Button

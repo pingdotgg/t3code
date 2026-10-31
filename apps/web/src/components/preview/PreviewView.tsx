@@ -619,7 +619,7 @@ export function PreviewView({
                     disabled: pathCopied,
                     onClick: copyPath,
                   },
-                  secondaryActionVariant: "outline",
+                  secondaryActionVariant: "secondary",
                 },
               }),
             );
@@ -635,7 +635,7 @@ export function PreviewView({
                   children: "Copy path",
                   onClick: copyPath,
                 },
-                secondaryActionVariant: "outline",
+                secondaryActionVariant: "secondary",
               },
             }),
           );
@@ -702,7 +702,7 @@ export function PreviewView({
                 secondaryActionProps: {
                   ...revealAction,
                 },
-                secondaryActionVariant: "outline",
+                secondaryActionVariant: "secondary",
               },
             }),
           );
@@ -778,7 +778,7 @@ export function PreviewView({
               secondaryActionProps: {
                 ...revealAction,
               },
-              secondaryActionVariant: "outline",
+              secondaryActionVariant: "secondary",
             },
           }),
         );
@@ -970,7 +970,7 @@ export function PreviewView({
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col bg-background"
+      className="flex min-h-0 flex-1 flex-col bg-background surface-grain"
       data-thread-key={scopedThreadKey(threadRef)}
     >
       {pickActive && runtimeTabId && annotationVoice ? (
@@ -1112,7 +1112,7 @@ export function PreviewView({
             />
           ) : (
             <div className="flex h-full items-center justify-center p-8 text-center">
-              <p className="max-w-sm text-sm text-muted-foreground">
+              <p className="max-w-sm text-body text-muted-foreground">
                 This tab is open in the T3 Code desktop app.
               </p>
             </div>
