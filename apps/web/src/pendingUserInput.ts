@@ -1,8 +1,4 @@
-import type {
-  ComposerContextRecord,
-  ThreadContextRecord,
-  UserInputQuestion,
-} from "@t3tools/contracts";
+import type { ThreadContextRecord, UserInputQuestion } from "@t3tools/contracts";
 import {
   projectComposerContextForProvider,
   replaceComposerContextReferences,
@@ -16,14 +12,37 @@ import {
   type PendingUserInputDraftAnswer,
 } from "@t3tools/client-runtime/state/pending-user-input";
 
+import type { ComposerThreadDraftState } from "./composerDraftStore";
+import { buildMessageContext } from "./lib/composerContextRecords";
 import { collectInlineContextIds } from "./lib/composerContextReferences";
 
+type PendingAnswerDraft = Pick<
+  ComposerThreadDraftState,
+  | "images"
+  | "files"
+  | "terminalContexts"
+  | "reviewComments"
+  | "previewAnnotations"
+  | "threadContexts"
+  | "environmentContexts"
+>;
+
 // Answers bypass the server's message-context expansion, so chips are expanded here.
+// `uploaded` holds the server attachments for the draft's images then files, in order.
 export function projectPendingUserInputAnswer(
   answer: unknown,
-  records: ReadonlyArray<ComposerContextRecord>,
+  draft: PendingAnswerDraft | null,
+  uploaded: ReadonlyArray<{ readonly id: string }>,
 ) {
-  if (typeof answer !== "string" || records.length === 0) return answer;
+  if (typeof answer !== "string" || !draft) return answer;
+  const records =
+    buildMessageContext({
+      ...draft,
+      attachments: [...draft.images, ...draft.files].flatMap((attachment, index) => {
+        const upload = uploaded[index];
+        return upload ? [{ attachment, attachmentId: upload.id }] : [];
+      }),
+    })?.records ?? [];
   const threadsById = new Map(
     records.flatMap((record) =>
       record.kind === "thread" && "threadId" in record ? [[record.contextId, record] as const] : [],

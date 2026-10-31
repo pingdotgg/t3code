@@ -2,7 +2,6 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "./lib/composerContextReferences";
 import {
-  reviewCommentContextRecord,
   reviewCommentContextReference,
   threadContextReference,
 } from "./lib/composerContextRecords";
@@ -23,10 +22,19 @@ describe("projectPendingUserInputAnswer", () => {
     },
     "Reference work",
   );
+  const draft = {
+    images: [],
+    files: [],
+    terminalContexts: [],
+    reviewComments: [],
+    previewAnnotations: [],
+    threadContexts: [record],
+    environmentContexts: [],
+  };
 
   it("sends thread chips as readable links with the actual thread ID", () => {
     const answer = `Compare ${formatInlineContextReference(threadContextReference(record))}`;
-    expect(projectPendingUserInputAnswer(answer, [record])).toBe(
+    expect(projectPendingUserInputAnswer(answer, draft, [])).toBe(
       "Compare [Reference work](t3-thread://v2/env-answer/reference-thread)",
     );
   });
@@ -45,10 +53,11 @@ describe("projectPendingUserInputAnswer", () => {
       diff: "+## Old heading",
     };
     const answer = `Yes, and ${formatInlineContextReference(reviewCommentContextReference(comment))}`;
-    const projected = projectPendingUserInputAnswer(answer, [
-      record,
-      reviewCommentContextRecord(comment),
-    ]);
+    const projected = projectPendingUserInputAnswer(
+      answer,
+      { ...draft, reviewComments: [comment] },
+      [],
+    );
     expect(projected).not.toContain("t3-context://");
     expect(projected).toContain("Rename this heading");
     expect(projected).toContain("+## Old heading");
@@ -57,8 +66,8 @@ describe("projectPendingUserInputAnswer", () => {
   // regression: #18789 answers to pending questions lost exact text and option values
   it("preserves option values and exact answer text", () => {
     const options = [" first\t", "second"];
-    expect(projectPendingUserInputAnswer(options, [record])).toBe(options);
-    expect(projectPendingUserInputAnswer("  Edited answer\n", [record])).toBe("  Edited answer\n");
+    expect(projectPendingUserInputAnswer(options, draft, [])).toBe(options);
+    expect(projectPendingUserInputAnswer("  Edited answer\n", draft, [])).toBe("  Edited answer\n");
   });
 });
 

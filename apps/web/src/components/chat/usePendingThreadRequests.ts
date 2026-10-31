@@ -25,7 +25,6 @@ import { useShallow } from "zustand/react/shallow";
 import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { getUploadedAttachments, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
-import { buildMessageContext } from "../../lib/composerContextRecords";
 import {
   buildPendingUserInputAnswers,
   setPendingUserInputCustomAnswer,
@@ -325,22 +324,10 @@ export function usePendingThreadRequests(input: {
         );
         return;
       }
-      const context = draft
-        ? buildMessageContext({
-            terminalContexts: draft.terminalContexts,
-            reviewComments: draft.reviewComments,
-            previewAnnotations: draft.previewAnnotations,
-            threadContexts: draft.threadContexts,
-            environmentContexts: draft.environmentContexts,
-            attachments: attachments.flatMap((attachment, index) => {
-              const upload = uploaded[index];
-              return upload ? [{ attachment, attachmentId: upload.id }] : [];
-            }),
-          })
-        : undefined;
       providerAnswers[question.id] = projectPendingUserInputAnswer(
         answers[question.id],
-        context?.records ?? [],
+        draft,
+        uploaded,
       );
       if (uploaded.length > 0) {
         attachmentsByQuestionId.set(question.id, uploaded as UserInputAttachments[string]);
