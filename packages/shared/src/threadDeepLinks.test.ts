@@ -85,12 +85,13 @@ it.each([
   expect(normalizeThreadClipboard(text, null)).toEqual({ text, fragment: null });
 });
 it.each([
-  "[".repeat(80000),
-  '[{"a":1},'.repeat(125000),
   "[".repeat(80000) + " https://app.t3.codes/env/thread",
+  '[{"a":1},'.repeat(125000) + " https://app.t3.codes/env/thread",
 ])("handles large bracket-heavy pastes", (text) => {
   const result = normalizeThreadClipboard(text, null);
   expect(result.text.startsWith(text.slice(0, 80000))).toBe(true);
+  expect(result.fragment?.records).toMatchObject([{ environmentId: "env", threadId: "thread" }]);
+  expect(collectComposerContextReferences(result.text)).toHaveLength(1);
 });
 it.each(["/assets/index.js", "/.well-known/assetlinks.json", "/guest/x", "/new/x"])(
   "rejects reserved web paths: %s",
