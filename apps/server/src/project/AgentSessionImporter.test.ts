@@ -8,10 +8,8 @@ import {
   MessageId,
   RunId,
   ThreadId,
-  TurnItemId,
   type ApplicationStoredEvent,
   type OrchestrationV2AppThread,
-  type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
@@ -529,101 +527,6 @@ it.effect(
         ["assistant_message", null, "Fixed it"],
       ]);
     }).pipe(Effect.scoped, Effect.provide(persistence)),
-);
-
-it.effect("marks history that an earlier build copied without its origin", () =>
-  Effect.gen(function* () {
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const sink = yield* EventSink.EventSinkV2;
-    const threadId = yield* seedOwner(candidate(CODEX_MODEL_SELECTION, "native-history-unmarked"));
-    // Earlier builds wrote these deterministic ids and no origin.
-    const suffix = "000000";
-    const messageId = MessageId.make(`${threadId}:${suffix}`);
-    const message = {
-      createdBy: "user",
-      creationSource: "server",
-      id: messageId,
-      threadId,
-      runId: null,
-      nodeId: null,
-      role: "user",
-      text: "Fix the build",
-      attachments: [],
-      streaming: false,
-      createdAt: now,
-      updatedAt: now,
-    } satisfies OrchestrationV2ConversationMessage;
-    yield* sink.write({
-      events: [
-        {
-          id: EventId.make(`agent-session-import:v2:message:${threadId}:${suffix}`),
-          type: "message.updated",
-          threadId,
-          occurredAt: now,
-          payload: message,
-        },
-        {
-          id: EventId.make(`agent-session-import:v2:turn-item:${threadId}:${suffix}`),
-          type: "turn-item.updated",
-          threadId,
-          occurredAt: now,
-          payload: {
-            id: TurnItemId.make(`agent-session-import:v2:turn-item:${threadId}:${suffix}`),
-            threadId,
-            runId: null,
-            nodeId: null,
-            providerThreadId: null,
-            providerTurnId: null,
-            nativeItemRef: null,
-            parentItemId: null,
-            ordinal: 1,
-            status: "completed",
-            title: null,
-            startedAt: now,
-            completedAt: now,
-            updatedAt: now,
-            createdBy: "user",
-            creationSource: "server",
-            type: "user_message",
-            messageId,
-            inputIntent: "turn_start",
-            text: "Fix the build",
-            attachments: [],
-          },
-        },
-      ],
-    });
-    let opened = 0;
-    // Reading the session again would replay the same message.
-    const adapter = {
-      openSession: () =>
-        Effect.sync(() => {
-          opened += 1;
-          return {
-            readThreadSnapshot: ({ providerThread }) =>
-              Effect.succeed({
-                providerThread,
-                providerTurns: [],
-                runtimeRequests: [],
-                messages: [{ ...message, creationSource: "provider" }],
-              }),
-          } as Pick<ProviderAdapter.ProviderAdapterV2SessionRuntime, "readThreadSnapshot">;
-        }),
-    } as unknown as ProviderAdapter.ProviderAdapterV2["Service"];
-    const importer = yield* makeImporter([], Effect.void, () => Effect.succeed(adapter));
-
-    expect(
-      yield* importer.importNativeHistory({ threadId, workspaceRoot: "/workspace/project" }),
-    ).toBe(0);
-    expect(opened).toBe(0);
-    expect((yield* projections.getThreadRecords(threadId, [])).thread.historyOrigin).toBe(
-      "v1_import",
-    );
-    const page = yield* projections.getTimelinePage(threadId, { view: "messages", limit: 10 });
-    expect(page.items.map(({ item }) => item.id)).toEqual([
-      `agent-session-import:v2:turn-item:${threadId}:${suffix}`,
-    ]);
-  }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
 /**

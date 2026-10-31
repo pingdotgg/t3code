@@ -433,7 +433,7 @@ const make = Effect.gen(function* () {
     readonly workspaceRoot: string;
   }) {
     const pendingThread = Effect.map(
-      orchestrator.getThreadRecords(input.threadId, ["providerThreads", "runs", "turnItems"]),
+      orchestrator.getThreadRecords(input.threadId, ["providerThreads", "runs"]),
       (records) =>
         isNativeHistoryPending({
           historyOrigin: records.thread.historyOrigin,
@@ -442,7 +442,6 @@ const make = Effect.gen(function* () {
           ? records
           : null,
     );
-    const importedItemPrefix = `${IMPORT_EVENT_PREFIX}:turn-item:${input.threadId}:`;
     // Thread commands write whole thread rows, so hold their lock from the
     // re-read through the write to keep both this marker and their changes.
     const commit = (messages: ReadonlyArray<AgentSessionScanner.AgentSessionThreadMessage>) =>
@@ -451,16 +450,11 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const current = yield* pendingThread;
           if (current === null) return 0;
-          // Earlier builds copied the history without the marker. Its ids are
-          // deterministic, so copying it again would collide; add the marker alone.
-          const copied = current.turnItems.some((item) => item.id.startsWith(importedItemPrefix));
           yield* eventSink.write({
             events: [
-              ...(copied
-                ? []
-                : messages.flatMap((message, index) =>
-                    messageEvents({ threadId: input.threadId, index, message }),
-                  )),
+              ...messages.flatMap((message, index) =>
+                messageEvents({ threadId: input.threadId, index, message }),
+              ),
               {
                 id: EventId.make(`${IMPORT_EVENT_PREFIX}:thread:${input.threadId}:native-history`),
                 type: "thread.metadata-updated",
@@ -471,13 +465,12 @@ const make = Effect.gen(function* () {
               },
             ],
           });
-          return copied ? 0 : messages.length;
+          return messages.length;
         }),
       );
     const records = yield* pendingThread;
     if (records === null) return 0;
-    const { thread, providerThreads, turnItems } = records;
-    if (turnItems.some((item) => item.id.startsWith(importedItemPrefix))) return yield* commit([]);
+    const { thread, providerThreads } = records;
     const providerThread = providerThreads.find(
       (candidate) => candidate.appThreadId === input.threadId && candidate.nativeThreadRef !== null,
     );
