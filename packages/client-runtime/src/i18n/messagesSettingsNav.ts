@@ -39,6 +39,8 @@ export const enMessages = {
   "settings.nav.breadcrumb.a11y": "Settings breadcrumb",
   "settings.nav.breadcrumb.openSourceLicenses": "Open source licenses",
   "settings.commandPalette.sectionDescription": "Settings · {section}",
+  "settings.layout.resetToDefault": "Reset {label} to default",
+  "settings.layout.resetToDefaultShort": "Reset to default",
 } as const;
 
 export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = {
@@ -77,4 +79,6 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.nav.breadcrumb.a11y": "设置面包屑导航",
   "settings.nav.breadcrumb.openSourceLicenses": "开源许可",
   "settings.commandPalette.sectionDescription": "设置 · {section}",
+  "settings.layout.resetToDefault": "重置{label}为默认",
+  "settings.layout.resetToDefaultShort": "恢复默认",
 };
