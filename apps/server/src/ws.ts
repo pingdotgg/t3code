@@ -160,6 +160,7 @@ import {
 import {
   makeLiveBodyDeduper,
   projectDomainEventForWire,
+  projectTurnItemForDetail,
   projectThreadProjectionForWire,
 } from "./orchestration-v2/WireProjection.ts";
 import { dedupeSnapshotBodies } from "@t3tools/shared/orchestrationV2DedupedBodies";
@@ -1924,6 +1925,9 @@ export const layerWsRpc = (
           readWorkflowScript({ scriptPath: input.scriptPath }),
         [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input) =>
           threadManagement.getTurnItem(input).pipe(
+            Effect.map(({ item }) => ({
+              item: item === null ? null : projectTurnItemForDetail(item),
+            })),
             Effect.mapError(
               (cause) =>
                 new OrchestrationV2GetThreadProjectionError({

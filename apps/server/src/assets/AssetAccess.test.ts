@@ -30,6 +30,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { assetFileResponse } from "../http.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, readMcpAppHtml, resolveAsset } from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
@@ -99,6 +100,24 @@ const oversizedScreenshotItem = {
   },
 };
 
+const crossThreadScreenshotItem = {
+  ...screenshotItem,
+  id: TurnItemId.make("tool-screenshot-cross-thread"),
+  output: {
+    content: [
+      {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/png",
+          attachmentId: "other-thread-11111111-1111-1111-1111-111111111111",
+          sizeBytes: screenshotPng.byteLength,
+        },
+      },
+    ],
+  },
+};
+
 const layerTest = Layer.mergeAll(
   NodeHttpPlatform.layer,
   Layer.mock(Orchestrator.OrchestratorV2)({
@@ -108,7 +127,9 @@ const layerTest = Layer.mergeAll(
           ? screenshotItem
           : itemId === oversizedScreenshotItem.id
             ? oversizedScreenshotItem
-            : null,
+            : itemId === crossThreadScreenshotItem.id
+              ? crossThreadScreenshotItem
+              : null,
       ),
   }),
   layerConfig,
@@ -206,6 +227,30 @@ describe("AssetAccess", () => {
         resource: { ...resource, itemId: oversizedScreenshotItem.id },
       }).pipe(Effect.flip);
       expect(oversized._tag).toBe("AssetWorkspaceAssetNotFoundError");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("does not serve a tool image attachment owned by another thread", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      const attachmentId = "other-thread-11111111-1111-1111-1111-111111111111";
+      const attachmentPath = resolveAttachmentRelativePath({
+        attachmentsDir: config.attachmentsDir,
+        relativePath: `${attachmentId}.bin`,
+      });
+      expect(attachmentPath).not.toBeNull();
+      yield* fs.writeFile(attachmentPath!, screenshotPng);
+
+      const error = yield* issueAssetUrl({
+        resource: {
+          _tag: "tool-output-image",
+          threadId: screenshotItem.threadId,
+          itemId: crossThreadScreenshotItem.id,
+          index: 0,
+        },
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("AssetWorkspaceAssetNotFoundError");
     }).pipe(Effect.provide(layerTest)),
   );
 

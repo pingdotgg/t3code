@@ -42,6 +42,7 @@ import {
   type TurnItemId,
 } from "@t3tools/contracts";
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
+import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as Clock from "effect/Clock";
@@ -63,9 +64,11 @@ import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
-import { projectTurnItemForDetail } from "./WireProjection.ts";
+import { needsTurnItemContentRead } from "./TurnItemContentStore.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
+
+const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -379,6 +382,7 @@ export interface ThreadManagementServiceShape {
   readonly getTurnItem: (input: {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
+    readonly includeImageData?: boolean;
   }) => Effect.Effect<OrchestrationV2GetTurnItemResult, Orchestrator.OrchestratorV2Error>;
   readonly getThreadRecords: Orchestrator.OrchestratorV2["Service"]["getThreadRecords"];
   readonly getThreadProjection: (
@@ -677,7 +681,6 @@ const make = Effect.gen(function* () {
         threadId: projection.thread.id,
         title: projection.thread.title,
         updatedAt: projection.updatedAt,
-        items: projection.visibleTurnItems,
       };
       let sizeBytes = Buffer.byteLength(
         threadTranscriptHeader(yield* environment.getEnvironmentId, transcript),
@@ -686,13 +689,53 @@ const make = Effect.gen(function* () {
       if (sizeBytes > PROVIDER_SEND_TURN_MAX_FILE_BYTES) {
         return yield* new ThreadTranscriptTooLargeError({ threadId });
       }
-      for (const row of transcript.items) {
-        sizeBytes += projectedRowEncodedBytes(row) + 1;
-        if (sizeBytes > PROVIDER_SEND_TURN_MAX_FILE_BYTES) {
+
+      const items: Array<(typeof projection.visibleTurnItems)[number]> = [];
+      for (const row of projection.visibleTurnItems) {
+        const compactRowBytes = projectedRowEncodedBytes(row) + 1;
+        if (sizeBytes + compactRowBytes > PROVIDER_SEND_TURN_MAX_FILE_BYTES) {
           return yield* new ThreadTranscriptTooLargeError({ threadId });
         }
+        let rowToExport = row;
+        if (needsTurnItemContentRead(row.item)) {
+          const compactItemBytes = Buffer.byteLength(encodeUnknownJson(row.item), "utf8");
+          const contentRef =
+            row.item.type === "command_execution" || row.item.type === "dynamic_tool"
+              ? row.item.contentRef
+              : undefined;
+          const fullItemBytes =
+            contentRef?.transcriptItemBytes ??
+            (contentRef === undefined
+              ? compactItemBytes +
+                (row.item.type === "dynamic_tool"
+                  ? toolOutputImages(row.item.output).reduce(
+                      (total, image) =>
+                        total +
+                        (image.sizeBytes === undefined ? 0 : Math.ceil(image.sizeBytes / 3) * 4),
+                      0,
+                    )
+                  : 0)
+              : contentRef.sizeBytes);
+          const estimatedRowBytes =
+            projectedRowEncodedBytes(row) - compactItemBytes + fullItemBytes + 1;
+          if (sizeBytes + estimatedRowBytes > PROVIDER_SEND_TURN_MAX_FILE_BYTES) {
+            return yield* new ThreadTranscriptTooLargeError({ threadId });
+          }
+          const item = yield* orchestrator.getTurnItem({
+            threadId: row.sourceThreadId,
+            itemId: row.sourceItemId,
+            includeImageData: true,
+          });
+          if (item !== null) rowToExport = { ...row, item };
+        }
+        const rowBytes = projectedRowEncodedBytes(rowToExport) + 1;
+        if (sizeBytes + rowBytes > PROVIDER_SEND_TURN_MAX_FILE_BYTES) {
+          return yield* new ThreadTranscriptTooLargeError({ threadId });
+        }
+        sizeBytes += rowBytes;
+        items.push(rowToExport);
       }
-      return transcript;
+      return { ...transcript, items };
     },
   );
   const getThreadSnapshotWindow: ThreadManagementServiceShape["getThreadSnapshotWindow"] = (
@@ -1503,7 +1546,7 @@ const make = Effect.gen(function* () {
     getTurnItem: Effect.fn("ThreadManagementService.getTurnItem")(function (input) {
       return ensureProjectionTranscript(input.threadId).pipe(
         Effect.andThen(orchestrator.getTurnItem(input)),
-        Effect.map((item) => ({ item: item === null ? null : projectTurnItemForDetail(item) })),
+        Effect.map((item) => ({ item })),
       );
     }),
     getThreadRecords: Effect.fn("ThreadManagementService.getThreadRecords")(

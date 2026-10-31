@@ -23,6 +23,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
+import * as TurnItemContentStoreTestkit from "./TurnItemContentStore.testkit.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { makeRunOutcomeRecorder } from "./RunMetrics.ts";
 
@@ -223,9 +224,11 @@ describe("EventSink run outcomes", () => {
       const layer = EventSink.layer.pipe(
         Layer.provideMerge(pausedLookup),
         Layer.provideMerge(
-          Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
-            Layer.provideMerge(SqlitePersistence.layerMemory),
-          ),
+          Layer.mergeAll(
+            EventStore.layer,
+            ProjectionStore.layer,
+            TurnItemContentStoreTestkit.layerPassthrough,
+          ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
         ),
       );
 

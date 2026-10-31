@@ -42,6 +42,7 @@ import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandOutputHub from "../orchestration-v2/CommandOutputHub.ts";
+import * as TurnItemContentStoreTestkit from "../orchestration-v2/TurnItemContentStore.testkit.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
@@ -67,6 +68,7 @@ const layerDatabase = SqlitePersistence.layerMemory;
 const layerOrchestration = Layer.mergeAll(
   layerDatabase,
   ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+  TurnItemContentStoreTestkit.layerPassthrough,
   EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
   ProviderReplayHarness.layerWithRegistry(
     { name: "guest-share-service" },

@@ -48,6 +48,7 @@ import {
 import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
+import * as TurnItemContentStoreTestkit from "../TurnItemContentStore.testkit.ts";
 import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as EffectWorker from "../EffectWorker.ts";
@@ -3001,6 +3002,7 @@ describe("orchestration v2 provider switching", () => {
           layerDatabase,
           layerEventStoreProvided,
           layerProjectionStoreProvided,
+          TurnItemContentStoreTestkit.layerPassthrough,
         );
         const layerEventSinkProvided = EventSink.layer.pipe(Layer.provide(layerStoresProvided));
         const layerImporterProvided = LegacyV1ThreadImporter.layer.pipe(

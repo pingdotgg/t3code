@@ -21,6 +21,7 @@ import * as EventStore from "../EventStore.ts";
 import * as LegacyV1ThreadImporter from "./LegacyV1ThreadImporter.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
+import * as TurnItemContentStoreTestkit from "../TurnItemContentStore.testkit.ts";
 
 const layerDatabase = SqlitePersistence.layerMemory;
 const layerEventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(layerDatabase));
@@ -29,6 +30,7 @@ const layerStoresProvided = Layer.mergeAll(
   layerDatabase,
   layerEventStoreProvided,
   layerProjectionStoreProvided,
+  TurnItemContentStoreTestkit.layerPassthrough,
 );
 const layerEventSinkProvided = EventSink.layer.pipe(Layer.provide(layerStoresProvided));
 const layerImporterProvided = LegacyV1ThreadImporter.layer.pipe(

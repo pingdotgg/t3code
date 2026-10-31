@@ -94,6 +94,7 @@ import {
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import { runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { needsTurnItemContentRead } from "../orchestration-v2/TurnItemContentStore.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
@@ -2873,6 +2874,23 @@ const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(threadManagementFailure));
       const page = timeline.items;
+      const hydratedPage = yield* Effect.forEach(
+        page,
+        (row) =>
+          !needsTurnItemContentRead(row.item)
+            ? Effect.succeed(row)
+            : threadManagement
+                .getTurnItem({
+                  threadId: row.sourceThreadId,
+                  itemId: row.sourceItemId,
+                  includeImageData: true,
+                })
+                .pipe(
+                  Effect.mapError(threadManagementFailure),
+                  Effect.map(({ item }) => (item === null ? row : { ...row, item })),
+                ),
+        { concurrency: 1 },
+      );
       const messageIdsByThread = new Map<ThreadId, Array<MessageId>>();
       for (const row of page) {
         if (row.item.type !== "user_message" && row.item.type !== "assistant_message") continue;
@@ -2956,7 +2974,7 @@ const make = Effect.gen(function* () {
           .toSorted((left, right) => right.ordinal - left.ordinal)
           .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
           .map(threadRun),
-        items: page.map((row) =>
+        items: hydratedPage.map((row) =>
           timelineItem({
             row,
             maxChars,

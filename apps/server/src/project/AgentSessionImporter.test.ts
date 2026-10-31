@@ -25,6 +25,7 @@ import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as TurnItemContentStoreTestkit from "../orchestration-v2/TurnItemContentStore.testkit.ts";
 import {
   CLAUDE_MODEL_SELECTION,
   CODEX_MODEL_SELECTION,
@@ -43,7 +44,9 @@ const stores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
 );
 const persistence = Layer.mergeAll(
   stores,
-  EventSink.layer.pipe(Layer.provide(stores)),
+  EventSink.layer.pipe(
+    Layer.provide(Layer.merge(stores, TurnItemContentStoreTestkit.layerPassthrough)),
+  ),
   ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
   IdAllocator.layer,
 );
@@ -196,6 +199,7 @@ const makeImporter = Effect.fn(function* (
               ),
             ),
         }),
+        TurnItemContentStoreTestkit.layerPassthrough,
       ),
     ),
   );
