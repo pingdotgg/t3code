@@ -365,6 +365,43 @@ it.effect("distinguishes malformed remote failures", () =>
   ),
 );
 
+it.effect("reports the capture deadline and pending stage instead of the request timeout", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const connected = yield* Deferred.make<void>();
+      const requests = requestsFrom(
+        (yield* broker.connect(makeHost())).pipe(
+          Stream.tap((event) =>
+            event.type === "connected" ? Deferred.succeed(connected, undefined) : Effect.void,
+          ),
+        ),
+      );
+      yield* Stream.runForEach(requests, (request) =>
+        broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: false,
+          error: {
+            _tag: "PreviewAutomationTimeoutError",
+            message: "Snapshot capture did not complete.",
+            detail: { timeoutMs: 10_000, pendingStages: ["screenshot"] },
+          },
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+      const error = yield* broker
+        .invoke<void>({ scope, operation: "snapshot", input: {} })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({ timeoutMs: 10_000, pendingStages: ["screenshot"] });
+      expect(error.message).toBe(
+        "Preview automation snapshot timed out after 10000ms. Waiting for: screenshot.",
+      );
+    }),
+  ),
+);
+
 it.effect("does not create host state from focus updates without a live stream", () =>
   Effect.gen(function* () {
     const broker = yield* makeBroker;
