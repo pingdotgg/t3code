@@ -151,7 +151,7 @@ const formatSetup = (setup: Setup) => {
   ].join("\n");
 };
 
-const formatNextSteps = (routes: Routes) =>
+const formatNextSteps = (routes: Routes, serviceInstalled: boolean) =>
   [
     ...(routes.connect
       ? ["On your other device, sign in to T3 Connect with the same account."]
@@ -159,7 +159,11 @@ const formatNextSteps = (routes: Routes) =>
     ...(routes.lan ? ["Run `t3 pair`. Use the code on your other device."] : []),
     ...(routes.connect || routes.lan
       ? []
-      : ["Remote access is off. Run `t3` to use T3 Code here."]),
+      : [
+          serviceInstalled
+            ? "Remote access is off. T3 Code still runs here in the background."
+            : "Remote access is off. Run `t3` to use T3 Code here.",
+        ]),
   ].join("\n");
 
 const interactiveTerminal = () => Boolean(process.stdin.isTTY && process.stdout.isTTY);
@@ -216,7 +220,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       yield* disconnectCloud({ clearAuthorization: false });
     }
     if (current.lan) yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: "false" });
-    return yield* Console.log(formatNextSteps(routes));
+    return yield* Console.log(formatNextSteps(routes, false));
   }
   const { installedVersion } = before.service;
   const newer =
@@ -231,10 +235,14 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     before.service.installed &&
     (before.service.current || newer) &&
     (needsRestart(current, routes) || stopped);
-  if (restart && interactive && !stopped) {
+  // An older or broken service is reinstalled, which restarts it too.
+  const update = before.service.installed && !before.service.current && !newer && !stopped;
+  if ((restart || update) && interactive && !stopped) {
     const confirmed = yield* Prompt.run(
       Prompt.Confirm({
-        message: "Apply changes and restart? Running agent turns will stop.",
+        message: update
+          ? "Update and restart T3 Code? Running agent turns will stop."
+          : "Apply changes and restart? Running agent turns will stop.",
         initial: true,
       }),
     ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) }));
@@ -257,7 +265,10 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       ? (yield* disconnectCloud({ clearAuthorization: false })).status === "failed"
       : false;
   const previousLan = (yield* CliService.readServiceEnv(baseDir)).entries.T3CODE_LAN;
-  yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: String(routes.lan) });
+  // Only the background service reads service.env.
+  if (before.service.supported) {
+    yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: String(routes.lan) });
+  }
   // When the service step fails, an installed service still runs with the old
   // value, so the file goes back to match it.
   // A new T3 Connect link is undone too, so a rerun sees it as a change and restarts.
@@ -288,6 +299,9 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   } else {
     if (newer) {
       yield* Console.log(`Keeping installed service version t3@${installedVersion}.`);
+    }
+    if (update && !interactive) {
+      yield* Console.log("Updating T3 Code. Running agent turns will stop.");
     }
     const result = newer
       ? ({ changed: false } as const)
@@ -325,14 +339,20 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
         if (outcome === "queued") {
           yield* Console.log("Restart queued. This session will disconnect.");
         }
+        if (outcome === "skipped") {
+          yield* Console.log(
+            "The installed service runs another T3 home, so it was not restarted. Pass its --base-dir.",
+          );
+        }
         started = outcome === "restarted";
       }
     }
   }
   if (started && routes.connect && !current.connect) yield* waitForReachability();
 
+  const after = yield* readSetup();
   yield* Console.log(
-    `\nThis machine\n${formatSetup(yield* readSetup())}\n\n${formatNextSteps(routes)}`,
+    `\nThis machine\n${formatSetup(after)}\n\n${formatNextSteps(routes, after.service.installed)}`,
   );
 });
 
