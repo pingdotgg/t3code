@@ -49,7 +49,6 @@ function setup() {
   let peakQueries = 0;
   function HookProbe() {
     const result = useDirectoryEntries(EnvironmentId.make("files-test"), "/workspace");
-    // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- exposes committed hook output to the test driver
     useEffect(() => {
       view = result;
     });
@@ -99,7 +98,7 @@ function setup() {
 it("coalesces 20 overlapping refreshes", async () => {
   const state = setup();
   // The hook probe does not navigate.
-  await using screen = await render(<state.Probe />, { router: false });
+  await using _screen = await render(<state.Probe />, { router: false });
   await state.settle(0);
   await act(async () => {
     for (let index = 0; index < 20; index++) state.view.refresh();
@@ -112,7 +111,7 @@ it("coalesces 20 overlapping refreshes", async () => {
 it("rescans mutations during both the initial listing and the follow-up", async () => {
   const state = setup();
   // The hook probe does not navigate.
-  await using screen = await render(<state.Probe />, { router: false });
+  await using _screen = await render(<state.Probe />, { router: false });
   await act(async () => state.view.refresh());
   await state.settle(0);
   expect(state.calls).toHaveLength(2);
@@ -131,7 +130,7 @@ it("rescans mutations during both the initial listing and the follow-up", async 
 it("shares the follow-up promise and does not resolve callers before the final listing", async () => {
   const state = setup();
   // The hook probe does not navigate.
-  await using screen = await render(<state.Probe />, { router: false });
+  await using _screen = await render(<state.Probe />, { router: false });
   let completed = false;
   const first = state.view.load("", true);
   const second = state.view.load("", true);
@@ -152,7 +151,7 @@ it("retains the four-query concurrency bound across directories and refreshes", 
   }));
   const state = setup();
   // The hook probe does not navigate.
-  await using screen = await render(<state.Probe />, { router: false });
+  await using _screen = await render(<state.Probe />, { router: false });
   await state.settle(0, folders);
   await act(async () => {
     for (const folder of folders) void state.view.load(folder.path);
