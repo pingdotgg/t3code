@@ -69,7 +69,12 @@ const layerRunExecutionTest = RunExecutionService.layer.pipe(
     Layer.mergeAll(
       McpAppModelContext.layerEmpty,
       PreviewAgentActivity.layer,
-      Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
+      Layer.mock(CheckpointService.CheckpointServiceV2)({
+        captureBaseline: (input) =>
+          Effect.sync(() => {
+            assert.equal(input.startOrdinalWithinScope, input.ordinalWithinScope + 1);
+          }),
+      }),
       layerTurnItemPositionsTest,
       Layer.mock(EventSink.EventSinkV2)({}),
       IdAllocator.layer,

@@ -514,5 +514,58 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         );
       }),
     );
+
+    it.effect("a commit made between turns is outside the next turn's start snapshot", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("checkpoint-start-snapshot");
+        const previousRef = checkpointRefForThreadTurn(threadId, 0);
+        const startRef = CheckpointRef.make(
+          `refs/t3/checkpoints/${Base64Url.encode(threadId)}/start/1`,
+        );
+        const endRef = checkpointRefForThreadTurn(threadId, 1);
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: previousRef });
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# external\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "external commit"]);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: startRef });
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: endRef });
+
+        const previousComparison = {
+          cwd: tmp,
+          fromCheckpointRef: previousRef,
+          toCheckpointRef: endRef,
+        };
+        expect(
+          parseTurnDiffFilesFromNumstat(
+            yield* checkpointStore.diffCheckpoints({
+              ...previousComparison,
+              ignoreWhitespace: false,
+              format: "numstat",
+            }),
+          ).map((file) => file.path),
+        ).toEqual(["README.md"]);
+        expect(yield* checkpointStore.listAuthoredPaths(previousComparison)).toEqual(
+          new Set(["README.md"]),
+        );
+
+        const startComparison = {
+          cwd: tmp,
+          fromCheckpointRef: startRef,
+          toCheckpointRef: endRef,
+        };
+        expect(
+          yield* checkpointStore.diffCheckpoints({
+            ...startComparison,
+            ignoreWhitespace: false,
+            format: "numstat",
+          }),
+        ).toBe("");
+        expect(yield* checkpointStore.listAuthoredPaths(startComparison)).toBeNull();
+      }),
+    );
   });
 });

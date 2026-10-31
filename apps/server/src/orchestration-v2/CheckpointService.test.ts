@@ -94,3 +94,59 @@ it.effect(
       }
     }),
 );
+
+it.effect("diffs a turn from its start snapshot when one exists", () =>
+  Effect.gen(function* () {
+    const scope: OrchestrationV2CheckpointScope = {
+      id: CheckpointScopeId.make("checkpoint-scope:start-snapshot"),
+      threadId: ThreadId.make("thread:start-snapshot"),
+      runId: RunId.make("run:start-snapshot:2"),
+      nodeId: NodeId.make("node:start-snapshot:2"),
+      parentScopeId: null,
+      providerThreadId: ProviderThreadId.make("provider-thread:start-snapshot"),
+      kind: "root_run",
+      ordinalWithinParent: 0,
+      advancesAppRunCount: true,
+      cwd: "/repo/start-snapshot",
+      createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
+    };
+    const diffInputs: Array<CheckpointStore.DiffCheckpointsInput> = [];
+    const layerTest = CheckpointService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          Layer.mock(CheckpointStore.CheckpointStore)({
+            isGitRepository: () => Effect.succeed(true),
+            hasCheckpointRef: ({ checkpointRef }) =>
+              Effect.succeed(checkpointRef.includes("/start/")),
+            captureCheckpoint: () => Effect.void,
+            diffCheckpoints: (input) =>
+              Effect.sync(() => {
+                diffInputs.push(input);
+                return "3\t1\tsrc/file.ts\0";
+              }),
+            listAuthoredPaths: () => Effect.succeed(null),
+          }),
+        ),
+      ),
+      Layer.provideMerge(NodeCrypto.layer),
+    );
+
+    yield* Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+      const checkpoint = yield* checkpoints.capture({
+        scope,
+        ordinalWithinScope: 2,
+        runId: scope.runId!,
+        nodeId: scope.nodeId!,
+        appRunOrdinal: 2,
+        capturedAt: scope.createdAt,
+      });
+
+      assert.deepEqual(checkpoint.files, [
+        { path: "src/file.ts", kind: "modified", additions: 3, deletions: 1 },
+      ]);
+      assert.include(diffInputs[0]?.fromCheckpointRef, "/start/2");
+    }).pipe(Effect.provide(layerTest));
+  }),
+);
