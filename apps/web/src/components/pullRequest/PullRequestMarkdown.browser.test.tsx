@@ -7,7 +7,7 @@ import { PullRequestMarkdown, PullRequestMarkdownContext } from "./PullRequestMa
 
 async function renderBody(host: string, options: { lineBreaks?: boolean } = {}) {
   const context = {
-    remarkPlugins: [],
+    rehypePlugins: [],
     lineBreaks: sourceControlClients.get(host).hardLineBreaks ?? false,
     threadRef: null,
   };

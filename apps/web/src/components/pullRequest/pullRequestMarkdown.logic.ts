@@ -78,7 +78,7 @@ export function pullRequestRehypePlugins(
   changeRequest: {
     readonly provider: string;
     readonly url: string;
-    readonly viewer?: string | null;
+    readonly viewer?: string | null | undefined;
   } | null,
 ): PluggableList {
   if (changeRequest === null) return NO_AUTOLINK_PLUGINS;

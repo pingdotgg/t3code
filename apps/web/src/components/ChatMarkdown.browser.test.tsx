@@ -439,7 +439,7 @@ describe("GitHub mentions through the markdown pipeline", () => {
   it("keeps lists, formatting, code, images and authored links intact", async () => {
     setup();
     await using screen = await renderText(
-      "- **Thanks @Adamulek123** and *@PixPMusic*.\n\n`@Adamulek123`\n\n```text\n@Adamulek123\n```\n\n[@Adamulek123](https://example.com)\n\n![ignore @Adamulek123](https://example.com/image.png)",
+      "- **Thanks @Adamulek123** and *@PixPMusic*.\n\n`@Adamulek123`\n\n```text\n@Adamulek123\n```\n\n[@Adamulek123](https://example.com)\n\n![ignore @Adamulek123](https://example.com/image.png)\n\\@Adamulek123\n\n-       **@PixPMusic**\n\n-       @PixPMusic",
       { extraRehypePlugins },
     );
     const { container } = screen;
@@ -448,6 +448,8 @@ describe("GitHub mentions through the markdown pipeline", () => {
     ];
     expect(links.map((link) => [link.textContent, link.href])).toEqual([
       ["@Adamulek123", "https://github.com/Adamulek123"],
+      ["@PixPMusic", "https://github.com/PixPMusic"],
+      ["@PixPMusic", "https://github.com/PixPMusic"],
       ["@PixPMusic", "https://github.com/PixPMusic"],
     ]);
     expect(container.querySelector("li strong a")?.textContent).toBe("@Adamulek123");
@@ -496,7 +498,7 @@ describe("GitHub mentions through the markdown pipeline", () => {
       .poll(() => document.querySelector('[data-slot="tooltip-popup"][data-open]')?.textContent)
       .toBe("https://github.com/Adamulek123");
     await userEvent.click(link, { button: "right" });
-    await userEvent.click(page.getByRole("button", { name: "Open in system browser" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Open in system browser" }));
     expect(open).toHaveBeenCalledWith(
       "https://github.com/Adamulek123",
       "_blank",
