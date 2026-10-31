@@ -1217,6 +1217,21 @@ function deriveTurnFolds(input: {
   return foldsByAnchorEntryId;
 }
 
+export function assistantMetaRow(
+  row: Extract<MessagesTimelineRow, { kind: "message" }>,
+  createdAt: string,
+): Extract<MessagesTimelineRow, { kind: "assistant-meta" }> {
+  return {
+    kind: "assistant-meta",
+    id: `assistant-meta:${row.message.id}`,
+    ...(row.projectedItem === undefined ? {} : { projectedItem: row.projectedItem }),
+    createdAt,
+    message: row.message,
+    showAssistantCopyButton: row.showAssistantCopyButton,
+    assistantCopyStreaming: row.assistantCopyStreaming,
+  };
+}
+
 function attachTrailingToolGroupsToAssistant(
   rows: ReadonlyArray<MessagesTimelineRow>,
 ): MessagesTimelineRow[] {
@@ -1284,15 +1299,10 @@ function attachTrailingToolGroupsToAssistant(
     }
 
     messageRowsWithoutMeta.add(row.id);
-    metaRowsAfterIndex.set(lastTrailingWorkIndex, {
-      kind: "assistant-meta",
-      id: `assistant-meta:${row.message.id}`,
-      ...(row.projectedItem === undefined ? {} : { projectedItem: row.projectedItem }),
-      createdAt: rows[lastTrailingWorkIndex]?.createdAt ?? row.message.updatedAt,
-      message: row.message,
-      showAssistantCopyButton: row.showAssistantCopyButton,
-      assistantCopyStreaming: row.assistantCopyStreaming,
-    });
+    metaRowsAfterIndex.set(
+      lastTrailingWorkIndex,
+      assistantMetaRow(row, rows[lastTrailingWorkIndex]?.createdAt ?? row.message.updatedAt),
+    );
   }
 
   const result: MessagesTimelineRow[] = [];

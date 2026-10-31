@@ -347,11 +347,15 @@ export interface PendingBackgroundWorkItem {
   readonly taskId: string;
   readonly kind: BackgroundWorkKind;
   readonly label: string;
+  /** False when the label is only the kind's noun, such as "command". */
+  readonly named: boolean;
   readonly childThreadId: ThreadId | undefined;
 }
 
 export interface PendingBackgroundWorkPresentation {
   readonly title: string;
+  /** What is running or waited on: a label, "a command", or "2 commands". */
+  readonly subject: string;
   readonly items: ReadonlyArray<PendingBackgroundWorkItem>;
   readonly waiting: boolean;
 }
@@ -373,13 +377,12 @@ export function presentPendingBackgroundWork(
         task.kind === "subagent" && description !== undefined
           ? formatSubagentDisplayTitle(description).trim()
           : description;
+      const named = label !== undefined && label.length > 0;
       return {
         taskId: task.taskId,
         kind: task.kind,
-        label:
-          label === undefined || label.length === 0
-            ? BACKGROUND_WORK_KINDS[task.kind].singular
-            : label,
+        label: named ? label : BACKGROUND_WORK_KINDS[task.kind].singular,
+        named,
         childThreadId: task.kind === "subagent" ? task.childThreadId : undefined,
       };
     })
@@ -391,15 +394,14 @@ export function presentPendingBackgroundWork(
   const [only] = items;
   if (items.length === 1 && only !== undefined) {
     const noun = BACKGROUND_WORK_KINDS[only.kind].singular;
-    const named = only.label !== noun;
+    const { named } = only;
+    const subject = named ? only.label : `a ${noun}`;
     const title = waiting
       ? named
         ? `${only.kind === "monitor" ? "" : `Waiting on ${noun} `}${only.label}`
-        : `Waiting on a ${noun}`
-      : named
-        ? `Running: ${only.label}`
-        : `Running a ${noun}`;
-    return { title, items, waiting };
+        : `Waiting on ${subject}`
+      : `Running in background: ${subject}`;
+    return { title, subject, items, waiting };
   }
   const counts = new Map<BackgroundWorkKind, number>();
   for (const item of items) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
@@ -407,7 +409,13 @@ export function presentPendingBackgroundWork(
     const { singular, plural } = BACKGROUND_WORK_KINDS[kind];
     return `${count} ${count === 1 ? singular : plural}`;
   });
-  return { title: `${waiting ? "Waiting on" : "Running"} ${joinWithAnd(groups)}`, items, waiting };
+  const groupsText = joinWithAnd(groups);
+  return {
+    title: waiting ? `Waiting on ${groupsText}` : `Running in background: ${groupsText}`,
+    subject: groupsText,
+    items,
+    waiting,
+  };
 }
 
 export interface ProviderGoalPresentation {
