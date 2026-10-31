@@ -206,6 +206,7 @@ export function ReopenClosedViewShortcut() {
     const commands = [
       ...(hasHistory ? (["view.reopenClosed"] as const) : []),
       ...PREVIEW_FORWARDED_LAYOUT_COMMANDS,
+      "preview.find" as const,
     ];
     void preview
       .setForwardedShortcuts(

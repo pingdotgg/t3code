@@ -71,6 +71,9 @@ vi.mock(import("./previewBridge"), async (original) => ({
       open: mocks.openPictureInPicture,
       close: mocks.closePictureInPicture,
     },
+    findInPage: vi.fn(async () => undefined),
+    stopFindInPage: vi.fn(async () => undefined),
+    onFindResult: vi.fn(() => () => undefined),
   } as never,
 }));
 vi.mock(import("~/browserHistoryStore"), async (original) => ({
@@ -298,5 +301,22 @@ describe("PreviewView", () => {
     await expect.element(address).not.toHaveFocus();
     act(() => dispatchPreviewAction("focus-url"));
     await expect.element(address).toHaveFocus();
+  });
+
+  it("does not reopen find when the user returns to a tab they left with find open", async () => {
+    setup();
+    const tabView = (tabId: string) => (
+      <PreviewView threadRef={TEST_THREAD_REF} tabId={tabId} visible />
+    );
+    await using screen = await render(tabView("tab-1"));
+    const findBar = page.getByRole("search", { name: "Find in page" });
+
+    act(() => dispatchPreviewAction("find"));
+    await expect.element(findBar).toBeInTheDocument();
+
+    await screen.rerender(tabView("tab-2"));
+    await expect.element(findBar).not.toBeInTheDocument();
+    await screen.rerender(tabView("tab-1"));
+    await expect.element(findBar).not.toBeInTheDocument();
   });
 });

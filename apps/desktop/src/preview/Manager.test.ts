@@ -1,6 +1,7 @@
 import { it as effectIt } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import type {
+  DesktopPreviewFindResultEvent,
   DesktopPreviewRecordingInputEvent,
   PreviewAnnotationPayload,
   PreviewAnnotationRect,
@@ -664,6 +665,135 @@ describe("PreviewManager", () => {
         );
         expect(agentPreventDefault).not.toHaveBeenCalled();
         expect(send).toHaveBeenCalledOnce();
+      }),
+    ),
+  );
+
+  effectIt.effect.each([
+    ["darwin", true],
+    ["linux", false],
+    ["win32", false],
+  ] as const)(
+    "lets the page claim the find shortcut before the host opens find on %s",
+    ([platform, usesMeta]) =>
+      withManager(
+        (manager) =>
+          Effect.gen(function* () {
+            const preview = makeFaviconWebContents();
+            const send = vi.fn();
+            const mainFrame = { processId: 1, routingId: 1 };
+            Object.assign(preview.webContents, {
+              hostWebContents: { isDestroyed: () => false, send },
+              mainFrame,
+              focusedFrame: mainFrame,
+            });
+            fromId.mockReturnValue(preview.webContents);
+            yield* manager.createTab("tab_page_find");
+            yield* manager.registerWebview("tab_page_find", 42);
+            yield* manager.setForwardedShortcuts([
+              { command: "preview.find", shortcut: parseKeybindingShortcut("mod+f")! },
+            ]);
+            const beforeInput = preview.listeners.get("before-input-event")!;
+            const findKey = {
+              type: "keyDown",
+              key: "f",
+              code: "KeyF",
+              meta: usesMeta,
+              control: !usesMeta,
+            };
+            const preventDefault = vi.fn();
+
+            beforeInput(
+              { preventDefault } as never,
+              { ...findKey, shift: false, alt: false } as never,
+            );
+            expect(preventDefault).not.toHaveBeenCalled();
+            expect(send).not.toHaveBeenCalled();
+
+            const ipcOn = (preview.webContents as Electron.WebContents).ipc.on as ReturnType<
+              typeof vi.fn
+            >;
+            const pageUnhandledShortcut = ipcOn.mock.calls.find(
+              ([channel]) => channel === "preview:page-unhandled-shortcut",
+            )![1];
+            pageUnhandledShortcut(
+              {},
+              {
+                key: "f",
+                code: "KeyF",
+                metaKey: usesMeta,
+                ctrlKey: !usesMeta,
+                shiftKey: false,
+                altKey: false,
+              },
+            );
+            expect(send).toHaveBeenCalledExactlyOnceWith("desktop:menu-action", "preview.find");
+
+            Object.assign(preview.webContents, { focusedFrame: { processId: 1, routingId: 2 } });
+            beforeInput(
+              { preventDefault } as never,
+              { ...findKey, shift: false, alt: false } as never,
+            );
+            expect(preventDefault).toHaveBeenCalledOnce();
+            expect(send).toHaveBeenCalledTimes(2);
+
+            Object.assign(preview.webContents, { focusedFrame: mainFrame });
+            yield* manager.setForwardedShortcuts([
+              { command: "preview.find", shortcut: parseKeybindingShortcut("ctrl+alt+8")! },
+            ]);
+            pageUnhandledShortcut(
+              {},
+              {
+                key: "[",
+                code: "Digit8",
+                metaKey: false,
+                ctrlKey: true,
+                shiftKey: false,
+                altKey: true,
+              },
+            );
+            expect(send).toHaveBeenCalledTimes(usesMeta ? 3 : 2);
+          }),
+        platform,
+      ),
+  );
+
+  effectIt.effect("searches the guest page and reports its match counts", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        const findInPage = vi.fn();
+        const stopFindInPage = vi.fn();
+        Object.assign(preview.webContents, { findInPage, stopFindInPage });
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.createTab("tab_find");
+        yield* manager.registerWebview("tab_find", 42);
+        const reported = yield* Deferred.make<DesktopPreviewFindResultEvent>();
+        yield* manager.subscribeFindResults((event) => Deferred.succeed(reported, event));
+
+        yield* manager.findInPage("tab_find", "needle", { forward: true, newSession: true });
+        expect(findInPage).toHaveBeenCalledExactlyOnceWith("needle", {
+          forward: true,
+          findNext: true,
+        });
+
+        preview.listeners.get("found-in-page")!(
+          {} as never,
+          {
+            requestId: 1,
+            activeMatchOrdinal: 2,
+            matches: 5,
+            finalUpdate: true,
+          } as never,
+        );
+        expect(yield* Deferred.await(reported)).toEqual({
+          tabId: "tab_find",
+          activeMatchOrdinal: 2,
+          matches: 5,
+        });
+
+        yield* manager.stopFindInPage("tab_find");
+        expect(stopFindInPage).toHaveBeenCalledExactlyOnceWith("clearSelection");
       }),
     ),
   );
