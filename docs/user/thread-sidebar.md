@@ -93,7 +93,9 @@ thread is over takes the accent color. Section labels also
 identify empty sections and a collapsed settled shelf.
 
 Drag within the pinned or active section to change its order. Other rows slide aside to show the
-spot where the thread will land. Drops into either section keep the position you choose. On
+spot where the thread will land. Drops into either section keep the position you choose. On web
+and desktop, with **Working section** or **Sort inbox by last message** on, the active list orders
+itself and dragging within it is off; pinned reordering still works. On
 mobile, open a thread's menu and choose **Arrange threads**. Drag a handle within or between
 **Pinned** and **Active** to reorder, pin, or unpin. Drop onto the **Settled** divider to
 settle a thread. The dragged card shows the action before you release it. Expand **Snoozed**
@@ -142,8 +144,9 @@ This is on by default. Turn it off with **Settings → General → Working secti
 or **Settings → General → Working section** on iOS and Android. Each device keeps its own
 choice.
 
-While this is on, the active list is ordered by when each thread last came back to you, so you
-cannot drag or move threads within it. Your saved order returns when you turn it off.
+While this is on, the active list is ordered by when each thread last came back to you, or by
+your last message when **Sort inbox by last message** is also on. Either way, you cannot drag or
+move threads within it. Your saved order returns when you turn both off.
 
 ### Group threads by project (beta)
 
@@ -154,6 +157,17 @@ many threads it holds, and a dot when one of them needs you. Use the pen button 
 right-click it, to start a thread in that project. Pinned threads stay above the folders, and
 Snoozed and Settled stay below them. In this mode you cannot drag threads, and the Working section
 is off. Each device keeps its own choice.
+
+### Sort the inbox by your last message (beta)
+
+Turn on **Settings → Labs → Sort inbox by last message** on web and desktop to order
+the active list by the last message you sent, newest first, instead of your saved order. Agent
+activity does not move a thread, so rows only change place when you send, create, or un-settle a
+thread, or, with the Working section on, when a thread comes back to you. You cannot drag or move
+threads within the active list while this is on. The boring sidebar already lists each folder by
+your last message, so this setting only changes the list without folders. Each device keeps its own
+choice. Turning it off brings back your saved order, or return-time order if the Working section is
+still on.
 
 ## Settle finished work
 
