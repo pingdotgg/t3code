@@ -169,7 +169,7 @@ describe("decodePullRequestJson", () => {
 
 describe("decodeThreadsJson", () => {
   it("takes every real comment of every thread, oldest first", () => {
-    const comments = expectSuccess(
+    const { comments } = expectSuccess(
       decodeThreadsJson(
         asJson({
           value: [
@@ -209,7 +209,7 @@ describe("decodeThreadsJson", () => {
   });
 
   it("reads a thread pinned to a file as a review comment on the path its diff uses", () => {
-    const comments = expectSuccess(
+    const { comments } = expectSuccess(
       decodeThreadsJson(
         asJson({
           value: [
@@ -226,8 +226,98 @@ describe("decodeThreadsJson", () => {
     expect(comments[0]).toMatchObject({ kind: "review-comment", path: "src/app.ts" });
   });
 
+  it("reads each file thread whole, pinned to the side and line Azure names", () => {
+    const remark = (id: number, content: string) => ({
+      id,
+      content,
+      author: { displayName: "Bilal", uniqueName: "bilal@acme.dev" },
+      publishedDate: `2026-07-02T0${id}:00:00Z`,
+    });
+    const { comments, reviewThreads } = expectSuccess(
+      decodeThreadsJson(
+        asJson({
+          value: [
+            {
+              id: 1,
+              status: "active",
+              threadContext: {
+                filePath: "/src/app.ts",
+                rightFileStart: { line: 12, offset: 1 },
+                rightFileEnd: { line: 12, offset: 1 },
+              },
+              comments: [
+                remark(1, "Rename this."),
+                { id: 2, content: "Bilal updated the thread", commentType: "system" },
+                { ...remark(3, "gone"), isDeleted: true },
+                remark(4, "Renamed."),
+              ],
+            },
+            {
+              id: 2,
+              status: "fixed",
+              threadContext: { filePath: "/src/old.ts", leftFileStart: { line: 3, offset: 1 } },
+              comments: [remark(1, "Why was this dropped?")],
+            },
+            {
+              id: 3,
+              status: "WontFix",
+              threadContext: { filePath: "/README.md" },
+              comments: [remark(1, "This file needs a heading.")],
+            },
+            {
+              id: 4,
+              status: "pending",
+              threadContext: { filePath: "/src/app.ts", rightFileStart: { line: 1 } },
+              comments: [{ id: 1, content: "Azure wrote this", commentType: "system" }],
+            },
+            { id: 5, status: "closed", comments: [remark(1, "On the whole change.")] },
+          ],
+        }),
+      ),
+    );
+
+    expect(reviewThreads).toEqual([
+      {
+        id: "1",
+        path: "src/app.ts",
+        line: 12,
+        side: "right",
+        isResolved: false,
+        isOutdated: false,
+        comments: [
+          {
+            id: "1:1",
+            author: { login: "bilal@acme.dev", name: "Bilal", avatarUrl: null },
+            body: "Rename this.",
+            createdAt: "2026-07-02T01:00:00Z",
+            url: null,
+          },
+          {
+            id: "1:4",
+            author: { login: "bilal@acme.dev", name: "Bilal", avatarUrl: null },
+            body: "Renamed.",
+            createdAt: "2026-07-02T04:00:00Z",
+            url: null,
+          },
+        ],
+      },
+      expect.objectContaining({ id: "2", path: "src/old.ts", line: 3, side: "left" }),
+      expect.objectContaining({ id: "3", path: "README.md", line: null, side: "right" }),
+    ]);
+    // `active` and `pending` leave a thread open; every other status Azure has closes it.
+    expect(reviewThreads.map((thread) => thread.isResolved)).toEqual([false, true, true]);
+    // The flat conversation is the same remarks, the one on the whole change among them.
+    expect(comments.map((comment) => [comment.id, comment.path])).toEqual([
+      ["1:1", "src/app.ts"],
+      ["2:1", "src/old.ts"],
+      ["3:1", "README.md"],
+      ["5:1", null],
+      ["1:4", "src/app.ts"],
+    ]);
+  });
+
   it("keeps the replies under a thread, which are as much of the conversation", () => {
-    const comments = expectSuccess(
+    const { comments } = expectSuccess(
       decodeThreadsJson(
         asJson({
           value: [
@@ -249,7 +339,7 @@ describe("decodeThreadsJson", () => {
   });
 
   it("drops deleted threads and threads with nothing to show", () => {
-    const comments = expectSuccess(
+    const { comments } = expectSuccess(
       decodeThreadsJson(
         asJson({
           value: [
@@ -435,7 +525,7 @@ describe("what az devops invoke answers with", () => {
   it("reads the envelope the extension adds its own continuation token to", () => {
     expect(
       expectSuccess(decodeThreadsJson(asJson({ value: [], count: 0, continuation_token: null }))),
-    ).toEqual([]);
+    ).toEqual({ comments: [], reviewThreads: [] });
 
     expect(
       expectSuccess(
