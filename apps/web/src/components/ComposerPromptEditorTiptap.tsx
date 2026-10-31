@@ -1516,7 +1516,7 @@ function ComposerPromptEditorTiptapInner(
     if (!editor) return;
     // Tiptap mounts React node views with flushSync; leave React's commit before updating them.
     let active = true;
-    queueMicrotask(() => {
+    const applyControlledUpdate = () => {
       if (!active || editor.isDestroyed) return;
       const initialSelection = !hasAppliedControlledSelectionRef.current;
       hasAppliedControlledSelectionRef.current = true;
@@ -1586,7 +1586,10 @@ function ComposerPromptEditorTiptapInner(
       queueMicrotask(() => {
         isApplyingControlledUpdateRef.current = false;
       });
-    });
+    };
+    // Cursor-only updates must precede focus restoration on a rich/plain remount.
+    if (snapshotRef.current.value === value) applyControlledUpdate();
+    else queueMicrotask(applyControlledUpdate);
     return () => {
       active = false;
     };
