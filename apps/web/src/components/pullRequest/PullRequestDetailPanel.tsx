@@ -198,14 +198,6 @@ const lastHandoffPromptByDraft = new Map<string, string>();
 const composerTargetKey = (target: ScopedThreadRef | DraftId): string =>
   typeof target === "string" ? target : scopedThreadKey(target);
 
-function reportCheckoutCommandError(error: Error) {
-  toastManager.add({
-    type: "error",
-    title: "Could not copy checkout command",
-    description: error.message,
-  });
-}
-
 function resolvePullRequestReference(
   requestedReference: PullRequestRef,
   repositoryIdentity: Parameters<typeof resolvePullRequestReferenceHost>[1],
@@ -1359,12 +1351,29 @@ export function PullRequestDetailPanel({
         >
           {detail ? (
             <>
-              {stackMenuProps !== null ? <PullRequestStackMenu {...stackMenuProps} display="trigger" /> : supportsStackActions && nativeStackQuery.error ? <Button variant="ghost" size="micro" onClick={nativeStackQuery.refresh}>Retry stack lookup</Button> : null}
+              {stackMenuProps !== null ? (
+                <PullRequestStackMenu {...stackMenuProps} display="trigger" />
+              ) : supportsStackActions && nativeStackQuery.error ? (
+                <Button variant="ghost" size="micro" onClick={nativeStackQuery.refresh}>
+                  Retry stack lookup
+                </Button>
+              ) : null}
               <span className="ml-auto inline-flex shrink-0 items-baseline gap-1.5 text-caption text-muted-foreground">
-                <span className="inline-flex items-baseline gap-1 tabular-nums" aria-label={`${detail.changedFiles.toLocaleString()} changed ${detail.changedFiles === 1 ? "file" : "files"}`}>
-                  <FileDiffIcon aria-hidden className="size-3 self-center" />{detail.changedFiles.toLocaleString()}
+                <span
+                  className="inline-flex items-baseline gap-1 tabular-nums"
+                  aria-label={`${detail.changedFiles.toLocaleString()} changed ${detail.changedFiles === 1 ? "file" : "files"}`}
+                >
+                  <FileDiffIcon aria-hidden className="size-3 self-center" />
+                  {detail.changedFiles.toLocaleString()}
                 </span>
-                <PullRequestChangeBreakdownStat environmentId={environmentId} reference={reference} additions={detail.additions} deletions={detail.deletions} className="shrink-0 font-mono text-caption" eager />
+                <PullRequestChangeBreakdownStat
+                  environmentId={environmentId}
+                  reference={reference}
+                  additions={detail.additions}
+                  deletions={detail.deletions}
+                  className="shrink-0 font-mono text-caption"
+                  eager
+                />
               </span>
             </>
           ) : null}
@@ -1462,17 +1471,36 @@ export function PullRequestDetailPanel({
               detail={detail}
               canWriteSourceControl={canWriteSourceControl}
               value={titleDraft}
-              onValueChange={(text) => setTitleScope(text === null ? null : { pullRequestKey, text })}
+              onValueChange={(text) =>
+                setTitleScope(text === null ? null : { pullRequestKey, text })
+              }
               onSaved={refreshDetail}
             />
             <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-meta text-muted-foreground">
               <PullRequestActorLabel actor={detail.author} profileUrl={authorProfileUrl} />
-              <span className="shrink-0"><RelativeTime timestamp={detail.updatedAt} /></span>
+              <span className="shrink-0">
+                <RelativeTime timestamp={detail.updatedAt} />
+              </span>
               <span aria-hidden className="h-3 w-px bg-border/70" />
               <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-caption text-dim-foreground">
-                <PullRequestBaseBranch compact baseBranch={detail.baseBranch} freshness={freshness} stacked={isStackedPullRequest} pending={actionPending} onUpdate={(method) => void perform("update-branch", undefined, method)} iconClassName="size-3" />
+                <PullRequestBaseBranch
+                  compact
+                  baseBranch={detail.baseBranch}
+                  freshness={freshness}
+                  stacked={isStackedPullRequest}
+                  pending={actionPending}
+                  onUpdate={(method) => void perform("update-branch", undefined, method)}
+                  iconClassName="size-3"
+                />
                 <ArrowLeftIcon aria-label="receives changes from" className="size-3 shrink-0" />
-                <PullRequestCopyableCode key={detail.headBranch} className="min-w-12 rounded-kbd bg-secondary px-1.5 py-px text-muted-foreground" value={detail.headBranch} target="branch name" copyLabel={`Copy ${terminology.singular} branch`} copiedLabel="Branch name copied" />
+                <PullRequestCopyableCode
+                  key={detail.headBranch}
+                  className="min-w-12 rounded-kbd bg-secondary px-1.5 py-px text-muted-foreground"
+                  value={detail.headBranch}
+                  target="branch name"
+                  copyLabel={`Copy ${terminology.singular} branch`}
+                  copiedLabel="Branch name copied"
+                />
               </span>
             </div>
           </div>
