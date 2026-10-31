@@ -230,7 +230,7 @@ describe("buildLinearIssueMarkdown", () => {
     const markdown = buildLinearIssueMarkdown(makeDetail(), all);
     expect(markdown).toContain("# ATT-612 · Server-side RFID APDU handshake");
     expect(markdown).toContain("Attraccess · RFID Gateway · Pilot · High · Todo");
-    expect(markdown).toContain("Branch: jan/att-612-rfid");
+    expect(markdown).toContain("\n- Branch: jan/att-612-rfid");
     expect(markdown).toContain("Move the auth out of the reader.");
     expect(markdown).toContain("- [x] ATT-613 Define schema");
     expect(markdown).toContain("- [ ] ATT-614 Port auth");

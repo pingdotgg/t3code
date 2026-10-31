@@ -19,11 +19,12 @@ export function formatLinearIssueMarkdown(snapshot: LinearIssueSnapshot): string
     snapshot.priorityLabel,
     snapshot.stateName,
   ].filter((part): part is string => part !== null && part.length > 0);
-  const lines = [`# ${snapshot.identifier} · ${snapshot.title}`, "", meta.join(" · ")];
-  lines.push(`Linear: ${snapshot.url}`);
-  if (snapshot.branchName) lines.push(`Branch: ${snapshot.branchName}`);
-  if (snapshot.assigneeName) lines.push(`Assignee: ${snapshot.assigneeName}`);
-  if (snapshot.labels.length > 0) lines.push(`Labels: ${snapshot.labels.join(", ")}`);
+  // Bullets, not bare lines: a single newline renders as a space in the dialog's preview.
+  const lines = [`# ${snapshot.identifier} · ${snapshot.title}`, "", meta.join(" · "), ""];
+  lines.push(`- Linear: ${snapshot.url}`);
+  if (snapshot.branchName) lines.push(`- Branch: ${snapshot.branchName}`);
+  if (snapshot.assigneeName) lines.push(`- Assignee: ${snapshot.assigneeName}`);
+  if (snapshot.labels.length > 0) lines.push(`- Labels: ${snapshot.labels.join(", ")}`);
   if (snapshot.description.trim()) lines.push("", snapshot.description.trim());
   if (snapshot.subIssues.length > 0) {
     lines.push("", "## Sub-issues", "");
