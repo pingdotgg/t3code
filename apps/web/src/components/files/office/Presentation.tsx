@@ -26,7 +26,7 @@ export default function Presentation(props: {
   const [page, setPage] = useState(0);
   const [failed, setFailed] = useState<Record<number, boolean>>({});
   const scroll = useRef<((index: number, y?: number) => void) | null>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Open and paint slides through a worker whose requests and lifetime belong to this presentation.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Open and paint slides through a worker whose requests and lifetime belong to this presentation.
   useEffect(() => {
     const controller = new AbortController();
     const worker = new Worker(new URL("./presentation.worker.ts", import.meta.url), {
