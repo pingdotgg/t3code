@@ -7,12 +7,14 @@ import { useId, type ReactElement } from "react";
 import { TriangleAlertIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
+import { Kbd } from "../ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
 
 interface ComposerPendingApprovalActionsProps {
   designLabels?: boolean;
+  showShortcutHints?: boolean;
   requestId: RuntimeRequestId;
   isResponding: boolean;
   canRespond: boolean;
@@ -55,6 +57,7 @@ export function resolveApprovalPrimaryDecision(
 
 export function ComposerPendingApprovalActions({
   designLabels = false,
+  showShortcutHints = true,
   requestId,
   isResponding,
   canRespond,
@@ -149,6 +152,7 @@ export function ComposerPendingApprovalActions({
                 <span className="max-w-40 truncate">
                   {designLabels && decline.label === "Deny" ? "Decline" : decline.label}
                 </span>
+                {designLabels && showShortcutHints ? <Kbd aria-hidden>esc</Kbd> : null}
               </Button>,
             )
           : null}
@@ -167,6 +171,7 @@ export function ComposerPendingApprovalActions({
                 <span className="max-w-40 truncate">
                   {designLabels && primary.label === "Allow" ? "Approve" : primary.label}
                 </span>
+                {designLabels && showShortcutHints ? <Kbd aria-hidden>⏎</Kbd> : null}
               </Button>,
             )
           : null}
