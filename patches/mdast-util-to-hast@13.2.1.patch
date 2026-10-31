@@ -1,0 +1,44 @@
+diff --git a/lib/state.js b/lib/state.js
+index 0d9c9df..1279783 100644
+--- a/lib/state.js
++++ b/lib/state.js
+@@ -176,7 +176,6 @@
+  */
+ 
+ import structuredClone from '@ungap/structured-clone'
+-import {visit} from 'unist-util-visit'
+ import {position} from 'unist-util-position'
+ import {handlers as defaultHandlers} from './handlers/index.js'
+ 
+@@ -223,7 +222,16 @@ export function createState(tree, options) {
+     wrap
+   }
+ 
+-  visit(tree, function (node) {
++  // A plain walk in the same order: `visit` costs more than the rest of this setup.
++  collectDefinitions(tree)
++
++  return state
++
++  /**
++   * @param {MdastNodes} node
++   * @returns {undefined}
++   */
++  function collectDefinitions(node) {
+     if (node.type === 'definition' || node.type === 'footnoteDefinition') {
+       const map = node.type === 'definition' ? definitionById : footnoteById
+       const id = String(node.identifier).toUpperCase()
+@@ -235,9 +243,11 @@ export function createState(tree, options) {
+         map.set(id, node)
+       }
+     }
+-  })
+ 
+-  return state
++    if ('children' in node) {
++      for (const child of node.children) collectDefinitions(child)
++    }
++  }
+ 
+   /**
+    * Transform an mdast node into a hast node.
