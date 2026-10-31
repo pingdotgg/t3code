@@ -388,6 +388,18 @@ export function showContextMenuFallback<T extends string>(
         "surface-popover fixed z-[10000] min-w-40 max-w-sm overflow-hidden rounded-card text-popover-foreground outline-none";
       menu.style.cssText =
         "position:fixed;z-index:10000;min-width:10rem;max-width:24rem;overflow:hidden;border-radius:var(--radius-card);color:var(--contrast-popover-foreground);outline:none;pointer-events:auto;";
+      // Web context menus keep their design widths even when labels are short.
+      // Use action ids so native menu contracts and localized labels stay unchanged.
+      const ids = new Set<string>(entries.map((item) => item.id));
+      const minWidth =
+        ids.has("rename") && ids.has("mark-unread")
+          ? 256
+          : ids.has("snooze:custom")
+            ? 220
+            : ids.has("open-in-preview")
+              ? 232
+              : 180;
+      menu.style.minWidth = `${Math.min(minWidth, Math.max(1, window.innerWidth - 8))}px`;
       menu.style.left = `${preferredLeft}px`;
       menu.style.top = `${preferredTop}px`;
       menu.dataset.level = String(level);
