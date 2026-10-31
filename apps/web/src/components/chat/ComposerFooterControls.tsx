@@ -351,11 +351,15 @@ export function ComposerModelPicker({
   readonly onProviderModelSelect: (
     instanceId: ProviderInstanceId,
     model: string,
-    options?: { focusComposer?: boolean },
+    options?: { focusComposer?: boolean; modelOptions?: ModelSelection["options"] },
   ) => void;
 }) {
   const { instanceEntries, modelOptionsByInstance } = pickerProps;
-  const toggleModel = (instanceId: ProviderInstanceId, model: string) => {
+  const toggleModel = (
+    instanceId: ProviderInstanceId,
+    model: string,
+    options?: ModelSelection["options"],
+  ) => {
     const current = multipleModelSelections ?? [selectedModelSelection];
     const matchesModel = (selection: ModelSelection) => {
       if (selection.instanceId !== instanceId) return false;
@@ -370,7 +374,7 @@ export function ComposerModelPicker({
     const exists = current.some(matchesModel);
     const next = exists
       ? current.filter((selection) => !matchesModel(selection))
-      : [...current, createModelSelection(instanceId, model)];
+      : [...current, createModelSelection(instanceId, model, options)];
     if (next.length > 1) {
       onMultipleModelSelectionsChange(next);
     } else {
@@ -392,6 +396,10 @@ export function ComposerModelPicker({
             onToggleModel: toggleModel,
           }
         : {})}
+      onInstanceModelSelectionChange={(instanceId, model, modelOptions) => {
+        onMultipleModelSelectionsChange(null);
+        onProviderModelSelect(instanceId, model, { modelOptions });
+      }}
       onInstanceModelChange={(instanceId, model) => {
         onMultipleModelSelectionsChange(null);
         onProviderModelSelect(instanceId, model);

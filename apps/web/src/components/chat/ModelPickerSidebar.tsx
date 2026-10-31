@@ -1,7 +1,7 @@
 import { Toolbar } from "@base-ui/react/toolbar";
 import { type ProviderInstanceId } from "@t3tools/contracts";
-import { memo, useLayoutEffect, useRef, useState } from "react";
-import { StarIcon } from "lucide-react";
+import { memo, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { ChartSplineIcon, StarIcon } from "lucide-react";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -28,17 +28,59 @@ function describeUnavailableInstance(entry: ProviderInstanceEntry): string {
 const PICKER_TOOLTIP_SIDE = "left" as const;
 const PICKER_TOOLTIP_SIDE_OFFSET = 8;
 
+/** A rail entry is one provider instance or a cross-provider view. */
+export type ModelPickerRailSelection = ProviderInstanceId | "favorites" | "pareto";
+
+/** Rail button for a cross-provider view, pinned above the instance buttons. */
+function ViewRailButton(props: {
+  view: "favorites" | "pareto";
+  label: string;
+  icon: ReactNode;
+  selected: boolean;
+  onSelect: (view: "favorites" | "pareto") => void;
+}) {
+  return (
+    <div className="relative w-full" data-model-picker-provider={props.view}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Toolbar.Button
+              className="relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-foreground/10 focus-visible:bg-foreground/10 focus-visible:outline-none"
+              onClick={() => props.onSelect(props.view)}
+              type="button"
+              aria-label={props.label}
+              aria-pressed={props.selected}
+            >
+              {props.icon}
+            </Toolbar.Button>
+          }
+        />
+        <TooltipPopup
+          side={PICKER_TOOLTIP_SIDE}
+          sideOffset={PICKER_TOOLTIP_SIDE_OFFSET}
+          align="center"
+        >
+          {props.label}
+        </TooltipPopup>
+      </Tooltip>
+    </div>
+  );
+}
+
 export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
-  selectedInstanceId: ProviderInstanceId | "favorites";
-  onSelectInstance: (instanceId: ProviderInstanceId | "favorites") => void;
+  selectedInstanceId: ModelPickerRailSelection;
+  onSelectInstance: (instanceId: ModelPickerRailSelection) => void;
   onFocusSearch: () => void;
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   showFavorites?: boolean;
+  /** Render the Pareto line rail entry, below favorites. */
+  showPareto?: boolean;
+  /** Instance ids shown in the rail but unavailable for the current picker context. */
   disabledInstanceIds?: ReadonlySet<ProviderInstanceId>;
   selectableUnavailableInstanceIds?: ReadonlySet<ProviderInstanceId>;
   getDisabledInstanceTooltip?: (entry: ProviderInstanceEntry) => string;
 }) {
-  const handleSelect = (instanceId: ProviderInstanceId | "favorites") => {
+  const handleSelect = (instanceId: ModelPickerRailSelection) => {
     props.onSelectInstance(instanceId);
   };
   const showFavorites = props.showFavorites ?? true;
@@ -64,6 +106,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
     props.instanceEntries,
     props.selectedInstanceId,
     showFavorites,
+    props.showPareto,
   ]);
 
   return (
@@ -91,35 +134,25 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
             />
           ) : null}
           {showFavorites ? (
-            <>
-              <div className="relative w-full" data-model-picker-provider="favorites">
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Toolbar.Button
-                        className={cn(
-                          "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-foreground/10 focus-visible:bg-foreground/10 focus-visible:outline-none",
-                        )}
-                        onClick={() => handleSelect("favorites")}
-                        type="button"
-                        aria-label="Favorites"
-                        aria-pressed={props.selectedInstanceId === "favorites"}
-                      >
-                        <StarIcon className="size-5 fill-current shrink-0" aria-hidden />
-                      </Toolbar.Button>
-                    }
-                  />
-                  <TooltipPopup
-                    side={PICKER_TOOLTIP_SIDE}
-                    sideOffset={PICKER_TOOLTIP_SIDE_OFFSET}
-                    align="center"
-                  >
-                    Favorites
-                  </TooltipPopup>
-                </Tooltip>
-              </div>
-              <div className="border-b border-border/70" aria-hidden="true" />
-            </>
+            <ViewRailButton
+              view="favorites"
+              label="Favorites"
+              icon={<StarIcon className="size-5 fill-current shrink-0" aria-hidden />}
+              selected={props.selectedInstanceId === "favorites"}
+              onSelect={handleSelect}
+            />
+          ) : null}
+          {props.showPareto ? (
+            <ViewRailButton
+              view="pareto"
+              label="Pareto line"
+              icon={<ChartSplineIcon className="size-5 shrink-0" aria-hidden />}
+              selected={props.selectedInstanceId === "pareto"}
+              onSelect={handleSelect}
+            />
+          ) : null}
+          {showFavorites || props.showPareto ? (
+            <div className="border-b border-border/70" aria-hidden="true" />
           ) : null}
 
           {props.instanceEntries.map((entry) => {

@@ -501,7 +501,9 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(HostResources.HostResources)({}),
   Layer.mock(McpAppRequests.McpAppRequests)({}),
-  Layer.mock(ModelManifest.ModelManifest)({}),
+  Layer.mock(ModelManifest.ModelManifest)({
+    current: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+  }),
   Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
   Layer.mock(Orchestrator.OrchestratorV2)({}),
   Layer.mock(OtlpEndpointCheck.OtlpEndpointCheck)({}),
@@ -684,6 +686,10 @@ it.effect(
       assert.equal(snapshot.type, "snapshot");
       if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
       assert.isFalse(snapshot.config.settings.defaultAutoPull);
+      assert.deepEqual(
+        snapshot.config.modelBenchmarks,
+        ModelManifest.BUNDLED_MODEL_MANIFEST.benchmarks,
+      );
       assert.deepEqual(snapshot.config.keybindings, initialKeybindings);
       const duringAck = yield* keybindings.upsertKeybindingRule({
         key: "mod+alt+y",

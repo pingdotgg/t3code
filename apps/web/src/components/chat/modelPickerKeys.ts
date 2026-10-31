@@ -2,6 +2,7 @@ import type { ProviderInstanceId } from "@t3tools/contracts";
 
 const MODEL_KEY_PREFIX = "model:";
 const LEGACY_SECTION_KEY_PREFIX = "legacy-models:";
+const PARETO_KEY_PREFIX = "pareto:";
 
 export function modelPickerModelKey(instanceId: ProviderInstanceId, slug: string): string {
   return `${MODEL_KEY_PREFIX}${instanceId.length}:${instanceId}${slug}`;
@@ -44,4 +45,13 @@ export function parseModelPickerLegacySectionKey(key: string): ProviderInstanceI
   return key.startsWith(LEGACY_SECTION_KEY_PREFIX)
     ? (key.slice(LEGACY_SECTION_KEY_PREFIX.length) as ProviderInstanceId)
     : null;
+}
+
+/** Key for the row at `index` of the Pareto line view. */
+export function modelPickerParetoKey(index: number): string {
+  return `${PARETO_KEY_PREFIX}${index}`;
+}
+
+export function parseModelPickerParetoKey(key: string): number | null {
+  return key.startsWith(PARETO_KEY_PREFIX) ? Number(key.slice(PARETO_KEY_PREFIX.length)) : null;
 }

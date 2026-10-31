@@ -142,7 +142,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   const onProviderModelSelect = (
     instanceId: ProviderInstanceId,
     model: string,
-    options?: { focusComposer?: boolean },
+    options?: { focusComposer?: boolean; modelOptions?: ModelSelection["options"] },
   ) => {
     if (!activeThread) return;
     const entry = providerStatuses.find((snapshot) => snapshot.instanceId === instanceId);
@@ -184,10 +184,17 @@ export function useComposerSelection(input: ComposerSelectionInput) {
       return;
     }
     const rememberedOptions =
-      useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[resolvedModel];
+      useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[
+        resolvedModel
+      ] ?? [];
+    const requestedOptions = options?.modelOptions ?? [];
+    const mergedOptions = [
+      ...rememberedOptions.filter(({ id }) => !requestedOptions.some((option) => option.id === id)),
+      ...requestedOptions,
+    ];
     const nextModelSelection: ModelSelection =
-      rememberedOptions !== undefined && rememberedOptions.length > 0
-        ? { instanceId, model: resolvedModel, options: [...rememberedOptions] }
+      mergedOptions.length > 0
+        ? { instanceId, model: resolvedModel, options: mergedOptions }
         : { instanceId, model: resolvedModel };
     const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
       hasStartedSession: activeRuntime !== null,

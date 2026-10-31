@@ -91,6 +91,15 @@ On web and desktop, use Settings → Providers → **Models** to add an unlisted
 name and options. Only options supported by the provider integration affect turns. Antigravity
 uses its account catalog and does not support custom models.
 
+## Best value models
+
+On web and desktop, the **Pareto line** entry under Favorites in the model picker lists the
+models and reasoning levels you can run that give the most coding intelligence for their cost.
+The list is cheapest first. Picking a row sets both the model and its reasoning level. **Chart**
+plots every benchmarked model you can run. Scores and costs come from
+[Slopalytics](https://slopalytics.com/?frontier=true), and cost is the API list price per
+benchmark task, so it ranks models but is not what a subscription charges.
+
 To rename a built-in model on every client, edit the server's `settings.json` in its `userdata`
 directory. Add a custom model entry with the built-in model ID and a new name under that provider
 instance:

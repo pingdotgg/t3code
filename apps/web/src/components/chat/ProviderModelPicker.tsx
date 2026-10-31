@@ -3,6 +3,7 @@ import {
   type ProviderInstanceId,
   type EnvironmentId,
   type ProviderDriverKind,
+  type ProviderOptionSelection,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { memo, useRef, useState } from "react";
@@ -11,6 +12,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPickerContent";
+import { ParetoChartDialog } from "./ModelPickerPareto";
 import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ModelEsque, getDisplayModelName, getTriggerDisplayModelName } from "./providerIconUtils";
@@ -70,7 +72,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   activeInstanceId: ProviderInstanceId;
   model: string;
   selectedModels?: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
-  onToggleModel?: (instanceId: ProviderInstanceId, model: string) => void;
+  onToggleModel?: (
+    instanceId: ProviderInstanceId,
+    model: string,
+    options?: ReadonlyArray<ProviderOptionSelection>,
+  ) => void;
   lockedProvider: ProviderDriverKind | null;
   lockedContinuationGroupKey?: string | null;
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
@@ -91,9 +97,16 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
+  /** Enables the Pareto line view, which selects a model together with its effort. */
+  onInstanceModelSelectionChange?: (
+    instanceId: ProviderInstanceId,
+    model: string,
+    options: ReadonlyArray<ProviderOptionSelection>,
+  ) => void;
 }) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
+  const [paretoChartOpen, setParetoChartOpen] = useState(false);
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;
   const searchInputRef = useRef<HTMLInputElement>(null);
   const size = props.size ?? "sm";
@@ -135,6 +148,18 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     props.onInstanceModelChange(instanceId, model);
     setIsMenuOpen(false);
   };
+  const onInstanceModelSelectionChange = props.onInstanceModelSelectionChange;
+  const handleInstanceModelSelectionChange = onInstanceModelSelectionChange
+    ? (
+        instanceId: ProviderInstanceId,
+        model: string,
+        options: ReadonlyArray<ProviderOptionSelection>,
+      ) => {
+        if (props.disabled) return;
+        onInstanceModelSelectionChange(instanceId, model, options);
+        setIsMenuOpen(false);
+      }
+    : undefined;
 
   const shortcutLabel = props.keybindings
     ? shortcutLabelForCommand(props.keybindings, "modelPicker.toggle")
@@ -291,8 +316,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           {...(props.selectedModels !== undefined ? { selectedModels: props.selectedModels } : {})}
           {...(props.onToggleModel
             ? {
-                onToggleModel: (instanceId: ProviderInstanceId, model: string) => {
-                  if (!props.disabled) props.onToggleModel?.(instanceId, model);
+                onToggleModel: (
+                  instanceId: ProviderInstanceId,
+                  model: string,
+                  options?: ReadonlyArray<ProviderOptionSelection>,
+                ) => {
+                  if (!props.disabled) props.onToggleModel?.(instanceId, model, options);
                 },
               }
             : {})}
@@ -310,11 +339,28 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               : (props.getModelDisabledReason?.(instanceId, model) ?? null)
           }
           onInstanceModelChange={handleInstanceModelChange}
+          {...(handleInstanceModelSelectionChange
+            ? {
+                onInstanceModelSelectionChange: handleInstanceModelSelectionChange,
+                onOpenParetoChart: () => {
+                  setIsMenuOpen(false);
+                  setParetoChartOpen(true);
+                },
+              }
+            : {})}
         />
         {props.selectedModels === undefined ? (
           <ChatGptSharingControl provider={activeEntry?.snapshot ?? null} />
         ) : null}
       </PopoverPopup>
+      {paretoChartOpen ? (
+        <ParetoChartDialog
+          open
+          onOpenChange={setParetoChartOpen}
+          entries={props.instanceEntries}
+          getModelDisabledReason={props.getModelDisabledReason}
+        />
+      ) : null}
     </Popover>
   );
 });
