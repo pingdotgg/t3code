@@ -16,11 +16,15 @@ import type {
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
+import { DEFAULT_WEBHOOK_PROMPT } from "@t3tools/client-runtime/scheduled-task-webhook";
 import {
   scheduledTaskDefaultModel,
   matchesScheduledTaskScope,
+  promptBody,
   scheduleFromDraft,
   taskToDraft,
+  withDefaultWebhookPrompt,
+  withoutUltrathinkPrefix,
 } from "./scheduledTasksSettings.logic";
 
 const laptopId = EnvironmentId.make("laptop");
@@ -148,6 +152,14 @@ describe("editing scheduled task branch settings", () => {
     const draft = taskToDraft(legacyTask);
     expect(draft.baseRef).toBe("release");
     expect(draft.startFromOrigin).toBe(false);
+  });
+
+  it("keeps the saved reasoning level", () => {
+    const modelSelection = {
+      ...legacyTask.modelSelection,
+      options: [{ id: "reasoningEffort", value: "high" }],
+    };
+    expect(taskToDraft({ ...legacyTask, modelSelection }).modelSelection).toEqual(modelSelection);
   });
 });
 
@@ -324,4 +336,26 @@ it("rejects dedupe templates without a request placeholder", () => {
   const draft = taskToDraft({ ...legacyTask, schedule: { type: "webhook", signature: null } });
   expect(scheduleFromDraft({ ...draft, replayKey: "literal" })).toBeNull();
   expect(scheduleFromDraft({ ...draft, coalesceKey: "{{body.bad" })).toBeNull();
+});
+
+describe("scheduled task prompt", () => {
+  it("does not count the Ultrathink prefix as a prompt", () => {
+    expect(promptBody("Ultrathink:\n")).toBe("");
+    expect(promptBody("Ultrathink:\nRun tests")).toBe("Run tests");
+  });
+
+  it("drops only the picker prefix when the model changes", () => {
+    expect(withoutUltrathinkPrefix("Ultrathink:\nRun tests")).toBe("Run tests");
+    expect(withoutUltrathinkPrefix("Run tests, then ultrathink")).toBe(
+      "Run tests, then ultrathink",
+    );
+  });
+
+  it("fills an empty webhook prompt and keeps the Ultrathink prefix", () => {
+    expect(withDefaultWebhookPrompt("  ")).toBe(DEFAULT_WEBHOOK_PROMPT);
+    expect(withDefaultWebhookPrompt("Ultrathink:\n")).toBe(
+      `Ultrathink:\n${DEFAULT_WEBHOOK_PROMPT}`,
+    );
+    expect(withDefaultWebhookPrompt("Run tests")).toBe("Run tests");
+  });
 });

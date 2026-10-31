@@ -14,7 +14,6 @@ import {
 import { type ReactNode, useRef, useState } from "react";
 import type {
   EnvironmentId,
-  ModelSelection,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
   ScheduledTask,
@@ -25,7 +24,6 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import {
-  DEFAULT_WEBHOOK_PROMPT,
   emptyWebhookFilterDraft,
   parseWebhookFilterDrafts,
   removeWebhookFilterDraft,
@@ -39,6 +37,7 @@ import {
   ProviderInstanceId,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -79,8 +78,11 @@ import {
   webhookDeliveryLabel,
   matchesScheduledTaskScope,
   scheduleFromDraft,
+  promptBody,
   scheduledTaskDefaultModel,
   taskToDraft,
+  withDefaultWebhookPrompt,
+  withoutUltrathinkPrefix,
   type DraftState,
   type ScheduleMode,
   type WorkspaceMode,
@@ -90,6 +92,7 @@ import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator } from "../ui/men
 import { ToggleGroup, Toggle } from "../ui/toggle-group";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "../ui/empty";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { readPromptUltrathink, TraitsPicker } from "../chat/TraitsPicker";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -140,10 +143,9 @@ const EMPTY_DRAFT: DraftState = {
   baseRef: "main",
   startFromOrigin: true,
   existingWorktreePath: "",
-  modelKey: "",
+  modelSelection: null,
   runtimeMode: "full-access",
   interactionMode: "default",
-  baseModelSelection: null,
   signatureEnabled: false,
   ...WEBHOOK_SIGNATURE_DEFAULTS,
   signatureSecret: "",
@@ -270,15 +272,6 @@ function Field({
       {children}
     </div>
   );
-}
-
-function splitModelKey(value: string): ModelSelection | null {
-  const index = value.indexOf(":");
-  if (index <= 0 || index === value.length - 1) return null;
-  return {
-    instanceId: ProviderInstanceId.make(value.slice(0, index)),
-    model: value.slice(index + 1),
-  };
 }
 
 export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
@@ -1176,12 +1169,16 @@ function ScheduledTaskEditorForm({
   );
 
   const firstInstance = instanceEntries[0];
-  const draftSelection = draft.modelKey ? splitModelKey(draft.modelKey) : null;
+  const draftSelection = draft.modelSelection;
   const activeSelection =
     draftSelection &&
     instanceEntries.some((entry) => entry.instanceId === draftSelection.instanceId && entry.enabled)
       ? draftSelection
       : scheduledTaskDefaultModel(settings, selectedProject ?? null, instanceEntries);
+  const boundToThread = draft.threadId !== "";
+  const activeEntry = instanceEntries.find(
+    (entry) => entry.instanceId === activeSelection?.instanceId,
+  );
   const activeInstanceId =
     activeSelection?.instanceId ?? firstInstance?.instanceId ?? ("" as ProviderInstanceId);
   const activeModel = activeSelection?.model ?? "";
@@ -1215,7 +1212,7 @@ function ScheduledTaskEditorForm({
     const selection = activeSelection;
     if (
       !draft.title.trim() ||
-      !draft.prompt.trim() ||
+      !promptBody(draft.prompt) ||
       !projects.some((project) => project.id === selectedProjectId) ||
       selection === null
     ) {
@@ -1253,12 +1250,6 @@ function ScheduledTaskEditorForm({
       reportFailure("Checkout path is required", "Enter the path of the checkout to run in.");
       return;
     }
-    const modelSelection =
-      draft.baseModelSelection !== null &&
-      draft.baseModelSelection.instanceId === selection.instanceId &&
-      draft.baseModelSelection.model === selection.model
-        ? draft.baseModelSelection
-        : selection;
     const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy =
       draft.workspaceMode === "root"
         ? { type: "root" }
@@ -1278,7 +1269,7 @@ function ScheduledTaskEditorForm({
       projectId: selectedProjectId as ProjectId,
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
       workspaceStrategy,
-      modelSelection,
+      modelSelection: selection,
       runtimeMode: draft.runtimeMode,
       interactionMode: draft.interactionMode,
       creationSource: "web",
@@ -1324,8 +1315,7 @@ function ScheduledTaskEditorForm({
                 setDraft((current) => ({
                   ...current,
                   projectId: "",
-                  modelKey: "",
-                  baseModelSelection: null,
+                  modelSelection: null,
                   baseRef: "main",
                   startFromOrigin: true,
                   existingWorktreePath: "",
@@ -1492,22 +1482,66 @@ function ScheduledTaskEditorForm({
           </Field>
 
           <Field label="Model">
-            <div>
-              <ProviderModelPicker
-                environmentId={environmentId}
-                disabled={saving || !connected}
-                activeInstanceId={activeInstanceId}
-                model={activeModel}
-                lockedProvider={null}
-                instanceEntries={instanceEntries}
-                modelOptionsByInstance={modelOptionsByInstance}
-                isComposerOwned={false}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) =>
-                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
-                }
-              />
-            </div>
+            {/* A run on a bound thread follows that thread's model, so the stored choice has no effect. */}
+            {boundToThread ? (
+              <p className="text-sm text-muted-foreground">
+                Runs with the bound thread's current model and reasoning.
+              </p>
+            ) : (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <ProviderModelPicker
+                  environmentId={environmentId}
+                  disabled={saving || !connected}
+                  activeInstanceId={activeInstanceId}
+                  model={activeModel}
+                  lockedProvider={null}
+                  instanceEntries={instanceEntries}
+                  modelOptionsByInstance={modelOptionsByInstance}
+                  isComposerOwned={false}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onInstanceModelChange={(instanceId, model) => {
+                    // Options and the Ultrathink prefix belong to one model, so a new model starts from its own defaults.
+                    if (
+                      activeSelection?.instanceId === instanceId &&
+                      activeSelection.model === model
+                    )
+                      return;
+                    setDraft((current) => ({
+                      ...current,
+                      prompt: withoutUltrathinkPrefix(current.prompt),
+                      modelSelection: createModelSelection(instanceId, model),
+                    }));
+                  }}
+                />
+                {activeSelection && activeEntry ? (
+                  <TraitsPicker
+                    provider={activeEntry.driverKind}
+                    instanceId={activeSelection.instanceId}
+                    models={activeEntry.models}
+                    model={activeSelection.model}
+                    modelOptions={activeSelection.options ?? []}
+                    // Ultrathink is a prompt prefix, not a stored option, so it edits the task prompt.
+                    promptUltrathink={readPromptUltrathink(draft.prompt)}
+                    onPromptEdit={(edit) =>
+                      setDraft((current) => ({ ...current, prompt: edit(current.prompt) }))
+                    }
+                    planModeEnabled={settings.planModeEnabled}
+                    disabled={saving || !connected}
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    onModelOptionsChange={(options) =>
+                      setDraft((current) => ({
+                        ...current,
+                        modelSelection: createModelSelection(
+                          activeSelection.instanceId,
+                          activeSelection.model,
+                          options,
+                        ),
+                      }))
+                    }
+                  />
+                ) : null}
+              </div>
+            )}
           </Field>
 
           <div className="space-y-3">
@@ -1531,8 +1565,8 @@ function ScheduledTaskEditorForm({
                       ...current,
                       scheduleMode: mode,
                       prompt:
-                        mode === "webhook" && !current.prompt.trim()
-                          ? DEFAULT_WEBHOOK_PROMPT
+                        mode === "webhook"
+                          ? withDefaultWebhookPrompt(current.prompt)
                           : current.prompt,
                     }));
                 }}

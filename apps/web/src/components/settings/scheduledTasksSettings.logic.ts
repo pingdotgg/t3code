@@ -11,7 +11,9 @@ import {
   type ProviderInteractionMode,
   type ServerSettings,
 } from "@t3tools/contracts";
+import { ULTRATHINK_PROMPT_PREFIX } from "@t3tools/client-runtime/model-traits";
 import {
+  DEFAULT_WEBHOOK_PROMPT,
   parseMaxDeliveryAge,
   parseWebhookFilterDrafts,
   webhookFilterDrafts,
@@ -26,6 +28,26 @@ import {
 import type { ProviderInstanceEntry } from "../../providerInstances";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
+
+const ULTRATHINK_PREFIX_PATTERN = /^\s*Ultrathink:\s*/i;
+
+/** Removes the Ultrathink prefix the reasoning picker adds, and keeps the user's text. */
+export function withoutUltrathinkPrefix(prompt: string): string {
+  return prompt.replace(ULTRATHINK_PREFIX_PATTERN, "");
+}
+
+/** The prompt the user wrote, without the Ultrathink prefix. */
+export function promptBody(prompt: string): string {
+  return withoutUltrathinkPrefix(prompt).trim();
+}
+
+/** Fills a prompt with no body with the webhook default, and keeps a chosen Ultrathink prefix. */
+export function withDefaultWebhookPrompt(prompt: string): string {
+  if (promptBody(prompt)) return prompt;
+  return ULTRATHINK_PREFIX_PATTERN.test(prompt)
+    ? `${ULTRATHINK_PROMPT_PREFIX}${DEFAULT_WEBHOOK_PROMPT}`
+    : DEFAULT_WEBHOOK_PROMPT;
+}
 
 export function matchesScheduledTaskScope(
   scope: ResolvedSettingsScope,
@@ -70,11 +92,10 @@ export interface DraftState {
   readonly baseRef: string;
   readonly startFromOrigin: boolean;
   readonly existingWorktreePath: string;
-  readonly modelKey: string;
+  /** Null follows the project's default model. Provider options carry the reasoning level. */
+  readonly modelSelection: ModelSelection | null;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
-  /** Retain the source selection's provider options when the picker leaves instanceId:model unchanged. */
-  readonly baseModelSelection: ModelSelection | null;
   readonly signatureEnabled: boolean;
   readonly signatureHeader: string;
   readonly signatureEncoding: "hex" | "base64";
@@ -224,10 +245,9 @@ export function taskToDraft(task: ScheduledTask): DraftState {
       task.workspaceStrategy.type === "existing_worktree"
         ? task.workspaceStrategy.worktreePath
         : "",
-    modelKey: `${task.modelSelection.instanceId}:${task.modelSelection.model}`,
+    modelSelection: task.modelSelection,
     runtimeMode: task.runtimeMode,
     interactionMode: task.interactionMode,
-    baseModelSelection: task.modelSelection,
     ...(schedule.type === "webhook" && schedule.signature !== null
       ? {
           signatureEnabled: true,
