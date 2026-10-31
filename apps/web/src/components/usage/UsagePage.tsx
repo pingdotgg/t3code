@@ -209,7 +209,7 @@ export function UsagePage() {
     environments,
     selectedEnvironments,
     shown,
-    isPartial,
+    isWaitingLong,
     refresh,
   } = useUsage(window, selectedEnvironmentIds, hiddenProviders);
   const merged = shown?.merged ?? answeredUsage;
@@ -374,7 +374,6 @@ export function UsagePage() {
             onSelectionChange={setSelectedEnvironmentIds}
             showUsageStatus={!showingLimits}
             refreshing={refreshingUsage}
-            isPartial={isPartial}
             duplicateSources={merged.duplicateSources}
             contractMismatches={merged.contractMismatches}
             onOpenModelPrices={() => setPriceDialog({})}
@@ -559,6 +558,7 @@ export function UsagePage() {
                 selectedEnvironments={selectedEnvironments}
                 hiddenProviders={hiddenProviders}
                 refreshingUsage={refreshingUsage}
+                isWaitingLong={isWaitingLong}
                 cursorAccessEnvironments={cursorAccessEnvironments}
                 showChatGptSharing={showChatGptSharing}
                 onCursorEnabled={() => {
@@ -612,6 +612,7 @@ function UsageOverview({
   selectedEnvironments,
   hiddenProviders,
   refreshingUsage,
+  isWaitingLong,
   cursorAccessEnvironments,
   showChatGptSharing,
   onCursorEnabled,
@@ -627,6 +628,7 @@ function UsageOverview({
   readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
   readonly hiddenProviders: ReadonlySet<UsageProviderKind>;
   readonly refreshingUsage: boolean;
+  readonly isWaitingLong: boolean;
   readonly cursorAccessEnvironments: readonly EnvironmentUsageStatus[];
   readonly showChatGptSharing: boolean;
   readonly onCursorEnabled: () => void;
@@ -694,7 +696,13 @@ function UsageOverview({
   ];
 
   return (
-    <div aria-busy={loadingPartial} className="flex flex-col gap-6">
+    <div
+      aria-busy={loadingPartial}
+      className={cn(
+        "flex flex-col gap-6",
+        isWaitingLong ? "[--usage-dim-delay:0ms]" : "[--usage-dim-delay:300ms]",
+      )}
+    >
       {sourceMessages.map((message) => (
         <p key={message} className="mb-4 text-sm text-muted-foreground">
           {message}
@@ -1227,7 +1235,10 @@ function ProviderMark({
 }
 
 function figureClass(loading: boolean) {
-  return cn("transition-opacity", loading && "opacity-40 delay-150");
+  return cn(
+    "transition-opacity",
+    loading && "opacity-40 delay-(--usage-dim-delay) starting:opacity-100",
+  );
 }
 
 function Metric({
@@ -1273,7 +1284,7 @@ function UsageCoverageNotice({
   }
 
   return (
-    <div className="flex flex-col gap-1 border-t border-border px-2 py-2 text-xs text-muted-foreground">
+    <div className="flex flex-col gap-1 border-t border-border px-2 py-2 text-xs text-muted-foreground wrap-break-word">
       {failed.map((environment) => (
         <span key={environment.label}>
           {environment.label}: {environment.error}
@@ -1301,7 +1312,6 @@ function UsageEnvironmentFilter({
   onSelectionChange,
   showUsageStatus,
   refreshing,
-  isPartial,
   duplicateSources,
   contractMismatches,
   onOpenModelPrices,
@@ -1312,7 +1322,6 @@ function UsageEnvironmentFilter({
   readonly onSelectionChange: (ids: ReadonlySet<EnvironmentId> | null) => void;
   readonly showUsageStatus: boolean;
   readonly refreshing: boolean;
-  readonly isPartial: boolean;
   readonly duplicateSources: readonly string[];
   readonly contractMismatches: MergedUsage["contractMismatches"];
   readonly onOpenModelPrices: () => void;
@@ -1345,7 +1354,7 @@ function UsageEnvironmentFilter({
           )}
         </span>
       </MenuTrigger>
-      <MenuPopup align="start">
+      <MenuPopup align="start" className="w-72">
         <MenuCheckboxItem
           checked={allSelected}
           closeOnClick={false}
@@ -1407,11 +1416,6 @@ function UsageEnvironmentFilter({
         })}
         {environments.length === 0 ? (
           <p className="px-2 py-2 text-xs text-muted-foreground">No environments connected.</p>
-        ) : null}
-        {showUsageStatus && isPartial ? (
-          <p className="px-2 py-2 text-xs text-muted-foreground">
-            Totals are partial while selected environments scan.
-          </p>
         ) : null}
         {showUsageStatus ? (
           <UsageCoverageNotice
@@ -1498,7 +1502,7 @@ function UsageSkeleton() {
             <Skeleton className="h-10 w-36" />
             <Skeleton className="h-4 w-32" />
           </div>
-          {PROVIDER_ORDER.map((provider) => (
+          {PROVIDER_ORDER.slice(0, 3).map((provider) => (
             <div key={provider} className="flex flex-col gap-1">
               <div className="flex min-h-5 items-center justify-between gap-4">
                 <span className="flex items-center gap-2">
