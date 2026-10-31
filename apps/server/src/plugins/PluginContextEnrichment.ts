@@ -45,34 +45,8 @@ export const make = Effect.gen(function* () {
   const catalog = yield* PluginCatalog;
   const environmentId: EnvironmentId = yield* (yield* ServerEnvironment).getEnvironmentId;
 
-  return RunContextEnricherV2.of({
-    sources: catalog.ready.pipe(
-      Effect.andThen(catalog.list),
-      Effect.map(({ installations }) =>
-        installations.flatMap((installation) => {
-          const { manifest, consent } = installation;
-          const enrich = manifest?.transforms?.enrich;
-          if (
-            manifest === null ||
-            enrich === undefined ||
-            pluginInstallationStatus(installation) !== "enabled" ||
-            !manifest.capabilities.includes(PLUGIN_TRANSFORMS_CAPABILITY) ||
-            consent?.capabilities.includes(PLUGIN_TRANSFORMS_CAPABILITY) !== true
-          )
-            return [];
-          return [
-            {
-              installationId: installation.installationId,
-              generation: installation.generation,
-              pluginId: manifest.id,
-              name: manifest.name,
-              timeoutSeconds: enrich.timeoutSeconds ?? PLUGIN_ENRICH_LIMITS.defaultTimeoutSeconds,
-            },
-          ];
-        }),
-      ),
-    ),
-    enrich: (source, input) => {
+  const enrich: RunContextEnricherV2["Service"]["enrich"] = Effect.fn("PluginContextEnrichment.enrich")(
+(source, input) => {
       const timeout = `${source.timeoutSeconds} seconds` as const;
       return catalog
         .invoke(
@@ -113,7 +87,37 @@ export const make = Effect.gen(function* () {
           ),
           Effect.catchDefect(() => Effect.succeed(skipped(`${source.name} failed unexpectedly.`))),
         );
-    },
+    }
+  );
+
+  return RunContextEnricherV2.of({
+    sources: catalog.ready.pipe(
+      Effect.andThen(catalog.list),
+      Effect.map(({ installations }) =>
+        installations.flatMap((installation) => {
+          const { manifest, consent } = installation;
+          const enrich = manifest?.transforms?.enrich;
+          if (
+            manifest === null ||
+            enrich === undefined ||
+            pluginInstallationStatus(installation) !== "enabled" ||
+            !manifest.capabilities.includes(PLUGIN_TRANSFORMS_CAPABILITY) ||
+            consent?.capabilities.includes(PLUGIN_TRANSFORMS_CAPABILITY) !== true
+          )
+            return [];
+          return [
+            {
+              installationId: installation.installationId,
+              generation: installation.generation,
+              pluginId: manifest.id,
+              name: manifest.name,
+              timeoutSeconds: enrich.timeoutSeconds ?? PLUGIN_ENRICH_LIMITS.defaultTimeoutSeconds,
+            },
+          ];
+        }),
+      ),
+    ),
+    enrich,
   });
 });
 
