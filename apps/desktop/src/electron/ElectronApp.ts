@@ -4,6 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as Electron from "electron";
 
@@ -250,4 +252,39 @@ export const make = ElectronApp.of({
   on: addScopedAppListener,
 });
 
-export const layer = Layer.succeed(ElectronApp, make);
+const makeWithLinuxRelaunch = Effect.gen(function* () {
+  const platform = yield* HostProcess.Platform;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  if (platform !== "linux") return make;
+
+  return ElectronApp.of({
+    ...make,
+    // Electron's Linux relauncher sets irreversible no_new_privs, breaking pkexec updates.
+    // Keep stdin open until this process exits so the replacement can take its instance lock.
+    relaunch: Effect.fn("ElectronApp.relaunch")(function* (options) {
+      yield* spawner
+        .spawn(
+          ChildProcess.make(
+            "/bin/sh",
+            [
+              "-c",
+              'while read -r _; do :; done; exec "$@" </dev/null',
+              "t3code-relaunch",
+              options.execPath ?? process.execPath,
+              ...(options.args ?? process.argv.slice(1)),
+            ],
+            { detached: true, stdin: "pipe", stdout: "ignore", stderr: "ignore" },
+          ),
+        )
+        // Keeps the waiting shell alive when this scope closes.
+        .pipe(
+          Effect.flatMap((handle) => handle.unref),
+          Effect.asVoid,
+          Effect.scoped,
+          Effect.catch(() => make.relaunch(options)),
+        );
+    }),
+  });
+});
+
+export const layer = Layer.effect(ElectronApp, makeWithLinuxRelaunch);
