@@ -16,7 +16,15 @@ const transport = vi.hoisted(() => ({
 vi.mock("~/state/terminalSessions", async () => {
   const { EMPTY_TERMINAL_SESSION_STATE: empty } =
     await import("@t3tools/client-runtime/state/terminal");
+  const { Atom } = await import("effect/reactivity");
+  const sessions = Atom.family((_key: string) =>
+    Atom.make({ ...empty, status: "running" as const, version: 1 }),
+  );
   return {
+    attachedTerminalSessionAtom: (environmentId: string, terminal: unknown) => {
+      transport.attached.push({ environmentId, terminal });
+      return sessions(JSON.stringify([environmentId, terminal]));
+    },
     useKnownTerminalSessions: () => [],
     useAttachedTerminalSession: (input: unknown) => {
       transport.attached.push(input);
@@ -24,6 +32,9 @@ vi.mock("~/state/terminalSessions", async () => {
     },
   };
 });
+vi.mock("~/components/preview/openTerminalLinkInPreview", () => ({
+  openTerminalLinkInPreview: () => undefined,
+}));
 // This client holds every scope, so the terminal accepts typing.
 vi.mock("~/state/session", async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
@@ -57,8 +68,11 @@ vi.mock("~/terminal/ghostty/surface", () => ({
       transport.surfaces.push(options);
       // Every surface method is a no-op; the test only feeds keystrokes through onData.
       return new Proxy(
-        {},
-        { get: (_target, key) => (key === "then" ? undefined : () => undefined) },
+        { input: document.createElement("textarea") },
+        {
+          get: (target, key) =>
+            key === "then" ? undefined : key in target ? Reflect.get(target, key) : () => undefined,
+        },
       );
     },
   },
@@ -74,6 +88,10 @@ vi.mock("~/state/entities", () => {
       worktreePath: null,
     }),
     useProject: () => project,
+    readProject: () => project,
+    readProjects: () => [],
+    readThreadShell: () => null,
+    useProjects: () => [],
   };
 });
 
@@ -113,7 +131,6 @@ async function renderTerminal(screen: Screen, threadRef: ScopedThreadRef) {
           id="terminal"
           surface={surface}
           launchContext={null}
-          focusRequestId={0}
           onAddTerminalContext={() => undefined}
           onSplitTerminal={() => undefined}
           onSplitTerminalVertical={() => undefined}
