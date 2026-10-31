@@ -370,7 +370,9 @@ export function planSidebarThreadDrop(input: {
     activeKeysById,
     activeReorderableKeys,
   } = input;
-  if (activeSection === "working") return { kind: "none" };
+  // Live status decides Working, and the server refuses to settle a running thread, so a thread
+  // lifted from Working can only be pinned. Pins outrank Working, so the pin holds.
+  if (activeSection === "working" && target.section !== "pinned") return { kind: "none" };
   if (input.supportsSettlement === false && (target.section === "settled" || activeSettled)) {
     return { kind: "none" };
   }
