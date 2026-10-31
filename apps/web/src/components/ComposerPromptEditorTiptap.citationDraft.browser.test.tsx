@@ -1,5 +1,6 @@
 import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
 import {
+  MAX_CITATION_HREF_LENGTH,
   formatAssistantCitationHref,
   parseAssistantCitationHref,
   serializeAssistantCitation,
@@ -105,11 +106,25 @@ it("keeps an unsaved citation comment when a question takes the composer", async
   await expect.element(page.getByLabelText("Edit citation comment")).toBeInTheDocument();
 });
 
-it.each(["save", "send", "question"] as const)(
-  "rejects a comment exceeding the complete citation URL budget on %s",
-  async (action) => {
-    const sourceCitation = { ...citation, messageId: MessageId.make("界".repeat(17_750)) };
-    const oversizedComment = "界".repeat(100);
+it.each([
+  ["save", 100],
+  ["send", 100],
+  ["question", 100],
+  ["save", 0],
+] as const)(
+  "rejects a comment exceeding the citation URL budget on %s (%i characters available)",
+  async (action, availableSpace) => {
+    const source = { ...citation, messageId: MessageId.make("界".repeat(17_750)) };
+    const sourceCitation = {
+      ...source,
+      messageId: MessageId.make(
+        source.messageId +
+          "m".repeat(
+            MAX_CITATION_HREF_LENGTH - formatAssistantCitationHref(source).length - availableSpace,
+          ),
+      ),
+    };
+    const oversizedComment = availableSpace === 0 ? "x" : "界".repeat(100);
     const prompt = `See ${serializeAssistantCitation(sourceCitation)} `;
     expect(parseAssistantCitationHref(formatAssistantCitationHref(sourceCitation))).toEqual(
       sourceCitation,
@@ -144,6 +159,12 @@ it.each(["save", "send", "question"] as const)(
     const comment = page.getByLabelText("Comment on selected text");
     await expect.element(comment).toBeVisible();
     await comment.fill(oversizedComment);
+    await expect.element(comment).toHaveAttribute("aria-invalid", "true");
+    const error = page.getByText(
+      "The citation link is too long. Shorten the comment or quoted text.",
+    );
+    await expect.element(error).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
 
     if (action === "question") {
       await screen.rerender(
@@ -162,11 +183,15 @@ it.each(["save", "send", "question"] as const)(
     });
     if (action !== "question") {
       await expect.element(comment).toHaveValue(oversizedComment);
-      await comment.fill("ok");
+      const acceptedComment = availableSpace === 0 ? "" : "ok";
+      await comment.fill(acceptedComment);
+      await expect.element(comment).not.toHaveAttribute("aria-invalid", "true");
+      await expect.element(error).not.toBeInTheDocument();
+      await expect.element(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
       await userEvent.keyboard(action === "send" ? "{Control>}{Enter}{/Control}" : "{Enter}");
       await vi.waitFor(() => {
         expect(screen.container.querySelector("output")?.dataset.prompt).toBe(
-          `See ${serializeAssistantCitation(withAssistantCitationComment(sourceCitation, "ok"))} `,
+          `See ${serializeAssistantCitation(withAssistantCitationComment(sourceCitation, acceptedComment))} `,
         );
         expect(onSend).toHaveBeenCalledTimes(action === "send" ? 1 : 0);
       });
