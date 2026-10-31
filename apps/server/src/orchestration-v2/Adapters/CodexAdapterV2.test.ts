@@ -7649,6 +7649,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 requests.push(method);
               }),
             undefined,
+            undefined,
             Effect.succeed([{ ...codexDaybreakTestModel(programs), isCustom }]),
           );
           const input = yield* goalTurnInput(harness, "work");
@@ -7730,6 +7731,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               Effect.sync(() => {
                 requests.push(method);
               }),
+            undefined,
             undefined,
             Effect.succeed([codexDaybreakTestModel(["standard", "daybreakRed"])]),
           );
