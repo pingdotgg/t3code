@@ -803,6 +803,23 @@ describe("ClaudeAdapterV2 session permissions", () => {
     assert.equal(result.interrupt, undefined);
   });
 
+  it("tells Claude that decline feedback is the user's message, not a tool error", () => {
+    const feedback = "Use the dry-run flag first.";
+    const result = ClaudeAdapterV2.permissionResultFromDecision({
+      toolName: "Bash",
+      decision: "decline",
+      toolInput: { command: "make deploy" },
+      toolUseID: "declined-with-feedback",
+      feedback,
+    });
+    assert.equal(result.behavior, "deny");
+    if (result.behavior !== "deny") return;
+    assert.include(result.message, feedback);
+    assert.notEqual(result.message, feedback, "feedback was forwarded as a bare tool error");
+    assert.match(result.message, /user/i);
+    assert.match(result.message, /declin|reject/i);
+  });
+
   it("forces suggested permission updates to session scope", () => {
     const result = ClaudeAdapterV2.permissionResultFromDecision({
       toolName: "Bash",
