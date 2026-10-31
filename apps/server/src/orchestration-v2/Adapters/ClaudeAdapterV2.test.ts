@@ -5564,13 +5564,39 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           Effect.forkChild,
         );
         yield* Deferred.await(accepted);
+        const acceptedOfferCount = harness.offeredMessages.length;
+        const permission = yield* Effect.promise(() =>
+          harness.getOpenedOptions()!.canUseTool!(
+            "Bash",
+            { command: "git status" },
+            {
+              signal: new AbortController().signal,
+              toolUseID: "post-acceptance",
+              requestId: "post-acceptance-request",
+            },
+          ),
+        ).pipe(Effect.forkScoped);
+        const request = yield* Queue.take(harness.runtimeRequestReceipts);
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: request.runtimeRequest.id,
+          decision: "accept",
+        });
+        yield* Fiber.join(permission);
+        registered.add("post-acceptance");
         yield* Fiber.interrupt(cancelled);
         cancelOffer = false;
         yield* through("cancelled");
+        yield* taskStarted("post-acceptance");
         yield* harness.offerAndWait(
           makeResultFrame({ uuid: uuid(), result: "", terminalReason: "aborted_tools" }),
         );
         yield* steer("Continue after the accepted steer.");
+        yield* through("post-acceptance");
+        assert.isTrue(
+          moves
+            .filter((move) => move.id === "post-acceptance")
+            .every((move) => move.offered > acceptedOfferCount),
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

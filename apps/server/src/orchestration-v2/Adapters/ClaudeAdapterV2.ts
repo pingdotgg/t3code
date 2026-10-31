@@ -10969,30 +10969,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     detail: `Claude provider turn ${turnInput.providerTurnId} ended before the steer was sent.`,
                   });
                 }
-                let queued = false;
+                let queuedCommands: ReadonlyArray<string> | undefined;
                 yield* Effect.uninterruptibleMask((restore) =>
                   restore(
                     existing.query.offer(userMessage, () => {
-                      queued = true;
+                      queuedCommands = [...currentTurn.rootCommands.keys()];
                       pdfReservation.commit();
                     }),
                   ).pipe(
                     // Queue acceptance survives cancellation during protocol logging.
                     Effect.onExit((exit) =>
                       Effect.gen(function* () {
-                        if (!queued && !Exit.isSuccess(exit)) return;
+                        if (queuedCommands === undefined && !Exit.isSuccess(exit)) return;
+                        const running = queuedCommands ?? [...currentTurn.rootCommands.keys()];
                         pdfReservation.commit();
                         yield* Ref.update(steeredTurns, (current) => {
                           const next = new Set(current);
                           next.add(turnInput.providerTurnId);
                           return next;
                         });
-                        for (const [toolUseId, state] of currentTurn.rootCommands) {
-                          if (state === "foreground") {
+                        for (const toolUseId of running) {
+                          if (currentTurn.rootCommands.get(toolUseId) === "foreground") {
                             currentTurn.rootCommands.set(toolUseId, "steered");
                           }
                         }
-                        for (const toolUseId of currentTurn.rootCommands.keys()) {
+                        for (const toolUseId of running) {
                           yield* backgroundForSteer(currentTurn, existing.query, toolUseId);
                         }
                       }),
