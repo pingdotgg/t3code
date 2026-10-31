@@ -224,10 +224,13 @@ export const make = Effect.gen(function* () {
     const onPath = windows
       ? Option.isSome(installed)
       : Option.isSome(first) && (yield* runsOurLauncher(first.value));
-    // Only a folder missing from PATH; prepending one that is there behind another t3 would
-    // change which t3 runs.
+    // Only a folder missing from PATH, with no other t3 first: prepending it would change which
+    // t3 runs.
     const setup =
-      onPath || Option.isNone(installed) || (yield* folderOnPath(installed.value))
+      onPath ||
+      Option.isSome(shadowedBy) ||
+      Option.isNone(installed) ||
+      (yield* folderOnPath(installed.value))
         ? undefined
         : startupLine(installed.value);
     return {
@@ -356,6 +359,12 @@ export const make = Effect.gen(function* () {
     if (Option.isNone(installed)) return yield* fail("Install the t3 command first.");
     const setup = startupLine(installed.value);
     if (setup === undefined) return yield* fail("T3 Code cannot add t3 to this shell's PATH.");
+    const shadowedBy = yield* foreignFirstOnPath;
+    if (Option.isSome(shadowedBy)) {
+      return yield* fail(
+        `Another t3 at ${shadowedBy.value} runs first; T3 Code leaves it in place.`,
+      );
+    }
     if (!(yield* folderOnPath(installed.value)) && !(yield* hasLine(setup))) {
       yield* fs.makeDirectory(path.dirname(setup.path), { recursive: true }).pipe(
         Effect.andThen(

@@ -258,6 +258,12 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const behind = yield* command.state;
       expect(behind.installedPath).toBe(path.join(home, ".local", "bin", "t3"));
       expect(behind.pathSetup).toBeUndefined();
+      // Off PATH behind theirs, adding the folder would still put ours first.
+      process.env.PATH = shadow;
+      expect((yield* command.state).pathSetup).toBeUndefined();
+      yield* Effect.flip(command.addToPath);
+      expect(yield* fs.exists(path.join(home, ".zshrc"))).toBe(false);
+      process.env.PATH = [shadow, `${path.join(home, ".local", "bin")}/`].join(":");
       yield* fs.remove(path.join(home, ".local", "bin", "t3"));
 
       // A first-launch install that failed is not retried behind the user's back.
