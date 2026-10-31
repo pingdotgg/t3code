@@ -9,7 +9,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 
-import { mergeEnvironmentSettings } from "../../hooks/useSettings";
+import { mergeEnvironmentSettings, useClientSettings } from "../../hooks/useSettings";
 import {
   getCustomModelOptionsByInstance,
   resolveEffectiveDefaultModelSelection,
@@ -61,6 +61,7 @@ function resolveDisplayedDefaultModel(
 export function ProjectDefaultsSettings({ category }: { category: ProjectSettingsCategory }) {
   const { scope, target, targets, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
+  const clientSettings = useClientSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
   const { environments } = useEnvironments();
@@ -87,7 +88,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     return candidateProviders?.length
       ? [
           resolveDisplayedDefaultModel(
-            mergeEnvironmentSettings(candidate.settings, settings),
+            mergeEnvironmentSettings(candidate.settings, clientSettings),
             candidateProviders,
           ),
         ]

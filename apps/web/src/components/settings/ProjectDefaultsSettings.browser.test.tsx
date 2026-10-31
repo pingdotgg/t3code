@@ -109,7 +109,7 @@ function setup(primary: EnvironmentFixture, remote: EnvironmentFixture) {
 }
 
 async function renderModelRow() {
-  const stack = new AsyncDisposableStack();
+  await using stack = new AsyncDisposableStack();
   const screen = stack.use(
     await render(
       <RegistryContext.Provider value={appAtomRegistry}>
@@ -161,6 +161,23 @@ describe("ProjectDefaultsSettings", () => {
     expect(
       screen.getByRole("button", { name: "Medium" }).query(),
       "effort picker for the shared model",
+    ).not.toBeNull();
+  });
+
+  it("resolves each environment against its own model preferences", async () => {
+    // Only primary hides Opus, so remote's automatic default stays Opus.
+    setup(
+      {
+        providers: [provider("claudeAgent", true, ["opus", "sonnet"])],
+        hiddenClaudeModels: ["opus"],
+      },
+      { providers: [provider("claudeAgent", true, ["opus", "sonnet"])] },
+    );
+    await using screen = await renderModelRow();
+
+    expect(
+      screen.getByRole("button", { name: "Mixed" }).query(),
+      "model picker labelled Mixed",
     ).not.toBeNull();
   });
 });
