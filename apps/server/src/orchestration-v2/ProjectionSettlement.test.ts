@@ -72,6 +72,8 @@ const createRun = Effect.fn(function* (
   threadId: ThreadId,
   status: OrchestrationV2Run["status"] = "completed",
   ordinal = 1,
+  at = old,
+  queueHeld = false,
 ) {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const runId = RunId.make(`run:${threadId}:${ordinal}`);
@@ -79,7 +81,7 @@ const createRun = Effect.fn(function* (
     id: EventId.make(`event:${runId}`),
     type: "run.created",
     threadId,
-    occurredAt: old,
+    occurredAt: at,
     payload: {
       id: runId,
       threadId,
@@ -91,9 +93,10 @@ const createRun = Effect.fn(function* (
       rootNodeId: null,
       activeAttemptId: null,
       status,
-      requestedAt: old,
-      startedAt: status === "queued" ? null : old,
-      completedAt: ["completed", "rolled_back", "failed"].includes(status) ? old : null,
+      queueHeld,
+      requestedAt: at,
+      startedAt: status === "queued" ? null : at,
+      completedAt: ["completed", "rolled_back", "failed"].includes(status) ? at : null,
       checkpointId: null,
       contextHandoffId: null,
     },
@@ -136,6 +139,41 @@ const createItem = Effect.fn(function* (
   });
 });
 
+it.effect("sql: a failed latest run blocks merge settlement until a successful follow-up", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* createThread("failed-after-merge");
+    const failedRunId = yield* createRun(
+      threadId,
+      "failed",
+      1,
+      DateTime.subtract(now, { minutes: 1 }),
+    );
+    const resolve = Effect.gen(function* () {
+      const candidates = yield* store.getSettlementCandidates(threadId);
+      assert.equal(candidates.length, 1);
+      return resolveAutoSettlementAt({
+        thread: candidates[0]!,
+        pullRequest: {
+          state: "merged",
+          mergedAt: DateTime.formatIso(DateTime.subtract(now, { minutes: 5 })),
+        },
+        nowMs: DateTime.toEpochMillis(now),
+        autoSettleAfterDays: null,
+        autoSettleOnMerge: true,
+      });
+    });
+    assert.isNull(yield* resolve);
+    yield* createRun(threadId, "queued", 2, now, true);
+    const [heldCandidate] = yield* store.getSettlementCandidates(threadId);
+    assert.equal(heldCandidate?.latestRunId, failedRunId);
+    assert.equal(heldCandidate?.status, "failed");
+    assert.isNull(yield* resolve);
+    yield* createRun(threadId, "completed", 3, now);
+    assert.deepEqual(yield* resolve, now);
+  }).pipe(Effect.provide(layerSql)),
+);
+
 it.effect(
   "sql: discovers settlement work with the same activity and background semantics as the shell",
   () =>
@@ -157,8 +195,7 @@ it.effect(
       for (const status of ["preparing", "starting", "running", "waiting"] as const) {
         yield* createRun(yield* createThread(status), status);
       }
-      const queued = yield* createThread("queued");
-      yield* createRun(queued, "queued");
+      yield* createRun(yield* createThread("queued"), "queued");
       const blocked = yield* createThread("blocked");
       yield* store.apply({
         id: EventId.make("event:settlement:request"),
@@ -250,7 +287,7 @@ it.effect(
       );
       assert.deepEqual(
         new Set(eligible.map((thread) => thread.id)),
-        new Set([idle, completed, queued, woke, background, persistent, rolledBack]),
+        new Set([idle, completed, background, persistent, rolledBack]),
       );
       assert.deepEqual(
         new Set(eligible.map((thread) => thread.id)),
