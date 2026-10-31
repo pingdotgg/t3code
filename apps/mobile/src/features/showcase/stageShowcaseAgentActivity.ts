@@ -27,7 +27,11 @@ export async function stageShowcaseAgentActivity(
   }
   if (Platform.OS !== "ios") return `unsupported platform ${Platform.OS}`;
 
+  // A stale fixture is staged with a staleDate that passes almost at once, as a silent relay would leave it.
+  const staleDate = activity.activities.some((row) => row.phase === "stale")
+    ? new Date(now + 2_000)
+    : undefined;
   await Promise.all(getAgentLiveActivities().map((existing) => existing.end("immediate")));
   // ActivityKit needs foreground startup; the runner locks only after this scene is ready.
-  return startAgentLiveActivity(activity) !== null || "Live Activity did not start";
+  return startAgentLiveActivity(activity, staleDate) !== null || "Live Activity did not start";
 }
