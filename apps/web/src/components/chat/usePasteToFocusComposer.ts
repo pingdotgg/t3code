@@ -1,3 +1,4 @@
+import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
 import { pasteTextToFocusComposer, shouldRedirectInputToComposer } from "./composerFocusRedirect";
 import { readPastedComposerContext } from "../composerInlineTokenPaste";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
@@ -16,11 +17,13 @@ export function usePasteToFocusComposer(
   activeThreadId: ThreadId | null,
   composerRef: ComposerHandleRef,
 ) {
+  const layoutPaneFocusedRef = useLayoutPaneFocusedRef();
   const pasteAsTextShortcutUntilRef = useRef(0);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches window keydown and paste capture listeners that route stray pastes into the composer
   useEffect(() => {
     if (!activeThreadId) return;
     const keyHandler = (event: KeyboardEvent) => {
+      if (!layoutPaneFocusedRef.current) return;
       if (
         shouldRedirectInputToComposer(event) &&
         isPasteAsTextShortcut(event, isMacPlatform(navigator.platform))
@@ -29,6 +32,7 @@ export function usePasteToFocusComposer(
       }
     };
     const handler = (event: ClipboardEvent) => {
+      if (!layoutPaneFocusedRef.current) return;
       if (isCommandPaletteOpen() || isInSideChatPane(event.target)) return;
       if (getTerminalFocusOwner() !== null) return;
       if (composerRef.current?.isModelPickerOpen()) return;
@@ -52,5 +56,5 @@ export function usePasteToFocusComposer(
       window.removeEventListener("keydown", keyHandler, true);
       window.removeEventListener("paste", handler, true);
     };
-  }, [activeThreadId, composerRef]);
+  }, [activeThreadId, composerRef, layoutPaneFocusedRef]);
 }

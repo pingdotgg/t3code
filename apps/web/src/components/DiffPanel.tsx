@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { PanelTabActions, PanelTabBreadcrumb, useInPanelTabBar } from "./PanelTabBreadcrumb";
 import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
 import {
   isAtomCommandInterrupted,
@@ -6,7 +7,12 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ReviewBranchCommitsResult, ScopedThreadRef, RunId } from "@t3tools/contracts";
+import type {
+  ReviewBranchCommitsResult,
+  ScopedProjectRef,
+  ScopedThreadRef,
+  RunId,
+} from "@t3tools/contracts";
 import {
   ArrowRightIcon,
   CheckIcon,
@@ -211,9 +217,19 @@ function DiffFileHeaderSuffix({
 
 interface DiffPanelProps {
   mode?: DiffPanelMode;
-  composerDraftTarget: ScopedThreadRef | DraftId;
+  /** The composer comments go to; without one (a threadless surface) there are none. */
+  composerDraftTarget?: ScopedThreadRef | DraftId | undefined;
   workspaceMutationId: string | null;
   visible: boolean;
+  /**
+   * The thread whose changes to show. A chat beside others in the layout
+   * passes its own; unset follows the route, as a lone thread view does.
+   */
+  threadRef?: ScopedThreadRef | null | undefined;
+  /** With no thread to follow (a threadless surface), the project checkout whose changes to show. */
+  projectRef?: ScopedProjectRef | null | undefined;
+  /** With no project either, the folder whose changes to show: the server's home. */
+  folder?: string | null | undefined;
 }
 
 export default function DiffPanel({
@@ -221,6 +237,9 @@ export default function DiffPanel({
   composerDraftTarget,
   workspaceMutationId,
   visible,
+  threadRef,
+  projectRef,
+  folder,
 }: DiffPanelProps) {
   const resolvedTheme = useRenderedAppearance();
   const now = useNowMinute();
@@ -231,6 +250,7 @@ export default function DiffPanel({
     timestampFormat: settings.timestampFormat,
     wordWrap: settings.wordWrap,
   }));
+  const inPanelTabBar = useInPanelTabBar();
   const diffLayout = settings.diffLayout;
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
@@ -247,9 +267,11 @@ export default function DiffPanel({
   // The comments written here since the review tray was last dismissed, for its one-press Undo.
   // Tied to the draft they went into, so switching threads does not carry a batch across.
   const composerDraftKey =
-    typeof composerDraftTarget === "string"
-      ? composerDraftTarget
-      : scopedThreadKey(composerDraftTarget);
+    composerDraftTarget === undefined
+      ? ""
+      : typeof composerDraftTarget === "string"
+        ? composerDraftTarget
+        : scopedThreadKey(composerDraftTarget);
   const [reviewBatch, setReviewBatch] = useState<{
     draftKey: string;
     commentIds: ReadonlyArray<string>;
@@ -263,9 +285,21 @@ export default function DiffPanel({
     }));
   const dismissReviewBatch = () => setReviewBatch(null);
 
-  const routeThreadRef = useThreadRouteRef();
+  const urlThreadRef = useThreadRouteRef();
+  const routeThreadRef = threadRef === undefined ? urlThreadRef : threadRef;
   const activeThreadId = routeThreadRef?.threadId ?? null;
-  const activeThread = useQuietThreadShell(routeThreadRef);
+  const threadShell = useQuietThreadShell(routeThreadRef);
+  const projectEnvironmentId = projectRef?.environmentId ?? null;
+  const projectCheckoutId = projectRef?.projectId ?? null;
+  const folderEnvironmentId = folder ? (routeThreadRef?.environmentId ?? null) : null;
+  // A project's own checkout, or a folder, stands in for a thread's; it has no turns.
+  const projectCheckout =
+    projectEnvironmentId !== null && projectCheckoutId !== null
+      ? { environmentId: projectEnvironmentId, projectId: projectCheckoutId, worktreePath: null }
+      : folder && folderEnvironmentId !== null
+        ? { environmentId: folderEnvironmentId, projectId: null, worktreePath: folder }
+        : null;
+  const activeThread = threadShell ?? projectCheckout;
   const fileAccess = useFilesystemReadAccess(activeThread?.environmentId ?? null);
   const { canReadFiles } = fileAccess;
   const activeProjectId = activeThread?.projectId ?? null;
@@ -320,7 +354,7 @@ export default function DiffPanel({
   );
   const toolCallItem = toolCallDetail.data?.item;
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
-  const turnDiffSummaries = useThreadCheckpointSummaries(routeThreadRef);
+  const turnDiffSummaries = useThreadCheckpointSummaries(projectCheckout ? null : routeThreadRef);
   const orderedTurnDiffSummaries = turnDiffSummaries.toSorted((left, right) => {
     if (left.checkpointTurnCount !== right.checkpointTurnCount) {
       return right.checkpointTurnCount - left.checkpointTurnCount;
@@ -806,13 +840,20 @@ export default function DiffPanel({
     }
   };
 
-  const headerRow = (
-    <>
-      <div className="@container/diff-refs flex min-w-0 flex-1 items-center gap-3 [-webkit-app-region:no-drag]">
+  // In tab headers, fold view controls before refs and scope labels as room shrinks.
+  // Keep the comparison picker reachable even when the labels truncate.
+  const crowdedTab =
+    inPanelTabBar &&
+    selectedRunId === null &&
+    selectedGitScope === "branch" &&
+    !!selectedGitSource?.baseRef;
+  const scopeCrumb = (
+    <PanelTabBreadcrumb>
+      <span className="flex min-w-0 items-center gap-3">
         <DropdownMenu>
           <DropdownMenuTrigger
             render={<Button size="xs" variant="ghost" />}
-            className={cn("max-w-full", headerCommitSha !== null && "min-w-0 shrink")}
+            className="min-w-0 max-w-full shrink"
             aria-label={`Diff scope: ${selectedScopeLabel}`}
             data-workspace-focus-default
           >
@@ -980,15 +1021,21 @@ export default function DiffPanel({
         </DropdownMenu>
         {canSelectBranchBase && (
           <div
-            className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden text-meta text-muted-foreground"
+            className={cn(
+              "min-w-0 max-w-full items-center gap-2 overflow-hidden text-meta text-muted-foreground",
+              crowdedTab ? "flex min-w-16" : "flex",
+            )}
             aria-label={`Comparing ${comparisonHeadRef} against ${comparisonBaseRef}`}
           >
             <Tooltip>
               <TooltipTrigger
                 render={
-                  // Too narrow for both refs, keep the target readable and drop the head, which
-                  // is the thread's own branch.
-                  <span className="flex min-w-[min(3rem,calc(100%-2.75rem))] items-center gap-2 overflow-hidden @max-[20rem]/diff-refs:hidden" />
+                  <span
+                    className={cn(
+                      "min-w-[min(3rem,calc(100%-2.75rem))] items-center gap-2 overflow-hidden",
+                      crowdedTab ? "hidden @xl/diff-toolbar:flex" : "flex",
+                    )}
+                  />
                 }
               >
                 <span className="min-w-0 max-w-48 truncate">{comparisonHeadRef}</span>
@@ -999,11 +1046,7 @@ export default function DiffPanel({
               </TooltipPopup>
             </Tooltip>
             <Tooltip>
-              <TooltipTrigger
-                render={<span aria-hidden className="hidden @max-[20rem]/diff-refs:inline" />}
-              >
-                vs
-              </TooltipTrigger>
+              <TooltipTrigger render={<span aria-hidden className="hidden" />}>vs</TooltipTrigger>
               <TooltipPopup side="top">
                 {`${comparisonHeadRef} → ${comparisonBaseRef}`}
               </TooltipPopup>
@@ -1022,7 +1065,7 @@ export default function DiffPanel({
             >
               <ComboboxTrigger
                 render={<Button variant="ghost-muted" size="xs" />}
-                className="min-w-9 max-w-48 shrink-0"
+                className="min-w-9 max-w-48 shrink"
                 aria-label={`Change comparison target. Currently ${comparisonBaseRef}`}
               >
                 <span className="min-w-0 truncate font-normal">{comparisonBaseRef}</span>
@@ -1107,34 +1150,53 @@ export default function DiffPanel({
             </Combobox>
           </div>
         )}
+      </span>
+    </PanelTabBreadcrumb>
+  );
+  const viewControls = (
+    <PanelTabActions>
+      <DiffViewControls
+        diffLayout={diffLayout}
+        wordWrap={wordWrap}
+        onWordWrapChange={setWordWrap}
+        ignoreWhitespace={diffIgnoreWhitespace}
+        onIgnoreWhitespaceChange={setDiffIgnoreWhitespace}
+        hasFiles={diffFileKeys.length > 0}
+        testFileCount={testFileCount}
+        hideTestFiles={hideTestFiles}
+        onHideTestFilesChange={setHideTestFiles}
+        foldBelow={crowdedTab ? "2xl" : "sm"}
+        fileTreeOpen={fileTreeOpen}
+        onFileTreeOpenChange={setFileTreeOpen}
+        allFilesCollapsed={allDiffFilesCollapsed}
+        onToggleAllFiles={toggleDiffFileCollapse}
+        refresh={
+          canRefreshGitDiff
+            ? { refreshing: isRefreshingDiff, onRefresh: refreshDiffFromUserAction }
+            : undefined
+        }
+      />
+    </PanelTabActions>
+  );
+  const headerRow = (
+    <>
+      <div className="flex min-w-0 flex-1 items-center gap-3 [-webkit-app-region:no-drag]">
+        {scopeCrumb}
       </div>
       <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
-        <DiffViewControls
-          diffLayout={diffLayout}
-          wordWrap={wordWrap}
-          onWordWrapChange={setWordWrap}
-          ignoreWhitespace={diffIgnoreWhitespace}
-          onIgnoreWhitespaceChange={setDiffIgnoreWhitespace}
-          hasFiles={diffFileKeys.length > 0}
-          testFileCount={testFileCount}
-          hideTestFiles={hideTestFiles}
-          onHideTestFilesChange={setHideTestFiles}
-          fileTreeOpen={fileTreeOpen}
-          onFileTreeOpenChange={setFileTreeOpen}
-          allFilesCollapsed={allDiffFilesCollapsed}
-          onToggleAllFiles={toggleDiffFileCollapse}
-          refresh={
-            canRefreshGitDiff
-              ? { refreshing: isRefreshingDiff, onRefresh: refreshDiffFromUserAction }
-              : undefined
-          }
-        />
+        {viewControls}
       </div>
     </>
   );
 
   return (
-    <DiffPanelShell mode={mode} header={headerRow}>
+    <DiffPanelShell mode={mode} header={inPanelTabBar ? null : headerRow}>
+      {inPanelTabBar ? (
+        <>
+          {scopeCrumb}
+          {viewControls}
+        </>
+      ) : null}
       {!activeThread ? (
         <PanelEmptyState
           icon={<FileDiffIcon />}
@@ -1145,7 +1207,7 @@ export default function DiffPanel({
         <PanelEmptyState
           icon={<FolderGit2Icon />}
           title="Not a git repository"
-          description="Diffs compare git checkpoints, so this project has none to show."
+          description="Diffs compare git checkpoints, so this folder has none to show."
         />
       ) : selectedRunId !== null && orderedTurnDiffSummaries.length === 0 ? (
         <PanelEmptyState
@@ -1163,7 +1225,15 @@ export default function DiffPanel({
         )
       ) : (
         <>
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+          <div
+            className={cn(
+              "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background",
+              // The notice takes the band under a pane header the diff scrolls under.
+              isSelectedPatchTruncated &&
+                !lazySource &&
+                "pt-under-header *:[--surface-top-inset:0px]",
+            )}
+          >
             {isSelectedPatchTruncated && !lazySource && (
               <p className="shrink-0 border-b border-border surface-card px-3 py-1.5 text-caption text-muted-foreground">
                 This preview exceeds the size limit. Changes shown are incomplete.
@@ -1372,6 +1442,7 @@ export default function DiffPanel({
                 </div>
                 {fileTreeOpen ? (
                   <FileExplorerPane
+                    className="mt-[var(--surface-top-inset,0px)]"
                     resizable
                     storageKey="t3code:diff-file-tree-width"
                     defaultWidthFraction={0.4}
@@ -1388,7 +1459,7 @@ export default function DiffPanel({
                 ) : null}
               </div>
             ) : (
-              <div className="min-h-0 flex-1 overflow-auto p-2">
+              <div className="min-h-0 flex-1 scroll-pt-[var(--surface-top-inset,0px)] overflow-auto p-2 pt-under-header-2">
                 <div className="space-y-2">
                   <p className="text-caption text-dim-foreground">
                     {renderablePatch?.kind === "raw" ? renderablePatch.reason : null}
@@ -1406,11 +1477,13 @@ export default function DiffPanel({
                 </div>
               </div>
             )}
-            <DiffReviewTray
-              composerDraftTarget={composerDraftTarget}
-              commentIds={reviewBatchIds}
-              onDismiss={dismissReviewBatch}
-            />
+            {composerDraftTarget ? (
+              <DiffReviewTray
+                composerDraftTarget={composerDraftTarget}
+                commentIds={reviewBatchIds}
+                onDismiss={dismissReviewBatch}
+              />
+            ) : null}
           </div>
         </>
       )}
