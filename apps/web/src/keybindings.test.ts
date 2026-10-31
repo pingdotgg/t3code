@@ -767,6 +767,24 @@ describe("isRichTextBoldShortcut", () => {
 });
 
 describe("composer and pull request shortcuts", () => {
+  it("dictates on mod+alt+v and keeps mod+shift+d for the terminal split", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "v", ctrlKey: true, altKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform: "Linux", context: { terminalFocus: false } },
+      ),
+      "composer.dictation",
+    );
+    const chord = event({ key: "d", ctrlKey: true, shiftKey: true });
+    assert.strictEqual(
+      resolveShortcutCommand(chord, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+      "terminal.splitVertical",
+    );
+  });
   it("fills missing number shortcuts without replacing the saved URL binding", () => {
     const olderServerBindings = DEFAULT_RESOLVED_KEYBINDINGS.filter(
       (binding) =>

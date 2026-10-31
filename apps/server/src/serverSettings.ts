@@ -51,6 +51,7 @@ import {
   deriveLegacyProjectOverrides,
   fallbackTextGenerationModelSelection,
   isModelSelectionProviderEnabled,
+  resolveSpeechPostProcessingModelSelection,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
@@ -482,14 +483,24 @@ function resolveTextGenerationProvider(
   isDriverAllowed: DriverAllowed = anyDriver,
 ): ServerSettings {
   const selection = settings.textGenerationModelSelection;
-  return isModelSelectionProviderEnabled(settings, selection) &&
+  const resolved =
+    isModelSelectionProviderEnabled(settings, selection) &&
     selectionSupportsTextGeneration(settings, selection) &&
     isDriverAllowed(
       settings.providerInstances[selection.instanceId]?.driver ??
         ProviderDriverKind.make(selection.instanceId),
     )
-    ? settings
-    : fallbackTextGenerationProvider(settings, isDriverAllowed);
+      ? settings
+      : fallbackTextGenerationProvider(settings, isDriverAllowed);
+  const speechPostProcessingModelSelection = resolveSpeechPostProcessingModelSelection(
+    resolved,
+    undefined,
+    isDriverAllowed,
+  );
+  return speechPostProcessingModelSelection === null ||
+    speechPostProcessingModelSelection === resolved.speechPostProcessingModelSelection
+    ? resolved
+    : { ...resolved, speechPostProcessingModelSelection };
 }
 
 function fallbackTextGenerationProvider(
@@ -517,6 +528,7 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "reviewGuideModelSelection",
   "textGenerationModelSelection",
   "fallbackModelSelection",
+  "speechPostProcessingModelSelection",
   "pullRequestMergeMethod",
   // Empty by default, these hold one whole value, which a managed policy can default.
   ...Object.entries(DEFAULT_SERVER_SETTINGS).flatMap(([key, value]) =>

@@ -2314,6 +2314,7 @@ it.layer(NodeServices.layer)("server settings under a provider policy", (it) => 
             codex: { driver: cursor, enabled: true },
           },
           textGenerationModelSelection: { instanceId: cursorId, model: "auto" },
+          speechPostProcessingModelSelection: { instanceId: cursorId, model: "auto" },
         }),
       );
 
@@ -2322,6 +2323,7 @@ it.layer(NodeServices.layer)("server settings under a provider policy", (it) => 
       assert.equal(settings.providerInstances[cursorId]?.driver, cursor);
       // Built-in text generation does not fall back onto a disallowed driver either.
       assert.equal(settings.textGenerationModelSelection.instanceId, "claudeAgent");
+      assert.equal(settings.speechPostProcessingModelSelection.instanceId, "claudeAgent");
 
       const rejected = yield* service
         .updateProviderInstance({
