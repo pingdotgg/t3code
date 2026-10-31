@@ -1,11 +1,15 @@
 import { EnvironmentId, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { deriveLogicalProjectKeyFromSettings } from "./logicalProject";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  pickableProjectGroups,
+} from "@t3tools/client-runtime/state/project-grouping";
 import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
   resolveSidebarProjectScopeKey,
+  resolveSidebarProjectScopeKeys,
   getSidebarProjectSettingsKey,
 } from "./sidebarProjectGrouping";
 import type { Project } from "./types";
@@ -275,4 +279,56 @@ describe("environment grouping", () => {
       id: fallbackPrimary.id,
     });
   });
+
+  it("puts the preferred project after pinned projects", () => {
+    const project = (title: string, pinnedAt: string | null = null) =>
+      makeProject({
+        id: ProjectId.make(title),
+        title,
+        workspaceRoot: `/tmp/${title}`,
+        repositoryIdentity: null,
+        pinnedAt,
+      });
+    const current = project("current");
+    const groups = buildSidebarProjectSnapshots({
+      projects: [project("other"), project("pinned", "2026-01-01T00:00:00.000Z"), current],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+    const entries = buildSidebarProjectPickerEntries({
+      groups: pickableProjectGroups(groups),
+      preferredProjectRef: { environmentId: current.environmentId, projectId: current.id },
+    });
+    expect(entries.map((entry) => entry.group.displayName)).toEqual(["pinned", "current", "other"]);
+  });
+});
+
+
+it("keeps visible selected projects and grouped clones when environment filtering hides another selection", () => {
+  const groups = buildSidebarProjectSnapshots({
+    projects: [
+      makeProject({ id: ProjectId.make("local"), title: "local", workspaceRoot: "/local/only" }),
+      makeProject({ id: ProjectId.make("remote"), title: "remote", workspaceRoot: "/remote/only", environmentId: remoteEnvironmentId }),
+      makeProject({ id: ProjectId.make("shared-local"), repositoryIdentity }),
+      makeProject({ id: ProjectId.make("shared-remote"), repositoryIdentity, environmentId: remoteEnvironmentId }),
+    ],
+    settings: defaultGroupingSettings,
+    primaryEnvironmentId,
+    resolveEnvironmentLabel: () => null,
+  });
+  const keys = groups.map((group) => group.projectKey);
+  const local = groups.find((group) => group.displayName === "local")!.projectKey;
+  const remote = groups.find((group) => group.displayName === "remote")!.projectKey;
+  const shared = repositoryIdentity.canonicalKey;
+  for (const [disabled, expected] of [
+    [[], keys],
+    [[remoteEnvironmentId], [local, shared]],
+    [[primaryEnvironmentId], [remote, shared]],
+    [[primaryEnvironmentId, remoteEnvironmentId], []],
+  ] as const) {
+    const resolved = resolveSidebarProjectScopeKeys({ groups, keys, disabledEnvironmentIds: new Set(disabled) });
+    expect(new Set(resolved)).toEqual(new Set(expected));
+  }
+  expect(resolveSidebarProjectScopeKeys({ groups, keys: ["not-loaded"], disabledEnvironmentIds: new Set([remoteEnvironmentId]) })).toEqual(["not-loaded"]);
 });

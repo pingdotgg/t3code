@@ -9,7 +9,7 @@ import type {
   AgentActivityRowProps,
 } from "../../widgets/AgentActivity";
 
-export const SHOWCASE_AGENT_ACTIVITY_ROWS = [
+const SHOWCASE_AGENT_ACTIVITY_ROWS = [
   { threadId: "pocket-command-center", phase: "waiting_for_approval", minutesAgo: 1 },
   { threadId: "beautiful-boot", phase: "waiting_for_input", minutesAgo: 4 },
   { threadId: "buttery-suspense", phase: "running", minutesAgo: 2 },
@@ -20,7 +20,6 @@ export const SHOWCASE_AGENT_ACTIVITY_ROWS = [
   readonly minutesAgo: number;
 }>;
 
-// Matches the relay's row wording (AgentActivityPublisher.statusForPhase).
 const STATUS_BY_PHASE: Record<AgentActivityPhase, string> = {
   starting: "Connecting",
   running: "Working",
@@ -76,7 +75,7 @@ export function buildShowcaseAgentActivity(
   };
 }
 
-export function showcaseAgentAlert(activity: AgentActivityProps) {
+function showcaseAgentAlert(activity: AgentActivityProps) {
   const row = activity.activities[0];
   if (!row) return null;
   return {
@@ -88,10 +87,7 @@ export function showcaseAgentAlert(activity: AgentActivityProps) {
   };
 }
 
-/**
- * The FCM data map Android's native receiver renders, mirroring the relay's
- * androidActivityData so the shade shows exactly what a real push produces.
- */
+/** Matches the relay's androidActivityData FCM map for native rendering. */
 export function showcaseAndroidActivityData(
   activity: AgentActivityProps,
   now: number,
