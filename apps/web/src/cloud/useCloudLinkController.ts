@@ -18,6 +18,7 @@ import * as Schema from "effect/Schema";
 import { useState } from "react";
 
 import { toastManager } from "../components/ui/toast";
+import { stackedThreadToast } from "../components/ui/toastHelpers";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { readEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -86,24 +87,35 @@ export function useCloudLinkController() {
   const [operationError, setOperationError] = useState<string | null>(null);
   const [tunnelLimit, setTunnelLimit] = useState<number | null>(null);
 
-  const reportUpdateFailure = (cause: unknown) => {
+  const reportUpdateFailure = (
+    cause: unknown,
+    description = "Could not save this change. Try again.",
+  ) => {
     const message = cause instanceof Error ? cause.message : "Could not update T3 Connect access.";
     const traceId = findErrorTraceId(cause);
     console.error("[t3-connect] Could not update T3 Connect", { message, traceId, cause });
     setOperationError(traceId ? `${message} Trace ID: ${traceId}` : message);
-    toastManager.add({
-      type: "error",
-      title: "Could not update T3 Connect",
-      description: message,
-      data: traceId
-        ? {
-            secondaryActionProps: {
-              children: "Copy trace ID",
-              onClick: () => void navigator.clipboard?.writeText(traceId),
-            },
-          }
-        : undefined,
-    });
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Could not update T3 Connect",
+        description,
+        ...(traceId
+          ? {
+              actionProps: {
+                children: "Copy trace ID",
+                onClick: () => void navigator.clipboard?.writeText(traceId),
+              },
+            }
+          : {}),
+        actionVariant: "outline",
+        data: {
+          copyErrorText: message,
+          expandableContent: message,
+          expandableLabels: { expand: "Show more", collapse: "Show less" },
+        },
+      }),
+    );
   };
 
   const linkData = primaryCloudLinkState.data;
@@ -159,9 +171,13 @@ export function useCloudLinkController() {
       refreshManagedTunnelUsage();
       if (unlinkResult._tag === "Failure") {
         if (!isAtomCommandInterrupted(unlinkResult)) {
-          reportUpdateFailure(squashAtomCommandFailure(unlinkResult));
+          reportUpdateFailure(
+            squashAtomCommandFailure(unlinkResult),
+            "Could not finish disconnecting. Try again.",
+          );
         }
         primaryCloudLinkState.refresh();
+        await refreshRelayEnvironments();
         return false;
       }
     } else {
