@@ -169,17 +169,6 @@ function RootRouteBranch() {
     return hostedPromptLinkLanding;
   }
 
-  // The dev design-system catalog: the user's appearance, no workspace shell.
-  if (import.meta.env.DEV && pathname === "/design-system") {
-    return (
-      <ToastProvider>
-        <AnchoredToastProvider>
-          <Outlet />
-        </AnchoredToastProvider>
-      </ToastProvider>
-    );
-  }
-
   const isWelcome = pathname === "/welcome";
   if (authGateState.status !== "authenticated" && authGateState.status !== "hosted-static") {
     return <Outlet />;

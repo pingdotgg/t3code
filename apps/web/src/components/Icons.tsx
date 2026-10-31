@@ -3,7 +3,15 @@ import { cn } from "~/lib/utils";
 export type Icon = React.FC<SVGProps<SVGSVGElement>>;
 
 export const UltrafastIcon: Icon = (props) => (
-  <svg viewBox="0 0 24 24" fill="currentColor" {...props}>
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
     <path d="m17 2-10 12h7l-1 8 10-12h-7l1-8Z" opacity="0.4" />
     <path d="m11 2-10 12h7l-1 8 10-12h-7l1-8Z" />
   </svg>

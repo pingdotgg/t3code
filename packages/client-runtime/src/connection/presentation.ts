@@ -18,6 +18,8 @@ export interface EnvironmentConnectionPresentation {
   readonly phase: EnvironmentConnectionPhase;
   readonly error: string | null;
   readonly traceId: string | null;
+  /** Epoch ms of the next automatic attempt while backing off. */
+  readonly retryAt?: number | null;
 }
 
 /**
@@ -54,6 +56,7 @@ export function presentConnectionState(
         phase: "reconnecting",
         error: state.lastFailure?.message ?? null,
         traceId: state.lastFailure?.traceId ?? null,
+        retryAt: state.retryAt,
       };
     case "blocked":
       return {
