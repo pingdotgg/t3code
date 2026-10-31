@@ -13,15 +13,14 @@ import {
 import {
   ChevronRightIcon,
   DownloadIcon,
+  FileQuestion,
   Trash2Icon,
   WrapTextIcon,
   XIcon,
   CheckIcon,
-  Code2Icon,
   CopyIcon,
-  EyeIcon,
-  Table2Icon,
 } from "lucide-react";
+
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
@@ -40,10 +39,12 @@ import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
 import {
   FILE_SURFACE_SUBHEADER_CLASS,
+  FileRenderedViewToggle,
   FileSurfaceAction,
   FileSurfaceFailure,
   FileSurfaceLoading,
   FileSurfaceNotice,
+  FileSurfaceState,
 } from "./fileSurfaceChrome";
 
 const LargeTextViewer = lazy(() => import("./LargeTextViewer"));
@@ -79,16 +80,6 @@ export function ReadOnlySourcePreview(props: { name: string; text: string; wordW
       <SourcePreview {...props} />
     </Suspense>
   );
-}
-
-function renderedToggleLabel(
-  mode: "markdown" | "mermaid" | "html" | "table",
-  rendered: boolean,
-): string {
-  if (mode === "mermaid") return rendered ? "Show Mermaid source" : "Show rendered diagram";
-  if (mode === "markdown") return rendered ? "Show markdown source" : "Show rendered markdown";
-  if (mode === "table") return rendered ? "Show source" : "Show table";
-  return rendered ? "Show HTML source" : "Show rendered page";
 }
 
 export function AttachmentFilePreview(props: {
@@ -377,13 +368,11 @@ export function AttachmentFilePreview(props: {
       onError={() => setError("Unable to load image.")}
     />
   ) : (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
-      <p className="text-sm font-medium">No preview for this file</p>
-      <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
-        Save it to open in an app that supports {props.name.split(".").at(-1) || "this format"}{" "}
-        files.
-      </p>
-    </div>
+    <FileSurfaceState
+      icon={<FileQuestion />}
+      title="No preview for this file"
+      description={`Save it to open in an app that supports ${props.name.split(".").at(-1) || "this format"} files.`}
+    />
   );
 
   return (
@@ -407,19 +396,11 @@ export function AttachmentFilePreview(props: {
           ) : null}
         </div>
         {renderedMode ? (
-          <FileSurfaceAction
-            label={renderedToggleLabel(renderedMode, rendered)}
-            pressed={rendered}
-            onPress={() => setRendered((value) => !value)}
-          >
-            {rendered ? (
-              <Code2Icon className="size-3.5" />
-            ) : renderedMode === "table" ? (
-              <Table2Icon className="size-3.5" />
-            ) : (
-              <EyeIcon className="size-3.5" />
-            )}
-          </FileSurfaceAction>
+          <FileRenderedViewToggle
+            mode={renderedMode}
+            rendered={rendered}
+            onRenderedChange={setRendered}
+          />
         ) : null}
         {showsRawText ? (
           <FileSurfaceAction

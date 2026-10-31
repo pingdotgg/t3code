@@ -68,26 +68,46 @@ describe("MediaVideoPlayer", () => {
     await expectVideoSrc(screen, "/asset/first/clip.mp4");
   });
 
-  it("starts loading metadata once the player scrolls near the viewport", async () => {
-    using _observer = stubGlobal("IntersectionObserver", VisibleIntersectionObserver);
-    await using screen = await render(<MediaVideoPlayer src="/asset/clip.mp4" label="clip" />);
+  it.each(["native", "custom"] as const)(
+    "starts loading metadata near the viewport with %s controls",
+    async (transport) => {
+      using _observer = stubGlobal("IntersectionObserver", VisibleIntersectionObserver);
+      await using screen = await render(
+        <MediaVideoPlayer src="/asset/clip.mp4" label="clip" transport={transport} />,
+      );
 
-    await expect.element(screen.getByLabelText("clip")).toHaveAttribute("preload", "metadata");
-  });
+      await expect.element(screen.getByLabelText("clip")).toHaveAttribute("preload", "metadata");
+    },
+  );
 
-  it("keeps a playing video playing when the player rerenders", async () => {
-    using _observer = stubGlobal("IntersectionObserver", HiddenIntersectionObserver);
-    await using screen = await render(
-      <MediaVideoPlayer src="/asset/clip.mp4" label="clip" className="w-40" />,
-    );
-    const video = screen.getByLabelText("clip").element() as HTMLVideoElement;
-    using pause = vi.spyOn(video, "pause");
-    await act(() => {
-      video.dispatchEvent(new Event("play"));
-    });
+  it.each(["native", "custom"] as const)(
+    "keeps a playing video playing when the player rerenders with %s controls",
+    async (transport) => {
+      using _observer = stubGlobal("IntersectionObserver", HiddenIntersectionObserver);
+      await using screen = await render(
+        <MediaVideoPlayer
+          src="/asset/clip.mp4"
+          label="clip"
+          className="w-40"
+          transport={transport}
+        />,
+      );
+      const video = screen.getByLabelText("clip").element() as HTMLVideoElement;
+      using pause = vi.spyOn(video, "pause");
+      await act(() => {
+        video.dispatchEvent(new Event("play"));
+      });
 
-    await screen.rerender(<MediaVideoPlayer src="/asset/clip.mp4" label="clip" className="w-48" />);
+      await screen.rerender(
+        <MediaVideoPlayer
+          src="/asset/clip.mp4"
+          label="clip"
+          className="w-48"
+          transport={transport}
+        />,
+      );
 
-    expect(pause).not.toHaveBeenCalled();
-  });
+      expect(pause).not.toHaveBeenCalled();
+    },
+  );
 });

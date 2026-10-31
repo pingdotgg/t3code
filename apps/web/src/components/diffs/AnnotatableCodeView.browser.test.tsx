@@ -150,7 +150,7 @@ describe("diff comment drafts", () => {
     await screen.rerender(view([refreshed], "loaded"));
     expect(editor().value).toBe("Keep this draft");
     expect(container.querySelector("mark")?.textContent).toBe("Line 1");
-    await click("Comment");
+    await click("Done");
     expect(useComposerDraftStore.getState().getComposerDraft(target)?.reviewComments).toEqual([
       expect.objectContaining({
         filePath: "shared.ts",
