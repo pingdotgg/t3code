@@ -278,10 +278,12 @@ function tabAudioState(overlay: DesktopPreviewOverlay | null): TabAudioState {
  */
 function PanelTabStrip({
   notched,
+  embedded,
   ref,
   children,
 }: {
   notched: boolean;
+  embedded: boolean;
   ref: Ref<HTMLDivElement>;
   children: ReactNode;
 }) {
@@ -291,7 +293,7 @@ function PanelTabStrip({
       // so a narrow pane never squeezes its shown tab away.
       <div
         ref={ref}
-        className="flex min-w-0 flex-auto items-center gap-1"
+        className={cn("flex items-center gap-1", embedded ? "shrink-0" : "min-w-0 flex-auto")}
         data-right-panel-tab-list
       >
         {children}
@@ -1466,7 +1468,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           {layoutTabId !== null
             ? siblingTabs.before.map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
             : null}
-          <PanelTabStrip notched={notched} ref={attachTabList}>
+          <PanelTabStrip notched={notched} embedded={layoutTabId !== null} ref={attachTabList}>
             <SortableTabList surfaces={props.surfaces} onMove={props.onMoveSurface}>
               {props.surfaces.map((surface) => {
                 if (tabFit.hidden.has(surface.id)) return null;
