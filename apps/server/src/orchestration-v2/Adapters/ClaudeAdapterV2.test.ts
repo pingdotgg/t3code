@@ -5877,6 +5877,29 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ]).pipe(Effect.flip);
       assert.instanceOf(error, ProviderAdapter.ProviderAdapterRollbackThreadError);
       assert.include(String(error.cause), "no SDK assistant message cursor");
+      const earlierCursor = "00000000-0000-4000-8000-000000000648";
+      const pastSilentTurn = yield* rollbackTo([
+        {
+          ...providerTurn,
+          id: ProviderTurnId.make("provider-turn-claude-cursor-earlier"),
+          ordinal: providerTurn.ordinal - 1,
+          nativeTurnRef: {
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeId: earlierCursor,
+            strength: "weak",
+          },
+        },
+        providerTurn,
+        {
+          ...providerTurn,
+          id: ProviderTurnId.make("provider-turn-claude-cursor-next"),
+          ordinal: providerTurn.ordinal + 1,
+        },
+      ]);
+      assert.equal(
+        pastSilentTurn.providerThread.nativeConversationHeadRef?.nativeId,
+        earlierCursor,
+      );
 
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
