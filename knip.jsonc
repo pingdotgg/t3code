@@ -118,6 +118,8 @@
     "apps/mobile/modules/t3-source-text": {
       // React Native codegen discovers component specifications by filename.
       "entry": ["src/*NativeComponent.ts!"],
+      // pnpm requires these optional type peers for frozen file: installs.
+      "ignoreDependencies": ["@types/react", "@types/react-native"],
     },
     "infra/task-cache": {
       "ignore": ["vendor/**"],

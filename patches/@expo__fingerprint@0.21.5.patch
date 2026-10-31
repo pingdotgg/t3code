@@ -14,3 +14,95 @@ index 785ec516921af68ea5922462a0177112e15c6bb1..8ce5ce7937b83b3677416bf18f4c60d7
                      const filePath = (0, _Path.toPosixPath)(_path().default.relative(realProjectRoot, plugin.sourceDir));
                      plugin.sourceDir = filePath; // use relative path for the dir
                      debug(`Adding expo-modules-autolinking android dir - ${_chalk().default.dim(filePath)}`);
+diff --git a/build/hash/Hash.js b/build/hash/Hash.js
+--- a/build/hash/Hash.js
++++ b/build/hash/Hash.js
+@@ -76,6 +76,8 @@
+     return data;
+ }
+ const _Concurrency = require("../utils/Concurrency");
++const _Sort = require("../Sort");
++const _PnpmPath = require("./PnpmPath");
+ const _Path = require("../utils/Path");
+ const _Predicates = require("../utils/Predicates");
+ const _Profile = require("../utils/Profile");
+@@ -87,6 +89,23 @@
+     };
+ }
+ async function createFingerprintFromSourcesAsync(sources, projectRoot, options) {
++    const normalizePath = (0, _PnpmPath.createPnpmPathNormalizer)(projectRoot);
++    options = { ...options, pnpmPathNormalizer: normalizePath };
++    // Physical paths remain available for reads and ignore matching. Sort by the same
++    // stable keys that are hashed, since pnpm layouts can reorder physical sources.
++    sources = (0, _Sort.sortSources)(sources.map((source)=>{
++        if (source.type === 'file' || source.type === 'dir') {
++            const key = normalizePath(source.filePath);
++            return key === source.filePath ? source : {
++                ...source,
++                overrideHashKey: source.overrideHashKey ?? key
++            };
++        }
++        if (source.type === 'contents') {
++            return { ...source, id: normalizePath(source.id) };
++        }
++        return source;
++    }));
+     const limiter = (0, _Concurrency.createLimiter)(options.concurrentIoLimit);
+     const fingerprintSources = await Promise.all(sources.map((source)=>createFingerprintSourceAsync(source, limiter, projectRoot, options)));
+     const hasher = (0, _crypto().createHash)(options.hashAlgorithm);
+@@ -191,7 +210,7 @@
+                     } : undefined;
+                     resolve({
+                         type: 'file',
+-                        id: filePath,
++                        id: (options.pnpmPathNormalizer ?? (0, _PnpmPath.createPnpmPathNormalizer)(projectRoot))(filePath),
+                         hex,
+                         ...debugInfo ? {
+                             debugInfo
+@@ -244,7 +263,7 @@
+     const hex = hasher.digest('hex');
+     return {
+         type: 'dir',
+-        id: dirPath,
++        id: (options.pnpmPathNormalizer ?? (0, _PnpmPath.createPnpmPathNormalizer)(projectRoot))(dirPath),
+         hex,
+         ...options.debug ? {
+             debugInfo: {
+diff --git a/build/hash/PnpmPath.js b/build/hash/PnpmPath.js
+new file mode 100644
+--- /dev/null
++++ b/build/hash/PnpmPath.js
+@@ -0,0 +1,33 @@
++"use strict";
++const fs = require("node:fs");
++const path = require("node:path");
++const { getNodeModulesPackageJsonPath } = require("../utils/Path");
++
++// pnpm's project virtual store and global virtual store encode install location,
++// peer resolution and store hashes outside the package. None is a native source ID.
++const PROJECT_STORE = /(?:^|\/)node_modules\/\.pnpm\/[^/]+\/$/;
++const GLOBAL_STORE = /(?:^|\/)v\d+\/links\/(?:@\/|@[^/]+\/)?[^/]+\/[^/]+\/[^/]+\/$/;
++
++function createPnpmPathNormalizer(projectRoot) {
++    const identities = new Map();
++    return (filePath)=>{
++        const marker = filePath.lastIndexOf('node_modules/');
++        if (marker === -1) return filePath;
++        const container = filePath.slice(0, marker);
++        if (!PROJECT_STORE.test(container) && !GLOBAL_STORE.test(container)) return filePath;
++        const packageJsonPath = getNodeModulesPackageJsonPath(filePath);
++        if (!packageJsonPath) return filePath;
++        const packageRoot = packageJsonPath.slice(0, -'/package.json'.length);
++        let identity = identities.get(packageRoot);
++        if (identity === undefined) {
++            const { name, version } = JSON.parse(fs.readFileSync(path.resolve(projectRoot, packageJsonPath), 'utf8'));
++            if (typeof name !== 'string' || !name || typeof version !== 'string' || !version) {
++                throw new Error(`Cannot fingerprint pnpm package without name and version: ${packageJsonPath}`);
++            }
++            identity = `node_modules/${name}@${version}`;
++            identities.set(packageRoot, identity);
++        }
++        return identity + filePath.slice(packageRoot.length);
++    };
++}
++module.exports = { createPnpmPathNormalizer };

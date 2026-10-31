@@ -6,6 +6,10 @@ packages:
   - packages/*
   - scripts
 
+virtualStoreType: global
+# Local file: packages must declare the synthesized peers for frozen installs.
+addMissingPeerTypes: true
+
 # Successor to onlyBuiltDependencies/ignoredBuiltDependencies (pnpm 11+).
 # true = allowed to run build scripts; false mirrors the pnpm 10 behavior
 # where anything outside onlyBuiltDependencies was silently not built.
@@ -348,11 +352,24 @@ packageExtensions:
   "@clerk/expo-native-components@*":
     dependencies:
       "@expo/config-plugins": 58.0.9
-  # Our patch makes @effect/vitest import vite-plus/test. A catalog: spec here
+  # Our test patches import vite-plus/test. A catalog: spec here
   # resolves through the vite-plus override above.
   "@effect/vitest@*":
     dependencies:
       vite-plus: "catalog:"
+  "alchemy@2.0.0-beta.84":
+    peerDependencies:
+      vite-plus: "catalog:"
+    peerDependenciesMeta:
+      vite-plus:
+        optional: true
+  # Navigation types import these without declaring them as direct dependencies.
+  "@react-navigation/native-stack@*":
+    dependencies:
+      "@react-navigation/core": 7.24.0
+  "@react-navigation/native@*":
+    dependencies:
+      "@react-navigation/routers": ^7.6.5
 
 patchedDependencies:
   react-native-image-viewing@0.2.2: patches/react-native-image-viewing@0.2.2.patch
