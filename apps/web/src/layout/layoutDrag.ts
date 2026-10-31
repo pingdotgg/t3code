@@ -159,7 +159,7 @@ function layoutDropDestination(
   target: LayoutDropTarget,
 ): LayoutTabDestination | null {
   if (target.kind === "side") return { kind: "split", paneId: target.paneId, side: target.side };
-  if (target.kind === "into") return { kind: "pane", paneId: target.paneId, index: target.index };
+  if (target.kind === "into") return { kind: "pane", paneId: target.paneId, ...(target.index === undefined ? {} : { index: target.index }) };
   const workspace = selectFocusedWorkspace(layout);
   if (target.edge === "left") return { kind: "column", workspaceId: workspace.id, index: 0 };
   if (target.edge === "right") {
