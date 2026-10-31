@@ -55,6 +55,8 @@ function fixture(
       }
     >;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
+    /** Upstream calls it matches never get an answer from the hub. */
+    stalls?: (request: RequestBody) => boolean;
     cooldownStatus?: number;
   } = {},
 ) {
@@ -80,6 +82,7 @@ function fixture(
         );
       expect(path).toMatch(/\/v0\/management\/api-call$/);
       expect(body?.header?.Authorization).toBe("Bearer $TOKEN$");
+      if (options.stalls?.(body!)) return undefined;
       const upstream = options.upstream?.(body!) ?? {
         status: 200,
         body: body?.url?.endsWith("/consume")
@@ -108,7 +111,12 @@ function fixture(
         request,
         Response.json({ status_code: upstream.status, body: encodeJson(upstream.body) }),
       );
-    }),
+    }).pipe(
+      Effect.filterOrElse(
+        (response) => response !== undefined,
+        () => Effect.never,
+      ),
+    ),
   );
   return {
     requests,
@@ -342,6 +350,51 @@ describe("CLIProxyAPI built-in management API", () => {
         ["seven_day", 50],
         ["seven_day_fable", 80],
       ]);
+    }),
+  );
+
+  it.effect("labels a hub Claude account with its plan tier", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: (request) => ({
+          status: 200,
+          body: request.url?.endsWith("/profile")
+            ? {
+                organization: {
+                  organization_type: "claude_max",
+                  rate_limit_tier: "default_claude_max_20x",
+                },
+              }
+            : { seven_day: { utilization: 50, resets_at: null } },
+        }),
+      });
+      const api = yield* test.api;
+      const [account] = yield* api.readAccounts(config);
+      expect(account?.plan).toBe("Claude Max 20x Subscription");
+    }),
+  );
+
+  it.effect("does not hold Claude usage until the hub times out a stalled profile", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: () => ({
+          status: 200,
+          body: { seven_day: { utilization: 50, resets_at: null } },
+        }),
+        stalls: (request) => request.url?.endsWith("/profile") ?? false,
+      });
+      const api = yield* test.api;
+      const pending = yield* api
+        .readAccounts(config)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("14 seconds");
+      const exit = pending.pollUnsafe();
+      expect(exit?._tag).toBe("Success");
+      const [account] = yield* Fiber.join(pending);
+      expect(account?.plan).toBe("Claude Subscription");
+      expect(account?.usageLimits.windows.map((window) => window.usedPercent)).toEqual([50]);
     }),
   );
 

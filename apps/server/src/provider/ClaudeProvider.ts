@@ -122,7 +122,7 @@ function normalizeClaudeAuthMethod(authMethod: string | undefined): string | und
   return undefined;
 }
 
-function formatClaudeSubscriptionAuthLabel(subscriptionType: string): string {
+export function formatClaudeSubscriptionAuthLabel(subscriptionType: string): string {
   const subscriptionLabel =
     claudeSubscriptionLabel(subscriptionType) ?? toTitleCaseWords(subscriptionType);
   const normalized = subscriptionLabel.toLowerCase().replace(/[\s_-]+/g, "");
