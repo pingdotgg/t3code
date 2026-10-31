@@ -164,5 +164,7 @@ it("keeps a docked picker open after a pick and hands focus to that model's effo
   await expect.element(page.getByRole("radio", { name: "Medium" })).toHaveFocus();
 
   await page.getByRole("option", { name: /Plain model/ }).click();
+  await expect.element(page.getByRole("option", { name: /Plain model/ })).toBeInTheDocument();
+  await userEvent.keyboard("{Escape}");
   await expect.element(search).not.toBeInTheDocument();
 });
