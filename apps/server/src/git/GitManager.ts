@@ -2230,6 +2230,7 @@ export const make = Effect.gen(function* () {
     fallbackBranch: string | null,
     threadId: ThreadId | undefined,
     emit: GitActionProgressEmitter,
+    pushRemoteRef?: { readonly remoteName: string; readonly upstreamRef: string },
   ) {
     const provider = yield* sourceControlProvider(cwd);
     const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
@@ -2250,10 +2251,12 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const headContext = yield* resolveBranchHeadContext(cwd, {
-      branch,
-      upstreamRef: details.upstreamRef,
-    });
+    // A configured push remote receives the commits while the branch keeps
+    // tracking its upstream, so the PR head is the push remote's branch.
+    const headContext = yield* resolveBranchHeadContext(
+      cwd,
+      pushRemoteRef ? { branch, ...pushRemoteRef } : { branch, upstreamRef: details.upstreamRef },
+    );
 
     const existing = yield* findOpenPr(cwd, headContext);
     if (existing) {
@@ -3179,6 +3182,9 @@ export const make = Effect.gen(function* () {
                     currentBranch,
                     input.threadId,
                     progress.emit,
+                    "pushRemote" in push && push.pushRemote && push.upstreamBranch
+                      ? { remoteName: push.pushRemote, upstreamRef: push.upstreamBranch }
+                      : undefined,
                   ),
                 ),
               )
