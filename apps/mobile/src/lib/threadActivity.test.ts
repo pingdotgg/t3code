@@ -1850,7 +1850,7 @@ describe("wake notification groups", () => {
     at: number,
     outcome: "completed" | "failed" = "completed",
     taskCount = 1,
-  ): OrchestrationV2TurnItem => ({
+  ): Extract<OrchestrationV2TurnItem, { type: "notification" }> => ({
     ...base(id, second(at), at),
     type: "notification",
     source: {
