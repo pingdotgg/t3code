@@ -9,17 +9,11 @@ import {
 import { useEffect, useState } from "react";
 
 import { Button } from "../components/ui/button";
-import {
-  Dialog,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogPopup,
-  DialogTitle,
-} from "../components/ui/dialog";
+import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "../components/ui/dialog";
 import { Popover, PopoverPopup } from "../components/ui/popover";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { isMacPlatform } from "../lib/utils";
+import { LayoutTourDiagram, LayoutTourKeys, type LayoutTourLesson } from "./LayoutTourDiagram";
 import { useLayoutStore } from "./layoutStore";
 import { useLayoutOverlayStore } from "./layoutOverlayStore";
 
@@ -119,6 +113,13 @@ export function LayoutOnboarding() {
       Icon: KeyboardIcon,
     },
   ];
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the overview lesson opens the real workspace overview and restores the prior state on leaving it.
+  useEffect(() => {
+    if (step !== 3) return;
+    const wasOpen = useLayoutStore.getState().overviewOpen;
+    useLayoutStore.getState().setOverviewOpen(true);
+    return () => useLayoutStore.getState().setOverviewOpen(wasOpen);
+  }, [step]);
   const current = step === null ? null : steps[step];
   const anchor = () =>
     current
@@ -138,28 +139,52 @@ export function LayoutOnboarding() {
           if (!open) finish();
         }}
       >
-        <DialogPopup className="max-w-100" bottomStickOnMobile={false}>
-          <DialogHeader>
-            <div
-              className="mb-3 flex h-28 items-center justify-center gap-2 rounded-card surface-well"
-              aria-hidden
-            >
-              <Columns2Icon className="size-16 text-muted-foreground" />
+        <DialogPopup className="max-w-[1000px]" bottomStickOnMobile={false}>
+          <div className="flex flex-col gap-6 p-8">
+            <div className="flex flex-col gap-2">
+              <DialogTitle render={<h1 />} size="page">
+                Tabs, side by side
+              </DialogTitle>
+              <DialogDescription>
+                Chats, terminals, diffs and the browser are all tabs now. Put them side by side,
+                scroll to the rest, and zoom out to see it all.
+              </DialogDescription>
             </div>
-            <DialogTitle>Tabs, side by side</DialogTitle>
-            <DialogDescription>
-              Group tabs in a pane. Drag one to an edge to split it out. Your workspace stays where
-              you leave it.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button size="standard" variant="secondary" onClick={finish}>
-              Got it
-            </Button>
-            <Button size="standard" onClick={() => setStep(0)}>
-              Show me
-            </Button>
-          </DialogFooter>
+            <div className="grid grid-cols-1 gap-4 min-[480px]:grid-cols-2 md:grid-cols-4">
+              {(
+                [
+                  ["tabs", "Everything is a tab", "Chat, terminal, diff, browser, settings."],
+                  ["split", "Drag to split", "Drop a tab on an edge to put it beside."],
+                  [
+                    "overview",
+                    "Scroll and zoom out",
+                    "Swipe sideways for more panes. Pinch to see everything.",
+                  ],
+                  [
+                    "keys",
+                    "Same keys as before",
+                    isMacPlatform(navigator.platform)
+                      ? "⌘J for a terminal, ⌥⌘B for the diff."
+                      : "Ctrl+J for a terminal, Ctrl+Alt+B for the diff.",
+                  ],
+                ] satisfies ReadonlyArray<readonly [LayoutTourLesson, string, string]>
+              ).map(([lesson, title, description]) => (
+                <div key={lesson} className="flex min-w-0 flex-col gap-2.5">
+                  <LayoutTourDiagram lesson={lesson} />
+                  <h2 className="text-label text-strong-foreground">{title}</h2>
+                  <p className="text-body text-muted-foreground">{description}</p>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button size="standard" onClick={() => setStep(0)}>
+                Show me
+              </Button>
+              <Button size="standard" variant="secondary" onClick={finish}>
+                Got it
+              </Button>
+            </div>
+          </div>
         </DialogPopup>
       </Dialog>
     );
@@ -174,14 +199,21 @@ export function LayoutOnboarding() {
     >
       <PopoverPopup
         anchor={anchor}
-        width="md"
+        className={step === 0 ? "w-75" : "w-82.5"}
         side="bottom"
-        align="start"
+        align={step === 3 ? "end" : "start"}
         sideOffset={12}
         initialFocus={false}
       >
         <div className="flex flex-col gap-2" role="region" aria-label="Layout tour">
-          <current.Icon className="size-8 text-muted-foreground" aria-hidden />
+          {step === 0 ? (
+            <current.Icon className="size-6 text-muted-foreground" aria-hidden />
+          ) : (
+            <LayoutTourDiagram
+              lesson={step === 1 ? "split" : step === 2 || step === 3 ? "overview" : "keys"}
+            />
+          )}
+          {step === 4 ? <LayoutTourKeys modifiers={keys} /> : null}
           <h2 className="text-label text-strong-foreground">{current.title}</h2>
           <p className="text-body text-muted-foreground">{current.text}</p>
           <div className="mt-2 flex items-center gap-2">

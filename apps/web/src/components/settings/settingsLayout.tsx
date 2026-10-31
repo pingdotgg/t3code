@@ -949,7 +949,7 @@ export function SettingsPageContainer({
           width={width}
           // Below a pane header the page scrolls under (--surface-top-inset).
           className={cn(
-            "max-w-[688px] gap-7 pt-under-header-9",
+            "max-w-[688px] gap-7 pt-under-header-15",
             centered && "min-h-full justify-center",
             className,
           )}
