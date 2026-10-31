@@ -33,7 +33,11 @@ import {
   type ThreadSearchSubject,
 } from "@t3tools/shared/paletteSearch";
 import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
-import { indexedMessageCondition, nonPlaceholderMessageCondition } from "./messageSearchIndex.ts";
+import {
+  indexedMessageCondition,
+  indexedMessageText,
+  nonPlaceholderMessageCondition,
+} from "./messageSearchIndex.ts";
 import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
 
 // When the user last wrote in the thread aliased `threads`, as the clients
@@ -223,7 +227,7 @@ export const messageHitsQuery = (
       AND messages.message_id NOT LIKE 'async-answer:%'
       AND NOT EXISTS (
         SELECT 1 FROM json_each(${substrings}) AS token
-        WHERE instr(lower(json_extract(messages.payload_json, '$.text')), token.value) = 0
+        WHERE instr(lower(${indexedMessageText(sql, "messages.payload_json")}), token.value) = 0
       )
     -- The index's own rowid, so FTS5 returns hits newest first and stops at
     -- the limit; ordering by the messages table's rowid sorts every hit.
