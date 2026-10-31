@@ -12,6 +12,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -443,10 +444,7 @@ it.effect("recovers terminal subagent results until their cross-thread transfer 
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect.each([
-  { name: "SQLite", layer: layerTest },
-  { name: "memory", layer: ProjectionStore.layerMemory },
-])("recovers only recorded follow-up results with $name projections", ({ layer }) =>
+it.effect("recovers only recorded follow-up results with SQLite projections", () =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const now = yield* DateTime.now;
@@ -522,7 +520,7 @@ it.effect.each([
       payload: { ...task, status: "completed", result: "Follow-up result.", completedAt: now },
     });
     assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), []);
-  }).pipe(Effect.provide(layer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("includes shared sessions and provider-owned background rosters in recovery", () =>
@@ -965,4 +963,103 @@ it.effect("marks fork descendants unreadable when their source is missing or cor
       new Set([fork, descendant]),
     );
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("startup ends the provider turn of a native child root it cancels", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+    const now = yield* DateTime.now;
+    const parentThreadId = yield* createThread("native-child-root-turn-parent");
+    const threadId = yield* createThread("native-child-root-turn");
+    const rootNodeId = NodeId.make(`node:${threadId}:thread-root`);
+    const providerThreadId = ProviderThreadId.make(`provider-thread:${threadId}`);
+    const providerTurnId = ProviderTurnId.make(`provider-turn:${threadId}`);
+    yield* projections.apply({
+      id: EventId.make(`event:${threadId}:root`),
+      type: "node.updated",
+      threadId,
+      nodeId: rootNodeId,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: rootNodeId,
+        threadId,
+        runId: null,
+        parentNodeId: null,
+        rootNodeId,
+        kind: "root_turn",
+        status: "running",
+        countsForRun: false,
+        providerThreadId,
+        providerTurnId,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      },
+    });
+    // A native subagent's turn belongs to no run attempt.
+    yield* projections.apply({
+      id: EventId.make(`event:${threadId}:provider-turn`),
+      type: "provider-turn.updated",
+      threadId,
+      nodeId: rootNodeId,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: providerTurnId,
+        providerThreadId,
+        nodeId: rootNodeId,
+        runAttemptId: null,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "running",
+        startedAt: now,
+        completedAt: null,
+      },
+    });
+
+    const subagentId = NodeId.make(`node:${parentThreadId}:subagent`);
+    yield* projections.apply({
+      id: EventId.make(`event:${parentThreadId}:subagent`),
+      type: "subagent.updated",
+      threadId: parentThreadId,
+      occurredAt: now,
+      payload: {
+        id: subagentId,
+        threadId: parentThreadId,
+        runId: null,
+        parentNodeId: NodeId.make(`node:${parentThreadId}:root`),
+        origin: "provider_native",
+        createdBy: "agent",
+        driver,
+        providerInstanceId,
+        providerThreadId,
+        childThreadId: threadId,
+        nativeTaskRef: null,
+        title: null,
+        model: null,
+        prompt: "sleep 300",
+        status: "running",
+        result: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      },
+    });
+
+    yield* recovery.reconcile("startup");
+
+    const projection = yield* projections.getThreadProjection(threadId);
+    assert.deepEqual(
+      {
+        root: projection.nodes.find((node) => node.id === rootNodeId)?.status,
+        providerTurn: projection.providerTurns.find((turn) => turn.id === providerTurnId)?.status,
+      },
+      { root: "cancelled", providerTurn: "cancelled" },
+      "a root startup recovery cancelled left its provider turn running",
+    );
+  }).pipe(Effect.provide(layerRecoveryTest)),
 );

@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, afterEach, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -132,6 +133,113 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("lists symlinks as what they point to, hiding ones that cannot be opened", () =>
+      Effect.gen(function* () {
+        const platform = yield* HostProcess.Platform;
+        if (platform === "win32") return;
+        const cwd = yield* makeTempDir({ git: true });
+        const outside = yield* makeTempDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "real.txt");
+        yield* writeTextFile(cwd, "realdir/nested.txt");
+        yield* writeTextFile(outside, "outside.txt");
+        yield* fileSystem.symlink("real.txt", path.join(cwd, "link.txt"));
+        yield* fileSystem.symlink("realdir", path.join(cwd, "linkdir"));
+        yield* fileSystem.symlink(outside, path.join(cwd, "outside-link"));
+        yield* fileSystem.symlink(".git", path.join(cwd, "git-link"));
+        yield* fileSystem.symlink("missing", path.join(cwd, "dangling"));
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const root = yield* workspaceEntries.list({ cwd, directoryPath: "" });
+        expect(root.entries.toSorted((a, b) => a.path.localeCompare(b.path))).toEqual([
+          { path: "link.txt", kind: "file" },
+          { path: "linkdir", kind: "directory" },
+          { path: "real.txt", kind: "file" },
+          { path: "realdir", kind: "directory" },
+        ]);
+        expect(yield* workspaceEntries.list({ cwd, directoryPath: "linkdir" })).toEqual({
+          entries: [{ path: "linkdir/nested.txt", kind: "file" }],
+          truncated: false,
+        });
+      }),
+    );
+
+    it.effect("hides folder links that lead back to a folder on the listed path", () =>
+      // "Expand all folders" loads every folder it expands, so a link that loops would
+      // keep nesting the same entries without end.
+      Effect.gen(function* () {
+        const platform = yield* HostProcess.Platform;
+        if (platform === "win32") return;
+        const cwd = yield* makeTempDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "a/file.txt");
+        yield* writeTextFile(cwd, "b/file.txt");
+        yield* fileSystem.symlink(".", path.join(cwd, "self"));
+        yield* fileSystem.symlink("..", path.join(cwd, "a/up"));
+        yield* fileSystem.symlink("../b", path.join(cwd, "a/to-b"));
+        yield* fileSystem.symlink("../a", path.join(cwd, "b/to-a"));
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const paths = (directoryPath: string) =>
+          workspaceEntries
+            .list({ cwd, directoryPath })
+            .pipe(Effect.map(({ entries }) => entries.map((entry) => entry.path).toSorted()));
+        expect(yield* paths("")).toEqual(["a", "b"]);
+        // A link into a sibling folder is fine on its own...
+        expect(yield* paths("a")).toEqual(["a/file.txt", "a/to-b"]);
+        // ...but once followed, the sibling's link back is hidden.
+        expect(yield* paths("a/to-b")).toEqual(["a/to-b/file.txt"]);
+      }),
+    );
+
+    it.effect("resolves a folder of many symlinks in bounded batches", () =>
+      Effect.gen(function* () {
+        const platform = yield* HostProcess.Platform;
+        if (platform === "win32") return;
+        const cwd = yield* makeTempDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // Shaped like a pnpm `node_modules`: one link per package into `.pnpm`.
+        const directoryPath = [...Array.from({ length: 80 }, () => "nested"), "node_modules"].join(
+          "/",
+        );
+        const packages = Array.from({ length: 200 }, (_, index) => `pkg-${index}`);
+        yield* Effect.forEach(
+          packages,
+          (name) =>
+            Effect.gen(function* () {
+              yield* writeTextFile(cwd, `${directoryPath}/.pnpm/${name}/index.js`);
+              yield* fileSystem.symlink(`.pnpm/${name}`, path.join(cwd, directoryPath, name));
+            }),
+          { concurrency: 32, discard: true },
+        );
+        const realpath = NodeFSP.realpath;
+        let inFlight = 0;
+        let maxInFlight = 0;
+        vi.spyOn(NodeFSP, "realpath").mockImplementation((async (target: string) => {
+          maxInFlight = Math.max(maxInFlight, ++inFlight);
+          try {
+            return await realpath(target);
+          } finally {
+            inFlight--;
+          }
+        }) as typeof NodeFSP.realpath);
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const { entries } = yield* workspaceEntries.list({ cwd, directoryPath });
+        expect(entries.map((entry) => entry.path).toSorted()).toEqual(
+          [
+            `${directoryPath}/.pnpm`,
+            ...packages.map((name) => `${directoryPath}/${name}`),
+          ].toSorted(),
+        );
+        expect(entries.every((entry) => entry.kind === "directory")).toBe(true);
+        expect(maxInFlight).toBeLessThanOrEqual(64);
+      }),
+    );
+
     it.effect("labels the children of wide folders exactly as git does for each child", () =>
       Effect.gen(function* () {
         // Above 1,000 children, listing first asks whether the whole folder is ignored.
@@ -174,7 +282,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         for (const { directoryPath, ignored, except } of [
           { directoryPath: "node_modules", ignored: true, except: [] },
-          // A force-tracked file and a folder holding tracked files stay unignored.
           { directoryPath: "dist", ignored: true, except: ["dist/kept.js", "dist/vendored"] },
           // git reads `[id]/page.tsx` as a pathspec, which matches the tracked `i/page.tsx`.
           { directoryPath: "[id]", ignored: true, except: ["[id]/page.tsx"] },
@@ -183,8 +290,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
             ? [
                 // git refuses to classify paths beyond a symlink, so nothing there is labelled.
                 { directoryPath: "node_modules/link", ignored: false, except: [] },
-                // A leading `:` is pathspec magic, so git reads `:foo/pkg-0.js` as `foo/pkg-0.js`,
-                // which `!foo/` keeps unignored.
+                // Leading : is pathspec magic; Git sees foo/pkg-0.js, unignored by !foo/.
                 { directoryPath: ":foo", ignored: false, except: [] },
               ]
             : []),
@@ -203,8 +309,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
     );
 
     it.effect("lists a host folder and its parent, each from its own root", () =>
-      // Folder links outside the workspace browse by passing the host folder as
-      // `cwd`; walking up passes the parent. Each stays bounded by its own root.
       Effect.gen(function* () {
         const parent = yield* makeTempDir();
         const path = yield* Path.Path;
