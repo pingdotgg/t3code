@@ -214,7 +214,7 @@ export function RevertConfirmHost(props: {
           <AlertDialogDescription>
             Rewind chat to before this message. Your prompt and attachments return to the composer.
             {pending?.hasFileChanges === false
-              ? " No files have changed since."
+              ? " The agent hasn’t changed any files since then."
               : " “Revert files too” also undoes your own edits."}
           </AlertDialogDescription>
         </AlertDialogHeader>

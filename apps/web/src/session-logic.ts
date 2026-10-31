@@ -1127,10 +1127,9 @@ export type RevertFileCheck =
   | { readonly kind: "diff"; readonly toTurnCount: number };
 
 /**
- * Whether rewinding to `turnCount` leaves changed files behind. Summaries can be empty despite
- * changes (failed summary, filtered git imports), so an empty result still needs the real diff.
- * Checkpoints snapshot the whole worktree, so diffing to the latest run's checkpoint also covers
- * earlier runs that never captured one.
+ * Whether runs after `turnCount` changed files; later hand edits are unseen, so keep files on
+ * "unchanged". Empty summaries can hide changes (failed summary, git imports), hence the real
+ * diff. Checkpoints snapshot the worktree, so it also covers runs that never captured one.
  */
 export function revertFileCheck(
   runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal" | "status">>,
