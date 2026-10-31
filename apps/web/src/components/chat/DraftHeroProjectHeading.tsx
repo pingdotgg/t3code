@@ -53,7 +53,9 @@ export function DraftHeroProjectHeading({
         </span>
         <span className="flex min-w-0 max-w-full items-baseline justify-center text-base tracking-normal lg:group-data-[inline=true]/draft-hero:text-3xl lg:group-data-[inline=true]/draft-hero:tracking-tight">
           <span className="min-w-0">{children}</span>
-          <span className="hidden shrink-0 lg:group-data-[inline=true]/draft-hero:inline">?</span>
+          <span className="hidden shrink-0 lg:group-data-[inline=true]/draft-hero:inline [@media(max-height:28rem)]:hidden!">
+            ?
+          </span>
         </span>
       </h1>
     </div>

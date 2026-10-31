@@ -21,8 +21,9 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
   // Focus the surface, not its first control: no stray focus ring, no phone keyboard.
   // On close, leave focus alone; returning it to the opener paints a focus ring.
   const popupRef = useRef<HTMLDivElement>(null);
-  // Below sm the modal fills the window, so it starts under the native window controls
-  // (macOS traffic lights, the Windows and Linux caption buttons). Leave that strip empty.
+  // Clear the native window controls (macOS traffic lights, the Windows and Linux caption
+  // buttons). Below sm the modal fills the window and leaves that strip empty; up to lg its
+  // 1.5rem inset is shorter than the strip.
   const nativeTitlebarHeight = useNativeTitlebarHeight();
 
   return (
@@ -45,7 +46,14 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
       <DialogPrimitive.Portal>
         <DialogBackdrop />
         <DialogPrimitive.Viewport
-          className="fixed inset-0 z-50 flex items-center justify-center sm:p-6 lg:p-10"
+          style={
+            {
+              "--app-modal-titlebar-height": `${nativeTitlebarHeight}px`,
+              "--app-modal-top-inset": `max(env(safe-area-inset-top), ${nativeTitlebarHeight}px)`,
+              "--app-modal-sm-top": `max(1.5rem, ${nativeTitlebarHeight}px)`,
+            } as CSSProperties
+          }
+          className="fixed inset-0 z-50 flex items-center justify-center sm:p-6 sm:pt-(--app-modal-sm-top) lg:p-10"
           onPointerDown={(event) => {
             backdropPressRef.current = event.target === event.currentTarget;
           }}
@@ -61,12 +69,6 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
             aria-label={label}
             data-slot="dialog-popup"
             data-app-modal=""
-            style={
-              {
-                "--app-modal-titlebar-height": `${nativeTitlebarHeight}px`,
-                "--app-modal-top-inset": `max(env(safe-area-inset-top), ${nativeTitlebarHeight}px)`,
-              } as CSSProperties
-            }
             className="relative flex size-full min-h-0 min-w-0 flex-col overflow-hidden bg-background max-sm:pt-(--app-modal-top-inset) max-sm:pb-safe text-foreground outline-none transition-[opacity,scale] duration-150 ease-out [-webkit-app-region:no-drag] data-ending-style:scale-[0.985] data-ending-style:opacity-0 data-starting-style:scale-[0.985] data-starting-style:opacity-0 sm:max-h-[60rem] sm:max-w-[80rem] sm:rounded-2xl sm:border sm:shadow-2xl/40"
           >
             {/* The emptied strip still moves the window, as the titlebar it replaces does. */}
