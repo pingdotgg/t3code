@@ -79,7 +79,9 @@ function Drawer(props: {
       height={240}
       terminalIds={["term-1"]}
       activeTerminalId="term-1"
-      terminalGroups={[{ id: "group-1", terminalIds: ["term-1"] }]}
+      terminalGroups={[
+        { id: "group-1", terminalIds: ["term-1"], layout: { kind: "pane", terminalId: "term-1" } },
+      ]}
       activeTerminalGroupId="group-1"
       onSplitTerminal={() => {}}
       onSplitTerminalVertical={() => {}}
