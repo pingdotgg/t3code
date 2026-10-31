@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
 import android.view.KeyEvent
+import android.view.View
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -168,5 +169,14 @@ class ComposerPasteTest {
     assertFalse(pasteAsText())
     assertEquals("unchanged", editor.text.toString())
     assertNull(intercepted)
+  }
+
+  @Test
+  fun autofillCannotWriteIntoTheDraft() {
+    assertEquals(
+      "Autofill services such as SMS verification codes must not target the composer",
+      View.AUTOFILL_TYPE_NONE,
+      editor.autofillType,
+    )
   }
 }
