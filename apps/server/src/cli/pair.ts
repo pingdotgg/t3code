@@ -25,6 +25,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
@@ -49,6 +50,7 @@ import { baseDirFlag, DurationFromString } from "./config.ts";
 
 const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
 const PAIR_PROBE_TIMEOUT = Duration.millis(2_500);
+const MAX_PROBE_BODY_BYTES = 64 * 1024;
 // Tailscale's first HTTPS request may take seconds to provision a certificate.
 const TAILSCALE_PROBE_ATTEMPTS = 5;
 const TAILSCALE_PROBE_RETRY_DELAY = Duration.seconds(1);
@@ -206,6 +208,35 @@ type EnvironmentProbeResult =
   | { readonly _tag: "unreachable" }
   | { readonly _tag: "not-a-t3-server" };
 
+const decodeProbeDescriptor = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(ExecutionEnvironmentDescriptor),
+);
+
+const readBoundedProbeBody = (response: HttpClientResponse.HttpClientResponse) =>
+  response.stream.pipe(
+    Stream.runFoldEffect(
+      () => ({ bytes: 0, chunks: [] as Array<Uint8Array> }),
+      (acc, chunk) => {
+        if (acc.bytes + chunk.byteLength > MAX_PROBE_BODY_BYTES) {
+          return Effect.fail({ _tag: "not-a-t3-server" } as const);
+        }
+        acc.bytes += chunk.byteLength;
+        acc.chunks.push(chunk);
+        return Effect.succeed(acc);
+      },
+    ),
+    Effect.map(({ bytes, chunks }) => {
+      const merged = new Uint8Array(bytes);
+      let offset = 0;
+      for (const chunk of chunks) {
+        merged.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return new TextDecoder().decode(merged);
+    }),
+    Effect.timeout(PAIR_PROBE_TIMEOUT),
+  );
+
 const probeEnvironmentDescriptor: (
   baseUrl: string,
 ) => Effect.Effect<EnvironmentProbeResult, never, HttpClient.HttpClient> = Effect.fn(
@@ -220,10 +251,20 @@ const probeEnvironmentDescriptor: (
     );
     // Gateway errors identify stale proxy mappings that pairing may repair.
     if (response.status === 502 || response.status === 503 || response.status === 504) {
+      yield* Effect.ignore(readBoundedProbeBody(response));
       return { _tag: "unreachable" } as const;
     }
-    const descriptor = yield* HttpClientResponse.filterStatusOk(response).pipe(
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(ExecutionEnvironmentDescriptor)),
+    const mediaType = response.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
+    if (
+      (mediaType !== "application/json" && !mediaType?.endsWith("+json")) ||
+      response.status < 200 ||
+      response.status >= 300
+    ) {
+      yield* Effect.ignore(readBoundedProbeBody(response));
+      return { _tag: "not-a-t3-server" } as const;
+    }
+    const descriptor = yield* readBoundedProbeBody(response).pipe(
+      Effect.flatMap(decodeProbeDescriptor),
       Effect.mapError(() => ({ _tag: "not-a-t3-server" }) as const),
     );
     return { _tag: "descriptor", descriptor } as const;
