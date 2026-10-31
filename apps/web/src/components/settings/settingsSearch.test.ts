@@ -58,6 +58,22 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it("offers plugins only when an environment has the plugin catalogue", () => {
+    const itemIds = (hasPluginEnvironment: boolean) =>
+      filterAvailableSettingsSearchItems({
+        hasCloudPublicConfig: false,
+        hasEnvironment: true,
+        hasProviderSettingsEnvironment: true,
+        hasMacProviderSettingsEnvironment: false,
+        canManageLocalBackend: false,
+        isWslSettingsRowVisible: false,
+        hasThreadAutoSettlement: false,
+        hasPluginEnvironment,
+      }).map((item) => item.id);
+    expect(itemIds(false)).not.toContain("plugins");
+    expect(itemIds(true)).toContain("plugins");
+  });
+
   it("matches titles, sections, and remembered setting details", () => {
     expect(searchSettings("word", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     expect(searchSettings("network", ITEMS).map((item) => item.id)).toEqual(["network-access"]);
@@ -113,6 +129,7 @@ describe("searchSettings", () => {
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
+      hasPluginEnvironment: false,
     });
 
     const gatedIds = new Set<string>([
@@ -133,6 +150,7 @@ describe("searchSettings", () => {
       "auto-settle-inactive-threads",
       "auto-settle-merged-threads",
       "days-before-auto-settle",
+      "plugins",
       "linked-environments",
     ]);
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
@@ -142,6 +160,7 @@ describe("searchSettings", () => {
     const availability = {
       hasCloudPublicConfig: false,
       hasEnvironment: true,
+      hasPluginEnvironment: false,
       hasProviderSettingsEnvironment: true,
       hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
@@ -239,6 +258,7 @@ describe("auto-settlement search availability", () => {
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: availability.eligibleEnvironmentIds.length > 0,
+      hasPluginEnvironment: false,
     });
     expect(searchSettings("auto-settle", items).map((item) => item.id)).toEqual([
       "auto-settle-inactive-threads",

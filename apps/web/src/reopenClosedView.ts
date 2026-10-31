@@ -136,6 +136,10 @@ export async function reopenClosedView(
     case "pull-request":
       panels.openPullRequest(ref, surface);
       break;
+    case "plugin-view":
+      // The tab shows the view's unavailable state if its plugin no longer offers it.
+      panels.openPluginView(ref, surface);
+      break;
     case "side-chat":
       panels.openSideChat(ref, surface.threadId);
       break;

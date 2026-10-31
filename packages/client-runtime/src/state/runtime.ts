@@ -93,6 +93,8 @@ interface EnvironmentQueryAtomOptions<Input, A, E, R> extends Omit<
     emit: (value: A) => Effect.Effect<void>,
   ) => Effect.Effect<A, E, R>;
   readonly persistence?: QueryPersistence<A>;
+  /** Disable when each response is a freshness receipt even if its data is unchanged. */
+  readonly structuralSharing?: boolean;
   readonly staleTimeMs?: number;
   readonly idleTtlMs?: number;
   readonly refreshIntervalMs?: number;
@@ -681,12 +683,17 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         // A refetch that returns equal content keeps the previous value's
         // references, so readers of the data skip re-rendering on idle polls.
         const share = (value: A): A =>
-          reuseUnchanged(
-            Option.getOrUndefined(
-              Option.flatMap(get.self<AsyncResult.AsyncResult<A, unknown>>(), AsyncResult.value),
-            ),
-            value,
-          );
+          options.structuralSharing === false
+            ? value
+            : reuseUnchanged(
+                Option.getOrUndefined(
+                  Option.flatMap(
+                    get.self<AsyncResult.AsyncResult<A, unknown>>(),
+                    AsyncResult.value,
+                  ),
+                ),
+                value,
+              );
         const emit = (value: A) =>
           Effect.sync(() => get.setSelf(AsyncResult.success(share(value), { waiting: true }))).pipe(
             // A value set while the atom builds wins over the build's own
@@ -870,6 +877,7 @@ export function createEnvironmentRpcQueryAtomFamily<
       EnvironmentSupervisor.EnvironmentSupervisor | EnvironmentRegistry.EnvironmentRegistry
     >;
     readonly persistence?: QueryPersistence<EnvironmentRpcSuccess<TTag>>;
+    readonly structuralSharing?: boolean;
     readonly staleTimeMs?: number;
     readonly idleTtlMs?: number;
     readonly refreshIntervalMs?: number;
@@ -884,6 +892,9 @@ export function createEnvironmentRpcQueryAtomFamily<
   return createEnvironmentQueryAtomFamily(runtime, {
     label: options.label,
     ...(options.persistence === undefined ? {} : { persistence: options.persistence }),
+    ...(options.structuralSharing === undefined
+      ? {}
+      : { structuralSharing: options.structuralSharing }),
     ...(options.staleTimeMs === undefined ? {} : { staleTimeMs: options.staleTimeMs }),
     ...(options.idleTtlMs === undefined ? {} : { idleTtlMs: options.idleTtlMs }),
     ...(options.refreshIntervalMs === undefined

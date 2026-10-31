@@ -147,6 +147,26 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   commandOutputStreaming: Schema.optionalKey(Schema.Boolean),
   /** Hosts headless Chromium tabs streamed over /api/preview-stream for clients without a local runtime. */
   serverBrowser: Schema.optionalKey(Schema.Boolean),
+  /** Server serves subscribeContributionStatus. Absent on older servers, which
+      lack the method, so clients must not subscribe and show no statuses. */
+  contributionStatus: Schema.optionalKey(Schema.Boolean),
+  /** Server exposes the trusted local plugin catalogue (`plugins.*`). Absent on
+      older servers, so clients must not call or subscribe to those methods. */
+  plugins: Schema.optionalKey(Schema.Boolean),
+  /** Server stores plugin setting values and secrets (`plugins.settings.*`). Absent on
+      older servers, so clients must not call or subscribe to those methods. */
+  pluginSettings: Schema.optionalKey(Schema.Boolean),
+  /** Server lists and runs plugin actions (`pluginActions.*`). Absent on older
+      servers, so clients must not call or subscribe to those methods. */
+  pluginActions: Schema.optionalKey(Schema.Boolean),
+  /** Server serves isolated plugin views (`pluginViews.*`). Absent on older
+      servers, so clients must not call or subscribe to those methods. */
+  pluginViews: Schema.optionalKey(Schema.Boolean),
+  /** Server installs plugins from npm (`plugins.npm.*`). Absent on older servers. */
+  pluginNpm: Schema.optionalKey(Schema.Boolean),
+  /** Server streams plugin notifications (`plugins.notifications.subscribe`). Absent on
+      older servers, so clients must not subscribe and show no plugin toasts. */
+  pluginNotifications: Schema.optionalKey(Schema.Boolean),
   /** Server links to other environments (`PeerLink`) and its agents can work
       in them. Absent on servers from before linking, which clients must not
       offer linking for. */

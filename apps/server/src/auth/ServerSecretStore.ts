@@ -150,9 +150,23 @@ export class ServerSecretStore extends Context.Service<
   }
 >()("t3/auth/ServerSecretStore") {}
 
+let processInstance: string | undefined;
+
+// A restarted container often reuses its own PID; its old temporaries belong to a different instance.
+const isWriterAlive = (pid: number, instance: string | undefined) => {
+  if (pid === process.pid) return instance === processInstance;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
+  }
+};
+
 /** @public */
 export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
+  processInstance ??= (crypto.nextIntUnsafe() >>> 0).toString(16).padStart(8, "0");
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
@@ -169,6 +183,30 @@ export const make = Effect.gen(function* () {
   );
 
   const resolveSecretPath = (name: string) => path.join(serverConfig.secretsDir, `${name}.bin`);
+
+  const removeTemporaryFiles = Effect.fnUntraced(function* (name?: string) {
+    for (const file of yield* fileSystem.readDirectory(serverConfig.secretsDir)) {
+      const match =
+        /^(.*\.bin)\.(?:(\d+)(?:-([0-9a-f]{8}))?\.)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/i.exec(
+          file,
+        );
+      if (
+        match !== null &&
+        (name === undefined || match[1] === `${name}.bin`) &&
+        (match[2] === undefined || !isWriterAlive(Number(match[2]), match[3]))
+      ) {
+        yield* fileSystem.remove(path.join(serverConfig.secretsDir, file), { force: true });
+      }
+    }
+  });
+
+  // New temporaries name their writer so another process cannot sweep an active replacement.
+  // UUID-only files predate writer ownership and remain eligible for crash recovery.
+  yield* removeTemporaryFiles().pipe(
+    Effect.mapError(
+      (cause) => new SecretStoreRemoveError({ resource: "temporary secret files", cause }),
+    ),
+  );
 
   const get: ServerSecretStore["Service"]["get"] = (name) =>
     fileSystem.readFile(resolveSecretPath(name)).pipe(
@@ -197,26 +235,17 @@ export const make = Effect.gen(function* () {
           }),
       ),
       Effect.flatMap((uuid) => {
-        const tempPath = `${secretPath}.${uuid}.tmp`;
+        const tempPath = `${secretPath}.${process.pid}-${processInstance}.${uuid}.tmp`;
         return Effect.gen(function* () {
           yield* fileSystem.writeFile(tempPath, value);
           yield* fileSystem.chmod(tempPath, 0o600);
           yield* fileSystem.rename(tempPath, secretPath);
           yield* fileSystem.chmod(secretPath, 0o600);
         }).pipe(
-          Effect.catch((cause) =>
-            fileSystem.remove(tempPath).pipe(
-              Effect.ignore,
-              Effect.flatMap(() =>
-                Effect.fail(
-                  new SecretStorePersistError({
-                    resource: `secret ${name}`,
-                    cause,
-                  }),
-                ),
-              ),
-            ),
+          Effect.mapError(
+            (cause) => new SecretStorePersistError({ resource: `secret ${name}`, cause }),
           ),
+          Effect.ensuring(fileSystem.remove(tempPath, { force: true }).pipe(Effect.ignore)),
         );
       }),
       Effect.withSpan("ServerSecretStore.set"),
@@ -236,7 +265,7 @@ export const make = Effect.gen(function* () {
           }),
       ),
       Effect.flatMap((uuid) => {
-        const tempPath = `${secretPath}.${uuid}.tmp`;
+        const tempPath = `${secretPath}.${process.pid}-${processInstance}.${uuid}.tmp`;
         return Effect.gen(function* () {
           yield* Effect.scoped(
             Effect.gen(function* () {
@@ -304,7 +333,8 @@ export const make = Effect.gen(function* () {
     );
 
   const remove: ServerSecretStore["Service"]["remove"] = (name) =>
-    fileSystem.remove(resolveSecretPath(name)).pipe(
+    removeTemporaryFiles(name).pipe(
+      Effect.andThen(fileSystem.remove(resolveSecretPath(name))),
       Effect.catch((cause) =>
         cause.reason._tag === "NotFound"
           ? Effect.void
