@@ -261,7 +261,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           "max-md:absolute max-md:inset-y-0 max-md:start-0 max-md:z-10 max-md:w-full",
       )}
     >
-      <SidebarContent className="overflow-x-hidden">
+      <SidebarContent className="overflow-x-hidden" hideScrollbars={false}>
         <SidebarGroup>
           <div className="flex flex-col gap-2">
             <div
