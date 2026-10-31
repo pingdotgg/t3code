@@ -89,9 +89,13 @@ export function evaluatePullRequestWatch(
     } else if (gate.some(isFailedCheck)) {
       // Gate checks still running when one failed are owed one wake when they finish, since
       // the gate can no longer pass and so never sends the checks-passed wake.
-      const running = gate.filter((check) => check.status === "pending").map((check) => check.name);
+      const running = detail.checks
+        .filter((check) => check.status === "pending")
+        .map((check) => check.name);
       const gateNewlyFailed = newlyFailed.some((check) => gateNames.includes(check.name));
-      owedChecks = gateNewlyFailed ? running : owedBefore.filter((name) => running.includes(name));
+      owedChecks = gateNewlyFailed
+        ? running.filter((name) => gateNames.includes(name))
+        : owedBefore.filter((name) => running.includes(name));
       if (newlyFailed.length === 0 && owedBefore.length > 0 && owedChecks.length === 0) {
         changes.push({ kind: "checks-finished", failing: gate.filter(isFailedCheck) });
       }

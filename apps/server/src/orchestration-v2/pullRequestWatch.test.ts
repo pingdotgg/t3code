@@ -220,6 +220,14 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(final.changes, [{ kind: "checks-finished", failing: [sonar] }]);
     assert.deepEqual(evaluatePullRequestWatch(final.next, done, noRemarks).changes, []);
 
+    // An owed check stays owed while it runs, even when the failed one turns required.
+    const gated = detail({
+      checks: [{ ...sonar, required: true }, check("unit", "success"), check("e2e", "pending")],
+    });
+    const still = evaluatePullRequestWatch(waiting.next, gated, noRemarks);
+    assert.deepEqual(still.changes, []);
+    assert.deepEqual(still.next.owedChecks, ["e2e"]);
+
     // A later failure is its own wake and leaves nothing more owed.
     const broke = detail({ checks: [sonar, check("unit", "success"), check("e2e", "failure")] });
     const failure = evaluatePullRequestWatch(waiting.next, broke, noRemarks);
