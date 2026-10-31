@@ -351,6 +351,8 @@ function DelegatedFromRow(props: {
 export function ThreadRelationshipsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly showLineage: boolean;
+  readonly showSideChats: boolean;
 }) {
   const ref = scopeThreadRef(props.environmentId, props.threadId);
   const projection = useThreadProjection(ref)?.projection ?? null;
@@ -482,15 +484,17 @@ export function ThreadRelationshipsPanel(props: {
   const delegatedFrom = currentThread?.delegatedFrom;
 
   const lineageVisible =
-    related.length > 0 ||
-    active.length > 0 ||
-    previous.length > 0 ||
-    runningCount > 0 ||
-    remoteSubagents.length > 0 ||
-    delegatedFrom !== undefined;
+    props.showLineage &&
+    (related.length > 0 ||
+      active.length > 0 ||
+      previous.length > 0 ||
+      runningCount > 0 ||
+      remoteSubagents.length > 0 ||
+      delegatedFrom !== undefined);
+  const sideChatsVisible = props.showSideChats && sideChats.length > 0;
   const runningSideChats = sideChats.filter(({ edge }) => edge.status === "running").length;
 
-  if (!lineageVisible && sideChats.length === 0) {
+  if (!lineageVisible && !sideChatsVisible) {
     return null;
   }
 
@@ -898,7 +902,7 @@ export function ThreadRelationshipsPanel(props: {
           ) : null}
         </ThreadDetailsSection>
       ) : null}
-      {sideChats.length > 0 ? (
+      {sideChatsVisible ? (
         <ThreadDetailsSection
           headingId="thread-details-side-chats-heading"
           title={runningSideChats > 0 ? `Side chats · ${runningSideChats} running` : "Side chats"}
