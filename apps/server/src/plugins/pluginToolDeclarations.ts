@@ -1,14 +1,5 @@
-/**
- * Turns a manifest's tool declarations into what the host lists and enforces.
- *
- * Input schemas are compiled from the JSON Schema subset documented in the
- * contracts' PluginTools module into an Effect Schema. Each accepted keyword
- * is built with JSON Schema's meaning (closed objects reject extra keys,
- * string lengths count code points), so the declared schema an agent sees is
- * exactly what calls are checked against. Anything outside the subset is a
- * problem naming the keyword; nothing is silently dropped. The manifest loader
- * refuses a plugin with a problem, so an enabled plugin's tools always compile.
- */
+// Accepted JSON Schema keywords retain their meaning, including extra-key rejection and code-point lengths.
+// Unsupported or malformed keywords refuse the manifest; compiled declarations must match what agents see.
 import {
   PLUGIN_TOOL_LIMITS,
   type PluginToolDeclaration,
@@ -102,13 +93,7 @@ const matchesType = (value: unknown, type: string) =>
         ? false
         : typeof value === type;
 
-/**
- * Refuses a reference cycle that consumes no input: one reached through only
- * `$ref` and `anyOf`, never `properties` or `items`. This walks the whole
- * definition graph on its own so that compiling a definition once and reusing
- * it cannot hide a cycle on another path. Malformed schemas are left for
- * `compile` to name.
- */
+// A cycle must consume input through properties or items; scan every definition so reuse cannot hide one.
 const refuseUnguardedCycles = (definitions: JsonObject) => {
   // Each definition's references that are reached without consuming input.
   const edges = new Map<string, Array<{ readonly name: string; readonly path: string }>>();
