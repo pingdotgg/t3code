@@ -286,11 +286,14 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: String(routes.lan) });
   // When the service step fails, an installed service still runs with the old
   // value, so the file goes back to match it.
-  // A new T3 Connect link is undone too, so a rerun sees it as a change and restarts.
+  // A new T3 Connect link is undone too, with any tunnel the failed start saved, so a
+  // rerun sees it as a change and restarts. The sign-in stays.
   const restoreServiceEnv = before.service.installed
     ? CliService.writeServiceEnv(baseDir, { T3CODE_LAN: previousLan }).pipe(
         Effect.andThen(
-          routes.connect && !current.connect ? CliState.setCliDesiredCloudLink(false) : Effect.void,
+          routes.connect && !current.connect
+            ? disconnectCloud({ clearAuthorization: false }).pipe(Effect.asVoid)
+            : Effect.void,
         ),
       )
     : Effect.void;
