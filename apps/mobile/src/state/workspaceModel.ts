@@ -13,6 +13,7 @@ export type { EnvironmentConnectionSummary as WorkspaceEnvironment } from "@t3to
 export interface WorkspaceConnectionState {
   readonly isLoadingConnections: boolean;
   readonly hasConnections: boolean;
+  readonly hasEnabledEnvironment: boolean;
   readonly hasReadyEnvironment: boolean;
   readonly hasConnectingEnvironment: boolean;
   readonly connectingEnvironments: ReadonlyArray<WorkspaceEnvironment>;
@@ -65,24 +66,41 @@ export function projectWorkspaceConnectionState(input: {
   readonly environments: ReadonlyArray<WorkspaceEnvironment>;
 }): WorkspaceConnectionState {
   const activeEnvironments = input.environments.filter((environment) => environment.isEnabled);
+  // An incompatible host is switched off, but its reason is what the user needs
+  // to see; leaving it out would present the workspace as merely offline.
+  const reportedEnvironments = input.environments.filter(
+    (environment) => environment.isEnabled || environment.connectionState === "unsupported",
+  );
   const connectingEnvironments = activeEnvironments.filter(
     (environment) =>
       environment.connectionState === "connecting" ||
       environment.connectionState === "reconnecting",
   );
 
+  const connectionState = overallConnectionState(reportedEnvironments, input.networkStatus);
+  const withError = reportedEnvironments.filter(
+    (environment) => environment.connectionError !== null,
+  );
+  // The detail must explain the state the title names, so prefer an
+  // environment in that state. The status banner still surfaces any enabled
+  // environment's failure, but a switched-off host only speaks for itself.
+  const connectionError =
+    (
+      withError.find((environment) => environment.connectionState === connectionState) ??
+      withError.find((environment) => environment.isEnabled)
+    )?.connectionError ?? null;
+
   return {
     isLoadingConnections: !input.isReady,
     hasConnections: input.environments.length > 0,
+    hasEnabledEnvironment: activeEnvironments.length > 0,
     hasReadyEnvironment:
       input.networkStatus !== "offline" &&
       activeEnvironments.some((environment) => environment.connectionState === "connected"),
     hasConnectingEnvironment: connectingEnvironments.length > 0,
     connectingEnvironments,
-    connectionState: overallConnectionState(activeEnvironments, input.networkStatus),
-    connectionError:
-      activeEnvironments.find((environment) => environment.connectionError !== null)
-        ?.connectionError ?? null,
+    connectionState,
+    connectionError,
     networkStatus: input.networkStatus,
   };
 }
