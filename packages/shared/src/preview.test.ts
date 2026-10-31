@@ -149,6 +149,14 @@ describe("resolveSearchUrlTemplate", () => {
 });
 
 describe("normalizePreviewUrl", () => {
+  it("tells agents how to open a blank tab and which URLs are accepted", () => {
+    expect(() => normalizePreviewUrl("about:blank")).toThrow(
+      /preview_open, omit url when creating a new tab[^.]*blank tab/i,
+    );
+    expect(() => normalizePreviewUrl("about:blank")).toThrow(/http\(s\)/i);
+    expect(() => normalizePreviewUrl("about:blank")).toThrow(/schemeless host/i);
+  });
+
   it("rejects unparseable input without retaining credentials or tokens", () => {
     const rawUrl = "https://user:password@example.com:bad/path?access_token=secret#fragment";
     try {
