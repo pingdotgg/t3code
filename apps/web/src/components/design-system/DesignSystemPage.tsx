@@ -170,6 +170,7 @@ const BUTTON_TEXT_SIZES: ReadonlyArray<ButtonSize> = [
   "micro",
   "xs",
   "compact",
+  "standard",
   "sm",
   "sm-multiline",
   "default",
@@ -370,8 +371,8 @@ const TEXT_TIERS = [
 const TYPE_ROLES = [
   ["title", "22 / 600", "Page and section titles"],
   ["prompt", "14 / 400", "The prompt, search fields, chat bubbles"],
-  ["label", "13 / 500", "Row titles, button and menu labels"],
-  ["body", "13 / 400", "Descriptions and running copy"],
+  ["label", "14 / 500", "Row titles, button and menu labels"],
+  ["body", "14 / 400", "Descriptions and running copy"],
   ["meta", "12 / 500", "Chips, metadata, small section headings"],
   ["caption", "11 / 500", "Key hints, status, captions"],
   ["micro", "10 / 500", "Status pills and counters in tight chrome"],
@@ -504,17 +505,19 @@ function ButtonStateRow({ variant, label }: { variant: ButtonVariant; label: str
   return (
     <>
       <Caption>{variant}</Caption>
-      <Button variant={variant}>{label}</Button>
-      <Button variant={variant} data-pressed>
+      <Button variant={variant} size="standard">
         {label}
       </Button>
-      <Button variant={variant} data-focus-preview>
+      <Button variant={variant} size="standard" data-pressed>
         {label}
       </Button>
-      <Button variant={variant} disabled>
+      <Button variant={variant} size="standard" data-focus-preview>
         {label}
       </Button>
-      <Button variant={variant} disabled>
+      <Button variant={variant} size="standard" disabled>
+        {label}
+      </Button>
+      <Button variant={variant} size="standard" disabled>
         <Spinner />
         {label}
       </Button>
@@ -530,10 +533,12 @@ function ButtonsSection() {
       layer="primitive"
       description="One Button with a variant and a size. Use render={<a/>} or render={<MenuTrigger/>} to put the look on another element. InlineButton is the text action inside a sentence."
     >
-      <Specimen label="Variants" source="<Button variant>">
+      <Specimen label="Variants" source={'<Button variant size="standard">'}>
         {BUTTON_VARIANTS.map((variant) => (
           <Cell key={variant} caption={variant}>
-            <Button variant={variant}>Button</Button>
+            <Button variant={variant} size="standard">
+              Button
+            </Button>
           </Cell>
         ))}
       </Specimen>
