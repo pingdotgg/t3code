@@ -6354,6 +6354,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     { status: 503, cooldown: "4m 6s", seconds: 0, errorType: "overloaded_error" },
     { status: 401, cooldown: "4m 6s", seconds: 0 },
     { status: 429, cooldown: "1h2m3s", seconds: 3723, proxy: true },
+    { status: 429, cooldown: "1h2m3s", seconds: 3723, proxy: true, sdkResetSeconds: 60 },
+    { status: 429, cooldown: "1h2m3s", seconds: 7200, proxy: true, sdkResetSeconds: 7200 },
+    { status: 429, cooldown: "1h2m3s", seconds: 3723, proxy: true, sdkResetSeconds: null },
     {
       status: 429,
       cooldown: "nested 1h",
@@ -6361,6 +6364,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       proxy: true,
       result:
         "API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down (last error: rate_limit_error (reset after 1h))",
+    },
+    {
+      status: 429,
+      cooldown: "nested cooldown",
+      seconds: 0,
+      proxy: true,
+      result:
+        "API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down (last error: All credentials for model upstream are cooling down (reset after 1h))",
+    },
+    {
+      status: 429,
+      cooldown: "outer cooldown",
+      seconds: 60,
+      proxy: true,
+      result:
+        "API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down (reset after 1m) (last error: All credentials for model upstream are cooling down (reset after 1h))",
     },
   ])("recovers wrapped gateway limits with status $status and cooldown $cooldown", (input) =>
     Effect.gen(function* () {
@@ -6377,6 +6396,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       yield* Queue.offerAll(harness.sdkMessages, [
+        ...(input.sdkResetSeconds !== undefined
+          ? [
+              claudeSdkFrame({
+                type: "rate_limit_event",
+                rate_limit_info: {
+                  status: "rejected",
+                  rateLimitType: "five_hour",
+                  ...(input.sdkResetSeconds === null
+                    ? {}
+                    : {
+                        resetsAt: DateTime.toEpochMillis(now) / 1000 + input.sdkResetSeconds,
+                      }),
+                },
+                uuid: "00000000-0000-4000-8000-000000000651",
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            ]
+          : []),
         makeAssistantErrorFrame({
           uuid: "00000000-0000-4000-8000-000000000652",
           error: input.proxy ? "rate_limit" : "server_error",
