@@ -1,5 +1,6 @@
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import type { DesktopSshPasswordPromptRequest } from "@t3tools/contracts";
+import { KeyRoundIcon, TimerIcon } from "lucide-react";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
 import { useId, useRef, useState, useSyncExternalStore } from "react";
@@ -17,10 +18,17 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
-import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
+import { SubmitKbd } from "../SubmitKbd";
+import { Label } from "../ui/label";
 
 function describeSshTarget(request: DesktopSshPasswordPromptRequest): string {
   return request.username ? `${request.username}@${request.destination}` : request.destination;
+}
+
+/** SSH's own prompt when it asks for something other than a password, like a passphrase. */
+function describeSshPrompt(prompt: string): string {
+  return /password:?\s*$/i.test(prompt.trim()) ? "Password" : prompt.trim();
 }
 
 function formatRemainingSeconds(seconds: number): string {
@@ -101,9 +109,6 @@ function ActiveSshPasswordPrompt({
   const remainingSeconds = remainingMs === null ? null : Math.ceil(remainingMs / 1_000);
   const remainingLabel =
     remainingSeconds === null ? null : formatRemainingSeconds(remainingSeconds);
-  const visibleResponseError = isExpired
-    ? "This SSH verification prompt expired. Try connecting again."
-    : responseError;
 
   const respond = async (nextPassword: string | null) => {
     if (isRespondingRef.current) {
@@ -154,7 +159,7 @@ function ActiveSshPasswordPrompt({
         }
       }}
     >
-      <DialogPopup className="max-w-md" initialFocus={inputRef} showCloseButton={false}>
+      <DialogPopup className="max-w-100" initialFocus={inputRef} showCloseButton={false}>
         <DialogHeader>
           <DialogTitle>SSH verification required</DialogTitle>
           <DialogDescription>
@@ -172,39 +177,39 @@ function ActiveSshPasswordPrompt({
               void respond(password);
             }}
           >
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-medium text-foreground">{request.prompt}</p>
-                {remainingLabel ? (
-                  <span
-                    className={
-                      isExpired
-                        ? "shrink-0 text-xs font-medium text-destructive"
-                        : "shrink-0 text-xs text-muted-foreground"
-                    }
-                  >
-                    {isExpired ? "Expired" : remainingLabel}
-                  </span>
-                ) : null}
-              </div>
-              <Input
-                ref={inputRef}
-                autoComplete="current-password"
-                disabled={isResponding || isExpired}
-                name="ssh-password"
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-              />
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`${formId}-password`}>{describeSshPrompt(request.prompt)}</Label>
+              <InputGroup>
+                <InputGroupAddon>
+                  <KeyRoundIcon />
+                </InputGroupAddon>
+                <InputGroupInput
+                  ref={inputRef}
+                  id={`${formId}-password`}
+                  autoComplete="current-password"
+                  disabled={isResponding || isExpired}
+                  name="ssh-password"
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+              </InputGroup>
             </div>
-            {visibleResponseError ? (
-              <p className="text-sm text-destructive">{visibleResponseError}</p>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                SSH keys may replace a password, but your server can still require a verification
-                code.
+            {remainingLabel ? (
+              <p
+                className={
+                  isExpired
+                    ? "flex items-center gap-1.5 text-destructive text-meta"
+                    : "flex items-center gap-1.5 text-dim-foreground text-meta"
+                }
+              >
+                <TimerIcon aria-hidden className="size-3 shrink-0" />
+                {isExpired ? "Expired. Try connecting again." : `Expires in ${remainingLabel}`}
               </p>
-            )}
+            ) : null}
+            {responseError && !isExpired ? (
+              <p className="text-body text-destructive">{responseError}</p>
+            ) : null}
           </form>
         </DialogPanel>
         <DialogFooter>
@@ -212,7 +217,8 @@ function ActiveSshPasswordPrompt({
             {isExpired ? "Dismiss" : "Cancel"}
           </Button>
           <Button disabled={isResponding || isExpired} form={formId} type="submit">
-            Continue
+            Connect
+            <SubmitKbd />
           </Button>
         </DialogFooter>
       </DialogPopup>
