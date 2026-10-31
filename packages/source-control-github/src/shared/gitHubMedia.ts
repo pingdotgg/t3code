@@ -16,6 +16,7 @@ export const GITHUB_CREDENTIALED_MEDIA_HOSTS: ReadonlySet<string> = new Set([
 
 const ATTACHMENT_PATH_PATTERN = /^\/user-attachments\/assets\/[\w-]+$/u;
 const LEGACY_ATTACHMENT_PATH_PATTERN = /^\/[^/]+\/[^/]+\/assets\/\d+\/[\w-]+$/u;
+const RELEASE_DOWNLOAD_PATH_PATTERN = /^\/([^/]+)\/([^/]+)\/releases\/download\/([^/]+)\/([^/]+)$/u;
 /** `blob` and `raw` both address file bytes; `raw` is the one the token is honoured on. */
 const REPOSITORY_FILE_PATTERN = /^\/([^/]+)\/([^/]+)\/(?:raw|blob)\/(.*[^/])$/u;
 
@@ -49,8 +50,43 @@ export function gitHubMediaUrl(url: URL): SourceControlMediaUrl | null {
   if (LEGACY_ATTACHMENT_PATH_PATTERN.test(url.pathname)) {
     return media(`https://github.com${url.pathname}`);
   }
+  if (gitHubReleaseAsset(url) !== null) return media(`https://github.com${url.pathname}`);
   const repositoryFile = REPOSITORY_FILE_PATTERN.exec(url.pathname);
   return repositoryFile
     ? media(`https://${RAW_HOST}/${repositoryFile[1]}/${repositoryFile[2]}/${repositoryFile[3]}`)
     : null;
+}
+
+export interface GitHubReleaseAsset {
+  readonly owner: string;
+  readonly repo: string;
+  readonly tag: string;
+  readonly name: string;
+}
+
+/** A release download on github.com, which a private repository serves only through the API. */
+export function gitHubReleaseAsset(url: URL): GitHubReleaseAsset | null {
+  if (url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.port !== "")
+    return null;
+  if (!WEB_HOSTS.has(url.hostname.toLowerCase())) return null;
+  const match = RELEASE_DOWNLOAD_PATH_PATTERN.exec(url.pathname);
+  if (match === null) return null;
+  try {
+    const owner = decodeURIComponent(match[1]!);
+    const repo = decodeURIComponent(match[2]!);
+    const tag = decodeURIComponent(match[3]!);
+    const name = decodeURIComponent(match[4]!);
+    if (
+      [owner, repo, tag, name].some((part) => part === "." || part === "..") ||
+      !/^[\w.-]+$/u.test(owner) ||
+      !/^[\w.-]+$/u.test(repo) ||
+      // Tags may contain "/" (git allows refs/tags/release/v1); the API lookup re-encodes it.
+      /[\p{Cc}\p{Cf}\\]/u.test(tag) ||
+      /[\p{Cc}\p{Cf}\\/]/u.test(name)
+    )
+      return null;
+    return { owner, repo, tag, name };
+  } catch {
+    return null;
+  }
 }
