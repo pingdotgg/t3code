@@ -410,7 +410,9 @@ function ThemeLibraryCard({
                 </div>
               </div>
               {onEdit || onDuplicate || onDownload || onRemove ? (
-                <div className="flex shrink-0 items-center gap-1">
+                // Ghost icon buttons hang 6px (box inset + glyph padding) so the last glyph's
+                // ink ends 13px in, on the same line as the name and the Style tiles' labels.
+                <div className="-me-1.5 flex shrink-0 items-center gap-1">
                   {onDuplicate && !onEdit ? (
                     <Tooltip>
                       <TooltipTrigger
@@ -918,41 +920,47 @@ export function ThemeLibrary({
   );
 
   return (
-    <div className="space-y-3">
-      <div className="flex min-h-8 flex-wrap items-center justify-between gap-3 px-3 sm:px-4">
-        <h3 className="text-sm font-medium text-dim-foreground">
-          {searchableSetting("color-scheme").title}
-        </h3>
-        {restoreAction}
-      </div>
-      {renderModeTiles()}
-      <div className="flex min-h-8 flex-wrap items-center justify-between gap-3 px-3 pt-2 sm:px-4">
-        <h3 className="text-sm font-medium text-dim-foreground">
-          {searchableSetting("theme").title}
-        </h3>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button size="xs" variant="secondary" onClick={() => onImportOpenChange(true)}>
-            <UploadIcon />
-            Import
-          </Button>
-          <Button
-            size="xs"
-            variant="secondary"
-            onClick={() =>
-              openThemeEditor({
-                editingThemeId: null,
-                seedThemeId: activeThemeForAppearance?.id ?? null,
-                seedName: null,
-                initialAppearance,
-              })
-            }
-          >
-            <PlusIcon />
-            Create theme
-          </Button>
+    // Same rhythm as SettingsSection: a 28px heading row, 8px to its content, 28px between sections.
+    <div className="space-y-7">
+      <div className="space-y-2">
+        <div className="flex min-h-7 flex-wrap items-center justify-between gap-3">
+          <h3 className="text-sm font-medium text-dim-foreground">
+            {searchableSetting("color-scheme").title}
+          </h3>
+          {/* The ghost button hangs by its 8px inline inset so its text ends on the card edge. */}
+          <div className="-me-2 flex">{restoreAction}</div>
         </div>
+        {renderModeTiles()}
       </div>
-      {renderPairGrid()}
+      <div className="space-y-2">
+        <div className="flex min-h-7 flex-wrap items-center justify-between gap-3">
+          <h3 className="text-sm font-medium text-dim-foreground">
+            {searchableSetting("theme").title}
+          </h3>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button size="xs" variant="secondary" onClick={() => onImportOpenChange(true)}>
+              <UploadIcon />
+              Import
+            </Button>
+            <Button
+              size="xs"
+              variant="secondary"
+              onClick={() =>
+                openThemeEditor({
+                  editingThemeId: null,
+                  seedThemeId: activeThemeForAppearance?.id ?? null,
+                  seedName: null,
+                  initialAppearance,
+                })
+              }
+            >
+              <PlusIcon />
+              Create theme
+            </Button>
+          </div>
+        </div>
+        {renderPairGrid()}
+      </div>
       <ThemeImportDialog
         onImportedMany={(importedThemes, { updated }) => {
           if (updated) refreshTheme();

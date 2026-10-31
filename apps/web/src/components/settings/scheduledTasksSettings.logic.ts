@@ -49,6 +49,10 @@ export function scheduleLabel(
   if (schedule.type === "once") return `Once, ${ONCE_FORMATTER.format(new Date(schedule.runAt))}`;
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / 60_000;
+    if (minutes >= 60 && minutes % 60 === 0) {
+      const hours = minutes / 60;
+      return hours === 1 ? "Every hour" : `Every ${hours} hours`;
+    }
     return Number.isInteger(minutes)
       ? `Every ${minutes} min`
       : `Every ${Math.round(schedule.everyMs / 1000)} sec`;

@@ -100,6 +100,12 @@ type ButtonSize = NonNullable<VariantProps<typeof buttonVariants>["size"]>;
 const contentButtonVariants = cva("outline-none", {
   variants: {
     variant: {
+      "card-row":
+        "flex min-w-0 items-center gap-3 rounded-card px-4 py-3 hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+      "inset-row":
+        "flex h-6.5 w-full cursor-pointer items-center gap-2 rounded-row px-2 text-left hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+      "inset-row-multiline":
+        "flex min-h-6.5 w-full cursor-pointer items-center gap-2 rounded-row px-2 py-1 text-left hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
       transport:
         "flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-row text-white hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/70",
       "panel-row":

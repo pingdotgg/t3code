@@ -3,7 +3,7 @@ import { RegistryProvider } from "@effect/atom-react";
 import { DEFAULT_SERVER_SETTINGS, type StorageCleanupReport } from "@t3tools/contracts";
 import { type ReactNode } from "react";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 
@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   run: vi.fn(),
   update: vi.fn(),
   report: null as StorageCleanupReport | null,
+  update: vi.fn(),
 }));
 
 vi.mock(import("../../state/server"), async (original) => {
@@ -57,7 +58,10 @@ vi.mock(import("./SettingsScopeContext"), async (original) => ({
       scope: { kind: "all" },
       environments,
       connectedEnvironments: environments,
-      targets: state.targets,
+      targets: state.targets.map((target) => ({
+        ...target,
+        sources: { worktreeCleanup: "environment" },
+      })),
       target: null,
     };
   }) as never,
@@ -94,7 +98,7 @@ vi.mock(import("../ui/toast"), async (original) => {
   return { ...actual, toastManager: { ...actual.toastManager, add: vi.fn() } };
 });
 
-import { StorageCleanupSections } from "./StorageSettings";
+import { StorageCleanupSections, WorktreeCleanupSection } from "./StorageSettings";
 
 function setup() {
   state.settings = {
@@ -141,6 +145,7 @@ function setRetentionValues(
 
 const panel = () => (
   <RegistryProvider>
+    <WorktreeCleanupSection />
     <StorageCleanupSections />
   </RegistryProvider>
 );
@@ -359,3 +364,64 @@ it("settles mixed retention statuses independently across selected machines", as
   await advance(300);
   await expect.element(screen.getByTestId("logs-retention-status")).not.toBeInTheDocument();
 });
+
+it.each([
+  ["worktreeSettledAfterDays", "Delete settled worktrees", true],
+  ["worktreeAfterDays", "Delete inactive worktrees", false],
+] as const)(
+  "edits custom %s retention without saving empty drafts",
+  async (key, label, allowsZero) => {
+    setup();
+    state.settings = {
+      ...state.settings,
+      storageCleanup: { ...state.settings.storageCleanup, [key]: 2 },
+    };
+    await using screen = await render(panel());
+    const { container } = screen;
+    if (allowsZero) {
+      await userEvent.click(page.getByRole("button", { name: "Advanced" }));
+    }
+    const input = container.querySelector<HTMLInputElement>(
+      `input[aria-label="${label} in days"]`,
+    )!;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      input.focus();
+      setValue.call(input, "");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(input.value).toBe("");
+    expect(state.update).not.toHaveBeenCalled();
+    await act(async () => input.blur());
+    expect(input.value).toBe("2");
+
+    await act(async () => {
+      input.focus();
+      setValue.call(input, "0");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(state.update).not.toHaveBeenCalled();
+    await act(async () => input.blur());
+    if (allowsZero) {
+      expect(state.update).toHaveBeenCalledExactlyOnceWith({ storageCleanup: { [key]: 0 } });
+      state.update.mockClear();
+      await act(async () => {
+        input.focus();
+        setValue.call(input, "0");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(state.update).not.toHaveBeenCalled();
+      await act(async () => {
+        setValue.call(input, "20");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(state.update).not.toHaveBeenCalled();
+      await act(async () =>
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+      );
+      expect(state.update).toHaveBeenCalledExactlyOnceWith({ storageCleanup: { [key]: 20 } });
+    } else {
+      expect(state.update).not.toHaveBeenCalled();
+    }
+  },
+);

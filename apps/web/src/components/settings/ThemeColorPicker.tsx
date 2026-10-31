@@ -1,9 +1,8 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useState, useRef, type ReactElement } from "react";
 import { isThemeColor, themeColorToHex, type ThemeColorRole } from "../../themePalette";
 import { cn } from "../../lib/utils";
 import { hexToHsv, hsvToHex, type HsvColor } from "../../lib/color";
 import { ColorHueSlider, ColorSaturationValuePlane } from "../ui/color-picker";
-import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 export function getThemeRoleLabel(role: ThemeColorRole): string {
@@ -232,20 +231,24 @@ function ThemeColorPickerPanel({
   );
 }
 
-function ThemeColorPicker({
+/**
+ * Opens the color picker from any trigger, so the editor's swatch cards,
+ * list rows and the legacy round swatch share one picker.
+ */
+export function ThemeColorPopover({
   label,
   value,
   onChange,
   onEditStart,
   onEditCancel,
-  onInteract,
+  trigger,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   onEditStart?: () => void;
   onEditCancel?: () => void;
-  onInteract?: () => void;
+  trigger: ReactElement<Record<string, unknown>>;
 }) {
   const [committer] = useState(createFrameCommitter);
   // Escape reverts the edit, so commits after it (the pending frame flushed on close, or a drag
@@ -266,29 +269,7 @@ function ThemeColorPicker({
         if (cancelledRef.current) onEditCancel?.();
       }}
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <PopoverTrigger
-              render={
-                <button
-                  aria-label={`Choose ${label} color`}
-                  className="relative flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border border-foreground/30 transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring"
-                  onFocus={onInteract}
-                  onPointerDown={onInteract}
-                  type="button"
-                >
-                  <span
-                    className="absolute inset-0 rounded-full shadow-sm"
-                    style={{ backgroundColor: value }}
-                  />
-                </button>
-              }
-            />
-          }
-        />
-        <TooltipPopup side="top">{`Choose ${label} color`}</TooltipPopup>
-      </Tooltip>
+      <PopoverTrigger render={trigger} />
       <PopoverPopup
         align="end"
         padding="none"
@@ -309,6 +290,39 @@ function ThemeColorPicker({
   );
 }
 
+/**
+ * The hex value as plain mono text that stays typeable: any CSS color the
+ * theme format accepts can still be entered, not only what the picker makes.
+ */
+export function ThemeColorHexInput({
+  label,
+  value,
+  onChange,
+  onFocus,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  onFocus?: () => void;
+}) {
+  const editorValue = value.trim().toLowerCase().startsWith("oklch(")
+    ? (themeColorToHex(value) ?? value)
+    : value;
+  return (
+    <input
+      aria-invalid={!isThemeColor(value)}
+      aria-label={`${label} hex value`}
+      className="w-[8.5ch] min-w-0 shrink-0 rounded-sm bg-transparent font-mono text-caption text-dim-foreground uppercase tabular-nums outline-none placeholder:normal-case hover:text-muted-foreground focus-visible:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring aria-invalid:text-destructive"
+      onChange={(event) => onChange(event.currentTarget.value)}
+      onFocus={onFocus}
+      spellCheck={false}
+      value={editorValue}
+    />
+  );
+}
+
+/** One color row in the advanced editor: swatch opens the picker, the label
+ *  toggles where the color is used, the hex stays typeable. */
 export const ThemeColorField = memo(function ThemeColorField({
   role,
   value,
@@ -331,59 +345,66 @@ export const ThemeColorField = memo(function ThemeColorField({
   label?: string;
 }) {
   const label = customLabel ?? getThemeRoleLabel(role);
-  const isColorValue = isThemeColor(value);
-  const swatchValue = isColorValue ? value : "#000000";
-  const editorValue = value.trim().toLowerCase().startsWith("oklch(")
-    ? (themeColorToHex(value) ?? value)
-    : value;
+  const swatchValue = isThemeColor(value) ? value : "#000000";
 
   return (
     <div
       className={cn(
-        "flex min-h-11 min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 transition-[background-color,box-shadow]",
-        selected && "bg-accent/60 inset-ring inset-ring-ring",
+        "flex min-w-0 items-center gap-2.5 rounded-item border border-transparent px-2 py-1.5 transition-colors hover:bg-foreground/[0.04]",
+        selected && "border-foreground/12 bg-foreground/6 hover:bg-foreground/6",
       )}
       data-theme-color-role={role}
     >
+      <ThemeColorPopover
+        onEditCancel={() => onEditCancel?.(role)}
+        onEditStart={() => onEditStart?.(role)}
+        label={label}
+        onChange={(nextValue) => onChange(role, nextValue)}
+        value={swatchValue}
+        trigger={
+          <button
+            aria-label={`Choose ${label} color`}
+            className="group flex size-4.5 shrink-0 cursor-pointer outline-none"
+            onFocus={() => onSelect?.(role)}
+            onPointerDown={() => onSelect?.(role)}
+            type="button"
+          >
+            <span
+              className={cn(
+                "size-full rounded-badge border group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-ring",
+                isThemeColor(value)
+                  ? "border-foreground/15"
+                  : "border-dashed border-destructive/70",
+              )}
+              style={isThemeColor(value) ? { backgroundColor: swatchValue } : undefined}
+            />
+          </button>
+        }
+      />
       <Tooltip>
         <TooltipTrigger
           render={
             <button
               aria-label={`${selected ? "Hide" : "Show"} ${label} usage`}
               aria-pressed={selected}
-              className="flex min-w-0 flex-1 cursor-pointer items-center rounded-md text-left text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className="group flex min-w-0 flex-1 cursor-pointer text-left outline-none"
               onClick={() => onToggleSelected?.(role)}
               type="button"
             >
-              <span className="min-w-0 flex-1 truncate">{label}</span>
+              <span className="truncate rounded-sm text-body text-foreground group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-ring">
+                {label}
+              </span>
             </button>
           }
         />
         <TooltipPopup side="top">{`${selected ? "Hide" : "Show"} where ${label} is used`}</TooltipPopup>
       </Tooltip>
-      <div className="ml-auto flex shrink-0 items-center gap-2">
-        <ThemeColorPicker
-          label={label}
-          onChange={(nextValue) => onChange(role, nextValue)}
-          onEditCancel={() => onEditCancel?.(role)}
-          onEditStart={() => onEditStart?.(role)}
-          onInteract={() => onSelect?.(role)}
-          value={swatchValue}
-        />
-        <Input
-          aria-invalid={!isColorValue}
-          aria-label={`${label} hex value`}
-          className="w-28 shrink-0"
-          font="mono"
-          id={`${role}-hex`}
-          nativeInput
-          onChange={(event) => onChange(role, event.currentTarget.value)}
-          onFocus={() => onSelect?.(role)}
-          onPointerDown={() => onSelect?.(role)}
-          size="compact"
-          value={editorValue}
-        />
-      </div>
+      <ThemeColorHexInput
+        label={label}
+        onChange={(nextValue) => onChange(role, nextValue)}
+        onFocus={() => onSelect?.(role)}
+        value={value}
+      />
     </div>
   );
 });
