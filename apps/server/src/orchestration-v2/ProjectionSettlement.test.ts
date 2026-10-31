@@ -250,6 +250,14 @@ it.effect(
       yield* createRun(woke, "failed");
       const limited = yield* createThread("usage-limited");
       yield* createFailure(limited, yield* createRun(limited, "failed"), "usage_limit");
+      // A message queued behind the limit is the newest run, but the limit still blocks.
+      const queuedBehindLimit = yield* createThread("queued-behind-limit");
+      yield* createFailure(
+        queuedBehindLimit,
+        yield* createRun(queuedBehindLimit, "failed"),
+        "usage_limit",
+      );
+      yield* createRun(queuedBehindLimit, "queued", 2);
       const providerFailed = yield* createThread("provider-failed");
       yield* createFailure(
         providerFailed,

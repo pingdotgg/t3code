@@ -6293,13 +6293,41 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE link.thread_id = t.thread_id
                   AND link.type = 'link_request' AND link.status = 'waiting'
               )
+              -- A usage limit interrupts work; settling would hide its recovery controls.
+              -- Matches the shell's blocked run, so a message queued behind the limit
+              -- does not hide it. The cheap EXISTS keeps the run sort off other threads.
               AND NOT (
-                r.status IS 'failed' AND EXISTS (
+                EXISTS (
                   SELECT 1 FROM orchestration_v2_projection_turn_items failure
-                  WHERE failure.thread_id = t.thread_id AND failure.run_id = r.run_id
+                  WHERE failure.thread_id = t.thread_id
                     AND failure.type = 'error' AND failure.status = 'failed'
-                    AND failure.node_id IS json_extract(r.payload_json, '$.rootNodeId')
                     AND json_extract(failure.payload_json, '$.failure.class') = 'usage_limit'
+                )
+                AND EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_runs blocked
+                  WHERE blocked.run_id = (
+                    SELECT latest.run_id FROM orchestration_v2_projection_runs latest
+                    WHERE latest.thread_id = t.thread_id
+                      AND latest.status <> 'queued'
+                      AND NOT (
+                        latest.status = 'cancelled'
+                        AND json_extract(latest.payload_json, '$.startedAt') IS NULL
+                      )
+                    -- latestExecutedRun: the run that ended last (runRanAfter).
+                    ORDER BY latest.completed_at IS NULL DESC, latest.completed_at DESC,
+                      latest.ordinal DESC, latest.run_id DESC
+                    LIMIT 1
+                  )
+                    AND blocked.status = 'failed'
+                    AND (
+                      SELECT json_extract(error.payload_json, '$.failure.class')
+                      FROM orchestration_v2_projection_turn_items error
+                      WHERE error.thread_id = t.thread_id AND error.run_id = blocked.run_id
+                        AND error.type = 'error' AND error.status = 'failed'
+                        AND error.node_id IS json_extract(blocked.payload_json, '$.rootNodeId')
+                      ORDER BY error.updated_at DESC, error.ordinal DESC, error.turn_item_id DESC
+                      LIMIT 1
+                    ) = 'usage_limit'
                 )
               )
             ORDER BY t.updated_at ASC, t.thread_id ASC
