@@ -723,7 +723,7 @@ export default defineConfig({
         "apps/web/src/components/settings/BrowserImportWizard.tsx": 1,
         "apps/web/src/components/settings/CodexSetupSection.tsx": 1,
         "apps/web/src/components/settings/DeviceHostEditor.tsx": 1,
-        "apps/web/src/components/settings/DiagnosticsSettings.tsx": 2,
+        "apps/web/src/components/settings/DiagnosticsSettings.tsx": 1,
         "apps/web/src/components/settings/KeybindingsSettings.tsx": 1,
         "apps/web/src/components/settings/PanelAnimationsPreview.tsx": 1,
         "apps/web/src/components/settings/ProviderInstanceCard.tsx": 1,
