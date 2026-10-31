@@ -72,6 +72,7 @@ import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
+import { desktopHomeEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { previewEnvironment } from "~/state/preview";
 import { serverEnvironment } from "~/state/server";
 import { useEnvironmentScope } from "~/state/session";
@@ -1013,6 +1014,7 @@ export default function FilePreviewPanel({
   const wordWrap = wordWrapOverride ?? defaultWordWrap;
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const desktopHomeEnvironmentId = useAtomValue(desktopHomeEnvironmentIdAtom);
   const remoteOpenState = useRemoteOpenState(environmentId);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
@@ -1269,7 +1271,9 @@ export default function FilePreviewPanel({
             </div>
           </ScrollArea>
           {absolutePath &&
-          (environmentId === primaryEnvironmentId || remoteOpenState.mode !== "local-exec") ? (
+          (environmentId === primaryEnvironmentId ||
+            environmentId === desktopHomeEnvironmentId ||
+            remoteOpenState.mode !== "local-exec") ? (
             <OpenInPicker
               environmentId={environmentId}
               keybindings={keybindings}
