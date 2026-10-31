@@ -326,7 +326,7 @@ const isRefusedRequestedReviewersOnly = (error: unknown): boolean =>
       path?.length === 6 &&
       path[0] === "repository" &&
       path[1] === "pullRequest" &&
-      path[2] === "reviewRequests" &&
+      (path[2] === "reviewRequests" || path[2] === "reviewRequestEvents") &&
       path[3] === "nodes" &&
       typeof path[4] === "number" &&
       Number.isInteger(path[4]) &&
@@ -2207,7 +2207,14 @@ export const make = Effect.gen(function* () {
           after: string | null,
         ): Effect.Effect<GitHubReviewThreadPage, GitHubPullRequestApiError> =>
           readRequestedReviewers(input, 50, (requestedReviewers) =>
-            client.ReviewThreads({ owner, name, number: input.number, after, requestedReviewers }),
+            client.ReviewThreads({
+              owner,
+              name,
+              number: input.number,
+              after,
+              requestedReviewers,
+              requestEvents: requestedReviewers > 0,
+            }),
           ).pipe(graphql(target), Effect.map(toReviewThreadPage), Effect.flatMap(found(target)));
         const entries: GitHubReviewThreadEntry[] = [];
         const avatarsByLogin = new Map<string, string>();
@@ -2218,6 +2225,7 @@ export const make = Effect.gen(function* () {
         const editedAtById = new Map<string, string>();
         let commits: GitHubReviewThreadPage["commits"] = [];
         let viewer: GitHubReviewThreadPage["viewer"] = { canUpdate: true, didAuthor: false };
+        let reviewRequests: GitHubReviewThreadPage["reviewRequests"] = [];
         const dismissalsByReviewId = new Map<string, string>();
         let dismissalCursor: string | null = null;
         let cursor: string | null = null;
@@ -2235,6 +2243,7 @@ export const make = Effect.gen(function* () {
             for (const [id, editedAt] of read.editedAtById) editedAtById.set(id, editedAt);
             commits = read.commits;
             viewer = read.viewer;
+            reviewRequests = read.reviewRequests;
             for (const [id, message] of read.dismissalsByReviewId)
               dismissalsByReviewId.set(id, message);
             dismissalCursor = read.nextDismissalCursor;
@@ -2292,6 +2301,7 @@ export const make = Effect.gen(function* () {
           botLogins,
           commits,
           viewer,
+          reviewRequests,
         };
       },
     ),

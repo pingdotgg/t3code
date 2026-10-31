@@ -362,6 +362,7 @@ function thread(id: string, ...commentIds: ReadonlyArray<string>) {
     diffSide: "RIGHT",
     isResolved: false,
     isOutdated: false,
+    firstComment: { nodes: [] },
     comments: threadComments(commentIds, null),
   };
 }
@@ -392,6 +393,7 @@ function reviewThreadsPage(
           },
           latestReviews: { nodes: [] },
           reviewDismissals: { pageInfo: lastPage, nodes: [] },
+          reviewRequestEvents: { nodes: [] },
           commits: { nodes: [] },
         },
       },
@@ -3418,9 +3420,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect.each([false, true])(
-    "keeps thread cursors and reviewers after a refusal (later page: %s)",
-    (later) =>
+  it.effect.each(
+    [false, true].flatMap((later) =>
+      ["reviewRequests", "reviewRequestEvents", "both"].map((selection) => ({ later, selection })),
+    ),
+  )(
+    "keeps thread cursors and reviewers after a $selection refusal (later page: $later)",
+    ({ later, selection }) =>
       Effect.gen(function* () {
         if (later)
           mockedExecute.mockReturnValueOnce(
@@ -3437,7 +3443,22 @@ layer("GitHubPullRequestApi.layer", (it) => {
               ),
             ),
           );
-        mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson({
+                data: null,
+                errors: (selection === "both"
+                  ? ["reviewRequests", "reviewRequestEvents"]
+                  : [selection]
+                ).map((field) => ({
+                  ...refusedReviewer,
+                  path: ["repository", "pullRequest", field, "nodes", 0, "requestedReviewer"],
+                })),
+              }),
+            ),
+          ),
+        );
         mockedExecute.mockReturnValueOnce(
           Effect.succeed(output(reviewThreadsPage([thread("T2", "c2")], "last"))),
         );
@@ -3451,19 +3472,23 @@ layer("GitHubPullRequestApi.layer", (it) => {
         });
         const conversation = yield* read;
         expect(
-          variablesOf("ReviewThreads").map((v) => [v["after"], v["requestedReviewers"]]),
+          variablesOf("ReviewThreads").map((v) => [
+            v["after"],
+            v["requestedReviewers"],
+            v["requestEvents"],
+          ]),
         ).toEqual(
           later
             ? [
-                [null, 50],
-                ["next", 50],
-                ["next", 0],
-                ["last", 0],
+                [null, 50, true],
+                ["next", 50, true],
+                ["next", 0, false],
+                ["last", 0, false],
               ]
             : [
-                [null, 50],
-                [null, 0],
-                ["last", 0],
+                [null, 50, true],
+                [null, 0, false],
+                ["last", 0, false],
               ],
         );
         expect(conversation.comments.map((c) => c.id)).toEqual(
@@ -3477,6 +3502,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         expect(variablesOf("ReviewThreads").at(-1)).toMatchObject({
           after: null,
           requestedReviewers: 0,
+          requestEvents: false,
         });
       }),
   );
@@ -3927,6 +3953,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
                   },
                   pullRequest: {
                     author: { __typename: "User", login: "bilal" },
+                    suggestedReviewers: [],
+                    requestEvents: { nodes: [] },
                     reviewRequests: {
                       nodes: [
                         {
