@@ -2,6 +2,8 @@ import * as NodeOS from "node:os";
 
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
+import { wslEnvironmentLabel } from "@t3tools/shared/environmentLabel";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -824,10 +826,11 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.withSpan("desktop.backendConfiguration.resolvePrimary")),
     resolvePrimaryLabel: Effect.gen(function* () {
       const { useWsl, distro } = yield* describePrimary;
+      const hostname = yield* HostProcess.Hostname;
       if (!useWsl) {
-        return environment.platform === "win32" ? "Windows" : "Local environment";
+        return environment.platform === "win32" ? hostname : "Local environment";
       }
-      return distro ? `WSL (${distro})` : "WSL";
+      return wslEnvironmentLabel(hostname, distro);
     }).pipe(Effect.withSpan("desktop.backendConfiguration.resolvePrimaryLabel")),
     // The span options depend on each request's port and distro.
     resolveWsl: Effect.fnUntraced(

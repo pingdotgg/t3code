@@ -1,3 +1,4 @@
+import { wslEnvironmentLabel } from "@t3tools/shared/environmentLabel";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -179,15 +180,31 @@ const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function*
   return null;
 });
 
+const isWsl = Effect.fn("isWsl")(function* () {
+  if ((yield* HostProcess.Platform) !== "linux") {
+    return false;
+  }
+  const fileSystem = yield* FileSystem.FileSystem;
+  const kernelRelease = yield* fileSystem
+    .readFileString("/proc/sys/kernel/osrelease")
+    .pipe(Effect.orElseSucceed(() => ""));
+  return kernelRelease.toLowerCase().includes("microsoft");
+});
+
 export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironmentLabel")(function* (
   input: ResolveServerEnvironmentLabelInput,
 ) {
+  const hostname = normalizeLabel(yield* HostProcess.Hostname);
+  if (hostname && (yield* isWsl())) {
+    const distro = normalizeLabel((yield* HostProcess.Environment).WSL_DISTRO_NAME);
+    return wslEnvironmentLabel(hostname, distro);
+  }
+
   const friendlyHostLabel = yield* resolveFriendlyHostLabel();
   if (friendlyHostLabel) {
     return friendlyHostLabel;
   }
 
-  const hostname = normalizeLabel(yield* HostProcess.Hostname);
   if (hostname) {
     return hostname;
   }
