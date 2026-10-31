@@ -1,3 +1,4 @@
+import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
 import {
   buildProjectGroups,
@@ -69,6 +70,50 @@ export function withoutScratchProjectScope(
   )
     ? { ...controls, projectId: undefined, projectEnvironmentId: undefined }
     : controls;
+}
+
+type FilterProject = Parameters<typeof pullRequestFilterProjects>[0][number];
+
+export function pullRequestProjectChoices<
+  Project extends FilterProject & { readonly isScratch?: true },
+>(
+  projects: readonly Project[],
+  input: {
+    readonly environmentId: string | null;
+    readonly controls: PullRequestListControls;
+    readonly environmentLabels: ReadonlyMap<EnvironmentId, string>;
+    readonly servesPullRequests: (environmentId: EnvironmentId) => boolean;
+  },
+) {
+  return pullRequestFilterProjects(
+    eligiblePullRequestProjects(projects, input),
+    input.environmentLabels,
+    projects.find(
+      (project) =>
+        project.id === input.controls.projectId &&
+        project.environmentId === input.controls.projectEnvironmentId,
+    ),
+  );
+}
+
+export function eligiblePullRequestProjects<
+  Project extends FilterProject & { readonly isScratch?: true },
+>(
+  projects: readonly Project[],
+  input: {
+    readonly environmentId: string | null;
+    readonly controls: PullRequestListControls;
+    readonly servesPullRequests: (environmentId: EnvironmentId) => boolean;
+  },
+) {
+  return projects.filter(
+    (project) =>
+      !project.isScratch &&
+      (input.environmentId === null || project.environmentId === input.environmentId) &&
+      (input.servesPullRequests(project.environmentId) ||
+        (project.id === input.controls.projectId &&
+          project.environmentId === input.controls.projectEnvironmentId)),
+  );
 }
 
 export function pullRequestListKey(
