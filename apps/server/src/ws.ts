@@ -2325,7 +2325,9 @@ export const layerWsRpc = (
                 ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)
                 : input.instanceId !== undefined
                   ? providerRegistry.refreshInstance(input.instanceId)
-                  : providerRegistry.refresh();
+                  : input.skipMaintenance === true
+                    ? providerRegistry.refreshSnapshots
+                    : providerRegistry.refresh();
             if (input.refreshModels) {
               const instances = yield* providerInstances.listInstances;
               for (const instance of instances) {

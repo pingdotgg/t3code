@@ -250,6 +250,27 @@ describe("makeManagedServerProvider", () => {
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
+  it.effect("re-probes the snapshot without rereading maintenance", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checks = yield* Ref.make(0);
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.die("snapshot refresh must not resolve maintenance"),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: () => false,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checks, (count) => count + 1).pipe(
+            Effect.map((count) => (count === 1 ? refreshedSnapshot : refreshedSnapshotSecond)),
+          ),
+          refreshOnInterval: false,
+        });
+        yield* provider.streamChanges.pipe(Stream.take(1), Stream.runDrain);
+        assert.deepStrictEqual(yield* provider.refreshSnapshot!, refreshedSnapshotSecond);
+        assert.deepStrictEqual(yield* provider.getSnapshot, refreshedSnapshotSecond);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
   it.effect(
     "runs the initial provider check in the background and streams the refreshed snapshot",
     () =>
