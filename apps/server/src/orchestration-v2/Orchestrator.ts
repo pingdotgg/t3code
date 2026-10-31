@@ -3724,7 +3724,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : linked;
           const existing = links.find(visible);
           if (existing === undefined) return thread;
-          const watch =
+          let watch =
             command.type === "thread.pull-request-watch.sync"
               ? existing.watch?.startedAt === command.startedAt
                 ? (command.watch ?? undefined)
@@ -3756,6 +3756,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     remarkIds: [],
                     wakes: 0,
                   });
+          if (
+            command.type === "thread.pull-request.watch" &&
+            watch !== undefined &&
+            command.includeOwnRemarks !== undefined &&
+            command.includeOwnRemarks !== (watch.includeOwnRemarks ?? false)
+          ) {
+            // A changed policy must reject in-flight syncs even within the same clock tick.
+            const policyStartedAt = DateTime.formatIso(
+              DateTime.makeUnsafe(
+                Math.max(
+                  DateTime.toEpochMillis(now),
+                  DateTime.toEpochMillis(DateTime.makeUnsafe(watch.startedAt)) + 1,
+                ),
+              ),
+            );
+            watch = {
+              ...watch,
+              includeOwnRemarks: command.includeOwnRemarks,
+              startedAt: policyStartedAt,
+              remarksThrough: DateTime.formatIso(now),
+              remarkIds: [],
+              wakes: 0,
+            };
+          }
           if (watch === existing.watch && links === linked) return thread;
           const final =
             command.type === "thread.pull-request-watch.sync" && watch === undefined

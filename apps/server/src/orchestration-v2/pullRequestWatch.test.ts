@@ -305,6 +305,22 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(watching, detail(), [own]).changes, []);
   });
 
+  it("can watch same-account reviews once while retaining the wake limit", () => {
+    const review = remark("AGENT-USER", "2026-10-02T12:06:00Z", "Please fix the race.");
+    const shared = { ...watch({ headSha: detail().headSha ?? null }), includeOwnRemarks: true };
+    const first = evaluatePullRequestWatch(shared, detail(), [review]);
+    assert.deepEqual(first.changes, [{ kind: "remarks", remarks: [review] }]);
+    assert.isTrue(first.next.includeOwnRemarks);
+    assert.deepEqual(evaluatePullRequestWatch(first.next, detail(), [review]).changes, []);
+    const last = evaluatePullRequestWatch(
+      { ...shared, wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1 },
+      detail(),
+      [review],
+    );
+    assert.isTrue(last.exhausted);
+    assert.deepEqual(evaluatePullRequestWatch(watch(), detail(), [review]).changes, []);
+  });
+
   it("does not treat a failed check read as a rerun", () => {
     const failed = detail({ checks: [check("lint", "failure")] });
     const reported = evaluatePullRequestWatch(watch(), failed, noRemarks);
