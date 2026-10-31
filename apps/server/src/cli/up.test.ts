@@ -17,40 +17,41 @@ import { afterEach, vi } from "vite-plus/test";
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import { upsertServiceEnv } from "./service.ts";
-import { connectEnabled, planRoutes, upCommand } from "./up.ts";
+import { connectEnabled, planRoutes, resolveOwner, upCommand, upPortCheck } from "./up.ts";
 
 const none = Option.none<boolean>();
+const off = { tailscale: false, connect: false, lan: false };
+const both = { tailscale: true, connect: true };
+const noFlags = { tailscale: none, connect: none, lan: none };
 
 it.each([
   {
-    label: "a new machine starts from T3 Connect and asks",
-    setup: { installed: false, connect: false, lan: false },
-    flags: { connect: none, lan: none },
-    expected: { routes: { connect: true, lan: false }, ask: ["connect", "lan"] },
+    label: "a new machine with Tailscale starts from it and asks",
+    setup: { installed: false, current: off, available: both },
+    flags: noFlags,
+    expected: { routes: { ...off, tailscale: true }, ask: ["tailscale", "connect", "lan"] },
   },
   {
-    label: "a build without T3 Connect never offers it",
-    setup: { installed: false, connect: null, lan: false },
-    flags: { connect: none, lan: none },
-    expected: { routes: { connect: false, lan: false }, ask: ["lan"] },
+    label: "a new machine without Tailscale starts from T3 Connect",
+    setup: { installed: false, current: off, available: { tailscale: false, connect: true } },
+    flags: noFlags,
+    expected: { routes: { ...off, connect: true }, ask: ["connect", "lan"] },
   },
   {
-    label: "a rerun starts from the current setup",
-    setup: { installed: true, connect: false, lan: true },
-    flags: { connect: none, lan: none },
-    expected: { routes: { connect: false, lan: true }, ask: ["connect", "lan"] },
+    label: "a rerun starts from the current setup and can turn a route off",
+    setup: {
+      installed: true,
+      current: { ...off, tailscale: true, lan: true },
+      available: { tailscale: false, connect: false },
+    },
+    flags: noFlags,
+    expected: { routes: { ...off, tailscale: true, lan: true }, ask: ["tailscale", "lan"] },
   },
   {
-    label: "a route flag on a new machine turns on only that route",
-    setup: { installed: false, connect: false, lan: false },
-    flags: { connect: none, lan: Option.some(true) },
-    expected: { routes: { connect: false, lan: true }, ask: [] },
-  },
-  {
-    label: "a route flag asks nothing and keeps the other route",
-    setup: { installed: true, connect: true, lan: true },
-    flags: { connect: none, lan: Option.some(false) },
-    expected: { routes: { connect: true, lan: false }, ask: [] },
+    label: "a route flag asks nothing and keeps the routes not named, even on a new machine",
+    setup: { installed: false, current: off, available: both },
+    flags: { ...noFlags, lan: Option.some(true) },
+    expected: { routes: { ...off, lan: true }, ask: [] },
   },
 ])("$label", ({ setup, flags, expected }) => {
   expect(planRoutes(setup, flags)).toEqual(expected);
@@ -354,3 +355,51 @@ it("rewrites only the named service.env keys and keeps the user's lines", () => 
   );
   expect(upsertServiceEnv("", { T3CODE_LAN: "false" })).toBe("T3CODE_LAN=false\n");
 });
+
+const RUNNING_SERVICE = { port: 3773, serviceManaged: true };
+const MANUAL = { port: 3773, serviceManaged: false };
+
+it.each([
+  { configuredPort: undefined, free: true, running: null, expected: "ok" },
+  { configuredPort: undefined, free: false, running: RUNNING_SERVICE, expected: "ok" },
+  { configuredPort: undefined, free: false, running: null, expected: "taken" },
+  { configuredPort: undefined, free: false, running: MANUAL, expected: "manual" },
+  // t3 up writes T3CODE_PORT=3773, so a later run still checks the port.
+  { configuredPort: "3773", free: false, running: null, expected: "taken" },
+  { configuredPort: "3773", free: false, running: RUNNING_SERVICE, expected: "ok" },
+  { configuredPort: "4000", free: true, running: null, expected: "custom" },
+  { configuredPort: "4000", free: true, running: { ...MANUAL, port: 4000 }, expected: "manual" },
+] as const)(
+  "port check with T3CODE_PORT=$configuredPort, free=$free, running=$running is $expected",
+  ({ configuredPort, free, running, expected }) => {
+    expect(upPortCheck({ configuredPort, portFree: free, running })).toBe(expected);
+  },
+);
+
+it.effect("a rerun on a tagged host keeps the owner saved before, with no prompt", () =>
+  Effect.gen(function* () {
+    const status = {
+      version: "1.90.0",
+      magicDnsName: "box.example.ts.net",
+      tailnetIpv4Addresses: ["100.64.0.2"],
+      httpsServeEnabled: null,
+      backendState: "Running",
+      selfNodeId: "n1",
+      selfUserId: null,
+      selfTags: ["tag:t3-box"],
+      keyExpiry: null,
+      keyExpired: false,
+      health: [],
+      magicDnsEnabled: true,
+      certDomains: [],
+      userspaceNetworking: false,
+      peers: [],
+      users: [{ userId: "123", loginName: "me@example.com" }],
+    };
+    // Not interactive, as with --yes, so asking would fail with "Pass --owner".
+    expect(yield* resolveOwner(status, Option.none(), "123", false)).toEqual({
+      userId: "123",
+      login: "me@example.com",
+    });
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

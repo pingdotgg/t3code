@@ -448,16 +448,23 @@ it.effect(
     ),
 );
 
-it.effect("requires access management to answer a link request", () =>
+it.effect("requires access management to answer a link request or manage Tailscale devices", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const registry = yield* setup;
+      const commands = [
+        WS_METHODS.peerLinksAnswerRequest,
+        WS_METHODS.tailnetDevicesList,
+        WS_METHODS.tailnetDevicesBlock,
+        WS_METHODS.tailnetDevicesUnblock,
+      ].map((method) => createCommandPermissions(runtime, method));
       registry.set(sessions(env), AsyncResult.success(grant(true)));
-      const answer = createCommandPermissions(runtime, WS_METHODS.peerLinksAnswerRequest);
-      expect(registry.get(answer.permissionAtom(env))).toBe(false);
-      expect((yield* answer.authorize(registry, env).pipe(Effect.flip)).requiredPermission).toBe(
-        AuthAccessWriteScope,
-      );
+      for (const command of commands) {
+        expect(registry.get(command.permissionAtom(env))).toBe(false);
+        expect((yield* command.authorize(registry, env).pipe(Effect.flip)).requiredPermission).toBe(
+          AuthAccessWriteScope,
+        );
+      }
       registry.set(
         sessions(env),
         AsyncResult.success({
@@ -466,8 +473,10 @@ it.effect("requires access management to answer a link request", () =>
           permissions: [AuthAccessWriteScope],
         }),
       );
-      expect(registry.get(answer.permissionAtom(env))).toBe(true);
-      yield* answer.authorize(registry, env);
+      for (const command of commands) {
+        expect(registry.get(command.permissionAtom(env))).toBe(true);
+        yield* command.authorize(registry, env);
+      }
     }),
   ),
 );

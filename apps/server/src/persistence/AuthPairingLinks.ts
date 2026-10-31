@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 
-import { AuthEnvironmentScopes } from "@t3tools/contracts";
+import { AuthEnvironmentScopes, TAILNET_SUBJECT_PREFIX } from "@t3tools/contracts";
 
 import {
   type AuthPairingLinkRepositoryError,
@@ -65,6 +65,12 @@ export const RevokeAuthPairingLinkInput = Schema.Struct({
 });
 export type RevokeAuthPairingLinkInput = typeof RevokeAuthPairingLinkInput.Type;
 
+export const RevokeAuthPairingLinksBySubjectInput = Schema.Struct({
+  subject: Schema.String,
+  revokedAt: Schema.DateTimeUtcFromString,
+});
+export type RevokeAuthPairingLinksBySubjectInput = typeof RevokeAuthPairingLinksBySubjectInput.Type;
+
 export const GetAuthPairingLinkByCredentialInput = Schema.Struct({
   credential: Schema.String,
 });
@@ -101,6 +107,10 @@ export class AuthPairingLinkRepository extends Context.Service<
     readonly revoke: (
       input: RevokeAuthPairingLinkInput,
     ) => Effect.Effect<boolean, AuthPairingLinkRepositoryError>;
+    /** Revokes the subject's unused links. Returns how many. */
+    readonly revokeUnusedBySubject: (
+      input: RevokeAuthPairingLinksBySubjectInput,
+    ) => Effect.Effect<number, AuthPairingLinkRepositoryError>;
     readonly getByCredential: (
       input: GetAuthPairingLinkByCredentialInput,
     ) => Effect.Effect<Option.Option<AuthPairingLinkRecord>, AuthPairingLinkRepositoryError>;
@@ -195,6 +205,11 @@ export const make = Effect.gen(function* () {
               SELECT value FROM json_each(auth_pairing_links.scopes)
             )
           )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM auth_tailnet_device_blocks AS blocks
+            WHERE auth_pairing_links.subject = ${TAILNET_SUBJECT_PREFIX} || blocks.stable_node_id
+          )
         RETURNING
           id AS "id",
           credential AS "credential",
@@ -243,6 +258,20 @@ export const make = Effect.gen(function* () {
         UPDATE auth_pairing_links
         SET revoked_at = ${revokedAt}
         WHERE id = ${id}
+          AND revoked_at IS NULL
+          AND consumed_at IS NULL
+        RETURNING id AS "id"
+      `,
+  });
+
+  const revokeUnusedPairingLinkRowsBySubject = SqlSchema.findAll({
+    Request: RevokeAuthPairingLinksBySubjectInput,
+    Result: Schema.Struct({ id: Schema.String }),
+    execute: ({ subject, revokedAt }) =>
+      sql`
+        UPDATE auth_pairing_links
+        SET revoked_at = ${revokedAt}
+        WHERE subject = ${subject}
           AND revoked_at IS NULL
           AND consumed_at IS NULL
         RETURNING id AS "id"
@@ -344,6 +373,19 @@ export const make = Effect.gen(function* () {
       Effect.map((rows) => rows.length > 0),
     );
 
+  const revokeUnusedBySubject: AuthPairingLinkRepository["Service"]["revokeUnusedBySubject"] = (
+    input,
+  ) =>
+    revokeUnusedPairingLinkRowsBySubject(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthPairingLinkRepository.revokeUnusedBySubject:query",
+          "AuthPairingLinkRepository.revokeUnusedBySubject:decodeRows",
+        ),
+      ),
+      Effect.map((rows) => rows.length),
+    );
+
   const getByCredential: AuthPairingLinkRepository["Service"]["getByCredential"] = (input) =>
     getPairingLinkRowByCredential(input).pipe(
       NodeSqliteClient.readOnly,
@@ -376,6 +418,7 @@ export const make = Effect.gen(function* () {
     consumeAvailable,
     listActive,
     revoke,
+    revokeUnusedBySubject,
     getByCredential,
   } satisfies AuthPairingLinkRepository["Service"];
 });

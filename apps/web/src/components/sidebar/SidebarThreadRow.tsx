@@ -74,6 +74,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { SidebarMachineIcon } from "./SidebarMachineIcon";
 import {
   animateSidebarLayoutChanges,
   hasUnseenCompletion,
@@ -1125,7 +1126,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const remoteMachineIcon =
     isRemote && !showsScratchMachine ? (
       <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
-        <EnvironmentMachineIcon aria-hidden kind={props.environmentMachine} className="size-3.5" />
+        <SidebarMachineIcon environmentId={thread.environmentId} kind={props.environmentMachine} />
       </span>
     ) : null;
   const diff = latestRunDiff(thread);

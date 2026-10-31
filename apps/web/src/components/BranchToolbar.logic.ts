@@ -1,3 +1,4 @@
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type {
   EnvironmentId,
   EnvironmentMachineKind,
@@ -16,6 +17,7 @@ export interface EnvironmentOption {
   label: string;
   isPrimary: boolean;
   machine: EnvironmentMachineKind;
+  connection: EnvironmentConnectionPhase;
 }
 
 /** "Add to another machine" stays muted until hovered: easy to find, quieter than the machines. */
