@@ -394,7 +394,7 @@ it.effect(
         Effect.flip,
       );
       assert.deepEqual(heldOffCalls, []);
-      assert.include(held.message, "while another app holds 127.0.0.1:3773");
+      assert.include(held.message, "while it cannot bind 127.0.0.1:3773");
     }).pipe(Effect.provideService(NetService.NetService, portFree));
   },
 );

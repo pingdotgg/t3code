@@ -114,7 +114,7 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
   if (!(yield* (yield* NetService.NetService).canListenOnHost(target.port, target.host))) {
     return yield* refuseRemoteClients(
       policy,
-      `so the server does not start while another app holds ${target.host}:${target.port}, whose Tailscale Serve routes it would take over`,
+      `so the server does not start while it cannot bind ${target.host}:${target.port}; if another app holds that port, the server would take over its Tailscale Serve routes`,
     );
   }
   const readRoutes = readTailscaleServeRoutesTo(target).pipe(
