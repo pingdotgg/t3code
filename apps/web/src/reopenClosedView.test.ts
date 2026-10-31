@@ -8,6 +8,8 @@ import { AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { type ClosedViewEntry, useClosedViewStore } from "./closedViewStore";
+import { createLayoutState, selectFocusedTab, findLayoutTab } from "./layout/layoutModel";
+import { useLayoutStore } from "./layout/layoutStore";
 import { __setClientSettingsForTests } from "./hooks/useSettings";
 import { readThreadPreviewState, resetPreviewStateForTests } from "./previewStateStore";
 import { planNextReopen, type ReopenOwnerState, reopenClosedView } from "./reopenClosedView";
@@ -40,6 +42,42 @@ beforeEach(() => {
 });
 
 describe("reopenClosedView", () => {
+  it("restores a chat at its saved pane position without reopening it twice", async () => {
+    const original = useLayoutStore.getState().layout;
+    using _restore = { [Symbol.dispose]: () => useLayoutStore.setState({ layout: original }) };
+    useLayoutStore.setState({ layout: createLayoutState() });
+    const store = useLayoutStore.getState();
+    store.openTab({ kind: "chat", target: { kind: "server", threadRef } });
+    const tab = selectFocusedTab(useLayoutStore.getState().layout)!;
+    const location = findLayoutTab(useLayoutStore.getState().layout, (candidate) => candidate.id === tab.id)!;
+    store.openTab({ kind: "launcher", id: "reopen-launcher", context: null }, { placement: "active-pane" });
+    store.closeTab(tab.id);
+    const entry = {
+      kind: "chat",
+      id: "closed-chat",
+      threadRef,
+      paneId: location.pane.id,
+      index: 0,
+    } as const;
+    const owner: ReopenOwnerState = {
+      environmentKnown: true,
+      catalogReady: true,
+      ownerExists: true,
+      sideChatExists: true,
+      shellLive: true,
+      panel: { isOpen: false, activeSurfaceId: null, surfaces: [] },
+    };
+    expect(planNextReopen([entry], () => owner).restore).toBe(entry);
+    const openPreview = vi.fn();
+    expect(await reopenClosedView(entry, { openPreview, workspaceAvailable: false })).toBe(true);
+    const restored = findLayoutTab(useLayoutStore.getState().layout, (candidate) => candidate.content.kind === "chat")!;
+    expect(restored.pane.id).toBe(location.pane.id);
+    expect(restored.tabIndex).toBe(0);
+    expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(restored.tab.id);
+    expect(planNextReopen([entry], () => owner)).toEqual({ drop: [entry], restore: null });
+    expect(openPreview).not.toHaveBeenCalled();
+  });
+
   it("restores a file tab at its line without creating a browser session", async () => {
     const openPreview = vi.fn();
     const reopened = await reopenClosedView(
