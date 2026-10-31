@@ -908,3 +908,81 @@ index 99cc6c6..d883e76 100644
    );
  }
  
+diff --git a/src/hooks/useKeyboardState/index.ts b/src/hooks/useKeyboardState/index.ts
+--- a/src/hooks/useKeyboardState/index.ts
++++ b/src/hooks/useKeyboardState/index.ts
+@@ -5,7 +5,7 @@
+ 
+ import type { IKeyboardState } from "../../types";
+ 
+-const EVENTS = ["keyboardWillShow", "keyboardDidHide"] as const;
++const EVENTS = ["keyboardWillShow", "keyboardDidShow", "keyboardDidHide"] as const;
+ 
+ const getLatestState = () => ({
+   ...KeyboardController.state(),
+diff --git a/lib/commonjs/hooks/useKeyboardState/index.js b/lib/commonjs/hooks/useKeyboardState/index.js
+--- a/lib/commonjs/hooks/useKeyboardState/index.js
++++ b/lib/commonjs/hooks/useKeyboardState/index.js
+@@ -7,7 +7,7 @@
+ var _react = require("react");
+ var _bindings = require("../../bindings");
+ var _module = require("../../module");
+-const EVENTS = ["keyboardWillShow", "keyboardDidHide"];
++const EVENTS = ["keyboardWillShow", "keyboardDidShow", "keyboardDidHide"];
+ const getLatestState = () => ({
+   ..._module.KeyboardController.state(),
+   isVisible: _module.KeyboardController.isVisible()
+diff --git a/lib/module/hooks/useKeyboardState/index.js b/lib/module/hooks/useKeyboardState/index.js
+--- a/lib/module/hooks/useKeyboardState/index.js
++++ b/lib/module/hooks/useKeyboardState/index.js
+@@ -1,7 +1,7 @@
+ import { useEffect, useState } from "react";
+ import { KeyboardEvents } from "../../bindings";
+ import { KeyboardController } from "../../module";
+-const EVENTS = ["keyboardWillShow", "keyboardDidHide"];
++const EVENTS = ["keyboardWillShow", "keyboardDidShow", "keyboardDidHide"];
+ const getLatestState = () => ({
+   ...KeyboardController.state(),
+   isVisible: KeyboardController.isVisible()
+diff --git a/src/module.ts b/src/module.ts
+--- a/src/module.ts
++++ b/src/module.ts
+@@ -22,6 +22,10 @@
+ });
+ 
+ KeyboardEvents.addListener("keyboardWillShow", (e) => {
++  isClosed = false;
++  lastState = e;
++});
++KeyboardEvents.addListener("keyboardDidShow", (e) => {
+   isClosed = false;
+   lastState = e;
+ });
+diff --git a/lib/commonjs/module.js b/lib/commonjs/module.js
+--- a/lib/commonjs/module.js
++++ b/lib/commonjs/module.js
+@@ -19,6 +19,10 @@
+   lastState = e;
+ });
+ _bindings.KeyboardEvents.addListener("keyboardWillShow", e => {
++  isClosed = false;
++  lastState = e;
++});
++_bindings.KeyboardEvents.addListener("keyboardDidShow", e => {
+   isClosed = false;
+   lastState = e;
+ });
+diff --git a/lib/module/module.js b/lib/module/module.js
+--- a/lib/module/module.js
++++ b/lib/module/module.js
+@@ -13,6 +13,10 @@
+   lastState = e;
+ });
+ KeyboardEvents.addListener("keyboardWillShow", e => {
++  isClosed = false;
++  lastState = e;
++});
++KeyboardEvents.addListener("keyboardDidShow", e => {
+   isClosed = false;
+   lastState = e;
+ });
