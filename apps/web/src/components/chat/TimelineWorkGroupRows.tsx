@@ -15,6 +15,7 @@ import {
   SlashCommandChip,
   WORKING_BAR_CLASS_NAME,
   WorkingBarControl,
+  useCarriedTextFade,
 } from "./TimelineRowParts";
 import {
   ToolActivityIconView,
@@ -440,18 +441,12 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
   const live = ctx.pendingApprovals.size === 0;
   const { groupId } = row;
   const activity = (
-    <LiveActivityRow
-      label={liveAnswerPreview ?? "Thinking"}
-      iconName="brain"
-      active={live}
-      interruptible={groupId === undefined}
-    />
+    <LiveActivityRow label={liveAnswerPreview ?? "Thinking"} iconName="brain" active={live} />
   );
   if (groupId === undefined) return activity;
   return (
     <LiveWorkToggle
       aria-expanded={row.expanded === true}
-      trailing={live ? <LiveWorkControls /> : undefined}
       onClick={() => ctx.onToggleWorkGroup(groupId, row.id)}
     >
       {activity}
@@ -462,12 +457,10 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
 /** A live activity row that is its work group's disclosure: the whole row toggles it. */
 function LiveWorkToggle({
   stacked = false,
-  trailing,
   ...props
 }: Omit<ComponentProps<"button">, "type" | "className"> & {
   /** Stacks a thought line above the status row. */
   stacked?: boolean;
-  trailing?: ReactNode;
 }) {
   return (
     <div className="flex w-full min-w-0 items-end gap-2.5">
@@ -479,29 +472,7 @@ function LiveWorkToggle({
         )}
         {...props}
       />
-      {trailing}
     </div>
-  );
-}
-
-/** Stop is a sibling of the fold toggle, so it never nests buttons or opens history. */
-function LiveWorkControls() {
-  const { onInterrupt } = use(TimelineRowCtx);
-  const { pendingRequest, turnEnded } = use(TimelineRowActivityCtx);
-  if (!onInterrupt || pendingRequest || turnEnded) return null;
-  return (
-    <span className="flex shrink-0 items-center gap-2.5 text-caption text-dim-foreground">
-      <Button
-        variant="ghost-muted"
-        size="xs"
-        onClick={(event) => {
-          event.stopPropagation();
-          onInterrupt();
-        }}
-      >
-        Stop
-      </Button>
-    </span>
   );
 }
 
@@ -511,7 +482,6 @@ function LiveActivityRow({
   toolIcon,
   failed = false,
   active = false,
-  interruptible = false,
 }: {
   label: ReactNode;
   iconName?: WorkEntryIconName;
@@ -533,7 +503,6 @@ function LiveActivityRow({
         toolIcon={toolIcon}
         failed={failed}
         announceFailure={failed}
-        trailing={interruptible && animated ? <LiveWorkControls /> : undefined}
       />
       {animated ? (
         <ActivityShimmerOverlay>
@@ -551,7 +520,6 @@ function LiveActivityContent({
   failed = false,
   announceFailure = false,
   highlighted = false,
-  trailing,
 }: {
   label: ReactNode;
   iconName: WorkEntryIconName | undefined;
@@ -559,7 +527,6 @@ function LiveActivityContent({
   failed?: boolean;
   announceFailure?: boolean;
   highlighted?: boolean;
-  trailing?: ReactNode;
 }) {
   const showTrailingFailureMark =
     failed && iconName !== undefined && !toolIconAcceptsTint(toolIcon);
@@ -595,9 +562,7 @@ function LiveActivityContent({
       trailing={
         showTrailingFailureMark ? (
           <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
-        ) : (
-          trailing
-        )
+        ) : null
       }
     />
   );
@@ -625,9 +590,6 @@ export function LiveWorkEntryTimelineRow({
   return (
     <LiveWorkToggle
       stacked={thoughtLine !== ""}
-      trailing={
-        row.active && !failed ? <LiveWorkControls /> : undefined
-      }
       aria-label={
         failed
           ? `${thoughtLine ? `${thoughtLine} ` : ""}${threadLabel?.text ?? label}, tool call failed`
@@ -845,21 +807,30 @@ function WorkingWindowText({
     item.projectedItemId,
   );
   const text = liveText ?? item.message.text;
+  const textRef = useCarriedTextFade(item.message.id);
   if (text.trim().length === 0) return null;
   return (
-    <div className="min-w-0 py-2">
-      <ChatMarkdown
-        text={text}
-        cwd={ctx.markdownCwd}
-        threadRef={ctx.threadRef ?? undefined}
-        isStreaming={Boolean(item.message.streaming)}
-        lineBreaks={shouldPreserveAssistantLineBreaks(text)}
-        skills={ctx.skills}
-        headingLevelOffset={MESSAGE_HEADING_LEVEL}
-        onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-        onRunShellCommand={ctx.onRunShellCommand}
-        onImageExpand={ctx.onImageExpand}
-      />
+    <div ref={textRef} className="min-w-0 py-2">
+      <AssistantCitationSource
+        messageId={item.message.id}
+        {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
+        itemKey={itemKey}
+        request={ctx.citationRequest}
+        listRef={ctx.listRef}
+      >
+        <ChatMarkdown
+          text={text}
+          cwd={ctx.markdownCwd}
+          threadRef={ctx.threadRef ?? undefined}
+          isStreaming={Boolean(item.message.streaming)}
+          lineBreaks={shouldPreserveAssistantLineBreaks(text)}
+          skills={ctx.skills}
+          headingLevelOffset={MESSAGE_HEADING_LEVEL}
+          onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+          onRunShellCommand={ctx.onRunShellCommand}
+          onImageExpand={ctx.onImageExpand}
+        />
+      </AssistantCitationSource>
     </div>
   );
 }
@@ -892,7 +863,6 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
         label={liveWorkEntryLabel(entry, ctx.workspaceRoot, true)}
         iconName={workEntryIconName(entry)}
         toolIcon={entry.toolIcon ?? entry.toolSource?.icon}
-        interruptible
         active={current}
       />
     );
@@ -958,31 +928,57 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
         data-working-window={openable ? "" : undefined}
         onClick={openable ? () => ctx.onToggleWorkingHistory(window.key) : undefined}
       >
-        <div
-          ref={observeHeight}
-          role={open ? "region" : undefined}
-          aria-label={open ? "Work history" : undefined}
-          className={cn(
-            // The gap under the bar sits inside the window, so its fade reaches the hairline.
-            "flex min-w-0 flex-col gap-1 pt-2",
-            !open && "max-h-[220px] justify-end overflow-hidden",
-            !open && full && "[mask-image:linear-gradient(to_bottom,transparent,black_36px)]",
-          )}
-        >
-          {shown.map((item) => (
-            <div key={item.id} inert={!open && !workingWindowItemIsLive(item)} className="min-w-0">
-              <WorkingWindowItemView item={item} current={item === window.items.at(-1)} historyOpen={open} />
-            </div>
-          ))}
-          {showThinking ? (
-            <LiveActivityRow
-              label={liveAnswerPreview ?? "Thinking"}
-              iconName="brain"
-              active
-              interruptible
-            />
-          ) : null}
-        </div>
+        {open ? (
+          <LegendList
+            data={window.items}
+            keyExtractor={workingWindowItemKey}
+            renderItem={({ item }) => (
+              <div className="min-w-0">
+                <WorkingWindowItemView
+                  item={item}
+                  itemKey={itemKey}
+                  current={item === window.items.at(-1)}
+                  historyOpen={open}
+                />
+              </div>
+            )}
+            estimatedItemSize={compactWorkEntryHeight}
+            drawDistance={240}
+            recycleItems
+            maintainVisibleContentPosition
+            ListFooterComponent={thinking}
+            tabIndex={0}
+            role="region"
+            aria-label="Work history"
+            className="max-h-[min(18rem,50dvh)] min-w-0 overflow-x-hidden pt-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+          />
+        ) : (
+          <div
+            ref={observeHeight}
+            className={cn(
+              // The gap under the bar sits inside the window, so its fade reaches the hairline.
+              "flex min-w-0 flex-col gap-1 pt-2",
+              !open && "max-h-[220px] justify-end overflow-hidden",
+              !open && full && "[mask-image:linear-gradient(to_bottom,transparent,black_36px)]",
+            )}
+          >
+            {shown.map((item) => (
+              <div
+                key={item.id}
+                inert={!open && !workingWindowItemIsLive(item)}
+                className="min-w-0"
+              >
+                <WorkingWindowItemView
+                  item={item}
+                  itemKey={itemKey}
+                  current={item === window.items.at(-1)}
+                  historyOpen={open}
+                />
+              </div>
+            ))}
+            {thinking}
+          </div>
+        )}
       </div>
     </WorkGroupViewCtx>
   );
