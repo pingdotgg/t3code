@@ -44,6 +44,15 @@ describe("splitMarkdownDetails", () => {
     }
   });
 
+  it("ignores a closing tag inside a code example in the fold", () => {
+    const markdown =
+      "<details>\n<summary>Example</summary>\n```html\n</details>\n```\n</details>\n\nAfter.";
+    expect(splitMarkdownDetails(markdown)).toMatchObject([
+      { kind: "details", summary: "Example", body: "\n```html\n</details>\n```\n" },
+      { kind: "markdown", markdown: "\n\nAfter." },
+    ]);
+  });
+
   it("folds the rest of a reply whose closing tag has not streamed yet", () => {
     expect(splitMarkdownDetails("<details>\n<summary>Plan</summary>\n\nStep one")).toEqual([
       { kind: "details", summary: "Plan", body: "\n\nStep one", open: false, sourceOffset: 0 },

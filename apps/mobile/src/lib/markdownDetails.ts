@@ -1,7 +1,7 @@
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 
-import { decodeHtmlEntities } from "./markdownDocument";
+import { decodeHtmlEntities, markdownHtmlTags } from "./markdownDocument";
 
 export type MarkdownDetailsSegment =
   | { readonly kind: "markdown"; readonly markdown: string; readonly sourceOffset: number }
@@ -14,7 +14,7 @@ export type MarkdownDetailsSegment =
     };
 
 const parser = unified().use(remarkParse);
-const DETAILS_TAG = /<(\/?)details\b[^>]*>/gi;
+const DETAILS_TAG = /^<(\/?)details\b/i;
 const SUMMARY = /^\s*<summary\b[^>]*>([\s\S]*?)<\/summary\s*>/i;
 
 /**
@@ -31,9 +31,11 @@ export function splitMarkdownDetails(markdown: string): ReadonlyArray<MarkdownDe
   for (const node of parser.parse(markdown).children) {
     if (node.type !== "html" || node.position?.start.offset === undefined) continue;
     const nodeStart = node.position.start.offset;
-    for (const tag of node.value.matchAll(DETAILS_TAG)) {
+    for (const tag of markdownHtmlTags(node.value)) {
+      const details = DETAILS_TAG.exec(tag[0]);
+      if (!details) continue;
       const start = nodeStart + tag.index;
-      if (tag[1] !== "/") {
+      if (details[1] !== "/") {
         if (depth === 0) {
           current = { start, openTagEnd: start + tag[0].length, open: /\sopen\b/i.test(tag[0]) };
         }

@@ -1187,7 +1187,6 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
   const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
-  const segments = useMemo(() => splitCodexArtifactTemplateMarkdown(liveMarkdown), [liveMarkdown]);
   const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
   const linkHandlers: MarkdownLinkHandlers = {
     ...props.linkHandlers,
@@ -1195,37 +1194,36 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
       withChipIcon(props.linkHandlers.linkCustomization?.(href), threadIcons.get(href)),
   };
 
-  return segments.map((segment) => {
-    if (segment.kind === "artifact-template") {
-      return (
-        <ArtifactTemplateCard
-          key={`artifact-template:${segment.sourceOffset}`}
-          template={segment.template}
-          onUse={props.onUseArtifactTemplate}
-        />
-      );
-    }
-    return (
-      <AssistantMarkdownBlocks
-        key={`markdown:${segment.sourceOffset}`}
-        markdown={segment.markdown}
-        markdownStyles={props.markdownStyles}
-        linkHandlers={linkHandlers}
-        renderImage={props.renderImage}
-        skills={props.skills}
-      />
-    );
-  });
+  return (
+    <AssistantMarkdownBlocks
+      markdown={liveMarkdown}
+      markdownStyles={props.markdownStyles}
+      linkHandlers={linkHandlers}
+      onUseArtifactTemplate={props.onUseArtifactTemplate}
+      renderImage={props.renderImage}
+      skills={props.skills}
+    />
+  );
 });
 
+// Folds split first, so an artifact card inside a fold stays inside it.
 function AssistantMarkdownBlocks(props: {
   readonly markdown: string;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
+  readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
-  const blocks = useMemo(() => splitMarkdownDetails(props.markdown), [props.markdown]);
+  const blocks = useMemo(
+    () =>
+      splitMarkdownDetails(props.markdown).map((block) =>
+        block.kind === "details"
+          ? block
+          : { ...block, segments: splitCodexArtifactTemplateMarkdown(block.markdown) },
+      ),
+    [props.markdown],
+  );
   return blocks.map((block) => {
     if (block.kind === "details") {
       return (
@@ -1238,17 +1236,29 @@ function AssistantMarkdownBlocks(props: {
         </MarkdownDetailsFold>
       );
     }
-    if (block.markdown.trim().length === 0) return null;
-    return (
-      <SelectableMarkdownText
-        key={`markdown:${block.sourceOffset}`}
-        markdown={renderCodexInlineDirectivesAsMarkdown(block.markdown)}
-        skills={props.skills}
-        textStyle={props.markdownStyles.nativeTextStyle}
-        {...props.linkHandlers}
-        renderImage={props.renderImage}
-      />
-    );
+    return block.segments.map((segment) => {
+      const offset = block.sourceOffset + segment.sourceOffset;
+      if (segment.kind === "artifact-template") {
+        return (
+          <ArtifactTemplateCard
+            key={`artifact-template:${offset}`}
+            template={segment.template}
+            onUse={props.onUseArtifactTemplate}
+          />
+        );
+      }
+      if (segment.markdown.trim().length === 0) return null;
+      return (
+        <SelectableMarkdownText
+          key={`markdown:${offset}`}
+          markdown={renderCodexInlineDirectivesAsMarkdown(segment.markdown)}
+          skills={props.skills}
+          textStyle={props.markdownStyles.nativeTextStyle}
+          {...props.linkHandlers}
+          renderImage={props.renderImage}
+        />
+      );
+    });
   });
 }
 

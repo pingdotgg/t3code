@@ -125,7 +125,7 @@ function anchorMarkdown(tags: readonly string[]): AnchorState {
   return { pending: replacements, open: 0 };
 }
 
-function markdownHtmlTags(content: string): RegExpExecArray[] {
+export function markdownHtmlTags(content: string): RegExpExecArray[] {
   // An HTML block such as <details> can also contain Markdown fences and code spans.
   const codeRanges: Array<{ start: number; end: number }> = [];
   const tags = [...content.matchAll(HTML_TAG)];
