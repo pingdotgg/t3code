@@ -13,6 +13,11 @@ describe("cloneUrlForProtocol", () => {
     expect(cloneUrlForProtocol("ssh://git@gitlab.com/group/sub/repo.git", "https")).toBe(
       "https://gitlab.com/group/sub/repo.git",
     );
+    expect(cloneUrlForProtocol("https://host/é/repo.git", "ssh")).toBe("git@host:é/repo.git");
+    expect(cloneUrlForProtocol("https://host//srv/git/repo.git", "ssh")).toBe(
+      "git@host:/srv/git/repo.git",
+    );
+    expect(cloneUrlForProtocol("http:team/repo.git", "https")).toBe("https://http/team/repo.git");
   });
 
   it("keeps the URL as is for its own protocol and drops HTTPS credentials on switch", () => {
@@ -30,6 +35,8 @@ describe("cloneUrlForProtocol", () => {
   it("refuses rewrites that would guess wrong", () => {
     expect(cloneUrlForProtocol("ssh://git@host.example:2222/a/b.git", "https")).toBeNull();
     expect(cloneUrlForProtocol("https://host.example:8443/a/b.git", "ssh")).toBeNull();
+    expect(cloneUrlForProtocol("https://host.example:443/a/b.git", "ssh")).toBeNull();
+    expect(cloneUrlForProtocol("http://host.example:80/a/b.git", "ssh")).toBeNull();
     expect(cloneUrlForProtocol("https://host.example:8443/a/b.git", "https")).toBe(
       "https://host.example:8443/a/b.git",
     );
