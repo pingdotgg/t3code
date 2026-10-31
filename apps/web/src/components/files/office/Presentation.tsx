@@ -102,7 +102,7 @@ export default function Presentation(props: {
         >
           <ChevronLeftIcon className="size-3.5" />
         </FileSurfaceAction>
-        <span className="flex-1 text-center text-xs tabular-nums" aria-live="polite">
+        <span className="flex-1 text-center text-meta tabular-nums" aria-live="polite">
           Slide {page + 1} of {opened.slides.length}
         </span>
         <FileSurfaceAction
@@ -128,7 +128,7 @@ export default function Presentation(props: {
             {failed[index] ? (
               <p
                 role="status"
-                className="absolute inset-0 flex items-center justify-center bg-background/80 p-4 text-xs text-foreground"
+                className="absolute inset-0 flex items-center justify-center bg-background/80 p-4 text-meta text-foreground"
               >
                 This slide could not be drawn.
               </p>
@@ -138,7 +138,7 @@ export default function Presentation(props: {
         footer={(index) => {
           const slide = opened.slides[index];
           return slide?.notes || slide?.hidden ? (
-            <div className="space-y-1 text-xs text-muted-foreground">
+            <div className="space-y-1 text-meta text-muted-foreground">
               {slide.hidden ? <p>Hidden slide</p> : null}
               {slide.notes ? (
                 <p

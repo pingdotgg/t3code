@@ -2,7 +2,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 
 import { cn } from "~/lib/utils";
 
-const skeletonVariants = cva("bg-muted-foreground/15 motion-safe:animate-skeleton", {
+const skeletonVariants = cva("bg-skeleton motion-safe:animate-skeleton", {
   variants: {
     shape: {
       block: "rounded-sm",

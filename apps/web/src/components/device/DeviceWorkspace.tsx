@@ -77,7 +77,7 @@ export function DeviceWorkspace(props: {
     <>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         {screenshotError || (controls.error && !toolsOpen) ? (
-          <p role="alert" className="px-3 py-2 text-xs text-destructive">
+          <p role="alert" className="px-3 py-2 text-xs text-error-foreground">
             {screenshotError ?? controls.error}
           </p>
         ) : null}
@@ -86,7 +86,12 @@ export function DeviceWorkspace(props: {
             environmentId={props.environmentId}
             platform={props.device.platform}
             deviceName={props.device.name}
-            deviceDescription={`${props.hostLabel} · ${props.device.version}`}
+            deviceDescription={
+              <span className="flex flex-col items-center gap-0.5">
+                <span>{props.hostLabel}</span>
+                <span>{props.device.version}</span>
+              </span>
+            }
             deviceId={props.device.id}
             hostId={props.device.hostId}
             visible={props.visible}
