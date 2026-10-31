@@ -905,9 +905,9 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
           aria-label={open ? "Work history" : undefined}
           className={cn(
             // The gap under the bar sits inside the window, so its fade reaches the hairline.
-            "flex min-w-0 flex-col pt-3",
-            !open && "max-h-[162px] justify-end overflow-hidden",
-            !open && full && "[mask-image:linear-gradient(to_bottom,transparent,black_56px)]",
+            "flex min-w-0 flex-col pt-2",
+            !open && "max-h-[220px] justify-end overflow-hidden",
+            !open && full && "[mask-image:linear-gradient(to_bottom,transparent,black_36px)]",
           )}
         >
           {shown.map((item) => (
@@ -933,9 +933,8 @@ function workingWindowItemIsLive(item: WorkingWindowItem | undefined): boolean {
   );
 }
 
-// The rows' 150px plus the 12px gap under the bar, which sits inside the window
-// so the fade runs up to the bar's hairline.
-const WORKING_WINDOW_MAX_HEIGHT = 162;
+// Includes the 8px gap under the bar so the fade reaches its hairline.
+const WORKING_WINDOW_MAX_HEIGHT = 220;
 
 const WORKING_WINDOW_TAIL = 12;
 
