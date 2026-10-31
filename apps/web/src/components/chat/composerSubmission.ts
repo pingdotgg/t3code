@@ -9,12 +9,17 @@ type ComposerSubmissionInput = {
   submissionTarget: "provider-turn" | "pending-user-input";
 };
 
-export function getComposerPromptLengthValidationMessage(prompt: string): string | null {
+/** Characters the provider will receive for this prompt, citations expanded. */
+export function getComposerPromptInputLength(prompt: string): number {
   const normalizedPrompt = prompt.trim();
-  const inputLength = Math.max(
+  return Math.max(
     normalizedPrompt.length,
     expandAssistantCitationsForProvider(normalizedPrompt).length,
   );
+}
+
+export function getComposerPromptLengthValidationMessage(prompt: string): string | null {
+  const inputLength = getComposerPromptInputLength(prompt);
   const excessCharacters = inputLength - PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
   if (excessCharacters <= 0) return null;
 
