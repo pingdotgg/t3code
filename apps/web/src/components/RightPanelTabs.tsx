@@ -981,10 +981,10 @@ function RightPanelTab(
                     onDoubleClick={() => {
                       if (surface.kind === "device" && canRename) onStartRename(surface.id);
                     }}
-                    // "Files" and "Diff" stay whole; their breadcrumb truncates instead.
+                    // Keep the active filename ahead of its thread label when the strip is crowded.
                     className={cn(
                       "cursor-pointer flex min-w-0 items-center",
-                      (filesCrumb || (active && surface.kind === "diff")) && "shrink-0",
+                      active && surface.kind === "diff" && "shrink-0",
                     )}
                     onClick={() => onActivate(surface)}
                   >
@@ -1012,7 +1012,11 @@ function RightPanelTab(
           {active ? (
             <span
               ref={onBreadcrumbSlotChange}
-              className={cn("flex min-w-0 items-center", notched ? "gap-1" : "gap-0.5")}
+              className={cn(
+                "flex min-w-0 items-center",
+                filesCrumb && "min-w-[8ch]",
+                notched ? "gap-1" : "gap-0.5",
+              )}
             />
           ) : null}
         </>
