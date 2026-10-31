@@ -28,7 +28,6 @@ const mocks = vi.hoisted(() => ({
   pickElement: vi.fn(),
   addPreviewAnnotation: vi.fn(),
   addImage: vi.fn(),
-  toast: vi.fn(),
   pictureInPicture: false,
   showEmptyState: false,
   loading: false,
@@ -136,10 +135,6 @@ vi.mock(import("~/browser/browserRecording"), async (original) => ({
   findActiveBrowserRecordingRuntimeTabId: () => mocks.recordingRuntimeTabId,
   useActiveBrowserRecordingTabIds: () => mocks.recordingTabIds,
 }));
-vi.mock(import("~/components/ui/toast"), async (original) => {
-  const actual = await original();
-  return { ...actual, toastManager: { ...actual.toastManager, add: mocks.toast } };
-});
 vi.mock(import("./useDiscoveredLocalServers"), async (original) => ({
   ...(await original()),
   useDiscoveredLocalServers: () => mocks.servers,
@@ -160,7 +155,9 @@ import { useComposerDraftStore } from "~/composerDraftStore";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import { dispatchPreviewAction } from "./previewActionBus";
 import { PreviewView } from "./PreviewView";
+import { ToastProvider } from "~/components/ui/toast";
 
 const TEST_THREAD_REF = {
   environmentId: EnvironmentId.make("environment-1"),
@@ -218,6 +215,23 @@ function setup() {
 }
 
 describe("PreviewView", () => {
+  it.each(["mailto:alice@example.com", "http://"])(
+    "reports rejected address %s without navigating or recording it",
+    async (address) => {
+      setup();
+      await using _screen = await render(<ToastProvider timeout={0}>{view()}</ToastProvider>);
+      const input = page.getByPlaceholder("Search or enter URL");
+      await input.fill(address);
+      await userEvent.keyboard("{Enter}");
+
+      await expect.element(page.getByText("Could not open this address")).toBeVisible();
+      await expect.element(page.getByText("Enter an http or https URL.")).toBeVisible();
+      expect(mocks.navigate).not.toHaveBeenCalled();
+      expect(mocks.recordVisitForThread).not.toHaveBeenCalled();
+      await userEvent.click(page.getByRole("button", { name: "Dismiss notification" }));
+    },
+  );
+
   it("retains the annotation locally when its own environment loses access during capture", async () => {
     setup();
     const picked = annotation("annotation-revoked");
@@ -270,5 +284,19 @@ describe("PreviewView", () => {
     await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(sent, null));
     expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, sent);
     expect(mocks.addImage).not.toHaveBeenCalled();
+  });
+
+  it("focuses the address bar each time the focus-url shortcut fires", async () => {
+    setup();
+    await using _screen = await render(view());
+    const address = page.getByRole("textbox");
+
+    act(() => dispatchPreviewAction("focus-url"));
+    await expect.element(address).toHaveFocus();
+
+    (address.element() as HTMLInputElement).blur();
+    await expect.element(address).not.toHaveFocus();
+    act(() => dispatchPreviewAction("focus-url"));
+    await expect.element(address).toHaveFocus();
   });
 });
