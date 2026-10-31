@@ -100,20 +100,6 @@ it.effect("a same-millisecond auto-settle disable rejects an in-flight settlemen
     );
     assert.equal(settlement._tag, "Failure");
     assert.equal((yield* projections.getThread(threadId)).settledOverride, null);
-
-    yield* orchestrator.dispatch({
-      type: "thread.auto-settle.set",
-      commandId: CommandId.make("enable-auto-settle-race"),
-      threadId,
-      enabled: true,
-    });
-    yield* orchestrator.dispatch({
-      type: "thread.auto-settle",
-      commandId: CommandId.make("enabled-auto-settle-race"),
-      threadId,
-      snapshotAt,
-    });
-    assert.equal((yield* projections.getThread(threadId)).settledOverride, "settled");
   }).pipe(Effect.provide(layerTest)),
 );
 

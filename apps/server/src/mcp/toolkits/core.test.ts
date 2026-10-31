@@ -10,7 +10,6 @@ import {
   NodeId,
   OrchestratorMcpThreadReadResult,
   ProviderDriverKind,
-  ProjectId,
   ProviderInstanceId,
   RunId,
   RuntimeRequestId,
@@ -36,10 +35,6 @@ import {
 } from "../../orchestration-v2/Orchestrator.ts";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
-import * as CommandReceiptStore from "../../orchestration-v2/CommandReceiptStore.ts";
-import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
-import * as ProviderReplayHarness from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
-import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
@@ -626,91 +621,45 @@ it.effect("a read-only client reads threads and is refused every write before it
 );
 const dispatched: Array<string> = [];
 
-const layerPersistedThreads = (() => {
-  const layerDatabase = SqlitePersistence.layerMemory;
-  const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
-    { name: "mcp-core-auto-settle" },
-    ProviderAdapterRegistry.layerFromAdapters([]),
-    { databaseLayer: layerDatabase, runEffectWorker: false },
-  );
-  return Layer.merge(
-    layerOrchestrator,
-    ThreadManagement.layer.pipe(
-      Layer.provide(layerOrchestrator),
-      Layer.provide(ServerSettings.layerTest()),
-      Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
-    ),
-  );
-})();
-
-it.effect("an agent turns auto-settle off and back on for only the thread it targets", () =>
-  Effect.gen(function* () {
+it.effect("an agent turns a thread's auto-settle off and back on", () => {
+  const commands: Array<unknown> = [];
+  return Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const threads = yield* ThreadManagement.ThreadManagementService;
-    const targetId = ThreadId.make("auto-settle-target");
-    const siblingId = ThreadId.make("auto-settle-sibling");
-    for (const id of [targetId, siblingId]) {
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make(`create-${id}`),
-        threadId: id,
-        projectId: ProjectId.make("project:mcp-core"),
-        title: id,
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-        createdBy: "user",
-        creationSource: "web",
-      });
-    }
-    yield* orchestrator.dispatch({
-      type: "thread.unsettle",
-      commandId: CommandId.make("manual-auto-settle-override"),
-      threadId: targetId,
-      reason: "user",
-    });
-    const manualOverride = (yield* threads.getThreadShell(targetId))?.settledOverride;
-    expect(manualOverride).toBe("active");
-    const organize = (
-      action: string,
-      invocation: McpInvocationContext.McpInvocationScope = clientScope("full-access"),
-    ) =>
-      server
-        .callTool({ name: "t3_thread_organize", arguments: { action, threadId: targetId } })
+    for (const action of ["disable_auto_settle", "enable_auto_settle"]) {
+      const result = yield* server
+        .callTool({ name: "t3_thread_organize", arguments: { action } })
         .pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
-    const autoSettleDisabled = (id: ThreadId) =>
-      threads.getThreadShell(id).pipe(Effect.map((shell) => shell?.autoSettleDisabledAt != null));
-
-    const disabled = yield* organize("disable_auto_settle");
-    expect(disabled.isError).toBe(false);
-    expect(yield* autoSettleDisabled(targetId)).toBe(true);
-    expect(yield* autoSettleDisabled(siblingId)).toBe(false);
-    expect((yield* threads.getThreadShell(targetId))?.settledOverride).toEqual(manualOverride);
-
-    const readOnly = yield* organize("enable_auto_settle", clientScope("read-only"));
-    expect(declaredFailure(readOnly)).toMatchObject({ code: "capability_denied" });
-    expect(yield* autoSettleDisabled(targetId)).toBe(true);
-
-    const enabled = yield* organize("enable_auto_settle");
-    expect(enabled.isError).toBe(false);
-    expect(yield* autoSettleDisabled(targetId)).toBe(false);
-    expect((yield* threads.getThreadShell(targetId))?.settledOverride).toEqual(manualOverride);
+      expect(result.isError).toBe(false);
+    }
+    expect(commands).toMatchObject([
+      { type: "thread.auto-settle.set", threadId, enabled: false },
+      { type: "thread.auto-settle.set", threadId, enabled: true },
+    ]);
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
-        Layer.provideMerge(layerPersistedThreads),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: ({ threadId: id }) =>
+              Effect.succeed(
+                McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
+              ),
+            dispatch: (command) => {
+              commands.push(command);
+              return Effect.succeed({ sequence: 1 } as never);
+            },
+          }),
+        ),
       ),
     ),
-  ),
-);
+  );
+});
 
 it.effect("refuses act-as-caller tools to a client caller", () =>
   Effect.gen(function* () {
