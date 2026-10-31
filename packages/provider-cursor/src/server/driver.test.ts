@@ -41,7 +41,7 @@ const layerTest = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(McpProviderSessions.layer),
-  Layer.provideMerge(CursorSdk.layer),
+  Layer.provideMerge(CursorSdk.layer.pipe(Layer.provide(NodeServices.layer))),
   Layer.provideMerge(
     Layer.mock(CursorAgentSdk.CursorAgentSdkRunner)({
       open: () => Effect.die("Maintenance resolution must not open a Cursor session"),
