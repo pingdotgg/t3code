@@ -25,6 +25,7 @@ export function WorkspacePlane({ children }: { children: ReactNode }) {
   const modalOpen = useMatches({
     select: (matches) => matches.some((match) => isAppModalPage(match.pathname)),
   });
+  const modalPending = isAppModalPage(location.pathname);
   const threadTarget = useThreadRouteTarget();
   const promotedThreadRef = useComposerDraftStore((store) =>
     threadTarget?.kind === "draft" ? store.getPromotedDraftRedirect(threadTarget.draftId) : null,
@@ -48,7 +49,7 @@ export function WorkspacePlane({ children }: { children: ReactNode }) {
   const panePage = pageKind !== null && location.search.pane === 1;
   const pagePlaneOpen = pageKind !== null && !panePage;
   const workspaceOpen =
-    modalOpen ||
+    modalOpen || modalPending ||
     (!pagePlaneOpen && (threadTarget !== null || panePage || (atIndex && indexShowsLayout)));
   const pagePlane = workspaceOpen ? undefined : children;
   const pagePlaneSplit = pageKind === "pull-requests";
