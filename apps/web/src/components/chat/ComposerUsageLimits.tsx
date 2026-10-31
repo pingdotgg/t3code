@@ -18,13 +18,12 @@ function accountLabel(account: UsageLimitsReport["accounts"][number]): string {
   const instance =
     account.displayName?.trim() ||
     (String(account.instanceId) !== String(account.driver) ? account.instanceId : "");
-  return instance && instance.toLowerCase() !== driver.toLowerCase()
-    ? `${driver} · ${instance}`
-    : driver;
+  return instance && instance.toLowerCase() !== driver.toLowerCase() ? String(instance) : driver;
 }
 
 function AccountSummary({ account }: { readonly account: UsageLimitsReport["accounts"][number] }) {
   const label = accountLabel(account);
+  const driver = providerClients.get(account.driver)?.label ?? String(account.driver);
   return (
     <>
       {label.includes("@") ? (
@@ -39,7 +38,10 @@ function AccountSummary({ account }: { readonly account: UsageLimitsReport["acco
       ) : (
         label
       )}
-      {account.plan ? ` · ${account.plan}` : null}
+      {account.instanceId && label !== driver ? <span className="block">{driver}</span> : null}
+      {account.plan ? (
+        <span className="ms-1.5 font-normal text-dim-foreground">{account.plan}</span>
+      ) : null}
     </>
   );
 }
@@ -91,7 +93,12 @@ export function modelFallbackBannerItem({
     variant: "info",
     icon: <GaugeIcon />,
     title: `Using ${fallbackModelName}`,
-    description: `${defaultProviderName} is out of usage${resetsAt ? ` · resets ${formatUpcomingTimestamp(resetsAt, timestampFormat)}` : ""}`,
+    description: (
+      <span className="inline-flex flex-col">
+        <span>{defaultProviderName} is out of usage</span>
+        {resetsAt ? <span>Resets {formatUpcomingTimestamp(resetsAt, timestampFormat)}</span> : null}
+      </span>
+    ),
     actions: (
       <Button size="xs" variant="ghost" onClick={onUseDefault}>
         Use {defaultModelName}
@@ -159,7 +166,7 @@ function UsageLimitsBannerBody({
           );
         })}
         {report.notices.map((notice) => (
-          <span key={notice} className="text-xs text-muted-foreground">
+          <span key={notice} className="text-meta text-muted-foreground">
             {notice}
           </span>
         ))}

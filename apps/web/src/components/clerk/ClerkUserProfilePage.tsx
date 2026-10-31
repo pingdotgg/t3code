@@ -22,7 +22,7 @@ export function ClerkUserProfilePage({
     <div className={cn("w-full min-w-0 text-foreground", className)}>
       <header className="flex flex-col gap-3 pb-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:pr-8">
         <div className="min-w-0">
-          <h2 className="text-base leading-6 font-semibold">{title}</h2>
+          <h2 className="text-base leading-6 font-semibold text-strong-foreground">{title}</h2>
           {description ? (
             <p className="mt-1 max-w-[34rem] text-xs leading-4.5 text-muted-foreground sm:min-h-9">
               {description}
@@ -51,7 +51,7 @@ export function ClerkUserProfileRefreshButton({
   return (
     <Button
       size="sm"
-      variant="outline"
+      variant="secondary"
       className={className}
       disabled={disabled || isPending}
       onClick={onClick}
@@ -76,7 +76,7 @@ export function ClerkUserProfileRow({
       <div className="flex items-start gap-3">
         <div
           aria-hidden="true"
-          className="flex size-8 shrink-0 items-center justify-center rounded-lg border bg-muted/32 text-muted-foreground"
+          className="flex size-8 shrink-0 items-center justify-center rounded-control surface-well text-dim-foreground"
         >
           {icon}
         </div>

@@ -6,7 +6,7 @@ export function guestBubbleClassName(pending: boolean): string {
 /** The guest's name above their message, where "Sent by T3 Code" sits for server messages. */
 export function GuestMessageName({ name }: { readonly name: string }) {
   return (
-    <p className="me-1 text-2xs text-guest-foreground">
+    <p className="me-1 text-caption text-guest-foreground">
       {name}
       <span className="sr-only"> (guest)</span>
     </p>

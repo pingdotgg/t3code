@@ -285,7 +285,7 @@ function SnoozePresetList(props: {
             className="flex flex-wrap items-center gap-2"
           >
             <SnoozePresetFields preset={preset} onChange={(next) => props.onChange(index, next)} />
-            <div className="ml-auto flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+            <div className="ml-auto flex min-w-0 items-center gap-2 text-meta text-muted-foreground">
               {preview.tone === "menu" ? (
                 <span className="truncate">
                   <span className="text-foreground">{preview.label}</span>
@@ -306,9 +306,20 @@ function SnoozePresetList(props: {
           </div>
         );
       })}
-      <p className="text-xs text-muted-foreground">
-        {menuOrder.length === 0 ? "Menus offer only Custom…" : `Menu now: ${menuOrder.join(" · ")}`}
-      </p>
+      <div className="text-meta text-muted-foreground">
+        {menuOrder.length === 0 ? (
+          "Menus offer only Custom…"
+        ) : (
+          <>
+            <p>Menu now</p>
+            <ol className="mt-1 grid gap-1">
+              {menuOrder.map((label) => (
+                <li key={label}>{label}</li>
+              ))}
+            </ol>
+          </>
+        )}
+      </div>
       <div>
         <Button
           variant="ghost-muted"
@@ -320,7 +331,7 @@ function SnoozePresetList(props: {
           Add option
         </Button>
         {props.presets.length >= MAX_SNOOZE_PRESETS ? (
-          <span className="ps-2 text-xs text-muted-foreground">
+          <span className="ps-2 text-meta text-muted-foreground">
             Up to {MAX_SNOOZE_PRESETS} options
           </span>
         ) : null}
@@ -374,7 +385,7 @@ function SnoozePresetFields(props: {
         />
       ) : (
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="text-xs text-muted-foreground">at</span>
+          <span className="text-meta text-muted-foreground">at</span>
           <Input
             nativeInput
             size="sm"

@@ -1,7 +1,7 @@
 import type { RestingComposerControlsMeasurement } from "../composerFooterLayout";
 
-function elementOuterWidth(element: HTMLElement): number {
-  const width = element.getBoundingClientRect().width;
+function elementOuterWidth(element: HTMLElement, scale: number): number {
+  const width = element.getBoundingClientRect().width / scale;
   if (width === 0) return 0;
   const style = getComputedStyle(element);
   return (
@@ -19,8 +19,8 @@ function elementInlineMarginWidth(element: HTMLElement): number {
   );
 }
 
-function providerModelPickerNaturalWidth(picker: HTMLElement): number {
-  const renderedWidth = picker.getBoundingClientRect().width;
+function providerModelPickerNaturalWidth(picker: HTMLElement, scale: number): number {
+  const renderedWidth = picker.getBoundingClientRect().width / scale;
   if (renderedWidth === 0) return 0;
   const style = getComputedStyle(picker);
   const label = picker.querySelector<HTMLElement>('[data-chat-provider-model-picker-label="true"]');
@@ -50,9 +50,12 @@ function providerModelPickerMinimumWidth(picker: HTMLElement): number {
   return minWidth + elementInlineMarginWidth(picker);
 }
 
-function controlBlockWidths(block: HTMLElement): { natural: number; iconOnly: number } {
+function controlBlockWidths(
+  block: HTMLElement,
+  scale: number,
+): { natural: number; iconOnly: number } {
   const compact = block.dataset.composerBlockIconOnly === "true";
-  let natural = elementOuterWidth(block);
+  let natural = elementOuterWidth(block, scale);
   let iconOnly = natural;
   for (const label of block.querySelectorAll<HTMLElement>("[data-composer-control-label]")) {
     const labelStyle = getComputedStyle(label);
@@ -60,13 +63,13 @@ function controlBlockWidths(block: HTMLElement): { natural: number; iconOnly: nu
     // Phone sr-only clipping survives compact styles overriding the label width.
     if (!inFlow && (!compact || labelStyle.clip !== "auto")) continue;
     const labelWidth = label.scrollWidth;
-    const renderedWidth = inFlow ? label.getBoundingClientRect().width : 0;
+    const renderedWidth = inFlow ? label.getBoundingClientRect().width / scale : 0;
     const gap = Number.parseFloat(getComputedStyle(label.parentElement!).columnGap) || 0;
     natural += labelWidth - renderedWidth + (inFlow ? 0 : gap);
     iconOnly -= renderedWidth + (inFlow ? gap : 0);
   }
   for (const icon of block.querySelectorAll<HTMLElement>("[data-composer-control-compact-icon]")) {
-    const width = elementOuterWidth(icon);
+    const width = elementOuterWidth(icon, scale);
     const gap = Number.parseFloat(getComputedStyle(icon.parentElement!).columnGap) || 0;
     natural -= compact ? width + gap : 0;
     iconOnly += compact ? 0 : width + gap;
@@ -78,27 +81,42 @@ function controlBlockWidths(block: HTMLElement): { natural: number; iconOnly: nu
 export function measureRestingComposerControls(
   controls: HTMLElement,
 ): RestingComposerControlsMeasurement | null {
-  const gap = Number.parseFloat(getComputedStyle(controls).columnGap) || 0;
+  const style = getComputedStyle(controls);
+  const gap = Number.parseFloat(style.columnGap) || 0;
+  // Rects include the overview's scale; CSS gaps, margins and scrollWidth do not.
+  // Recover the common scale from the fractional layout border box, not offsetWidth.
+  const layoutWidth =
+    Number.parseFloat(style.width) +
+    (style.boxSizing === "border-box"
+      ? 0
+      : (Number.parseFloat(style.paddingLeft) || 0) +
+        (Number.parseFloat(style.paddingRight) || 0) +
+        (Number.parseFloat(style.borderLeftWidth) || 0) +
+        (Number.parseFloat(style.borderRightWidth) || 0));
+  const measuredScale = controls.getBoundingClientRect().width / layoutWidth;
+  const scale = Number.isFinite(measuredScale) && measuredScale > 0 ? measuredScale : 1;
   const picker = controls.querySelector<HTMLElement>("[data-chat-provider-model-picker]");
   const leadingControl =
     picker ?? controls.querySelector<HTMLElement>('[data-chat-provider-unavailable="true"]');
   if (!leadingControl) return null;
   const separator = controls.querySelector<HTMLElement>("[data-resting-controls-separator]");
-  const separatorWidth = separator ? elementOuterWidth(separator) : 0;
+  const separatorWidth = separator ? elementOuterWidth(separator, scale) : 0;
   const overflow = controls.querySelector<HTMLElement>("[data-resting-controls-overflow]");
   const separatorAndGapWidth = separatorWidth > 0 ? separatorWidth + gap : 0;
   const blocks = Array.from(controls.querySelectorAll<HTMLElement>("[data-resting-block]"));
-  const widths = blocks.map(controlBlockWidths);
+  const widths = blocks.map((block) => controlBlockWidths(block, scale));
   return {
     gap,
     naturalFixedWidth:
-      (picker ? providerModelPickerNaturalWidth(picker) : elementOuterWidth(leadingControl)) +
-      separatorAndGapWidth,
+      (picker
+        ? providerModelPickerNaturalWidth(picker, scale)
+        : elementOuterWidth(leadingControl, scale)) + separatorAndGapWidth,
     minimumFixedWidth:
-      (picker ? providerModelPickerMinimumWidth(picker) : elementOuterWidth(leadingControl)) +
-      separatorAndGapWidth,
+      (picker
+        ? providerModelPickerMinimumWidth(picker)
+        : elementOuterWidth(leadingControl, scale)) + separatorAndGapWidth,
     blockWidths: widths.map((width) => width.natural),
     iconOnlyBlockWidths: widths.map((width) => width.iconOnly),
-    overflowWidth: overflow ? elementOuterWidth(overflow) : 0,
+    overflowWidth: overflow ? elementOuterWidth(overflow, scale) : 0,
   };
 }

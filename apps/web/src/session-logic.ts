@@ -457,7 +457,8 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
         item.steps.find((step) => step.status === "pending");
       return {
         ...common,
-        label: `Tasks ${done}/${item.steps.length}${current ? ` · ${current.text}` : ""}`,
+        label: `Tasks ${done}/${item.steps.length}`,
+        ...(current ? { detail: current.text } : {}),
       };
     }
     case "approval_request":

@@ -85,7 +85,7 @@ function StatBlock({
 }) {
   return (
     <div className="min-w-0 border-border/60 px-4 py-3 sm:px-5">
-      <div className="flex min-w-0 items-center gap-1.5 text-2xs font-medium uppercase tracking-widest text-muted-foreground/70">
+      <div className="flex min-w-0 items-center gap-1.5 text-2xs font-medium text-dim-foreground">
         <span className="min-w-0 truncate">{label}</span>
         {tooltip ? (
           <Tooltip>
@@ -93,7 +93,7 @@ function StatBlock({
               render={
                 <button
                   type="button"
-                  className="cursor-pointer inline-flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 hover:text-foreground"
+                  className="cursor-pointer inline-flex size-3.5 shrink-0 items-center justify-center rounded-sm text-dim-foreground hover:text-foreground"
                   aria-label={`${label} details`}
                 >
                   <InfoIcon className="size-3" />
@@ -174,7 +174,7 @@ function DiagnosticsTable({
             ))}
           </colgroup>
         ) : null}
-        <thead className="border-b border-border/60 text-2xs uppercase tracking-widest text-muted-foreground/70">
+        <thead className="border-b border-border/60 text-2xs text-dim-foreground">
           <tr>
             {headers.map((header, index) => (
               <th
@@ -284,7 +284,9 @@ function ProcessNameCell({
       <span className="size-1.5 shrink-0 rounded-full bg-success/80" />
       <Tooltip>
         <TooltipTrigger
-          render={<span className="min-w-0 truncate font-medium text-foreground">{name}</span>}
+          render={
+            <span className="min-w-0 truncate font-medium text-strong-foreground">{name}</span>
+          }
         />
         <TooltipPopup side="top" variant="code">
           {process.command}
@@ -363,7 +365,7 @@ function ProcessDiagnosticsTable({
             <col className="w-[11%]" />
             <col className="w-[6%]" />
           </colgroup>
-          <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-2xs uppercase tracking-widest text-muted-foreground/70">
+          <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-2xs text-dim-foreground">
             <tr>
               <th className="px-4 py-2 font-semibold sm:pl-5">Name</th>
               <th className="px-3 py-2 text-right font-semibold">CPU</th>
@@ -383,7 +385,7 @@ function ProcessDiagnosticsTable({
               </tr>
             ) : null}
             {visibleProcesses.map((process) => (
-              <tr key={process.pid} className="hover:bg-muted/20">
+              <tr key={process.pid} className="hover:surface-ghost-hover">
                 <td className="px-4 py-2 align-middle sm:pl-5">
                   <ProcessNameCell
                     process={process}
@@ -471,7 +473,9 @@ function ResourceHistoryProcessNameCell({
       />
       <Tooltip>
         <TooltipTrigger
-          render={<span className="min-w-0 truncate font-medium text-foreground">{name}</span>}
+          render={
+            <span className="min-w-0 truncate font-medium text-strong-foreground">{name}</span>
+          }
         />
         <TooltipPopup side="top" variant="code">
           {process.command}
@@ -589,7 +593,7 @@ function ProcessResourceHistoryTable({
             <col className="w-[16%]" />
             <col className="w-[10%]" />
           </colgroup>
-          <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-2xs uppercase tracking-widest text-muted-foreground/70">
+          <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-2xs text-dim-foreground">
             <tr>
               <th className="px-4 py-2 font-semibold sm:pl-5">Process</th>
               <th className="px-3 py-2 text-right font-semibold">CPU Time</th>
@@ -610,7 +614,7 @@ function ProcessResourceHistoryTable({
               </tr>
             ) : null}
             {processes.map((process) => (
-              <tr key={process.processKey} className="hover:bg-muted/20">
+              <tr key={process.processKey} className="hover:surface-ghost-hover">
                 <td className="px-4 py-2 align-middle sm:pl-5">
                   <ResourceHistoryProcessNameCell
                     process={process}
@@ -662,15 +666,15 @@ function DiagnosticsLastChecked({ checkedAt }: { checkedAt: DateTime.Utc | null 
   const relative = useRelativeTimeState(checkedAt ? DateTime.formatIso(checkedAt) : null);
 
   if (relative.status === "missing") {
-    return <span className="text-2xs text-muted-foreground/50">Checking</span>;
+    return <span className="text-2xs text-dim-foreground">Checking</span>;
   }
 
   if (relative.status === "invalid") {
-    return <span className="text-2xs text-muted-foreground/50">Checked unavailable</span>;
+    return <span className="text-2xs text-dim-foreground">Checked unavailable</span>;
   }
 
   return (
-    <span className="text-2xs text-muted-foreground/60">
+    <span className="text-2xs text-dim-foreground">
       {relative.suffix ? (
         <>
           Checked <span className="font-mono tabular-nums">{relative.value}</span> {relative.suffix}
@@ -1150,7 +1154,7 @@ function DiagnosticsSettingsBody() {
           <DiagnosticsTable headers={["Span", "Cause", "Duration", "Ended"]}>
             {data.latestFailures.map((failure) => (
               <tr key={`${failure.traceId}:${failure.spanId}`}>
-                <td className="px-4 py-3 align-top text-xs font-medium text-foreground first:sm:pl-5">
+                <td className="px-4 py-3 align-top text-xs font-medium text-strong-foreground first:sm:pl-5">
                   {failure.name}
                 </td>
                 <td className="max-w-[360px] px-4 py-3 align-top text-muted-foreground">
@@ -1178,7 +1182,7 @@ function DiagnosticsSettingsBody() {
           >
             {data.commonFailures.map((failure) => (
               <tr key={`${failure.name}:${failure.cause}`}>
-                <td className="px-4 py-3 align-top text-xs font-medium text-foreground first:sm:pl-5">
+                <td className="px-4 py-3 align-top text-xs font-medium text-strong-foreground first:sm:pl-5">
                   {failure.name}
                 </td>
                 <td className="px-4 py-3 align-top font-mono tabular-nums">
@@ -1209,7 +1213,7 @@ function DiagnosticsSettingsBody() {
           >
             {data.slowestSpans.map((span) => (
               <tr key={`${span.traceId}:${span.spanId}`}>
-                <td className="px-4 py-3 align-top text-xs font-medium text-foreground first:sm:pl-5">
+                <td className="px-4 py-3 align-top text-xs font-medium text-strong-foreground first:sm:pl-5">
                   {span.name}
                 </td>
                 <td className="px-4 py-3 align-top font-mono tabular-nums">
@@ -1246,7 +1250,7 @@ function DiagnosticsSettingsBody() {
                 <col className="w-[26%]" />
                 <col className="w-[30%]" />
               </colgroup>
-              <thead className="border-b border-border/60 text-2xs uppercase tracking-widest text-muted-foreground/70">
+              <thead className="border-b border-border/60 text-2xs text-dim-foreground">
                 <tr>
                   <th className="whitespace-nowrap px-4 py-2.5 font-semibold sm:pl-5">Time</th>
                   <th className="whitespace-nowrap px-4 py-2.5 font-semibold">Level</th>
@@ -1259,18 +1263,20 @@ function DiagnosticsSettingsBody() {
                 {data.latestWarningAndErrorLogs.map((event) => (
                   <tr
                     key={`${event.traceId}:${event.spanId}:${DateTime.formatIso(event.seenAt)}:${event.message}`}
-                    className="hover:bg-muted/15"
+                    className="hover:surface-ghost-hover"
                   >
                     <td className="whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums text-muted-foreground sm:pl-5">
                       <RelativeTimeNoWrap value={event.seenAt} />
                     </td>
                     <td className="px-4 py-3 align-top">
-                      <span className="inline-flex rounded bg-muted px-1.5 py-0.5 font-mono text-2xs font-medium uppercase text-foreground/80">
+                      <span className="inline-flex rounded-badge bg-secondary px-1.5 py-0.5 font-mono text-2xs font-medium uppercase text-foreground">
                         {event.level}
                       </span>
                     </td>
                     <td className="px-4 py-3 align-top">
-                      <div className="truncate font-medium text-foreground">{event.spanName}</div>
+                      <div className="truncate font-medium text-strong-foreground">
+                        {event.spanName}
+                      </div>
                     </td>
                     <td className="px-4 py-3 align-top text-muted-foreground">
                       <ExpandableText
@@ -1303,7 +1309,7 @@ function DiagnosticsSettingsBody() {
           >
             {data.topSpansByCount.map((span) => (
               <tr key={span.name}>
-                <td className="px-4 py-3 align-top text-xs font-medium text-foreground first:sm:pl-5">
+                <td className="px-4 py-3 align-top text-meta text-strong-foreground first:sm:pl-5">
                   {span.name}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums">
