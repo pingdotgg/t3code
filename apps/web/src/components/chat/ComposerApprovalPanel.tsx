@@ -1,11 +1,16 @@
 import { ShieldIcon } from "lucide-react";
-import { useState } from "react";
+import { use, useEffect, useEffectEvent, useRef, useState } from "react";
+import { BackgroundThreadContext } from "./backgroundThread";
 import type { ProviderApprovalDecision, RuntimeRequestId } from "@t3tools/contracts";
 import type { PendingApproval } from "../../session-logic";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { ComposerBanner } from "./ComposerBanner";
-import { ComposerRequestCard } from "./ComposerRequestCard";
-import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
+import { ComposerRequestCard, useRequestCardEnterShortcut } from "./ComposerRequestCard";
+import {
+  ComposerPendingApprovalActions,
+  DEFAULT_APPROVAL_OPTIONS,
+  resolveApprovalPrimaryDecision,
+} from "./ComposerPendingApprovalActions";
 
 export function ComposerApprovalPanel({
   approval,
@@ -20,8 +25,45 @@ export function ComposerApprovalPanel({
   isResponding: boolean;
   onRespond: (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => Promise<unknown>;
 }) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const backgroundThread = use(BackgroundThreadContext);
   const [expanded, setExpanded] = useState(true);
   const [alwaysAllow, setAlwaysAllow] = useState(false);
+  const canRespond = !disabled && !isResponding && approval.responseCapability === "live";
+  const options = approval.options ?? DEFAULT_APPROVAL_OPTIONS;
+  const primary = resolveApprovalPrimaryDecision(options, alwaysAllow);
+  useRequestCardEnterShortcut(
+    canRespond && primary ? () => void onRespond(approval.requestId, primary.decision) : null,
+  );
+  const decline = options.find((option) => option.decision === "decline");
+  const declineFromShortcut = useEffectEvent(() => {
+    if (decline) void onRespond(approval.requestId, decline.decision);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the active approval owns Escape while focus is on its card or the page, leaving editors and modal controls to their own shortcuts
+  useEffect(() => {
+    if (!canRespond || !decline || backgroundThread) return;
+    const handler = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.shiftKey
+      )
+        return;
+      if (
+        event.target !== document.body &&
+        !(event.target instanceof Node && cardRef.current?.contains(event.target))
+      )
+        return;
+      event.preventDefault();
+      declineFromShortcut();
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [canRespond, decline, backgroundThread]);
   const title =
     approval.requestKind === "command"
       ? "Command approval"
@@ -32,7 +74,7 @@ export function ComposerApprovalPanel({
     <Collapsible
       open={expanded}
       onOpenChange={setExpanded}
-      render={<ComposerRequestCard.Root data-chat-composer-request-card="approval" />}
+      render={<ComposerRequestCard.Root ref={cardRef} data-chat-composer-request-card="approval" />}
     >
       <ComposerRequestCard.Header
         render={<CollapsibleTrigger render={<button type="button" />} />}
