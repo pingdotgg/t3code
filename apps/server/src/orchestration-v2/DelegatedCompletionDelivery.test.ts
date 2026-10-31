@@ -14,6 +14,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderTurnId,
+  RunAttemptId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -2246,6 +2248,9 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       const parent = yield* orchestrator.getThreadProjection(threadId);
       const childProjection = yield* orchestrator.getThreadProjection(child.childThreadId);
       const providerThreadId = ProviderThreadId.make("provider-thread:result-message-child");
+      const childRootNodeId = NodeId.make("node:result-message-child-root");
+      const childAttemptId = RunAttemptId.make("attempt:result-message-child");
+      const fallbackNotice = "Model gpt-5.4 is restricted. Using gpt-5.4-mini instead.";
       yield* eventSink.write({
         commandId: CommandId.make("command:result-message-child-provider"),
         events: [
@@ -2266,7 +2271,83 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
             threadId: child.childThreadId,
             runId: child.childRunId,
             occurredAt: now,
-            payload: { ...childProjection.runs[0]!, providerThreadId },
+            payload: {
+              ...childProjection.runs[0]!,
+              providerThreadId,
+              rootNodeId: childRootNodeId,
+              activeAttemptId: childAttemptId,
+            },
+          },
+          {
+            id: EventId.make("event:result-message-child-provider-turn"),
+            type: "provider-turn.updated",
+            threadId: child.childThreadId,
+            runId: child.childRunId,
+            nodeId: childRootNodeId,
+            occurredAt: now,
+            payload: {
+              id: ProviderTurnId.make("provider-turn:result-message-child"),
+              providerThreadId,
+              nodeId: childRootNodeId,
+              runAttemptId: childAttemptId,
+              nativeTurnRef: null,
+              ordinal: 1,
+              status: "completed",
+              startedAt: now,
+              completedAt: now,
+              model: "gpt-5.4-mini",
+            },
+          },
+          {
+            id: EventId.make("event:result-message-child-notice"),
+            type: "turn-item.updated",
+            threadId: child.childThreadId,
+            runId: child.childRunId,
+            nodeId: childRootNodeId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make("turn-item:result-message-child-notice"),
+              type: "system_notice",
+              threadId: child.childThreadId,
+              runId: child.childRunId,
+              nodeId: childRootNodeId,
+              providerThreadId,
+              providerTurnId: ProviderTurnId.make("provider-turn:result-message-child"),
+              nativeItemRef: {
+                driver,
+                nativeId: "result-message-child-notice",
+                strength: "strong",
+              },
+              parentItemId: null,
+              ordinal: 0,
+              status: "completed",
+              title: fallbackNotice,
+              message: fallbackNotice,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            },
+          },
+          {
+            id: EventId.make("event:result-message-child-answer"),
+            type: "message.updated",
+            threadId: child.childThreadId,
+            runId: child.childRunId,
+            occurredAt: now,
+            payload: {
+              id: MessageId.make("message:result-message-child-answer"),
+              threadId: child.childThreadId,
+              runId: child.childRunId,
+              nodeId: childRootNodeId,
+              role: "assistant",
+              text: "Review done.",
+              attachments: [],
+              streaming: false,
+              createdBy: "agent",
+              creationSource: "server",
+              createdAt: now,
+              updatedAt: now,
+            },
           },
         ],
       });
@@ -2275,7 +2356,13 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       const recovered = yield* orchestrator.getThreadProjection(threadId);
       const task = recovered.subagents.find((candidate) => candidate.id === child.taskId)!;
       assert.equal(task.status, "completed");
-      assert.isNotNull(task.result);
+      assert.equal(
+        task.result,
+        `Requested model gpt-5.4, but the provider ran gpt-5.4-mini.\nProvider notice: ${fallbackNotice}\n\nReview done.`,
+      );
+      const recoveredChild = yield* orchestrator.getThreadProjection(child.childThreadId);
+      assert.deepEqual(recoveredChild.thread.modelSelection, modelSelection);
+      assert.deepEqual(recoveredChild.runs[0]?.modelSelection, modelSelection);
       assert.isEmpty(recovered.contextHandoffs);
       assert.equal(recovered.contextTransfers.length, 1);
 

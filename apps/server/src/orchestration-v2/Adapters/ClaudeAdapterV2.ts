@@ -2911,8 +2911,14 @@ function isClaudeBackgroundTasksChangedMessage(message: SDKMessage): boolean {
   return message.type === "system" && (message.subtype as string) === "background_tasks_changed";
 }
 
+// A wake can stream its root message before its init frame.
 function isClaudeTurnStartMessage(message: SDKMessage): boolean {
-  return message.type === "system" && message.subtype === "init";
+  return (
+    (message.type === "system" && message.subtype === "init") ||
+    (message.type === "stream_event" &&
+      message.event.type === "message_start" &&
+      message.parent_tool_use_id == null)
+  );
 }
 
 function isClaudeRootTurnFrame(message: SDKMessage): boolean {
@@ -4036,6 +4042,8 @@ interface ActiveClaudeTurnContext {
   nativeWakeStarted: boolean;
   gatedFramesBeforeEcho: number;
   readonly heldRootFrames: Array<SDKMessage>;
+  // Claude can run another model than requested, such as when an organization disallows it.
+  executedModel: { readonly model: string; readonly modelSubstituted: boolean } | undefined;
 }
 
 interface ActiveClaudeProviderRetry {
@@ -4129,6 +4137,13 @@ interface PendingClaudeSubagentLaunch {
   readonly model?: string;
   readonly effort?: string;
   readonly ownerToolUseId?: string;
+}
+
+function executedModelField(context: ActiveClaudeTurnContext): {
+  readonly model?: string;
+  readonly modelSubstituted?: boolean;
+} {
+  return context.executedModel ?? {};
 }
 
 function canonicalClaudeSubagentModel(catalog: ClaudeModelCatalog, model: string): string {
@@ -5049,6 +5064,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               startedAt: context.startedAt,
               completedAt: null,
               tokenUsage,
+              ...executedModelField(context),
             },
           });
         });
@@ -5541,7 +5557,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           status: input.status,
           startedAt: input.context.startedAt,
           completedAt: input.completedAt,
+          ...executedModelField(input.context),
         });
+
+        const recordExecutedModel = (context: ActiveClaudeTurnContext, model: unknown) => {
+          const reported = typeof model === "string" ? model.trim() : "";
+          // "<synthetic>" identifies CLI notices, not a model.
+          if (reported.length > 0 && reported !== "<synthetic>") {
+            const executed = resolveClaudeModelSlug(subagentModelCatalog, reported);
+            // An alias such as `opus` requests the model its canonical slug names.
+            const requested = resolveClaudeModelSlug(
+              subagentModelCatalog,
+              context.input.modelSelection.model,
+            );
+            context.executedModel = { model: executed, modelSubstituted: requested !== executed };
+          }
+        };
 
         const buildToolCallArtifacts = (input: {
           readonly context: ActiveClaudeTurnContext | null;
@@ -7936,7 +7967,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message.task_id,
             );
           }
-          // Open continuations only after root init, user, assistant, or result frames prove a wake began.
+          // Open continuations only after root init, message start, user, assistant, or result frames prove a wake began.
           // Background child frames can stream while the root is idle.
           const buffered = (yield* Ref.get(wakeBuffers)).get(wakeInput.nativeThreadId);
           const hasBufferedNotification =
@@ -8319,6 +8350,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return;
           }
+          if (
+            message.type === "system" &&
+            message.subtype === "init" &&
+            context === (yield* Ref.get(activeTurn))
+          ) {
+            recordExecutedModel(context, message.model);
+          }
           const focusedPlugin = claudeFocusRequestedPanePlugin(message);
           if (focusedPlugin !== null && context === (yield* Ref.get(activeTurn))) {
             yield* Effect.logWarning("orchestration-v2.claude-mod-pane-focus-unsupported", {
@@ -8347,6 +8385,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const event = message.event;
             const reasoning = context.reasoning;
             if (event.type === "message_start") {
+              recordExecutedModel(context, event.message.model);
               reasoning.messageId = event.message.id;
               reasoning.streamBlocks.clear();
               const usage: ClaudeMessageUsage | undefined = event.message.usage;
@@ -8451,6 +8490,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           if (message.type === "assistant" && input.replayed !== true) {
             if (message.parent_tool_use_id === null) {
+              recordExecutedModel(context, message.message.model);
               // Subagent uuids exist only in the sidechain transcript, so resume and fork cannot target them.
               context.nativeMessageCursor = message.uuid;
               context.latestAssistantRateLimit =
@@ -8612,6 +8652,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   status: "running",
                   startedAt: context.startedAt,
                   completedAt: null,
+                  ...executedModelField(context),
                   tokenUsage: {
                     usedTokens: afterTokenCount,
                     maxTokens,
@@ -8661,7 +8702,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
                 threadId: context.input.threadId,
                 runId: context.input.runId,
-                nodeId: context.input.rootNodeId,
+                nodeId:
+                  message.subtype === "model_refusal_fallback" && message.scope === "local"
+                    ? null
+                    : context.input.rootNodeId,
                 providerThreadId: context.input.providerThread.id,
                 providerTurnId: context.providerTurnId,
                 nativeItemRef: {
@@ -10476,6 +10520,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeWakeStarted: false,
               gatedFramesBeforeEcho: 0,
               heldRootFrames: [],
+              executedModel: undefined,
             };
             const attachTurn = Effect.gen(function* () {
               querySession.lastTurn = context;

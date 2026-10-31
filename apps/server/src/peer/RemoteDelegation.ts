@@ -24,6 +24,7 @@ import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as Tool from "effect/ai/Tool";
+import { withSubstitutedModelNote } from "@t3tools/provider-core/server/subagentProjection";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
@@ -368,6 +369,7 @@ const make = Effect.gen(function* () {
     result: string,
     stoppedThere: "ran-out" | "stopped" | undefined,
     stopCount?: number,
+    resultModel?: OrchestrationV2RemoteTaskChild["resultModel"],
   ) {
     const attempt = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
     yield* threads
@@ -380,6 +382,7 @@ const make = Effect.gen(function* () {
         result,
         ...(stoppedThere === undefined ? {} : { stoppedThere }),
         ...(stopCount === undefined ? {} : { stopCount }),
+        ...(resultModel === undefined ? {} : { resultModel }),
       })
       .pipe(
         Effect.catch((error) =>
@@ -435,6 +438,7 @@ const make = Effect.gen(function* () {
    * The last reply `runId` gave on the task's thread there, which is its
    * result, read whole however long it is. A failed run prefers its error
    * from the activity view over an earlier reply, without taking another run's.
+   * Also the model that run asked for and the one its provider reported running.
    */
   const lastReply = Effect.fn("RemoteDelegation.lastReply")(function* (
     scope: ThreadScope,
@@ -445,13 +449,27 @@ const make = Effect.gen(function* () {
     let reply: OrchestratorMcpThreadTimelineItem | undefined;
     let error: OrchestratorMcpThreadTimelineItem | undefined;
     let afterPosition: number | undefined;
+    let resultModel: OrchestrationV2RemoteTaskChild["resultModel"];
     while (true) {
       const read = yield* forwarding.readThread(scope, remote.environmentId, {
         threadId: remote.threadId,
         view: failed ? "activity" : "messages",
         limit: 100,
+        runLimit: 50,
         ...(afterPosition === undefined ? {} : { afterPosition }),
       });
+      const run = read.recentRuns.find((candidate) => candidate.runId === runId);
+      // Older environments omit executedModel and modelSubstituted.
+      resultModel ??=
+        run === undefined
+          ? undefined
+          : {
+              model: run.model,
+              executedModel: run.executedModel ?? null,
+              ...(run.modelSubstituted === undefined
+                ? {}
+                : { modelSubstituted: run.modelSubstituted }),
+            };
       reply =
         read.items.findLast(
           (item) => item.type === "assistant_message" && (runId === null || item.runId === runId),
@@ -466,7 +484,7 @@ const make = Effect.gen(function* () {
       afterPosition = read.nextPosition;
     }
     reply = error ?? reply;
-    if (reply === undefined) return undefined;
+    if (reply === undefined) return { text: undefined, resultModel };
     let text = reply.text ?? "";
     let textOffset = reply.textTruncated ? (reply.nextTextOffset ?? null) : null;
     while (textOffset !== null) {
@@ -481,7 +499,7 @@ const make = Effect.gen(function* () {
       text += part.text ?? "";
       textOffset = part.textTruncated ? (part.nextTextOffset ?? null) : null;
     }
-    return text;
+    return { text, resultModel };
   });
 
   /**
@@ -613,7 +631,7 @@ const make = Effect.gen(function* () {
     // A task recorded without its run waits on the thread's latest; a
     // thread there with none has nothing left to wait for.
     if (waited.runId === null) {
-      const reply = yield* lastReply(scope, remote, null);
+      const reply = (yield* lastReply(scope, remote, null)).text;
       yield* complete(
         parentThreadId,
         taskId,
@@ -628,13 +646,26 @@ const make = Effect.gen(function* () {
       runId: remote.runId ?? waited.runId,
       status: waited.status,
     };
-    const result = yield* lastReply(scope, remote, resultRun.runId, resultRun.status === "failed");
+    const { text, resultModel } = yield* lastReply(
+      scope,
+      remote,
+      resultRun.runId,
+      resultRun.status === "failed",
+    );
     yield* complete(
       parentThreadId,
       taskId,
       terminalStatus(resultRun.status),
-      result ?? noReply,
+      resultModel === undefined
+        ? (text ?? noReply)
+        : withSubstitutedModelNote(text ?? noReply, {
+            requestedModel: resultModel.model,
+            executedModel: resultModel.executedModel,
+            modelSubstituted: resultModel.modelSubstituted,
+          }),
       "ran-out",
+      undefined,
+      resultModel,
     );
     return yield* settled(parentThreadId, taskId);
   });

@@ -16,6 +16,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   ProviderTurnId,
+  RunAttemptId,
   RunId,
   ThreadId,
   type OrchestrationV2ServerCommand,
@@ -119,6 +120,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       let hasNestedWork = true;
@@ -247,6 +249,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
         turnItems: [],
       } as unknown as OrchestrationV2ThreadProjection;
@@ -343,6 +346,7 @@ describe("OrchestratorMcpService", () => {
           messages: [],
           subagents: [],
           providerThreads: [],
+          providerTurns: [],
           runtimeRequests: pendingRequest ? [{ status: "pending" }] : [],
           nodes: [],
           turnItems: [],
@@ -442,6 +446,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
@@ -530,6 +535,7 @@ describe("OrchestratorMcpService", () => {
           messages: [],
           subagents: [],
           providerThreads: [],
+          providerTurns: [],
           runtimeRequests: [],
           turnItems: [],
         } as unknown as OrchestrationV2ThreadProjection;
@@ -631,6 +637,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
@@ -712,6 +719,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
@@ -799,6 +807,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        providerTurns: [],
         runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
@@ -897,6 +906,7 @@ describe("OrchestratorMcpService", () => {
               appOwnedTask("node:mcp-cancel-grandchild-below", childThreadId, grandchildThreadId),
             ],
             providerThreads: [],
+            providerTurns: [],
             runtimeRequests: [],
           },
         ],
@@ -909,6 +919,7 @@ describe("OrchestratorMcpService", () => {
             messages: [],
             subagents: [],
             providerThreads: [],
+            providerTurns: [],
             runtimeRequests: [],
           },
         ],
@@ -1124,6 +1135,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     messages: [],
     subagents: [],
     providerThreads: [],
+    providerTurns: [],
     runtimeRequests: [],
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
@@ -2454,13 +2466,48 @@ describe("OrchestratorMcpService provider resolution", () => {
           status: "running",
           result: null,
         };
+        let hasContinuation = false;
+        let hasStoredResult = false;
+        const restartedAttemptId = RunAttemptId.make("attempt:mcp-restarted-child");
+        const continuationAttemptId = RunAttemptId.make("attempt:mcp-child-continuation");
+        const continuationSelection = { ...runSelection, model: "claude-sonnet-4-6" };
+        // Claude ran the restarted attempt on Sonnet; a later turn of another attempt reported Haiku.
+        const providerTurns = [
+          { runAttemptId: restartedAttemptId, ordinal: 1, model: "claude-sonnet-4-6" },
+          { runAttemptId: continuationAttemptId, ordinal: 2, model: "claude-haiku-4-5" },
+          {
+            runAttemptId: RunAttemptId.make("attempt:mcp-other-run"),
+            ordinal: 2,
+            model: "claude-haiku-4-5",
+          },
+        ];
         const dependencies = Layer.mergeAll(
           NodeServices.layer,
           Layer.mock(ThreadManagementService.ThreadManagementService)({
-            getThreadRecords: (threadId) =>
+            getThreadRecords: (threadId, fields) =>
               Effect.succeed(
                 threadId === parentThreadId
-                  ? parentProjection([task])
+                  ? ({
+                      ...parentProjection([
+                        {
+                          ...task,
+                          status: hasStoredResult ? "completed" : task.status,
+                          result: hasStoredResult ? "Stored review result." : null,
+                          completionDelivery: { state: "acknowledged" },
+                        },
+                      ]),
+                      contextTransfers: hasStoredResult
+                        ? [
+                            {
+                              id: "transfer:mcp-stored-result",
+                              type: "subagent_result",
+                              sourceThreadId: childThreadId,
+                              targetThreadId: parentThreadId,
+                              sourcePoint: { runId: RunId.make("run:mcp-restarted-child") },
+                            },
+                          ]
+                        : [],
+                    } as unknown as OrchestrationV2ThreadProjection)
                   : ({
                       ...childProjection,
                       thread: { ...childProjection.thread, modelSelection: threadSelection },
@@ -2469,10 +2516,27 @@ describe("OrchestratorMcpService provider resolution", () => {
                             {
                               id: RunId.make("run:mcp-restarted-child"),
                               ordinal: 1,
-                              status: "running",
+                              status: hasStoredResult ? "completed" : "running",
                               modelSelection: runSelection,
+                              activeAttemptId: restartedAttemptId,
+                              delegatedTaskId: hasStoredResult ? undefined : taskId,
                             },
+                            ...(hasContinuation
+                              ? [
+                                  {
+                                    id: RunId.make("run:mcp-child-continuation"),
+                                    ordinal: 2,
+                                    status: hasStoredResult ? "completed" : "running",
+                                    modelSelection: continuationSelection,
+                                    activeAttemptId: continuationAttemptId,
+                                    delegatedTaskId: hasStoredResult ? undefined : taskId,
+                                  },
+                                ]
+                              : []),
                           ]
+                        : [],
+                      providerTurns: fields?.some((field) => field === "providerTurns")
+                        ? providerTurns
                         : [],
                     } as unknown as OrchestrationV2ThreadProjection),
               ),
@@ -2487,12 +2551,21 @@ describe("OrchestratorMcpService provider resolution", () => {
         );
         yield* Effect.gen(function* () {
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-          for (const selection of [runSelection, threadSelection]) {
+          for (const [runExists, continuationExists, storedResult, selection, executedModel] of [
+            [true, false, false, runSelection, "claude-sonnet-4-6"],
+            [true, true, false, continuationSelection, "claude-haiku-4-5"],
+            [true, true, true, runSelection, "claude-sonnet-4-6"],
+            [false, false, false, threadSelection, null],
+          ] as const) {
+            hasRun = runExists;
+            hasContinuation = continuationExists;
+            hasStoredResult = storedResult;
             const result = yield* service.taskStatus(scope, taskId);
             assert.equal(result.providerInstanceId, selection.instanceId);
             assert.equal(result.model, selection.model);
             assert.deepEqual(result.options, selection.options);
-            hasRun = false;
+            assert.equal(result.executedModel, executedModel);
+            if (hasStoredResult) assert.equal(result.summary, "Stored review result.");
           }
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
       }),
