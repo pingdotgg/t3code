@@ -65,8 +65,6 @@ import {
   ChevronDownIcon,
   FolderIcon,
   ListFilterIcon,
-  PinIcon,
-  PinOffIcon,
   PlusIcon,
   SettingsIcon,
 } from "lucide-react";
@@ -126,6 +124,7 @@ import {
   useThreadActions,
 } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
 import { useProjectGroupUpdate } from "../hooks/useProjectGroupUpdate";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
@@ -240,6 +239,7 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { Button } from "./ui/button";
+import { ProjectPinButton } from "./ProjectPinButton";
 import {
   Combobox,
   ComboboxEmpty,
@@ -899,7 +899,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     projectByKey,
     projectDisplayNameByKey,
     projectGroupByScopeKey,
-    projectScopeItems,
+    projectScopeItems: lookupProjectScopeItems,
   } = useSidebarLookups();
   const delegatedUnderParent = useDelegatedUnderParent();
   const router = useRouter();
@@ -1152,6 +1152,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     }
     return environmentLabelById.get(thread.environmentId) ?? null;
   };
+  // Pinning from a row keeps rows in place while the menu is open.
+  const projectScopeItems = useOrderWhileOpen(
+    lookupProjectScopeItems,
+    (item) => item.value,
+    projectScopeMenuState.open,
+  );
   const selectedProjectScopeItem =
     projectScopeKeys.length > 1
       ? null
@@ -3032,15 +3038,31 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         if (
                           event.defaultPrevented ||
                           event.nativeEvent.isComposing ||
-                          event.keyCode === 229 ||
-                          event.ctrlKey ||
-                          event.altKey ||
-                          event.metaKey
+                          event.keyCode === 229
                         ) {
                           return;
                         }
                         const scopeKey = highlightedProjectScopeKeyRef.current;
                         const project = scopeKey ? projectGroupByScopeKey.get(scopeKey) : null;
+                        // The thread pin shortcut pins the highlighted project here.
+                        if (
+                          project &&
+                          canPinProject(project) &&
+                          resolveShortcutCommand(event.nativeEvent, keybindings, {
+                            platform: navigator.platform,
+                            context: { modelPickerOpen: false, editableFocus: true },
+                          }) === "thread.pin"
+                        ) {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          void updateProjectGroup(
+                            project.memberProjects,
+                            { pinned: !project.pinned },
+                            project.pinned ? "Failed to unpin project" : "Failed to pin project",
+                          );
+                          return;
+                        }
+                        if (event.ctrlKey || event.altKey || event.metaKey) return;
                         if (event.shiftKey && event.key === "Enter") {
                           if (!project) return;
                           event.preventDefault();
@@ -3097,46 +3119,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               />
                             ) : null}
                             {project && canPinProject(project) ? (
-                              <span
-                                className={cn(
-                                  "group/pin ml-auto flex",
-                                  !project.pinned &&
-                                    "opacity-0 in-data-highlighted:opacity-100 pointer-coarse:opacity-100",
-                                )}
-                              >
-                                <Button
-                                  size="icon-xs"
-                                  variant="ghost-muted"
-                                  tabIndex={-1}
-                                  aria-hidden="true"
-                                  title={
+                              <ProjectPinButton
+                                name={project.displayName}
+                                pinned={project.pinned}
+                                shortcutLabel={shortcutLabelForCommand(keybindings, "thread.pin")}
+                                onToggle={() => {
+                                  void updateProjectGroup(
+                                    project.memberProjects,
+                                    { pinned: !project.pinned },
                                     project.pinned
-                                      ? `Unpin ${project.displayName}`
-                                      : `Pin ${project.displayName}`
-                                  }
-                                  onPointerDown={(event) => event.stopPropagation()}
-                                  onClick={(event) => {
-                                    event.preventDefault();
-                                    event.stopPropagation();
-                                    void updateProjectGroup(
-                                      project.memberProjects,
-                                      { pinned: !project.pinned },
-                                      project.pinned
-                                        ? "Failed to unpin project"
-                                        : "Failed to pin project",
-                                    );
-                                  }}
-                                >
-                                  {project.pinned ? (
-                                    <>
-                                      <PinIcon className="size-3.5 group-hover/pin:hidden" />
-                                      <PinOffIcon className="hidden size-3.5 group-hover/pin:block" />
-                                    </>
-                                  ) : (
-                                    <PinIcon className="size-3.5" />
-                                  )}
-                                </Button>
-                              </span>
+                                      ? "Failed to unpin project"
+                                      : "Failed to pin project",
+                                  );
+                                }}
+                              />
                             ) : null}
                             {project ? (
                               <Button

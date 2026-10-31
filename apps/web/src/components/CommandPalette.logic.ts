@@ -208,6 +208,14 @@ export interface CommandPaletteActionItem extends CommandPaletteItem {
   readonly kind: "action";
   readonly keepOpen?: boolean;
   readonly run: () => Promise<void>;
+  /** A pin toggle on the row, also reached with the pin shortcut while the row is highlighted. */
+  readonly pin?: CommandPaletteItemPin;
+}
+
+export interface CommandPaletteItemPin {
+  readonly name: string;
+  readonly pinned: boolean;
+  readonly toggle: () => void;
 }
 
 export interface CommandPaletteSubmenuItem extends CommandPaletteItem {
@@ -364,24 +372,29 @@ export function buildProjectActionItems(input: {
   searchTerms?: (project: CommandPaletteProject) => ReadonlyArray<string>;
   renderDescription?: (project: CommandPaletteProject) => ReactNode;
   shortcutCommand?: KeybindingCommand;
+  pin?: (project: CommandPaletteProject) => CommandPaletteItemPin | null;
 }): CommandPaletteActionItem[] {
-  return input.projects.map((project) => ({
-    kind: "action",
-    value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
-    searchTerms: [
-      project.displayName,
-      project.title,
-      project.workspaceRoot,
-      ...(input.searchTerms?.(project) ?? []),
-    ],
-    title: project.displayName,
-    description: input.renderDescription?.(project) ?? project.workspaceRoot,
-    icon: input.icon(project),
-    ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
-    run: async () => {
-      await input.runProject(project);
-    },
-  }));
+  return input.projects.map((project) => {
+    const pin = input.pin?.(project) ?? null;
+    return {
+      kind: "action",
+      value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
+      searchTerms: [
+        project.displayName,
+        project.title,
+        project.workspaceRoot,
+        ...(input.searchTerms?.(project) ?? []),
+      ],
+      title: project.displayName,
+      description: input.renderDescription?.(project) ?? project.workspaceRoot,
+      icon: input.icon(project),
+      ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
+      ...(pin ? { pin } : {}),
+      run: async () => {
+        await input.runProject(project);
+      },
+    };
+  });
 }
 
 export type BuildThreadActionItemsThread = Pick<

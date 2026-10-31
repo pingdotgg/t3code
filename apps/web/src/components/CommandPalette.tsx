@@ -68,6 +68,8 @@ import {
   RotateCcwIcon,
   SettingsIcon,
   MonitorIcon,
+  PinIcon,
+  PinOffIcon,
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
@@ -108,7 +110,11 @@ import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
 import { threadEnvironment } from "../state/threads";
-import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import {
+  readEnvironmentScope,
+  useEnvironmentScope,
+  useEnvironmentsWithScope,
+} from "~/state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
@@ -117,6 +123,8 @@ import { useScratchProject } from "../hooks/useScratchProject";
 import { useStartTriage } from "../hooks/useStartTriage";
 import { pickTriageEnvironment } from "../lib/triageTarget";
 import { useNewProject } from "../hooks/useNewProject";
+import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
+import { useProjectGroupUpdate } from "../hooks/useProjectGroupUpdate";
 import {
   useEnvironmentProviders,
   useEnvironments,
@@ -239,7 +247,10 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
 import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
-import { buildSidebarProjectPickerEntries } from "../sidebarProjectGrouping";
+import {
+  buildSidebarProjectPickerEntries,
+  type SidebarProjectSnapshot,
+} from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
@@ -519,6 +530,28 @@ function OpenCommandPaletteDialog(props: {
       group,
     ]),
   );
+  const { updateProjectGroup, canOrganizeProjectGroup } = useProjectGroupUpdate();
+  const operableEnvironmentIds = useEnvironmentsWithScope(projects, AuthOrchestrationOperateScope);
+  const canPinProjectGroup = (group: SidebarProjectSnapshot) =>
+    canOrganizeProjectGroup(group.memberProjects) &&
+    group.memberProjects.every((member) => operableEnvironmentIds.has(member.environmentId));
+  const toggleProjectGroupPin = (group: SidebarProjectSnapshot) => {
+    void updateProjectGroup(
+      group.memberProjects,
+      { pinned: !group.pinned },
+      group.pinned ? "Failed to unpin project" : "Failed to pin project",
+    );
+  };
+  const projectPin = (project: CommandPaletteProject) => {
+    const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+    return group && canPinProjectGroup(group)
+      ? {
+          name: group.displayName,
+          pinned: group.pinned,
+          toggle: () => toggleProjectGroupPin(group),
+        }
+      : null;
+  };
 
   const addProjectEnvironmentOptions = (() => {
     const options = environments
@@ -761,64 +794,75 @@ function OpenCommandPaletteDialog(props: {
     await handleNewThread(scopeProjectRef(project.environmentId, project.id));
   };
 
-  const projectSearchItems = buildProjectSearchItems({
-    projects: pickerProjects,
-    projectGroupByTargetKey,
-    locationByEnvironmentId: projectEnvironmentLocationById,
-    runProject: openProjectFromSearch,
-  });
+  // Pinning from a row keeps rows in place while the palette is open.
+  const projectSearchItems = useOrderWhileOpen(
+    buildProjectSearchItems({
+      projects: pickerProjects,
+      projectGroupByTargetKey,
+      locationByEnvironmentId: projectEnvironmentLocationById,
+      runProject: openProjectFromSearch,
+      pin: projectPin,
+    }),
+    (item) => item.value,
+    true,
+  );
 
-  const projectThreadItems = (() => {
-    const isScratch = (project: CommandPaletteProject) =>
-      isScratchProject(project, scratchWorkspaceRootFor(project.environmentId));
-    const projectItems = enumerateCommandPaletteItems(
-      buildNewThreadInProjectItems({
-        projects: pickerProjects.filter((project) => !isScratch(project)),
-        projectGroupByTargetKey,
-        locationByEnvironmentId: projectEnvironmentLocationById,
-        runProject: async (project) => {
-          const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
-          const contextualRefBelongsToGroup =
-            contextualProjectRef !== null &&
-            group?.memberProjectRefs.some(
-              (projectRef) =>
-                projectRef.environmentId === contextualProjectRef.environmentId &&
-                projectRef.projectId === contextualProjectRef.projectId,
+  const projectThreadItems = useOrderWhileOpen(
+    (() => {
+      const isScratch = (project: CommandPaletteProject) =>
+        isScratchProject(project, scratchWorkspaceRootFor(project.environmentId));
+      const projectItems = enumerateCommandPaletteItems(
+        buildNewThreadInProjectItems({
+          projects: pickerProjects.filter((project) => !isScratch(project)),
+          projectGroupByTargetKey,
+          locationByEnvironmentId: projectEnvironmentLocationById,
+          pin: projectPin,
+          runProject: async (project) => {
+            const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+            const contextualRefBelongsToGroup =
+              contextualProjectRef !== null &&
+              group?.memberProjectRefs.some(
+                (projectRef) =>
+                  projectRef.environmentId === contextualProjectRef.environmentId &&
+                  projectRef.projectId === contextualProjectRef.projectId,
+              );
+            await handleNewThread(
+              contextualRefBelongsToGroup
+                ? contextualProjectRef
+                : scopeProjectRef(project.environmentId, project.id),
             );
-          await handleNewThread(
-            contextualRefBelongsToGroup
-              ? contextualProjectRef
-              : scopeProjectRef(project.environmentId, project.id),
-          );
-        },
-      }),
-    );
-    if (scratchTargetEnvironmentId === null) return projectItems;
+          },
+        }),
+      );
+      if (scratchTargetEnvironmentId === null) return projectItems;
 
-    const noProjectIndex = newThreadNoProjectIndex(
-      projectPickerEntries.map(({ group, targetProject, isPreferred }) => ({
-        isScratch: isScratchProject(
-          targetProject,
-          scratchWorkspaceRootFor(targetProject.environmentId),
-        ),
-        pinned: group.pinned,
-        isPreferred,
-      })),
-    );
-    return [
-      ...projectItems.slice(0, noProjectIndex),
-      {
-        kind: "action" as const,
-        value: "new-thread-in:no-project",
-        searchTerms: ["no project", "without project", "none"],
-        title: "No project",
-        icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
-        shortcutCommand: "chat.newWithoutProject" as const,
-        run: () => startScratchThread(scratchTargetEnvironmentId),
-      },
-      ...projectItems.slice(noProjectIndex),
-    ];
-  })();
+      const noProjectIndex = newThreadNoProjectIndex(
+        projectPickerEntries.map(({ group, targetProject, isPreferred }) => ({
+          isScratch: isScratchProject(
+            targetProject,
+            scratchWorkspaceRootFor(targetProject.environmentId),
+          ),
+          pinned: group.pinned,
+          isPreferred,
+        })),
+      );
+      return [
+        ...projectItems.slice(0, noProjectIndex),
+        {
+          kind: "action" as const,
+          value: "new-thread-in:no-project",
+          searchTerms: ["no project", "without project", "none"],
+          title: "No project",
+          icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
+          shortcutCommand: "chat.newWithoutProject" as const,
+          run: () => startScratchThread(scratchTargetEnvironmentId),
+        },
+        ...projectItems.slice(noProjectIndex),
+      ];
+    })(),
+    (item) => item.value,
+    true,
+  );
 
   const {
     threadItems: allThreadItems,
@@ -1552,7 +1596,7 @@ function OpenCommandPaletteDialog(props: {
   });
 
   // Every group, so an archived project's thread still opens its own settings.
-  const contextualProjectGroup =
+  const currentProjectGroup =
     (contextualProjectRef
       ? projectGroups.find((group) =>
           group.memberProjectRefs.some(
@@ -1561,9 +1605,23 @@ function OpenCommandPaletteDialog(props: {
               ref.projectId === contextualProjectRef.projectId,
           ),
         )
-      : null) ??
-    projectGroups[0] ??
-    null;
+      : null) ?? null;
+  if (currentProjectGroup && canPinProjectGroup(currentProjectGroup)) {
+    actionItems.push({
+      kind: "action",
+      value: "action:project-pin",
+      searchTerms: ["pin", "unpin", "project", "favorite"],
+      title: currentProjectGroup.pinned ? "Unpin project" : "Pin project",
+      description: currentProjectGroup.displayName,
+      icon: currentProjectGroup.pinned ? (
+        <PinOffIcon className={ITEM_ICON_CLASS} />
+      ) : (
+        <PinIcon className={ITEM_ICON_CLASS} />
+      ),
+      run: async () => toggleProjectGroupPin(currentProjectGroup),
+    });
+  }
+  const contextualProjectGroup = currentProjectGroup ?? projectGroups[0] ?? null;
   if (contextualProjectGroup) {
     actionItems.push({
       kind: "action",
@@ -2329,6 +2387,19 @@ function OpenCommandPaletteDialog(props: {
       platform: navigator.platform,
       context: { modelPickerOpen: false, editableFocus: true },
     });
+    if (command === "thread.pin") {
+      const highlightedItem = findHighlightedCommandPaletteItem(
+        displayedGroups,
+        highlightedItemValue ??
+          (autoHighlightsFirstRow ? (resultRows.itemValues[0] ?? null) : null),
+      );
+      if (highlightedItem?.kind === "action" && highlightedItem.pin) {
+        event.preventDefault();
+        event.stopPropagation();
+        highlightedItem.pin.toggle();
+        return;
+      }
+    }
     // Global new-thread handlers ignore shortcuts while the palette is open.
     const isJump = threadJumpIndexFromCommand(command ?? "") !== null;
     const isNewThread =
