@@ -644,7 +644,7 @@ it.effect.each(["confirmed", "unconfirmed", "failed"] as const)(
 );
 
 it.effect(
-  "releases four expired leases while preserving ownership, ordering, and late settlement",
+  "frees four overdue worker slots while preserving ownership, ordering, and late settlement",
   () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
@@ -683,7 +683,7 @@ it.effect(
       }));
       yield* outbox.enqueue([...hung, unrelated, ...followUps]);
       // Give one row a prior attempt so the same worker exercises exhausted and retryable failures.
-      const prior = yield* outbox.claimNext({ workerId: "previous", leaseDurationMs: 1_000 });
+      const prior = yield* outbox.claimNext({ workerId: "previous" });
       assert.equal(Option.getOrThrow(prior).id, hung[0]!.id);
       assert.isTrue(
         yield* outbox.retry({
@@ -727,8 +727,8 @@ it.effect(
           outbox.retry(input).pipe(Effect.tap(() => Deferred.succeed(retryScheduled, undefined))),
       });
       const layerWorker = EffectWorker.layerWithOptions({
-        workerId: "lease-worker",
-        leaseDurationMs: 1_000,
+        workerId: "bounded-worker",
+        slotWaitMs: 1_000,
         maxAttempts: 2,
       }).pipe(Layer.provide(Layer.merge(layerOutbox, layerExecutor)));
       yield* EffectWorker.runDaemon.pipe(Effect.provide(layerWorker), Effect.forkScoped);
@@ -743,7 +743,7 @@ it.effect(
       for (const effect of hung) {
         const row = Option.getOrThrow(yield* outbox.get(effect.id));
         assert.equal(row.status, "running");
-        assert.equal(row.leaseOwner, "lease-worker");
+        assert.equal(row.leaseOwner, "bounded-worker");
         assert.equal(row.attemptCount, effect.outcome === "failure" ? 2 : 1);
       }
       for (const followUp of followUps) {
@@ -760,7 +760,7 @@ it.effect(
         .cancelUnsettled({
           threadId: cancelled.threadId,
           effectTypes: [cancelled.request.type],
-          reason: "stopped after lease expiry",
+          reason: "stopped after the worker wait expired",
         })
         .pipe(Effect.flatMap(outbox.signalCancellations));
       yield* Deferred.await(cancelledExecution);
@@ -837,16 +837,16 @@ it.effect("closes the worker layer with overdue effects and recovers the remaini
       },
     });
     const context = yield* Layer.buildWithScope(
-      EffectWorker.layerWithOptions({ leaseDurationMs: 1_000 }).pipe(Layer.provide(layerExecutor)),
+      EffectWorker.layerWithOptions({ slotWaitMs: 1_000 }).pipe(Layer.provide(layerExecutor)),
       workerScope,
     );
     const worker = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
       Effect.provideContext(context),
     );
-    yield* Effect.all(
-      effects.map(() => worker.runOnce),
-      { concurrency: "unbounded" },
-    ).pipe(Effect.andThen(Deferred.succeed(released, undefined)), Effect.forkScoped);
+    yield* Effect.forEach(effects, () => worker.runOnce(), {
+      concurrency: "unbounded",
+      discard: true,
+    }).pipe(Effect.andThen(Deferred.succeed(released, undefined)), Effect.forkScoped);
     yield* Effect.forEach(started, Deferred.await);
     yield* TestClock.adjust("1 second");
     assert.isTrue(yield* Deferred.isDone(released));
@@ -928,7 +928,7 @@ it.effect("interrupts overdue executions with the daemon while the worker layer 
             : Effect.void,
     });
     const context = yield* Layer.build(
-      EffectWorker.layerWithOptions({ leaseDurationMs: 1_000 }).pipe(Layer.provide(layerExecutor)),
+      EffectWorker.layerWithOptions({ slotWaitMs: 1_000 }).pipe(Layer.provide(layerExecutor)),
     );
     const daemon = yield* EffectWorker.runDaemonWithOptions({ concurrency: 1 }).pipe(
       Effect.provideContext(context),
