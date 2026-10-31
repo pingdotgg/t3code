@@ -205,7 +205,9 @@ function setup() {
     write(key, { project: target });
     return key;
   });
-  mocks.retargetDraft.mockImplementation((key, target) => write(key, { project: target }));
+  mocks.retargetDraft.mockImplementation((key, target) =>
+    write(key, { project: target, workspaceSelection: undefined }),
+  );
   mocks.writeSettings.mockImplementation(write);
   mocks.writeText.mockImplementation((key, text) => write(key, { text }));
   let current: ReturnType<typeof useNewTaskFlow>;
@@ -276,18 +278,7 @@ it("owns a status stream only while the draft is active, retaining draft choices
   await screen.render(true);
   expect(screen.events).toEqual(["start:/a"]);
   const draftKey = screen.current.draftKey!;
-  act(() => {
-    screen.current.setPrompt("keep this draft");
-    screen.current.setWorkspaceMode("worktree");
-    screen.current.selectBranch({
-      name: "feature",
-      current: false,
-      isDefault: false,
-      worktreePath: null,
-    });
-    screen.current.setStartFromOrigin(true);
-  });
-  const chosenWorkspace = screen.snapshot(draftKey).workspaceSelection;
+  act(() => screen.current.setPrompt("keep this draft"));
 
   await act(async () => screen.current.setProject(screen.projects[1]!));
   expect(screen.current.prompt).toBe("keep this draft");
@@ -303,6 +294,24 @@ it("owns a status stream only while the draft is active, retaining draft choices
   // A late old-project result cannot replace the current environment's checkout.
   await screen.emit("/a", "stale-branch");
   expect(screen.current.currentCheckoutBranchName).toBe("main");
+  expect(screen.snapshot(draftKey).workspaceSelection).toBeUndefined();
+  act(() => screen.current.setWorkspaceMode("worktree"));
+  act(() =>
+    screen.current.selectBranch({
+      name: "feature",
+      current: false,
+      isDefault: false,
+      worktreePath: null,
+    }),
+  );
+  act(() => screen.current.setStartFromOrigin(true));
+  const chosenWorkspace = screen.snapshot(draftKey).workspaceSelection;
+  expect(chosenWorkspace).toEqual({
+    mode: "worktree",
+    branch: "feature",
+    worktreePath: null,
+    startFromOrigin: true,
+  });
 
   await screen.render(false);
   const settingsWrites = mocks.writeSettings.mock.calls.length;
