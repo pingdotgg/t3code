@@ -3400,7 +3400,7 @@ export function ChatComposer(props: ChatComposerProps) {
                   }}
                 >
                   {collapsedComposerShowsStop ? (
-                    <span className="size-3 rounded-xs bg-current" aria-hidden="true" />
+                    <span className="size-2.5 rounded-xs bg-error-foreground" aria-hidden="true" />
                   ) : showResumeAction ? (
                     <PlayIcon className="size-4 fill-current" aria-hidden="true" />
                   ) : (
