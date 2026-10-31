@@ -2064,6 +2064,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       "--porcelain=2",
       "--branch",
       "-z",
+      // Overrides `status.showUntrackedFiles=no`, which would hide new files from commits.
+      "--untracked-files=normal",
       ...(includeDivergence ? [] : ["--no-ahead-behind"]),
     ];
     const indexResult = yield* executeGitWithStableDiagnostics(
