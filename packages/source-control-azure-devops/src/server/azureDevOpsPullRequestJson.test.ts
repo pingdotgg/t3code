@@ -2,6 +2,7 @@ import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  decodeFilesDiffJson,
   decodeItemContentJson,
   decodeIterationChangesJson,
   decodeIterationsJson,
@@ -428,6 +429,113 @@ describe("decodeItemContentJson", () => {
       contents: "",
       isBinary: false,
     });
+  });
+});
+
+/** A page's JSON as a string, in ASCII: what `az` prints for `--query to_string(@)`. */
+const asQuotedPage = (page: unknown) =>
+  JSON.stringify(JSON.stringify(page)).replace(
+    /[\u0080-\uffff]/g,
+    (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+
+describe("decodeFilesDiffJson", () => {
+  const editBlock = {
+    changeType: "edit",
+    originalLineNumberStart: 2,
+    originalLinesCount: 1,
+    originalLines: ["two"],
+    modifiedLineNumberStart: 2,
+    modifiedLinesCount: 1,
+    modifiedLines: ["two again — §6"],
+  };
+
+  it("reads each file with its blocks, naming a deleted file by the path it had", () => {
+    const files = expectSuccess(
+      decodeFilesDiffJson(
+        asQuotedPage({
+          fileDiffs: [
+            {
+              path: "/docs/new.md",
+              originalPath: "/docs/old.md",
+              changeType: "edit, rename",
+              lineDiffBlocks: [editBlock],
+            },
+            { path: null, originalPath: "/gone.md", changeType: "delete" },
+          ],
+        }),
+      ),
+    );
+
+    expect(files).toEqual([
+      {
+        change: {
+          path: "docs/new.md",
+          oldPath: "docs/old.md",
+          changeKind: "rename-changed",
+          objectId: null,
+          originalObjectId: null,
+        },
+        blocks: [
+          {
+            kind: "edit",
+            oldStart: 2,
+            oldCount: 1,
+            newStart: 2,
+            newCount: 1,
+            oldLines: ["two"],
+            newLines: ["two again — §6"],
+          },
+        ],
+      },
+      {
+        change: {
+          path: "gone.md",
+          oldPath: "gone.md",
+          changeKind: "deleted",
+          objectId: null,
+          originalObjectId: null,
+        },
+        blocks: [],
+      },
+    ]);
+  });
+
+  it("keeps a file whose blocks it cannot trust, so the caller can read it another way", () => {
+    const files = expectSuccess(
+      decodeFilesDiffJson(
+        asQuotedPage({
+          fileDiffs: [
+            {
+              path: "/a.md",
+              originalPath: "/a.md",
+              changeType: "edit",
+              lineDiffBlocks: [{ ...editBlock, changeType: "move" }],
+            },
+            {
+              path: "/b.md",
+              originalPath: "/b.md",
+              changeType: "edit",
+              lineDiffBlocks: [{ ...editBlock, modifiedLinesCount: undefined }],
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(files.map((file) => file.blocks)).toEqual([null, null]);
+  });
+
+  it.each([
+    ["a page without its files", asQuotedPage({ pullRequestTitle: "Anything" })],
+    ["a file that names no path", asQuotedPage({ fileDiffs: [{ changeType: "edit" }] })],
+    [
+      "a file that is not one",
+      asQuotedPage({ fileDiffs: [{ path: "/a.md", originalPath: "/a.md" }, "unexpected"] }),
+    ],
+    ["a page that is not quoted", asJson({ fileDiffs: [] })],
+  ])("fails the whole page for %s, rather than shift the files after it", (_name, raw) => {
+    expect(Result.isFailure(decodeFilesDiffJson(raw))).toBe(true);
   });
 });
 

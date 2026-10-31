@@ -360,6 +360,25 @@ const RawChangePageSchema = Schema.Struct({
   nextSkip: Schema.optional(Schema.NullOr(Schema.Number)),
 });
 
+const RawFileDiffBlockSchema = Schema.Struct({
+  changeType: Schema.Literals(["none", "add", "delete", "edit"]),
+  originalLineNumberStart: Schema.Int,
+  originalLinesCount: Schema.Int,
+  modifiedLineNumberStart: Schema.Int,
+  modifiedLinesCount: Schema.Int,
+  originalLines: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+  modifiedLines: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+});
+
+const RawFileDiffSchema = Schema.Struct({
+  path: Schema.optional(Schema.NullOr(Schema.String)),
+  originalPath: Schema.optional(Schema.NullOr(Schema.String)),
+  changeType: Schema.optional(Schema.NullOr(Schema.String)),
+  lineDiffBlocks: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))),
+});
+
+const RawFilesDiffPageSchema = Schema.Struct({ fileDiffs: Schema.Array(Schema.Unknown) });
+
 const RawItemContentSchema = Schema.Struct({
   content: Schema.optional(Schema.NullOr(Schema.String)),
   contentMetadata: Schema.optional(
@@ -386,6 +405,22 @@ export interface AzureDevOpsChangePage {
   readonly nextSkip: number | null;
 }
 
+export interface AzureDevOpsDiffBlock {
+  readonly kind: "none" | "add" | "delete" | "edit";
+  readonly oldStart: number;
+  readonly oldCount: number;
+  readonly newStart: number;
+  readonly newCount: number;
+  readonly oldLines: ReadonlyArray<string>;
+  readonly newLines: ReadonlyArray<string>;
+}
+
+export interface AzureDevOpsFileDiff {
+  readonly change: AzureDevOpsChangeEntry;
+  /** Null when the file has no blocks to go by, so it is read instead. */
+  readonly blocks: ReadonlyArray<AzureDevOpsDiffBlock> | null;
+}
+
 export interface AzureDevOpsItemContent {
   readonly contents: string;
   readonly isBinary: boolean;
@@ -395,6 +430,10 @@ const decodeIterationPage = decodeJsonResult(RawIterationPageSchema);
 const decodeIterationEntry = Schema.decodeUnknownExit(RawIterationSchema);
 const decodeChangePage = decodeJsonResult(RawChangePageSchema);
 const decodeChangeEntry = Schema.decodeUnknownExit(RawChangeEntrySchema);
+const decodeQuotedJson = decodeJsonResult(Schema.String);
+const decodeFilesDiffPage = decodeJsonResult(RawFilesDiffPageSchema);
+const decodeFileDiff = Schema.decodeUnknownExit(RawFileDiffSchema);
+const decodeFileDiffBlock = Schema.decodeUnknownExit(RawFileDiffBlockSchema);
 const decodeItemContent = decodeJsonResult(RawItemContentSchema);
 
 /** Preserve whitespace to match patch paths and viewed marks. */
@@ -469,6 +508,61 @@ export function decodeIterationChangesJson(
     changes,
     nextSkip: nextSkip !== null && Number.isSafeInteger(nextSkip) && nextSkip > 0 ? nextSkip : null,
   });
+}
+
+function toDiffBlocks(raw: ReadonlyArray<unknown>): ReadonlyArray<AzureDevOpsDiffBlock> | null {
+  const blocks: AzureDevOpsDiffBlock[] = [];
+  for (const entry of raw) {
+    const decoded = decodeFileDiffBlock(entry);
+    if (Exit.isFailure(decoded)) return null;
+    const block = decoded.value;
+    blocks.push({
+      kind: block.changeType,
+      oldStart: block.originalLineNumberStart,
+      oldCount: block.originalLinesCount,
+      newStart: block.modifiedLineNumberStart,
+      newCount: block.modifiedLinesCount,
+      oldLines: block.originalLines ?? [],
+      newLines: block.modifiedLines ?? [],
+    });
+  }
+  return blocks;
+}
+
+/**
+ * One page of files with their diff blocks. A row that cannot be read fails the page, which
+ * counts every row Azure sent. The page arrives as a JSON string (`to_string(@)`) because on
+ * Windows `az` drops every character its console code page lacks from plain JSON, page-wide.
+ */
+export function decodeFilesDiffJson(
+  raw: string,
+): Result.Result<ReadonlyArray<AzureDevOpsFileDiff>, unknown> {
+  const quoted = decodeQuotedJson(raw);
+  if (!Result.isSuccess(quoted)) return Result.fail(quoted.failure);
+  const decoded = decodeFilesDiffPage(quoted.success);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const files: AzureDevOpsFileDiff[] = [];
+  for (const entry of decoded.success.fileDiffs) {
+    const decodedFile = decodeFileDiff(entry);
+    if (Exit.isFailure(decodedFile)) return Result.fail(decodedFile.cause);
+    const file = decodedFile.value;
+    const originalPath = toRepositoryPath(file.originalPath);
+    // A deleted file has no current path.
+    const path = toRepositoryPath(file.path) ?? originalPath;
+    if (path === null) return Result.fail(new Error("A file diff named no path."));
+    const oldPath = originalPath ?? path;
+    files.push({
+      change: {
+        path,
+        oldPath,
+        changeKind: toChangeKind(file.changeType, oldPath !== path),
+        objectId: null,
+        originalObjectId: null,
+      },
+      blocks: toDiffBlocks(file.lineDiffBlocks ?? []),
+    });
+  }
+  return Result.succeed(files);
 }
 
 /** Azure returns an empty body for absent files. Binary status comes from its metadata. */
