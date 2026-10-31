@@ -329,7 +329,7 @@ it.effect.each(["failure", "interrupt"] as const)(
                   ? Effect.never
                   : Effect.fail(
                       PlatformError.systemError({
-                        _tag: "PermissionDenied",
+                        _tag: "BadResource",
                         module: "FileSystem",
                         method: "link",
                       }),
@@ -423,8 +423,8 @@ it.effect.each([".pack", ".idx"] as const)(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
-it.effect.each([".idx", ".pack"] as const)(
-  "checkpoint publication failure linking %s cannot strand a large pack",
+it.effect.each([".idx", ".pack", "all"] as const)(
+  "checkpoint publication handles %s link failures without stranding a large pack",
   (extension) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -438,8 +438,19 @@ it.effect.each([".idx", ".pack"] as const)(
       const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
         Effect.provideService(FileSystem.FileSystem, {
           ...fs,
+          rename:
+            extension === "all"
+              ? fs.rename
+              : () =>
+                  Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "PermissionDenied",
+                      module: "FileSystem",
+                      method: "rename",
+                    }),
+                  ),
           link: (source, destination) =>
-            destination.endsWith(extension)
+            extension === "all" || destination.endsWith(extension)
               ? Effect.fail(
                   PlatformError.systemError({
                     _tag: "PermissionDenied",
@@ -453,10 +464,16 @@ it.effect.each([".idx", ".pack"] as const)(
       const result = yield* captureDriver.checkpoints
         .captureCheckpoint({ cwd, checkpointRef })
         .pipe(Effect.result);
-      assert.strictEqual(result._tag, "Failure");
+      assert.strictEqual(result._tag, extension === "all" ? "Success" : "Failure");
       const files = yield* fs.readDirectory(path.join(cwd, ".git/objects/pack"));
-      assert.isFalse(files.some((name) => name.endsWith(".pack")));
-      assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+      assert.strictEqual(
+        files.some((name) => name.endsWith(".pack")),
+        extension === "all",
+      );
+      assert.strictEqual(
+        yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }),
+        extension === "all",
+      );
       // A failed pack link may leave its small index. Retrying completes the pair
       // without deleting shared metadata that a concurrent writer could be using.
       yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
@@ -493,7 +510,21 @@ it.effect.each([false, true])(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const liveProcess = yield* VcsProcess.VcsProcess;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) =>
+            liveProcess
+              .run(input)
+              .pipe(
+                Effect.map((result) =>
+                  input.args.includes("--path-format=absolute")
+                    ? { ...result, stdout: `--path-format=absolute\n${result.stdout}` }
+                    : result,
+                ),
+              ),
+        }),
+      );
       const sandbox = yield* fs.makeTempDirectoryScoped({ prefix: "t3-explicit-objects-" });
       const cwd = path.join(sandbox, "repo");
       yield* fs.makeDirectory(cwd);
