@@ -1,5 +1,10 @@
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
-import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ModelSelection,
+  ProviderInstanceId,
+  ServerSettings,
+} from "@t3tools/contracts";
 
 export function modelFavoriteKey(provider: ProviderInstanceId, model: string): string {
   return `${provider}:${model}`;
@@ -72,4 +77,59 @@ export function providerSectionIsCollapsed(input: {
     return false;
   }
   return input.defaultExpanded ? input.hasExpansionOverride : !input.hasExpansionOverride;
+}
+
+/** A local visibility toggle shown until the write settles and a newer settings snapshot replaces `baseline`. */
+export type HiddenModelOverride = {
+  readonly hidden: boolean;
+  readonly baseline: ServerSettings;
+  readonly pending: boolean;
+};
+
+export function hiddenModelOverrideKey(
+  environmentId: EnvironmentId,
+  selection: Pick<ModelSelection, "instanceId" | "model">,
+): string {
+  return JSON.stringify([environmentId, selection.instanceId, selection.model]);
+}
+
+export function withHiddenModelOverrides(
+  groups: ReadonlyArray<ProviderGroup>,
+  environmentId: EnvironmentId | null,
+  settings: ServerSettings | undefined,
+  overrides: ReadonlyMap<string, HiddenModelOverride>,
+): ReadonlyArray<ProviderGroup> {
+  if (!environmentId || overrides.size === 0) return groups;
+  return groups.map((group) => ({
+    ...group,
+    models: group.models.map((model) => {
+      const override = overrides.get(hiddenModelOverrideKey(environmentId, model.selection));
+      if (
+        !override ||
+        !model.canHide ||
+        (!override.pending && override.baseline !== settings) ||
+        override.hidden === (model.isHidden === true)
+      ) {
+        return model;
+      }
+      return { ...model, isHidden: override.hidden };
+    }),
+  }));
+}
+
+export function settleHiddenModelOverride(
+  overrides: ReadonlyMap<string, HiddenModelOverride>,
+  key: string,
+  override: HiddenModelOverride,
+  succeeded: boolean,
+  currentSettings: ServerSettings | undefined,
+): ReadonlyMap<string, HiddenModelOverride> {
+  if (overrides.get(key) !== override) return overrides;
+  const next = new Map(overrides);
+  if (succeeded && currentSettings === override.baseline) {
+    next.set(key, { ...override, pending: false });
+  } else {
+    next.delete(key);
+  }
+  return next;
 }

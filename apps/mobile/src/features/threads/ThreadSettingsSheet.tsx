@@ -121,10 +121,14 @@ import {
 import {
   canCommitPendingModel,
   favoritesFirst,
+  hiddenModelOverrideKey,
+  type HiddenModelOverride,
   modelFavoriteKey,
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
   providerSectionIsCollapsed,
+  settleHiddenModelOverride,
+  withHiddenModelOverrides,
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 
@@ -347,7 +351,10 @@ function ThreadSettingsSessionProvider(
     new Map<string, { favorite: boolean; settings: ServerSettings; pending: boolean }>(),
   );
   const [pendingHiddenKeys, setPendingHiddenKeys] = useState<ReadonlySet<string>>(() => new Set());
-  const providerGroups =
+  const [hiddenOverrides, setHiddenOverrides] = useState<ReadonlyMap<string, HiddenModelOverride>>(
+    () => new Map(),
+  );
+  const providerGroups = withHiddenModelOverrides(
     manageHidden && config
       ? groupByProvider(
           buildModelOptions(
@@ -358,7 +365,11 @@ function ThreadSettingsSessionProvider(
             true,
           ),
         )
-      : props.providerGroups;
+      : props.providerGroups,
+    props.environmentId,
+    settings,
+    hiddenOverrides,
+  );
   const legacyFavorites = AsyncResult.isSuccess(preferences)
     ? (preferences.value.modelFavorites ?? EMPTY_MODEL_FAVORITES)
     : EMPTY_MODEL_FAVORITES;
@@ -454,30 +465,44 @@ function ThreadSettingsSessionProvider(
     }
   };
   const toggleHidden = (option: ModelOption) => {
-    if (
-      !settings ||
-      !props.environmentId ||
-      !option.canHide ||
-      pendingHidden.current.has(option.key)
-    )
+    const environmentId = props.environmentId;
+    const baseline = environmentId
+      ? registry.get(environmentServerConfigsAtom).get(environmentId)?.settings
+      : undefined;
+    if (!baseline || !environmentId || !option.canHide || pendingHidden.current.has(option.key))
       return;
+    const overrideKey = hiddenModelOverrideKey(environmentId, option.selection);
+    const override = { hidden: !option.isHidden, baseline, pending: true };
     pendingHidden.current.add(option.key);
     setPendingHiddenKeys(new Set(pendingHidden.current));
+    setHiddenOverrides((current) => new Map(current).set(overrideKey, override));
     void Haptics.selectionAsync();
     void saveSettings({
-      environmentId: props.environmentId,
+      environmentId,
       input: {
         patch: {
           setModelsHidden: [
             {
               provider: option.selection.instanceId,
               model: option.selection.model,
-              hidden: !option.isHidden,
+              hidden: override.hidden,
             },
           ],
         },
       },
-    }).then(() => {
+    }).then((result) => {
+      const currentSettings = registry
+        .get(environmentServerConfigsAtom)
+        .get(environmentId)?.settings;
+      setHiddenOverrides((current) =>
+        settleHiddenModelOverride(
+          current,
+          overrideKey,
+          override,
+          AsyncResult.isSuccess(result),
+          currentSettings,
+        ),
+      );
       pendingHidden.current.delete(option.key);
       setPendingHiddenKeys(new Set(pendingHidden.current));
     });
