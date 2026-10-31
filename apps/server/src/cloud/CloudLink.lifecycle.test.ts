@@ -138,6 +138,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     readonly address?: HttpServer.HttpServer["Service"]["address"];
     readonly respondEffect?: Effect.Effect<Response>;
     readonly getExisting?: CliTokenManager.CloudCliTokenManager["Service"]["getExisting"];
+    readonly latestReachability?: ConnectReachability.ConnectReachability["Service"]["latest"];
   }
 
   const writeLauncherState = (update: ServiceUpdateRecord) =>
@@ -163,7 +164,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
           ConnectReachability.ConnectReachability,
           ConnectReachability.ConnectReachability.of({
             check: Effect.die("unused"),
-            latest: Effect.succeedNone,
+            latest: harness.latestReachability ?? Effect.succeedNone,
           }),
         ),
         Effect.provideService(HttpServer.HttpServer, {
@@ -1047,5 +1048,58 @@ describe("releaseManagedTunnelOnShutdown", () => {
       });
       expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(false);
     }).pipe(provideReleaseHarness({ store: failingStore, applyConfigCalls, requests }));
+  });
+
+  it.effect("does not report a not-linked check once the managed tunnel config is stored", () => {
+    const { store } = makeMemorySecretStore(managedLinkSecrets);
+    const notLinked = ConnectReachability.classifyReachability(
+      {
+        managedTunnelConfigured: false,
+        connector: null,
+        endpoint: null,
+        edgeReachable: null,
+        exitNode: null,
+      },
+      "2026-10-29T00:00:00.000Z",
+    );
+
+    return Effect.gen(function* () {
+      const state = yield* (yield* CloudLink.CloudLink).linkState();
+
+      expect(state.managedTunnelActive).toBe(true);
+      expect(state.reachability?.status === "unreachable" && state.reachability.cause).not.toBe(
+        "not_linked",
+      );
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls: [],
+        requests: [],
+        latestReachability: Effect.succeedSome(notLinked),
+      }),
+    );
+  });
+
+  it.effect("reports a check that ran after the managed tunnel config was stored", () => {
+    const { store } = makeMemorySecretStore(managedLinkSecrets);
+    const reachable = {
+      status: "reachable" as const,
+      checkedAt: "2026-10-29T00:00:00.000Z",
+      readyConnections: 4,
+      protocol: "quic",
+    };
+
+    return Effect.gen(function* () {
+      const state = yield* (yield* CloudLink.CloudLink).linkState();
+
+      expect(state.reachability).toEqual(reachable);
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls: [],
+        requests: [],
+        latestReachability: Effect.succeedSome(reachable),
+      }),
+    );
   });
 });

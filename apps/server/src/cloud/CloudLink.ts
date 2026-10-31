@@ -1285,6 +1285,13 @@ const make = Effect.gen(function* () {
       ],
       { concurrency: 8 },
     );
+    // A not-linked check predates the stored tunnel config; the next check replaces it.
+    const currentReachability = Option.filter(
+      latestReachability,
+      (result) =>
+        Option.isNone(endpointRuntimeConfig) ||
+        !(result.status === "unreachable" && result.cause === "not_linked"),
+    );
     return {
       linked: Option.isSome(cloudUserId),
       linkRevoked: Option.isSome(cloudUserId) && Option.isSome(revoked),
@@ -1297,7 +1304,7 @@ const make = Effect.gen(function* () {
         : false,
       holdWebhooksWhileOffline:
         Option.isSome(holdWebhooks) && bytesToString(holdWebhooks.value) === "true",
-      ...(Option.isSome(latestReachability) ? { reachability: latestReachability.value } : {}),
+      ...(Option.isSome(currentReachability) ? { reachability: currentReachability.value } : {}),
     } satisfies EnvironmentCloudLinkStateResult;
   });
 

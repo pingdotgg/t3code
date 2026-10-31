@@ -68,10 +68,11 @@ export function classifyReachability(
   const restart = "Restart T3 Code. If it stays, run `t3 connect` again.";
 
   if (!facts.managedTunnelConfigured) {
+    // A running server reads the link `t3 connect` stores only at startup.
     return fail(
       "not_linked",
       "The server has not set up a T3 Connect tunnel.",
-      "Run `t3 connect`, then restart the server (`t3 service restart`) so it applies the link.",
+      "Run `t3 connect`, then restart T3 Code so it applies the link.",
     );
   }
   if (connector === null) {
