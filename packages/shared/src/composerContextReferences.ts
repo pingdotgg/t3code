@@ -360,6 +360,14 @@ export function projectComposerContextForProvider(input: {
   return `${body}\n\n<${CONTEXT_ENVELOPE_TAG} version="1">\n${entries.join("\n")}\n</${CONTEXT_ENVELOPE_TAG}>`;
 }
 
+/** Display text for a provider-projected message: the body without its trailing envelope. */
+export function stripComposerContextEnvelope(text: string): string {
+  const close = `</${CONTEXT_ENVELOPE_TAG}>`;
+  if (!text.endsWith(close)) return text;
+  const start = text.lastIndexOf(`\n\n<${CONTEXT_ENVELOPE_TAG} version="1">\n`);
+  return start === -1 ? text : text.slice(0, start);
+}
+
 // An agent reads threads on its own machine and on those it links to, even when a draft
 // moves between machines.
 export function threadContextsOutsideEnvironment(input: {

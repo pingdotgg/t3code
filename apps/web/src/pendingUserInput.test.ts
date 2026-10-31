@@ -2,6 +2,8 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "./lib/composerContextReferences";
 import {
+  attachmentContextRecord,
+  imageContextReference,
   reviewCommentContextRecord,
   reviewCommentContextReference,
   threadContextReference,
@@ -50,6 +52,36 @@ describe("projectPendingUserInputAnswer", () => {
     expect(projected).toContain(comment.text);
     expect(projected).toContain(comment.diff);
     expect(projected).not.toContain("t3-context://");
+  });
+
+  it("sends image chips beside review comments as attached images", () => {
+    const comment = {
+      id: "review-comment-image",
+      sectionId: "working-tree",
+      sectionTitle: "Working tree",
+      filePath: "docs/plan.md",
+      startIndex: 15,
+      endIndex: 15,
+      rangeLabel: "L16",
+      text: "Match this screenshot",
+      diff: "+- Step 3",
+    };
+    const image = {
+      type: "image" as const,
+      id: "image-answer",
+      name: "screen.png",
+      mimeType: "image/png",
+      sizeBytes: 4,
+      previewUrl: "blob:screen",
+      file: new File(["png"], "screen.png", { type: "image/png" }),
+    };
+    const answer = `${formatInlineContextReference(imageContextReference(image))} vs ${formatInlineContextReference(reviewCommentContextReference(comment))}`;
+    const projected = projectPendingUserInputAnswer(answer, [
+      reviewCommentContextRecord(comment),
+      attachmentContextRecord({ attachment: image, attachmentId: "uploaded-image" }),
+    ]);
+    expect(projected).toContain("uploaded-image");
+    expect(projected).not.toContain('unavailable="true"');
   });
 
   // regression: #18789 answers to pending questions lost exact text and option values

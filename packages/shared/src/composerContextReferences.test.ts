@@ -15,6 +15,7 @@ import {
   projectComposerContextForProvider,
   restoreAttachmentOnlyBootstrapPrompt,
   stripAttachmentOnlyBootstrapPrompt,
+  stripComposerContextEnvelope,
   threadContextRecord,
   threadContextsOutsideEnvironment,
   toComposerContextId,
@@ -320,6 +321,16 @@ describe("provider projection", () => {
     expect(projected).toContain('<context kind="terminal" id="ctx_t" unavailable="true"/>');
     expect(projected).not.toContain("another payload");
     expect(projected).not.toContain("boom");
+  });
+
+  it("strips the trailing envelope for display and leaves other text unchanged", () => {
+    const projected = projectComposerContextForProvider({
+      text: "See [log](t3-context://v1/terminal/ctx_t)",
+      records: [terminal],
+    });
+    expect(stripComposerContextEnvelope(projected)).toBe("See [Terminal: log; ref=ctx_t]");
+    const plain = 'Quote <t3_context version="1">\n</t3_context>';
+    expect(stripComposerContextEnvelope(plain)).toBe(plain);
   });
 });
 
