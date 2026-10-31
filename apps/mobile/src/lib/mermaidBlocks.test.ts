@@ -40,4 +40,44 @@ describe("splitMarkdownWithMermaid", () => {
       expect(first[0].id).toBe(second[0].id);
     }
   });
+
+  it("accepts fences longer than three backticks", () => {
+    const segments = splitMarkdownWithMermaid(
+      ["````mermaid", "flowchart TD", "  A --> B", "````"].join("\n"),
+    );
+    expect(segments).toMatchObject([{ kind: "mermaid", source: "flowchart TD\n  A --> B" }]);
+  });
+
+  it("keeps a mermaid example inside a non-mermaid fence whole", () => {
+    const markdown = ["```md", "```mermaid", "A --> B", "```", "```"].join("\n");
+    const segments = splitMarkdownWithMermaid(markdown);
+    expect(segments.map((segment) => segment.kind)).toEqual(["markdown"]);
+    expect(segments[0]).toMatchObject({ kind: "markdown", markdown });
+  });
+
+  it("uses position keys that survive content appends", () => {
+    const before = splitMarkdownWithMermaid("```mermaid\nA --> B\n```\n\nHello");
+    const after = splitMarkdownWithMermaid("```mermaid\nA --> B\n```\n\nHello world");
+    expect(before.map((segment) => segment.key)).toEqual(after.map((segment) => segment.key));
+  });
+
+  it("shares link reference definitions with segments after a fence", () => {
+    const segments = splitMarkdownWithMermaid(
+      [
+        "[guide]: https://example.com",
+        "",
+        "```mermaid",
+        "A --> B",
+        "```",
+        "",
+        "[Open][guide]",
+      ].join("\n"),
+    );
+    const tail = segments[segments.length - 1];
+    expect(tail).toMatchObject({ kind: "markdown" });
+    if (tail?.kind === "markdown") {
+      expect(tail.markdown).toContain("[guide]: https://example.com");
+      expect(tail.markdown).toContain("[Open][guide]");
+    }
+  });
 });

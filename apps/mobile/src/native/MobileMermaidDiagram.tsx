@@ -6,8 +6,9 @@ import { AppText } from "../components/ui/AppText";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 
 function buildHtml(source: string, dark: boolean): string {
-  // Source travels as JSON inside script, never as raw HTML.
-  const payload = JSON.stringify({ source, dark });
+  // Source travels as JSON inside script. Escape `<` so a `</script>` in the
+  // diagram text cannot close the script tag and run as HTML.
+  const payload = JSON.stringify({ source, dark }).replace(/</g, "\\u003c");
   return `<!doctype html>
 <html>
 <head>
@@ -67,6 +68,7 @@ function isHeightMessage(message: HeightMessage | ErrorMessage): message is Heig
 
 export function MobileMermaidDiagram(props: { readonly source: string; readonly dark: boolean }) {
   const [height, setHeight] = useState(220);
+  const [tall, setTall] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const [showCode, setShowCode] = useState(false);
   const html = useMemo(() => buildHtml(props.source, props.dark), [props.source, props.dark]);
@@ -76,7 +78,9 @@ export function MobileMermaidDiagram(props: { readonly source: string; readonly 
     if (!message) return;
     if (isHeightMessage(message)) {
       if (Number.isFinite(message.height)) {
-        setHeight(Math.min(Math.max(Math.ceil(message.height) + 16, 120), 800));
+        const next = Math.ceil(message.height) + 16;
+        setTall(next > 800);
+        setHeight(Math.min(Math.max(next, 120), 800));
       }
       return;
     }
@@ -119,7 +123,8 @@ export function MobileMermaidDiagram(props: { readonly source: string; readonly 
           javaScriptEnabled
           domStorageEnabled={false}
           allowFileAccess={false}
-          scrollEnabled={false}
+          scrollEnabled={tall}
+          onLoadStart={() => setFailed(null)}
           style={{ height }}
           onMessage={onMessage}
         />
