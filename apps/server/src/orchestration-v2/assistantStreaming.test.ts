@@ -2,7 +2,8 @@ import { MessageId, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as DateTime from "effect/DateTime";
 import { assert, describe, expect, it } from "vite-plus/test";
-import { makeAssistantStreamingFilter, splitBufferedAssistantText } from "./assistantStreaming.ts";
+import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
+import { splitBufferedAssistantText } from "@t3tools/shared/assistantStreaming";
 
 describe("V2 assistant streaming", () => {
   it("keeps code fences intact", () => {
