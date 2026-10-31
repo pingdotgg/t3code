@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { type PointerEvent as ReactPointerEvent, useLayoutEffect, useState } from "react";
 
-import { getLocalStorageItem, setLocalStorageItem } from "./useLocalStorage";
+import { useLocalStorage, writeLocalStorageValue } from "./useLocalStorage";
 import { useResizeDrag } from "./useResizeDrag";
 
 const WidthSchema = Schema.Finite;
@@ -39,31 +39,23 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     return Math.max(minWidth, Math.min(maxWidth, value));
   };
 
-  const readWidth = () => {
-    if (typeof window === "undefined") return defaultWidth;
-    try {
-      const stored = getLocalStorageItem(storageKey, WidthSchema);
-      return clamp(stored ?? defaultWidth);
-    } catch (error) {
-      console.error("Could not read persisted panel width.", error);
-      return defaultWidth;
-    }
-  };
-  const [widthState, setWidthState] = useState(() => ({ storageKey, width: readWidth() }));
-  if (widthState.storageKey !== storageKey) {
-    setWidthState({ storageKey, width: readWidth() });
-  }
-
-  const clampedWidth = clamp(widthState.width);
+  // Panels that share a key follow each other's drags, in this tab and in others.
+  const [storedWidth] = useLocalStorage(storageKey, defaultWidth, WidthSchema);
+  // Resizing remains usable for this session when browser storage is unavailable.
+  const [unsaved, setUnsaved] = useState<{
+    readonly storageKey: string;
+    readonly storedWidth: number;
+    readonly width: number;
+  } | null>(null);
+  const clampedWidth = clamp(
+    unsaved?.storageKey === storageKey && unsaved.storedWidth === storedWidth
+      ? unsaved.width
+      : storedWidth,
+  );
 
   const commitWidth = (nextStorageKey: string, nextWidth: number) => {
-    // Resizing remains usable for this session when browser storage is unavailable.
-    setWidthState({ storageKey: nextStorageKey, width: nextWidth });
-    try {
-      setLocalStorageItem(nextStorageKey, nextWidth, WidthSchema);
-    } catch (error) {
-      console.error("Could not persist panel width.", error);
-    }
+    const saved = writeLocalStorageValue(nextStorageKey, nextWidth, defaultWidth, WidthSchema);
+    setUnsaved(saved ? null : { storageKey: nextStorageKey, storedWidth, width: nextWidth });
   };
 
   const drag = useResizeDrag<HTMLElement>((event) => {
