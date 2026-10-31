@@ -399,10 +399,13 @@ export function useComposerContextImport(input: {
             !linkedEnvironments.has(record.environmentId)
           )
             break;
-          addComposerDraftThreadContexts(threadDraftTarget, [record], {
+          const imported = conflicts
+            ? { ...record, contextId: toKindScopedComposerContextId("thread", randomUUID()) }
+            : record;
+          addComposerDraftThreadContexts(threadDraftTarget, [imported], {
             appendReference: false,
           });
-          rewritten.set(record.contextId, record.contextId);
+          rewritten.set(record.contextId, imported.contextId);
           break;
         }
         case "environment": {
