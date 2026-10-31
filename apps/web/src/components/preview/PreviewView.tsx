@@ -89,7 +89,11 @@ import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
 import { Badge } from "~/components/ui/badge";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { alternatePreviewRuntime, useRendersServerTabNatively } from "~/browser/previewRuntime";
-import { ServerBrowserSurface, handoffServerBrowserFrame, type ServerBrowserHandle } from "~/browser/ServerBrowserSurface";
+import {
+  ServerBrowserSurface,
+  handoffServerBrowserFrame,
+  type ServerBrowserHandle,
+} from "~/browser/ServerBrowserSurface";
 import { cn } from "~/lib/utils";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { usePreviewSession } from "./usePreviewSession";
@@ -495,7 +499,13 @@ export function PreviewView({
       usePreviewMiniPlayerStore.getState().close(threadRef);
       return;
     }
-    if (isServerTab) handoffServerBrowserFrame(threadRef.environmentId, threadRef.threadId, tabId, serverSurfaceRef.current?.canvas() ?? null);
+    if (isServerTab)
+      handoffServerBrowserFrame(
+        threadRef.environmentId,
+        threadRef.threadId,
+        tabId,
+        serverSurfaceRef.current?.canvas() ?? null,
+      );
     usePreviewMiniPlayerStore.getState().open(threadRef, browserMiniPlayerSource(tabId));
     useRightPanelStore.getState().close(threadRef);
   };
