@@ -2,7 +2,7 @@ import { CheckIcon, MessageSquareIcon, XIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 
-import type { LinearActivityPill as Pill } from "./linearIssueList.logic";
+import type { LinearActivityPill as Pill } from "@t3tools/client-runtime/linear/activity";
 
 const KIND_CLASS: Record<Pill["kind"], string> = {
   "pipeline-failed": "border-destructive/35 bg-destructive/8 text-destructive-foreground",

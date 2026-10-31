@@ -1,7 +1,7 @@
 import { type ComposerThreadTarget, useComposerDraftStore } from "../../composerDraftStore";
 import { cn } from "../../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { linearMoveHint } from "./linearLaunch.logic";
+import { linearMoveHint } from "@t3tools/client-runtime/linear/launch-plan";
 
 function HintToggle({
   label,

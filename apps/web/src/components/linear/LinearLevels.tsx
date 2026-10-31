@@ -6,9 +6,9 @@ import { cn } from "~/lib/utils";
 import { LinearIssueList } from "./LinearIssueList";
 import type { LinearIssueRowContext } from "./LinearIssueRow";
 import { LinearMilestoneIcon, LinearTeamBadge } from "./linearIcons";
-import { formatProgressPercent } from "./linearIssueList.logic";
-import { formatLinearTargetDate } from "./linearJump";
-import { NO_MILESTONE_ID } from "./linearSearch";
+import { formatProgressPercent } from "@t3tools/client-runtime/linear/issue-list";
+import { formatLinearTargetDate } from "@t3tools/client-runtime/linear/jump";
+import { NO_MILESTONE_ID } from "@t3tools/client-runtime/linear/search";
 import type { LinearIssue } from "@t3tools/contracts";
 
 function ProgressBar({ progress, className }: { progress: number; className?: string }) {

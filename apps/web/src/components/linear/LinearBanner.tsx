@@ -2,7 +2,7 @@ import { RefreshCwIcon } from "lucide-react";
 
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
-import type { LinearDegradation } from "./linearDegradation";
+import type { LinearDegradation } from "@t3tools/client-runtime/linear/degradation";
 
 const COPY: Record<LinearDegradation, string> = {
   rate_limited: "Linear rate limit hit. Showing cached data.",

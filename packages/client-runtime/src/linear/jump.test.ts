@@ -1,7 +1,7 @@
 import type { LinearMilestone, LinearProject, LinearTeam } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatLinearTargetDate, matchLinearJumpTargets } from "./linearJump";
+import { formatLinearTargetDate, matchLinearJumpTargets } from "./jump.ts";
 
 const team = { id: "t1", key: "ATT", name: "Attraccess" } as LinearTeam;
 const project = { id: "p1", name: "Attraccess project" } as LinearProject;
@@ -39,6 +39,7 @@ describe("matchLinearJumpTargets", () => {
 describe("formatLinearTargetDate", () => {
   it("formats date-only strings without a timezone shift", () => {
     expect(formatLinearTargetDate("2026-11-14")).toBe(
+      // @effect-diagnostics-next-line globalDate:off
       new Date(2026, 10, 14).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
     );
     expect(formatLinearTargetDate(null)).toBeNull();

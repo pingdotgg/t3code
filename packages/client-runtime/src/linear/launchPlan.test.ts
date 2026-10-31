@@ -7,7 +7,7 @@ import {
   linearThreadUrl,
   linearWriteBackOf,
   resolveLinearChatWorkspace,
-} from "./linearLaunch.logic";
+} from "./launchPlan.ts";
 
 const states: ReadonlyArray<LinearWorkflowState> = [
   { id: "todo", name: "Todo", type: "unstarted", color: "#999", position: 1 },

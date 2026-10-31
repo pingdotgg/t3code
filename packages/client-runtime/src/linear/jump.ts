@@ -1,6 +1,6 @@
 import type { LinearIssue, LinearMilestone, LinearProject, LinearTeam } from "@t3tools/contracts";
 
-import { NO_MILESTONE_ID, type LinearScope } from "./linearSearch";
+import { NO_MILESTONE_ID, type LinearScope } from "./search.ts";
 
 export type LinearJumpTarget =
   | {
@@ -115,8 +115,10 @@ export function formatLinearTargetDate(value: string | null): string | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})/u.exec(value);
   const date =
     match === null
-      ? new Date(value)
-      : new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+      ? // @effect-diagnostics-next-line globalDate:off
+        new Date(value)
+      : // @effect-diagnostics-next-line globalDate:off
+        new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }

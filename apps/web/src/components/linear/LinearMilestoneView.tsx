@@ -18,7 +18,7 @@ import {
   DEFAULT_LINEAR_GROUP,
   type LinearSearch,
   type LinearSearchPatch,
-} from "./linearSearch";
+} from "@t3tools/client-runtime/linear/search";
 import {
   useLinearDegradation,
   useLinearIssues,

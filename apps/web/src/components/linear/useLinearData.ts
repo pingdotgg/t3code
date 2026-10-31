@@ -14,8 +14,11 @@ import { linearEnvironment } from "../../state/linear";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery, type EnvironmentQueryView } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { resolveLinearDegradation, type LinearDegradation } from "./linearDegradation";
-import { indexActivityByIssueId } from "./linearIssueList.logic";
+import {
+  resolveLinearDegradation,
+  type LinearDegradation,
+} from "@t3tools/client-runtime/linear/degradation";
+import { indexActivityByIssueId } from "@t3tools/client-runtime/linear/activity";
 
 /** Linear is read through the primary environment only. */
 export const useLinearEnvironmentId = usePrimaryEnvironmentId;

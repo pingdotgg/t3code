@@ -47,12 +47,12 @@ import {
   LinearStateIcon,
   LinearTeamBadge,
 } from "./linearIcons";
+import { formatProgressPercent } from "@t3tools/client-runtime/linear/issue-list";
 import {
   activityStatusLabel,
-  formatProgressPercent,
   pickActivityPill,
   stepTone,
-} from "./linearIssueList.logic";
+} from "@t3tools/client-runtime/linear/activity";
 import { useLinearLaunchActions } from "./linearLaunchTypes";
 import {
   useLinearActivity,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { classifyLinearFailure, resolveLinearDegradation } from "./linearDegradation";
+import { classifyLinearFailure, resolveLinearDegradation } from "./degradation.ts";
 
 const linearError = (reason: string) => ({ _tag: "LinearError", reason });
 const now = Date.parse("2026-01-01T00:00:00.000Z");

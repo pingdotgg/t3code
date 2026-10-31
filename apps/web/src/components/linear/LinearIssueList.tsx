@@ -10,8 +10,8 @@ import {
   groupLinearIssues,
   topLevelIssues,
   type LinearStatePositions,
-} from "./linearIssueList.logic";
-import type { LinearGroupBy } from "./linearSearch";
+} from "@t3tools/client-runtime/linear/issue-list";
+import type { LinearGroupBy } from "@t3tools/client-runtime/linear/search";
 
 function LinearIssueGroupSection({
   label,

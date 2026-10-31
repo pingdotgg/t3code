@@ -23,6 +23,38 @@
       "types": "./src/pipelineEditor.ts",
       "default": "./src/pipelineEditor.ts"
     },
+    "./linear/search": {
+      "types": "./src/linear/search.ts",
+      "default": "./src/linear/search.ts"
+    },
+    "./linear/issue-list": {
+      "types": "./src/linear/issueList.ts",
+      "default": "./src/linear/issueList.ts"
+    },
+    "./linear/jump": {
+      "types": "./src/linear/jump.ts",
+      "default": "./src/linear/jump.ts"
+    },
+    "./linear/degradation": {
+      "types": "./src/linear/degradation.ts",
+      "default": "./src/linear/degradation.ts"
+    },
+    "./linear/pipeline-dialog": {
+      "types": "./src/linear/pipelineDialog.ts",
+      "default": "./src/linear/pipelineDialog.ts"
+    },
+    "./linear/launch-plan": {
+      "types": "./src/linear/launchPlan.ts",
+      "default": "./src/linear/launchPlan.ts"
+    },
+    "./linear/record-launch": {
+      "types": "./src/linear/recordLaunch.ts",
+      "default": "./src/linear/recordLaunch.ts"
+    },
+    "./linear/activity": {
+      "types": "./src/linear/activity.ts",
+      "default": "./src/linear/activity.ts"
+    },
     "./pipeline-start": {
       "types": "./src/pipelineStart.ts",
       "default": "./src/pipelineStart.ts"

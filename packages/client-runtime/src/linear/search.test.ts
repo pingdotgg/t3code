@@ -13,7 +13,7 @@ import {
   patchLinearSearch,
   validateLinearRouteSearch,
   withLinearScope,
-} from "./linearSearch";
+} from "./search.ts";
 
 describe("parseLinearSearch", () => {
   it("drops garbage, defaults, and orphaned deeper levels", () => {

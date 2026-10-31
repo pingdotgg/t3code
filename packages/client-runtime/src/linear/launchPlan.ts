@@ -7,12 +7,26 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import {
+  buildLinearIssueContextRecord,
+  buildLinearIssuePrompt,
   resolveLinearMoveTarget,
   type LinearMappingResolution,
 } from "@t3tools/shared/linearLaunch";
 
-import type { DraftLinearIssue } from "../../composerDraftStore";
-import type { LinearLaunchWorkspace } from "./linearLaunchTypes";
+export type LinearLaunchWorkspace = "worktree" | "local";
+
+/** What a draft started from an issue carries until it is sent. */
+export interface LinearDraftIssue {
+  readonly issueId: string;
+  readonly identifier: string;
+  readonly teamId?: string;
+  readonly projectId?: string;
+  readonly branchName: string;
+  readonly mappedProjectId: string | null;
+  readonly moveTo: { readonly id: string; readonly name: string } | null;
+  readonly moveEnabled: boolean;
+  readonly commentEnabled: boolean;
+}
 
 type LaunchSettings = Pick<
   LinearSettings,
@@ -28,7 +42,7 @@ export function buildDraftLinearIssue(input: {
   readonly settings: LaunchSettings;
   readonly teamStates: ReadonlyArray<LinearWorkflowState> | null;
   readonly mapping: Pick<LinearMappingResolution, "projectRef"> | null;
-}): DraftLinearIssue {
+}): LinearDraftIssue {
   const { issue } = input.detail;
   const moveTarget =
     input.teamStates === null
@@ -53,7 +67,7 @@ export function buildDraftLinearIssue(input: {
 
 /** The write-back the server is asked to perform for one launch. */
 export function linearWriteBackOf(
-  launch: Pick<DraftLinearIssue, "moveTo" | "moveEnabled" | "commentEnabled">,
+  launch: Pick<LinearDraftIssue, "moveTo" | "moveEnabled" | "commentEnabled">,
 ): LinearRecordLaunchInput["writeBack"] {
   return {
     ...(launch.moveEnabled && launch.moveTo ? { moveToStateId: launch.moveTo.id } : {}),
@@ -79,6 +93,55 @@ export function linearThreadUrl(input: {
   return `${input.origin.replace(/\/+$/u, "")}/${input.environmentId}/${input.threadId}`;
 }
 
-export function linearMoveHint(launch: Pick<DraftLinearIssue, "identifier" | "moveTo">) {
+export function linearMoveHint(launch: Pick<LinearDraftIssue, "identifier" | "moveTo">) {
   return launch.moveTo ? `Moves ${launch.identifier} to ${launch.moveTo.name}` : null;
+}
+
+/** The T3 project a mapping points at, when it exists in the given environment. */
+export function findLinearMappedProject<
+  P extends { readonly id: string; readonly environmentId: string },
+>(input: {
+  readonly environmentId: string;
+  readonly mapping: Pick<LinearMappingResolution, "projectRef"> | null;
+  readonly projects: ReadonlyArray<P>;
+}): P | undefined {
+  const { mapping } = input;
+  if (mapping === null) return undefined;
+  return input.projects.find(
+    (project) => project.environmentId === input.environmentId && project.id === mapping.projectRef,
+  );
+}
+
+/**
+ * Everything a chat started from an issue needs: the attached context record, where it runs, the
+ * prompt, and the draft record. `formatReference` renders the client's inline chip for the record.
+ */
+export function buildLinearChatLaunchPlan(input: {
+  readonly detail: LinearIssueDetail;
+  readonly settings: LinearSettings;
+  readonly mapping: LinearMappingResolution | null;
+  readonly workspace: LinearLaunchWorkspace;
+  readonly teamStates: ReadonlyArray<LinearWorkflowState> | null;
+  readonly formatReference: (record: ReturnType<typeof buildLinearIssueContextRecord>) => string;
+}) {
+  const { detail, settings } = input;
+  const record = buildLinearIssueContextRecord(detail, {
+    subIssues: settings.includeSubIssues,
+    comments: settings.includeComments,
+    linkedPrs: settings.includeLinkedPrs,
+  });
+  return {
+    record,
+    workspace: resolveLinearChatWorkspace({
+      workspace: input.workspace,
+      baseBranch: input.mapping?.baseBranch ?? null,
+    }),
+    prompt: `${input.formatReference(record)}\n\n${buildLinearIssuePrompt(detail.issue)}`,
+    draftIssue: buildDraftLinearIssue({
+      detail,
+      settings,
+      teamStates: input.teamStates,
+      mapping: input.mapping,
+    }),
+  };
 }

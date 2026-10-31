@@ -7,7 +7,7 @@ import { cn } from "~/lib/utils";
 import { Spinner } from "../ui/spinner";
 import { Kbd } from "../ui/kbd";
 import { LinearGlyph } from "./linearIcons";
-import type { LinearJumpTarget } from "./linearJump";
+import type { LinearJumpTarget } from "@t3tools/client-runtime/linear/jump";
 
 const JUMP_SHORTCUT_LABEL = formatShortcutLabel({
   key: "k",

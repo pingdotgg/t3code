@@ -8,7 +8,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { requestConfirmDialog } from "../../confirmDialog";
 import { useEnvironments } from "../../state/environments";
 import { linearEnvironment } from "../../state/linear";
-import { classifyLinearFailure } from "../linear/linearDegradation";
+import { classifyLinearFailure } from "@t3tools/client-runtime/linear/degradation";
 import { LinearAvatar, LinearGlyph, LinearTeamBadge } from "../linear/linearIcons";
 import {
   useLinearCommands,

@@ -10,7 +10,7 @@ import {
   type LinearIssueIncludes,
 } from "@t3tools/shared/linearLaunch";
 
-import type { LinearLaunchWorkspace } from "./linearLaunchTypes";
+import type { LinearLaunchWorkspace } from "./launchPlan.ts";
 
 const LAST_USED_PIPELINE_KEY = "t3code:linear:last-pipeline:v1";
 

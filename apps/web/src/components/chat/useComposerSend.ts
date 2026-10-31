@@ -15,7 +15,7 @@ import {
   withMessageContext,
   makeThreadErrorSetter,
 } from "../ChatView.logic";
-import { linearWriteBackOf } from "../linear/linearLaunch.logic";
+import { linearWriteBackOf } from "@t3tools/client-runtime/linear/launch-plan";
 import { recordLinearLaunch } from "../linear/recordLinearLaunch";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import {

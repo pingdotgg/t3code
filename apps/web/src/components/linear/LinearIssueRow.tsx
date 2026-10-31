@@ -8,7 +8,7 @@ import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { RelativeTime } from "../RelativeTime";
 import { LinearActivityPill } from "./LinearActivityPill";
 import { LinearAvatar, LinearPriorityIcon, LinearStateIcon } from "./linearIcons";
-import { pickActivityPill } from "./linearIssueList.logic";
+import { pickActivityPill } from "@t3tools/client-runtime/linear/activity";
 import { useLinearSubIssues } from "./useLinearData";
 
 export interface LinearIssueRowContext {

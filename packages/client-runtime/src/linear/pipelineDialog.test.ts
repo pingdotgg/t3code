@@ -9,7 +9,7 @@ import {
   readLastUsedPipelineId,
   resolveInitialPipelineId,
   writeLastUsedPipelineId,
-} from "./linearPipelineDialog.logic";
+} from "./pipelineDialog.ts";
 
 const detail = {
   issue: {

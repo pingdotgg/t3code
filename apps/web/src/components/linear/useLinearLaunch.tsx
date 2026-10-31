@@ -8,12 +8,7 @@ import {
   type LinearWorkflowState,
   type ProjectId,
 } from "@t3tools/contracts";
-import {
-  buildLinearIssueContextRecord,
-  buildLinearIssuePrompt,
-  resolveLinearMapping,
-  type LinearMappingResolution,
-} from "@t3tools/shared/linearLaunch";
+import { resolveLinearMapping, type LinearMappingResolution } from "@t3tools/shared/linearLaunch";
 import { type ReactNode, useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -38,12 +33,12 @@ import {
 import { toastManager } from "../ui/toast";
 import { LinearPipelineDialog } from "./LinearPipelineDialog";
 import { LinearProjectSelect } from "./LinearProjectSelect";
-import { buildDraftLinearIssue, resolveLinearChatWorkspace } from "./linearLaunch.logic";
 import {
-  type LinearLaunchActions,
-  LinearLaunchActionsProvider,
+  buildLinearChatLaunchPlan,
+  findLinearMappedProject,
   type LinearLaunchWorkspace,
-} from "./linearLaunchTypes";
+} from "@t3tools/client-runtime/linear/launch-plan";
+import { type LinearLaunchActions, LinearLaunchActionsProvider } from "./linearLaunchTypes";
 import { useLinearEnvironmentId } from "./useLinearData";
 
 const QUIET = { reportFailure: false, reportDefect: false } as const;
@@ -89,19 +84,17 @@ function useOpenLinearChatDraft() {
       readonly teamStates: ReadonlyArray<LinearWorkflowState> | null;
     }) => {
       const { detail, settings } = input;
-      const record = buildLinearIssueContextRecord(detail, {
-        subIssues: settings.includeSubIssues,
-        comments: settings.includeComments,
-        linkedPrs: settings.includeLinkedPrs,
-      });
-      const workspace = resolveLinearChatWorkspace({
+      const plan = buildLinearChatLaunchPlan({
+        detail,
+        settings,
+        mapping: input.mapping,
         workspace: input.workspace,
-        baseBranch: input.mapping?.baseBranch ?? null,
+        teamStates: input.teamStates,
+        formatReference: (record) => formatInlineContextReference(linearContextReference(record)),
       });
-      const prompt = `${formatInlineContextReference(linearContextReference(record))}\n\n${buildLinearIssuePrompt(detail.issue)}`;
       const opened = await newThread(scopeProjectRef(input.environmentId, input.projectId), {
-        ...workspace,
-        prompt,
+        ...plan.workspace,
+        prompt: plan.prompt,
       }).then(
         (result) => result,
         () => null,
@@ -115,16 +108,8 @@ function useOpenLinearChatDraft() {
         return;
       }
       const store = useComposerDraftStore.getState();
-      store.addLinearContexts(opened.draftId, [record], { appendReference: false });
-      store.setDraftLinearIssue(
-        opened.draftId,
-        buildDraftLinearIssue({
-          detail,
-          settings,
-          teamStates: input.teamStates,
-          mapping: input.mapping,
-        }),
-      );
+      store.addLinearContexts(opened.draftId, [plan.record], { appendReference: false });
+      store.setDraftLinearIssue(opened.draftId, plan.draftIssue);
     },
   );
 }
@@ -156,13 +141,11 @@ function useStartLinearChat(
       const workspace = options?.workspace ?? settings.defaultWorkspace;
       const teamStates = await readTeamStates(environmentId, detail.issue.team.id);
       const mapping = resolveLinearMapping(detail.issue, settings.mappings);
-      const mappedProject =
-        mapping === null
-          ? undefined
-          : readProjects().find(
-              (project) =>
-                project.environmentId === environmentId && project.id === mapping.projectRef,
-            );
+      const mappedProject = findLinearMappedProject({
+        environmentId,
+        mapping,
+        projects: readProjects(),
+      });
       if (mapping === null || mappedProject === undefined) {
         askForProject({ environmentId, detail, settings, workspace, teamStates });
         return;

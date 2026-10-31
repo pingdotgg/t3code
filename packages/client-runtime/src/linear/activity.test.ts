@@ -2,14 +2,11 @@ import type { LinearIssue, LinearIssueActivity } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  groupLinearIssues,
-  linearBadgeTextTone,
   pickActivityPill,
   recentActivityIssueIds,
   runningCountByTeam,
   stepTone,
-  topLevelIssues,
-} from "./linearIssueList.logic";
+} from "./activity.ts";
 
 function issue(
   id: string,
@@ -130,75 +127,5 @@ describe("activity summaries", () => {
       "idle",
       "idle",
     ]);
-  });
-});
-
-describe("topLevelIssues", () => {
-  it("nests sub-issues whose parent is listed", () => {
-    const list = [
-      issue("p"),
-      issue("c", { parent: { id: "p", identifier: "P" } }),
-      issue("orphan", { parent: { id: "elsewhere", identifier: "X" } }),
-    ];
-    expect(topLevelIssues(list).map((entry) => entry.id)).toEqual(["p", "orphan"]);
-  });
-});
-
-describe("groupLinearIssues", () => {
-  const review = { id: "s-review", name: "In Review", type: "started", color: "#0f0" } as const;
-  const progress = {
-    id: "s-progress",
-    name: "In Progress",
-    type: "started",
-    color: "#ff0",
-  } as const;
-  const todo = { id: "s-todo", name: "Todo", type: "unstarted", color: "#fff" } as const;
-  const done = { id: "s-done", name: "Done", type: "completed", color: "#00f" } as const;
-
-  it("groups by state in workflow order, later started steps first", () => {
-    const groups = groupLinearIssues(
-      [
-        issue("a", { state: todo }),
-        issue("b", { state: done }),
-        issue("c", { state: progress }),
-        issue("d", { state: review }),
-      ],
-      "state",
-      new Map([
-        ["s-progress", 2],
-        ["s-review", 3],
-        ["s-todo", 1],
-        ["s-done", 4],
-      ]),
-    );
-    expect(groups.map((group) => group.label)).toEqual([
-      "In Review",
-      "In Progress",
-      "Todo",
-      "Done",
-    ]);
-  });
-
-  it("groups by milestone with the unassigned bucket last", () => {
-    const groups = groupLinearIssues(
-      [issue("a"), issue("b", { milestone: { id: "m", name: "v1" } })],
-      "milestone",
-    );
-    expect(groups.map((group) => group.label)).toEqual(["v1", "No milestone"]);
-  });
-
-  it("returns one flat group for none and nothing for no issues", () => {
-    expect(groupLinearIssues([issue("a"), issue("b")], "none")).toHaveLength(1);
-    expect(groupLinearIssues([], "none")).toEqual([]);
-  });
-});
-
-describe("linearBadgeTextTone", () => {
-  it("picks dark text on light team colors and light text on dark ones", () => {
-    expect(linearBadgeTextTone("#f2c94c")).toBe("dark");
-    expect(linearBadgeTextTone("#fff")).toBe("dark");
-    expect(linearBadgeTextTone("#5e6ad2")).toBe("light");
-    expect(linearBadgeTextTone("#000000ff")).toBe("light");
-    expect(linearBadgeTextTone("#12345")).toBe("light");
   });
 });
