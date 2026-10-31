@@ -1651,6 +1651,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           instanceId: fallbackInstanceId,
           model: "claude-sonnet-4-6",
         };
+        const effortHigh = { id: "effort", value: "high" };
         const exhaustedCodex: ServerProvider = {
           ...providerSnapshot({
             instanceId: codexInstanceId,
@@ -1670,11 +1671,38 @@ describe("OrchestratorMcpService provider resolution", () => {
             ],
           },
         };
-        const fallbackProvider = providerSnapshot({
-          instanceId: fallbackInstanceId,
-          driver: ProviderDriverKind.make("claudeAgent"),
-          model: "claude-sonnet-4-6",
-        });
+        const fallbackProvider: ServerProvider = {
+          ...providerSnapshot({
+            instanceId: fallbackInstanceId,
+            driver: ProviderDriverKind.make("claudeAgent"),
+          }),
+          models: [
+            {
+              slug: "claude-haiku-4-5",
+              name: "claude-haiku-4-5",
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [{ id: "fastMode", label: "Fast", type: "boolean" }],
+              },
+            },
+            {
+              slug: "claude-sonnet-4-6",
+              name: "claude-sonnet-4-6",
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "effort",
+                    label: "Effort",
+                    type: "select",
+                    options: [{ id: "high", label: "High" }],
+                  },
+                ],
+              },
+            },
+          ],
+        };
+        const committedFallback = { ...fallbackModelSelection, options: [effortHigh] };
         for (const testCase of [
           {
             name: "explicit",
@@ -1689,10 +1717,10 @@ describe("OrchestratorMcpService provider resolution", () => {
             expected: fallbackModelSelection,
           },
           {
-            name: "accepted retry replays the committed provider",
-            target: undefined,
-            committed: { instanceId: codexInstanceId, model: "gpt-5.4" },
-            expected: { instanceId: codexInstanceId, model: "gpt-5.4" },
+            name: "accepted retry replays the committed selection",
+            target: { options: [effortHigh] },
+            committed: committedFallback,
+            expected: committedFallback,
           },
         ]) {
           const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);

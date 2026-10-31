@@ -1285,9 +1285,11 @@ const make = Effect.gen(function* () {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
+    readonly committedSelection?: ModelSelection | undefined;
   }) => {
     const parentSelection = input.parent.thread.modelSelection;
     if (!namesNoModel(input.target)) return Effect.succeed(parentSelection);
+    if (input.committedSelection !== undefined) return Effect.succeed(input.committedSelection);
     return Effect.gen(function* () {
       const settings = yield* serverSettings.getSettings;
       return (
@@ -1328,6 +1330,8 @@ const make = Effect.gen(function* () {
     readonly providers: ReadonlyArray<ServerProvider>;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
     readonly skipProjectEnablementFilter?: boolean;
+    /** An implicit replay inherits what the accepted request committed, since the usage fallback can differ by now. */
+    readonly committedSelection?: ModelSelection | undefined;
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
     const requestedInstanceId = input.target?.providerInstanceId;
     const requestedDriver = input.target?.driverKind;
@@ -2297,7 +2301,6 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
-      // The usage fallback can differ by now; replay against the provider the task committed to.
       const committedChild =
         isRetryOfAcceptedDelegation && namesNoModel(input.target)
           ? yield* threadManagement
@@ -2306,12 +2309,10 @@ const make = Effect.gen(function* () {
           : null;
       const target = yield* resolveTargetRechecking({
         parent,
-        target:
-          committedChild === null
-            ? input.target
-            : { ...input.target, providerInstanceId: committedChild.modelSelection.instanceId },
+        target: input.target,
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
+        committedSelection: committedChild?.modelSelection,
       });
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,
@@ -2719,7 +2720,7 @@ const make = Effect.gen(function* () {
               const target = yield* resolveTargetRechecking({
                 parent,
                 target:
-                  committedThread === null
+                  committedThread === null || namesNoModel(request.target)
                     ? request.target
                     : {
                         ...request.target,
@@ -2727,6 +2728,7 @@ const make = Effect.gen(function* () {
                       },
                 providers,
                 skipProjectEnablementFilter: isRetryOfAcceptedCreation,
+                committedSelection: committedThread?.modelSelection,
               });
               const runtimeMode = yield* resolveRuntimeMode(
                 parent.thread.runtimeMode,
