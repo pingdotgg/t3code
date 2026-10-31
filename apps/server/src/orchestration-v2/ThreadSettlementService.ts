@@ -302,7 +302,8 @@ export const make = Effect.gen(function* () {
   const shellClosedThreads = new Set<ThreadId>();
   const terminals = yield* TerminalManager.TerminalManager;
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
-  // Repeated thread.settled retains settledAt; run the action only once per settlement.
+  // Repeated thread.settled retains settledAt; cleanup must not stop the settle script.
+  const settleTerminalsClosedAt = new Map<ThreadId, number>();
   const settleActionRunAt = new Map<ThreadId, number>();
 
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
@@ -570,14 +571,25 @@ export const make = Effect.gen(function* () {
     function* (threadId: ThreadId) {
       const settled = yield* projections.getThread(threadId);
       if (settled.settledOverride !== "settled") return;
-      yield* terminals.closeIdle({ threadId });
+      const settledAtMs = toMillis(settled.settledAt);
+      if (settledAtMs === null) return;
+      if (settleTerminalsClosedAt.get(threadId) !== settledAtMs) {
+        const settings = resolveProjectSettings(
+          yield* settingsService.getSettings,
+          settled.projectId,
+        ).settings;
+        yield* settings.closeRunningTerminalsOnSettle
+          ? terminals.close({ threadId })
+          : terminals.closeIdle({ threadId });
+        settleTerminalsClosedAt.set(threadId, settledAtMs);
+      }
       const worktreePath = settled.worktreePath;
       if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;
       // Recheck after closing and worktree I/O; re-engaged threads must not be cleaned up.
       const thread = yield* projections.getThread(threadId);
-      if (thread.settledOverride !== "settled") return;
-      const settledAtMs = toMillis(thread.settledAt);
-      if (settledAtMs === null || settleActionRunAt.get(threadId) === settledAtMs) return;
+      if (thread.settledOverride !== "settled" || toMillis(thread.settledAt) !== settledAtMs)
+        return;
+      if (settleActionRunAt.get(threadId) === settledAtMs) return;
       const run = yield* projectScripts.runForThread({
         threadId,
         projectId: thread.projectId,

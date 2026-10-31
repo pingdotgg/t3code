@@ -588,6 +588,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const invalidatedCwds = yield* Ref.make<ReadonlyArray<string>>([]);
   const domainEvents = yield* PubSub.unbounded<OrchestrationV2DomainEvent>();
   const closedIdle = yield* Queue.unbounded<{ readonly threadId: string }>();
+  const closedAll = yield* Queue.unbounded<{ readonly threadId: string }>();
   const scriptRuns =
     yield* Queue.unbounded<ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput>();
 
@@ -678,6 +679,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       dispatch,
     }),
     Layer.mock(TerminalManager.TerminalManager)({
+      close: (input) => Queue.offer(closedAll, input).pipe(Effect.asVoid),
       closeIdle: (input) =>
         Queue.offer(closedIdle, input).pipe(Effect.andThen(options.onCloseIdle?.() ?? Effect.void)),
     }),
@@ -718,6 +720,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     summaryRecovery,
     invalidatedCwds,
     closedIdle,
+    closedAll,
     scriptRuns,
     publishEvent: (event: OrchestrationV2DomainEvent) => PubSub.publish(domainEvents, event),
     updateSettings,
@@ -1320,7 +1323,12 @@ describe("ThreadSettlementServiceV2 terminals", () => {
     ),
   );
 
-  it.effect("runs the settle script in the thread's own worktree", () =>
+  it.effect.each([
+    { enabled: false, override: undefined, closeAll: false },
+    { enabled: true, override: undefined, closeAll: true },
+    { enabled: false, override: true, closeAll: true },
+    { enabled: true, override: false, closeAll: false },
+  ])("cleans up terminals before the settle script: %j", ({ enabled, override, closeAll }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const shared = appThread("shared-checkout-thread", "settled");
@@ -1328,6 +1336,16 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         const worktree = appThread("worktree-thread", "settled", "/worktrees/thread");
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([]),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            closeRunningTerminalsOnSettle: enabled,
+            projectSettingsOverrides: {
+              [ProjectId.make("other-project")]: { closeRunningTerminalsOnSettle: !enabled },
+              ...(override === undefined
+                ? {}
+                : { [PROJECT_ID]: { closeRunningTerminalsOnSettle: override } }),
+            },
+          },
           currentThreads: [shared, missing, worktree],
           existingWorktreePaths: ["/worktrees/thread"],
         });
@@ -1342,6 +1360,15 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           assert.strictEqual(run.threadId, worktree.id);
           assert.strictEqual(run.worktreePath, "/worktrees/thread");
           assert.strictEqual(run.trigger, "settle");
+          const expectedClosed = [shared, missing, worktree].map((thread) => ({
+            threadId: thread.id,
+          }));
+          assert.strictEqual(yield* Queue.size(fixture.closedAll), closeAll ? 3 : 0);
+          assert.strictEqual(yield* Queue.size(fixture.closedIdle), closeAll ? 0 : 3);
+          assert.deepStrictEqual(
+            [...(yield* Queue.takeAll(closeAll ? fixture.closedAll : fixture.closedIdle))],
+            expectedClosed,
+          );
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -1374,14 +1401,16 @@ describe("ThreadSettlementServiceV2 terminals", () => {
     ),
   );
 
-  it.effect("runs the settle script once when a settlement is re-emitted", () =>
+  it.effect.each([false, true])("cleans up once per settlement with close all %s", (closeAll) =>
     Effect.scoped(
       Effect.gen(function* () {
         const repeated = appThread("repeated-thread", "settled", "/worktrees/repeated");
         const marker = appThread("marker-thread", "settled", "/worktrees/marker");
+        const currentThreads = [repeated, marker];
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([]),
-          currentThreads: [repeated, marker],
+          settings: { ...DEFAULT_SERVER_SETTINGS, closeRunningTerminalsOnSettle: closeAll },
+          currentThreads,
           existingWorktreePaths: ["/worktrees/repeated", "/worktrees/marker"],
         });
 
@@ -1393,6 +1422,15 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           yield* fixture.publishEvent(settledEvent(marker));
           assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, repeated.id);
           assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, marker.id);
+          const closed = closeAll ? fixture.closedAll : fixture.closedIdle;
+          assert.strictEqual(yield* Queue.size(closed), 2);
+          currentThreads[0] = {
+            ...repeated,
+            settledAt: DateTime.add(repeated.settledAt!, { seconds: 1 }),
+          };
+          yield* fixture.publishEvent(settledEvent(currentThreads[0]));
+          assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, repeated.id);
+          assert.strictEqual(yield* Queue.size(closed), 3);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -1405,6 +1443,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         const starts = yield* Ref.make(0);
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([]),
+          settings: { ...DEFAULT_SERVER_SETTINGS, closeRunningTerminalsOnSettle: true },
           currentThreads: [thread],
           existingWorktreePaths: ["/worktrees/failed-start"],
           onScriptRun: () =>
@@ -1422,6 +1461,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           yield* fixture.publishEvent(settledEvent(thread));
           assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, thread.id);
           assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, thread.id);
+          assert.strictEqual(yield* Queue.size(fixture.closedAll), 1);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
