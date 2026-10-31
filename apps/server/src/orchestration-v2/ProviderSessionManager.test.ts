@@ -1050,6 +1050,76 @@ it.effect(
     }),
 );
 
+it.effect(
+  "ProviderSessionManagerV2 keeps a session rebuilt settings made stale while a sibling turn runs on it",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const replacementState = yield* Ref.make(emptyState);
+      const replaced = yield* Ref.make(false);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const busy = ThreadId.make("thread-provider-session-manager-settings-busy");
+        const next = ThreadId.make("thread-provider-session-manager-settings-next");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const open = (threadId: ThreadId) =>
+          manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: busy, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: next, now }),
+          ],
+        });
+        const runtime = yield* open(busy);
+        const runId = idAllocator.derive.run({ threadId: busy, ordinal: 1 });
+        yield* runtime.startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(busy)).thread,
+          threadId: busy,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId: busy,
+            providerSessionId,
+            now,
+            nativeThreadId: `native-${busy}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId: busy, ordinal: 1 }),
+            text: "turn",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* Ref.set(replaced, true);
+
+        assert.strictEqual(yield* open(next), runtime);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        assert.equal((yield* Ref.get(replacementState)).openCount, 0);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            replacementAdapter: { state: replacementState, active: replaced },
+          }),
+        ),
+      );
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);

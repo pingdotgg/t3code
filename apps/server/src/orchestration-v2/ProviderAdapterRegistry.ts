@@ -11,6 +11,7 @@ import * as Scope from "effect/Scope";
 
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const isProviderSetupError = Schema.is(ProviderSetupError);
@@ -67,6 +68,11 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
   ProviderAdapterRegistryV2,
   Effect.gen(function* () {
     const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+    // One wrapper per instance build: session reuse compares adapter identity to detect rebuilds.
+    const guardedAdapters = new WeakMap<
+      ProviderInstance,
+      ProviderAdapter.ProviderAdapterV2["Service"]
+    >();
     return ProviderAdapterRegistryV2.of({
       get: Effect.fn("ProviderAdapterRegistryV2.get")(function (instanceId) {
         return instances.getInstance(instanceId).pipe(
@@ -76,7 +82,9 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
             const adapter = instance.orchestrationAdapter;
             const auth = instance.auth;
             if (!auth) return Effect.succeed(adapter);
-            return Effect.succeed({
+            const memoized = guardedAdapters.get(instance);
+            if (memoized !== undefined) return Effect.succeed(memoized);
+            const guarded: ProviderAdapter.ProviderAdapterV2["Service"] = {
               ...adapter,
               openSession: (input) => {
                 const open = Effect.gen(function* () {
@@ -122,7 +130,9 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
                   ),
                 );
               },
-            } satisfies ProviderAdapter.ProviderAdapterV2["Service"]);
+            };
+            guardedAdapters.set(instance, guarded);
+            return Effect.succeed(guarded);
           }),
         );
       }),

@@ -221,6 +221,8 @@ interface LiveSessionEntry {
   /** Scope revocation to recorded credential ids so superseded sessions cannot revoke replacements opened before detach. */
   readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
   readonly supportsMultipleProviderThreads: boolean;
+  /** Compared with the registry's current adapter to retire sessions opened before a settings change. */
+  readonly adapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly eventSubscribers: Ref.Ref<
@@ -1110,6 +1112,30 @@ export const layerWithOptions = (
             ),
           ),
         );
+
+      // A settings change rebuilds the instance's adapter, but its live sessions keep their old process.
+      const releaseIfAdapterRebuilt = Effect.fn("ProviderSessionManager.releaseIfAdapterRebuilt")(
+        function* (entry: LiveSessionEntry) {
+          const current = yield* registry.get(entry.runtime.instanceId).pipe(Effect.option);
+          if (Option.isNone(current) || current.value === entry.adapter) return false;
+          const hasPendingWork =
+            entry.runtime.hasPendingBackgroundWork === undefined
+              ? false
+              : yield* entry.runtime.hasPendingBackgroundWork.pipe(
+                  Effect.catchCause(() => Effect.succeed(true)),
+                );
+          if (hasPendingWork) return false;
+          const providerSessionId = entry.runtime.providerSessionId;
+          // A busy turn keeps the stale session; a later open retires it once idle.
+          yield* releaseEntry({
+            providerSessionId,
+            reason: "manual_shutdown",
+            detail: "Provider settings changed.",
+            keepIfBusyOtherThan: [],
+          }).pipe(logReleaseFailure(providerSessionId));
+          return (yield* Ref.get(sessions)).get(sessionKey(providerSessionId)) !== entry;
+        },
+      );
 
       const releaseIfStillIdle = Effect.fn("ProviderSessionManager.releaseIfStillIdle")(
         function* (input: {
@@ -2136,7 +2162,7 @@ export const layerWithOptions = (
               }
               const key = sessionKey(input.providerSessionId);
               const existing = (yield* Ref.get(sessions)).get(key);
-              if (existing !== undefined) {
+              if (existing !== undefined && !(yield* releaseIfAdapterRebuilt(existing))) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
                 if (!attached && !existing.supportsMultipleProviderThreads) {
                   return yield* new ProviderSessionOpenError({
@@ -2243,6 +2269,7 @@ export const layerWithOptions = (
                 supportsMultipleProviderThreads:
                   runtime.providerSession.capabilities.sessions
                     .supportsMultipleProviderThreadsPerSession,
+                adapter,
                 runtime,
                 exposedRuntime,
                 eventSubscribers,
