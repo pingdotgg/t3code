@@ -118,8 +118,10 @@ export const make = Effect.gen(function* () {
       Effect.provideService(HostProcess.Platform, platform),
     );
 
+  const runOrFail = (command: string, args: ReadonlyArray<string>) =>
+    runner.run({ command, args, timeout: "5 seconds" });
   const run = (command: string, args: ReadonlyArray<string>) =>
-    runner.run({ command, args, timeout: "5 seconds" }).pipe(Effect.option);
+    runOrFail(command, args).pipe(Effect.option);
 
   const readCgroupFile = (controlGroup: string, file: string) =>
     fileSystem
@@ -167,22 +169,16 @@ export const make = Effect.gen(function* () {
       // Only a probe systemd answered decides. A busy user manager can miss the
       // timeout, and that failure must not turn scopes off for the server's life.
       const probe = (options: ReadonlyArray<string>) =>
-        runner
-          .run({
-            command: systemdRun,
-            args: [
-              "--user",
-              "--scope",
-              "--quiet",
-              "--collect",
-              `--slice=${AGENT_SLICE}`,
-              ...options,
-              "--",
-              "true",
-            ],
-            timeout: "5 seconds",
-          })
-          .pipe(Effect.map((result) => result.code === 0));
+        runOrFail(systemdRun, [
+          "--user",
+          "--scope",
+          "--quiet",
+          "--collect",
+          `--slice=${AGENT_SLICE}`,
+          ...options,
+          "--",
+          "true",
+        ]).pipe(Effect.map((result) => result.code === 0));
       // Scopes take OOMPolicy from systemd 253; older managers still get scopes.
       const supportsOomPolicy = yield* probe([...SCOPE_OPTIONS, "--property=OOMPolicy=stop"]);
       if (!supportsOomPolicy && !(yield* probe(SCOPE_OPTIONS))) {
