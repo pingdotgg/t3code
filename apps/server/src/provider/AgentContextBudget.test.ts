@@ -8,6 +8,7 @@ import { McpServer } from "effect/ai";
 
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../config.ts";
+import { PluginTools } from "../plugins/PluginTools.ts";
 import { DeviceService } from "../device/DeviceService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
@@ -67,6 +68,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(PullRequestReviewGuideService)({}),
   Layer.mock(RemoteDelegation)({}),
   Layer.mock(ScheduledTaskService)({}),
+  Layer.mock(PluginTools)({}),
   Layer.mock(SecretRequests)({}),
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-agent-context-budget-" }),
   Layer.mock(ServerEnvironment)({}),
