@@ -1,6 +1,7 @@
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Duration from "effect/Duration";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -92,6 +93,9 @@ export const layer = Layer.effect(
     const startNew = Effect.fn("desktop.wslBackend.startNew")(function* (input: {
       readonly distro: string | null;
     }) {
+      const primary = yield* pool.primary;
+      // Readiness creates the owner identity; keep WSL available if the primary cannot start.
+      yield* primary.waitForReady(Duration.seconds(60));
       const primaryConfig = yield* serverExposure.backendConfig;
       const port = yield* scanForWslPort(primaryConfig.port + 1).pipe(
         Effect.provideService(NetService.NetService, net),

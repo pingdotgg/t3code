@@ -215,6 +215,7 @@ export const make = Effect.gen(function* () {
     },
     serverVersion: packageJson.version,
     orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+    ...(serverConfig.desktopHost === undefined ? {} : { desktopHost: serverConfig.desktopHost }),
     ...(databaseMigration === undefined ? {} : { databaseMigration }),
     capabilities: {
       repositoryIdentity: true,

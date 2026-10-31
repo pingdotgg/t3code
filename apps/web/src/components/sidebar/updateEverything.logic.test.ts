@@ -1,4 +1,8 @@
-import { EnvironmentId, type ServerSelfUpdateCapability } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type ServerConfig,
+  type ServerSelfUpdateCapability,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -45,6 +49,47 @@ function machine(
   };
 }
 
+function withCapabilities(
+  base: UpdateEverythingMachine,
+  capabilities: Partial<ServerConfig["environment"]["capabilities"]>,
+): UpdateEverythingMachine {
+  return {
+    ...base,
+    serverConfig: {
+      ...base.serverConfig!,
+      environment: {
+        ...base.serverConfig!.environment,
+        capabilities: { ...base.serverConfig!.environment.capabilities, ...capabilities },
+      },
+    },
+  };
+}
+
+const secondary = (
+  id: string,
+  overrides: Partial<UpdateEverythingMachine> = {},
+  desktopHost: { readonly environmentId?: EnvironmentId } = {
+    environmentId: EnvironmentId.make("windows-primary"),
+  },
+) => {
+  const base = withCapabilities(machine(id, "0.0.40", "desktop-managed", overrides), {
+    desktopAppUpdate: false,
+  });
+  return {
+    ...base,
+    serverConfig: {
+      ...base.serverConfig!,
+      environment: {
+        ...base.serverConfig!.environment,
+        desktopHost,
+      },
+    },
+  };
+};
+
+const oldDesktop = (id: string) =>
+  withCapabilities(machine(id, "0.0.40", "desktop-managed"), { desktopAppUpdate: false });
+
 describe("collectServerUpdateTargets", () => {
   it("updates remote servers that can move to the target and names every skipped one", () => {
     const { targets, skipped } = collectServerUpdateTargets(
@@ -53,6 +98,10 @@ describe("collectServerUpdateTargets", () => {
         machine("service", "0.0.40", "boot-service"),
         machine("nightly-service", "0.0.49-nightly.20261001.3", "boot-service"),
         machine("other-desktop", "0.0.49-nightly.20261001.3", "desktop-managed"),
+        secondary("other-wsl"),
+        secondary("offline-wsl", { connected: false }),
+        secondary("unattributed-wsl", {}, {}),
+        oldDesktop("old-desktop"),
         machine("offline", "0.0.40", "boot-service", { connected: false }),
         machine("never-connected", "0.0.40", "boot-service", { serverConfig: null }),
         machine("no-scope", "0.0.40", "boot-service", { canMaintain: false }),
@@ -77,12 +126,56 @@ describe("collectServerUpdateTargets", () => {
     ]);
     expect(skipped.map((entry) => [entry.label, entry.reason])).toEqual([
       ["nightly-service", "on the nightly channel"],
+      ["other-wsl", "update its owning desktop app"],
+      ["offline-wsl", "not connected"],
+      ["unattributed-wsl", "update its owning desktop app"],
+      ["old-desktop", "needs a newer desktop app"],
       ["offline", "not connected"],
       ["never-connected", "not connected"],
       ["no-scope", "no permission"],
       ["busy", "already updating"],
       ["manual", "needs a manual update"],
     ]);
+  });
+
+  it.each([
+    {
+      name: "updating",
+      owner: machine("windows-primary", "0.0.40", "desktop-managed"),
+      covered: true,
+    },
+    { name: "absent", owner: undefined, covered: false },
+    {
+      name: "offline",
+      owner: machine("windows-primary", "0.0.40", "desktop-managed", { connected: false }),
+      covered: false,
+    },
+    {
+      name: "denied",
+      owner: machine("windows-primary", "0.0.40", "desktop-managed", { canMaintain: false }),
+      covered: false,
+    },
+    {
+      name: "current",
+      owner: machine("windows-primary", "0.0.50", "desktop-managed"),
+      covered: false,
+    },
+    {
+      name: "not a desktop",
+      owner: machine("windows-primary", "0.0.40", "boot-service"),
+      covered: false,
+    },
+  ])("only omits a secondary when its owner is updating: $name", ({ owner, covered }) => {
+    const { targets, skipped } = collectServerUpdateTargets(
+      [secondary("wsl"), ...(owner ? [owner] : [])],
+      "0.0.50",
+    );
+    expect(targets.some((target) => target.environmentId === "wsl")).toBe(false);
+    expect(skipped.find((entry) => entry.environmentId === "wsl")).toEqual(
+      covered
+        ? undefined
+        : { environmentId: "wsl", label: "wsl", reason: "update its owning desktop app" },
+    );
   });
 });
 
@@ -238,8 +331,9 @@ describe("collectRestartingMachines", () => {
       withContinuation("opted-out", {}, false),
       machine("old", "0.0.40", "boot-service"),
       withContinuation("providers-only"),
+      secondary("wsl"),
     ];
-    const servers = ["alvin", "opted-out", "old"].map((id) => ({
+    const servers = ["alvin", "opted-out", "old", "windows-primary"].map((id) => ({
       environmentId: EnvironmentId.make(id),
     }));
 
@@ -248,10 +342,11 @@ describe("collectRestartingMachines", () => {
       { environmentId: "alvin", continuesThreads: true },
       { environmentId: "opted-out", continuesThreads: false },
       { environmentId: "old", continuesThreads: false },
+      { environmentId: "wsl", continuesThreads: false },
     ]);
     expect(
       collectRestartingMachines(machines, servers, false).map((entry) => entry.environmentId),
-    ).toEqual(["alvin", "opted-out", "old"]);
+    ).toEqual(["alvin", "opted-out", "old", "wsl"]);
   });
 });
 

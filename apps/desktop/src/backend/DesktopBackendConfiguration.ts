@@ -1,5 +1,6 @@
 import * as NodeOS from "node:os";
 
+import { EnvironmentId } from "@t3tools/contracts";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
 import * as Clock from "effect/Clock";
@@ -548,6 +549,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   input: SharedBootstrapInput & {
     readonly port: number;
     readonly distro: string | null;
+    readonly hostEnvironmentId?: EnvironmentId | undefined;
   },
 ): Effect.fn.Return<
   DesktopBackendManager.DesktopBackendStartConfig,
@@ -575,6 +577,8 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     // PortSchema rejects 0 even when Tailscale Serve is disabled.
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
+    desktopHost:
+      input.hostEnvironmentId === undefined ? {} : { environmentId: input.hostEnvironmentId },
     ...buildObservabilityFragment(input.observabilitySettings),
   };
 
@@ -833,7 +837,15 @@ export const make = Effect.gen(function* () {
     resolveWsl: Effect.fnUntraced(
       function* (input) {
         const shared = yield* sharedInputs;
-        return yield* resolveWslStartConfig({ ...shared, ...input }).pipe(
+        // Ownership is optional; WSL must start even before the primary creates its identity.
+        const hostEnvironmentId = yield* fileSystem
+          .readFileString(environment.path.join(environment.stateDir, "environment-id"))
+          .pipe(
+            Effect.map((value) => value.trim()),
+            Effect.map((value) => (value ? EnvironmentId.make(value) : undefined)),
+            Effect.orElseSucceed(() => undefined),
+          );
+        return yield* resolveWslStartConfig({ ...shared, ...input, hostEnvironmentId }).pipe(
           Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
           Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
           Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),
