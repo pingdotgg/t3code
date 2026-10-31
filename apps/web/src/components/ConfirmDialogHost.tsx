@@ -89,10 +89,10 @@ export function ConfirmDialogHost() {
           ) : null}
         </AlertDialogHeader>
         <AlertDialogFooter variant="bare">
-          <AlertDialogClose render={<Button size="sm" variant="secondary" />}>
+          <AlertDialogClose render={<Button size="standard" variant="secondary" />}>
             Cancel
           </AlertDialogClose>
-          <Button size="sm" variant={confirmVariant} onClick={onConfirm}>
+          <Button size="standard" variant={confirmVariant} onClick={onConfirm}>
             {showDeleteIcon ? <Trash2Icon aria-hidden /> : null}
             {confirmLabel}
           </Button>
