@@ -23,6 +23,8 @@ import type { SelectableMarkdownTextProps } from "./SelectableMarkdownText.types
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { Menu } from "../components/ui/Menu";
+import { MobileMermaidDiagram } from "./MobileMermaidDiagram";
+import { splitMarkdownWithMermaid } from "../lib/mermaidBlocks";
 import { useEnrichedLinkVariants } from "./useEnrichedLinkVariants";
 import { useRetryingImageSource } from "./useRetryingImageSource";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
@@ -287,6 +289,62 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
       }
     : undefined;
   const resolveNativeImageSource = useRetryingImageSource(resolveImageSource);
+  const segments = useMemo(() => splitMarkdownWithMermaid(markdown), [markdown]);
+  const hasMermaid = segments.some((segment) => segment.kind === "mermaid");
+  const dark = themeAppearance === "dark";
+  const onSegmentLinksChange = (links: MarkdownLinkOccurrence[]) => {
+    if (links.length === 0) return;
+    const urls = [...new Set(links.map((link) => link.url))];
+    setParsedLinkUrls((previous) => {
+      const next = [...previous];
+      for (const url of urls) {
+        if (!next.includes(url)) next.push(url);
+      }
+      return next.length === previous.length ? previous : next;
+    });
+  };
+  const renderMarkdownSegment = (
+    segmentMarkdown: string,
+    key: string,
+    onLinkLongPress?: ({ url }: { url: string }) => void,
+  ) => (
+    <EnrichedMarkdownText
+      key={key}
+      markdown={segmentMarkdown}
+      markdownStyle={markdownStyle}
+      writingDirection={props.writingDirection}
+      onLinksChange={hasMermaid ? onSegmentLinksChange : onLinksChange}
+      renderers={renderers}
+      resolveImageSource={resolveNativeImageSource}
+      onImagePress={
+        props.onImagePress || props.onLinkPress
+          ? ({ url }) => (props.onImagePress ?? props.onLinkPress)?.(url)
+          : undefined
+      }
+      linkRecognition={linkRecognition}
+      containerStyle={{ flexShrink: 1, minWidth: 0 }}
+      flavor="github"
+      selectable
+      selectionClipboard={selectionClipboard}
+      selectionColor={props.textStyle.selectionColor}
+      selectionHandleColor={props.textStyle.selectionHandleColor}
+      md4cFlags={{
+        latexMath: mathRenderingEnabled,
+        hardSoftBreaks: props.preserveSoftBreaks ?? false,
+        admonitions: true,
+        preserveWindowsPaths: true,
+      }}
+      enableTaskListItemToggle={false}
+      enableCodeBlockWrapToggle
+      spoilerOverlay="solid"
+      onLinkPress={
+        props.onLinkPress || props.onImagePress ? ({ url }) => onLinkPress(url) : undefined
+      }
+      onLinkLongPress={onLinkLongPress}
+      linkContextMenuItems={linkContextMenuItems}
+      linkPillContent={linkPillContent}
+    />
+  );
   const renderMarkdown = (openAndroidMenu?: () => void) => {
     const onLinkLongPress =
       Platform.OS === "android" && props.fileContextMenu
@@ -312,41 +370,19 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
           marginBottom: props.marginBottom,
         }}
       >
-        <EnrichedMarkdownText
-          markdown={markdown}
-          markdownStyle={markdownStyle}
-          writingDirection={props.writingDirection}
-          onLinksChange={onLinksChange}
-          renderers={renderers}
-          resolveImageSource={resolveNativeImageSource}
-          onImagePress={
-            props.onImagePress || props.onLinkPress
-              ? ({ url }) => (props.onImagePress ?? props.onLinkPress)?.(url)
-              : undefined
-          }
-          linkRecognition={linkRecognition}
-          containerStyle={{ flexShrink: 1, minWidth: 0 }}
-          flavor="github"
-          selectable
-          selectionClipboard={selectionClipboard}
-          selectionColor={props.textStyle.selectionColor}
-          selectionHandleColor={props.textStyle.selectionHandleColor}
-          md4cFlags={{
-            latexMath: mathRenderingEnabled,
-            hardSoftBreaks: props.preserveSoftBreaks ?? false,
-            admonitions: true,
-            preserveWindowsPaths: true,
-          }}
-          enableTaskListItemToggle={false}
-          enableCodeBlockWrapToggle
-          spoilerOverlay="solid"
-          onLinkPress={
-            props.onLinkPress || props.onImagePress ? ({ url }) => onLinkPress(url) : undefined
-          }
-          onLinkLongPress={onLinkLongPress}
-          linkContextMenuItems={linkContextMenuItems}
-          linkPillContent={linkPillContent}
-        />
+        {hasMermaid ? (
+          <View style={{ flexShrink: 1, minWidth: 0, gap: 8 }}>
+            {segments.map((segment) =>
+              segment.kind === "mermaid" ? (
+                <MobileMermaidDiagram key={segment.key} source={segment.source} dark={dark} />
+              ) : (
+                renderMarkdownSegment(segment.markdown, segment.key, onLinkLongPress)
+              ),
+            )}
+          </View>
+        ) : (
+          renderMarkdownSegment(markdown, "markdown", onLinkLongPress)
+        )}
       </View>
     );
   };
