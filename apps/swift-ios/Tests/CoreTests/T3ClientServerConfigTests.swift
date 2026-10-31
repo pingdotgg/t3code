@@ -3,6 +3,59 @@ import XCTest
 
 @MainActor
 final class T3ClientServerConfigTests: XCTestCase {
+    func testSettingsReadsStayFreshWhenTheLegacyMethodIsUnavailable() async throws {
+        let connection = ServerConfigTestConnection(mode: .snapshot)
+        let client = makeClient(connection: connection)
+        let cached = try await client.serverConfig()
+        XCTAssertEqual(cached.settings?.newWorktreesStartFromOrigin, false)
+
+        await connection.replaceSettings(.object([
+            "newWorktreesStartFromOrigin": .bool(true),
+            "favorites": .array([.object(["provider": .string("codex"), "model": .string("gpt-5")])]),
+        ]))
+        let settings = try await client.serverSettings()
+        XCTAssertTrue(settings.newWorktreesStartFromOrigin)
+        XCTAssertEqual(settings.favorites?.first?.model, "gpt-5")
+        let tags = await connection.tags()
+        XCTAssertFalse(tags.contains("server.getSettings"))
+        await client.disconnect()
+    }
+
+    func testProviderToggleAndReviewGuidesReadSettingsFromConfiguration() async throws {
+        let connection = ServerConfigTestConnection(mode: .snapshot)
+        let client = makeClient(connection: connection)
+        _ = try await client.serverConfig()
+        await connection.replaceSettings(.object([
+            "reviewGuidesEnabled": .bool(true),
+            "providerInstances": .object([
+                "codex": .object([
+                    "driver": .string("codex"), "enabled": .bool(true),
+                    "config": .object(["binaryPath": .string("/custom/codex"), "futureOption": .bool(true)]),
+                ]),
+                "other": .object(["driver": .string("claude"), "enabled": .bool(true)]),
+            ]),
+        ]))
+        try await client.setProviderEnabled(instanceID: "codex", driver: "codex", enabled: false)
+        let writes = await connection.payloads(for: "server.updateSettings")
+        let instances = try XCTUnwrap(writes.first?["patch"]?["providerInstances"])
+        XCTAssertEqual(instances["codex"]?["enabled"], .bool(false))
+        XCTAssertEqual(instances["codex"]?["config"]?["binaryPath"], .string("/custom/codex"))
+        XCTAssertEqual(instances["codex"]?["config"]?["futureOption"], .bool(true))
+        XCTAssertEqual(instances["other"]?["enabled"], .bool(true))
+
+        let enabled = try await client.reviewGuidesEnabled()
+        XCTAssertTrue(enabled)
+        await connection.replaceSettings(.object(["reviewGuidesEnabled": .bool(false)]))
+        let disabled = try await client.reviewGuidesEnabled()
+        XCTAssertFalse(disabled)
+        await connection.replaceSettings(.object([:]))
+        let unsupported = try await client.reviewGuidesEnabled()
+        XCTAssertFalse(unsupported)
+        let tags = await connection.tags()
+        XCTAssertFalse(tags.contains("server.getSettings"))
+        await client.disconnect()
+    }
+
     func testQuestionAttachmentsRequireTheServerCapabilityBeforeUploading() async throws {
         let connection = ServerConfigTestConnection(mode: .snapshot)
         let client = makeClient(connection: connection)
@@ -464,6 +517,7 @@ private actor ServerConfigTestConnection: WebSocketConnection {
     private let failResetCreditSend: Bool
     private let supportsQuestionAttachments: Bool?
     private var requestTags: [String] = []
+    private var settingsOverride: JSONValue?
     private var requestPayloads: [String: [JSONValue]] = [:]
     private var subscriptionRequestID: Int?
     private var refreshRequestID: Int?
@@ -500,6 +554,10 @@ private actor ServerConfigTestConnection: WebSocketConnection {
             }
         case "server.getConfig":
             try enqueue(success(id: id, value: config(id: "codex-old")))
+        case "server.getSettings":
+            try enqueue(failure(id: id, message: "Unknown request tag: server.getSettings"))
+        case "server.updateSettings":
+            try enqueue(success(id: id, value: settingsOverride ?? .object([:])))
         case "server.refreshProviders":
             refreshRequestID = id
         case "attachments.createUploadUrl":
@@ -530,6 +588,7 @@ private actor ServerConfigTestConnection: WebSocketConnection {
     }
 
     func tags() -> [String] { requestTags }
+    func replaceSettings(_ settings: JSONValue) { settingsOverride = settings }
     func payloads(for tag: String) -> [JSONValue] { requestPayloads[tag] ?? [] }
 
     func waitForRequestCount(_ count: Int) async {
@@ -592,7 +651,7 @@ private actor ServerConfigTestConnection: WebSocketConnection {
         }
         return .object([
             "providers": .array([provider(id: id)]),
-            "settings": .object([
+            "settings": settingsOverride ?? .object([
                 "defaultThreadEnvMode": .string("worktree"),
                 "newWorktreesStartFromOrigin": .bool(false),
             ]),

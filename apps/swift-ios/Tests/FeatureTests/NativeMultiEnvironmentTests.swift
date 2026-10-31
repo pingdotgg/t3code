@@ -2149,7 +2149,7 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
             ModelSelection(instanceId: "codex", model: "gpt-5.6-sol"),
             ModelSelection(instanceId: "claudeAgent", model: "claude-opus-4-1"),
         ]
-        return .object(["providers": .array(selections.map { selection in .object([
+        return .object(["settings": .object([:]), "providers": .array(selections.map { selection in .object([
             "instanceId": .string(selection.instanceId),
             "driver": .string(selection.instanceId),
             "enabled": .bool(true), "installed": .bool(true), "status": .string("ready"),
@@ -2314,9 +2314,9 @@ private actor MultiEnvironmentFixtureSocket: WebSocketConnection {
         case RPCMethod.subscribeServerConfig.rawValue:
             response = .object(["_tag": .string("Chunk"), "requestId": id,
                 "values": .array([.object(["type": .string("snapshot"), "config": await transport.serverConfig(host: host)])])])
-        case "server.getSettings":
+        case RPCMethod.serverGetConfig.rawValue:
             response = .object(["_tag": .string("Exit"), "requestId": id,
-                "exit": .object(["_tag": .string("Success"), "value": .object([:])])])
+                "exit": .object(["_tag": .string("Success"), "value": await transport.serverConfig(host: host)])])
         case RPCMethod.subscribeShell.rawValue where interruptShellSubscriptions:
             // Let startup load configuration, then break live shell delivery.
             throw URLError(.networkConnectionLost)
@@ -2448,8 +2448,8 @@ private actor MultiEnvironmentConfigurationServer {
         case "projects.ensureScratch":
             scratchRequestHosts.append(host)
             value = .object(["projectId": .string("scratch")])
-        case "server.getSettings":
-            value = .object(settingsByHost[host] ?? [:])
+        case RPCMethod.serverGetConfig.rawValue:
+            value = config(host: host)
         case RPCMethod.subscribeVCSStatus.rawValue:
             guard let cwd = request["payload"]?["cwd"]?.stringValue else {
                 throw URLError(.badServerResponse)

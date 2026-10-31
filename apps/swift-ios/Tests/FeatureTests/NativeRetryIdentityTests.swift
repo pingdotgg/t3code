@@ -453,8 +453,7 @@ private actor ConcurrentBootstrapWebSocketConnection: WebSocketConnection {
             connectionWaiters.removeAll()
         }
         if request["tag"]?.stringValue == RPCMethod.serverGetConfig.rawValue
-            || request["tag"]?.stringValue == RPCMethod.subscribeServerConfig.rawValue
-            || request["tag"]?.stringValue == "server.getSettings",
+            || request["tag"]?.stringValue == RPCMethod.subscribeServerConfig.rawValue,
            let response = try retryConfigResponse(for: request) {
             enqueue(response)
             return
@@ -760,8 +759,7 @@ private actor AmbiguousDispatchWebSocketConnection: WebSocketConnection {
             connectionWaiters.removeAll()
         }
         if request["tag"]?.stringValue == RPCMethod.serverGetConfig.rawValue
-            || request["tag"]?.stringValue == RPCMethod.subscribeServerConfig.rawValue
-            || request["tag"]?.stringValue == "server.getSettings",
+            || request["tag"]?.stringValue == RPCMethod.subscribeServerConfig.rawValue,
            let response = try retryConfigResponse(for: request) {
             enqueue(response)
             return
@@ -825,8 +823,7 @@ private actor PartialBootstrapWebSocketConnection: WebSocketConnection {
         guard [RPCMethod.dispatchCommand.rawValue, "orchestration.launchThread"].contains(request["tag"]?.stringValue ?? ""),
               let payload = request["payload"] else {
             if request["tag"]?.stringValue == RPCMethod.serverGetConfig.rawValue
-                || request["tag"]?.stringValue == RPCMethod.subscribeServerConfig.rawValue
-                || request["tag"]?.stringValue == "server.getSettings",
+                || request["tag"]?.stringValue == RPCMethod.subscribeServerConfig.rawValue,
                let response = try retryConfigResponse(for: request) {
                 enqueue(response)
             }
@@ -885,7 +882,8 @@ private actor PartialBootstrapWebSocketConnection: WebSocketConnection {
 
 private func retryConfigResponse(for request: JSONValue) throws -> Data? {
     guard case let .number(requestID)? = request["id"] else { return nil }
-    let config: JSONValue = request["tag"]?.stringValue == "server.getSettings" ? .object([:]) : .object([
+    let config: JSONValue = .object([
+        "settings": .object([:]),
         "providers": .array([.object([
             "instanceId": .string("codex"), "driver": .string("codex"),
             "enabled": .bool(true), "installed": .bool(true), "status": .string("ready"),

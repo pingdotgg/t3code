@@ -214,7 +214,7 @@ private actor WorkspacePermissionServer: HTTPTransport {
         }
         let value: JSONValue
         switch method {
-        case "server.getSettings": value = .object([:])
+        case RPCMethod.serverGetConfig.rawValue: value = .object(["settings": .object([:])])
         case "git.preparePullRequestThread":
             value = .object(["branch": .string("pr-1"), "worktreePath": .string("/work/pr-1"),
                              "isOnPullRequestHead": .bool(true)])
