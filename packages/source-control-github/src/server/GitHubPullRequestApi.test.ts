@@ -3825,6 +3825,54 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("asks GitHub to search everyone assignable when the reviewer menu has a query", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: {
+                repository: {
+                  assignableUsers: {
+                    pageInfo: { hasNextPage: false },
+                    nodes: [{ login: "octocat", name: null, avatarUrl: "https://avatars/octocat" }],
+                  },
+                  pullRequest: {
+                    author: { __typename: "User", login: "bilal" },
+                    reviewRequests: {
+                      nodes: ["octocat", "unrelated"].map((login) => ({
+                        requestedReviewer: {
+                          __typename: "User",
+                          login,
+                          name: null,
+                          avatarUrl: "https://avatars/user",
+                        },
+                      })),
+                    },
+                  },
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const list = yield* cli.listReviewerCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        query: "octo",
+      });
+
+      expect(varsAt(0)).toMatchObject({ owner: "acme", name: "web", number: 7, query: "octo" });
+      expect(list.candidates.map((candidate) => [candidate.login, candidate.isRequested])).toEqual([
+        ["octocat", true],
+      ]);
+    }),
+  );
+
   it.effect("takes labels off one at a time, naming each in the path encoded", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValue(Effect.succeed(output("[]")));

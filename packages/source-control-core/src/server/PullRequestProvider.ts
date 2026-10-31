@@ -515,7 +515,11 @@ export interface PullRequestProviderApi {
 
   /** Exclude the author using host-specific account identities. */
   readonly listReviewerCandidates: (
-    input: ProviderRepositoryRef & { readonly number: number },
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      /** Asks the host to search past its first page of candidates. */
+      readonly query?: string | undefined;
+    },
   ) => Effect.Effect<PullRequestReviewerCandidateList, PullRequestProviderError>;
 
   readonly setReviewerRequest: (

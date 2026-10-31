@@ -281,6 +281,13 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
     }),
   );
+  // Asked only when the menu's first page is not everybody, so a query cannot be answered from it.
+  const reviewerSearch = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:pull-requests:reviewer-search",
+    tag: WS_METHODS.pullRequestsReviewerCandidates,
+    execute: (input) => routedRequest(WS_METHODS.pullRequestsReviewerCandidates, input),
+    staleTimeMs: 60_000,
+  });
   const loadDiff = Effect.fn("PullRequests.loadDiff")(function* (input: PullRequestDiffInput) {
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const loader = yield* PullRequestDiffLoader.PullRequestDiffLoader;
@@ -525,6 +532,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       concurrency: serialPerEnvironment,
     }),
     reviewerCandidates,
+    /** The host's search for reviewers past the first page, keyed by what was typed. */
+    reviewerSearch,
     requestReviewers: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:request-reviewers",
       tag: WS_METHODS.pullRequestsRequestReviewers,
@@ -543,12 +552,19 @@ export function createPullRequestEnvironmentAtoms<R, E>(
               ),
             ) ?? [];
           const missingIdentities = selected.length < reviewers.length;
-          updateCached(registry, candidatesAtom, (value) => ({
-            ...value,
-            candidates: value.candidates.map((candidate) =>
-              selected.includes(candidate) ? { ...candidate, isRequested: requested } : candidate,
-            ),
-          }));
+          // Somebody found only by the host's search is not in the loaded list yet; the host
+          // puts requested reviewers first, so reading it again brings them in.
+          updateCached(
+            registry,
+            candidatesAtom,
+            (value) => ({
+              ...value,
+              candidates: value.candidates.map((candidate) =>
+                selected.includes(candidate) ? { ...candidate, isRequested: requested } : candidate,
+              ),
+            }),
+            missingIdentities,
+          );
           const selectedLogins = new Set(
             selected.map((candidate) => candidate.login.toLowerCase()),
           );

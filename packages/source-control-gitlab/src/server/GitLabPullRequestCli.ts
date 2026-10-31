@@ -331,6 +331,7 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly host?: string | undefined;
       readonly repository: string;
       readonly number: number;
+      readonly query?: string | undefined;
     }) => Effect.Effect<PullRequestReviewerCandidateList, GitLabPullRequestCliError>;
 
     readonly listProjectLabels: (input: {
@@ -1522,19 +1523,42 @@ export const make = Effect.gen(function* () {
 
     listReviewerCandidates: Effect.fn("GitLabPullRequestCli.listReviewerCandidates")(
       function (input) {
-        return Effect.all([mergeRequestDetail(input), projectUsers(input)], {
-          concurrency: 2,
-        }).pipe(
+        return Effect.all(
+          [mergeRequestDetail(input), projectUsers({ ...input, search: input.query })],
+          {
+            concurrency: 2,
+          },
+        ).pipe(
           Effect.map(([mergeRequest, users]) => {
             const author = mergeRequest.author?.login;
-            const requested = new Set(mergeRequest.reviewRequestLogins);
+            const requested = (input.query?.trim() ? [] : mergeRequest.reviewerUsers).map(
+              ({ id, ...actor }) => ({
+                ...actor,
+                id: String(id),
+                kind: "user" as const,
+                isRequested: true,
+              }),
+            );
+            const listed = new Set(requested.map((reviewer) => reviewer.id));
+            // Every reviewer id, not just the ones shown above: a reviewer GitLab sent without a
+            // username can still turn up on the users page, and must read as requested there or
+            // choosing them would ask again instead of taking the request back.
+            const requestedIds = new Set(mergeRequest.reviewerIds.map(String));
             return {
-              // GitLab forbids requesting a review from the MR author.
-              candidates: users.candidates.flatMap((candidate) =>
-                candidate.login === author
-                  ? []
-                  : [{ ...candidate, isRequested: requested.has(candidate.login) }],
-              ),
+              // The reviewers lead, and come from the merge request rather than the users page:
+              // that page stops at a hundred, and somebody missing from it could not be taken off.
+              // The author is dropped rather than shown unusable: GitLab refuses to make the person
+              // who opened a merge request its reviewer.
+              candidates: [
+                ...requested,
+                ...users.candidates
+                  .filter((candidate) => candidate.login !== author && !listed.has(candidate.id))
+                  .map((candidate) =>
+                    requestedIds.has(candidate.id)
+                      ? { ...candidate, isRequested: true }
+                      : candidate,
+                  ),
+              ],
               truncated: users.rawCount >= MAX_PAGE_SIZE,
             };
           }),
