@@ -11,6 +11,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
+import { ClaudeOAuthUsage, claudeOAuthUsageToResponse } from "./claudeUsageLimits.ts";
+
 const API_BASE = "https://api.anthropic.com";
 const PROGRAM = "cedar_ember";
 const GRANT_ID = /^[a-z0-9_-]{1,40}$/;
@@ -39,6 +41,7 @@ const CedarEmber = Schema.Struct({
   next_grant_id: Schema.optional(Schema.NullOr(Schema.String)),
 });
 const UsageResponse = Schema.Struct({
+  ...ClaudeOAuthUsage.fields,
   cedar_ember: Schema.optional(Schema.NullOr(Schema.Unknown)),
 });
 const decodeCedarEmber = Schema.decodeUnknownOption(CedarEmber);
@@ -150,27 +153,37 @@ const withClaudeHeaders = (token: string, version: string) =>
     "user-agent": `claude-cli/${version} (external, cli)`,
   });
 
-export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
+export class ClaudeOAuthUsageError extends Schema.TaggedError<ClaudeOAuthUsageError>()(
+  "ClaudeOAuthUsageError",
+  { cause: Schema.Defect() },
+) {}
+
+export const readClaudeOAuthUsage = Effect.fn("readClaudeOAuthUsage")(
   function* (configDir: string, version: string) {
     const token = yield* readAccessToken(configDir);
     if (!token) return undefined;
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
       HttpClientRequest.get(`${API_BASE}/api/oauth/usage`, {
-        urlParams: { cedar_ember: "1", skip_spend: "1" },
+        urlParams: { cedar_ember: "1" },
       }).pipe(withClaudeHeaders(token, version)),
     );
     const body = yield* HttpClientResponse.schemaBodyJson(UsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );
-    return claudeResetCreditsToContract(
-      body.cedar_ember,
-      DateTime.toEpochMillis(yield* DateTime.now),
-    );
+    return {
+      usage: claudeOAuthUsageToResponse(body),
+      resetCredits: claudeResetCreditsToContract(
+        body.cedar_ember,
+        DateTime.toEpochMillis(yield* DateTime.now),
+      ),
+    };
   },
   Effect.timeout("10 seconds"),
-  Effect.orElseSucceed(() => undefined),
+  Effect.mapError((cause) => new ClaudeOAuthUsageError({ cause })),
 );
+
+export type ClaudeOAuthUsage = NonNullable<Effect.Success<ReturnType<typeof readClaudeOAuthUsage>>>;
 
 export const readClaudeOrganizationId = (accountConfigPath: string) =>
   readJson(Config, accountConfigPath).pipe(

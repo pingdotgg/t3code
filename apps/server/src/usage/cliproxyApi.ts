@@ -15,7 +15,11 @@ import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } fr
 
 import { codexPlanLabel } from "../provider/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
-import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
+import {
+  ClaudeOAuthUsage,
+  claudeOAuthUsageToResponse,
+  claudeUsageResponseToLimits,
+} from "../provider/claudeUsageLimits.ts";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 
 const AuthFile = Schema.Struct({
@@ -48,30 +52,6 @@ const CodexUsage = Schema.Struct({
     }),
   ),
 });
-const ClaudeWindow = Schema.Struct({
-  utilization: Schema.Number,
-  resets_at: Schema.NullOr(Schema.String),
-});
-const ClaudeUsage = Schema.Struct({
-  five_hour: Schema.optional(Schema.NullOr(ClaudeWindow)),
-  seven_day: Schema.optional(Schema.NullOr(ClaudeWindow)),
-  limits: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        kind: Schema.String,
-        percent: Schema.optional(Schema.NullOr(Schema.Number)),
-        resets_at: Schema.optional(Schema.NullOr(Schema.String)),
-        scope: Schema.optional(
-          Schema.NullOr(
-            Schema.Struct({
-              model: Schema.optional(Schema.NullOr(Schema.Struct({ display_name: Schema.String }))),
-            }),
-          ),
-        ),
-      }),
-    ),
-  ),
-});
 const CreditList = Schema.Struct({
   credits: Schema.Array(
     Schema.Struct({
@@ -87,7 +67,7 @@ const decodeAuthFiles = Schema.decodeUnknownEffect(AuthFiles);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
-const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
+const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeOAuthUsage));
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
 
@@ -268,30 +248,12 @@ export const makeCliproxyApi = Effect.gen(function* () {
       if (account.provider === "claude") {
         const body = yield* apiCall(config, account, "https://api.anthropic.com/api/oauth/usage");
         const usage = yield* decodeClaudeUsage(body);
-        const model_scoped = (usage.limits ?? []).flatMap((limit) =>
-          limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
-            ? [
-                {
-                  display_name: limit.scope.model.display_name,
-                  utilization: limit.percent,
-                  resets_at: limit.resets_at ?? null,
-                },
-              ]
-            : [],
-        );
         return {
           ...base,
           plan: "Claude Subscription",
           usageLimits: claudeUsageResponseToLimits({
             checkedAt,
-            response: {
-              rate_limits_available: true,
-              rate_limits: {
-                five_hour: usage.five_hour ?? null,
-                seven_day: usage.seven_day ?? null,
-                model_scoped,
-              },
-            },
+            response: claudeOAuthUsageToResponse(usage),
           }).limits,
         };
       }

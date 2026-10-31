@@ -31,6 +31,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -599,9 +600,14 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       const client = HttpClient.make((request) =>
         Effect.gen(function* () {
           if (request.url.endsWith("/api/oauth/usage")) {
+            const redeemed = yield* fs.exists(marker).pipe(Effect.orDie);
+            if (redeemed && claim.usageFailsAfterClaim) {
+              return HttpClientResponse.fromWeb(request, new Response(null, { status: 500 }));
+            }
             return HttpClientResponse.fromWeb(
               request,
               Response.json({
+                five_hour: { utilization: redeemed ? 0 : 100, resets_at: null },
                 cedar_ember: {
                   eligible: true,
                   next_grant_id: "grant_a",
@@ -672,6 +678,73 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         });
         expect(outcome).toMatchObject({ _tag: "Success", success: "alreadyRedeemed" });
       }),
+  );
+
+  it.live.skipIf(windowsHost)("keeps Claude limits when a direct usage refresh fails", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixtures = yield* makeTildeProviderFixtures();
+      yield* fs.writeFileString(
+        path.join(fixtures.claudeHomePath, ".credentials.json"),
+        '{"claudeAiOauth":{"accessToken":"fake-token"}}',
+      );
+      const responseStatus = yield* Ref.make(200);
+      const utilization = yield* Ref.make(42);
+      const client = HttpClient.make((request) =>
+        Effect.gen(function* () {
+          if (!request.url.endsWith("/api/oauth/usage")) {
+            return HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }));
+          }
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json(
+              {
+                five_hour: { utilization: yield* Ref.get(utilization), resets_at: null },
+                cedar_ember: {
+                  eligible: true,
+                  next_grant_id: "grant_a",
+                  grants: [{ id: "grant_a", resets_left: 2, usable_now: true }],
+                },
+              },
+              { status: yield* Ref.get(responseStatus) },
+            ),
+          );
+        }),
+      );
+      const instanceId = ProviderInstanceId.make("claude_direct_usage");
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            environment: [
+              { name: "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", value: "1", sensitive: false },
+            ],
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+      const instance = (yield* registry.getInstance(instanceId))!;
+      const before = yield* instance.snapshot.refresh;
+      expect(before.usageLimits?.windows[0]?.usedPercent).toBe(42);
+      expect(before.usageLimits?.resetCredits).toMatchObject({ availableCount: 2 });
+
+      yield* Ref.set(responseStatus, 429);
+      const failed = yield* instance.snapshot.refresh;
+      expect(failed.usageLimits).toEqual(before.usageLimits);
+
+      yield* Ref.set(responseStatus, 200);
+      yield* Ref.set(utilization, 25);
+      const recovered = yield* instance.snapshot.refresh;
+      expect(recovered.usageLimits?.windows[0]?.usedPercent).toBe(25);
+      expect(recovered.usageLimits?.unavailable).toBeUndefined();
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux"), Effect.provide(layerTest)),
   );
 
   const makeClaudeCacheFixture = Effect.fnUntraced(function* (

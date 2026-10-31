@@ -87,14 +87,14 @@ describe("claudeResetCreditsToContract", () => {
   });
 });
 
-effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
-  it.effect("reads the grants with the CLI's request", () =>
+effectIt.layer(NodeServices.layer)("readClaudeOAuthUsage", (it) => {
+  it.effect("reads the windows and grants with the CLI's request", () =>
     Effect.gen(function* () {
       const { configDir } = yield* writeLogin;
       const client = HttpClient.make((request) => {
         expect(request.method).toBe("GET");
         expect(request.url).toBe("https://api.anthropic.com/api/oauth/usage");
-        expect(UrlParams.toString(request.urlParams)).toBe("cedar_ember=1&skip_spend=1");
+        expect(UrlParams.toString(request.urlParams)).toBe("cedar_ember=1");
         expect(request.headers.authorization).toBe("Bearer oauth-token");
         expect(request.headers["anthropic-beta"]).toBe("oauth-2025-04-20");
         expect(request.headers["user-agent"]).toBe("claude-cli/2.1.0 (external, cli)");
@@ -102,31 +102,60 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
           HttpClientResponse.fromWeb(
             request,
             Response.json({
+              five_hour: { utilization: 42, resets_at: "2026-06-01T05:00:00Z" },
+              seven_day: null,
+              limits: [
+                { kind: "session", percent: 42 },
+                {
+                  kind: "weekly_scoped",
+                  percent: 7,
+                  resets_at: 1780300800,
+                  scope: { model: { display_name: "Fable" } },
+                },
+              ],
               cedar_ember: { eligible: true, next_grant_id: "grant_a", grants: [grant({})] },
             }),
           ),
         );
       });
-      const credits = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const result = yield* ClaudeResetCredits.readClaudeOAuthUsage(configDir, "2.1.0").pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, client),
       );
-      expect(credits).toEqual({ availableCount: 1, nextCreditId: "grant_a" });
+      expect(result).toEqual({
+        usage: {
+          rate_limits_available: true,
+          rate_limits: {
+            five_hour: { utilization: 42, resets_at: "2026-06-01T05:00:00Z" },
+            seven_day: null,
+            model_scoped: [
+              { display_name: "Fable", utilization: 7, resets_at: "2026-06-01T08:00:00.000Z" },
+            ],
+            extra_usage: null,
+          },
+        },
+        resetCredits: { availableCount: 1, nextCreditId: "grant_a" },
+      });
     }),
   );
 
-  it.effect("reads nothing from keychain logins or failed requests", () =>
+  it.effect("distinguishes keychain logins from failed requests", () =>
     Effect.gen(function* () {
       const { configDir } = yield* writeLogin;
-      const darwin = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const darwin = yield* ClaudeResetCredits.readClaudeOAuthUsage(configDir, "2.1.0").pipe(
         Effect.provideService(HostProcess.Platform, "darwin"),
         Effect.provideService(HttpClient.HttpClient, refuseRequests),
       );
-      const limited = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const limited = yield* ClaudeResetCredits.readClaudeOAuthUsage(configDir, "2.1.0").pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, respond(429, {})),
+        Effect.result,
       );
-      expect([darwin, limited]).toEqual([undefined, undefined]);
+      expect(darwin).toBeUndefined();
+      expect(limited).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "ClaudeOAuthUsageError" },
+      });
     }),
   );
 });
