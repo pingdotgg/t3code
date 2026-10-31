@@ -87,6 +87,7 @@ interface ChatHeaderProps {
 
 export interface HiddenTerminalChip {
   readonly shortcutLabel: string | null;
+  readonly running: boolean;
   readonly onShow: () => void;
 }
 
@@ -447,7 +448,7 @@ export const ChatHeader = memo(function ChatHeader({
                   }
                 >
                   <SquareTerminal aria-hidden className="size-3.5 shrink-0" />
-                  <span className="min-w-0 truncate">Terminal</span>
+                  <span className="min-w-0 truncate">{hiddenTerminal.running ? "Terminal · running" : "Terminal"}</span>
                 </TooltipTrigger>
                 <TooltipPopup side="bottom">
                   Show the terminal
