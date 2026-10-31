@@ -5,7 +5,7 @@ export * as CredentialStore from "./credentialStore.ts";
 export * as ConnectionDriver from "./driver.ts";
 export { type ConnectionDriverProgress, type EnvironmentConnectionLease } from "./driver.ts";
 export * from "./errors.ts";
-export * from "./githubRoutingPermissions.ts";
+export * from "./pullRequestRoutingPermissions.ts";
 export * from "./hostFreeze.ts";
 export * as Connection from "./layer.ts";
 export * from "./model.ts";

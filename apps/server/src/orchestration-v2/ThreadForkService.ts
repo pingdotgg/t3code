@@ -31,9 +31,7 @@ export class ThreadForkPlanError extends Schema.TaggedError<ThreadForkPlanError>
   },
 ) {}
 
-/**
- * `waiting` is provider-finished with checkpoint capture still pending.
- */
+/** waiting means provider-finished with checkpoint capture pending. */
 export function isForkableSourceRunStatus(status: OrchestrationV2Run["status"]): boolean {
   return (
     status === "completed" ||
@@ -92,6 +90,8 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         creationSource: input.creationSource,
         id: input.targetThreadId,
         title: input.title ?? `${input.sourceProjection.thread.title} fork`,
+        // The source's title job completes only on the source thread.
+        titleRegeneration: null,
         activeProviderThreadId: null,
         lineage: {
           parentThreadId: input.sourceProjection.thread.id,
@@ -110,7 +110,11 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         settledAt: null,
         snoozedUntil: null,
         snoozedAt: null,
+        // A guest link belongs to the thread it was made for.
+        guestShare: null,
         lastVisitedAt: null,
+        // A fork is a new thread; it does not inherit how often the source was opened.
+        opens: null,
         deletedAt: null,
       };
       const transfer: OrchestrationV2ContextTransfer = {

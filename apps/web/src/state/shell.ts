@@ -49,6 +49,23 @@ export function useEnvironmentShellHasSnapshot(environmentId: EnvironmentId | nu
   );
 }
 
+let previousLiveEnvironmentIds: ReadonlySet<EnvironmentId> = new Set();
+/** Environments whose threads reflect the server now, not a cache or a resync in flight. */
+export const liveShellEnvironmentIdsAtom = Atom.make((get) => {
+  const next = new Set<EnvironmentId>();
+  for (const environmentId of enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))) {
+    if (get(environmentShell.statusAtom(environmentId)) === "live") next.add(environmentId);
+  }
+  if (
+    next.size === previousLiveEnvironmentIds.size &&
+    [...next].every((environmentId) => previousLiveEnvironmentIds.has(environmentId))
+  ) {
+    return previousLiveEnvironmentIds;
+  }
+  previousLiveEnvironmentIds = next;
+  return next;
+}).pipe(Atom.withLabel("web-live-shell-environment-ids"));
+
 export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
   const catalog = AsyncResult.value(get(environmentCatalog.catalogAtom));
   if (Option.isNone(catalog)) {
@@ -58,8 +75,8 @@ export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
     if (Option.isSome(get(environmentShell.stateValueAtom(environmentId)).snapshot)) {
       continue;
     }
-    const connection = Option.getOrElse(
-      AsyncResult.value(get(environmentCatalog.stateAtom(environmentId))),
+    const connection = AsyncResult.getOrElse(
+      get(environmentCatalog.stateAtom(environmentId)),
       () => AVAILABLE_CONNECTION_STATE,
     );
     if (connectionProjectionPhase(connection) !== "disconnected") {
@@ -72,10 +89,7 @@ export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
   return true;
 }).pipe(Atom.withLabel("web-all-environment-shells-bootstrapped"));
 
-/**
- * The persisted catalog can emit before platform discovery registers the primary environment.
- * Neither that gap nor an empty catalog proves a project is absent.
- */
+// Catalog can precede primary discovery; an empty or incomplete catalog cannot prove absence.
 function catalogIsComplete(
   catalog: EnvironmentCatalogState,
   requiresPrimaryEnvironment: boolean,
