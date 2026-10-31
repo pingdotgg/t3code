@@ -90,11 +90,13 @@ the dialog.
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
 or Claude accounts across your enabled environments and hubs you read one number per window rather than a
 list. Each window card shows how much of the pool is left and a bar with one segment per account,
-kept in the same column across windows. Accounts are ordered by their next 5-hour refill, soonest
+sharing each row equally among accounts that report that window. The headline is the average
+percentage left across those accounts; each segment shows that account's percentage.
+Accounts are ordered by their next 5-hour refill, soonest
 first. For an account with no weekly quota left, this is when its session becomes usable again.
-The first available window is used when no account reports a 5-hour limit. A gap means the
-account does not report that window. When the provider reports reset times, the card also says
-when the next reset lands and how much it hands back. The hatched
+The first available window is used when no account reports a 5-hour limit. Accounts that do not
+report a window take no space in that row. When the provider reports reset times, the card also says
+when the next account reset lands. The hatched
 part of a segment is what that reset restores. Tap a segment or account row for the account's plan,
 where it is signed in, and its reset time. On web, you can hover too. Codex and Claude accounts
 with banked reset credits show a ticket count and the **Use reset** action in the account details.

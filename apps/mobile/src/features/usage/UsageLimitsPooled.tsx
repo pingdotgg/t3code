@@ -187,7 +187,7 @@ function PoolWindowCard({
   const inlineLabels = wide && segmentWidth >= 96;
   const inlineReset = wide && segmentWidth >= 150;
   const inlineName = wide && segmentWidth >= 220;
-  const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const nextReset = pool.resets[0];
   const openAccount = (account: LimitAccount) =>
     navigation.navigate("SettingsUsageAccount", {
       accountKey: account.key,
@@ -205,18 +205,25 @@ function PoolWindowCard({
             <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
               {pool.remainingPercent}%
             </Text>
-            <Text className="text-sm text-foreground-muted">left</Text>
+            <Text className="text-sm text-foreground-muted">
+              {pool.members.length > 1 ? "average left" : "left"}
+            </Text>
           </View>
+          {pool.members.length > 1 ? (
+            <Text className="text-xs text-foreground-muted">
+              Across {pool.members.length} accounts
+            </Text>
+          ) : null}
         </View>
         {pool.pace ? (
           <Text className="text-xs text-foreground-tertiary">{PACE_LABEL[pool.pace]}</Text>
         ) : null}
       </View>
       {description ? <Text className="text-xs text-foreground-muted">{description}</Text> : null}
-      {nextRefill ? (
+      {nextReset ? (
         <Text className="text-xs tabular-nums text-foreground-muted">
-          ↻ +{nextRefill.restoresPercent}%{" "}
-          {formatResetsIn(nextRefill.member.window, now)
+          Next account reset{" "}
+          {formatResetsIn(nextReset.member.window, now)
             ?.replace("resets in ", "in ")
             .replace("resets now", "now")}
         </Text>
@@ -609,9 +616,11 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                   Even pace: {evenPace}% left by now
                 </Text>
               ) : null}
-              {reset && reset.restoresPercent > 0 ? (
+              {reset && reset.member.refillPercent > 0 ? (
                 <Text className="text-sm text-foreground-muted">
-                  Restores {reset.restoresPercent}% of the pool
+                  After reset:{" "}
+                  {Math.round(Math.min(100, remainingPercent(window) + reset.member.refillPercent))}
+                  % left on this account
                 </Text>
               ) : null}
             </View>

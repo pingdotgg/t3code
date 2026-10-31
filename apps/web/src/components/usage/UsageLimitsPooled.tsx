@@ -192,8 +192,11 @@ function SegmentPopover({
           </Row>
         ) : null}
         {timeLeft !== null ? <Row label="Even pace">{timeLeft}% left by now</Row> : null}
-        {reset && reset.restoresPercent > 0 ? (
-          <Row label="Restores">+{reset.restoresPercent}% of pool</Row>
+        {reset && reset.member.refillPercent > 0 ? (
+          <Row label="After reset">
+            {Math.round(Math.min(100, remaining + reset.member.refillPercent))}% left on this
+            account
+          </Row>
         ) : null}
       </div>
       {credits && redeem ? (
@@ -496,10 +499,12 @@ function PoolBar({
   pool,
   color,
   now,
+  providerAccountCount,
 }: {
   readonly pool: LimitPoolWindow;
   readonly color: string;
   readonly now: number;
+  readonly providerAccountCount: number;
 }) {
   const restores = new Map(pool.resets.map((reset) => [reset.member.account.key, reset]));
   return (
@@ -519,7 +524,7 @@ function PoolBar({
               color={normalizeProviderAccentColor(member.account.accentColor) ?? color}
               now={now}
               index={position + 1}
-              showAccountName={pool.columns.length > 1}
+              showAccountName={providerAccountCount > 1}
             />
           ) : null,
         )}
@@ -532,16 +537,18 @@ function PoolWindowCard({
   pool,
   color,
   now,
+  providerAccountCount,
   label,
   description,
 }: {
   readonly pool: LimitPoolWindow;
   readonly color: string;
   readonly now: number;
+  readonly providerAccountCount: number;
   readonly label?: string | undefined;
   readonly description?: string | undefined;
 }) {
-  const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const nextReset = pool.resets[0];
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
@@ -551,17 +558,23 @@ function PoolWindowCard({
             {pool.remainingPercent}%
           </span>
           <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-            <span>left</span>
+            <span>{pool.members.length > 1 ? "average left" : "left"}</span>
             {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
           </span>
         </span>
-        {nextRefill && pool.columns.length > 1 ? (
+        {pool.members.length > 1 ? (
+          <span className="text-xs text-muted-foreground">
+            Across {pool.members.length} accounts
+          </span>
+        ) : null}
+        {nextReset && providerAccountCount > 1 ? (
           <span className="text-xs font-medium text-foreground tabular-nums">
-            ↻ +{nextRefill.restoresPercent}%
+            Next account reset{" "}
+            {formatResetsIn(nextReset.member.window, now)?.replace("resets ", "")}
           </span>
         ) : null}
       </div>
-      <PoolBar pool={pool} color={color} now={now} />
+      <PoolBar pool={pool} color={color} now={now} providerAccountCount={providerAccountCount} />
       {description ? (
         <p className="text-xs text-muted-foreground md:col-span-2">{description}</p>
       ) : null}
@@ -591,6 +604,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
           <PoolWindowCard
             key={`${window.kind}:${window.id}`}
             pool={window}
+            providerAccountCount={pool.accounts.length}
             color={color}
             now={now}
             label={details?.label}
