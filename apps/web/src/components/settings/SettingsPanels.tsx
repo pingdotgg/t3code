@@ -98,7 +98,7 @@ import { searchableSetting } from "./settingsSearch";
 import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { PullRequestLinksOpenInAppSetting } from "./IntegrationsSettings";
-import { StorageCleanupSections } from "./StorageSettings";
+import { StorageCleanupSections, WorktreeCleanupSection } from "./StorageSettings";
 import { InputGroup, InputGroupInput, InputGroupUnit } from "../ui/input-group";
 import { SettingsModelPicker } from "./SettingsModelPicker";
 import { UpdateTrackSwitchDialog } from "./UpdateTrackSwitchDialog";
@@ -1976,7 +1976,9 @@ export function MaintenanceSettingsPanel() {
   const hasServerTargets = connectedEnvironments.length > 0;
 
   return (
-    <SettingsPageContainer>
+    <SettingsPageContainer className="max-w-[688px]">
+      <WorktreeCleanupSection title="Worktrees" />
+      <StorageCleanupSections />
       <SettingsSection id="updates" title="Updates">
         <SettingsRow
           serverScoped
@@ -2049,8 +2051,6 @@ export function MaintenanceSettingsPanel() {
       <SettingsSection id="background" title="Background activity">
         <BackgroundActivitySettingsRow />
       </SettingsSection>
-
-      <StorageCleanupSections />
 
       <SettingsSection id="diagnostics-section" title="Diagnostics">
         <SettingsRow
