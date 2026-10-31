@@ -402,3 +402,77 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect("a bound run follows its thread when promotion moves it mid-send", () =>
+  Effect.gen(function* () {
+    const scratch = ProjectId.make("project:scratch");
+    const promoted = ProjectId.make("project:promoted");
+    const sends = yield* Ref.make<Array<{ projectId: ProjectId; commandId: string }>>([]);
+    // Rebind lands first, then the promotion commits between the shell read and the retry.
+    const shellProjects = yield* Ref.make([scratch, promoted]);
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: (input) =>
+              Ref.updateAndGet(sends, (all) => [
+                ...all,
+                { projectId: input.projectId, commandId: input.commandId },
+              ]).pipe(
+                Effect.flatMap((all) =>
+                  all.length < 3
+                    ? Effect.fail(
+                        new ThreadManagementService.ThreadManagementThreadNotFoundError({
+                          projectId: input.projectId,
+                          threadId: input.threadId,
+                        }),
+                      )
+                    : Effect.succeed({} as never),
+                ),
+              ),
+            getThreadShell: () =>
+              Ref.modify(shellProjects, ([next, ...rest]) => [
+                { projectId: next ?? promoted } as never,
+                rest,
+              ]),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const threadId = ThreadId.make("thread:promoted-during-run");
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:promoted-during-run"),
+        title: "Check in",
+        prompt: "Check progress",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: promoted,
+        threadId,
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+
+      const result = yield* service.runNow({ id: task.id });
+
+      assert.equal(result.threadId, threadId);
+      const attempts = yield* Ref.get(sends);
+      assert.deepEqual(
+        attempts.map((attempt) => attempt.projectId),
+        [promoted, scratch, promoted],
+      );
+      assert.equal(new Set(attempts.map((attempt) => attempt.commandId)).size, 1);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
