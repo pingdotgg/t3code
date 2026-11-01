@@ -13,6 +13,14 @@ import type { DeviceHostReady, DeviceOperations, HostDevice } from "./DeviceHost
 
 const BOOT_TIMEOUT = Duration.minutes(3);
 const SCREENSHOT_TIMEOUT = Duration.seconds(20);
+// Xcode 26 simctl rejects the numeric display ID expo-device-hub always passes; it
+// takes only internal/external aliases there. Base64 keeps the PNG intact as text.
+const LEGACY_SIMCTL_SCREENSHOT = `f=$(mktemp -t t3-screenshot) || exit 1
+trap 'rm -f "$f"' 0
+trap 'exit 1' HUP INT TERM
+xcrun simctl io "$1" screenshot --type=png "$f" >/dev/null && base64 -i "$f"
+status=$?
+exit $status`;
 
 const HubDevice = Schema.Struct({
   id: Schema.String,
@@ -236,7 +244,7 @@ export const makeDeviceHubOperations = (options: {
     },
   );
 
-  const screenshot: DeviceOperations["screenshot"] = (device) =>
+  const hubScreenshot: DeviceOperations["screenshot"] = (device) =>
     httpClient
       .execute(
         HttpClientRequest.post(
@@ -260,8 +268,44 @@ export const makeDeviceHubOperations = (options: {
               cause,
             }),
         ),
-        Effect.withSpan("DeviceHubOperations.screenshot"),
       );
+
+  const legacySimctlScreenshot = Effect.fn("DeviceHubOperations.legacySimctlScreenshot")(function* (
+    udid: string,
+    hubError: DeviceOperationError,
+  ) {
+    const help = yield* run("xcrun", ["simctl", "help", "io"]);
+    const helpText = `${help.stdout}\n${help.stderr}`;
+    if (
+      help.code !== 0 ||
+      helpText.includes("Screen ID") ||
+      !/\binternal\b.*\bexternal\b/.test(helpText)
+    ) {
+      return yield* hubError;
+    }
+    const capture = yield* run("sh", ["-c", LEGACY_SIMCTL_SCREENSHOT, "sh", udid], {
+      timeoutMs: Duration.toMillis(SCREENSHOT_TIMEOUT),
+      maxOutputBytes: 64 * 1024 * 1024,
+    });
+    if (capture.code !== 0) {
+      return yield* new DeviceOperationError({
+        operation: "screenshot",
+        reason: "command_failed",
+        exitCode: capture.code,
+        cause: capture.stderr.trim(),
+      });
+    }
+    return new Uint8Array(Buffer.from(capture.stdout, "base64"));
+  });
+
+  const screenshot: DeviceOperations["screenshot"] = (device) =>
+    hubScreenshot(device).pipe(
+      Effect.catchIf(
+        (error) => device.platform === "ios" && error.reason === "hub_rejected",
+        (error) => legacySimctlScreenshot(device.id, error),
+      ),
+      Effect.withSpan("DeviceHubOperations.screenshot"),
+    );
 
   return { list, boot, attach, shutdown, screenshot };
 };
