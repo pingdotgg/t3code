@@ -291,7 +291,6 @@ export function PreviewChromeRow({
         aria-hidden
         data-loading={loading}
         className="preview-loading-progress pointer-events-none absolute bottom-0 left-0 z-10 h-0.5 w-full origin-left rounded-r-full bg-primary"
-        style={{ boxShadow: "0 0 6px 1px var(--color-ring)" }}
       />
     </div>
   );
