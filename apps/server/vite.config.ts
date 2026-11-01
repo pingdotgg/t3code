@@ -1,8 +1,12 @@
+// @effect-diagnostics nodeBuiltinImport:off - Build configuration normalizes manifest paths before an Effect runtime exists.
 import "vite-plus/test/config";
 import { defineConfig, mergeConfig } from "vite-plus";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import baseConfig from "../../vite.config.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import { resolveTaggedSourceVersion } from "../../scripts/lib/tagged-source-version.ts";
 import rootPackageJson from "../../package.json" with { type: "json" };
 import packageJson from "./package.json" with { type: "json" };
 import { WeightedShardSequencer } from "./src/testUtils/weightedShardSequencer.ts";
@@ -16,9 +20,12 @@ import {
 export { shouldBundleCliDependency };
 
 const repoEnv = loadRepoEnv();
-const cliBuildChannel = /^[^-+]+-(?:nightly|preview)\./.test(packageJson.version)
-  ? "nightly"
-  : "latest";
+const serverManifestPath = NodeURL.fileURLToPath(new URL("./package.json", import.meta.url));
+const buildVersion = resolveTaggedSourceVersion(
+  NodeURL.fileURLToPath(new URL("../../", import.meta.url)),
+  packageJson.version,
+);
+const cliBuildChannel = /^[^-+]+-(?:nightly|preview)\./.test(buildVersion) ? "nightly" : "latest";
 // Official release workflows set the telemetry channel; local builds and forks use "dev".
 const TELEMETRY_CHANNELS = ["stable", "nightly", "preview", "dev"];
 const telemetryChannel = process.env.T3CODE_TELEMETRY_CHANNEL?.trim() || "dev";
@@ -82,6 +89,18 @@ export default mergeConfig(
       },
     },
     pack: {
+      plugins: [
+        {
+          name: "tagged-source-version",
+          load(id) {
+            if (NodePath.resolve(id) !== serverManifestPath) return;
+            return {
+              code: JSON.stringify({ ...packageJson, version: buildVersion }),
+              moduleType: "json",
+            };
+          },
+        },
+      ],
       // SEA embeds one entry; expose the history worker as a hidden subcommand.
       entry: packExecutable ? ["src/bin.ts"] : ["src/bin.ts", "src/claude-history-worker.ts"],
       outDir: packExecutable ? "dist-exe" : "dist",
