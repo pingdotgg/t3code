@@ -130,3 +130,28 @@ describe("SidebarUpdatePill update everything", () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(button.element()));
   });
 });
+
+describe("SidebarUpdatePill check", () => {
+  it("re-enables when a check settles while the spin animation is paused", async () => {
+    setup({ ...nightlyUpdate([]), status: "checking", availableVersion: null });
+    // Off-screen, the spin stays paused and never fires the iteration event that ends its latch.
+    await using screen = await render(
+      <div style={{ position: "fixed", top: -2000 }}>
+        <SidebarUpdatePill />
+      </div>,
+    );
+    const checking = screen.getByRole("button", { name: "Checking for updates…" });
+    await expect.element(checking).toHaveAttribute("aria-disabled", "true");
+
+    await publish({ ...nightlyUpdate([]), status: "up-to-date", availableVersion: null });
+    const idle = screen.getByRole("button", { name: "Check for updates" });
+    await expect.element(idle).not.toHaveAttribute("aria-disabled");
+
+    await publish(nightlyUpdate([]));
+    const available = screen.getByRole("button", {
+      name: "Update 0.0.50-nightly.2 ready to download",
+    });
+    await expect.element(available).not.toHaveAttribute("aria-disabled");
+    await expect.element(available).toHaveAttribute("data-update-state", "available");
+  });
+});
