@@ -5,12 +5,18 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  MessageId,
+  RunId,
   ThreadId,
   type ApplicationStoredEvent,
   type OrchestrationV2AppThread,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -20,11 +26,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import {
   CLAUDE_MODEL_SELECTION,
   CODEX_MODEL_SELECTION,
@@ -170,6 +179,8 @@ const seedOwner = Effect.fn(function* (
 const makeImporter = Effect.fn(function* (
   candidates: ReadonlyArray<ReturnType<typeof candidate>>,
   beforeTransaction: Effect.Effect<void> = Effect.void,
+  getAdapter?: ProviderAdapterRegistry.ProviderAdapterRegistryV2Shape["get"],
+  threadCommands?: KeyedLock.KeyedLock<ThreadId>,
 ) {
   const sql = yield* SqlClient.SqlClient;
   const events = yield* EventStore.EventStoreV2;
@@ -236,12 +247,23 @@ const makeImporter = Effect.fn(function* (
                   ),
                 ),
           }),
+          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)(
+            getAdapter === undefined ? {} : { get: getAdapter },
+          ),
+          Layer.succeed(
+            ThreadCommandExecutor.ThreadCommandExecutor,
+            threadCommands ?? (yield* KeyedLock.make<ThreadId>()),
+          ),
         ),
       ),
     ),
   );
   const importer = Context.get(context, AgentSessionImporter.AgentSessionImporter);
-  return { run: importer.importRecentAgentThreads({ projectId }), published };
+  return {
+    run: importer.importRecentAgentThreads({ projectId }),
+    importNativeHistory: importer.importNativeHistory,
+    published,
+  };
 });
 
 it.effect(
@@ -415,4 +437,316 @@ it.effect(
         runtimePayload: { importedTranscripts: [source.source] },
       });
     }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect(
+  "copies native session history into the imported thread once, retrying a failed read",
+  () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const source = candidate(CODEX_MODEL_SELECTION, "native-history");
+      const threadId = yield* seedOwner(source);
+      const resolved: Array<ProviderInstanceId> = [];
+      const opened: Array<ProviderAdapter.ProviderAdapterV2OpenSessionInput> = [];
+      let closed = false;
+      let failRead = true;
+      const replayed = (role: "user" | "assistant", text: string) => ({
+        createdBy: role === "user" ? ("user" as const) : ("agent" as const),
+        creationSource: "provider" as const,
+        id: MessageId.make(`replayed:${text}`),
+        threadId,
+        runId: null,
+        nodeId: null,
+        role,
+        text,
+        attachments: [],
+        streaming: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const adapter = {
+        openSession: (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) =>
+          Effect.acquireRelease(
+            Effect.sync(() => {
+              opened.push(input);
+              return {
+                readThreadSnapshot: ({ providerThread }) =>
+                  failRead
+                    ? Effect.fail(
+                        new ProviderAdapter.ProviderAdapterReadThreadSnapshotError({
+                          driver: providerThread.driver,
+                          providerThreadId: providerThread.id,
+                        }),
+                      )
+                    : Effect.succeed({
+                        providerThread,
+                        providerTurns: [],
+                        runtimeRequests: [],
+                        messages: [
+                          replayed("user", "Fix the build"),
+                          replayed("assistant", "Fixed it"),
+                          replayed("assistant", " "),
+                        ],
+                      }),
+              } as Pick<ProviderAdapter.ProviderAdapterV2SessionRuntime, "readThreadSnapshot">;
+            }),
+            () =>
+              Effect.sync(() => {
+                closed = true;
+              }),
+          ),
+      } as unknown as ProviderAdapter.ProviderAdapterV2["Service"];
+      const importer = yield* makeImporter([], Effect.void, (instanceId) =>
+        Effect.sync(() => {
+          resolved.push(instanceId);
+          return adapter;
+        }),
+      );
+
+      const importHistory = importer.importNativeHistory({
+        threadId,
+        workspaceRoot: "/workspace/project",
+      });
+
+      expect((yield* Effect.flip(importHistory))._tag).toBe(
+        "ProviderAdapterReadThreadSnapshotError",
+      );
+      expect(closed).toBe(true);
+      expect(
+        (yield* projections.getThreadRecords(threadId, [])).thread.historyOrigin,
+      ).toBeUndefined();
+
+      failRead = false;
+      expect(yield* importHistory).toBe(2);
+      expect(resolved).toEqual([
+        CODEX_MODEL_SELECTION.instanceId,
+        CODEX_MODEL_SELECTION.instanceId,
+      ]);
+      expect(opened[1]).toMatchObject({
+        threadId,
+        initialNativeThreadId: source.source.providerSessionId,
+        runtimePolicy: { cwd: "/workspace/project" },
+      });
+      // Forks keep run-less history only for this origin.
+      expect((yield* projections.getThreadRecords(threadId, [])).thread.historyOrigin).toBe(
+        "v1_import",
+      );
+      expect(yield* importHistory).toBe(0);
+      expect(opened).toHaveLength(2);
+      const page = yield* projections.getTimelinePage(threadId, { view: "messages", limit: 10 });
+      expect(
+        page.items.map(({ item }) => [
+          item.type,
+          item.runId,
+          "text" in item ? item.text : undefined,
+        ]),
+      ).toEqual([
+        ["user_message", null, "Fix the build"],
+        ["assistant_message", null, "Fixed it"],
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("releases the ACP import lock when a native session never answers", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+    const threadId = yield* seedOwner(candidate(CODEX_MODEL_SELECTION, "native-history-hang"));
+    const opened = yield* Deferred.make<void>();
+    let closed = false;
+    // An agent that only resumes sessions and never answers its first session/resume.
+    const adapter = {
+      openSession: () =>
+        Effect.suspend(() => {
+          if (!closed) {
+            return Effect.addFinalizer(() =>
+              Effect.sync(() => {
+                closed = true;
+              }),
+            ).pipe(
+              Effect.andThen(Deferred.succeed(opened, undefined)),
+              Effect.andThen(Effect.never),
+            );
+          }
+          return Effect.succeed({
+            readThreadSnapshot: ({ providerThread }) =>
+              Effect.succeed({
+                providerThread,
+                providerTurns: [],
+                runtimeRequests: [],
+                messages: [
+                  {
+                    createdBy: "user",
+                    creationSource: "provider",
+                    id: MessageId.make("replayed:hang"),
+                    threadId,
+                    runId: null,
+                    nodeId: null,
+                    role: "user",
+                    text: "Fix the build",
+                    attachments: [],
+                    streaming: false,
+                    createdAt: now,
+                    updatedAt: now,
+                  },
+                ],
+              }),
+          } as Pick<ProviderAdapter.ProviderAdapterV2SessionRuntime, "readThreadSnapshot">);
+        }),
+    } as unknown as ProviderAdapter.ProviderAdapterV2["Service"];
+    const importer = yield* makeImporter([], Effect.void, () => Effect.succeed(adapter));
+    const importHistory = coordinator.withSessionMutation(
+      importer.importNativeHistory({ threadId, workspaceRoot: "/workspace/project" }),
+    );
+
+    const importing = yield* importHistory.pipe(Effect.flip, Effect.forkChild);
+    yield* Deferred.await(opened);
+    // Any other ACP import or delete waits for the same lock.
+    const next = yield* coordinator
+      .withSessionMutation(Effect.succeed("next"))
+      .pipe(Effect.forkChild);
+    yield* TestClock.adjust("2 minutes");
+
+    expect((yield* Fiber.join(importing))._tag).toBe("TimeoutError");
+    expect(closed).toBe(true);
+    expect(yield* Fiber.join(next)).toBe("next");
+    expect(
+      (yield* projections.getThreadRecords(threadId, [])).thread.historyOrigin,
+    ).toBeUndefined();
+    expect(yield* importHistory).toBe(1);
+    expect((yield* projections.getThreadRecords(threadId, [])).thread.historyOrigin).toBe(
+      "v1_import",
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(Layer.merge(persistence, AcpRegistryRuntimeCoordinator.layer)),
+  ),
+);
+
+/**
+ * Runs a thread command that read the thread before the history load ended and
+ * writes once the importer is about to commit, as an unserialized write would.
+ */
+const importDuringCommand = Effect.fn(function* (
+  name: string,
+  command: (thread: OrchestrationV2AppThread) => ReadonlyArray<OrchestrationV2DomainEvent>,
+) {
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const sink = yield* EventSink.EventSinkV2;
+  const threadId = yield* seedOwner(candidate(CODEX_MODEL_SELECTION, name));
+  const lock = yield* KeyedLock.make<ThreadId>();
+  const loaded = yield* Deferred.make<void>();
+  const importerCommitting = yield* Deferred.make<void>();
+  const commandWritten = yield* Deferred.make<void>();
+  const committing = Deferred.succeed(importerCommitting, undefined);
+  const adapter = {
+    openSession: () =>
+      Effect.succeed({
+        readThreadSnapshot: ({ providerThread }) =>
+          Deferred.await(loaded).pipe(
+            Effect.as({
+              providerThread,
+              providerTurns: [],
+              runtimeRequests: [],
+              messages: [
+                {
+                  createdBy: "user" as const,
+                  creationSource: "provider" as const,
+                  id: MessageId.make(`replayed:${name}`),
+                  threadId,
+                  runId: null,
+                  nodeId: null,
+                  role: "user" as const,
+                  text: "Fix the build",
+                  attachments: [],
+                  streaming: false,
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              ],
+            }),
+          ),
+      } as Pick<ProviderAdapter.ProviderAdapterV2SessionRuntime, "readThreadSnapshot">),
+  } as unknown as ProviderAdapter.ProviderAdapterV2["Service"];
+  const importer = yield* makeImporter(
+    [],
+    committing.pipe(Effect.andThen(Deferred.await(commandWritten))),
+    () => Effect.succeed(adapter),
+    {
+      ...lock,
+      withLock: (key, effect) => committing.pipe(Effect.andThen(lock.withLock(key, effect))),
+    },
+  );
+  const commanding = yield* Effect.forkScoped(
+    lock.withLock(
+      threadId,
+      Effect.gen(function* () {
+        const { thread } = yield* projections.getThreadRecords(threadId, []);
+        yield* Deferred.succeed(loaded, undefined);
+        yield* Deferred.await(importerCommitting);
+        yield* sink.write({ events: command(thread) });
+        yield* Deferred.succeed(commandWritten, undefined);
+      }),
+    ),
+  );
+  const imported = yield* importer.importNativeHistory({
+    threadId,
+    workspaceRoot: "/workspace/project",
+  });
+  yield* Fiber.join(commanding);
+  const records = yield* projections.getThreadRecords(threadId, ["runs"]);
+  const page = yield* projections.getTimelinePage(threadId, { view: "messages", limit: 10 });
+  return { imported, thread: records.thread, runs: records.runs, items: page.items };
+});
+
+it.effect("keeps a thread edit made while the native history loads", () =>
+  Effect.gen(function* () {
+    const result = yield* importDuringCommand("renamed-during-load", (thread) => [
+      {
+        id: EventId.make(`${thread.id}:renamed`),
+        type: "thread.metadata-updated",
+        threadId: thread.id,
+        occurredAt: now,
+        payload: { ...thread, title: "Renamed" },
+      },
+    ]);
+    expect(result.imported).toBe(1);
+    expect(result.thread.title).toBe("Renamed");
+    expect(result.thread.historyOrigin).toBe("v1_import");
+    expect(result.items).toHaveLength(1);
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("skips the native history when a run starts while it loads", () =>
+  Effect.gen(function* () {
+    const result = yield* importDuringCommand("run-during-load", (thread) => [
+      {
+        id: EventId.make(`${thread.id}:run`),
+        type: "run.updated",
+        threadId: thread.id,
+        occurredAt: now,
+        payload: {
+          id: RunId.make(`${thread.id}:run`),
+          threadId: thread.id,
+          ordinal: 1,
+          providerInstanceId: thread.providerInstanceId,
+          modelSelection: thread.modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make(`${thread.id}:prompt`),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "queued",
+          requestedAt: now,
+          startedAt: null,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      },
+    ]);
+    expect(result.imported).toBe(0);
+    expect(result.runs).toHaveLength(1);
+    expect(result.thread.historyOrigin).toBeUndefined();
+    expect(result.items).toEqual([]);
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
 );

@@ -1506,6 +1506,13 @@ export const layerWsRpc = (
               Effect.map((thread) => ({
                 ...session,
                 importedThreadId: thread === null ? null : threadId,
+                ...(thread !== null &&
+                AgentSessionImporter.isNativeHistoryPending({
+                  historyOrigin: thread.historyOrigin,
+                  hasRun: thread.latestRunId !== null,
+                })
+                  ? { nativeHistoryPending: true }
+                  : {}),
               })),
               Effect.mapError(
                 (cause) =>
@@ -1527,7 +1534,7 @@ export const layerWsRpc = (
       ) {
         return yield* acpRegistryRuntimeCoordinator.withSessionMutation(
           Effect.gen(function* () {
-            yield* acpRegistryProject(input.projectId);
+            const project = yield* acpRegistryProject(input.projectId);
             const { instance } = yield* acpSessionManager(input.instanceId);
             const providerSnapshot = yield* instance.snapshot.getSnapshot;
             if (
@@ -1554,7 +1561,25 @@ export const layerWsRpc = (
                   }),
               ),
             );
-            if (existing !== null) return { threadId, imported: false } as const;
+            if (existing !== null) {
+              const repairing = AgentSessionImporter.isNativeHistoryPending({
+                historyOrigin: existing.historyOrigin,
+                hasRun: existing.latestRunId !== null,
+              });
+              yield* agentSessionImporter
+                .importNativeHistory({ threadId, workspaceRoot: project.workspaceRoot })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new AcpRegistryOperationError({
+                        reason: "session_import_failed",
+                        message: "Could not import the ACP session history.",
+                        cause,
+                      }),
+                  ),
+                );
+              return { threadId, imported: repairing } as const;
+            }
 
             const provider = (yield* providerRegistry.getProviders).find(
               (candidate) => candidate.instanceId === input.instanceId,
@@ -1610,6 +1635,18 @@ export const layerWsRpc = (
                 cause: launched.failure,
               });
             }
+            // The thread is usable without its history, so a failed read only logs.
+            yield* agentSessionImporter
+              .importNativeHistory({ threadId, workspaceRoot: project.workspaceRoot })
+              .pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Could not import ACP session history", {
+                    instanceId: input.instanceId,
+                    sessionId: input.sessionId,
+                    cause,
+                  }),
+                ),
+              );
             return { threadId, imported: true } as const;
           }),
         );
