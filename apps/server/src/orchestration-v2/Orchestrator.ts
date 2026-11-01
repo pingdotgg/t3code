@@ -3669,7 +3669,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               );
               if (!stack) return thread;
               targets = new Set(stack.layers);
-              for (const layer of existing.stack?.layers ?? []) {
+              for (const layer of stack.layers.flatMap((link) => link.stack?.layers ?? [])) {
                 const member = links.find((link) =>
                   threadPullRequestKeysEqual(link, { ...key, number: layer.number }),
                 );

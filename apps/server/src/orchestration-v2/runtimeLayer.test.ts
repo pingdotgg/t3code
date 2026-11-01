@@ -2851,7 +2851,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           commandId: CommandId.make(`sync-${id}`),
           threadId,
           ...reference,
-          stack: reference.number === 1 || reference.number === 2 ? stack : null,
+          stack:
+            reference.number === 1 && stack
+              ? { ...stack, layers: stack.layers.filter((layer) => layer.number < 3) }
+              : reference.number === 2
+                ? stack
+                : null,
           snapshot: {
             state: "open",
             title: "PR",
