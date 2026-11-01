@@ -496,10 +496,11 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
           headers: [],
         }),
       );
-
-      const response = yield* Schema.decodeEffect(Schema.fromJsonString(JsonRpcErrorResponse))(
-        yield* Queue.take(output),
+      const decodeJsonRpcErrorResponse = Schema.decodeEffect(
+        Schema.fromJsonString(JsonRpcErrorResponse),
       );
+
+      const response = yield* decodeJsonRpcErrorResponse(yield* Queue.take(output));
       assert.equal(response.id, 9);
       assert.equal(response.error.code, -32603);
     }),
@@ -864,6 +865,36 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
           },
         },
       });
+    }),
+  );
+
+  it.effect("fails pending and later requests when input ends before the process exits", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const termination = yield* Deferred.make<AcpError.AcpError>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        terminationError: Effect.never,
+        serverRequestMethods: new Set(),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+      const pending = yield* transport
+        .request("x/test", { hello: "world" })
+        .pipe(Effect.flip, Effect.orDie, Effect.forkScoped);
+      yield* Queue.take(output);
+      yield* Queue.end(input);
+
+      const error = yield* Deferred.await(termination);
+      assert.instanceOf(error, AcpError.AcpInputStreamEndedError);
+      assert.strictEqual(yield* Fiber.join(pending), error);
+      assert.strictEqual(
+        yield* transport.request("x/test", { hello: "later" }).pipe(Effect.flip, Effect.orDie),
+        error,
+      );
+      assert.strictEqual(
+        yield* transport.notify("session/cancel", { sessionId: "session-1" }).pipe(Effect.flip),
+        error,
+      );
     }),
   );
 

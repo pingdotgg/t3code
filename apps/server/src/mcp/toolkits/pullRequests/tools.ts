@@ -1,5 +1,6 @@
 import {
   McpCapabilityUnavailableError,
+  OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   PositiveInt,
   PullRequestReviewGuide,
@@ -33,6 +34,7 @@ const guideDependencies = [
 ];
 
 export const PullRequestTargetInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: Schema.optional(
     ThreadId.annotate({
       description: "Thread. Default: this thread.",
@@ -210,11 +212,33 @@ const PullRequestIdentity = {
   url: Schema.String,
 };
 
+/** A delegated child's report is how its parent learns the PR, so the link result asks for it. */
+export const CHILD_PULL_REQUEST_REPORT_NEXT =
+  "End your reply with: PR <full URL>, head <SHA>, checks and reviews <state>.";
+
 export const LinkPullRequestResult = Schema.Struct({
   ...PullRequestIdentity,
   alreadyLinked: Schema.Boolean,
+  next: Schema.optional(Schema.String),
 });
 export type LinkPullRequestResult = typeof LinkPullRequestResult.Type;
+
+const PullRequestNumbersByRepository = Schema.Array(
+  Schema.Struct({
+    host: Schema.String,
+    repository: Schema.String,
+    numbers: Schema.Array(Schema.Int),
+  }),
+);
+
+export const LinkPullRequestsResult = Schema.Struct({
+  linked: PullRequestNumbersByRepository,
+  alreadyLinked: PullRequestNumbersByRepository,
+  linkedCount: Schema.Int,
+  invalidUrls: Schema.optional(Schema.Array(Schema.String)),
+  next: Schema.optional(Schema.String),
+});
+export type LinkPullRequestsResult = typeof LinkPullRequestsResult.Type;
 
 export const UnlinkPullRequestResult = Schema.Struct({
   host: Schema.String,
@@ -223,6 +247,20 @@ export const UnlinkPullRequestResult = Schema.Struct({
   wasLinked: Schema.Boolean,
 });
 export type UnlinkPullRequestResult = typeof UnlinkPullRequestResult.Type;
+
+export const UnlinkPullRequestsResult = Schema.Struct({
+  unlinked: Schema.Array(
+    Schema.Struct({
+      host: Schema.String,
+      repository: Schema.String,
+      state: PullRequestState,
+      numbers: Schema.Array(Schema.Int),
+    }),
+  ),
+  unlinkedCount: Schema.Int,
+  remaining: Schema.Int,
+});
+export type UnlinkPullRequestsResult = typeof UnlinkPullRequestsResult.Type;
 
 export const WatchPullRequestResult = Schema.Struct({
   ...PullRequestIdentity,
@@ -264,13 +302,32 @@ export const ListThreadPullRequestsResult = Schema.Struct({
 export type ListThreadPullRequestsResult = typeof ListThreadPullRequestsResult.Type;
 
 const LinkPullRequestTool = Tool.make("link_pull_request", {
-  description: "Link a PR to this thread. T3 shows its status and settles the thread on merge.",
+  description:
+    "Link a PR to this thread. T3 shows its status and settles the thread on merge. For several PRs, use `link_pull_requests`.",
   parameters: PullRequestTargetInput,
   success: LinkPullRequestResult,
   failure: PullRequestToolError,
   dependencies,
 })
   .annotate(Tool.Title, "Link pull request to thread")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+const LinkPullRequestsTool = Tool.make("link_pull_requests", {
+  description:
+    "Link several PRs to a thread in one call. Use it instead of one `link_pull_request` per PR. URLs that are not PRs come back in `invalidUrls`.",
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    threadId: Schema.optional(ThreadId.annotate({ description: "Thread. Default: this thread." })),
+    urls: Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1)),
+  }),
+  success: LinkPullRequestsResult,
+  failure: PullRequestToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Link pull requests to thread")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
@@ -290,10 +347,29 @@ const UnlinkPullRequestTool = Tool.make("unlink_pull_request", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+const UnlinkPullRequestsTool = Tool.make("unlink_pull_requests", {
+  description:
+    "Unlink every PR on a thread whose last known state (as `list_thread_pull_requests` shows) is in `states`, in one call. Use it instead of one `unlink_pull_request` per PR. PRs with no known state stay linked.",
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    threadId: Schema.optional(ThreadId.annotate({ description: "Thread. Default: this thread." })),
+    states: Schema.Array(PullRequestState).check(Schema.isMinLength(1)),
+  }),
+  success: UnlinkPullRequestsResult,
+  failure: PullRequestToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Unlink pull requests by state")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
   description:
     "List PRs linked to a thread, with last known state and stack order (bottom to top). Call only when you need that list. Never as an end-of-work check.",
   parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId.annotate({ description: "Thread. Default: this thread." })),
   }),
   success: ListThreadPullRequestsResult,
@@ -370,6 +446,7 @@ const WritePullRequestGuidesTool = Tool.make("write_pull_request_guides", {
   description:
     "Write review guides for up to 20 PRs (the tour in the PR Guide tab). Returns once runs start. Each run takes minutes in a temporary checkout. A run for the same head is joined. Read with `read_pull_request_guide`. Fails while guides are off.",
   parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
     pullRequests: Schema.Array(GuideTarget).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
   }),
   success: WritePullRequestGuidesResult,
@@ -385,7 +462,10 @@ const WritePullRequestGuidesTool = Tool.make("write_pull_request_guides", {
 const ReadPullRequestGuideTool = Tool.make("read_pull_request_guide", {
   description:
     "Read a PR's stored review guide and run state. `guide` is null when none exists. Never starts a run.",
-  parameters: GuideTarget,
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    ...GuideTarget.fields,
+  }),
   success: ReadPullRequestGuideResult,
   failure: PullRequestToolError,
   dependencies: guideDependencies,
@@ -398,7 +478,9 @@ const ReadPullRequestGuideTool = Tool.make("read_pull_request_guide", {
 
 export const PullRequestsToolkit = Toolkit.make(
   LinkPullRequestTool,
+  LinkPullRequestsTool,
   UnlinkPullRequestTool,
+  UnlinkPullRequestsTool,
   ListThreadPullRequestsTool,
   WatchPullRequestTool,
   UnwatchPullRequestTool,
