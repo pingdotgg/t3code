@@ -24,12 +24,13 @@ export const relayLayer = (
       const policy = yield* ManagedPolicy.ManagedPolicy;
       return RelayTracing.layer(
         ManagedPolicy.deniedBy(policy, "telemetry") === undefined
-          ? (tracingConfig ??
-              resolveRelayClientTracingConfig(
+          ? tracingConfig === undefined
+            ? resolveRelayClientTracingConfig(
                 process.env,
                 undefined,
                 config.telemetryEnabledInSettings,
-              ))
+              )
+            : tracingConfig
           : null,
         {
           ...resource,
