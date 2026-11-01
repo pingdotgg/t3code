@@ -205,6 +205,18 @@ describe("pull request primary control", () => {
       }),
     ).toBe("merge");
   });
+
+  // regression: #25583 green checks offered Merge while branch rules blocked it
+  it("offers auto-merge for a blocked merge, and otherwise says it is blocked", () => {
+    const blocked = { ...open, mergeBlocked: true };
+    expect(resolvePullRequestPrimaryControl(blocked)).toBe("enable-auto-merge");
+    expect(resolvePullRequestPrimaryControl({ ...blocked, canEnableAutoMerge: false })).toBe(
+      "blocked",
+    );
+    expect(
+      resolvePullRequestPrimaryControl({ ...blocked, canEnableAutoMerge: false, canMerge: false }),
+    ).toBeNull();
+  });
 });
 
 describe("stacked pull request classification", () => {
@@ -1235,6 +1247,11 @@ describe("the compact row's single action slot", () => {
         openDetail({ checks: [check("failure"), check("pending")] }),
       ),
     ).toBe("fix");
+  });
+
+  it("does not offer a merge the host's branch rules block", () => {
+    expect(resolveThreadPanelPullRequestAction(openDetail())).toBe("merge");
+    expect(resolveThreadPanelPullRequestAction(openDetail({ mergeBlocked: true }))).toBeNull();
   });
 
   it("offers nothing the viewer may not do, and nothing on settled pull requests", () => {

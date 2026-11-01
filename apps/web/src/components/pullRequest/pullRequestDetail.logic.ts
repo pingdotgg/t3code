@@ -75,6 +75,7 @@ type PullRequestPrimaryControl =
   | "resolve"
   | "ready"
   | "merge"
+  | "blocked"
   | "enable-auto-merge"
   | "auto-merge-armed"
   | "merged"
@@ -85,6 +86,7 @@ export function resolvePullRequestPrimaryControl(input: {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
   readonly mergeability: PullRequestMergeability;
+  readonly mergeBlocked?: boolean | undefined;
   readonly checksState: ContractPullRequestChecksState | null;
   readonly autoMergeEnabled: boolean | undefined;
   readonly hasMergeMethod: boolean;
@@ -100,13 +102,14 @@ export function resolvePullRequestPrimaryControl(input: {
   if (!input.hasMergeMethod) return null;
   if (
     input.autoMergeEnabled === false &&
-    input.checksState !== null &&
-    input.checksState !== "passing" &&
+    (input.mergeBlocked === true ||
+      (input.checksState !== null && input.checksState !== "passing")) &&
     input.canEnableAutoMerge
   ) {
     return "enable-auto-merge";
   }
-  return input.canMerge ? "merge" : null;
+  if (!input.canMerge) return null;
+  return input.mergeBlocked ? "blocked" : "merge";
 }
 
 export function pullRequestCheckoutCommand(
@@ -276,7 +279,13 @@ export function isStackedPullRequestBase(
 
 type PullRequestActionableDetail = Pick<
   PullRequestDetail,
-  "state" | "isDraft" | "mergeability" | "capabilities" | "viewerPermissions" | "mergeCapabilities"
+  | "state"
+  | "isDraft"
+  | "mergeability"
+  | "mergeBlocked"
+  | "capabilities"
+  | "viewerPermissions"
+  | "mergeCapabilities"
 >;
 
 export function allowedPullRequestMergeMethods(
@@ -361,7 +370,7 @@ export function resolveThreadPanelPullRequestAction(
   }
   const checks = classifyPullRequestChecks(detail.checks);
   if (checks === "failing") return "fix";
-  if (checks === "pending") return null;
+  if (checks === "pending" || detail.mergeBlocked) return null;
   return canPerformPullRequestAction(detail, "merge") &&
     allowedPullRequestMergeMethods(detail).length > 0
     ? "merge"
