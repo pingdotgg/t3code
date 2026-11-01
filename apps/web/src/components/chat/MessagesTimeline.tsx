@@ -793,6 +793,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   });
   const [findListReady, setFindListReady] = useState(false);
   const promptJumpLoadRequestRef = useRef<number | null>(null);
+  const promptJumpHistoryWasLoadingRef = useRef(false);
   const handleListLoad = () => {
     onCitationListLoad();
     setFindListReady(true);
@@ -1222,6 +1223,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   useEffect(() => {
     if (promptJump === null) {
       promptJumpLoadRequestRef.current = null;
+      promptJumpHistoryWasLoadingRef.current = false;
       return;
     }
     if (!threadDetailReady || detailBehindShell || !findListReady || restoringThreadPosition)
@@ -1245,14 +1247,24 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (historyControls?.error !== null && historyControls?.error !== undefined) {
       usePromptJumpStore.getState().clear(promptJump.requestId);
       promptJumpLoadRequestRef.current = null;
+      promptJumpHistoryWasLoadingRef.current = false;
       return;
     }
     if (!historyControls?.hasMoreHistory) {
       usePromptJumpStore.getState().clear(promptJump.requestId);
       promptJumpLoadRequestRef.current = null;
+      promptJumpHistoryWasLoadingRef.current = false;
       return;
     }
-    if (!historyControls.loading && promptJumpLoadRequestRef.current !== promptJump.requestId) {
+    if (historyControls.loading) {
+      promptJumpHistoryWasLoadingRef.current = true;
+      return;
+    }
+    if (promptJumpHistoryWasLoadingRef.current) {
+      promptJumpHistoryWasLoadingRef.current = false;
+      promptJumpLoadRequestRef.current = null;
+    }
+    if (promptJumpLoadRequestRef.current !== promptJump.requestId) {
       promptJumpLoadRequestRef.current = promptJump.requestId;
       historyControls.onLoadEarlier(promptJump.messageId);
     }

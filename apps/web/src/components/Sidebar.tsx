@@ -180,6 +180,7 @@ import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
   groupSidebarThreadsByProject,
+  projectFolderThreadCandidates,
   sidebarFolderExpansionKeys,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
@@ -507,7 +508,7 @@ function useSidebarThreads(input: {
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
     scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
-    expanded: settledShelfExpanded,
+    expanded: settledShelfExpanded || folderGroups !== null,
     visibleCount: settledVisibleCount,
   });
   const listedSettledThreads = settledThreads.filter(olderSettledShelf.isListed);
@@ -527,12 +528,14 @@ function useSidebarThreads(input: {
     }
     return visible.length === settledThreads.length ? settledThreads : visible;
   })();
-  const renderedSettledThreads = settledShelfExpanded
-    ? visibleSettledThreads
-    : routeThreadOnly(visibleSettledThreads, routeRowThreadKey);
-  const visibleSnoozedThreads = snoozedShelfExpanded
-    ? snoozedThreads
-    : routeThreadOnly(snoozedThreads, routeRowThreadKey);
+  const renderedSettledThreads =
+    settledShelfExpanded || folderGroups !== null
+      ? visibleSettledThreads
+      : routeThreadOnly(visibleSettledThreads, routeRowThreadKey);
+  const visibleSnoozedThreads =
+    snoozedShelfExpanded || folderGroups !== null
+      ? snoozedThreads
+      : routeThreadOnly(snoozedThreads, routeRowThreadKey);
   const visibleWorkingThreads = workingShelfExpanded
     ? workingThreads
     : routeThreadOnly(workingThreads, routeRowThreadKey);
@@ -541,13 +544,13 @@ function useSidebarThreads(input: {
       ? null
       : groupSidebarThreadsByProject(
           folderGroups,
-          [
-            ...pinnedThreads,
-            ...activeThreads,
-            ...visibleWorkingThreads,
-            ...visibleSnoozedThreads,
-            ...renderedSettledThreads,
-          ],
+          projectFolderThreadCandidates({
+            pinned: pinnedThreads,
+            active: activeThreads,
+            working: visibleWorkingThreads,
+            snoozed: visibleSnoozedThreads,
+            settled: renderedSettledThreads,
+          }),
           keepEmpty,
         ).map((folder) => {
           const collapsed = !resolveProjectExpanded(
@@ -3616,14 +3619,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       }
                       return items;
                     })()}
-                    {settledShelfExpanded && hiddenSettledCount > 0 ? (
+                    {(settledShelfExpanded || projectFolders !== null) && hiddenSettledCount > 0 ? (
                       <li className="list-none">
                         <button
                           type="button"
                           role="treeitem"
                           tabIndex={-1}
                           data-sidebar-row="settled:more"
-                          data-sidebar-parent="shelf:settled"
+                          data-sidebar-parent={
+                            projectFolders === null ? "shelf:settled" : undefined
+                          }
                           disabled={olderSettledShelf.loading}
                           onClick={() => {
                             olderSettledShelf.retry();

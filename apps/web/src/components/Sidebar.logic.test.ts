@@ -37,6 +37,7 @@ import {
   type SidebarSection,
   resolveSidebarDropVerb,
   groupSidebarThreadsByProject,
+  projectFolderThreadCandidates,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
 } from "./Sidebar.logic";
@@ -1695,6 +1696,20 @@ describe("groupSidebarThreadsByProject", () => {
       { projectKey: "t3code", threads: ["a", "b"] },
       { projectKey: "fleet", threads: [] },
     ]);
+  });
+});
+
+describe("projectFolderThreadCandidates", () => {
+  it("keeps snoozed and settled threads visible alongside active project threads", () => {
+    expect(
+      projectFolderThreadCandidates({
+        pinned: ["pinned"],
+        active: ["active"],
+        working: ["working"],
+        snoozed: ["snoozed"],
+        settled: ["settled"],
+      }),
+    ).toEqual(["pinned", "active", "working", "snoozed", "settled"]);
   });
 });
 

@@ -35,6 +35,7 @@ import { environmentThreadDetails } from "../../state/threads";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
+import { usePromptJumpStore } from "./promptJumpStore";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import {
   type PendingApproval,
@@ -212,6 +213,42 @@ async function click(element: HTMLElement) {
 function setup({ scheduledTasks = [] as ReadonlyArray<{ id: string; title: string }> } = {}) {
   environmentQuery.data = { tasks: scheduledTasks };
 }
+
+describe("MessagesTimeline prompt navigation", () => {
+  it("requests each history page until a sidebar prompt is reachable", async () => {
+    const routeThreadKey = "environment-local:thread-prompt-history";
+    const targetMessageId = MessageId.make("older-prompt");
+    const onLoadEarlier = vi.fn();
+    const request = usePromptJumpStore.getState().request;
+    request(routeThreadKey, targetMessageId);
+    const requestId = usePromptJumpStore.getState().target!.requestId;
+    const controls = (loading: boolean) => ({
+      hasMoreHistory: true,
+      loading,
+      error: null,
+      onLoadEarlier,
+    });
+    const timeline = (loading: boolean, timelineEntries: ReadonlyArray<Entry> = []) => (
+      <MessagesTimeline
+        {...baseProps()}
+        routeThreadKey={routeThreadKey}
+        timelineEntries={timelineEntries as Entry[]}
+        historyControls={controls(loading)}
+      />
+    );
+
+    try {
+      const screen = await renderElement(timeline(false));
+      await vi.waitFor(() => expect(onLoadEarlier).toHaveBeenCalledTimes(1));
+      await screen.rerender(timeline(true));
+      await screen.rerender(timeline(false, [message("first history page", {}, "page-1")]));
+      await vi.waitFor(() => expect(onLoadEarlier).toHaveBeenCalledTimes(2));
+      expect(onLoadEarlier).toHaveBeenLastCalledWith(targetMessageId);
+    } finally {
+      usePromptJumpStore.getState().clear(requestId);
+    }
+  });
+});
 
 const TASK_ID = ScheduledTaskId.make("task-1");
 const AUTOMATION_PROMPT = "Triage the inbox\n\nLabel every new issue and close duplicates.";

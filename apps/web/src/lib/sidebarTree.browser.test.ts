@@ -87,6 +87,33 @@ describe("sidebar keyboard navigation", () => {
     expect(group.getAttribute("aria-expanded")).toBe("false");
   });
 
+  it("routes folder arrow keys to a nested expansion control", () => {
+    using tree = setup();
+    const folderThread = tree.row("thread");
+    folderThread.setAttribute("aria-expanded", "false");
+    const expand = document.createElement("button");
+    expand.dataset.sidebarExpandControl = "";
+    folderThread.append(expand);
+    const onExpand = vi.fn(() => folderThread.setAttribute("aria-expanded", "true"));
+    const onCollapse = vi.fn(() => folderThread.setAttribute("aria-expanded", "false"));
+    expand.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (folderThread.getAttribute("aria-expanded") === "false") onExpand();
+      else onCollapse();
+    });
+    const activateThread = vi.fn();
+    folderThread.addEventListener("click", activateThread);
+
+    tree.install();
+    folderThread.focus();
+    press(folderThread, "ArrowRight");
+    expect(onExpand).toHaveBeenCalledOnce();
+    expect(activateThread).not.toHaveBeenCalled();
+    press(folderThread, "ArrowLeft");
+    expect(onCollapse).toHaveBeenCalledOnce();
+    expect(activateThread).not.toHaveBeenCalled();
+  });
+
   it("opens the row menu on Shift+F10 release without moving focus", () => {
     using tree = setup();
     tree.row("first");

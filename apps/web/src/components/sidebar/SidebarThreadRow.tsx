@@ -1251,6 +1251,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 <button
                   type="button"
                   tabIndex={-1}
+                  data-sidebar-expand-control
                   aria-label={`${props.promptExpanded ? "Hide" : "Show"} prompts in ${thread.title}`}
                   aria-expanded={props.promptExpanded ?? false}
                   onPointerDown={(event) => event.stopPropagation()}

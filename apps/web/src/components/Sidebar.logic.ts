@@ -1028,6 +1028,16 @@ export function groupSidebarThreadsByProject<
   return folders.filter((folder) => folder.threads.length > 0 || keepEmpty(folder.group));
 }
 
+export function projectFolderThreadCandidates<T>(input: {
+  readonly pinned: ReadonlyArray<T>;
+  readonly active: ReadonlyArray<T>;
+  readonly working: ReadonlyArray<T>;
+  readonly snoozed: ReadonlyArray<T>;
+  readonly settled: ReadonlyArray<T>;
+}): T[] {
+  return [...input.pinned, ...input.active, ...input.working, ...input.snoozed, ...input.settled];
+}
+
 export type SidebarV2TopStatusKind =
   | "approval"
   | "done"
