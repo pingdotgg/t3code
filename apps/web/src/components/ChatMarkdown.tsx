@@ -2,6 +2,7 @@ import { buildFileLinkParentSuffixByPath, fileLinkLabel } from "@t3tools/shared/
 import {
   isWindowsDrivePathHref,
   normalizeMarkdownLinkDestination,
+  decodeMarkdownLinkEscapes,
   extractInlineCodeSpans,
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
@@ -455,6 +456,7 @@ function fileLinkSourcesKey(
 ): string {
   const hrefs = extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))
     .filter((href) => !parseComposerContextHref(href))
+    .map(decodeMarkdownLinkEscapes)
     .map(normalizeMarkdownLinkHrefKey)
     .filter((href) => resolveMarkdownFileLinkMeta(href, cwd, imageBaseDir ?? cwd));
   const spans = extractInlineCodeSpans(text).filter((span) =>

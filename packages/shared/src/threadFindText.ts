@@ -15,6 +15,7 @@ import {
 } from "./fileLinks.ts";
 import {
   isMarkdownFileLinkLabel,
+  decodeMarkdownLinkEscapes,
   extractMarkdownLinkHrefs,
   extractInlineCodeSpans,
   inlineCodeFilePathCandidate,
@@ -119,7 +120,9 @@ function markdownThreadFindText(
       : assistantProcessor;
   const tree = processor.runSync(processor.parse(markdown));
   const paths = [
-    ...extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(markdown)),
+    ...extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(markdown)).map(
+      decodeMarkdownLinkEscapes,
+    ),
     ...extractInlineCodeSpans(markdown).flatMap((span) => inlineCodeFilePathCandidate(span) ?? []),
   ].flatMap((href) => {
     const target = resolveMarkdownFileLinkTarget(href, cwd);

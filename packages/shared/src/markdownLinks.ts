@@ -403,6 +403,10 @@ function markdownLinkDestinationScanner(markdown: string) {
   };
 }
 
+export function decodeMarkdownLinkEscapes(href: string): string {
+  return href.replace(/\\([!-/:-@[-`{-~])/g, "$1");
+}
+
 export function extractMarkdownLinkHrefs(markdown: string): string[] {
   const hrefs: string[] = [];
   const scanDestination = markdownLinkDestinationScanner(markdown);
