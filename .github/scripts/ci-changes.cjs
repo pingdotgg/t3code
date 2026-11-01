@@ -10,6 +10,9 @@ const INERT = [
   /^\.(agents|cursor|vscode|devcontainer|macroscope|repos)\//,
   /^[^/]+\.md$/,
   /^LICENSE$/,
+  // Package tests read no other workflow. ci.yml defines these jobs, and the
+  // .github/scripts tests read release.yml and web-preview.yml.
+  /^\.github\/workflows\/(?!(ci|release|web-preview)\.yml$)/,
 ];
 
 // Shared test setup and vendored mobile dependencies affect every package.

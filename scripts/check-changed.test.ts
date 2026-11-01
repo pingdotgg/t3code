@@ -46,6 +46,25 @@ describe("check:changed", () => {
     assert.deepStrictEqual(decide(["docs/user/install.md"], packages, false).affected, []);
   });
 
+  it("runs no package jobs for workflows that package tests do not read", () => {
+    const packages = readWorkspace();
+    const { affected, outputs } = decide([".github/workflows/pr-size.yml"], packages, false);
+    assert.deepStrictEqual(affected, []);
+    assert.isFalse(Object.values(outputs).some((value) => value === true));
+    assert.deepStrictEqual(
+      decide([".github/workflows/pr-size.yml", "apps/web/src/main.tsx"], packages, false).affected,
+      ["@t3tools/scripts", "@t3tools/web"],
+    );
+    for (const file of [
+      ".github/workflows/ci.yml",
+      ".github/workflows/release.yml",
+      ".github/workflows/web-preview.yml",
+      ".github/actions/setup-ci-deps/action.yml",
+    ]) {
+      assert.lengthOf(decide([file], packages, false).affected, packages.length, file);
+    }
+  });
+
   it.effect(
     "keeps weighted steps within the budget, in order, and serial steps one at a time",
     () =>
