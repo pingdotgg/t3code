@@ -288,6 +288,26 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe("approval");
   });
 
+  it("shows worktree setup as Preparing, below the agent's requests, receding like Working", () => {
+    const preparing = { ...runtime, status: "preparing" as const };
+    expect(resolveSidebarThreadStatus({ ...idle, runtime: preparing })).toBe("preparing");
+    expect(
+      resolveSidebarThreadStatus({ ...idle, runtime: { ...preparing, status: "starting" } }),
+    ).toBe("working");
+    expect(
+      resolveSidebarThreadStatus({ ...idle, hasPendingApprovals: true, runtime: preparing }),
+    ).toBe("approval");
+    expect(
+      shouldRecedeSidebarThread({
+        status: "preparing",
+        isUnread: false,
+        isWoke: false,
+        isActive: false,
+        isSelected: false,
+      }),
+    ).toBe(true);
+  });
+
   it("shows a waiting guest message as a Request, below the agent's own requests", () => {
     expect(resolveSidebarThreadStatus({ ...idle, pendingGuestMessageCount: 1, runtime })).toBe(
       "request",
@@ -1730,6 +1750,9 @@ describe("resolveSidebarFolderDot", () => {
       resolveSidebarFolderDot([{ ...unread, runtime: { ...runtime, status: "idle" as const } }]),
     ).toBeNull();
     expect(resolveSidebarFolderDot([idle, working])).toBe("working");
+    expect(
+      resolveSidebarFolderDot([idle, { ...idle, runtime: { ...runtime, status: "preparing" } }]),
+    ).toBe("working");
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
   });
