@@ -672,6 +672,169 @@ it.effect("prefers credentials saved in settings over the environment, without a
   }).pipe(Effect.provide(layer));
 });
 
+it.effect(
+  "streams private media with current credentials only on the configured API origin",
+  () => {
+    const requests: Array<{
+      readonly url: string;
+      readonly authorization: string | undefined;
+      readonly range: string | undefined;
+    }> = [];
+    const bytes = new Uint8Array([137, 80, 78, 71, 0, 255]);
+    const { layer } = makeLayer({
+      env: { T3CODE_BITBUCKET_ACCESS_TOKEN: "environment-token" },
+      response: (request) => {
+        requests.push({
+          url: request.url,
+          authorization: request.headers.authorization,
+          range: request.headers.range,
+        });
+
+        if (new URL(request.url).hostname === "api.bitbucket.org") {
+          return new Response(null, {
+            status: 302,
+            headers: {
+              location: "https://bbuseruploads.s3.amazonaws.com/shot.png?signature=signed",
+            },
+          });
+        }
+
+        return new Response(bytes, { status: 206, headers: { "content-type": "image/png" } });
+      },
+    });
+
+    return Effect.gen(function* () {
+      const api = yield* BitbucketApi.BitbucketApi;
+      const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
+      const input = {
+        url: "https://api.bitbucket.org/2.0/repositories/acme/app/src/main/docs/shot.png",
+        headers: { range: "bytes=0-5" },
+      };
+
+      yield* settings.update({ sourceControlHosts: { bitbucket: { accessToken: "saved-token" } } });
+
+      const response = yield* api.fetchMedia(input);
+
+      assert.isNotNull(response);
+
+      if (response === null) {
+        return;
+      }
+
+      yield* TestClock.adjust("31 seconds");
+
+      assert.deepEqual(new Uint8Array(yield* response.arrayBuffer), bytes);
+      assert.strictEqual(response.status, 206);
+      assert.deepEqual(requests, [
+        { url: input.url, authorization: "Bearer saved-token", range: "bytes=0-5" },
+        {
+          url: "https://bbuseruploads.s3.amazonaws.com/shot.png?signature=signed",
+          authorization: undefined,
+          range: "bytes=0-5",
+        },
+      ]);
+
+      yield* settings.update({
+        sourceControlHosts: {
+          bitbucket: { accessToken: "", email: "saved@example.test", apiToken: "api-token" },
+        },
+      });
+      yield* api.fetchMedia(input);
+
+      assert.strictEqual(
+        requests[2]?.authorization,
+        `Basic ${btoa("saved@example.test:api-token")}`,
+      );
+      assert.isUndefined(requests[3]?.authorization);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  },
+);
+
+it.effect("refuses unrelated media and keeps custom-origin credentials off Cloud media", () => {
+  const authorizations: Array<string | undefined> = [];
+  const { layer } = makeLayer({
+    response: (request) => {
+      authorizations.push(request.headers.authorization);
+      return new Response(null);
+    },
+  });
+
+  return Effect.gen(function* () {
+    const api = yield* BitbucketApi.BitbucketApi;
+
+    assert.isNull(yield* api.fetchMedia({ url: "https://example.test/shot.png", headers: {} }));
+    assert.deepEqual(authorizations, []);
+
+    yield* api.fetchMedia({
+      url: "https://api.bitbucket.org/2.0/repositories/acme/app/downloads/shot.png",
+      headers: {},
+    });
+
+    assert.deepEqual(authorizations, [undefined]);
+  }).pipe(Effect.provide(layer), Effect.scoped);
+});
+
+it.effect("bounds media redirects and refuses insecure or credential-bearing targets", () => {
+  let location = "http://untrusted.test/shot.png";
+  const urls: Array<string> = [];
+  const { layer } = makeLayer({
+    env: { T3CODE_BITBUCKET_ACCESS_TOKEN: "token" },
+    response: (request) => {
+      urls.push(request.url);
+      return new Response(null, { status: 302, headers: { location } });
+    },
+  });
+
+  return Effect.gen(function* () {
+    const api = yield* BitbucketApi.BitbucketApi;
+    const input = {
+      url: "https://api.bitbucket.org/2.0/repositories/acme/app/downloads/shot.png",
+      headers: {},
+    };
+
+    for (const target of [
+      "http://untrusted.test/shot.png",
+      "https://user:password@untrusted.test/shot.png",
+      "https://[",
+    ]) {
+      location = target;
+      assert.isNull(yield* api.fetchMedia(input));
+    }
+
+    assert.lengthOf(urls, 3);
+
+    location = "https://objects.example.test/loop";
+
+    assert.isNull(yield* api.fetchMedia(input));
+    assert.lengthOf(urls, 7);
+  }).pipe(Effect.provide(layer), Effect.scoped);
+});
+
+it.effect("bounds media response headers without keeping a deadline on the body", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const { layer } = makeLayer({
+      response: () => new Response(null),
+      answer: () => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+    });
+
+    yield* Effect.gen(function* () {
+      const api = yield* BitbucketApi.BitbucketApi;
+      const pending = yield* api
+        .fetchMedia({
+          url: "https://api.bitbucket.org/2.0/repositories/acme/app/downloads/shot.png",
+          headers: {},
+        })
+        .pipe(Effect.forkChild);
+
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("30 seconds");
+
+      assert.isNull(yield* Fiber.join(pending));
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  }),
+);
+
 it.effect("never puts a saved token that is unsafe for an HTTP header on the wire", () => {
   const { execute, layer } = makeLayer({
     response: () => Response.json({ username: "bitbucket-user" }),
