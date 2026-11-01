@@ -34,8 +34,22 @@ const recordingClient = (calls: Array<RecordedCall>) =>
       create: (input: Record<string, unknown>) =>
         Effect.sync(() => {
           calls.push({ op: "session.create", args: input });
-          return { id: "ses_fake" };
+          return { id: "ses_fake", location: { directory: "/workspace" } };
         }),
+      get: (input: Record<string, unknown>) =>
+        Effect.sync(() => {
+          calls.push({ op: "session.get", args: input });
+          return { id: input.sessionID, location: { directory: "/workspace" } };
+        }),
+      fork: (input: Record<string, unknown>) =>
+        Effect.sync(() => {
+          calls.push({ op: "session.fork", args: input });
+          return { id: "ses_fork", location: { directory: "/workspace" } };
+        }),
+      update: (input: Record<string, unknown>) =>
+        Effect.sync(() => void calls.push({ op: "session.update", args: input })),
+      move: (input: Record<string, unknown>) =>
+        Effect.sync(() => void calls.push({ op: "session.move", args: input })),
       form: { list: () => Effect.succeed([]) },
     },
     model: { list: () => Effect.succeed({ data: [] }) },
@@ -119,14 +133,30 @@ it.effect(
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       yield* mcpSessions.set(mcpConfig(threadId));
 
-      yield* openFor(adapter, threadId);
+      const runtime = yield* openFor(adapter, threadId);
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode-test"),
+          model: "anthropic/claude-sonnet",
+          options: [],
+        },
+        runtimePolicy: runtimePolicy(),
+      });
 
       const adds = calls.filter((call) => call.op === "mcp.add");
       assert.strictEqual(adds.length, 1);
       assert.strictEqual(adds[0]!.args.server, `t3-code-${threadId}`);
-      // OpenCode builds a session's tool catalog at session creation, so the
-      // server must already be in place when the first `session.create` runs.
-      assert.strictEqual(calls.filter((call) => call.op === "session.create").length, 0);
+      assert.deepStrictEqual(
+        calls.map((call) => call.op),
+        ["mcp.add", "session.create"],
+      );
+      const created = calls.find((call) => call.op === "session.create")!;
+      assert.deepStrictEqual((created.args.permissions as ReadonlyArray<unknown>).slice(-2), [
+        ...mcpRules(`t3-code-${threadId}`),
+      ]);
+      yield* runtime.unloadThread!({ providerThread });
+      assert.strictEqual(calls.at(-1)?.op, "mcp.remove");
     }).pipe(Effect.provide(makeLayers(calls)));
   },
 );
@@ -149,6 +179,60 @@ it.effect(
       const adds = calls.filter((call) => call.op === "mcp.add");
       assert.strictEqual(adds.length, 1);
       assert.deepStrictEqual(adds[0]!.args.location, { directory: "/projects/app-worktree" });
+    }).pipe(Effect.provide(makeLayers(calls)));
+  },
+);
+
+it.effect(
+  "registers a fork in the source directory, then moves its registration with the session",
+  () => {
+    const calls: Array<RecordedCall> = [];
+    return Effect.gen(function* () {
+      const sourceId = ThreadId.make("thread-source");
+      const targetId = ThreadId.make("thread-target");
+      const adapter = yield* make(ProviderInstanceId.make("opencode-test"));
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set(mcpConfig(targetId));
+      const runtime = yield* openFor(adapter, targetId, "/target");
+      const source = yield* runtime.ensureThread({
+        threadId: sourceId,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode-test"),
+          model: "anthropic/claude-sonnet",
+          options: [],
+        },
+        runtimePolicy: runtimePolicy(),
+      });
+      calls.length = 0;
+      const fork = yield* runtime.forkThread({
+        sourceProviderThread: source,
+        targetThreadId: targetId,
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: "/target",
+        }),
+      });
+      assert.deepStrictEqual(
+        calls
+          .filter(
+            (call) =>
+              call.op.startsWith("mcp.") ||
+              call.op === "session.fork" ||
+              call.op === "session.move",
+          )
+          .map((call) => [call.op, call.args.location ?? call.args.directory]),
+        [
+          ["mcp.remove", { directory: "/target" }],
+          ["mcp.add", { directory: "/workspace" }],
+          ["session.fork", undefined],
+          ["mcp.remove", { directory: "/workspace" }],
+          ["mcp.add", { directory: "/target" }],
+          ["session.move", "/target"],
+        ],
+      );
+      yield* runtime.unloadThread!({ providerThread: fork });
+      assert.deepStrictEqual(calls.at(-1)?.args.location, { directory: "/target" });
     }).pipe(Effect.provide(makeLayers(calls)));
   },
 );
@@ -216,7 +300,11 @@ it.layer(NodeServices.layer)("OpenCode2Adapter MCP server names", (it) => {
 
 describe("T3 orchestration instructions", () => {
   it("names the session's registered namespace when the server is thread-suffixed", () => {
-    const prompt = orchestrationInstructions.t3OrchestrationSystemPrompt(true, false, "t3-code-490f020d");
+    const prompt = orchestrationInstructions.t3OrchestrationSystemPrompt(
+      true,
+      false,
+      "t3-code-490f020d",
+    );
     assert.isString(prompt);
     assert.include(prompt!, 'tools["t3-code-490f020d"].');
     assert.include(prompt!, 'search({ query: "orchestrator_capabilities" })');
@@ -229,17 +317,16 @@ describe("T3 orchestration instructions", () => {
       orchestrationInstructions.t3OrchestrationSystemPrompt(true, false, "t3-code"),
       base,
     );
-    assert.strictEqual(orchestrationInstructions.t3OrchestrationSystemPrompt(false, false), undefined);
+    assert.strictEqual(
+      orchestrationInstructions.t3OrchestrationSystemPrompt(false, false),
+      undefined,
+    );
   });
 
-  it("documents the thread-suffixed OpenCode pattern for discovery", () => {
+  it("preserves device guidance when adding the session namespace", () => {
     assert.include(
-      orchestrationInstructions.T3_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "t3-code-<threadId>",
-    );
-    assert.include(
-      orchestrationInstructions.T3_CODE_ORCHESTRATION_INSTRUCTIONS,
-      'tools["t3-code-..."]',
+      orchestrationInstructions.t3OrchestrationSystemPrompt(true, true, "t3-code-thread")!,
+      orchestrationInstructions.T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
     );
   });
 });

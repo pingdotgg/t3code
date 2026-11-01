@@ -3011,7 +3011,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         client.mcp.remove({ server: mcp.name, location: { directory: mcp.directory } }),
       ).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true }));
 
-
     // Catalogs are built at create/fork, so register in the native session's directory first.
     const preRegisterMcp = Effect.fn("OpenCode2Adapter.preRegisterMcp")(function* (
       threadId: ThreadId,
@@ -3021,7 +3020,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const mcpSession = yield* mcpSessions.read(threadId);
       if (mcpSession === undefined) return;
       const known = registeredMcp.get(threadId);
-      if (known?.directory === directory && known.credential === mcpSession.authorizationHeader) return;
+      if (known?.directory === directory && known.credential === mcpSession.authorizationHeader)
+        return;
       if (known !== undefined) {
         yield* removeMcp(known);
         registeredMcp.delete(threadId);
@@ -3128,7 +3128,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       const instructions = [
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
-        t3OrchestrationSystemPrompt(mcpAvailable, mcpSession?.capabilities?.has("device") === true, wanted?.name),
+        t3OrchestrationSystemPrompt(
+          mcpAvailable,
+          mcpSession?.capabilities?.has("device") === true,
+          wanted?.name,
+        ),
       ]
         .filter((part) => part !== undefined && part.length > 0)
         .join("\n\n");
@@ -3872,9 +3876,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           childOwners.delete(child);
           threads.delete(child);
         }
-        const mcp = state.mcp ?? registeredMcp.get(providerThread.appThreadId);
+        const threadId = providerThread.appThreadId;
+        const mcp = state.mcp ?? (threadId === null ? undefined : registeredMcp.get(threadId));
         if (mcp !== undefined) yield* removeMcp(mcp);
-        registeredMcp.delete(providerThread.appThreadId);
+        if (threadId !== null) registeredMcp.delete(threadId);
       }),
       respondToRuntimeRequest: Effect.fn("OpenCode2Adapter.respondToRuntimeRequest")(
         function* (requestInput) {
@@ -4056,8 +4061,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   selected,
                   yield* userMessages(sourceId),
                 );
-          const sourceSession = yield* client.session.get({ sessionID: Session.ID.make(sourceId) });
-          yield* preRegisterMcp(forkInput.targetThreadId, sourceSession.location.directory);
+          const sourceDirectory =
+            ownerOf(sourceId)?.directory ??
+            (yield* client.session.get({ sessionID: Session.ID.make(sourceId) })).location
+              .directory;
+          yield* preRegisterMcp(forkInput.targetThreadId, sourceDirectory);
           const forked = yield* client.session.fork({
             sessionID: Session.ID.make(sourceId),
             ...(before === null ? {} : { before: SessionMessage.ID.make(before) }),
