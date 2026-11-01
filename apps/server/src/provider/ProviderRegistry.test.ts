@@ -1823,6 +1823,8 @@ it.layer(
           models: [],
         } satisfies ServerProvider;
         const changes = yield* PubSub.unbounded<ServerProvider>();
+        let activeSubscriptions = 0;
+        const instanceChanges = yield* PubSub.unbounded<void>();
         const instance = {
           instanceId: cursorInstanceId,
           driverKind: cursorDriver,
@@ -1842,23 +1844,33 @@ it.layer(
               ),
             getSnapshot: Effect.succeed(initialProvider),
             refresh: Effect.succeed(refreshedProvider),
-            streamChanges: Stream.fromPubSub(changes),
+            streamChanges: Stream.unwrap(
+              Effect.sync(() => {
+                activeSubscriptions++;
+                return Stream.fromPubSub(changes);
+              }),
+            ).pipe(
+              Stream.ensuring(
+                Effect.sync(() => {
+                  activeSubscriptions--;
+                }),
+              ),
+            ),
             applyUsageLimits: () => Effect.void,
           },
           orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
           textGeneration: {} as ProviderInstance["textGeneration"],
         } satisfies ProviderInstance;
+        let instances: ReadonlyArray<ProviderInstance> = [instance];
         const layerInstanceRegistry = Layer.succeed(
           ProviderInstanceRegistry.ProviderInstanceRegistry,
           {
             getInstance: (instanceId) =>
-              Effect.succeed(instanceId === cursorInstanceId ? instance : undefined),
-            listInstances: Effect.succeed([instance]),
+              Effect.sync(() => instances.find((instance) => instance.instanceId === instanceId)),
+            listInstances: Effect.sync(() => instances),
             listUnavailable: Effect.succeed([]),
             streamChanges: Stream.empty,
-            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
-              PubSub.subscribe(pubsub),
-            ),
+            subscribeChanges: PubSub.subscribe(instanceChanges),
           },
         );
         const scope = yield* Scope.make();
@@ -1900,6 +1912,32 @@ it.layer(
               models: [...initialProvider.models],
             }),
           );
+          for (const iconUrl of ["https://example.com/one.png", "https://example.com/two.png"]) {
+            const next = { ...initialProvider, iconUrl };
+            instances = [
+              {
+                ...instance,
+                snapshot: { ...instance.snapshot, getSnapshot: Effect.succeed(next) },
+              },
+            ];
+            const updated = yield* registry.streamChanges.pipe(
+              Stream.filter((providers) => providers[0]?.iconUrl === iconUrl),
+              Stream.runHead,
+              Effect.forkChild({ startImmediately: true }),
+            );
+            yield* PubSub.publish(instanceChanges, undefined);
+            yield* Fiber.join(updated);
+            assert.strictEqual(activeSubscriptions, 1);
+          }
+          instances = [];
+          const removed = yield* registry.streamChanges.pipe(
+            Stream.filter((providers) => providers.length === 0),
+            Stream.runHead,
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* PubSub.publish(instanceChanges, undefined);
+          yield* Fiber.join(removed);
+          assert.strictEqual(activeSubscriptions, 0);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );
