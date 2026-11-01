@@ -1533,6 +1533,25 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         assert.isTrue(Option.isNone(yield* stored("bitbucket", "accessToken", null)));
         assert.isTrue(Option.isNone(yield* stored("github", "tokens", "github.com")));
         assert.isTrue(Option.isSome(yield* stored("github", "tokens", "ghe.acme.test")));
+
+        const reference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Bitbucket/token",
+        };
+        yield* serverSettings.updateSettings({
+          sourceControlHosts: { bitbucket: { accessToken: "bb-access" } },
+        });
+        assert.isTrue(Option.isSome(yield* stored("bitbucket", "accessToken", null)));
+        const referenced = yield* serverSettings.updateSettings({
+          sourceControlHosts: { bitbucket: { accessToken: reference } },
+        });
+        assert.deepEqual(referenced.sourceControlHosts.bitbucket?.accessToken, reference);
+        assert.isTrue(Option.isNone(yield* stored("bitbucket", "accessToken", null)));
+        assert.deepEqual(
+          ServerSettingsModule.redactServerSettingsForClient(referenced).sourceControlHosts
+            .bitbucket?.accessToken,
+          reference,
+        );
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
