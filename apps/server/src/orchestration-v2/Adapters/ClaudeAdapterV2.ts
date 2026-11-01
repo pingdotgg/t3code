@@ -8644,10 +8644,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
 
+          // Claude emits passive Stop summaries as notices. Warnings and notices
+          // that prevent continuation still need to explain why a hook blocked work.
           if (
             message.type === "system" &&
             (message.subtype === "model_refusal_fallback" ||
-              (message.subtype === "informational" && message.level !== "info"))
+              (message.subtype === "informational" &&
+                message.level !== "info" &&
+                !(
+                  message.level === "notice" &&
+                  message.content.startsWith("Stop says: ") &&
+                  message.prevent_continuation !== true
+                )))
           ) {
             const now = yield* DateTime.now;
             const nativeItemId = message.uuid;
