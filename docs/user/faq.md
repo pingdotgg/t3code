@@ -13,7 +13,7 @@ Bring your own: Claude Code, Codex, Cursor, Grok Build, OpenCode, Google Antigra
 We were inspired by the Codex desktop app, Conductor, Claude Desktop, and Cursor Glass, but none met our bar. What you get:
 
 - Bring your own sub. Claude, Codex, and whatever else you already have installed.
-- Best in class remote. Run `npx t3 connect` on any box and drive it from anywhere.
+- Best in class remote. Run `npx t3 up` on any box and drive it from anywhere.
 - Best in class mobile app.
 - Truly 100% open source. If we go the wrong direction, fork it.
 
@@ -37,7 +37,7 @@ T3 Code drives Claude through Anthropic's Agent SDK. I confirmed it's a real bug
 
 ## How do I use T3 Code remotely?
 
-Your agents run wherever T3 Code runs: your desktop, a server, a VPS. You connect to it from anywhere. I do this constantly. Less than 5% of my prompts run on my laptop. Run `npx t3 connect` on that machine and you get really good remote support. T3 Connect is the easy path. LAN pairing and Tailscale work too, and [app.t3.codes](https://app.t3.codes) is the web client. [Remote access](./remote-access.md)
+Your agents run wherever T3 Code runs: your desktop, a server, a VPS. You connect to it from anywhere. I do this constantly. Less than 5% of my prompts run on my laptop. Run `npx t3 up` on that machine and you get really good remote support. T3 Connect is the easy path. LAN pairing and Tailscale work too, and [app.t3.codes](https://app.t3.codes) is the web client. [Remote access](./remote-access.md)
 
 ## How do I use T3 Code on my phone?
 
@@ -45,7 +45,7 @@ Get the [iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819
 
 ## Why does T3 Connect keep disconnecting?
 
-T3 Connect is our built-in alternative to Tailscale for remote connections. If it keeps dropping, open **Settings > Connections**, find the machine, and select **Details**. The first part marked as failed is the cause. I will not be disappointed if you set up Tailscale as a fallback (I do this personally). [T3 Connect troubleshooting](./t3-connect-troubleshooting.md)
+T3 Connect is our built-in alternative to Tailscale for remote connections. If it keeps dropping, open **Settings > Environments**, find the machine, and select **Details**. The first part marked as failed is the cause. I will not be disappointed if you set up Tailscale as a fallback (I do this personally). [T3 Connect troubleshooting](./t3-connect-troubleshooting.md)
 
 ## Will I get banned for using my subscription?
 

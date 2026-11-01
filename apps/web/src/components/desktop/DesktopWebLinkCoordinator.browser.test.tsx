@@ -1,11 +1,16 @@
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import type { Atom } from "effect/reactivity";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { AsyncResult, type Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render, stubGlobal } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
-  projects: [] as never[],
+  projects: [] as EnvironmentProject[],
+  routeParams: {} as Record<string, string>,
+  preview: vi.fn(),
+  openLink: vi.fn(async () => undefined),
   navigate: vi.fn(async (): Promise<void> => undefined),
   openScratchProject: vi.fn(async () => null),
   confirm: vi.fn(async (_message: string) => true),
@@ -18,7 +23,10 @@ const state = vi.hoisted(() => ({
 vi.mock(import("@tanstack/react-router"), async (original) => ({
   ...(await original()),
   useNavigate: (() => state.navigate) as never,
-  useRouter: (() => ({ navigate: state.navigate, state: { matches: [] } })) as never,
+  useRouter: (() => ({
+    navigate: state.navigate,
+    state: { matches: [{ params: state.routeParams }] },
+  })) as never,
 }));
 vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
@@ -47,11 +55,17 @@ vi.mock(import("../../state/server"), async (original) => {
 });
 vi.mock(import("../../state/shell"), async (original) => {
   const { Atom } = await import("effect/reactivity");
-  return { ...(await original()), allReachableShellsLiveAtom: Atom.make(false) };
+  return {
+    ...(await original()),
+    allReachableShellsLiveAtom: Atom.make(false).pipe(Atom.keepAlive),
+  };
 });
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
   readProjects: () => state.projects,
+  readThreadShell: (ref: { threadId: string }) =>
+    ref.threadId === "thread" ? ({ projectId: "effect", worktreePath: null } as never) : null,
+  readProject: () => state.projects[0] ?? null,
 }));
 vi.mock(import("../../hooks/useScratchProject"), async (original) => ({
   ...(await original()),
@@ -61,6 +75,10 @@ vi.mock(import("../../hooks/useScratchProject"), async (original) => ({
   })) as never,
 }));
 
+vi.mock("../../state/use-atom-query-runner", () => ({
+  useAtomQueryRunner: () => state.preview,
+}));
+vi.mock("../../browser/useOpenLink", () => ({ useOpenLink: () => state.openLink }));
 vi.mock(import("../../confirmDialog"), async (original) => ({
   ...(await original()),
   requestConfirmDialog: state.confirm,
@@ -82,6 +100,12 @@ vi.mock(import("../../state/use-atom-command"), async (original) => {
 
 import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
 import { allReachableShellsLiveAtom } from "../../state/shell";
+import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../../diffPanelStore";
+import {
+  selectActiveRightPanel,
+  selectActiveRightPanelSurface,
+  useRightPanelStore,
+} from "../../rightPanelStore";
 import { DesktopWebLinkCoordinator } from "./DesktopWebLinkCoordinator";
 
 const discoverySettled = allReachableShellsLiveAtom as Atom.Writable<boolean>;
@@ -89,6 +113,7 @@ const environmentId = EnvironmentId.make("local");
 const projectId = ProjectId.make("effect");
 const project = {
   id: projectId,
+  workspaceRoot: "/workspace/effect",
   environmentId,
   repositoryIdentity: {
     provider: "github",
@@ -100,7 +125,7 @@ const project = {
       remoteUrl: "https://github.com/Effect-TS/effect.git",
     },
   },
-} as never;
+} as EnvironmentProject;
 const pullRequestUrl = "https://github.com/Effect-TS/effect/pull/9339";
 const pullRequestView = {
   to: "/pull-requests",
@@ -123,6 +148,12 @@ function setup() {
   state.confirm.mockResolvedValue(true);
   state.localEnvironmentDisabled = false;
   state.projects = [];
+  state.routeParams = {};
+  state.preview
+    .mockReset()
+    .mockResolvedValue(AsyncResult.success({ sources: [{ kind: "commit", headRef: sha }] }));
+  useDiffPanelStore.setState({ byThreadKey: {}, branchBaseRefByThreadKey: {} });
+  useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
   appAtomRegistry.set(discoverySettled, false);
 }
 
@@ -170,6 +201,80 @@ it("holds a launch PR link until project discovery settles, then opens the PR vi
   });
   expect(state.navigate).toHaveBeenCalledExactlyOnceWith(pullRequestView);
   expect(state.openScratchProject).not.toHaveBeenCalled();
+});
+
+const sha = "a".repeat(40);
+const commitUrl = `https://github.com/Effect-TS/effect/pull/9339/commits/${sha}`;
+const threadRef = scopeThreadRef(environmentId, ThreadId.make("thread"));
+
+it.each([
+  ["github.com", "pull/9339/commits"],
+  ["code.example.com:8443", "commit"],
+])("opens a %s/%s commit in the active thread's Diff pane after discovery", async (host, path) => {
+  setup();
+  state.routeParams = { environmentId: "local", threadId: "thread" };
+  await using _coordinator = await mount(`https://${host}/Effect-TS/effect/${path}/${sha}`);
+  expect(state.preview).not.toHaveBeenCalled();
+
+  state.projects = [
+    {
+      ...project,
+      repositoryIdentity: {
+        ...project.repositoryIdentity,
+        canonicalKey: `${host}/effect-ts/effect`,
+        locator: {
+          ...project.repositoryIdentity?.locator,
+          remoteUrl: `https://${host}/Effect-TS/effect.git`,
+        },
+      },
+    } as EnvironmentProject,
+  ];
+  await act(async () => appAtomRegistry.set(discoverySettled, true));
+  await vi.waitFor(() => {
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, threadRef)).toBe(
+      "diff",
+    );
+  });
+  expect(
+    selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, threadRef),
+  ).toMatchObject({ kind: "commit", sha });
+  expect(state.preview).toHaveBeenCalledExactlyOnceWith({
+    environmentId,
+    input: expect.objectContaining({ cwd: "/workspace/effect", commitSha: sha }),
+  });
+  expect(state.navigate).not.toHaveBeenCalled();
+  expect(state.openLink).not.toHaveBeenCalled();
+});
+
+it("opens a PR commit the workspace lacks in the thread's PR panel", async () => {
+  setup();
+  state.routeParams = { environmentId: "local", threadId: "thread" };
+  state.projects = [project];
+  state.preview.mockResolvedValueOnce(AsyncResult.success({ sources: [] }));
+  appAtomRegistry.set(discoverySettled, true);
+  await using _coordinator = await mount(commitUrl);
+  await vi.waitFor(() =>
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, threadRef),
+    ).toMatchObject({ kind: "pull-request", repository: "effect-ts/effect", number: 9339 }),
+  );
+  expect(useDiffPanelStore.getState().byThreadKey).toEqual({});
+  expect(state.openLink).not.toHaveBeenCalled();
+});
+
+it("opens a plain commit the workspace lacks like any other delivered link", async () => {
+  setup();
+  state.routeParams = { environmentId: "local", threadId: "thread" };
+  state.projects = [project];
+  state.preview.mockResolvedValueOnce(AsyncResult.success({ sources: [] }));
+  appAtomRegistry.set(discoverySettled, true);
+  const plainCommitUrl = `https://github.com/Effect-TS/effect/commit/${sha}`;
+  await using _coordinator = await mount(plainCommitUrl);
+  await vi.waitFor(() => expect(state.openScratchProject).toHaveBeenCalledOnce());
+  // Handing it to the OS browser would loop when T3 Code is the default browser.
+  expect(state.openLink).not.toHaveBeenCalled();
+  expect(useDiffPanelStore.getState().byThreadKey).toEqual({});
+  expect(useRightPanelStore.getState().byThreadKey).toEqual({});
 });
 
 it("adds the backend from a pairing link after the user confirms its host", async () => {

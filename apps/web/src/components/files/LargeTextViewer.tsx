@@ -36,6 +36,8 @@ export default function LargeTextViewer(props: {
   readonly delimiter: "," | "\t" | null;
   readonly revealLine?: number | null;
   readonly revealRequestId?: number;
+  /** A preview's own wrap toggle; omitted follows the word wrap setting. */
+  readonly wordWrap?: boolean;
 }) {
   const [meta, setMeta] = useState<Extract<TextPreviewResult, { type: "meta" }> | null>(null);
   const [pages, setPages] = useState(new Map<number, string[][]>());
@@ -46,7 +48,8 @@ export default function LargeTextViewer(props: {
     reject: (cause: Error) => void;
   } | null>(null);
   const pending = useRef(new Set<number>());
-  const wordWrap = useClientSettings((settings) => settings.wordWrap);
+  const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
+  const wordWrap = props.wordWrap ?? defaultWordWrap;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the prefix fetch and indexing worker, cancelling requests and pending copies when the source changes or unmounts.
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- A replacement source must discard the previous worker's error and pages.
