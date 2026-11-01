@@ -170,6 +170,13 @@ export function markdownWithDirection(markdown: string, direction: TextDirection
   const offsets: number[] = [];
   const visit = (node: Root | RootContent, parent?: Root | RootContent): void => {
     if (node.type === "paragraph" || node.type === "heading") {
+      if (
+        node.type === "paragraph" &&
+        node.children.length === 1 &&
+        (node.children[0]?.type === "image" || node.children[0]?.type === "imageReference")
+      ) {
+        return;
+      }
       let offset = node.children[0]?.position?.start.offset;
       if (offset !== undefined) {
         // Keep the native admonition marker at the start of its quote line.

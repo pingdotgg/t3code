@@ -92,6 +92,8 @@ it("reads only the visible preview prose without losing truncated code boundarie
 
 it("seeds native paragraphs without changing Markdown block structure or code", () => {
   expect(markdownWithDirection("[!NOTE]", "rtl")).toBe("\u200f[!NOTE]");
+  const image = "![diagram](https://example.com/a.png)";
+  expect(markdownWithDirection(image, "rtl")).toBe(image);
   const rich =
     "| Name | Value |\n| --- | --- |\n| React | עברית |\n\n- [ ] React שינוי\n\n> [!NOTE]\n> React עדכון\n\n$$\nx^2\n$$\n\nReact המשך";
   expect(markdownWithDirection(rich, "rtl")).toBe(
