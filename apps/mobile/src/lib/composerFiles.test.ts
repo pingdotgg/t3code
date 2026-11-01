@@ -940,6 +940,18 @@ describe("composer file attachments", () => {
     );
   });
 
+  it("replaces characters Android rejects in file URIs when naming the copy", async () => {
+    await persistComposerAttachmentFile(
+      "file:///downloads/report.pdf",
+      'Oxford [Oxfordshire] a|b^c{d}e`f"g<h>.pdf',
+    );
+
+    expect(mocks.copy).toHaveBeenCalledWith(
+      "file:///downloads/report.pdf",
+      "file:///documents/t3-composer-attachments/attachment-id-Oxford -Oxfordshire- a-b-c-d-e-f-g-h-.pdf",
+    );
+  });
+
   it("deletes app-owned attachments without touching user-owned files", async () => {
     await removePersistedComposerAttachmentFile(
       "file:///documents/t3-composer-attachments/report.pdf",
