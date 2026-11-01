@@ -26,6 +26,7 @@ import * as Path from "effect/Path";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
 
 export type DesktopSshEnvironmentRuntimeServices =
@@ -128,6 +129,7 @@ const makePasswordPrompt = (
 /** @public */
 export const make = Effect.gen(function* () {
   const manager = yield* SshTunnel.SshEnvironmentManager;
+  const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
   const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
   const runtimeContext = yield* Effect.context<DesktopSshEnvironmentRuntimeServices>();
   const passwordPrompt = SshAuth.SshPasswordPrompt.of(makePasswordPrompt(prompts));
@@ -137,6 +139,7 @@ export const make = Effect.gen(function* () {
       return yield* discoverDesktopSshHostsEffect(input);
     }, Effect.provide(runtimeContext)),
     resolveHost: Effect.fn("desktop.ssh.resolveHost")(function* (alias) {
+      yield* shellEnvironment.installIntoProcess;
       return yield* resolveSshTarget(alias.trim());
     }, Effect.provide(runtimeContext)),
     ensureEnvironment: Effect.fn("desktop.ssh.ensureEnvironment")(
@@ -159,10 +162,14 @@ export const make = Effect.gen(function* () {
 export const layer = (options: DesktopSshEnvironmentLayerOptions = {}) =>
   Layer.effect(DesktopSshEnvironment, make).pipe(
     Layer.provide(
-      SshTunnel.SshEnvironmentManager.layer(
-        options.resolveCliRunner === undefined
-          ? {}
-          : { resolveCliRunner: options.resolveCliRunner },
+      Layer.unwrap(
+        Effect.gen(function* () {
+          const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
+          return SshTunnel.SshEnvironmentManager.layer({
+            ...options,
+            prepareEnvironment: shellEnvironment.installIntoProcess.pipe(Effect.asVoid),
+          });
+        }),
       ),
     ),
   );
