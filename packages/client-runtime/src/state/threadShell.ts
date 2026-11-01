@@ -644,7 +644,14 @@ export function createEnvironmentThreadShellAtoms(input: {
         ) {
           continue;
         }
-        next.push(scopedThread(environmentId, thread, subagentRequests));
+        const shell = scopedThread(environmentId, thread, subagentRequests);
+        const previous = previousNavigationShells[next.length];
+        // Token ticks must not rebuild navigation; threadShellAtom still supplies the live values.
+        next.push(
+          previous !== undefined && previous !== shell && sameApartFromStreaming(previous, shell)
+            ? previous
+            : shell,
+        );
       }
     }
     if (arrayElementsEqual(previousNavigationShells, next)) return previousNavigationShells;
