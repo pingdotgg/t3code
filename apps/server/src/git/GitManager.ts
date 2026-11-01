@@ -36,6 +36,8 @@ import {
   ModelSelection,
   type OrchestrationV2TurnItem,
   type ProjectId,
+  PROVIDER_DISPLAY_NAMES,
+  ProviderDriverKind,
   SourceControlProviderError,
   type SourceControlWritingStyleSettings,
   type ThreadId,
@@ -172,6 +174,7 @@ const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
 const PR_LOOKUP_GIT_STATE_TTL = Duration.minutes(5);
 const PR_THREAD_CONTEXT_BYTES = 16_000;
+const NO_THREAD_CONTEXT = { history: undefined, producedBy: undefined };
 const PR_THREAD_COMMAND_OUTPUT_CHARS = 2_000;
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
@@ -695,8 +698,8 @@ export const make = Effect.gen(function* () {
   });
   const readThreadContext = Effect.fnUntraced(
     function* (threadId: ThreadId | undefined) {
-      if (threadId === undefined) return undefined;
-      const { visibleTurnItems } = yield* threads.getThreadProjection(threadId);
+      if (threadId === undefined) return NO_THREAD_CONTEXT;
+      const { thread, runs, visibleTurnItems } = yield* threads.getThreadProjection(threadId);
       const selected = selectHistory({
         messages: visibleTurnItems.flatMap(
           ({ item }) => historicalMessage(limitCommandOutput(item)) ?? [],
@@ -704,9 +707,47 @@ export const make = Effect.gen(function* () {
         coverage: "Digest of the thread that made this change, oldest first.",
         budget: PR_THREAD_CONTEXT_BYTES,
       });
-      return selected.messages.length === 0
-        ? undefined
-        : renderHistory(selected.messages, selected.context);
+      // A thread can switch models mid-way, and a fork inherits its ancestors' history; credit
+      // every model behind a turn still visible here. Ancestor runs are best-effort.
+      const visibleRunIds = new Set(visibleTurnItems.flatMap(({ item }) => item.runId ?? []));
+      const ancestorRuns = yield* Effect.forEach(
+        new Set(
+          visibleTurnItems.flatMap(({ item }) => (item.threadId === threadId ? [] : item.threadId)),
+        ),
+        (ancestorId) =>
+          threads.getThreadRecords(ancestorId, ["runs"]).pipe(
+            Effect.map((records) => records.runs),
+            Effect.orElseSucceed(() => []),
+          ),
+      );
+      // Visibility already hides local rollbacks; an ancestor's later rollback leaves the fork's
+      // inherited work in place. A queued run shows its message before it starts.
+      const runSelections = [...runs, ...ancestorRuns.flat()]
+        .filter((run) => visibleRunIds.has(run.id) && run.startedAt !== null)
+        .map((run) => run.modelSelection);
+      const providers = yield* providerRegistry.getProviders;
+      const producedBy = Arr.dedupeWith(
+        (runSelections.length > 0 ? runSelections : [thread.modelSelection]).map(
+          ({ instanceId, model }) => {
+            // The instance's displayName is a user label (often an account), not the harness.
+            // Default instances are named after their driver; a removed custom one names nothing.
+            const harness =
+              PROVIDER_DISPLAY_NAMES[
+                providers.find((provider) => provider.instanceId === instanceId)?.driver ??
+                  ProviderDriverKind.make(instanceId)
+              ];
+            return harness === undefined ? { model } : { model, harness };
+          },
+        ),
+        (left, right) => left.model === right.model && left.harness === right.harness,
+      );
+      return {
+        producedBy,
+        history:
+          selected.messages.length === 0
+            ? undefined
+            : renderHistory(selected.messages, selected.context),
+      };
     },
     (effect, threadId) =>
       effect.pipe(
@@ -714,7 +755,7 @@ export const make = Effect.gen(function* () {
           Effect.logWarning("GitManager.readThreadContext failed", {
             threadId,
             errorTag: error._tag,
-          }).pipe(Effect.as(undefined)),
+          }).pipe(Effect.as(NO_THREAD_CONTEXT)),
         ),
       ),
   );
@@ -2294,7 +2335,7 @@ export const make = Effect.gen(function* () {
             yield* provider.readChangeRequestTemplate({ cwd, treeish: baseRangeRef }),
           )
         : undefined;
-    const threadContext = yield* readThreadContext(threadId);
+    const { history: threadContext, producedBy } = yield* readThreadContext(threadId);
 
     const generated = yield* textGeneration.generatePrContent({
       cwd,
@@ -2305,6 +2346,7 @@ export const make = Effect.gen(function* () {
       diffPatch: limitContext(rangeContext.diffPatch, 60_000),
       ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
       ...(threadContext ? { threadContext } : {}),
+      producedBy,
       ...(policy ? { policy } : {}),
       modelSelection: settings.modelSelection,
     });
