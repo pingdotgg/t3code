@@ -58,6 +58,35 @@ saved totals first, then updates them when Cursor's API responds.
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.
 
+## Read usage from the CLI
+
+Agents and scripts can read the running local environment's usage as JSON:
+
+```sh
+t3 usage limits
+t3 usage tokens
+t3 usage cost --since 2026-09-01 --until 2026-09-26
+```
+
+All three commands write one JSON object to stdout. Use `--base-dir /path/to/t3-home`
+or `T3CODE_HOME` to select a different local environment. The server must already
+be running; these commands do not start it or combine remote environments.
+
+`limits` reads the cached Usage page snapshot, including configured hubs. It reports
+remaining percentages, reset times, and when each account was checked. Duplicate
+accounts count once. It does not refresh providers or spend reset credits; refresh
+Limits in the app when you need a newer reading. Missing or failed readings appear
+in `notices`, not as unlimited quota.
+
+`tokens` and `cost` default to today's UTC calendar day. Both accept inclusive
+`--since` and `--until` dates in `YYYY-MM-DD` format and include daily model buckets
+and source coverage. Token totals do not count reasoning tokens twice. Costs are
+API-equivalent estimates, not subscription charges; `unpricedRecords` identifies
+usage excluded from the cost total because its price is unknown.
+
+The usage CLI is read-only. There are no reset-credit redemption, price-editing,
+credential-management, or other usage-changing commands.
+
 ## Set custom model prices
 
 On web or desktop, open the environment dropdown on **Usage**, then choose **Model prices** to add,

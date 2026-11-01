@@ -29,6 +29,7 @@ import { serviceCommand } from "./cli/service.ts";
 import { servicePreflightCommand } from "./cli/servicePreflight.ts";
 import { themeCommand } from "./cli/theme.ts";
 import { traceCommand } from "./cli/trace.ts";
+import { usageCommand } from "./cli/usage.ts";
 import { triageCommand } from "./cli/triage.ts";
 import { connectCommand, statusCommand, upCommand } from "./cli/up.ts";
 
@@ -96,6 +97,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       traceCommand,
       doctorCommand,
       triageCommand,
+      usageCommand,
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),
   );
