@@ -56,7 +56,15 @@ const SETTINGS_SEARCH_TERMS = {
     "auto-resume",
     "thread behavior",
   ],
-  SettingsFollowUp: ["follow-ups", "queue", "steer", "while the agent is running"],
+  SettingsFollowUp: [
+    "follow-ups",
+    "queue",
+    "steer",
+    "while the agent is running",
+    "large pastes",
+    "attachment",
+    "text file",
+  ],
   SettingsArchive: ["archive", "archived", "restore", "unarchive"],
   SettingsProviderAccounts: [
     "provider accounts",

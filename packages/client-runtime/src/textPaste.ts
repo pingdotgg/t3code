@@ -1,5 +1,3 @@
-export const PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES = 32 * 1024;
-
 const textEncoder = new TextEncoder();
 
 export type PastedTextDisposition = "attachment" | "inline";
@@ -17,12 +15,14 @@ export function isPasteAsTextShortcut(
 }
 
 /**
- * The threshold is byte-based: character counts substantially understate the
- * context cost of some Unicode-heavy clipboard contents.
+ * `thresholdBytes` is the `pastedTextAttachmentThreshold` setting. It is compared
+ * with both the length and the UTF-8 byte count: character counts substantially
+ * understate the context cost of some Unicode-heavy clipboard contents.
  */
 export function pastedTextDisposition(input: {
   readonly text: string;
   readonly canAttach: boolean;
+  readonly thresholdBytes: number;
   readonly bypassAutoAttachment?: boolean;
   readonly wouldExceedInputLimit?: boolean;
 }): PastedTextDisposition {
@@ -30,10 +30,20 @@ export function pastedTextDisposition(input: {
     return "inline";
   }
   return input.wouldExceedInputLimit ||
-    input.text.length >= PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES ||
-    textEncoder.encode(input.text).byteLength >= PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES
+    input.text.length >= input.thresholdBytes ||
+    textEncoder.encode(input.text).byteLength >= input.thresholdBytes
     ? "attachment"
     : "inline";
+}
+
+/**
+ * Settings label for a `pastedTextAttachmentThreshold` preset, such as
+ * "5 KB (~5,000 chars)". Sizes come first because the threshold also counts
+ * UTF-8 bytes, so non-Latin text and emoji fold with fewer characters.
+ */
+export function pastedTextThresholdLabel(thresholdBytes: number) {
+  const kilobytes = Math.floor(thresholdBytes / 1000);
+  return `${kilobytes} KB (~${(kilobytes * 1000).toLocaleString("en-US")} chars)`;
 }
 
 export function nextPastedTextFileName(existingNames: ReadonlyArray<string>): string {

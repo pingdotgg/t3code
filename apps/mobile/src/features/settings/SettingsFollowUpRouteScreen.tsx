@@ -1,5 +1,10 @@
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import {
+  DEFAULT_PASTED_TEXT_ATTACHMENT_THRESHOLD,
+  type PastedTextAttachmentThreshold,
+} from "@t3tools/contracts";
+import { pastedTextThresholdLabel } from "@t3tools/client-runtime/text-paste";
 import { AsyncResult } from "effect/reactivity";
 import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -28,6 +33,17 @@ const FOLLOW_UP_OPTIONS: ReadonlyArray<{
   },
 ];
 
+const THRESHOLD_OPTIONS: ReadonlyArray<{
+  readonly threshold: PastedTextAttachmentThreshold;
+  readonly description: string;
+}> = [
+  { threshold: 1_000, description: "Most logs, stack traces, and code snippets become files." },
+  { threshold: 5_000, description: "Long logs and documents become files; snippets stay as text." },
+  { threshold: 32_768, description: "Default. Only very large pastes become files." },
+];
+
+const PASTE_AS_TEXT_SHORTCUT = Platform.OS === "ios" ? "Command + Shift + V" : "Ctrl + Shift + V";
+
 export function SettingsFollowUpRouteScreen() {
   const insets = useSafeAreaInsets();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
@@ -35,6 +51,10 @@ export function SettingsFollowUpRouteScreen() {
   const preferencesReady = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
   const selectedBehavior = AsyncResult.isSuccess(preferencesResult)
     ? (preferencesResult.value.followUpBehavior ?? DEFAULT_FOLLOW_UP_BEHAVIOR)
+    : null;
+  const selectedThreshold = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.pastedTextAttachmentThreshold ??
+      DEFAULT_PASTED_TEXT_ATTACHMENT_THRESHOLD)
     : null;
 
   const content = (
@@ -61,6 +81,24 @@ export function SettingsFollowUpRouteScreen() {
       <Text className="px-2 text-sm text-foreground-muted">
         Long-press the send button to use the other option for a single message. With a hardware
         keyboard, hold Command while sending.
+      </Text>
+      <SettingsSection title="Attach pastes as files from">
+        {THRESHOLD_OPTIONS.map(({ threshold, description }, index) => (
+          <SettingsChoiceRow
+            key={threshold}
+            label={pastedTextThresholdLabel(threshold)}
+            description={description}
+            selected={selectedThreshold === threshold}
+            separated={index > 0}
+            disabled={!preferencesReady}
+            onPress={() => savePreferences({ pastedTextAttachmentThreshold: threshold })}
+          />
+        ))}
+      </SettingsSection>
+      <Text className="px-2 text-sm text-foreground-muted">
+        Shorter pastes go into the message as text. Non-Latin text and emoji use more bytes per
+        character, so they reach the limit sooner. With a hardware keyboard, press{" "}
+        {PASTE_AS_TEXT_SHORTCUT} to paste a long block as text instead.
       </Text>
     </ScrollView>
   );
