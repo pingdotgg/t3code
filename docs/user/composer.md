@@ -198,8 +198,9 @@ hidden when transcription is unavailable for the device or its language.
 
 The first use may download a speech model and needs a network connection.
 Later transcription works offline for that language. Recordings can be up to five
-minutes long. Canceling, leaving the screen, or an audio interruption discards the
-recording and preserves your existing draft. While recording, the screen stays
+minutes long. Canceling or an audio interruption discards the recording and
+preserves your existing draft. Navigating to another screen keeps dictation active;
+use the floating controls to finish or cancel. While recording, the screen stays
 awake; it can sleep normally once recording stops.
 
 Choose a preferred order in **Settings → Microphone**. Voice input requests the first
