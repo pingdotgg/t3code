@@ -42,5 +42,5 @@ export function sanitizeStderrExcerpt(
     .replace(API_KEY_HEADER_PATTERN, "x-api-key: [REDACTED]")
     .replace(BEARER_TOKEN_PATTERN, "Bearer [redacted]")
     .replace(SECRET_TOKEN_PATTERN, "[redacted]");
-  return redactSecretAssignments(redactUrls(result)).trim();
+  return redactUrls(redactSecretAssignments(result)).trim();
 }

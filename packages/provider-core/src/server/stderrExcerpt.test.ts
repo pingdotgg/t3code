@@ -165,9 +165,17 @@ describe("stderrExcerpt", () => {
     ],
     [
       'connect mongodb+srv://db.example/?password="s3cr3t" failed',
-      'connect mongodb+srv://db.example/" failed',
+      "connect mongodb+srv://db.example/ failed",
     ],
-    ['fetch https://example.test/?token="s3cr3t" failed', 'fetch https://example.test/" failed'],
+    ['fetch https://example.test/?token="s3cr3t" failed', "fetch https://example.test/ failed"],
+    [
+      '{"url":"https://api.test/?a=1","password":"super secret"}',
+      '{"url":"https://api.test/","password":"[REDACTED]"}',
+    ],
+    [
+      '{"url":"mongodb+srv://db.example/?a=1","password":"super secret"}',
+      '{"url":"mongodb+srv://db.example/","password":"[REDACTED]"}',
+    ],
     ['see "https://example.test/path?a=1" here', 'see "https://example.test/path" here'],
     ['{"password":"topsecret\nError: boom', '{"password":"[REDACTED]"'],
     ['PASSWORD="first\nsecond-secret"\nError: boom', "PASSWORD=[REDACTED]"],
@@ -187,6 +195,6 @@ describe("stderrExcerpt", () => {
         "/Users/ada",
         {},
       ),
-    ).toBe(["AWS_SECRET_ACCESS_KEY=[REDACTED]", "fetch https://example.test/' failed"].join("\n"));
+    ).toBe(["AWS_SECRET_ACCESS_KEY=[REDACTED]", "fetch https://example.test/ failed"].join("\n"));
   });
 });
