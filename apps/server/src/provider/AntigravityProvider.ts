@@ -517,7 +517,15 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     onSessionStarted,
     onConfigOptionsUpdated,
     onAvailableCommands,
-    onSignedIn: resetUsage,
+    // The new sign-in may be another account, so its session start reads fresh limits.
+    onSignedIn: resetUsage.pipe(
+      Effect.andThen(
+        SubscriptionRef.update(metadata, (state) => {
+          const { usageLimits: _previousAccount, ...draft } = state.draft;
+          return { ...state, draft };
+        }),
+      ),
+    ),
     onSignedOut: clearAccountMetadata(),
     onAuthRequired: clearAccountMetadata(),
     snapshotForCwd,

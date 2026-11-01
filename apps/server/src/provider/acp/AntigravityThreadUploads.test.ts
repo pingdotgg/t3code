@@ -1,10 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
@@ -187,6 +189,11 @@ it.layer(NodeServices.layer)("syncAntigravityThreadUploads", (it) => {
       );
       expect(moved?.more).toBe(1);
       expect(yield* takeAntigravityMovedUploads(root)).toBeUndefined();
+      // The agent can write in the root; a FIFO in place of the marker must not hang a prompt.
+      if ((yield* HostProcess.Platform) !== "win32") {
+        NodeChildProcess.execFileSync("mkfifo", [NodePath.join(root, ".moved-uploads-notice")]);
+        expect((yield* takeAntigravityMovedUploads(root))?.files).toEqual([]);
+      }
     }),
   );
 });

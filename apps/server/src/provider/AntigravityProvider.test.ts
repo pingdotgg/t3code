@@ -815,6 +815,16 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         yield* harness.provider.onSignedIn;
         yield* harness.provider.onSessionStarted(started);
         expect((yield* published)?.usageLimits).toEqual(newLimits);
+        // Switching again replaces limits the previous account already published.
+        const nextLimits = { ...newLimits, checkedAt: "2026-10-09T12:02:00.000Z" };
+        yield* Ref.set(usage, Effect.succeed(nextLimits));
+        const republished = yield* harness.nextPublish(
+          (snapshot) => snapshot.usageLimits?.checkedAt === nextLimits.checkedAt,
+        );
+        yield* harness.provider.onSignedIn;
+        expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
+        yield* harness.provider.onSessionStarted(started);
+        expect((yield* republished)?.usageLimits).toEqual(nextLimits);
       }),
     ),
   );

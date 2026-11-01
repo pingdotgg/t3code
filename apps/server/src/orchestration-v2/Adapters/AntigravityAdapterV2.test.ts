@@ -245,6 +245,55 @@ describe("AntigravityAdapterV2 session open", () => {
   );
 });
 
+describe("AntigravityAdapterV2 thread uploads", () => {
+  it.effect("copies only uploads this thread owns or inherited, not another thread's by ID", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const host = yield* ProviderHost.ProviderHost;
+      const threadId = ThreadId.make("thread-antigravity-containment");
+      const upload = (id: string) => {
+        const attachment = {
+          type: "file",
+          id,
+          name: `${id}.txt`,
+          mimeType: "text/plain",
+          sizeBytes: 4,
+        } as const;
+        return fileSystem
+          .writeFileString(path.join(host.paths.attachmentsDir, id), "data")
+          .pipe(Effect.as(attachment));
+      };
+      const own = yield* upload(
+        "thread-antigravity-containment-00000000-0000-4000-8000-000000000001",
+      );
+      const foreign = yield* upload("thread-other-00000000-0000-4000-8000-000000000002");
+      const inherited = yield* upload("pasted.txt");
+      const uploadsFlavor = makeAntigravityAcpAdapterFlavor({
+        instanceId: ProviderInstanceId.make("antigravity-uploads-test"),
+        crypto: yield* Crypto.Crypto,
+        fileSystem,
+        path,
+        host,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: () => Effect.die("not spawned in this test"),
+        withProcess: (_stop, task) => task,
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
+        defaultModel: Effect.succeed(undefined),
+      });
+      const resolve = yield* uploadsFlavor.prepareAttachments!({
+        threadId,
+        attachments: [own, foreign, inherited],
+      });
+      assert.isString(resolve(own));
+      assert.isString(resolve(inherited));
+      assert.isNull(resolve(foreign));
+      const root = antigravityThreadUploadsRoot(host.paths.stateDir, threadId);
+      assert.isFalse(yield* fileSystem.exists(path.join(root, foreign.id)));
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+});
+
 describe("AntigravityAdapterV2 client file system", () => {
   it.effect("serves confined reads and leaves edits to the agent's diff tools", () =>
     Effect.gen(function* () {
@@ -423,7 +472,7 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       const host = yield* ProviderHost.ProviderHost;
       const document = ChatFileAttachment.make({
         type: "file",
-        id: "native-pdf",
+        id: "thread-antigravity-workspace-change-00000000-0000-4000-8000-000000000003",
         name: "diagram.pdf",
         mimeType: "application/pdf",
         sizeBytes: 9,
@@ -434,7 +483,7 @@ describe("AntigravityAdapterV2 workspace changes", () => {
           host.paths.stateDir,
           ThreadId.make("thread-antigravity-workspace-change"),
         ),
-        "native-pdf",
+        "thread-antigravity-workspace-change-00000000-0000-4000-8000-000000000003",
       );
       let readTextFile: Parameters<RuntimeService["handleReadTextFile"]>[0] | undefined;
       const instanceId = ProviderInstanceId.make("antigravity-workspace-change-test");

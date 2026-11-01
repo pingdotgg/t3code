@@ -34,16 +34,24 @@ interface FakeThread {
   readonly items: ReadonlyArray<FakeItem>;
 }
 
-const message = (runId: string | null, id: string, inputIntent = "new_turn"): FakeItem => ({
+// Stored upload IDs start with their owner thread; each label's owner is its first word.
+const labels: Array<string> = [];
+const uploadId = (label: string) => {
+  if (!labels.includes(label)) labels.push(label);
+  const serial = String(labels.indexOf(label) + 1).padStart(12, "0");
+  return `${label.split("-")[0]}-00000000-0000-4000-8000-${serial}`;
+};
+const labelOf = (id: string) => labels.find((label) => uploadId(label) === id) ?? id;
+const message = (runId: string | null, label: string, inputIntent = "new_turn"): FakeItem => ({
   type: "user_message",
   runId,
   inputIntent,
-  attachments: [{ id }],
+  attachments: [{ id: uploadId(label) }],
 });
-const answer = (runId: string, id: string): FakeItem => ({
+const answer = (runId: string, label: string): FakeItem => ({
   type: "user_input_request",
   runId,
-  questionAnswer: { attachmentsByQuestionId: { file: [{ id }] } },
+  questionAnswer: { attachmentsByQuestionId: { file: [{ id: uploadId(label) }] } },
 });
 const runs = (...statuses: ReadonlyArray<string>) =>
   statuses.map((status, index) => ({ id: `run-${index + 1}`, ordinal: index + 1, status }));
@@ -119,14 +127,15 @@ it.effect("reads uploads from the history the thread's agent was given", () =>
       sibling: {
         forkedFrom: null,
         runs: runs("completed"),
-        items: [message("run-1", "sibling-own")],
+        // A client named the source thread's stored upload in this unrelated thread.
+        items: [message("run-1", "sibling-own"), message("run-1", "source-before")],
       },
       orphan: { forkedFrom: fork("deleted", "run-1"), runs: [], items: [] },
       "missing-run": { forkedFrom: fork("source", "run-9"), runs: [], items: [] },
     });
     const readable = (threadId: string) =>
       readThreadReadableAttachmentIds(store, ThreadId.make(threadId)).pipe(
-        Effect.map((ids) => ids.toSorted()),
+        Effect.map((ids) => ids.map(labelOf).toSorted()),
       );
 
     assert.deepEqual(yield* readable("source"), [

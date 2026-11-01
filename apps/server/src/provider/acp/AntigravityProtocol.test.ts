@@ -376,6 +376,21 @@ describe("Antigravity tool results", () => {
     pathOnly = normalizeAntigravityToolCall(mergeToolCallState(pathOnly, completed));
     expect(pathOnly.data.content).toEqual([{ type: "diff", patch: { format: "omitted" } }]);
     expect(acpToolCallDiffPatch(pathOnly.data.content)).toBeUndefined();
+    // A patch too long to keep, or input cut to its tail, must not fall back to line-1 snippets.
+    for (const width of [60, 120]) {
+      const block = (value: string) =>
+        Array.from({ length: 120 }, (_, i) => `${value} ${i} `.padEnd(width, "x")).join("\n");
+      const long = {
+        TargetContent: block("old"),
+        ReplacementContent: block("new"),
+        TargetFile: path,
+      };
+      const toolCall = normalizeAntigravityToolCall(
+        parseToolUpdate(frame({ ...long, StartLine: 80, EndLine: 199 }, 80)).toolCall,
+      );
+      expect(toolCall.data.content).toMatchObject([{ patch: { format: "omitted" } }]);
+      expect(acpToolCallDiffPatch(toolCall.data.content)).toBeUndefined();
+    }
   });
 
   it.each([

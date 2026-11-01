@@ -1,4 +1,9 @@
 import type { OrchestrationV2TurnItem, ThreadId } from "@t3tools/contracts";
+
+import {
+  parseThreadSegmentFromAttachmentId,
+  toSafeThreadAttachmentSegment,
+} from "../attachmentStore.ts";
 import * as Effect from "effect/Effect";
 
 import { visibleConversationItems } from "./ContextHandoffService.ts";
@@ -55,5 +60,7 @@ export const readThreadReadableAttachmentIds = Effect.fn(
     for (const id of attachmentIds(visibleConversationItems(source, turnItems))) ids.add(id);
     current = source.thread;
   }
-  return [...ids];
+  // A client can name another thread's stored upload; only uploads owned by this lineage count.
+  const owners = new Set([...seen].map(toSafeThreadAttachmentSegment));
+  return [...ids].filter((id) => owners.has(parseThreadSegmentFromAttachmentId(id)));
 });

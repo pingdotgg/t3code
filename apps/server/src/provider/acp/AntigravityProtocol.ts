@@ -357,6 +357,11 @@ function localImagePath(imagePath: string | undefined): string | undefined {
   return /^[a-z][a-z\d+.-]*:/i.test(path) && !/^[a-z]:[\\/]/i.test(path) ? undefined : path;
 }
 
+function hasTruncatedText(value: unknown): boolean {
+  if (typeof value === "string") return value.startsWith(TOOL_TEXT_TRUNCATED);
+  return Predicate.isObject(value) && Object.values(value).some(hasTruncatedText);
+}
+
 /** The ACP adapter renders a diff's `patch.text` ahead of its bare old/new snippets. */
 function withAntigravityEditPatches(
   content: ReadonlyArray<unknown>,
@@ -368,15 +373,21 @@ function withAntigravityEditPatches(
       return entry;
     // Keep the first patch: once the edit runs, the file no longer holds the old text.
     if (entry.patch !== undefined) return entry;
+    // Bounding keeps only the tail of long input, so a cut snippet cannot be located.
+    if (hasTruncatedText(data.rawInput)) return { ...entry, patch: { format: "omitted" } };
     const text = antigravityEditPatch({
       path: entry.path,
       rawInput: data.rawInput,
       locations: data.locations,
       readPreEditFile,
     });
-    // A truncated patch would no longer parse, so the snippets stay the fallback.
-    if (text === ANTIGRAVITY_EDIT_DIFF_OMITTED) return { ...entry, patch: { format: "omitted" } };
-    if (text === undefined || text.length > TOOL_TEXT_LIMIT) return entry;
+    // A truncated patch would no longer parse, and bare snippets would render at line 1.
+    if (
+      text === ANTIGRAVITY_EDIT_DIFF_OMITTED ||
+      (text !== undefined && text.length > TOOL_TEXT_LIMIT)
+    )
+      return { ...entry, patch: { format: "omitted" } };
+    if (text === undefined) return entry;
     return {
       ...entry,
       patch: isAntigravitySnippetPatch(text) ? { format: "snippet", text } : { text },

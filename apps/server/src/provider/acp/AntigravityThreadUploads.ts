@@ -55,6 +55,7 @@ async function ensureManagedRoot(stateDir: string, threadId: ThreadId) {
 }
 
 const MOVED_UPLOADS_MARKER = ".moved-uploads-notice";
+const MOVED_MARKER_MAX_BYTES = 64 * 1024;
 const MOVED_NOTICE_FILES = 8;
 const MOVED_NOTICE_PATH_BYTES = 2 * 1024;
 
@@ -88,7 +89,15 @@ export const takeAntigravityMovedUploads = Effect.fn("takeAntigravityMovedUpload
 ) {
   return yield* Effect.tryPromise(async (): Promise<AntigravityMovedUploads> => {
     const marker = NodePath.join(root, MOVED_UPLOADS_MARKER);
-    const contents = await NodeFS.promises.readFile(marker, "utf8");
+    // The agent can write here: open without blocking or following links, and read only a small file.
+    const { O_RDONLY, O_NONBLOCK, O_NOFOLLOW } = NodeFS.constants;
+    const handle = await NodeFS.promises.open(marker, O_RDONLY | O_NONBLOCK | O_NOFOLLOW);
+    const contents = await handle
+      .stat()
+      .then((info) =>
+        info.isFile() && info.size <= MOVED_MARKER_MAX_BYTES ? handle.readFile("utf8") : "",
+      )
+      .finally(() => handle.close());
     await NodeFS.promises.unlink(marker);
     const canonical = await NodeFS.promises.realpath(root);
     // Stored attachment names are an id and an extension, one per line.

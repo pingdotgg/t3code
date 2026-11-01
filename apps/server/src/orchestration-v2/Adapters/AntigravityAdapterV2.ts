@@ -31,6 +31,10 @@ import {
   type AntigravityAcpRuntimeInput,
 } from "../../provider/acp/AntigravityAcpSupport.ts";
 import {
+  parseThreadSegmentFromAttachmentId,
+  toSafeThreadAttachmentSegment,
+} from "../../attachmentStore.ts";
+import {
   antigravitySubagentLaunches,
   describeAntigravitySubagentLaunches,
 } from "../../provider/acp/AntigravityChildWork.ts";
@@ -240,23 +244,38 @@ export function makeAntigravityAcpAdapterFlavor(
     mcpOverHttp: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
-    prepareAttachments: ({ threadId, attachments }) =>
-      syncAntigravityThreadUploads({
+    prepareAttachments: Effect.fn("AntigravityAdapterV2.prepareAttachments")(function* ({
+      threadId,
+      attachments,
+    }) {
+      // A message may name another thread's stored upload; copy only this lineage's uploads.
+      const owner = toSafeThreadAttachmentSegment(threadId);
+      const inherited = new Set(
+        options.host.readableAttachmentPaths === undefined
+          ? []
+          : yield* options.host.readableAttachmentPaths(threadId),
+      );
+      const readable = (attachment: ChatAttachment) => {
+        const stored = options.host.resolveAttachmentPath(attachment);
+        return stored !== null &&
+          (parseThreadSegmentFromAttachmentId(attachment.id) === owner || inherited.has(stored))
+          ? stored
+          : null;
+      };
+      const { root } = yield* syncAntigravityThreadUploads({
         stateDir: options.host.paths.stateDir,
         threadId,
         attachmentsDir: options.host.paths.attachmentsDir,
-        storedPaths: attachments.flatMap((attachment) => {
-          const stored = options.host.resolveAttachmentPath(attachment);
-          return stored === null ? [] : [stored];
-        }),
+        storedPaths: attachments.flatMap((attachment) => readable(attachment) ?? []),
         prune: false,
       }).pipe(
         Effect.mapError((cause) => EffectAcpErrors.AcpRequestError.internalError(cause.detail)),
-        Effect.map(({ root }) => (attachment: ChatAttachment) => {
-          const stored = options.host.resolveAttachmentPath(attachment);
-          return stored === null ? null : antigravityThreadUploadPath(root, stored);
-        }),
-      ),
+      );
+      return (attachment: ChatAttachment) => {
+        const stored = readable(attachment);
+        return stored === null ? null : antigravityThreadUploadPath(root, stored);
+      };
+    }),
     buildPrompt: ({
       threadId,
       text,
