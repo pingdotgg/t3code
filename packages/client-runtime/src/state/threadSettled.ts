@@ -63,6 +63,10 @@ export function hasQueuedTurnStart(
   if (Math.abs(nowMs - messageAt) > QUEUED_TURN_START_GRACE_MS) return false;
   const turn = shell.latestRun ?? shell.latestTurn ?? null;
   if (turn === null) return true;
+  // A queued send that was steered into the running turn is cancelled before
+  // it starts, and the message is re-stamped just after. That run can never
+  // adopt the message, so the message is not waiting on a start.
+  if (turn.status === "cancelled" && turn.startedAt == null) return false;
   return [turn.requestedAt, turn.startedAt, turn.completedAt].every(
     (candidate) => candidate == null || Date.parse(candidate) < messageAt,
   );

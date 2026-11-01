@@ -233,6 +233,42 @@ describe("hasQueuedTurnStart", () => {
     expect(hasQueuedTurnStart(adopted, { now: NOW })).toBe(false);
     expect(hasQueuedTurnStart(failed, { now: NOW })).toBe(false);
   });
+
+  it("does not wait on a run that was cancelled before it started (steered follow-up)", () => {
+    const shell = {
+      ...makeShell({}),
+      latestUserMessageAt: "2026-04-10T11:59:30.000Z",
+      latestRun: {
+        status: "cancelled",
+        requestedAt: "2026-04-10T11:59:20.000Z",
+        startedAt: null,
+        completedAt: "2026-04-10T11:59:29.923Z",
+      },
+      runtime: { status: "cancelled", updatedAt: "2026-04-10T11:59:29.923Z" },
+    };
+    expect(hasQueuedTurnStart(shell, { now: NOW })).toBe(false);
+    expect(canSnooze(shell, { now: NOW })).toBe(true);
+  });
+
+  it.each([
+    { reason: "queued run that has not started", status: "queued", startedAt: null },
+    {
+      reason: "cancelled run that had started",
+      status: "cancelled",
+      startedAt: "2026-04-10T11:59:21.000Z",
+    },
+  ])("still waits on a message newer than a $reason", ({ status, startedAt }) => {
+    const shell = makeQueuedTurnShell({
+      latestUserMessageAt: "2026-04-10T11:59:30.000Z",
+      latestRun: {
+        status,
+        requestedAt: "2026-04-10T11:59:20.000Z",
+        startedAt,
+        completedAt: status === "cancelled" ? "2026-04-10T11:59:29.923Z" : null,
+      },
+    });
+    expect(hasQueuedTurnStart(shell, { now: NOW })).toBe(true);
+  });
 });
 
 describe("threadWokeAt", () => {
