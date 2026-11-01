@@ -775,17 +775,13 @@ export const make = Effect.gen(function* () {
             instance.snapshot.pipe(Effect.map((snapshot) => snapshot.desiredRunning)),
           );
           yield* Ref.set(installRunningBackendsRef, runningInstances);
-          yield* Effect.all(
-            [
-              Effect.forEach(
-                instances,
-                (instance) => instance.stop({ timeout: Duration.seconds(5) }),
-                { concurrency: "unbounded", discard: true },
-              ),
-              sshEnvironment.stopTunnels,
-            ],
-            { concurrency: "unbounded", discard: true },
+          yield* Effect.forEach(
+            instances,
+            (instance) => instance.stop({ timeout: Duration.seconds(5) }),
+            { concurrency: "unbounded" },
           );
+          // Last, so a renderer reconnect during the backend stop cannot spawn a tunnel that outlives the quit.
+          yield* sshEnvironment.stopTunnels;
           yield* electronUpdater.quitAndInstall({
             isSilent: true,
             isForceRunAfter: true,
