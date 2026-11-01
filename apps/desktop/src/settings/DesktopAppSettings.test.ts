@@ -170,6 +170,9 @@ describe("DesktopSettings", () => {
             "tailscaleServeEnabled": true,
             "tailscaleServePort": 8443,
             "mainWindowBounds": { "x": 120, "y": 80, "width": 1280, "height": 900 },
+            // Values this build cannot read fall back per field, not for the whole file.
+            "updateChannel": "beta",
+            "wslOnly": "yes",
           }\n`,
         );
 

@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -104,7 +105,21 @@ const DesktopSettingsDocument = Schema.Struct({
 type DesktopSettingsDocument = typeof DesktopSettingsDocument.Type;
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
-const DesktopSettingsJson = fromLenientJson(DesktopSettingsDocument);
+interface DropUnreadableKey extends Struct.Lambda {
+  <S extends Schema.Top>(field: S): Schema.middlewareDecoding<S, S["DecodingServices"]>;
+  readonly "~lambda.out": this["~lambda.in"] extends Schema.Top
+    ? Schema.middlewareDecoding<this["~lambda.in"], this["~lambda.in"]["DecodingServices"]>
+    : never;
+}
+// A value this build cannot read drops only its own key, so the rest of the file
+// still loads instead of every setting resetting to defaults.
+const dropUnreadableKey = Struct.lambda<DropUnreadableKey>((field) =>
+  field.pipe(Schema.catchDecoding(() => Effect.succeedNone)),
+);
+
+const DesktopSettingsJson = fromLenientJson(
+  DesktopSettingsDocument.mapFields(Struct.map(dropUnreadableKey)),
+);
 const decodeDesktopSettingsJson = Schema.decodeEffect(DesktopSettingsJson);
 const encodeDesktopSettingsJson = Schema.encodeEffect(DesktopSettingsJson);
 const decodeDesktopWindowBounds = Schema.decodeUnknownOption(DesktopWindowBoundsSchema);
