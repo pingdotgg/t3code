@@ -895,6 +895,8 @@ export const OrchestrationV2Subagent = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
+  // The run whose unfinished task was cancelled, committed with its Stop.
+  cancelledRunId: Schema.optional(RunId),
   status: Schema.Literals([
     "idle",
     "pending",
