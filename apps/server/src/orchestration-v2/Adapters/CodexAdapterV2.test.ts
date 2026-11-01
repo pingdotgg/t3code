@@ -222,6 +222,30 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
+  it.effect("sends the chosen cyber access program, else the model's default", () =>
+    Effect.gen(function* () {
+      const build = (value?: string, defaultCyberAccessProgram?: string) =>
+        CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-cyber",
+          codexInput: [{ type: "text", text: "test" }],
+          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+            ...(value === undefined ? {} : { options: [{ id: "cyberAccessProgram", value }] }),
+          },
+          defaultCyberAccessProgram,
+        });
+
+      // Custom models have no catalog entry, so Codex keeps its own treatment.
+      assert.notProperty(yield* build(), "cyberAccessProgram");
+      assert.equal((yield* build(undefined, "standard")).cyberAccessProgram, "standard");
+      assert.equal((yield* build("automatic", "standard")).cyberAccessProgram, "standard");
+      assert.equal((yield* build("daybreakBlue", "standard")).cyberAccessProgram, "daybreakBlue");
+      assert.equal((yield* build("standard", "daybreakBlue")).cyberAccessProgram, "standard");
+    }),
+  );
+
   it.effect("sends MCP app model context as untrusted Codex context", () =>
     Effect.gen(function* () {
       const policy = { runtimeMode: "full-access", interactionMode: "default", cwd: null } as const;
@@ -2043,6 +2067,74 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* answer(4, "file-change", "accept");
         yield* harness.awaitTerminal(3);
         assert.lengthOf(requests(), 4);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("sends the selected cyber access program on the wire", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "cyber-thread";
+        const nativeTurnId = "cyber-turn";
+        const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "review" });
+        const transcript = makeCodexReplayTranscript({
+          scenario: "cyber-access-program",
+          entries: [
+            ...entries.slice(0, 5),
+            {
+              type: "expect_outbound",
+              label: "turn/start",
+              frame: {
+                id: 3,
+                method: "turn/start",
+                params: {
+                  threadId: nativeThreadId,
+                  input: [{ type: "text", text: "review" }],
+                  cwd: "/workspace",
+                  model: "gpt-5.4",
+                  approvalPolicy: "never",
+                  approvalsReviewer: "user",
+                  sandboxPolicy: { type: "dangerFullAccess" },
+                  summary: "detailed",
+                  cyberAccessProgram: "daybreakBlue",
+                  collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
+                },
+              },
+            },
+            ...entries.slice(6),
+            {
+              type: "emit_inbound",
+              label: "done",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("cyber-attempt"),
+            text: "review",
+          }),
+          modelSelection: {
+            ...CODEX_TEST_MODEL_SELECTION,
+            options: [{ id: "cyberAccessProgram", value: "daybreakBlue" }],
+          },
+        });
+        yield* harness.firstTerminal;
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

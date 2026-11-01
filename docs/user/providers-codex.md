@@ -92,6 +92,19 @@ in the thread on web, desktop, or mobile. Some tools offer access for one reques
 the current session, or permanently. See [Permission modes](./permission-modes.md)
 for command and file approvals.
 
+## Use Daybreak
+
+Models that list cyber access programs show a Cyber Access choice in the model
+options next to the composer. T3 Code sends it with every turn. As in the Codex
+CLI, the default is Standard unless you set `daybreak = true` in Codex's
+`config.toml`. Your last choice stays selected for new threads until you change
+it, so check it before starting unrelated work. Models that only offer Daybreak
+stay on Daybreak. Custom models do not show the choice.
+
+If Codex reports that you are not logged in with a Daybreak key, sign in to
+Codex again using the appropriate Daybreak credentials for your account, then
+retry the turn. Use the same Codex home as the provider instance in T3 Code.
+
 ## Codex says I hit a usage limit
 
 When Codex stops on a usage limit, the thread names the window that ran out and

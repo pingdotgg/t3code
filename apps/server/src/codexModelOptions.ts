@@ -12,3 +12,9 @@ export function getCodexServiceTierOptionValue(
     (getModelSelectionBooleanOptionValue(modelSelection, "fastMode") === true ? "fast" : undefined)
   );
 }
+
+export function getCodexCyberAccessProgramOptionValue(
+  modelSelection: ModelSelection | null | undefined,
+): string | undefined {
+  return getModelSelectionStringOptionValue(modelSelection, "cyberAccessProgram");
+}
