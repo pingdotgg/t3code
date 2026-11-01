@@ -36,6 +36,8 @@ const state = vi.hoisted(() => ({
 
 vi.mock("~/state/server", () => ({
   serverEnvironment: { configValueAtom: () => state.config },
+  // Read by the shortcut dispatcher only when a key is pressed.
+  primaryServerKeybindingsAtom: null,
 }));
 vi.mock("~/state/review", () => ({
   reviewEnvironment: {
