@@ -155,6 +155,12 @@ describe("sidebar shift guard", () => {
     list.button("C").focus();
     await userEvent.keyboard("{Enter}");
     expect(list.pressed).toEqual(["C"]);
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    expect(
+      list
+        .button("C")
+        .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
+    ).toBe(true);
   });
 
   it("ends a dropped press the browser cancels", async () => {

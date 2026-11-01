@@ -84,7 +84,7 @@ export function createSidebarShiftGuard(list: HTMLElement) {
     heldDrops.delete(event.pointerId);
   };
   const onKeyDown = (event: KeyboardEvent) => {
-    if (heldDrops.size === 0) pressDropped = false;
+    pressDropped = false;
     if (!editsText(event)) lastInputAt = performance.now();
   };
   const onPressFollowUp = (event: MouseEvent) => {
