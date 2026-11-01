@@ -100,7 +100,7 @@ export function HistorySwipeNavigation() {
   useEffect(() => {
     let gesture: SwipeGesture | null = null;
     const hideIndicator = () =>
-      setSwipe((current) => (current === null ? null : { ...current, tracking: false }));
+      setSwipe((current) => (current?.tracking ? { ...current, tracking: false } : current));
     // The fingers lifted: navigate if the swipe went far enough, then ignore its momentum.
     const release = () => {
       if (
