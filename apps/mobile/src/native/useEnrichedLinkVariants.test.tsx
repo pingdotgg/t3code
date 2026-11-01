@@ -77,3 +77,12 @@ it("keeps the file name chip for a file link labelled with its file name", async
 
   expect(content["docs/guide.md"]?.label).toBe("guide.md");
 });
+
+it("keeps the file name chip for an inline-code Windows path", async () => {
+  // preserveWindowsPaths keeps the inline-code rewrite's escapes in the link text.
+  const content = await pillContent([
+    { url: "C:\\repo\\src\\a.ts", label: "C:\\\\repo\\\\src\\\\a.ts", title: "" },
+  ]);
+
+  expect(content["C:\\repo\\src\\a.ts"]?.label).toBe("a.ts");
+});

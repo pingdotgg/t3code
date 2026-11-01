@@ -82,7 +82,12 @@ function presentation(
   if (link.kind === "file")
     return {
       // Without a label the native pill shows the authored text, e.g. [the setup steps](docs/guide.md).
-      label: authoredLabels.every((label) => isMarkdownFileLinkLabel(label, link.href))
+      // preserveWindowsPaths keeps backslash escapes in link text, so test the unescaped text too.
+      label: authoredLabels.every(
+        (label) =>
+          isMarkdownFileLinkLabel(label, link.href) ||
+          isMarkdownFileLinkLabel(label.replace(/\\(.)/g, "$1"), link.href),
+      )
         ? link.label
         : undefined,
       icon: markdownFileIconSource(link.icon),
