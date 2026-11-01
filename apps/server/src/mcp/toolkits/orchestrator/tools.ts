@@ -165,7 +165,7 @@ const ScheduleTaskTool = Tool.make("schedule_task", {
   failureMode: "return",
   dependencies,
 })
-  .annotate(Tool.Title, "Schedule a recurring task")
+  .annotate(Tool.Title, "Schedule a task")
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 

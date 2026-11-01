@@ -365,6 +365,15 @@ function providerConstraints(
   return constraints;
 }
 
+/** t3_thread_launch keeps a selection as given, so it can hold options its model does not have. */
+function knownOptions(
+  options: ReadonlyArray<ProviderOptionSelection> | undefined,
+  descriptors: ReadonlyArray<ProviderOptionDescriptor> | undefined,
+): ReadonlyArray<ProviderOptionSelection> | undefined {
+  if (options === undefined || descriptors === undefined) return options;
+  return options.filter((option) => descriptors.some((descriptor) => descriptor.id === option.id));
+}
+
 /** Skip checks without descriptors; reject duplicate IDs because consumers disagree on precedence. */
 function invalidOptionSelections(
   selections: ReadonlyArray<ProviderOptionSelection>,
@@ -1394,10 +1403,10 @@ const make = Effect.gen(function* () {
       );
     }
 
+    const descriptors = provider.models.find((candidate) => candidate.slug === model)?.capabilities
+      ?.optionDescriptors;
     const requestedOptions = input.target?.options;
     if (requestedOptions !== undefined) {
-      const descriptors = provider.models.find((candidate) => candidate.slug === model)
-        ?.capabilities?.optionDescriptors;
       const invalid = invalidOptionSelections(requestedOptions, descriptors);
       if (invalid.length > 0) {
         return yield* failure(
@@ -1409,7 +1418,9 @@ const make = Effect.gen(function* () {
 
     const inheritsOptions =
       instanceId === inheritedSelection.instanceId && model === inheritedSelection.model;
-    let options = inheritsOptions ? inheritedSelection.options : undefined;
+    let options = inheritsOptions
+      ? knownOptions(inheritedSelection.options, descriptors)
+      : undefined;
     if (requestedOptions !== undefined) {
       const selections = new Map(
         (requestedOptions.length === 0 ? [] : (options ?? [])).map((selection) => [
@@ -2229,7 +2240,14 @@ const make = Effect.gen(function* () {
         parentThreadId: parent?.thread.id ?? null,
         inheritedProviderInstanceId: inherited?.instanceId ?? null,
         inheritedModel: inherited?.model ?? null,
-        inheritedOptions: inherited?.options ?? [],
+        inheritedOptions:
+          knownOptions(
+            inherited?.options,
+            providers
+              .find((provider) => provider.instanceId === inherited?.instanceId)
+              ?.models.find((model) => model.slug === inherited?.model)?.capabilities
+              ?.optionDescriptors,
+          ) ?? [],
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
         providers: providers.map((provider) => {
