@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent, type Locator } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
+import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
+import * as atomCommands from "../../state/use-atom-command";
 
 vi.mock(import("../../state/session"), async (original) => ({
   ...(await original()),
@@ -13,7 +15,7 @@ vi.mock(import("../../state/session"), async (original) => ({
 }));
 vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
-  useAtomCommand: (() => vi.fn()) as never,
+  useAtomCommand: vi.fn(() => vi.fn()) as never,
 }));
 vi.mock(import("./SettingsScopeContext"), async (original) => ({
   ...(await original()),
@@ -21,7 +23,13 @@ vi.mock(import("./SettingsScopeContext"), async (original) => ({
     const environment = {
       environmentId: "env",
       label: "Build workstation",
-      serverConfig: { keybindings: [], keybindingsConfigPath: null, availableEditors: [] },
+      serverConfig: {
+        keybindings: compileResolvedKeybindingsConfig([
+          { command: "script.run-tests.run", key: "mod+r" },
+        ]),
+        keybindingsConfigPath: null,
+        availableEditors: [],
+      },
     };
     return {
       scope: { kind: "environment" },
@@ -103,6 +111,56 @@ describe("Esc in a shortcut recorder", () => {
     await userEvent.keyboard("{Escape}");
     expect(onOpenChange).toHaveBeenCalledWith(false, expect.anything());
   });
+});
+
+it("shows Unassign only while recording and keeps it clickable without blurring the recorder", async () => {
+  const mutate = vi.fn(async () => ({ _tag: "Success", value: [] }));
+  await vi.mocked(atomCommands.useAtomCommand).withImplementation(
+    () => mutate as never,
+    async () => {
+      await using screen = await render(<KeybindingsSettingsPanel />);
+      const remove = screen.getByRole("button", { name: "Unassign shortcut for Sidebar: Toggle" });
+      const field = screen.getByRole("textbox", { name: "Keybinding for Sidebar: Toggle" });
+      const pill = screen.getByRole("button", { name: /^Edit shortcut for Sidebar: Toggle:/ });
+
+      await expect.element(remove).not.toBeInTheDocument();
+      await pill.click();
+      await expect.element(field).toHaveAttribute("placeholder", "Press shortcut");
+      await expect.element(remove).toBeVisible();
+      await userEvent.keyboard("{Escape}");
+      await expect.element(remove).not.toBeInTheDocument();
+      await pill.click();
+      await remove.click();
+
+      expect(mutate).toHaveBeenCalledTimes(1);
+      expect(mutate).toHaveBeenCalledWith({
+        environmentId: "env",
+        input: {
+          command: "sidebar.toggle",
+          key: "mod+b",
+          when: "false",
+          replace: { command: "sidebar.toggle", key: "mod+b" },
+        },
+      });
+      await expect.element(field).toHaveFocus();
+      await userEvent.keyboard("{Escape}");
+      await screen
+        .getByRole("button", { name: /^Edit shortcut for Run Script: Run Tests:/ })
+        .click();
+      await expect
+        .element(
+          screen.getByRole("button", { name: "Unassign shortcut for Run Script: Run Tests" }),
+        )
+        .not.toBeInTheDocument();
+      await userEvent.keyboard("{Escape}");
+      await screen.getByRole("button", { name: "Actions for Run Script: Run Tests" }).click();
+      await screen.getByRole("menuitem", { name: "Remove", exact: true }).click();
+      expect(mutate).toHaveBeenLastCalledWith({
+        environmentId: "env",
+        input: { command: "script.run-tests.run", key: "mod+r" },
+      });
+    },
+  );
 });
 
 it("re-enables Save when a When editor closes on an expression it could not parse", async () => {
