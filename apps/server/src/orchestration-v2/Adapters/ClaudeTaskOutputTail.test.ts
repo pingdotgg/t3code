@@ -20,7 +20,7 @@ const makeTaskFile = Effect.gen(function* () {
   return { root, tasks, file: path.join(tasks, `${TASK_ID}.output`) };
 });
 
-// TestClock cannot interleave with real filesystem I/O; use the live clock.
+// TestClock cannot interleave with real filesystem I/O; tests that wait on a poll use the live clock.
 describe("tailClaudeTaskOutput", () => {
   it.live("follows a file that appears after the task starts, across split characters", () =>
     Effect.scoped(
@@ -48,7 +48,7 @@ describe("tailClaudeTaskOutput", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("drops a split character when the file is truncated and rewritten", () =>
+  it.effect("drops a split character when the file is truncated and rewritten", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -57,16 +57,18 @@ describe("tailClaudeTaskOutput", () => {
         // End the first read inside the two-byte é.
         yield* fileSystem.writeFile(file, new TextEncoder().encode("café").subarray(0, 4));
         const chunks = yield* Queue.unbounded<string>();
+        const stop = yield* Deferred.make<void>();
         yield* tailClaudeTaskOutput({
           root,
           sessionId: SESSION_ID,
           taskId: TASK_ID,
-          stop: yield* Deferred.make<void>(),
+          stop,
           onChunk: (chunk) => Queue.offer(chunks, chunk),
         }).pipe(Effect.forkScoped);
         assert.equal(yield* Queue.take(chunks), "caf");
 
         yield* fileSystem.writeFileString(file, "ok\n");
+        yield* Deferred.succeed(stop, undefined);
         assert.equal(yield* Queue.take(chunks), "ok\n");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
