@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off
+// The Linux relaunch must outlive this process; scoped ChildProcess kills children on exit.
+import * as NodeChildProcess from "node:child_process";
+import * as NodePath from "node:path";
+
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -37,6 +42,29 @@ export class ElectronAppWhenReadyError extends Schema.TaggedError<ElectronAppWhe
   override get message(): string {
     return `Failed to wait for the Electron app to become ready (packaged: ${this.isPackaged}).`;
   }
+}
+
+/**
+ * Electron's Linux relauncher helper gets no_new_privs from Chromium's launch
+ * defaults, and the relaunched app and its terminals inherit it, breaking sudo.
+ * Node's spawn doesn't set it: wait for this process to exit, then start again.
+ */
+export function linuxRelaunchCommand(
+  pid: number,
+  execPath: string,
+  args: ReadonlyArray<string>,
+): { readonly command: string; readonly args: ReadonlyArray<string> } {
+  return {
+    command: "/bin/sh",
+    args: [
+      "-c",
+      'while kill -0 "$1" 2>/dev/null && ! grep -q "^State:[[:space:]]*Z" "/proc/$1/status" 2>/dev/null; do sleep 0.1; done; shift; exec "$@"',
+      "t3code-relaunch",
+      String(pid),
+      execPath,
+      ...args,
+    ],
+  };
 }
 
 export class ElectronApp extends Context.Service<
@@ -171,9 +199,41 @@ export const make = ElectronApp.of({
       Electron.app.exit(code);
     });
   }),
-  relaunch: Effect.fn("ElectronApp.relaunch")(function (options) {
-    return Effect.sync(() => {
-      Electron.app.relaunch(options);
+  relaunch: Effect.fn("ElectronApp.relaunch")(function* (options) {
+    const platform = yield* HostProcess.Platform;
+    if (platform !== "linux") {
+      yield* Effect.sync(() => Electron.app.relaunch(options));
+      return;
+    }
+    const currentExecPath = yield* HostProcess.ExecutablePath;
+    const execPath = options.execPath ?? currentExecPath;
+    // The AppImage mount goes away with this process, so start the AppImage itself.
+    const env = yield* HostProcess.Environment;
+    const appImage = env.APPIMAGE?.trim();
+    const appDir = env.APPDIR?.trim();
+    const relativeExecPath = appDir ? NodePath.posix.relative(appDir, execPath) : "";
+    const isAppImageExecutable =
+      appDir &&
+      NodePath.posix.isAbsolute(appDir) &&
+      NodePath.posix.isAbsolute(execPath) &&
+      relativeExecPath !== "" &&
+      relativeExecPath !== ".." &&
+      !relativeExecPath.startsWith("../");
+    const launch = linuxRelaunchCommand(
+      process.pid,
+      appImage && execPath === currentExecPath && isAppImageExecutable ? appImage : execPath,
+      options.args ?? process.argv.slice(1),
+    );
+    yield* Effect.callback<void>((resume) => {
+      const child = NodeChildProcess.spawn(launch.command, launch.args, {
+        detached: true,
+        stdio: "ignore",
+      });
+      child.once("spawn", () => {
+        child.unref();
+        resume(Effect.void);
+      });
+      child.once("error", (cause) => resume(Effect.die(cause)));
     });
   }),
   setPath: Effect.fn("ElectronApp.setPath")(function (name, path) {
