@@ -34,6 +34,8 @@ import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
+  resolveThreadListV2ConnectionIssue,
+  resolveThreadListV2LockedReason,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozePresets,
   resolveThreadListV2Status,
@@ -96,6 +98,45 @@ describe("resolveThreadListV2SnoozePresets", () => {
     );
     // The evening preset is gone by 19:15; a reading from 10:00 would still offer it.
     expect(presets.map((preset) => preset.id)).not.toContain("at:today:18:00");
+  });
+});
+
+describe("thread rows on hosts they cannot change", () => {
+  it("names the connection issue and stays quiet while connected or on a first attempt", () => {
+    expect(resolveThreadListV2ConnectionIssue({ phase: "connected", error: null })).toBeNull();
+    expect(resolveThreadListV2ConnectionIssue({ phase: "connecting", error: null })).toBeNull();
+    expect(resolveThreadListV2ConnectionIssue(null)).toBeNull();
+    expect(resolveThreadListV2ConnectionIssue({ phase: "offline", error: null })).toBe("offline");
+    expect(resolveThreadListV2ConnectionIssue({ phase: "reconnecting", error: null })).toBe(
+      "reconnecting",
+    );
+    expect(resolveThreadListV2ConnectionIssue({ phase: "reconnecting", error: "timeout" })).toBe(
+      "unreachable",
+    );
+    expect(resolveThreadListV2ConnectionIssue({ phase: "error", error: null })).toBe("unreachable");
+  });
+
+  it("explains a missing grant, expired credentials, and connection issues differently", () => {
+    const reason = (
+      access: "denied" | "signed-out" | "unknown",
+      connectionIssue: Parameters<typeof resolveThreadListV2LockedReason>[0]["connectionIssue"],
+    ) => resolveThreadListV2LockedReason({ access, connectionIssue, environmentLabel: "lxso2" });
+
+    expect(reason("denied", null)).toBe(
+      "This device can view threads on lxso2 but not change them.",
+    );
+    expect(reason("signed-out", null)).toBe(
+      "This device is no longer signed in to lxso2. Pair again to change threads.",
+    );
+    expect(reason("unknown", "unsupported")).toBe(
+      "lxso2 and this app need compatible versions before threads can be changed.",
+    );
+    expect(reason("unknown", "unreachable")).toBe(
+      "Thread actions are unavailable until lxso2 reconnects.",
+    );
+    expect(reason("unknown", null)).toBe(
+      "Thread actions are unavailable until lxso2 confirms this device's access.",
+    );
   });
 });
 
