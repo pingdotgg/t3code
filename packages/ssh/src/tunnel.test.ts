@@ -4,10 +4,12 @@ import * as NetService from "@t3tools/shared/Net";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
+import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
@@ -156,22 +158,388 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(layerProcess));
   });
 
+  it.effect.each(["resolution", "pairing"] as const)(
+    "interrupts pending %s when the manager closes",
+    (stage) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const pause = Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never));
+        let launches = 0;
+        let kills = 0;
+        let stops = 0;
+        let pairingStarted = false;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            const args = commandArgs(command);
+            if (args.includes("-G")) {
+              if (stage === "resolution") return yield* pause;
+              return makeSuccessfulProcess("");
+            }
+            if (args.includes("-N")) {
+              return makeRunningProcess(() => {
+                kills += 1;
+              });
+            }
+            if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
+              launches += 1;
+              return makeSuccessfulProcess(
+                '{"remotePort":3773,"serverKind":"managed","launched":true}',
+              );
+            }
+            if (!pairingStarted) {
+              pairingStarted = true;
+              return { ...makeSuccessfulProcess(""), exitCode: pause };
+            }
+            stops += 1;
+            return makeSuccessfulProcess('{"stopped":true}');
+          }),
+        );
+        const services = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Layer.succeed(HttpClient.HttpClient, testHttpClient),
+          Layer.succeed(NetService.NetService, testNetService),
+          SshAuth.SshPasswordPrompt.disabledLayer,
+        );
+        yield* Effect.gen(function* () {
+          const scope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+            Scope.close(scope, Exit.void),
+          );
+          const context = yield* Layer.buildWithScope(
+            SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+            scope,
+          );
+          const manager = yield* SshTunnel.SshEnvironmentManager.pipe(Effect.provide(context));
+          const request = yield* Effect.forkChild(
+            manager.ensureEnvironment(
+              { alias: "devbox", hostname: "devbox", username: null, port: null },
+              { issuePairingToken: stage === "pairing" },
+            ),
+          );
+          yield* Deferred.await(started);
+          yield* Scope.close(scope, Exit.void);
+          yield* TestClock.adjust(Duration.zero);
+          const exit = request.pollUnsafe();
+          // Dispose the caller even when the manager failed to interrupt it.
+          yield* Fiber.interrupt(request);
+          assert.isDefined(exit, "manager shutdown must settle the pending caller");
+          assert.isTrue(exit !== undefined && Exit.hasInterrupts(exit));
+          assert.equal(launches, stage === "pairing" ? 1 : 0);
+          assert.equal(kills, launches);
+          assert.equal(stops, launches);
+        }).pipe(Effect.provide(services), Effect.scoped);
+      }),
+  );
+
+  it.effect.each([
+    { name: "fresh managed", serverKind: "managed", launched: true, expectedStops: 1 },
+    { name: "external", serverKind: "external", launched: undefined, expectedStops: 0 },
+    { name: "reused managed", serverKind: "managed", launched: undefined, expectedStops: 0 },
+  ] as const)(
+    "cleans up only owned servers when cancelling port reservation after a $name launch",
+    ({ serverKind, launched, expectedStops }) =>
+      Effect.gen(function* () {
+        const reserving = yield* Deferred.make<void>();
+        let launches = 0;
+        let forwards = 0;
+        let stops = 0;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.sync(() => {
+            const args = commandArgs(command);
+            if (args.includes("-G")) return makeSuccessfulProcess("");
+            if (args.includes("-N")) {
+              forwards += 1;
+              return makeRunningProcess(() => undefined);
+            }
+            if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
+              launches += 1;
+              return makeSuccessfulProcess(
+                JSON.stringify({ remotePort: 3773, serverKind, launched }),
+              );
+            }
+            stops += 1;
+            return makeSuccessfulProcess('{"stopped":true}');
+          }),
+        );
+        const layer = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Layer.succeed(HttpClient.HttpClient, testHttpClient),
+          Layer.succeed(NetService.NetService, {
+            ...testNetService,
+            reserveLoopbackPort: () =>
+              Deferred.succeed(reserving, undefined).pipe(Effect.andThen(Effect.never)),
+          }),
+          SshAuth.SshPasswordPrompt.disabledLayer,
+          SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+        );
+        yield* Effect.gen(function* () {
+          const manager = yield* SshTunnel.SshEnvironmentManager;
+          const request = yield* Effect.forkChild(
+            manager.ensureEnvironment({
+              alias: "devbox",
+              hostname: "devbox",
+              username: null,
+              port: null,
+            }),
+          );
+          yield* Deferred.await(reserving);
+          yield* Fiber.interrupt(request);
+          assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(request)));
+          assert.equal(launches, 1);
+          assert.equal(forwards, 0);
+          assert.equal(stops, expectedStops);
+        }).pipe(Effect.provide(layer), Effect.scoped);
+        assert.equal(stops, expectedStops);
+      }),
+  );
+
+  it.effect("releases caller-cancelled readiness and shares the next healthy tunnel", () =>
+    Effect.gen(function* () {
+      const probing = yield* Deferred.make<void>();
+      let probes = 0;
+      let forwards = 0;
+      let kills = 0;
+      let stops = 0;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = commandArgs(command);
+          if (args.includes("-G")) return makeSuccessfulProcess("");
+          if (args.includes("-N")) {
+            forwards += 1;
+            return makeRunningProcess(() => {
+              kills += 1;
+            });
+          }
+          if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
+            return makeSuccessfulProcess(
+              '{"remotePort":3773,"serverKind":"managed","launched":true}',
+            );
+          }
+          stops += 1;
+          return makeSuccessfulProcess('{"stopped":true}');
+        }),
+      );
+      const httpClient = HttpClient.make((request) =>
+        Effect.gen(function* () {
+          if (++probes === 1) {
+            yield* Deferred.succeed(probing, undefined);
+            return yield* Effect.never;
+          }
+          return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, httpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
+        const request = yield* Effect.forkChild(manager.ensureEnvironment(target));
+        yield* Deferred.await(probing);
+        yield* Fiber.interrupt(request);
+        assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(request)));
+        assert.equal(kills, 1);
+        assert.equal(stops, 1);
+        const [first, second] = yield* Effect.all(
+          [manager.ensureEnvironment(target), manager.ensureEnvironment(target)],
+          { concurrency: "unbounded" },
+        );
+        assert.equal(first.httpBaseUrl, second.httpBaseUrl);
+        assert.equal(forwards, 2);
+        assert.equal(kills, 1);
+        assert.equal(stops, 1, "successful setup transfers cleanup until manager shutdown");
+      }).pipe(Effect.provide(layer), Effect.scoped);
+      assert.equal(kills, 2);
+      assert.equal(stops, 2);
+    }),
+  );
+
+  it.effect.each([
+    { mode: "successful stop", closeManager: false },
+    { mode: "failed stop", closeManager: false },
+    { mode: "successful stop", closeManager: true },
+    { mode: "failed stop", closeManager: true },
+  ] as const)(
+    "closes the tunnel scope after a $mode (manager shutdown: $closeManager)",
+    ({ mode, closeManager }) =>
+      Effect.gen(function* () {
+        const stopStarted = yield* Deferred.make<void>();
+        const finishStop = yield* Deferred.make<void>();
+        const pauseStop = Deferred.succeed(stopStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(finishStop)),
+        );
+        const spawnedCommands: Array<ReadonlyArray<string>> = [];
+        let tunnelKillCount = 0;
+        let stopCommandCount = 0;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.sync(() => {
+            const args = commandArgs(command);
+            spawnedCommands.push(args);
+            if (args.includes("-N")) {
+              return makeRunningProcess(() => {
+                tunnelKillCount += 1;
+              });
+            }
+            if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
+              return makeSuccessfulProcess(
+                '{"remotePort":3773,"serverKind":"managed","launched":true}\n',
+              );
+            }
+            if (args.includes("sh")) {
+              stopCommandCount += 1;
+              if (mode === "failed stop" && stopCommandCount === 1) {
+                return {
+                  ...makeSuccessfulProcess(""),
+                  exitCode: (closeManager ? pauseStop : Effect.void).pipe(
+                    Effect.as(ChildProcessSpawner.ExitCode(1)),
+                  ),
+                  stderr: Stream.make(
+                    new TextEncoder().encode("Remote T3 server did not stop within 2 seconds.\n"),
+                  ),
+                };
+              }
+              return {
+                ...makeSuccessfulProcess('{"stopped":true}\n'),
+                exitCode: (closeManager && stopCommandCount === 1 ? pauseStop : Effect.void).pipe(
+                  Effect.as(ChildProcessSpawner.ExitCode(0)),
+                ),
+              };
+            }
+            return makeSuccessfulProcess("\n");
+          }),
+        );
+        const layer = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Layer.succeed(HttpClient.HttpClient, testHttpClient),
+          Layer.succeed(NetService.NetService, testNetService),
+          SshAuth.SshPasswordPrompt.disabledLayer,
+        );
+        const target = {
+          alias: "devbox",
+          hostname: "devbox.example.com",
+          username: "julius",
+          port: 2222,
+        } as const;
+
+        yield* Effect.gen(function* () {
+          const scope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+            Scope.close(scope, Exit.void),
+          );
+          const context = yield* Layer.buildWithScope(
+            SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+            scope,
+          );
+          const manager = yield* SshTunnel.SshEnvironmentManager.pipe(Effect.provide(context));
+
+          const first = yield* manager.ensureEnvironment(target);
+          assert.equal(first.httpBaseUrl, "http://127.0.0.1:41773/");
+          const firstTunnelArgs = spawnedCommands.find((args) => args.includes("-N"));
+          assert.isDefined(firstTunnelArgs);
+          assert.include(firstTunnelArgs, "ControlMaster=no");
+          assert.include(firstTunnelArgs, "ControlPath=none");
+          assert.include(firstTunnelArgs, "ControlPersist=no");
+          assert.deepEqual(firstTunnelArgs?.slice(-2), ["--", "julius@devbox"]);
+
+          assert.equal(stopCommandCount, 0, "successful setup must retain its remote server");
+          const disconnect = yield* Effect.forkChild(
+            Effect.result(manager.disconnectEnvironment(target)),
+          );
+          if (closeManager) {
+            yield* Deferred.await(stopStarted);
+            yield* Scope.close(scope, Exit.void);
+            yield* TestClock.adjust(Duration.zero);
+            const exit = disconnect.pollUnsafe();
+            yield* Deferred.succeed(finishStop, undefined);
+            assert.isUndefined(exit, "manager shutdown must leave the caller-owned stop running");
+          }
+          const disconnectExit = yield* Fiber.await(disconnect);
+          assert.isTrue(
+            Exit.isSuccess(disconnectExit),
+            "disconnect must deliver its result to the caller",
+          );
+          if (!Exit.isSuccess(disconnectExit)) return;
+          const disconnected = disconnectExit.value;
+          if (mode === "failed stop") {
+            assert.isTrue(Result.isFailure(disconnected));
+            if (Result.isFailure(disconnected)) {
+              assert.instanceOf(disconnected.failure, SshCommandError);
+              assert.equal(
+                disconnected.failure.message,
+                "Remote T3 server did not stop within 2 seconds.",
+              );
+            }
+          } else {
+            assert.isTrue(Result.isSuccess(disconnected));
+          }
+          assert.equal(tunnelKillCount, 1);
+          assert.equal(stopCommandCount, 1);
+
+          if (closeManager) return;
+
+          if (mode === "failed stop") {
+            yield* manager.disconnectEnvironment(target);
+            assert.equal(tunnelKillCount, 1);
+            assert.equal(stopCommandCount, 2);
+          }
+
+          yield* manager.ensureEnvironment(target);
+
+          assert.equal(spawnedCommands.filter((args) => args.includes("-N")).length, 2);
+          assert.equal(tunnelKillCount, 1);
+        }).pipe(
+          Effect.ensuring(Deferred.succeed(finishStop, undefined)),
+          Effect.provide(layer),
+          Effect.scoped,
+          Effect.andThen(
+            Effect.sync(() => {
+              assert.equal(tunnelKillCount, closeManager ? 1 : 2);
+              assert.equal(stopCommandCount, closeManager ? 1 : mode === "failed stop" ? 3 : 2);
+            }),
+          ),
+        );
+      }),
+  );
+
   it.effect("retains a bounded diagnostic tail when the tunnel exits before readiness", () =>
     Effect.gen(function* () {
       const diagnostic = "Connection refused: café";
       const output = new TextEncoder().encode(
         "old diagnostics\n" + "x".repeat(32_768) + "\n" + diagnostic,
       );
+      let stops = 0;
       const spawner = ChildProcessSpawner.make((command) =>
-        Effect.succeed(
-          commandArgs(command).includes("-N")
+        Effect.gen(function* () {
+          const input = command._tag === "StandardCommand" ? command.options.stdin : undefined;
+          if (
+            input &&
+            typeof input === "object" &&
+            "stream" in input &&
+            Stream.isStream(input.stream)
+          ) {
+            const script = yield* input.stream.pipe(
+              Stream.decodeText(),
+              Stream.runFold(
+                () => "",
+                (text, chunk) => text + chunk,
+              ),
+            );
+            if (script.includes(`printf '{"stopped":true}`)) stops += 1;
+          }
+          return commandArgs(command).includes("-N")
             ? {
                 ...makeSuccessfulProcess(""),
                 exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
                 stderr: Stream.make(output.subarray(0, output.length - 1), output.subarray(-1)),
               }
-            : makeSuccessfulProcess('{"remotePort":3773}\n'),
-        ),
+            : makeSuccessfulProcess('{"remotePort":3773,"serverKind":"managed","launched":true}\n');
+        }),
       );
       const layer = Layer.mergeAll(
         NodeServices.layer,
@@ -201,7 +569,9 @@ describe("ssh tunnel scripts", () => {
             assert.equal(result.failure.message, result.failure.stderr.trim());
           }
         }
+        assert.equal(stops, 1, "failed readiness must stop the acknowledged managed server");
       }).pipe(Effect.provide(layer), Effect.scoped);
+      assert.equal(stops, 1);
     }),
   );
 
@@ -441,8 +811,3 @@ describe("ssh tunnel scripts", () => {
       }),
   );
 });
-
-// On macOS, Node can bind 127.0.0.1:<port> while another process (such as the
-// desktop app with network access on) listens on *:<port>. Linux refuses that
-// bind unless both sockets set SO_REUSEPORT, so on Linux the preload adds it to
-// the picker's probe and the holder sets it too.
