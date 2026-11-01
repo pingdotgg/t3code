@@ -21,6 +21,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -41,6 +42,8 @@ import { agentDeviceSession, releaseAgentDeviceSession } from "./AgentDeviceTarg
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBootError));
 const encodeBootError = Schema.encodeSync(Schema.fromJsonString(DeviceBootError));
+const decodeOperationError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceOperationError));
+const encodeOperationError = Schema.encodeSync(Schema.fromJsonString(DeviceOperationError));
 
 it.effect.each([400, 500])(
   "distinguishes screenshot HTTP rejection (%s) from transport failure",
@@ -1440,67 +1443,86 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
   ),
 );
 
-it.effect("a failed tool update reports npm's exit code but not its output", () =>
-  Effect.gen(function* () {
-    const host: DeviceHost.DeviceHost["Service"] = {
-      id: LOCAL_DEVICE_HOST_ID,
-      label: "This machine",
-      summary: Effect.succeed({
+it.effect.each(["exit", "missing"] as const)(
+  "a failed tool update reports a safe %s failure",
+  (failure) =>
+    Effect.gen(function* () {
+      const host: DeviceHost.DeviceHost["Service"] = {
         id: LOCAL_DEVICE_HOST_ID,
-        kind: "local",
-        label: "Test server",
-        platforms: [],
-        hubInstalled: false,
-        agentDeviceInstalled: false,
-      }),
-      platformAvailability: (platform) => Effect.succeed({ platform, available: false }),
-      ensureReady: () => Effect.die("Updating a tool does not start the hub"),
-      ensureAgentReady: () => Effect.die("Updating a tool does not start the agent"),
-      current: Effect.succeed(null),
-      stopAgent: Effect.void,
-      stop: Effect.void,
-    };
-    const npmFailure = {
-      code: ChildProcessSpawner.ExitCode(243),
-      stdout: "",
-      stderr: "npm error EACCES https://private:credential@registry.example.test/expo-device-hub",
-      timedOut: false,
-      stdoutTruncated: false,
-      stderrTruncated: false,
-      stdoutInvalidUtf8: false,
-      stderrInvalidUtf8: false,
-    };
-    const service = yield* DeviceService.make.pipe(
-      Effect.provideService(DeviceHost.DeviceHost, host),
-      Effect.provideService(ProcessRunner.ProcessRunner, {
-        run: () => Effect.succeed(npmFailure),
-      }),
-      Effect.provideService(
-        HttpClient.HttpClient,
-        HttpClient.make(() => Effect.die("Updating a tool makes no hub requests")),
-      ),
-    );
+        label: "This machine",
+        summary: Effect.succeed({
+          id: LOCAL_DEVICE_HOST_ID,
+          kind: "local",
+          label: "Test server",
+          platforms: [],
+          hubInstalled: false,
+          agentDeviceInstalled: false,
+        }),
+        platformAvailability: (platform) => Effect.succeed({ platform, available: false }),
+        ensureReady: () => Effect.die("Updating a tool does not start the hub"),
+        ensureAgentReady: () => Effect.die("Updating a tool does not start the agent"),
+        current: Effect.succeed(null),
+        stopAgent: Effect.void,
+        stop: Effect.void,
+      };
+      const npmFailure = {
+        code: ChildProcessSpawner.ExitCode(243),
+        stdout: "",
+        stderr: "npm error EACCES https://private:credential@registry.example.test/expo-device-hub",
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      };
+      const service = yield* DeviceService.make.pipe(
+        Effect.provideService(DeviceHost.DeviceHost, host),
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: ({ command, args }) =>
+            failure === "exit"
+              ? Effect.succeed(npmFailure)
+              : Effect.fail(
+                  new ProcessRunner.ProcessSpawnError({
+                    command,
+                    argumentCount: args.length,
+                    cause: PlatformError.systemError({
+                      _tag: "NotFound",
+                      module: "ChildProcess",
+                      method: "spawn",
+                      description: "private diagnostic text",
+                    }),
+                  }),
+                ),
+        }),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("Updating a tool makes no hub requests")),
+        ),
+      );
 
-    const error = yield* service.updateTool("hub").pipe(Effect.flip);
-    expect(error).toMatchObject({
-      _tag: "DeviceOperationError",
-      reason: "command_failed",
-      exitCode: 243,
-    });
-    expect(error.message).toBe(
-      "Device update device tool failed: The device command failed (exit code 243).",
-    );
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        ServerSettings.layerTest({ enableDeviceSupport: true }),
-        ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-update-" }),
-        NodeCrypto.layer,
-        NetService.layer,
-      ).pipe(Layer.provideMerge(NodeServices.layer)),
+      const error = yield* service.updateTool("hub").pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "DeviceOperationError",
+        reason: failure === "exit" ? "command_failed" : "package_manager_missing",
+      });
+      if (error._tag !== "DeviceOperationError") throw error;
+      const publicError = decodeOperationError(encodeOperationError(error));
+      expect(publicError.message).toBe(
+        failure === "exit"
+          ? "Device update device tool failed: The device command failed (exit code 243)."
+          : "Device update device tool failed: Neither npm nor pnpm was found on this host. Install Node.js with npm on this host, make npm available to the T3 server, then retry.",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({ enableDeviceSupport: true }),
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-update-" }),
+          NodeCrypto.layer,
+          NetService.layer,
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
+      ),
+      Effect.scoped,
     ),
-    Effect.scoped,
-  ),
 );
 
 describe("agent session release on close", () => {
