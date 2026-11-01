@@ -600,6 +600,12 @@ const threadStartCommand = Command.make("start", {
     Flag.withDescription("Thread title. Defaults to the message's first line."),
     Flag.optional,
   ),
+  generateTitle: Flag.Boolean("generate-title").pipe(
+    Flag.withDescription(
+      "Generate a title from the message, as the app does. Until then the thread shows --title or the first line.",
+    ),
+    Flag.withDefault(false),
+  ),
   provider: Flag.String("provider").pipe(
     Flag.withDescription("Provider instance id. Pass with --model."),
     Flag.optional,
@@ -641,6 +647,7 @@ const threadStartCommand = Command.make("start", {
             {
               projectId: project.id,
               title,
+              ...(flags.generateTitle ? { generateTitle: true } : {}),
               message,
               ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
               ...(Option.isSome(flags.provider) && Option.isSome(flags.model)

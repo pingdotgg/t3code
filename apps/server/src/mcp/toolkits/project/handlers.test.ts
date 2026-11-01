@@ -163,6 +163,7 @@ it.effect(
         defaultRuntimeMode: RuntimeMode,
         params: {
           readonly title: string;
+          readonly generateTitle?: boolean;
           readonly message?: string;
           readonly runtimeMode?: RuntimeMode;
           readonly targeted?: false;
@@ -203,6 +204,14 @@ it.effect(
       });
       expect(belowCeiling.launched[0]?.runtimeMode).toBe("approval-required");
       expect(belowCeiling.launched[0]?.initialMessage?.senderThreadId).toBeUndefined();
+      expect(belowCeiling.launched[0]?.generateTitle).toBeUndefined();
+
+      const titled = yield* launchWith("full-access", "full-access", {
+        title: "Fix",
+        generateTitle: true,
+        message: "Fix the bug",
+      });
+      expect(titled.launched[0]).toMatchObject({ title: "Fix", generateTitle: true });
 
       const aboveCeiling = yield* launchWith("auto-accept-edits", "full-access", {
         title: "Fix",
