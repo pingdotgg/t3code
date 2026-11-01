@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalDate:off
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off
 import * as NodeCrypto from "node:crypto";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -67,16 +67,17 @@ if (files.length === 0) {
 console.log(
   `Cached tests: ${files.length} files, ${groupSize} per task, concurrency ${concurrency}`,
 );
+const run = NodeCrypto.randomBytes(16).toString("hex");
 const env = {
   ...process.env,
   T3_CACHED_TESTS: JSON.stringify({
+    run,
     files,
     groupSize,
     uncached: values.uncached.map((file) => NodePath.relative(root, NodePath.resolve(file))),
   }),
 };
 const started = performance.now();
-const startedAt = Date.now();
 const result = NodeChildProcess.spawnSync(
   NodePath.join(root, "node_modules/.bin/vp"),
   ["run", "--concurrency-limit", String(concurrency), "test-cache"],
@@ -92,7 +93,7 @@ process.exitCode = result.status ?? 1;
 if (values.report || verifyHits > 0) {
   const cacheRoot =
     process.env.VITE_CACHE_PATH || NodePath.join(root, "node_modules/.vite/task-cache");
-  const summary = readRunSummary(cacheRoot, startedAt);
+  const summary = readRunSummary(cacheRoot, run);
   if (!summary) {
     console.error(`No task summary from this run in ${cacheRoot}`);
     process.exitCode ||= 1;

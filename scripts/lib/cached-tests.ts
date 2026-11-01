@@ -18,21 +18,26 @@ interface CachedTestTask {
 interface TaskRunSummary {
   tasks: Array<{
     task_name: string;
+    command: string;
     result: { CacheHit?: { source: string; saved_duration_ms: number } };
   }>;
 }
 
-export function readRunSummary(cacheRoot: string, startedAt: number): TaskRunSummary | undefined {
-  if (!NodeFS.existsSync(cacheRoot)) return undefined;
-  const newest = NodeFS.readdirSync(cacheRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => NodePath.join(cacheRoot, entry.name, "last-summary.json"))
-    .filter((file) => NodeFS.existsSync(file))
-    .map((file) => ({ file, mtimeMs: NodeFS.statSync(file).mtimeMs }))
-    // vp leaves the previous summary untouched when it fails before running tasks.
-    .filter((summary) => summary.mtimeMs >= startedAt)
-    .sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
-  return newest && JSON.parse(NodeFS.readFileSync(newest.file, "utf8"));
+// vp keeps one last-summary.json per cache, rewritten by every `vp run`, so a run is
+// recognized by an uncached task that every test depends on and that carries its id.
+const runTask = "test-cache:run";
+const runCommand = (run: string) => `node -e "" ${run}`;
+
+export function readRunSummary(cacheRoot: string, run: string): TaskRunSummary | undefined {
+  try {
+    return NodeFS.readdirSync(cacheRoot)
+      .map((entry) => NodePath.join(cacheRoot, entry, "last-summary.json"))
+      .filter((file) => NodeFS.existsSync(file))
+      .map((file): TaskRunSummary => JSON.parse(NodeFS.readFileSync(file, "utf8")))
+      .find((summary) => summary.tasks.some((task) => task.command === runCommand(run)));
+  } catch {
+    return undefined;
+  }
 }
 
 export function matchesTestPath(file: string, filters: Array<string>) {
@@ -56,7 +61,10 @@ export function cachedTestTasks(
     !("groupSize" in request) ||
     typeof request.groupSize !== "number" ||
     !Number.isSafeInteger(request.groupSize) ||
-    request.groupSize < 1
+    request.groupSize < 1 ||
+    !("run" in request) ||
+    typeof request.run !== "string" ||
+    !/^[\w-]+$/.test(request.run)
   ) {
     throw new Error("Invalid cached test request");
   }
@@ -115,6 +123,7 @@ export function cachedTestTasks(
     for (const group of groups) {
       const key = NodeCrypto.createHash("sha256").update(group.join("\0")).digest("hex");
       tasks[`test-cache:${key}`] = {
+        dependsOn: [runTask],
         command: `${command} ${group.map((file) => `'${NodePath.relative(directory, NodePath.join(root, file)).replaceAll("'", "'\"'\"'")}'`).join(" ")}`,
         ...(directory === root ? {} : { cwd: NodePath.relative(root, directory) }),
         cache: uncached.includes(group[0]!)
@@ -133,6 +142,7 @@ export function cachedTestTasks(
   }
   return {
     ...tasks,
+    [runTask]: { command: runCommand(request.run), cache: false },
     "test-cache": { command: 'node -e ""', dependsOn: Object.keys(tasks), cache: false },
   };
 }
