@@ -5,6 +5,7 @@ import {
   backgroundActivitySharedPolicySettings,
   getChangedBrowserSettingLabels,
   hasChangedBackgroundActivitySettings,
+  telemetrySettingLocks,
 } from "./SettingsPanels.logic";
 
 describe("background activity settings restore", () => {
@@ -86,5 +87,63 @@ describe("getChangedBrowserSettingLabels", () => {
         browserCustomSearchUrl: "https://search.example/?q=%s",
       }),
     ).toEqual(["Search engine"]);
+  });
+});
+
+describe("telemetry setting locks", () => {
+  const observability = (telemetryEnabledByEnvironment?: boolean) => ({
+    logsDirectoryPath: "/logs",
+    localTracingEnabled: false,
+    otlpTracesEnabled: false,
+    otlpMetricsEnabled: false,
+    otlpLogsEnabled: false,
+    ...(telemetryEnabledByEnvironment === undefined ? {} : { telemetryEnabledByEnvironment }),
+  });
+  const policy = (telemetry: boolean) => ({
+    organization: "Example Corp",
+    lockedSettings: [],
+    limits: { telemetry },
+  });
+
+  it("leaves the setting in charge where neither a policy nor the variable decides", () => {
+    expect(
+      telemetrySettingLocks([
+        { label: "Laptop", serverConfig: { observability: observability() } },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("reports the variable's value with its environment", () => {
+    expect(
+      telemetrySettingLocks([
+        { label: "Laptop", serverConfig: { observability: observability(false) } },
+      ]),
+    ).toEqual([
+      { value: false, reason: "Set by T3CODE_TELEMETRY_ENABLED=false on Laptop.", managed: false },
+    ]);
+  });
+
+  it("lets a policy that turns telemetry off win over the variable", () => {
+    expect(
+      telemetrySettingLocks([
+        {
+          label: "Laptop",
+          serverConfig: { observability: observability(true), managedPolicy: policy(false) },
+        },
+      ]),
+    ).toEqual([
+      { value: false, reason: "Example Corp turned off anonymous usage data.", managed: true },
+    ]);
+  });
+
+  it("ignores a policy that allows telemetry", () => {
+    expect(
+      telemetrySettingLocks([
+        {
+          label: "Laptop",
+          serverConfig: { observability: observability(), managedPolicy: policy(true) },
+        },
+      ]),
+    ).toEqual([]);
   });
 });

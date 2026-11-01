@@ -15,6 +15,7 @@ import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -22,6 +23,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { getTelemetryIdentity, type TelemetryOwner } from "./Identify.ts";
 
 interface BufferedAnalyticsEvent {
@@ -69,7 +71,7 @@ const TelemetryEnvConfig = Config.all({
   posthogHost: Config.String("T3CODE_POSTHOG_HOST").pipe(
     Config.withDefault("https://ingest.t3.codes"),
   ),
-  enabled: Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.withDefault(true)),
+  enabled: Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.option),
   flushBatchSize: Config.Number("T3CODE_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
   maxBufferedEvents: Config.Number("T3CODE_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
     Config.withDefault(1_000),
@@ -114,35 +116,49 @@ function serverOsFromNodePlatform(platform: string): ClientOs {
   }
 }
 
+/**
+ * Whether `T3CODE_TELEMETRY_ENABLED` in `env` turns telemetry off. A value that does not parse counts
+ * as off. Reads the live environment, which desktop shell discovery updates after startup.
+ */
+export const environmentOptsOut = (env: NodeJS.ProcessEnv): Effect.Effect<boolean> => {
+  const value = env.T3CODE_TELEMETRY_ENABLED;
+  if (value === undefined) return Effect.succeed(false);
+  return Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromEnv({ env: { T3CODE_TELEMETRY_ENABLED: value } }),
+    ),
+    Effect.map((enabled) => !enabled),
+    Effect.orElseSucceed(() => true),
+  );
+};
+
 /** @public */
 /** @public */
 export const make = Effect.gen(function* () {
   const telemetryConfig = yield* TelemetryEnvConfig;
   const hostEnvironment = yield* HostProcess.Environment;
   const awaitingShellConsent = hostEnvironment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING === "1";
-  // A managed policy can switch analytics off over the environment, never on.
+  // A managed policy can switch analytics off over the environment and the setting, never on.
   const policyAllows =
     ManagedPolicy.deniedBy(yield* ManagedPolicy.ManagedPolicy, "telemetry") === undefined;
-  // A cached PATH does not establish consent from the current login shell.
-  const telemetryEnabled = Effect.suspend(() => {
-    if (!telemetryConfig.enabled || !policyAllows) return Effect.succeed(false);
-    if (!awaitingShellConsent) return Effect.succeed(true);
+  // What decides over the setting, when anything does: the policy's opt-out, then the variable.
+  // A desktop launch waits for the login shell, since a cached PATH does not establish consent from
+  // the current login shell. Clients were told the setting decides by then, so the shell's value
+  // can only opt out.
+  const variableEnabled = Effect.suspend((): Effect.Effect<Option.Option<boolean>> => {
+    if (!policyAllows || Option.contains(telemetryConfig.enabled, false))
+      return Effect.succeedSome(false);
+    if (!awaitingShellConsent) return Effect.succeed(telemetryConfig.enabled);
     if (hostEnvironment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING === "1")
-      return Effect.succeed(false);
-    const preference = hostEnvironment.T3CODE_TELEMETRY_ENABLED;
-    return Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(
-      Config.withDefault(true),
-      Effect.provideService(
-        ConfigProvider.ConfigProvider,
-        ConfigProvider.fromEnv({
-          env: preference === undefined ? {} : { T3CODE_TELEMETRY_ENABLED: preference },
-        }),
-      ),
-      Effect.orElseSucceed(() => false),
+      return Effect.succeedSome(false);
+    return environmentOptsOut(hostEnvironment).pipe(
+      Effect.map((optsOut) => (optsOut ? Option.some(false) : telemetryConfig.enabled)),
     );
   });
   const httpClient = yield* HttpClient.HttpClient;
   const serverConfig = yield* ServerConfig.ServerConfig;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const { distinctId, installId } = yield* getTelemetryIdentity;
   const crypto = yield* Crypto.Crypto;
   const bufferRef = yield* Ref.make<ReadonlyArray<BufferedAnalyticsEvent>>([]);
@@ -161,6 +177,20 @@ export const make = Effect.gen(function* () {
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
   const hostPlatform = yield* HostProcess.Platform;
   const hostArchitecture = yield* HostProcess.Architecture;
+
+  // The variable wins when set; otherwise the setting decides, so turning it off applies at once.
+  // An unreadable setting counts as off: an opt-out must not be lost to a read failure.
+  const isEnabled = Effect.flatMap(
+    variableEnabled,
+    Option.match({
+      onSome: Effect.succeed,
+      onNone: () =>
+        serverSettings.getSettings.pipe(
+          Effect.map((settings) => settings.telemetryEnabled),
+          Effect.orElseSucceed(() => false),
+        ),
+    }),
+  );
 
   const enqueueBufferedEvent = (
     uuid: string,
@@ -197,7 +227,7 @@ export const make = Effect.gen(function* () {
   const sendBatch = Effect.fn("AnalyticsService.sendBatch")(function* (
     events: ReadonlyArray<BufferedAnalyticsEvent>,
   ) {
-    if (!(yield* telemetryEnabled) || !distinctId) return;
+    if (!distinctId) return;
 
     const payload = {
       api_key: telemetryConfig.posthogKey,
@@ -238,9 +268,28 @@ export const make = Effect.gen(function* () {
     return [nextBatch, current.slice(nextBatch.length)] as const;
   });
 
+  // Counts opt-outs as they land, without waiting for a flush in progress to release its lock.
+  const optOutsRef = yield* Ref.make(0);
+  // Nothing recorded before an opt-out is sent after it, even if telemetry is turned back on.
+  const discardQueued = Effect.andThen(
+    Ref.set(bufferRef, []),
+    Ref.update(deliveryRef, (delivery) => ({
+      ...delivery,
+      failedBatch: [],
+      batchAttempts: 0,
+      firstFailedAt: 0,
+    })),
+  );
+
   // Back off even after dropping rejected batches so bad API keys cannot drain the queue in a tight loop.
   const flush: AnalyticsService["Service"]["flush"] = Effect.gen(function* () {
+    const optOutsAtStart = yield* Ref.get(optOutsRef);
     while (true) {
+      // An opt-out during this flush stops it even if telemetry is already back on.
+      if (!(yield* isEnabled) || (yield* Ref.get(optOutsRef)) !== optOutsAtStart) {
+        yield* discardQueued;
+        return;
+      }
       const delivery = yield* Ref.get(deliveryRef);
       const batch = delivery.failedBatch.length > 0 ? delivery.failedBatch : yield* takeBatch;
       if (batch.length === 0) {
@@ -309,7 +358,7 @@ export const make = Effect.gen(function* () {
 
   const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
     function* (event, properties) {
-      if (!(yield* telemetryEnabled) || !distinctId) return;
+      if (!distinctId || !(yield* isEnabled)) return;
 
       // Catch Node UUID defects too; best-effort telemetry drops events without UUIDs.
       const uuid = yield* Effect.exit(crypto.randomUUIDv7());
@@ -346,6 +395,24 @@ export const make = Effect.gen(function* () {
         ),
       { discard: true },
     ),
+  );
+
+  // Discard as soon as the setting turns telemetry off, not at the next flush, which may come after
+  // telemetry is back on. The lock waits out a send in flight so its batch cannot be kept for retry.
+  const settingsChanges = yield* serverSettings.subscribeChanges;
+  yield* settingsChanges.pipe(
+    // Use each change's own value: by the time it is handled, telemetry may be back on.
+    Stream.runForEach((settings) =>
+      Effect.flatMap(variableEnabled, (variable) =>
+        Option.getOrElse(variable, () => settings.telemetryEnabled)
+          ? Effect.void
+          : Effect.andThen(
+              Ref.update(optOutsRef, (count) => count + 1),
+              discardQueued.pipe(flushLock.withPermit),
+            ),
+      ),
+    ),
+    Effect.forkScoped,
   );
 
   yield* Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.andThen(flushWhenDue)), {

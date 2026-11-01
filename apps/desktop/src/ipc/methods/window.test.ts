@@ -187,6 +187,7 @@ describe("installRelayTelemetryEnabled", () => {
   const relayTelemetryEnabled = (
     env: NodeJS.ProcessEnv,
     policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0],
+    telemetrySetting = true,
   ) =>
     Effect.gen(function* () {
       const listeners = new Map<string, DesktopIpc.DesktopIpcSyncListener>();
@@ -196,7 +197,7 @@ describe("installRelayTelemetryEnabled", () => {
         removeAllListeners: (channel) => void listeners.delete(channel),
         on: (channel, listener) => void listeners.set(channel, listener),
       };
-      yield* installRelayTelemetryEnabled().pipe(
+      yield* installRelayTelemetryEnabled(telemetrySetting).pipe(
         Effect.provideService(HostProcess.Environment, env),
         Effect.provide(
           Layer.mergeAll(DesktopIpc.layer(ipcMain), DesktopManagedPolicy.layerTest(policy)),
@@ -229,6 +230,15 @@ describe("installRelayTelemetryEnabled", () => {
           {},
           new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" }),
         ),
+      );
+    }),
+  );
+
+  it.effect("follows the server setting unless the host variable is set", () =>
+    Effect.gen(function* () {
+      assert.isFalse(yield* relayTelemetryEnabled({}, undefined, false));
+      assert.isTrue(
+        yield* relayTelemetryEnabled({ T3CODE_TELEMETRY_ENABLED: "true" }, undefined, false),
       );
     }),
   );

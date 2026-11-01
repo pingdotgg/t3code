@@ -252,14 +252,23 @@ describe("serverSettings helpers", () => {
       otlpTracesUrl: "http://localhost:4318/v1/traces",
       otlpMetricsUrl: "http://localhost:4318/v1/metrics",
       otlpLogsUrl: "http://localhost:4318/v1/logs",
+      telemetryEnabled: true,
     });
   });
 
-  it("falls back cleanly when persisted settings are invalid", () => {
+  it("reads a persisted telemetry opt-out", () => {
+    expect(
+      parsePersistedServerObservabilitySettings(JSON.stringify({ telemetryEnabled: false }))
+        .telemetryEnabled,
+    ).toBe(false);
+  });
+
+  it("falls back to no endpoints and telemetry off when persisted settings are invalid", () => {
     expect(parsePersistedServerObservabilitySettings("{")).toEqual({
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
       otlpLogsUrl: undefined,
+      telemetryEnabled: false,
     });
   });
 

@@ -5,7 +5,9 @@ import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
@@ -14,12 +16,14 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import type { ServerSettings as ServerSettingsValue } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import type { ManagedPolicyDocument } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { getTelemetryIdentity } from "./Identify.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 
@@ -109,10 +113,27 @@ const recordTwentyEvents = Effect.gen(function* () {
   }
 });
 
+/** `ServerSettings.layerTest`, plus the change stream the file-backed service publishes on save. */
+const layerSettingsWithChanges = (overrides: Parameters<typeof ServerSettings.layerTest>[0]) =>
+  Layer.effect(
+    ServerSettings.ServerSettingsService,
+    Effect.gen(function* () {
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const changes = yield* PubSub.unbounded<ServerSettingsValue>();
+      return ServerSettings.ServerSettingsService.of({
+        ...settings,
+        updateSettings: (patch) =>
+          settings.updateSettings(patch).pipe(Effect.tap((next) => PubSub.publish(changes, next))),
+        streamChanges: Stream.fromPubSub(changes),
+        subscribeChanges: Effect.map(PubSub.subscribe(changes), Stream.fromSubscription),
+      });
+    }),
+  ).pipe(Layer.provide(ServerSettings.layerTest(overrides)));
+
 /**
- * Runs `record` (20 events by default), then lets `minutes` of background
- * flushes run against a client that answers every send with `respond`.
- * Returns the sent batches.
+ * Runs `record` (20 events by default), then `minutes` of background flushes against `respond`.
+ * `variable` sets `T3CODE_TELEMETRY_ENABLED` (`true` by default, `null` unset), `setting` the
+ * setting, and `policy` the managed policy. Returns the sent batches.
  */
 const sendFor = (
   minutes: number,
@@ -120,9 +141,15 @@ const sendFor = (
   record: Effect.Effect<
     void,
     never,
-    AnalyticsService.AnalyticsService | Effect.Services<typeof getTelemetryIdentity>
+    | AnalyticsService.AnalyticsService
+    | ServerSettings.ServerSettingsService
+    | Effect.Services<typeof getTelemetryIdentity>
   > = recordTwentyEvents,
-  policy?: ManagedPolicyDocument,
+  options: {
+    readonly variable?: boolean | null;
+    readonly setting?: boolean;
+    readonly policy?: ManagedPolicyDocument;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const batches: Array<ReadonlyArray<SentEvent>> = [];
@@ -137,14 +164,20 @@ const sendFor = (
         return yield* respond(request);
       }),
     );
+    const variable = options.variable === undefined ? true : options.variable;
     const runtimeLayer = AnalyticsService.layer.pipe(
       Layer.provideMerge(
         ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-telemetry-retry-" }),
       ),
+      Layer.provideMerge(
+        layerSettingsWithChanges(
+          options.setting === undefined ? {} : { telemetryEnabled: options.setting },
+        ),
+      ),
       Layer.provide(
         ConfigProvider.layer(
           ConfigProvider.fromUnknown({
-            T3CODE_TELEMETRY_ENABLED: true,
+            ...(variable === null ? {} : { T3CODE_TELEMETRY_ENABLED: variable }),
             T3CODE_POSTHOG_KEY: "phc_test_key",
             T3CODE_POSTHOG_HOST: "http://localhost",
           }),
@@ -155,7 +188,7 @@ const sendFor = (
           Layer.succeed(HostProcess.Platform, "win32"),
           Layer.succeed(HostProcess.Architecture, "x64"),
           Layer.succeed(HttpClient.HttpClient, client),
-          ManagedPolicy.layerTest(policy),
+          ManagedPolicy.layerTest(options.policy),
         ),
       ),
     );
@@ -193,6 +226,28 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         batches.flat().map((event) => event.event),
         ["test.allowed"],
       );
+    }),
+  );
+
+  it.effect("after desktop shell discovery, only a shell opt-out outranks the setting", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1" };
+      const batches = yield* sendFor(
+        0,
+        respondWithStatus(204),
+        Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          delete env.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING;
+          yield* analytics.record("test.setting-off");
+          yield* analytics.flush;
+          // Clients already show the setting as deciding, so a late shell value cannot turn it back on.
+          env.T3CODE_TELEMETRY_ENABLED = "true";
+          yield* analytics.record("test.late-shell-true");
+          yield* analytics.flush;
+        }),
+        { variable: null, setting: false },
+      ).pipe(Effect.provideService(HostProcess.Environment, env));
+      assert.equal(batches.length, 0);
     }),
   );
 
@@ -251,13 +306,11 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       Effect.gen(function* () {
         const policy = { schemaVersion: 1, organization: "Example Corp" } as const;
         const allowed = yield* sendFor(1, respondWithStatus(204), recordTwentyEvents, {
-          ...policy,
-          limits: { telemetry: true },
+          policy: { ...policy, limits: { telemetry: true } },
         });
         assert.equal(allowed.length, 1);
         const denied = yield* sendFor(1, respondWithStatus(204), recordTwentyEvents, {
-          ...policy,
-          limits: { telemetry: false },
+          policy: { ...policy, limits: { telemetry: false } },
         });
         assert.deepEqual(denied, []);
       }),
@@ -270,6 +323,115 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
     }),
   );
 
+  it.effect("the setting turns usage events off while the variable is unset", () =>
+    Effect.gen(function* () {
+      const batches = yield* sendFor(1, respondWithStatus(204), recordTwentyEvents, {
+        variable: null,
+        setting: false,
+      });
+      assert.equal(batches.length, 0);
+    }),
+  );
+
+  it.effect("the variable overrides the setting", () =>
+    Effect.gen(function* () {
+      const batches = yield* sendFor(1, respondWithStatus(204), recordTwentyEvents, {
+        variable: true,
+        setting: false,
+      });
+      assert.equal(batches.flat().length, 20);
+    }),
+  );
+
+  it.effect("turning the setting off discards events still waiting to be sent", () =>
+    Effect.gen(function* () {
+      const batches = yield* sendFor(
+        1,
+        respondWithStatus(204),
+        Effect.gen(function* () {
+          yield* recordTwentyEvents;
+          const settings = yield* ServerSettings.ServerSettingsService;
+          yield* settings.updateSettings({ telemetryEnabled: false }).pipe(Effect.orDie);
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          yield* analytics.record("test.after-opt-out");
+        }),
+        { variable: null },
+      );
+      assert.equal(batches.length, 0);
+    }),
+  );
+
+  it.effect("turning the setting off and back on before a flush discards what was queued", () =>
+    Effect.gen(function* () {
+      const batches = yield* sendFor(
+        1,
+        respondWithStatus(204),
+        Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          const settings = yield* ServerSettings.ServerSettingsService;
+          yield* analytics.record("test.before-opt-out");
+          yield* settings.updateSettings({ telemetryEnabled: false }).pipe(Effect.orDie);
+          yield* settings.updateSettings({ telemetryEnabled: true }).pipe(Effect.orDie);
+          yield* analytics.record("test.after-opt-in");
+        }),
+        { variable: null },
+      );
+      assert.notInclude(
+        batches.flat().map((event) => event.event),
+        "test.before-opt-out",
+      );
+    }),
+  );
+
+  it.effect("turning the setting off and on during a flush stops the batches after it", () =>
+    Effect.gen(function* () {
+      let settings: ServerSettings.ServerSettingsService["Service"] | undefined;
+      const batches = yield* sendFor(
+        1,
+        (request) =>
+          Effect.gen(function* () {
+            yield* settings!.updateSettings({ telemetryEnabled: false }).pipe(Effect.orDie);
+            yield* settings!.updateSettings({ telemetryEnabled: true }).pipe(Effect.orDie);
+            // Let the settings listener see both changes before this request completes.
+            for (let turn = 0; turn < 10; turn += 1) yield* Effect.yieldNow;
+            return yield* respondWithStatus(204)(request);
+          }),
+        Effect.gen(function* () {
+          settings = yield* ServerSettings.ServerSettingsService;
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          for (let index = 0; index < 45; index += 1) {
+            yield* analytics.record("test.batches", { index });
+          }
+        }),
+        { variable: null },
+      );
+      assert.equal(batches.length, 1);
+    }),
+  );
+
+  it.effect("turning the setting off during a flush stops the batches after it", () =>
+    Effect.gen(function* () {
+      let settings: ServerSettings.ServerSettingsService["Service"] | undefined;
+      const batches = yield* sendFor(
+        1,
+        (request) =>
+          Effect.gen(function* () {
+            yield* settings!.updateSettings({ telemetryEnabled: false }).pipe(Effect.orDie);
+            return yield* respondWithStatus(204)(request);
+          }),
+        Effect.gen(function* () {
+          settings = yield* ServerSettings.ServerSettingsService;
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          for (let index = 0; index < 45; index += 1) {
+            yield* analytics.record("test.batches", { index });
+          }
+        }),
+        { variable: null },
+      );
+      assert.equal(batches.length, 1);
+    }),
+  );
+
   it.effect("flush drains all buffered events across multiple batches", () =>
     Effect.gen(function* () {
       const capturedRequests: Array<RecordedBatchRequest> = [];
@@ -277,7 +439,10 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         prefix: "t3-telemetry-base-",
       });
 
-      const layerTelemetry = AnalyticsService.layer.pipe(Layer.provideMerge(layerServerConfig));
+      const layerTelemetry = AnalyticsService.layer.pipe(
+        Layer.provideMerge(layerServerConfig),
+        Layer.provide(ServerSettings.layerTest()),
+      );
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
           T3CODE_TELEMETRY_ENABLED: true,
@@ -379,7 +544,10 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       const layerServerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
         prefix: "t3-telemetry-disabled-",
       });
-      const layerTelemetry = AnalyticsService.layer.pipe(Layer.provideMerge(layerServerConfig));
+      const layerTelemetry = AnalyticsService.layer.pipe(
+        Layer.provideMerge(layerServerConfig),
+        Layer.provide(ServerSettings.layerTest()),
+      );
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
           T3CODE_TELEMETRY_ENABLED: false,

@@ -5,7 +5,10 @@ import {
   type SignalExport,
 } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
-import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
+import {
+  NO_PERSISTED_SERVER_OBSERVABILITY_SETTINGS,
+  parsePersistedServerObservabilitySettings,
+} from "@t3tools/shared/serverSettings";
 import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
@@ -117,6 +120,10 @@ const EnvServerConfig = Config.all({
     Config.map(Option.getOrUndefined),
   ),
   otlpLogsUrl: Config.String("T3CODE_OTLP_LOGS_URL").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  telemetryEnabled: Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
@@ -253,7 +260,7 @@ const loadPersistedObservabilitySettings = Effect.fn(function* (settingsPath: st
   const fs = yield* FileSystem.FileSystem;
   const exists = yield* fs.exists(settingsPath).pipe(Effect.orElseSucceed(() => false));
   if (!exists) {
-    return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined, otlpLogsUrl: undefined };
+    return NO_PERSISTED_SERVER_OBSERVABILITY_SETTINGS;
   }
 
   const raw = yield* fs.readFileString(settingsPath).pipe(Effect.orElseSucceed(() => ""));
@@ -493,6 +500,10 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     ...(logs !== undefined ? { otlpLogsSource: logs.source } : {}),
     ...(logs?.variable !== undefined ? { otlpLogsVariable: logs.variable } : {}),
     otelEnvironment: otel,
+    ...(env.telemetryEnabled === undefined
+      ? {}
+      : { telemetryEnabledByEnvironment: env.telemetryEnabled }),
+    telemetryEnabledInSettings: persistedObservabilitySettings.telemetryEnabled,
     mode,
     port,
     cwd,

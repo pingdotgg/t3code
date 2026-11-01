@@ -88,6 +88,7 @@ import {
   projectGroupingModeFromToggle,
   readLastEnabledProjectGroupingMode,
   rememberEnabledProjectGroupingMode,
+  telemetrySettingLocks,
 } from "./SettingsPanels.logic";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
@@ -2001,6 +2002,57 @@ export function MaintenanceSettingsPanel() {
   );
 }
 
+function ProductUsageDataRow() {
+  return useOptionalSettingsScope() === null ? null : <ScopedProductUsageDataRow />;
+}
+
+function ScopedProductUsageDataRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const { connectedEnvironments } = useSettingsScope();
+  // Older servers ignore the setting, so a switch there would claim an opt-out that never happens.
+  if (
+    !connectedEnvironments.every(
+      (target) => target.serverConfig?.environment.capabilities.telemetrySetting === true,
+    )
+  ) {
+    return null;
+  }
+  // A policy or the variable decides over the setting; where one does, the switch shows its value.
+  const locks = telemetrySettingLocks(connectedEnvironments);
+  const lockedEverywhere =
+    connectedEnvironments.length > 0 && locks.length === connectedEnvironments.length;
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("product-usage-data")}
+      settingKeys={["telemetryEnabled"]}
+      description="Send anonymous usage events and T3 Connect connection traces from this environment. They never include prompts, responses, or file contents. Connection traces stop after a restart."
+      status={
+        locks.length > 0 ? [...new Set(locks.map(({ reason }) => reason))].join(" ") : undefined
+      }
+      managed={lockedEverywhere ? locks.find((lock) => lock.managed)?.reason : undefined}
+      control={
+        lockedEverywhere ? (
+          // Persisted values do not decide here, so they must not make the switch look mixed.
+          <Switch
+            checked={locks.every(({ value }) => value)}
+            disabled
+            aria-label="Product usage data"
+          />
+        ) : (
+          <ScopedSwitch
+            settingKeys={["telemetryEnabled"]}
+            checked={settings.telemetryEnabled}
+            onCheckedChange={(checked) => updateSettings({ telemetryEnabled: Boolean(checked) })}
+            aria-label="Product usage data"
+          />
+        )
+      }
+    />
+  );
+}
+
 export function AboutSettingsPanel() {
   const primaryPolicy = usePrimaryManagedPolicy();
   const telemetryOff = managedTelemetryOffMessage(primaryPolicy);
@@ -2058,6 +2110,7 @@ export function AboutSettingsPanel() {
             </Button>
           }
         />
+        <ProductUsageDataRow />
         <SettingsRow
           {...searchableSetting("open-source-licenses")}
           description="Notices for dependencies, assets, and optional tools used by T3 Code."
