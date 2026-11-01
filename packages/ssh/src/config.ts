@@ -234,23 +234,8 @@ const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
   }
 });
 
-function normalizeKnownHostsHostname(rawHost: string): string {
-  const bracketMatch = /^\[([^\]]+)\]:(\d+)$/u.exec(rawHost);
-  if (bracketMatch?.[1]) {
-    return bracketMatch[1];
-  }
-
-  if (!rawHost.includes(":")) {
-    return rawHost;
-  }
-
-  const firstColonIndex = rawHost.indexOf(":");
-  const lastColonIndex = rawHost.lastIndexOf(":");
-  return firstColonIndex === lastColonIndex ? rawHost.slice(0, lastColonIndex) : rawHost;
-}
-
-export function parseKnownHostsHostnames(raw: string): ReadonlyArray<string> {
-  const hostnames = new Set<string>();
+function parseKnownHostsTargets(raw: string): ReadonlyArray<DesktopDiscoveredSshHost> {
+  const targets = new Map<string, DesktopDiscoveredSshHost>();
 
   for (const line of raw.split(/\r?\n/u)) {
     const trimmed = line.trim();
@@ -267,23 +252,28 @@ export function parseKnownHostsHostnames(raw: string): ReadonlyArray<string> {
     }
 
     for (const rawHost of hostField.split(",")) {
-      const host = normalizeKnownHostsHostname(rawHost).trim();
+      const withPort = /^\[([^\]]+)\]:(.*)$/u.exec(rawHost) ?? /^([^:]+):([^:]*)$/u.exec(rawHost);
+      const host = (withPort?.[1] ?? rawHost).trim();
       if (host.length === 0 || hasSshPattern(host)) {
         continue;
       }
-      hostnames.add(host);
+      const portText = withPort?.[2];
+      if (portText !== undefined && !/^\d+$/u.test(portText)) continue;
+      const port = portText === undefined ? null : Number(portText);
+      if (port !== null && (!Number.isSafeInteger(port) || port < 1 || port > 65535)) continue;
+      const alias =
+        port === null ? host : `ssh://${host.includes(":") ? `[${host}]` : host}:${port}`;
+      targets.set(alias, { alias, hostname: host, username: null, port, source: "known-hosts" });
     }
   }
 
-  return [...hostnames].toSorted((left, right) => left.localeCompare(right));
+  return [...targets.values()].toSorted((left, right) => left.alias.localeCompare(right.alias));
 }
 
-const readKnownHostsHostnames = Effect.fnUntraced(function* (filePath: string) {
+const readKnownHostsTargets = Effect.fnUntraced(function* (filePath: string) {
   const fs = yield* FileSystem.FileSystem;
-  if (!(yield* fs.exists(filePath))) {
-    return NO_HOSTS;
-  }
-  return parseKnownHostsHostnames(yield* fs.readFileString(filePath));
+  if (!(yield* fs.exists(filePath))) return [];
+  return parseKnownHostsTargets(yield* fs.readFileString(filePath));
 });
 
 export const discoverSshHosts = Effect.fnUntraced(
@@ -313,7 +303,7 @@ export const discoverSshHosts = Effect.fnUntraced(
       hostNameRules,
       [],
     );
-    const knownHosts = yield* readKnownHostsHostnames(path.join(sshDirectory, "known_hosts"));
+    const knownHosts = yield* readKnownHostsTargets(path.join(sshDirectory, "known_hosts"));
     const discovered = new Map<string, DesktopDiscoveredSshHost>();
 
     const configuredHostnames = new Set<string>();
@@ -329,17 +319,14 @@ export const discoverSshHosts = Effect.fnUntraced(
       });
     }
 
-    for (const hostname of knownHosts) {
-      if (discovered.has(hostname) || configuredHostnames.has(hostname.toLowerCase())) {
+    for (const target of knownHosts) {
+      if (
+        discovered.has(target.alias) ||
+        (target.port === null && configuredHostnames.has(target.hostname.toLowerCase()))
+      ) {
         continue;
       }
-      discovered.set(hostname, {
-        alias: hostname,
-        hostname,
-        username: null,
-        port: null,
-        source: "known-hosts",
-      });
+      discovered.set(target.alias, target);
     }
 
     return [...discovered.values()].toSorted((left, right) =>

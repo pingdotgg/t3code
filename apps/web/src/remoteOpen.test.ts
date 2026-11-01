@@ -113,6 +113,23 @@ describe("resolveRemoteOpenState", () => {
     );
   });
 
+  it("keeps a known-host URI destination in editor links without its SSH scheme", () => {
+    const state = resolveRemoteOpenState({
+      target: new SshConnectionTarget({ environmentId, label: "server", connectionId: "ssh-1" }),
+      sshTarget: { alias: "ssh://server:2222", username: "alice" },
+      isDesktopRenderer: true,
+      remoteOpenTargets: undefined,
+    });
+    expect(state).toEqual({
+      mode: "remote-links",
+      host: { kind: "ssh-alias", host: "server:2222", username: "alice" },
+    });
+    if (state.mode !== "remote-links") throw new Error("Expected a remote link");
+    expect(
+      buildRemoteOpenUrl({ editor: "vscode", ...state.host, absolutePath: "/work/project" }),
+    ).toBe("vscode://vscode-remote/ssh-remote+alice%40server%3A2222/work/project");
+  });
+
   it("uses the advertised login username in editor links over a relay", () => {
     const state = resolveRemoteOpenState({
       target: new RelayConnectionTarget({ environmentId, label: "server" }),
