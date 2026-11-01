@@ -41,8 +41,7 @@ const shared = {
 };
 const EnvironmentReadTool = Tool.make("t3_environment_read", {
   ...shared,
-  description:
-    "Read this server's identity and preferences. Providers and models: `orchestrator_capabilities`.",
+  description: "Read server identity/preferences. Providers/models: `orchestrator_capabilities`.",
   parameters: Schema.Struct({ environmentId: OrchestratorMcpEnvironmentTarget }),
   success: Schema.Struct({
     environmentId: ExecutionEnvironmentDescriptor.fields.environmentId,
@@ -57,7 +56,7 @@ const EnvironmentReadTool = Tool.make("t3_environment_read", {
 const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update", {
   ...shared,
   description:
-    "Update environment-wide preferences. Live full-access or default caller thread only. Omitted fields are unchanged; `customInstructions: ''` clears it.",
+    "Update preferences. Live full-access/default caller thread only. Omitted fields stay; `customInstructions: ''` clears.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     defaultThreadEnvMode: ServerSettingsPatch.fields.defaultThreadEnvMode,

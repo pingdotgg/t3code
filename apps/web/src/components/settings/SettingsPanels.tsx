@@ -1925,8 +1925,7 @@ export function MaintenanceSettingsPanel() {
           {...searchableSetting("download-new-models")}
           description="Download the latest T3 Code model catalog so new models appear between releases. Follows Provider update checks until you change it."
           resetAction={
-            settings.enableModelCatalogUpdates !==
-            DEFAULT_UNIFIED_SETTINGS.enableModelCatalogUpdates ? (
+            targets.some((candidate) => candidate.settings.enableModelCatalogUpdates !== null) ? (
               <SettingResetButton
                 label="download new models"
                 onClick={() =>
