@@ -126,6 +126,32 @@ const sendPointerPress = async (
   }
 };
 
+const pointerCommands = new WeakMap<Electron.WebContents, Promise<unknown>>();
+
+/** Focus capture crosses processes; later pointer events must not overtake the press. */
+const sendPointerCommand = async (
+  webContents: Electron.WebContents,
+  debuggee: Electron.Debugger,
+  method: string,
+  params: Record<string, unknown>,
+  sessionId: string | undefined,
+) => {
+  const previous = pointerCommands.get(webContents) ?? Promise.resolve();
+  const current = previous
+    .catch(() => {})
+    .then(() =>
+      params["type"] === "mousePressed" || params["type"] === "touchStart"
+        ? sendPointerPress(webContents, debuggee, method, params, sessionId)
+        : debuggee.sendCommand(method, params, sessionId),
+    );
+  pointerCommands.set(webContents, current);
+  try {
+    return await current;
+  } finally {
+    if (pointerCommands.get(webContents) === current) pointerCommands.delete(webContents);
+  }
+};
+
 /** Sends one command to the guest's page, keeping reloads and input inside it. */
 export const sendPageCommand = async (
   webContents: Electron.WebContents,
@@ -134,11 +160,8 @@ export const sendPageCommand = async (
   params: Record<string, unknown>,
   sessionId?: string,
 ): Promise<unknown> => {
-  if (
-    (method === "Input.dispatchMouseEvent" && params["type"] === "mousePressed") ||
-    (method === "Input.dispatchTouchEvent" && params["type"] === "touchStart")
-  ) {
-    return sendPointerPress(webContents, debuggee, method, params, sessionId);
+  if (method === "Input.dispatchMouseEvent" || method === "Input.dispatchTouchEvent") {
+    return sendPointerCommand(webContents, debuggee, method, params, sessionId);
   }
   if (sessionId !== undefined) return debuggee.sendCommand(method, params, sessionId);
   // Electron's debugger routes Page.reload on a webview to its embedder window.

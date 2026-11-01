@@ -124,6 +124,69 @@ describe("preview guest input", () => {
     },
   );
 
+  it.each([
+    {
+      method: "Input.dispatchMouseEvent",
+      press: "mousePressed",
+      release: "mouseReleased",
+      failPress: false,
+    },
+    {
+      method: "Input.dispatchTouchEvent",
+      press: "touchStart",
+      release: "touchEnd",
+      failPress: false,
+    },
+    {
+      method: "Input.dispatchMouseEvent",
+      press: "mousePressed",
+      release: "mouseReleased",
+      failPress: true,
+    },
+  ])(
+    "keeps $method releases behind presses waiting for host focus, failed press: $failPress",
+    async ({ method, press, release, failPress }) => {
+      const captureStarted = Promise.withResolvers<void>();
+      const finishCapture = Promise.withResolvers<void>();
+      const events: Array<unknown> = [];
+      const guest = {
+        id: 7,
+        focusedFrame: null,
+        hostWebContents: {
+          isDestroyed: () => false,
+          executeJavaScript: async () => {
+            captureStarted.resolve();
+            await finishCapture.promise;
+          },
+        },
+      };
+      const debuggee = {
+        sendCommand: async (_method: string, params: Record<string, unknown>) => {
+          events.push(params["type"]);
+          if (failPress && params["type"] === press) throw new Error("Press failed");
+          return {};
+        },
+      };
+      const send = (type: string) =>
+        sendPageCommand(
+          guest as unknown as Electron.WebContents,
+          debuggee as unknown as Electron.Debugger,
+          method,
+          { type },
+        );
+      const pressed = send(press);
+      await captureStarted.promise;
+      const released = send(release);
+      finishCapture.resolve();
+      const results = await Promise.allSettled([pressed, released]);
+      expect(results.map((result) => result.status)).toEqual([
+        failPress ? "rejected" : "fulfilled",
+        "fulfilled",
+      ]);
+      expect(events).toEqual([press, release]);
+    },
+  );
+
   it("refuses input when a cross-site frame holds the unfocused page's focus", async () => {
     const guest = makeGuest({ focused: false, focusedDocument: false });
     await expect(guest.send("Input.insertText", { text: "secret" })).rejects.toThrow(
