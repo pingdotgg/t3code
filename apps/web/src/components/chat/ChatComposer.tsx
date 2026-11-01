@@ -931,9 +931,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedProviderSkills = selectedProviderStatus
     ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SKILLS;
-  const selectedProviderSlashCommands = selectedProviderStatus
+  const providerSlashCommands = selectedProviderStatus
     ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SLASH_COMMANDS;
+  const selectedProviderSlashCommands =
+    props.onUsageLimitsCommand &&
+    !providerSlashCommands.some((command) => command.name === USAGE_LIMITS_COMMAND.name)
+      ? [...providerSlashCommands, USAGE_LIMITS_COMMAND]
+      : providerSlashCommands;
   const { refresh: refreshWorkspaceSnapshotOnTyping, scanning: workspaceSkillsScanning } =
     useProviderWorkspaceSnapshotRefresh({
       environmentId,

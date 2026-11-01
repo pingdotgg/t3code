@@ -4,9 +4,15 @@ import type {
   ServerProvider,
   UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
-import { collectProviderUsageLimits, hasProviderUsageLimits } from "@t3tools/shared/usageLimits";
+import { useAtomValue } from "@effect/atom-react";
+import {
+  collectProviderUsageLimits,
+  composerUsageLimitSources,
+  hasProviderUsageLimits,
+} from "@t3tools/shared/usageLimits";
 import { useState } from "react";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { environmentPresentations } from "../../state/presentation";
 import { toastManager } from "../ui/toast";
 import { usageLimitsBannerItem } from "./ComposerUsageLimits";
 
@@ -20,15 +26,13 @@ export function useUsageLimitsPanel(input: {
   readonly providers: readonly ServerProvider[];
   readonly sources: UsageLimitSourceSnapshots;
 }) {
-  const {
+  const { environmentId, threadKey, panelKey, providerInstanceId, providerDriver, providers } =
+    input;
+  const sources = composerUsageLimitSources(
     environmentId,
-    threadKey,
-    panelKey,
-    providerInstanceId,
-    providerDriver,
-    providers,
-    sources,
-  } = input;
+    input.sources,
+    useAtomValue(environmentPresentations.usageLimitSourcesByEnvironmentAtom),
+  );
   const [panel, setPanel] = useState<{
     readonly key: string;
     readonly threadKey: string;

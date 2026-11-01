@@ -1,6 +1,7 @@
 import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
+import { useComposerUsageLimitSources } from "./ComposerUsageLimits";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import {
@@ -28,6 +29,7 @@ import {
   collectProviderUsageLimits,
   hasProviderUsageLimits,
   isUsageLimitsCommand,
+  withUsageLimitsCommands,
 } from "@t3tools/shared/usageLimits";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
@@ -492,10 +494,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       currentModelSelection,
       props.selectedThread.projectId,
     );
+  const usageLimitSources = useComposerUsageLimitSources(
+    props.environmentId,
+    props.serverConfig?.usageLimitSources,
+  );
   const selectedProviderStatus = (() => {
     if (!props.serverConfig) return null;
     return (
-      props.serverConfig.providers.find(
+      withUsageLimitsCommands(props.serverConfig.providers, usageLimitSources).find(
         (p) => p.instanceId === props.selectedThread.modelSelection.instanceId,
       ) ?? null
     );
@@ -518,13 +524,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     hasProviderUsageLimits(
       selectedProviderStatus.driver,
       props.serverConfig?.providers ?? [],
-      props.serverConfig?.usageLimitSources ?? [],
+      usageLimitSources,
     );
   const openUsageLimits = () => {
     const report = collectProviderUsageLimits(
       currentModelSelection.instanceId,
       props.serverConfig?.providers ?? [],
-      props.serverConfig?.usageLimitSources ?? [],
+      usageLimitSources,
       Date.now(),
     );
     onShowUsageLimits(report);
