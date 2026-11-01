@@ -9,6 +9,15 @@ import {
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 
+/** Provider-reported money in minor units; `exponent` is the currency's decimal places. */
+export const ServerProviderUsageSpend = Schema.Struct({
+  usedMinor: NonNegativeInt,
+  limitMinor: NonNegativeInt,
+  currency: TrimmedNonEmptyString,
+  exponent: NonNegativeInt,
+});
+export type ServerProviderUsageSpend = typeof ServerProviderUsageSpend.Type;
+
 /** Stable per-provider ids let sparse updates merge with full probes. */
 export const ServerProviderUsageWindow = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -17,6 +26,7 @@ export const ServerProviderUsageWindow = Schema.Struct({
   usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.optional(IsoDateTime),
   windowDurationMins: Schema.optional(NonNegativeInt),
+  spend: Schema.optional(ServerProviderUsageSpend),
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 
