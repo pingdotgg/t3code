@@ -1101,7 +1101,7 @@ function TaskForm({
                 }}
               />
             </>
-          ) : draft.schedule.mode === "webhook" && webhookDenial !== undefined ? (
+          ) : draft.schedule.mode === "webhook" && webhookDenial !== undefined && draft.enabled ? (
             <Text className="border-t border-border-subtle px-4 py-3 text-sm text-foreground-muted">
               {`${webhookDenial} Switch the task to a timer, or turn it off, to save it.`}
             </Text>

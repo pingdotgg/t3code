@@ -131,6 +131,16 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
               },
             },
           }),
+          // The server would move it into the user's secret store, past the policy's removal.
+          JSON.stringify({
+            ...base,
+            settings: {
+              providerInstances: {
+                value: { gemini: { driver: "antigravity", config: { apiKey: "corp-key" } } },
+                locked: true,
+              },
+            },
+          }),
         ],
         (contents) =>
           loadFrom(contents).pipe(
@@ -138,7 +148,7 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
             Effect.map((error) => error.reason),
           ),
       );
-      assert.lengthOf(reasons, 12);
+      assert.lengthOf(reasons, 13);
       assert.include(reasons[3], "storageCleanup.logsAfterDayz");
       assert.include(reasons[6], "adds entries users could not remove");
       assert.include(reasons[7], "adds entries users could not remove");
@@ -146,6 +156,7 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       assert.include(reasons[9], 'manage "idleCompaction" instead');
       assert.include(reasons[10], 'lock "worktreeCleanup" too');
       assert.include(reasons[11], 'lock "providerInstances.codex" as a whole');
+      assert.include(reasons[12], "holds a credential");
     }),
   );
 

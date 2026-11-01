@@ -1663,8 +1663,10 @@ function ScheduledTaskEditorForm({
                   : webhookDenial}
               </ManagedNotice>
             ) : null}
+            {/* A disabled task still saves, so keep its fields reachable for fixing. */}
             {draft.scheduleMode === "webhook" &&
-            webhookDenial !== undefined ? null : draft.scheduleMode === "webhook" ? (
+            webhookDenial !== undefined &&
+            draft.enabled ? null : draft.scheduleMode === "webhook" ? (
               <div className="space-y-4">
                 <WebhookEndpointField environmentId={environmentId} task={liveTask} />
                 <p className="text-xs text-muted-foreground">

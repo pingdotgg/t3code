@@ -380,6 +380,8 @@ export function ProviderEnvironmentSection(props: {
   };
 
   const updateVariable = (id: string, patch: Partial<Omit<EnvironmentDraftRow, "id">>) => {
+    // A row named like a pinned variable renders as the policy's, with no way to edit or remove it.
+    if (patch.name !== undefined && props.managed?.names.has(patch.name)) return;
     const nextRows = rows.map((row) =>
       row.id === id
         ? {

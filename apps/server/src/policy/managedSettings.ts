@@ -10,6 +10,8 @@ import {
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
+import { mapSettingsSecrets } from "../settingsSecrets.ts";
+
 const encodeSettings = Schema.encodeSync(ServerSettings);
 const decodeSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeSettingsExit = Schema.decodeUnknownExit(ServerSettings);
@@ -319,6 +321,20 @@ export function makeManagedSettings(
     return {
       _tag: "Invalid",
       reason: `"${lost.path}" is not a setting this version can manage, or its value is invalid`,
+    };
+  }
+  // The server moves a credential it finds in settings into the user's secret store, where a
+  // policy's would outlive the policy. Built-in defaults hold none, so any found is the policy's.
+  let holdsCredential = false;
+  mapSettingsSecrets(decoded.value, (secret) => {
+    if (secret.sensitive && !secret.redacted && secret.value.length > 0) holdsCredential = true;
+    return secret;
+  });
+  if (holdsCredential) {
+    return {
+      _tag: "Invalid",
+      reason:
+        "a managed setting holds a credential, which every user can read in the policy; deploy credentials another way",
     };
   }
   // Defaults fill in what the file leaves out, so an entry a default adds to a record such as
