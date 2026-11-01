@@ -10,7 +10,7 @@ import type { DesktopCaptureHelperState } from "@t3tools/contracts";
 
 import { escapeDesktopEntryExecArgument } from "../app/DesktopLinuxUrlHandler.ts";
 import type { LinuxWindowSnapshot } from "./LinuxSnapShot.ts";
-import { readPortalPng } from "./linuxCaptureSession.ts";
+import { CaptureSetupRequiredError, readPortalPng } from "./linuxCaptureSession.ts";
 import { startNativeCaptureFeedback } from "./NativeCaptureFeedback.ts";
 export { isKdeCaptureSession } from "./linuxCaptureSession.ts";
 
@@ -215,8 +215,7 @@ export async function captureKdeWindow(
   options?: { readonly flash: boolean; readonly animate: boolean },
 ): Promise<LinuxWindowSnapshot> {
   const state = await new KdeCaptureSetup(paths).state();
-  if (state.status !== "ready")
-    throw new Error(`${state.message} Open Settings → SnapShots to continue setup.`);
+  if (state.status !== "ready") throw new CaptureSetupRequiredError(state.message);
   const { executable } = kdeCapturePaths(paths);
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-kde-capture-"));
   let retained = false;
