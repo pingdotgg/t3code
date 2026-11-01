@@ -30,7 +30,6 @@ import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
-import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import { DESKTOP_RENDERER_ORIGINS } from "../httpCors.ts";
@@ -212,7 +211,6 @@ export const make = Effect.gen(function* () {
   const blocks = yield* AuthTailnetDeviceBlocks.AuthTailnetDeviceBlockRepository;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const crypto = yield* Crypto.Crypto;
-  const sql = yield* SqlClient.SqlClient;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const pairingLinks = yield* AuthPairingLinks.AuthPairingLinkRepository;
@@ -482,14 +480,8 @@ export const make = Effect.gen(function* () {
           decision.reason,
           undefined,
           GRANT_FIXES.has(decision.reason)
-            ? tailnetGrantSnippet(
-                // A login from another tailnet is not one this policy can name.
-                node.tags[0] ??
-                  (node.sharerUserId === null ? node.loginName : null) ??
-                  remoteAddress,
-                status.selfTags[0] ?? localAddress,
-                localPort,
-              )
+            ? // This device on this machine only: a login or tag would cover others too.
+              tailnetGrantSnippet(remoteAddress, localAddress, localPort)
             : undefined,
         );
       }
@@ -596,6 +588,9 @@ export const make = Effect.gen(function* () {
 
   /** One recheck pass; true when it saw a grant while none was counted on its account. */
   const recheckPass = Effect.gen(function* () {
+    // Read before the credentials are listed, so a grant seen while they are counts.
+    const countsBefore = yield* Ref.get(grantsSeen);
+    const doubtBefore = yield* Ref.get(grantsInDoubt);
     // Unused sign-in credentials count too: exchanging one would bring the device back.
     const now = yield* DateTime.now;
     const devices = new Map<
@@ -657,8 +652,7 @@ export const make = Effect.gen(function* () {
     }
     statusFailingSince = null;
     const account = status.value.selfNodeId;
-    const ownerRuleWasOn = (yield* grantsSeenOn(account)) === 0;
-    const doubtBefore = yield* Ref.get(grantsInDoubt);
+    const ownerRuleWasOn = (countsBefore.get(account) ?? 0) === 0;
     const stillOnAccount = yield* Effect.cached(
       host.freshStatus.pipe(
         Effect.map((now) => now.selfNodeId === account),
@@ -768,12 +762,13 @@ export const make = Effect.gen(function* () {
         (session) => session.subject === subject,
       )?.client.label ?? null;
     const blockedAt = yield* DateTime.now;
-    // Shares the writer with the grant exchange, so no session for this device survives.
+    // A grant exchange checks blocks in its own write, so once the block lands none can make
+    // a session; one made before is revoked here. Not one transaction: an open socket that
+    // wakes on the revocation must read it committed.
     return yield* blocks
       .block({ stableNodeId, label, blockedAt })
       .pipe(
         Effect.andThen(sessions.revokeBySubject(subject)),
-        sql.withTransaction,
         Effect.mapError(accessError("Could not block the device.")),
       );
   });

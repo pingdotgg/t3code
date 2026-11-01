@@ -615,18 +615,23 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
     }).pipe(Effect.provide(layerTest({ status: hostStatus(), node: phoneNode() }))),
   );
 
-  it.effect("a shared-in device's suggested grant names its address, not its login", () =>
+  it.effect.each([
+    { device: "a shared-in device", node: phoneNode({ Sharer: "int64:555" }) },
+    { device: "a tagged device", node: phoneNode({ Tags: ["tag:ci"] }) },
+  ])("$device's suggested grant names it and this machine by address only", ({ node }) =>
     Effect.gen(function* () {
       yield* requireGrantOn;
       const error = yield* Effect.flip(signIn(makeDpopKey()));
-      expect(isRefusal(error) ? error.suggestedGrant : error).toContain(
-        `"src": ["${PHONE_ADDRESS}"]`,
-      );
+      const grant = isRefusal(error) ? error.suggestedGrant : undefined;
+      expect(grant).toContain(`"src": ["${PHONE_ADDRESS}"]`);
+      expect(grant).toContain(`"dst": ["${HOST_ADDRESS}"]`);
     }).pipe(
       Effect.provide(
         layerTest({
-          status: hostStatus(),
-          node: phoneNode({ Sharer: "int64:555" }),
+          status: hostStatus({
+            Self: { ...hostStatus().Self, Tags: ["tag:t3-box"] },
+          }),
+          node,
           loginName: "friend@other.example",
         }),
       ),
@@ -1227,13 +1232,23 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       },
     );
 
-    it.effect.each([{ via: "its own lookup" }, { via: "a policy scan" }])(
+    it.effect.each([
+      { via: "its own lookup" },
+      { via: "a policy scan" },
+      { via: "a sign-in's scan before it reads Tailscale" },
+    ])(
       "an owner-rule sign-in during the recheck that first sees a grant ($via) ends in it",
       ({ via }) => {
         const tailnet = withLaptop();
-        tailnet.status = hostStatus({ Peer: { ...peers, desk: ownPeer("nDesk", DESK_ADDRESS) } });
+        tailnet.status = hostStatus({
+          Peer: { ...peers, desk: ownPeer("nDesk", DESK_ADDRESS), stranger: strangerPeer },
+        });
         const desk = ownDevice("nDesk", DESK_ADDRESS);
-        tailnet.devices = { ...tailnet.devices, [DESK_ADDRESS]: { node: desk } };
+        tailnet.devices = {
+          ...tailnet.devices,
+          [DESK_ADDRESS]: { node: desk },
+          [STRANGER_ADDRESS]: { node: stranger },
+        };
         const grant = (address: string, node: JsonObject) => {
           tailnet.devices = {
             ...tailnet.devices,
@@ -1244,19 +1259,26 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
           const service = yield* TailnetSignIn.TailnetSignIn;
           yield* signInLaptop(makeDpopKey());
           if (via === "its own lookup") grant(LAPTOP_ADDRESS, laptop);
-          // While the recheck looks the laptop up, the phone signs in by the owner rule.
+          // While the recheck reads Tailscale or looks the laptop up, the phone signs in by the
+          // owner rule.
           const started = yield* Deferred.make<void>();
           const release = yield* Deferred.make<void>();
-          tailnet.hold = { address: LAPTOP_ADDRESS, started, release };
+          const beforeStatus = via === "a sign-in's scan before it reads Tailscale";
+          if (beforeStatus) {
+            tailnet.holdFreshRead = { at: (tailnet.freshReads ?? 0) + 1, started, release };
+          } else tailnet.hold = { address: LAPTOP_ADDRESS, started, release };
           const recheck = yield* service.recheckSessions.pipe(Effect.forkChild);
           yield* Deferred.await(started);
           const phoneKey = makeDpopKey();
           const phone = yield* exchange((yield* signIn(phoneKey)).credential, phoneKey);
-          if (via === "a policy scan") {
-            // The idle desk gets a grant, and the kept "no grants" expires, so the laptop's
-            // decision scans afresh.
+          if (via !== "its own lookup") {
+            // The idle desk gets a grant, and the kept "no grants" expires, so the next owner
+            // rule decision scans afresh: the stranger's, or the laptop's in the recheck.
             grant(DESK_ADDRESS, desk);
             yield* TestClock.adjust("61 seconds");
+          }
+          if (beforeStatus) {
+            yield* refusalOf(signIn(makeDpopKey(), { remoteAddress: STRANGER_ADDRESS }));
           }
           yield* Deferred.succeed(release, undefined);
           yield* Fiber.join(recheck);
