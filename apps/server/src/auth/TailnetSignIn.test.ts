@@ -774,13 +774,20 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
         yield* service.recheckSessions;
         expect(yield* revoked(standard.access_token)).toBe(true);
         const read = yield* signInLaptop(laptopKey);
+        const readCode = yield* signIn(laptopKey, { remoteAddress: LAPTOP_ADDRESS });
         tailnet.devices = {
           [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["standard"] }) },
         };
         const widened = yield* signInLaptop(laptopKey);
+        const standardCode = yield* signIn(laptopKey, { remoteAddress: LAPTOP_ADDRESS });
         yield* service.recheckSessions;
         expect(yield* revoked(read.access_token)).toBe(true);
         expect(yield* revoked(widened.access_token)).toBe(false);
+        // Of the codes not yet exchanged, only the one from the older grant goes.
+        expect(yield* refusalOf(exchange(readCode.credential, laptopKey))).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+        yield* exchange(standardCode.credential, laptopKey);
 
         // Removing the grant ends the session and the sign-in not yet exchanged.
         const pending = yield* signIn(laptopKey, { remoteAddress: LAPTOP_ADDRESS });
@@ -1211,6 +1218,29 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       },
     );
 
+    it.effect("an owner-rule sign-in during the recheck that first sees a grant ends in it", () => {
+      const tailnet = withLaptop();
+      return Effect.gen(function* () {
+        const service = yield* TailnetSignIn.TailnetSignIn;
+        // The laptop signs in by the owner rule, then gets a grant.
+        yield* signInLaptop(makeDpopKey());
+        tailnet.devices = {
+          [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
+        };
+        // While the recheck looks the laptop up, the phone signs in by the owner rule.
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        tailnet.hold = { address: LAPTOP_ADDRESS, started, release };
+        const recheck = yield* service.recheckSessions.pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        const phoneKey = makeDpopKey();
+        const phone = yield* exchange((yield* signIn(phoneKey)).credential, phoneKey);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(recheck);
+        expect(yield* revoked(phone.access_token)).toBe(true);
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
     it.effect(
       "a grant the recheck reads after a profile switch is not counted for the old one",
       () => {
@@ -1378,11 +1408,17 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
             [TABLET_ADDRESS]: { node: ownDevice("nTablet", TABLET_ADDRESS) },
           };
         };
-        // A recheck whose account check after the desk's grant cannot read Tailscale.
+        // A recheck that cannot read Tailscale from its account check after the desk's grant
+        // on, through the pass it then runs again.
         const recheckInDoubt = Effect.gen(function* () {
           const service = yield* TailnetSignIn.TailnetSignIn;
-          tailnet.failFreshReadAt = (tailnet.freshReads ?? 0) + 2;
+          const from = (tailnet.freshReads ?? 0) + 2;
+          tailnet.onFreshRead = (count) => {
+            if (count >= from) tailnet.failFreshReadAt = count;
+          };
           yield* service.recheckSessions;
+          delete tailnet.onFreshRead;
+          delete tailnet.failFreshReadAt;
         });
         return Effect.gen(function* () {
           deskGranted(false);

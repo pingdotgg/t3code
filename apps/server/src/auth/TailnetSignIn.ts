@@ -593,7 +593,8 @@ export const make = Effect.gen(function* () {
   // The periodic recheck and the one a sign-in's first grant starts share the state above.
   const recheckLock = yield* Semaphore.make(1);
 
-  const recheckSessions: TailnetSignIn["Service"]["recheckSessions"] = Effect.gen(function* () {
+  /** One recheck pass; true when it saw a grant while none was counted on its account. */
+  const recheckPass = Effect.gen(function* () {
     // Unused sign-in credentials count too: exchanging one would bring the device back.
     const now = yield* DateTime.now;
     const devices = new Map<
@@ -603,7 +604,10 @@ export const make = Effect.gen(function* () {
           readonly sessionId: AuthSessionId;
           readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
         }>;
-        links: Array<ReadonlyArray<AuthEnvironmentScope>>;
+        links: Array<{
+          readonly id: string;
+          readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+        }>;
         /** The sign-in label, "name" or "name (login)", for logs once Tailscale forgets the device. */
         label: string | null;
       }
@@ -619,7 +623,7 @@ export const make = Effect.gen(function* () {
     // one exchanged after is caught by the reread below.
     for (const link of yield* pairingLinks.listActive({ now })) {
       if (link.subject.startsWith(TAILNET_SUBJECT_PREFIX))
-        deviceOf(link.subject, link.label).links.push(link.scopes);
+        deviceOf(link.subject, link.label).links.push(link);
     }
     for (const session of yield* sessions.listActive()) {
       if (session.subject.startsWith(TAILNET_SUBJECT_PREFIX)) {
@@ -634,7 +638,7 @@ export const make = Effect.gen(function* () {
     for (const id of knownUsers.keys()) if (!devices.has(id)) knownUsers.delete(id);
     if (devices.size === 0) {
       statusFailingSince = null;
-      return;
+      return false;
     }
     // A daemon that is starting or logged out lists no peers, which proves nothing for a
     // while. Past the grace period nothing vouches for these devices, so their access ends.
@@ -642,16 +646,18 @@ export const make = Effect.gen(function* () {
     if (status._tag === "None" || status.value.backendState !== "Running") {
       const nowMs = DateTime.toEpochMillis(now);
       statusFailingSince ??= nowMs;
-      if (nowMs - statusFailingSince < Duration.toMillis(LOOKUP_GRACE)) return;
+      if (nowMs - statusFailingSince < Duration.toMillis(LOOKUP_GRACE)) return false;
       yield* Effect.forEach(
         devices.keys(),
         (id) => endAccess(id, "tailscale_unavailable", nameOf(id)),
         { discard: true },
       );
-      return;
+      return false;
     }
     statusFailingSince = null;
     const account = status.value.selfNodeId;
+    const ownerRuleWasOn = (yield* grantsSeenOn(account)) === 0;
+    const doubtBefore = yield* Ref.get(grantsInDoubt);
     const stillOnAccount = yield* Effect.cached(
       host.freshStatus.pipe(
         Effect.map((now) => now.selfNodeId === account),
@@ -666,13 +672,16 @@ export const make = Effect.gen(function* () {
         const name = nameOf(stableNodeId, "node" in result ? result.node : undefined);
         if ("end" in result) return yield* endAccess(stableNodeId, result.end, name);
         const subject = tailnetSubject(stableNodeId);
-        const links = held.links.some((scopes) => !sameScopes(scopes, result.allowed))
-          ? yield* pairingLinks.revokeUnusedBySubject({ subject, revokedAt: now })
-          : 0;
+        // Only codes from an older grant go; one that matches stays usable.
+        const staleLinks = held.links.filter((link) => !sameScopes(link.scopes, result.allowed));
+        const revokedLinks = yield* Effect.forEach(staleLinks, (link) =>
+          pairingLinks.revoke({ id: link.id, revokedAt: now }),
+        );
+        const links = revokedLinks.filter(Boolean).length;
         // A code exchanged since the list above made its session in the same transaction, so
-        // with codes listed, sessions are read again once unused codes are revoked.
+        // with stale codes listed, sessions are read again once those are revoked.
         const current =
-          held.links.length === 0
+          staleLinks.length === 0
             ? held.sessions
             : (yield* sessions.listActive()).filter((session) => session.subject === subject);
         const stale = current.filter((session) => !sameScopes(session.scopes, result.allowed));
@@ -693,6 +702,13 @@ export const make = Effect.gen(function* () {
       }),
       { concurrency: 8, discard: true },
     );
+    return ownerRuleWasOn && (yield* Ref.get(grantsInDoubt)) !== doubtBefore;
+  });
+
+  const recheckSessions: TailnetSignIn["Service"]["recheckSessions"] = Effect.gen(function* () {
+    // A pass that first sees a grant may already have let owner-rule devices stay, so it
+    // runs once more.
+    if (yield* recheckPass) yield* recheckPass;
   }).pipe(
     Effect.catchCause((cause) =>
       Effect.logWarning("Could not recheck Tailscale sessions.", { cause }),
