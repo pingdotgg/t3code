@@ -542,7 +542,7 @@ export const make = Effect.gen(function* () {
       // Native menus ignore the app theme. macOS keeps them; elsewhere the app's own page draws
       // the menu. Guests and popups have no app page to draw in, so they stay native.
       const inPageMenus =
-        environment.platform !== "darwin" && contents === ownerWindow.webContents
+        environment.platform !== "darwin" && contents === window.webContents
           ? makeInPageContextMenus((request) => {
               if (!contents.isDestroyed()) contents.send(WINDOW_CONTEXT_MENU_CHANNEL, request);
             })
