@@ -8,6 +8,7 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import {
+  composerThreadQuery,
   type ComposerEnvironmentCandidate,
   matchComposerEnvironmentItems,
   matchComposerThreadItems,
@@ -305,6 +306,14 @@ export function useComposerCommandMenu({
   useThreadSearch(
     trigger?.kind === "path" && environmentId ? [environmentId] : [],
     trigger?.kind === "path" ? trigger.query : "",
+    { titlesOnly: true },
+  );
+  const threadQuery = trigger?.kind === "path" ? composerThreadQuery(trigger.query) : "";
+  useThreadSearch(
+    trigger?.kind === "path" && environmentId && threadQuery !== trigger.query
+      ? [environmentId]
+      : [],
+    threadQuery,
     { titlesOnly: true },
   );
   const pullRequestSearch = useComposerPullRequestSearch({
