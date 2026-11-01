@@ -439,6 +439,9 @@ const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
+// HEAD reflog subjects of operations that create commits. Fast-forwards are imports, so excluded.
+const LOCAL_COMMIT_REFLOG_SUBJECT =
+  /^(?:(?:commit(?: \([^)]*\))?|cherry-pick|revert|(?:rebase|pull .*) \((?:pick|reword|edit|squash|fixup)\)): |(?:merge|pull) .*: Merge made by )/;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
@@ -1418,31 +1421,114 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         return null;
       }
 
-      const listPaths = (args: ReadonlyArray<string>) =>
+      const lines = (args: ReadonlyArray<string>, stdin?: string) =>
+        execute({
+          operation,
+          cwd: input.cwd,
+          args,
+          ...(stdin === undefined ? {} : { stdin }),
+          maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+          outputMode: "error",
+        }).pipe(Effect.map((result) => result.stdout.split("\n").filter((line) => line !== "")));
+      const listPaths = (args: ReadonlyArray<string>, stdin?: string) =>
         execute({
           operation,
           cwd: input.cwd,
           args: [...args, "--name-only", "-z", "--no-renames", "--no-ext-diff"],
+          ...(stdin === undefined ? {} : { stdin }),
           maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
           outputMode: "error",
         }).pipe(Effect.map((result) => result.stdout.split("\0")));
+
+      // A commit is an import when a remote-tracking reflog shows a fetch delivering it after the
+      // previous checkpoint. Only refs with a tip that recent can hold one, which keeps the walk
+      // cheap in repositories with thousands of remote refs.
+      const listFetchedCommits = Effect.fn("GitVcsDriver.checkpoints.listFetchedCommits")(
+        function* () {
+          const since = Number(capturedAt);
+          const recentRemoteRefs = (yield* lines([
+            "for-each-ref",
+            "--format=%(committerdate:unix) %(refname)",
+            "refs/remotes",
+          ])).flatMap((line) => {
+            const [committedAt = "", ref = ""] = line.split(" ");
+            return Number(committedAt) >= since ? [ref] : [];
+          });
+          if (recentRemoteRefs.length === 0) return new Set<string>();
+
+          const entries = (yield* lines(
+            ["log", "--walk-reflogs", "--stdin", "--date=unix", "--format=%H %gD %gs"],
+            `${[...recentRemoteRefs, "HEAD"].join("\n")}\n`,
+          )).map((line) => {
+            const [commit = "", selector = "", ...subject] = line.split(" ");
+            const at = selector.lastIndexOf("@{");
+            return {
+              commit,
+              ref: selector.slice(0, at),
+              updatedAt: Number(selector.slice(at + 2, -1)),
+              subject: subject.join(" "),
+            };
+          });
+          // Fetching another branch can rediscover a commit made locally during this turn.
+          const localCommits = new Set(
+            entries
+              .filter(
+                (entry) =>
+                  entry.ref === "HEAD" &&
+                  entry.updatedAt >= since &&
+                  LOCAL_COMMIT_REFLOG_SUBJECT.test(entry.subject),
+              )
+              .map((entry) => entry.commit),
+          );
+          const previousByRef = new Map<string, string>();
+          const fetchRanges = entries.toReversed().flatMap((entry) => {
+            const previous = previousByRef.get(entry.ref);
+            previousByRef.set(entry.ref, entry.commit);
+            if (entry.ref === "HEAD") return [];
+            if (entry.updatedAt < since || entry.subject === "update by push") return [];
+            return [[entry.commit, ...(previous === undefined ? [] : [`^${previous}`])]];
+          });
+          // Each range runs alone: in one walk, a later fetch's `^previous` would hide the commits
+          // an earlier fetch in the same turn delivered.
+          const fetched = yield* Effect.forEach(
+            fetchRanges,
+            (range) =>
+              lines(
+                ["rev-list", `--since=@${capturedAt}`, "--stdin"],
+                `${[...range, `^${startHead}`].join("\n")}\n`,
+              ),
+            { concurrency: 4 },
+          );
+          return new Set(fetched.flat().filter((commit) => !localCommits.has(commit)));
+        },
+      );
+
       // Remerge diffs retain merge conflict fixes while excluding clean upstream changes.
-      const pathLists = yield* Effect.all(
+      const [pathLists, recentCommits] = yield* Effect.all(
         [
-          listPaths(["diff", startHead, `${input.fromCheckpointRef}^{commit}`]),
-          listPaths(["diff", endHead, `${input.toCheckpointRef}^{commit}`]),
-          listPaths(["log", "--format=", "--diff-merges=remerge", `${endHead}..${startHead}`]),
-          listPaths([
-            "log",
-            "--format=",
-            "--diff-merges=remerge",
-            `--since=@${capturedAt}`,
-            `${startHead}..${endHead}`,
-          ]),
+          Effect.all(
+            [
+              listPaths(["diff", startHead, `${input.fromCheckpointRef}^{commit}`]),
+              listPaths(["diff", endHead, `${input.toCheckpointRef}^{commit}`]),
+              listPaths(["log", "--format=", "--diff-merges=remerge", `${endHead}..${startHead}`]),
+            ],
+            { concurrency: "unbounded" },
+          ),
+          lines(["rev-list", `--since=@${capturedAt}`, `${startHead}..${endHead}`]),
         ],
         { concurrency: "unbounded" },
       );
-      return new Set(pathLists.flat().filter((path) => path.length > 0));
+      const fetchedCommits =
+        recentCommits.length === 0 ? new Set<string>() : yield* listFetchedCommits();
+      const ownCommits = recentCommits.filter((commit) => !fetchedCommits.has(commit));
+      const ownCommitPaths =
+        ownCommits.length === 0
+          ? []
+          : yield* listPaths(
+              ["log", "--no-walk=unsorted", "--stdin", "--format=", "--diff-merges=remerge"],
+              `${ownCommits.join("\n")}\n`,
+            );
+      return new Set([...pathLists.flat(), ...ownCommitPaths].filter((path) => path.length > 0));
     }),
 
     deleteCheckpointRefs: Effect.fn("GitVcsDriver.checkpoints.deleteCheckpointRefs")(
