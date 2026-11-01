@@ -677,11 +677,13 @@ export const make = Effect.gen(function* () {
         );
         return false;
       }
-      yield* Effect.forEach(
-        devices.keys(),
-        (id) => endAccess(id, "tailscale_unavailable", nameOf(id)),
-        { discard: true },
-      );
+      const reason =
+        status._tag === "Some" && status.value.backendState === "Running"
+          ? "tailscale_outdated"
+          : "tailscale_unavailable";
+      yield* Effect.forEach(devices.keys(), (id) => endAccess(id, reason, nameOf(id)), {
+        discard: true,
+      });
       return false;
     }
     statusFailingSince = null;
