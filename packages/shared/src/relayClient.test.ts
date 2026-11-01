@@ -463,6 +463,57 @@ describe("RelayClient", () => {
       ),
   );
 
+  it.effect.skipIf(windowsHost)(
+    "installs when the host environment sets a GODEBUG value Go has removed",
+    () => {
+      const hostEnv = { PATH: "", GODEBUG: "tlskyber=0" };
+      const goRuntimeSpawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          if (!ChildProcess.isStandardCommand(command)) return makeHandle();
+          // HostProcess.Environment stands in for the process.env a child inherits.
+          const { env, extendEnv } = command.options;
+          const childEnv = env === undefined || extendEnv ? { ...hostEnv, ...env } : env;
+          // Go >= 1.24 exits 2 before main when a removed GODEBUG setting has its old value.
+          if (childEnv.GODEBUG === "tlskyber=0") return makeHandle(2);
+          return command.args[0] === "version"
+            ? makeHandle(
+                0,
+                `cloudflared version ${RelayClient.CLOUDFLARED_VERSION} (built 2026-01-01-00:00 UTC)\n`,
+              )
+            : makeHandle();
+        }),
+      );
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-cloudflared-test-",
+        });
+        const manager = yield* RelayClient.makeCloudflaredRelayClient({
+          baseDir,
+          releaseAsset: testReleaseAsset,
+        });
+
+        const installed = yield* manager.installWithProgress(() => Effect.void);
+        expect(installed).toEqual({
+          status: "available",
+          executablePath: managedPathFor(baseDir, RelayClient.CLOUDFLARED_VERSION),
+          source: "managed",
+          version: RelayClient.CLOUDFLARED_VERSION,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            layerHttpClient(testBinary),
+            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, goRuntimeSpawner),
+            layerHostRuntime(hostEnv),
+          ),
+        ),
+      );
+    },
+  );
+
   it.effect("rejects downloads whose checksum does not match the pinned manifest", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
