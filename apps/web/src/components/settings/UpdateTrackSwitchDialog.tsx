@@ -18,7 +18,7 @@ import {
   type ChannelSwitchRelease,
 } from "../sidebar/updateEverything.logic";
 import { isHostedByThisApp, useUpdateEverything } from "../sidebar/useUpdateEverything";
-import { prepareLocalTrackSwitch } from "./updateTrackSwitch.logic";
+import { nothingToMove, prepareLocalTrackSwitch } from "./updateTrackSwitch.logic";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -83,6 +83,15 @@ function SwitchPlan({
   const [checking, setChecking] = useState(false);
   const everything = useUpdateEverything(switchesLocal ? release.version : null, release);
   const label = channelSwitchLabel(release.channel);
+  const idle = nothingToMove({
+    label,
+    channel: release.channel,
+    savedChannel: updateState?.channel ?? null,
+    switchesLocal,
+    crossesLocal,
+    rows: everything.rows,
+    hasTargets: everything.hasUpdates,
+  });
   // This app's reinstall restarts every server it hosts, so each of their databases must allow it.
   const localBlocked = localSwitchBlockReason(
     APP_VERSION,
@@ -158,9 +167,7 @@ function SwitchPlan({
       providerCount={0}
       rows={everything.rows}
       notes={[
-        ...(everything.rows.length === 0 && !crossesLocal
-          ? [`Every connected machine is already on ${label}. This only saves the track.`]
-          : []),
+        ...(idle.note === null ? [] : [idle.note]),
         ...(crossesLocal && updatesOff
           ? ["This app's updates are off here, so reinstall it yourself to switch."]
           : []),
@@ -172,7 +179,9 @@ function SwitchPlan({
       confirmLabel={checking ? "Checking…" : `Switch to ${label}`}
       busy={checking}
       disabledReason={
-        !switchesLocal || localBlocked === null ? null : `This app cannot switch: ${localBlocked}.`
+        switchesLocal && localBlocked !== null
+          ? `This app cannot switch: ${localBlocked}.`
+          : idle.disabledReason
       }
       onConfirm={() => void run()}
     />
