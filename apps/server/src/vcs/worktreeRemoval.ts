@@ -4,10 +4,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 
 import type * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const INDEX_LIST_MAX_BYTES = 64 * 1024 * 1024;
+// About 10 seconds of retries while a stopped provider's processes exit.
+const OPEN_FILE_RETRIES = 40;
+const OPEN_FILE_RETRY_DELAY = "250 millis";
 
 /**
  * Git for Windows before 2.54 follows NTFS junctions; newer Git leaves them behind.
@@ -142,13 +146,19 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
       );
   }
 
-  // A file held open can stop the delete partway. Putting `.git` back, when
-  // that works, leaves a worktree that a retry can remove.
+  // Only forced deletes retry: a later attempt must not discard newly written edits.
+  // Restore `.git` on failure or interruption so Git can retry a partial deletion.
   const gitFileContents = yield* fileSystem
     .readFileString(gitFile)
     .pipe(Effect.mapError(() => notAWorktree));
-  yield* fileSystem.remove(worktreePath, { recursive: true }).pipe(
-    Effect.tapError(() => fileSystem.writeFileString(gitFile, gitFileContents).pipe(Effect.ignore)),
+  yield* fileSystem.remove(worktreePath, { recursive: true, force: true }).pipe(
+    // Node cannot cancel fs.rm; wait for its callback before restoring `.git`.
+    Effect.uninterruptible,
+    Effect.retry({
+      times: input.force ? OPEN_FILE_RETRIES : 0,
+      schedule: Schedule.spaced(OPEN_FILE_RETRY_DELAY),
+    }),
+    Effect.onError(() => fileSystem.writeFileString(gitFile, gitFileContents).pipe(Effect.ignore)),
     Effect.mapError((cause) => refuse(`failed to delete '${worktreePath}'`, cause)),
   );
   // The folder is gone, so Git only drops the worktree's metadata.
