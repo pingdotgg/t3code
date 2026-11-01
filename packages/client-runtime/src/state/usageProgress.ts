@@ -78,7 +78,12 @@ export function usageLoadingState(
   let everyProvider = false;
   for (const environment of environments) {
     const progress = usageEnvironmentProgress(environment, refreshing);
-    if (progress.phase === "loading" || progress.phase === "stale") everyProvider = true;
+    if (
+      progress.phase === "loading" ||
+      progress.phase === "stale" ||
+      (environment.isPending && environment.summary === null && environment.error === null)
+    )
+      everyProvider = true;
     if (progress.phase === "partway")
       for (const provider of progress.providers) providers.add(provider);
   }
