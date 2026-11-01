@@ -214,7 +214,7 @@ export function ComposerPermissionsSection(props: {
               className="group flex h-7 flex-1 cursor-pointer p-0.5 text-muted-foreground outline-none data-checked:text-foreground data-highlighted:text-foreground"
             >
               {/* Square items leave no hover gaps; the inset span draws the rounded highlight. */}
-              <span className="flex size-full items-center justify-center rounded-md group-data-checked:bg-input/72 group-not-data-checked:group-data-highlighted:bg-accent group-focus-visible:ring-2 group-focus-visible:ring-ring group-focus-visible:ring-inset">
+              <span className="flex size-full items-center justify-center rounded-md group-data-checked:bg-input/72 group-not-data-checked:group-data-highlighted:bg-input/32 group-focus-visible:ring-2 group-focus-visible:ring-ring group-focus-visible:ring-inset">
                 <OptionIcon aria-hidden="true" className="size-3.5" />
               </span>
             </MenuPrimitive.RadioItem>
