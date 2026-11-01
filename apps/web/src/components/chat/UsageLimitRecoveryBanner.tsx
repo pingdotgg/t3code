@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { deadlineStore } from "@t3tools/client-runtime/clock";
+import { providerFailureTitle } from "@t3tools/shared/orchestrationV2ThreadError";
 import { GaugeIcon } from "lucide-react";
 import { useState } from "react";
 import { useDeadlinePassed } from "../../hooks/useDeadline";
@@ -15,6 +16,7 @@ import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
 type RecoveryProps = {
   runId: RunId;
+  failureCode: string | null;
   resetAt: string | null;
   stoppedAt: string;
   snoozedUntil: string | null;
@@ -30,10 +32,10 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     id: `usage-limit-recovery:${runId}`,
     variant: "warning",
     icon: <GaugeIcon />,
-    title: "Usage limit reached",
+    title: providerFailureTitle("usage_limit", props.failureCode),
     description: resetAt
       ? `Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}`
-      : "Reset time unavailable; retry manually",
+      : "No reset time reported; retry manually",
     actions: canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null,
   };
 }

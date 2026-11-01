@@ -131,13 +131,30 @@ describe("V2 session presentation", () => {
       },
     } satisfies Extract<OrchestrationV2TurnItem, { readonly type: "error" }>;
 
-    expect(
-      providerErrorPresentation({
+    for (const [code, label] of [
+      ["responseTooManyFailedAttempts", "Provider rate limit (HTTP 429)"],
+      ["usageLimitExceeded", "Usage limit reached"],
+    ] as const) {
+      const failed = {
         ...retryItem,
-        status: "failed",
-        failure: { ...retryItem.failure, class: "usage_limit" },
-      }),
-    ).toMatchObject({ label: "Usage limit reached after 2/10 retries" });
+        status: "failed" as const,
+        title: "Usage limit reached",
+        failure: {
+          class: "usage_limit" as const,
+          code,
+          message: "exceeded retry limit, last status: 429 Too Many Requests",
+          retryable: null,
+        },
+      };
+      expect(providerErrorPresentation(failed)).toEqual({
+        label: `${label} after 2/10 retries`,
+        detail: failed.failure.message,
+      });
+      expect(providerErrorPresentation({ ...failed, retry: undefined })).toEqual({
+        label,
+        detail: failed.failure.message,
+      });
+    }
     const recoveredLimit = {
       ...retryItem,
       status: "completed" as const,
