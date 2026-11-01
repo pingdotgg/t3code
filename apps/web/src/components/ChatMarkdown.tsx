@@ -1035,7 +1035,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         <input
           {...props}
           type={type}
-          checked={checked}
+          checked={type === "checkbox" ? checked === true : checked}
           disabled={_disabled}
           readOnly={type === "checkbox"}
         />
@@ -1047,7 +1047,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         type="checkbox"
         name="markdown-task"
         aria-label="Toggle task"
-        checked={checked}
+        checked={checked === true}
         onChange={(event) => {
           const listItemStart = Number(event.currentTarget.closest("li")?.dataset.listItemOffset);
           if (!Number.isSafeInteger(listItemStart)) return;
