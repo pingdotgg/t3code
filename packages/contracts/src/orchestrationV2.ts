@@ -1197,6 +1197,21 @@ export function latestProviderTurnForAttempt<
   return latest;
 }
 
+/** A queued provider thread reserves a seat for the next run; it does not own the thread yet. */
+export function isQueuedProviderThreadPlaceholder(
+  providerThread: Pick<
+    OrchestrationV2ProviderThread,
+    "status" | "firstRunOrdinal" | "nativeThreadRef" | "providerSessionId"
+  >,
+): boolean {
+  return (
+    providerThread.status === "not_loaded" &&
+    providerThread.firstRunOrdinal === null &&
+    providerThread.nativeThreadRef === null &&
+    providerThread.providerSessionId === null
+  );
+}
+
 export const OrchestrationV2RuntimeRequest = Schema.Struct({
   id: RuntimeRequestId,
   nodeId: NodeId,
