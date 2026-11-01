@@ -620,7 +620,13 @@ function textJsonForSpan(text: string, marks: RichTextMark[]): Record<string, un
 export function buildTiptapContent(
   value: string,
   skillLabelFor: (name: string) => SkillMeta | null,
-  options?: { styling?: boolean; blocks?: boolean; literalText?: boolean; literalLength?: number },
+  options?: {
+    styling?: boolean;
+    blocks?: boolean;
+    literalText?: boolean;
+    answerThreadLinks?: boolean;
+    literalLength?: number;
+  },
 ): Record<string, unknown>[] {
   if (options?.literalText) {
     return value.split("\n").map((line) => ({
@@ -655,7 +661,7 @@ export function buildTiptapContent(
         atomSources.push(chunk.source);
         return sentinel;
       }
-      return splitPromptIntoComposerSegments(chunk.text)
+      return splitPromptIntoComposerSegments(chunk.text, options?.answerThreadLinks)
         .map((segment) => {
           if (segment.type === "text") return segment.text;
           const atom = atomJsonForSegment(segment, skillLabelFor);
@@ -858,7 +864,7 @@ export function buildTiptapContent(
 export function buildDocJson(
   value: string,
   skillLabelFor: (name: string) => SkillMeta | null,
-  options?: { styling?: boolean; literalText?: boolean },
+  options?: { styling?: boolean; literalText?: boolean; answerThreadLinks?: boolean },
 ) {
   const content = buildTiptapContent(value, skillLabelFor, options);
   if (content.at(-1)?.type === "horizontalRule") content.push({ type: "paragraph" });

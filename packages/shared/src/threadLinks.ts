@@ -117,6 +117,23 @@ export function unknownThreadLinkLabel(
     : "Thread on another machine";
 }
 
+/** Self-contained thread references outside code, including their source ranges. */
+export function collectThreadLinks(markdown: string) {
+  return Array.from(markdown.matchAll(THREAD_LINK_OUTSIDE_CODE)).flatMap((match) => {
+    const link = match.groups?.href ? parseThreadLinkHref(match.groups.href) : null;
+    if (link === null) return [];
+    return [
+      {
+        ...link,
+        label: match[0].slice(1, match[0].indexOf("](")),
+        source: match[0],
+        start: match.index,
+        end: match.index + match[0].length,
+      },
+    ];
+  });
+}
+
 /**
  * Writes each link with its thread's current title. A link `title` cannot resolve becomes plain
  * text, its written label or a neutral one, except a labeled v1 link, which may open elsewhere.
