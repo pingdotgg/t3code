@@ -670,6 +670,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["ask before thread chat history"],
   },
   {
+    id: "terminal-close-confirmation",
+    title: "Terminal close confirmation",
+    to: "/settings/threads",
+    searchTerms: ["ask before delete stop process shell console history"],
+  },
+  {
     id: "quit-confirmation",
     title: "Quit shortcut",
     to: "/settings/general",
