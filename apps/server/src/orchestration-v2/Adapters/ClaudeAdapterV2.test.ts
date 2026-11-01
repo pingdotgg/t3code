@@ -1512,6 +1512,74 @@ describe("ClaudeAdapterV2 resume compaction", () => {
         assert.isFunction(callback);
         const canUseTool = openedOptions?.canUseTool;
         assert.isFunction(canUseTool);
+        const shellSafetyReason =
+          "Dangerous rm operation not ruled out — the shell may read this command differently than it was parsed";
+        for (const [safetyIndex, { askRule, reason }] of [
+          { askRule: false, reason: shellSafetyReason },
+          { askRule: true, reason: shellSafetyReason },
+          {
+            askRule: false,
+            reason:
+              "Dangerous rm operation on possibly-empty variable path: $TARGET\nUse a literal absolute path instead.",
+          },
+          { askRule: false, reason: "This shell -c script runs rm and could not be checked" },
+          { askRule: false, reason: "A permission rule denies a command in this shell -c script" },
+        ].entries()) {
+          const safetyRequest = yield* runtime.events.pipe(
+            Stream.filter((event) => event.type === "runtime_request.updated"),
+            Stream.runHead,
+            Effect.forkScoped,
+          );
+          const safetySignal = yield* Effect.abortSignal;
+          const safetyDecision = yield* Effect.promise(() =>
+            canUseTool!(
+              "Bash",
+              { command: "for pair in a b; do echo $pair; done" },
+              {
+                signal: safetySignal,
+                toolUseID: `tool-shell-safety-${safetyIndex}`,
+                requestId: `request-shell-safety-${safetyIndex}`,
+                decisionReason: `\u001b[33m${reason}\u001b[39m`,
+                suppressAlwaysAllowRule: true,
+                ...(askRule
+                  ? {
+                      matchedAskRule: {
+                        source: "userSettings" as const,
+                        toolName: "Bash",
+                        ruleContent: "*",
+                      },
+                    }
+                  : {}),
+              },
+            ),
+          ).pipe(Effect.forkScoped);
+          const safety = yield* Effect.raceFirst(
+            Fiber.join(safetyDecision).pipe(
+              Effect.map((result) => ({ type: "decision", result }) as const),
+            ),
+            Fiber.join(safetyRequest).pipe(
+              Effect.map((event) => ({ type: "approval", event }) as const),
+            ),
+          );
+          assert.equal(safety.type, askRule ? "approval" : "decision");
+          if (safety.type === "decision") {
+            assert.equal(safety.result?.behavior, "deny");
+            if (safety.result?.behavior === "deny") {
+              assert.include(safety.result.message, reason);
+              assert.notInclude(safety.result.message, "\u001b[");
+            }
+          } else if (
+            Option.isSome(safety.event) &&
+            safety.event.value.type === "runtime_request.updated"
+          ) {
+            yield* runtime.respondToRuntimeRequest({
+              requestId: safety.event.value.runtimeRequest.id,
+              decision: "decline",
+            });
+            assert.equal((yield* Fiber.join(safetyDecision))?.behavior, "deny");
+          }
+          yield* Fiber.interrupt(safetyRequest);
+        }
         const longQuestion = `Choose a deployment target: ${"region ".repeat(80)}`;
         const questionRequestEvent = yield* runtime.events.pipe(
           Stream.filter((event) => event.type === "runtime_request.updated"),

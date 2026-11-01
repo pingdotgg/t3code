@@ -1,3 +1,4 @@
+import { ChildThreadApprovals } from "./ChildThreadApprovals";
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
@@ -1528,6 +1529,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                     key={`chatgpt-limit:${props.selectedThread.latestRun?.runId}`}
                     thread={props.selectedThread}
                   />
+                  <ChildThreadApprovals threadRef={props.selectedThreadDetailRef} />
                   <ThreadGuestShareBar
                     threadRef={props.selectedThreadDetailRef}
                     canOperateThread={props.canOperateThread}

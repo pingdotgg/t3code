@@ -1,3 +1,4 @@
+import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
@@ -3546,6 +3547,7 @@ export default function ChatView(props: ChatViewProps) {
                         : undefined
                     }
                   >
+                    <ChildThreadApprovals threadRef={activeThreadRef} />
                     <ComposerSurface.Shell contextRow={showComposerContextStrip}>
                       <ComposerSurface.Host
                         inert={queuedRunEdit.isSaving}
