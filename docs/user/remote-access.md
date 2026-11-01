@@ -212,8 +212,8 @@ minutes, then lets in only granted devices until it can tell. Right after it
 starts, it has no check to reuse. On that machine, `t3 tailscale require-grant`
 shows why. A refused
 device shows the grant to add, for that device and this machine only. It names
-both by Tailscale address, so remove it when you retire either one: Tailscale can
-give that address to a new device.
+both by Tailscale address, so remove it when either leaves the tailnet: Tailscale
+can give that address to a new device.
 
 A grant goes in the `grants` section of your tailnet policy. This one lets your
 devices sign in to machines tagged `tag:t3-box`:

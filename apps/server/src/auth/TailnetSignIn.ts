@@ -491,7 +491,7 @@ export const make = Effect.gen(function* () {
                 remoteAddress,
                 localAddress,
                 localPort,
-                `${label(node, status) ?? remoteAddress} on ${status.magicDnsName?.split(".")[0] ?? localAddress}; remove when either leaves, as addresses get reused`,
+                `${label(node, status) ?? remoteAddress} on ${status.magicDnsName?.split(".")[0] ?? localAddress}; remove when either leaves the tailnet, as addresses get reused`,
               )
             : undefined,
         );
