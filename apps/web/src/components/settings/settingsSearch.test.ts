@@ -109,6 +109,9 @@ describe("searchSettings", () => {
     expect(searchSettings("hold to quit")).toEqual([]);
     expect(searchSettings("wsl")).toEqual([]);
     expect(searchSettings("update track")).toEqual([]);
+    expect(searchSettings("styled context menu").map((item) => item.id)).not.toContain(
+      "styled-context-menu",
+    );
   });
 
   it("hides settings whose controls are unavailable", () => {

@@ -6,6 +6,25 @@ import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientP
 
 let cachedApi: LocalApi | undefined;
 
+// Invalidates in-flight `show` calls when a newer show begins or `close`
+// runs first. The styled preference read is asynchronous, so without this a
+// menu could open after it was already dismissed.
+let contextMenuShowGeneration = 0;
+
+// Whether the user opted into T3 Code styling for right-click menus on
+// desktop. Reads the client-settings snapshot lazily so this module stays
+// free of a static import cycle with the settings hooks. Falls back to the
+// native menu when the preference can't be read.
+async function shouldUseStyledContextMenu(): Promise<boolean> {
+  try {
+    const { ensureClientSettingsHydrated, getClientSettings } = await import("~/hooks/useSettings");
+    await ensureClientSettingsHydrated();
+    return getClientSettings().styledContextMenuEnabled;
+  } catch {
+    return false;
+  }
+}
+
 export function createLocalApi(): LocalApi {
   return {
     dialogs: {
@@ -45,15 +64,21 @@ export function createLocalApi(): LocalApi {
         position?: { x: number; y: number },
       ): Promise<T | null> => {
         if (window.desktopBridge) {
+          const generation = ++contextMenuShowGeneration;
+          const useStyled = await shouldUseStyledContextMenu();
+          if (generation !== contextMenuShowGeneration) return null;
+          if (useStyled) {
+            return showContextMenuFallback(items, position);
+          }
           return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
         }
         return showContextMenuFallback(items, position);
       },
-      // Unlike native menus, the DOM fallback needs dismissal when underlying state disappears.
+      // Dismissing is a no-op unless a DOM menu is open, so it is safe on desktop.
+      // Bumping the generation abandons any show still awaiting the preference read.
       close: async () => {
-        if (!window.desktopBridge) {
-          dismissContextMenu();
-        }
+        contextMenuShowGeneration += 1;
+        dismissContextMenu();
       },
     },
     persistence: {
