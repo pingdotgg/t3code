@@ -204,7 +204,7 @@ const requireGrantCommand = Command.make("require-grant", {
                           "devices get in. Name its owner with: t3 up --owner <login>",
                         ]
                       : [
-                          "Grant required: no. Your tailnet policy grants T3 Code here to no device,",
+                          "Grant required: no. Your tailnet policy grants T3 Code here to no device.",
                           "If Tailscale sign-in is on, your own untagged devices sign in without one.",
                           `Once the policy grants ${TAILNET_APP_CAPABILITY} here, only granted devices get in.`,
                           "Require a grant now with: t3 tailscale require-grant on",
@@ -218,7 +218,8 @@ const requireGrantCommand = Command.make("require-grant", {
                 ...(since === null
                   ? [
                       "This is this shell's scan. The server notices a first grant within a minute",
-                      "(five if it cannot read that device), and the last grant's removal within five.",
+                      "(five if it cannot read that device). After you remove the last grant, the",
+                      "owner rule returns within five minutes.",
                     ]
                   : []),
               ]

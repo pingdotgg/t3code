@@ -3,6 +3,7 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type ExecutionEnvironmentDescriptor,
+  tailscaleStateFromBackend,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
@@ -25,6 +26,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as TailscaleHost from "../tailscale/TailscaleHost.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
+import { signInIssues } from "./TailscaleHealth.ts";
 
 export class ServerEnvironmentIdPersistenceError extends Schema.TaggedError<ServerEnvironmentIdPersistenceError>()(
   "ServerEnvironmentIdPersistenceError",
@@ -289,10 +291,8 @@ export const make = Effect.gen(function* () {
     ? tailscaleHost.status.pipe(
         Effect.map(
           (status) =>
-            status.backendState === "Running" &&
-            status.userspaceNetworking !== true &&
-            TailscaleHost.isSupportedTailscaleVersion(status.version) &&
-            status.tailnetIpv4Addresses.length > 0,
+            tailscaleStateFromBackend(status.backendState) === "running" &&
+            signInIssues(status).length === 0,
         ),
         Effect.orElseSucceed(() => false),
       )
