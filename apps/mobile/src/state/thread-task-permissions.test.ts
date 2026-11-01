@@ -304,17 +304,31 @@ describe("mobile task permissions", () => {
     state.grantedEnvironments.add("secondary");
     const requests = useSelectedThreadRequests();
     expect(requests.activePendingUserInputAnswers).toEqual({ language: "TypeScript" });
+    requests.onChangeUserInputCustomAnswer(requestId, "language", "你好");
     state.grantedEnvironments.delete("secondary");
     await requests.onSubmitUserInput();
     expect(state.answer).not.toHaveBeenCalled();
     expect(useSelectedThreadRequests().activePendingUserInputAnswers).toEqual({
-      language: "TypeScript",
+      language: "你好",
     });
     state.grantedEnvironments.add("secondary");
+    requests.onChangeUserInputCustomAnswer(requestId, "language", "   ");
+    await requests.onSubmitUserInput();
+    expect(state.answer).not.toHaveBeenCalled();
+    requests.onChangeUserInputCustomAnswer(requestId, "language", "你好");
     await requests.onSubmitUserInput();
     expect(state.answer).toHaveBeenCalledWith({
       environmentId: "secondary",
-      input: { threadId: "thread", requestId: "input", answers: { language: "TypeScript" } },
+      input: { threadId: "thread", requestId: "input", answers: { language: "你好" } },
+    });
+
+    const emptyRequests = useSelectedThreadRequests();
+    expect(emptyRequests.activePendingUserInputAnswers).toBeNull();
+    emptyRequests.onChangeUserInputCustomAnswer(requestId, "language", "最新");
+    await emptyRequests.onSubmitUserInput();
+    expect(state.answer).toHaveBeenLastCalledWith({
+      environmentId: "secondary",
+      input: { threadId: "thread", requestId: "input", answers: { language: "最新" } },
     });
   });
 });
