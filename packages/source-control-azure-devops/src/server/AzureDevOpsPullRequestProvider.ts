@@ -1,4 +1,5 @@
 import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
@@ -42,6 +43,12 @@ const DIFF_FILE_CONCURRENCY = 4;
 export const MAX_DIFF_SPAWNS = 2 * DIFF_FILE_CONCURRENCY;
 
 export const LOCATION_CACHE_CAPACITY = 128;
+
+/**
+ * Stop starting file reads once a slice has run this long. The client abandons a diff page after
+ * 60 seconds, and each `az` read can take several seconds on a busy machine.
+ */
+export const DIFF_SLICE_READ_BUDGET_MILLIS = 15_000;
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
@@ -386,6 +393,7 @@ export const make = Effect.gen(function* () {
     // the Code tab has nothing to scope itself to and always asks for the whole change.
     getDiff: Effect.fn("AzureDevOpsPullRequestProvider.getDiff")(
       function* (input) {
+        const startedAt = yield* Clock.currentTimeMillis;
         const scope = yield* diffScope(input);
         if (scope === null) return EMPTY_DIFF_SLICE;
         const cursor = parseAzureDevOpsDiffCursor(input.cursor);
@@ -461,6 +469,12 @@ export const make = Effect.gen(function* () {
               full = true;
               break;
             }
+          }
+          if (
+            !full &&
+            (yield* Clock.currentTimeMillis) - startedAt >= DIFF_SLICE_READ_BUDGET_MILLIS
+          ) {
+            full = true;
           }
         }
 
