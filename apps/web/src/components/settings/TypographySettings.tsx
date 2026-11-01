@@ -143,7 +143,7 @@ function CodeFontRow({
   return (
     <FontFamilySettingsRow
       {...searchableSetting("code-font")}
-      {...(title !== undefined ? { title } : {})}
+      title={title ?? t("settings.typography.codeFont.title")}
       description={description ?? t("settings.typography.codeFont.description")}
       familyA11yLabel={familyA11yLabel ?? t("settings.typography.codeFont.familyA11y")}
       defaultFamily={defaults.code}
