@@ -24,6 +24,7 @@ import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeUtil from "node:util";
 
+import { readMacosSystemProxyEnv } from "./macosSystemProxy.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
@@ -305,17 +306,22 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
-  const runMaintenanceCommand = (
-    update: ProviderMaintenanceCommandAction,
-    onProgress: (line: string) => Effect.Effect<void>,
-  ) =>
-    runProviderMaintenanceCommandWithSpawner({
-      spawner,
-      command: update.executable,
-      args: update.args,
-      onProgress,
-      ...(update.env ? { env: update.env } : {}),
-    });
+  const runMaintenanceCommand = Effect.fn("ProviderMaintenanceRunner.runMaintenanceCommand")(
+    function* (
+      update: ProviderMaintenanceCommandAction,
+      onProgress: (line: string) => Effect.Effect<void>,
+    ) {
+      // Read per update: the user may toggle the system proxy while T3 Code runs.
+      const env = { ...update.env, ...(yield* readMacosSystemProxyEnv(spawner, update.env)) };
+      return yield* runProviderMaintenanceCommandWithSpawner({
+        spawner,
+        command: update.executable,
+        args: update.args,
+        onProgress,
+        ...(Object.keys(env).length > 0 ? { env } : {}),
+      });
+    },
+  );
   const commandCoordinator = yield* makeProviderMaintenanceCommandCoordinator({
     makeAlreadyRunningError: () =>
       new ServerProviderUpdateError({
