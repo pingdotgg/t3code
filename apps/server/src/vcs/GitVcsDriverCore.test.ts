@@ -1381,6 +1381,61 @@ it.effect("lets a worktree checkout that is still working run past five minutes"
   }).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
+it.effect("cancels a slow submodule checkout without reporting best-effort success", () =>
+  Effect.gen(function* () {
+    const updateStarted = yield* Deferred.make<void>();
+    const updateStopped = yield* Deferred.make<void>();
+    const finished = yield* Ref.make<ReadonlyArray<{ ok: boolean; detail: string | null }>>([]);
+    const claimed = yield* Ref.make<string | null>(null);
+    const spawner = ChildProcessSpawner.make((command) => {
+      if (
+        ChildProcess.isStandardCommand(command) &&
+        command.args[0] === "submodule" &&
+        command.args[1] === "update"
+      ) {
+        return Effect.acquireRelease(
+          Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              ...makeSuccessfulHandle(""),
+              exitCode: Deferred.succeed(updateStarted, undefined).pipe(
+                Effect.andThen(Effect.never),
+              ),
+            }),
+          ),
+          () => Deferred.succeed(updateStopped, undefined),
+        );
+      }
+      return Effect.succeed(makeSuccessfulHandle(""));
+    });
+    const driver = yield* makeGitVcsDriverCore().pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+    const cwd = yield* makeTmpDir();
+    const path = yield* Path.Path;
+    const worktreePath = path.join(cwd, "worktree");
+    yield* writeTextFile(worktreePath, ".gitmodules", "");
+    const creation = yield* driver
+      .createWorktree(
+        { cwd, refName: "main", newRefName: "bugfix/cancel-submodules", path: worktreePath },
+        {
+          progress: {
+            onWorktreeClaimed: (value) => Ref.set(claimed, value),
+            onSubmodulesFinished: (result) => Ref.update(finished, (items) => [...items, result]),
+          },
+        },
+      )
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(updateStarted);
+    yield* TestClock.adjust("6 minutes");
+    yield* Fiber.interrupt(creation);
+    const exit = yield* Fiber.await(creation);
+    assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+    assert.isTrue(yield* Deferred.isDone(updateStopped));
+    assert.equal(yield* Ref.get(claimed), worktreePath);
+    assert.isEmpty(yield* Ref.get(finished));
+  }).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
 describe("rejected git refs", () => {
   const remoteUrl = "https://user:token-123@git.example.invalid/org/secret-repo.git";
   const failedPush = `error: failed to push some refs to '${remoteUrl}'`;
@@ -4145,7 +4200,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
-    it.effect("checks out submodules in a new worktree", () =>
+    it.effect.each([
+      ["recursive", false],
+      ["recursive", true],
+      ["top-level", false],
+      ["top-level", true],
+    ] as const)("finishes a slow submodule checkout (%s, progress: %s)", ([submodules, progress]) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const pathService = yield* Path.Path;
@@ -4165,6 +4225,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         const submoduleRepo = yield* makeTmpDir("git-submodule-");
         yield* initRepoWithCommit(submoduleRepo);
+        yield* writeTextFile(submoduleRepo, ".gitattributes", "* text eol=lf\n");
         yield* writeTextFile(submoduleRepo, "SHARED.md", "# shared\n");
         yield* git(submoduleRepo, ["add", "."]);
         yield* git(submoduleRepo, ["commit", "-m", "shared"]);
@@ -4173,23 +4234,80 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const { initialBranch } = yield* initRepoWithCommit(cwd);
         yield* git(cwd, ["submodule", "add", submoduleRepo, "shared"]);
         yield* git(cwd, ["commit", "-m", "add submodule"]);
+        const recordedHead = yield* git(submoduleRepo, ["rev-parse", "HEAD"]);
+        yield* writeTextFile(submoduleRepo, "SHARED.md", "# newer remote default\n");
+        yield* git(submoduleRepo, ["commit", "-am", "advance remote default"]);
+
+        const updateStarted = yield* Deferred.make<void>();
+        const releaseUpdate = yield* Deferred.make<void>();
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (
+              ChildProcess.isStandardCommand(command) &&
+              command.args[0] === "submodule" &&
+              command.args[1] === "update"
+            ) {
+              yield* Deferred.succeed(updateStarted, undefined);
+              yield* Deferred.await(releaseUpdate);
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(layerServerConfig),
+        );
+        const finished = yield* Ref.make<ReadonlyArray<{ ok: boolean; detail: string | null }>>([]);
+        const lines = yield* Ref.make<ReadonlyArray<string>>([]);
 
         const worktreePath = pathService.join(
           yield* makeTmpDir("git-worktrees-"),
           "submodule-worktree",
         );
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* driver.createWorktree({
-          cwd,
-          path: worktreePath,
-          refName: initialBranch,
-          newRefName: "feature/submodules",
-        });
+        const creation = yield* driver
+          .createWorktree(
+            {
+              cwd,
+              path: worktreePath,
+              refName: initialBranch,
+              newRefName: "feature/submodules",
+            },
+            {
+              submodules,
+              progress: {
+                onSubmodulesFinished: (result) =>
+                  Ref.update(finished, (items) => [...items, result]),
+                ...(progress
+                  ? {
+                      onSubmoduleLine: (line: string) =>
+                        Ref.update(lines, (items) => [...items, line]),
+                    }
+                  : {}),
+              },
+            },
+          )
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(updateStarted);
+        yield* TestClock.adjust("6 minutes");
+        yield* Deferred.succeed(releaseUpdate, undefined);
+        yield* Fiber.join(creation);
 
+        assert.deepEqual(yield* Ref.get(finished), [{ ok: true, detail: null }]);
         assert.equal(
           yield* fileSystem.exists(pathService.join(worktreePath, "shared", "SHARED.md")),
           true,
         );
+        assert.equal(
+          yield* git(pathService.join(worktreePath, "shared"), ["rev-parse", "HEAD"]),
+          recordedHead,
+        );
+        assert.equal(yield* git(worktreePath, ["status", "--porcelain"]), "");
+        assert.equal(
+          yield* git(pathService.join(worktreePath, "shared"), ["status", "--porcelain"]),
+          "",
+        );
+        if (progress) assert.isNotEmpty(yield* Ref.get(lines));
       }),
     );
 
@@ -4206,6 +4324,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           '[submodule "missing"]\n\tpath = missing\n\turl = /nonexistent/repo.git\n',
         );
         yield* git(cwd, ["add", "."]);
+        const gitlink = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* git(cwd, ["update-index", "--add", "--cacheinfo", `160000,${gitlink},missing`]);
         yield* git(cwd, ["commit", "-m", "add unreachable submodule"]);
 
         const worktreePath = pathService.join(
@@ -4213,15 +4333,27 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           "broken-submodule-worktree",
         );
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        const created = yield* driver.createWorktree({
-          cwd,
-          path: worktreePath,
-          refName: initialBranch,
-          newRefName: "feature/broken-submodules",
-        });
+        const finished = yield* Ref.make<ReadonlyArray<{ ok: boolean; detail: string | null }>>([]);
+        const created = yield* driver.createWorktree(
+          {
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/broken-submodules",
+          },
+          {
+            progress: {
+              onSubmodulesFinished: (result) => Ref.update(finished, (items) => [...items, result]),
+            },
+          },
+        );
 
         assert.equal(created.worktree.path, worktreePath);
         assert.equal(yield* fileSystem.exists(worktreePath), true);
+        const results = yield* Ref.get(finished);
+        assert.lengthOf(results, 1);
+        assert.isFalse(results[0]!.ok);
+        assert.include(results[0]!.detail, "GitVcsDriver.createWorktree.updateSubmodules");
       }),
     );
 

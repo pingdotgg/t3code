@@ -4239,17 +4239,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             submoduleMode.value === "recursive"
               ? ["submodule", "update", "--init", "--recursive"]
               : ["submodule", "update", "--init"],
-            onSubmoduleLine
-              ? {
-                  env: { LC_ALL: "C" },
-                  progress: { onStdoutLine: onSubmoduleLine, onStderrLine: onSubmoduleLine },
-                }
-              : {},
+            {
+              // Cloning scales with remote size; let it finish or be cancelled, like worktree add.
+              timeoutMs: null,
+              ...(onSubmoduleLine
+                ? {
+                    env: { LC_ALL: "C" },
+                    progress: { onStdoutLine: onSubmoduleLine, onStderrLine: onSubmoduleLine },
+                  }
+                : {}),
+            },
           ),
         ),
         Effect.matchEffect({
           onFailure: (cause) =>
-            Effect.logWarning("worktree submodule checkout failed; submodule paths are empty", {
+            Effect.logWarning("worktree submodule checkout failed; submodules may be incomplete", {
               worktreePath,
               cause,
             }).pipe(
