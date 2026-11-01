@@ -489,6 +489,42 @@ export const make = Effect.gen(function* () {
             payload: cancelledItem(item, now),
           });
         }
+        // A queued run never did provider work, so there is nothing to explain.
+        if (run.status === "queued") continue;
+        events.push({
+          id: yield* allocateEventId(),
+          type: "turn-item.updated",
+          threadId: projection.thread.id,
+          runId: run.id,
+          ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            id: ids.derive.runSignalTurnItem({ runId: run.id, signal: "server-recovery" }),
+            threadId: projection.thread.id,
+            runId: run.id,
+            nodeId: run.rootNodeId,
+            providerThreadId: run.providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            // EventSink places the item after the run's existing items.
+            ordinal:
+              Math.max(
+                0,
+                ...projection.turnItems
+                  .filter((item) => item.runId === run.id)
+                  .map((item) => item.ordinal),
+              ) + 1,
+            status: "completed",
+            title: trigger === "startup" ? "Server restarted" : "Server shut down",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "system_notice",
+            message: detail,
+          },
+        });
       }
       // Blocking waits die with their turn; let child results wake the parent continuation as async tasks.
       const cutRunIds = new Set(runs.map((run) => run.id));

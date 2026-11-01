@@ -418,6 +418,74 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("tells the thread a running run stopped because the server restarted", () => {
+  const threadId = ThreadId.make("thread_restart_notice");
+  const runId = RunId.make("run_restart_notice");
+  const rootNodeId = NodeId.make("node_restart_notice");
+  let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
+    null;
+  const projection = {
+    thread: { id: threadId },
+    runtimeRequests: [],
+    providerSessions: [],
+    providerThreads: [],
+    providerTurns: [],
+    runs: [{ id: runId, status: "running", providerInstanceId: ProviderInstanceId.make("codex") }],
+    attempts: [
+      {
+        id: RunAttemptId.make("attempt_restart_notice"),
+        runId,
+        rootNodeId,
+        status: "running",
+      },
+    ],
+    nodes: [{ id: rootNodeId, runId, status: "running" }],
+    subagents: [],
+    messages: [],
+    turnItems: [],
+  } as unknown as OrchestrationV2ThreadProjection;
+  const layer = ProviderRuntimeRecovery.layer.pipe(
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getRecoveryThreadIds: () => Effect.succeed([threadId]),
+          getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+        }),
+        Layer.mock(EventSink.EventSinkV2)({
+          commitCommand: (input) => {
+            committedInput = input;
+            return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+          },
+        }),
+        IdAllocator.layer,
+        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+          runRecoveryOnce: Effect.succeed(false),
+        }),
+        Layer.mock(EffectOutbox.EffectOutboxV2)({
+          reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+        }),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const summary =
+      yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
+    assert.equal(summary.terminalizedRuns, 1);
+    const notices = (committedInput?.events ?? []).flatMap((event) =>
+      event.type === "turn-item.updated" &&
+      event.payload.type === "system_notice" &&
+      event.payload.runId === runId
+        ? [event.payload]
+        : [],
+    );
+    assert.equal(notices.length, 1, "the restart-cancelled run has no notice saying why");
+    assert.equal(notices[0]?.status, "completed");
+    assert.include(notices[0]?.message ?? "", "restarted");
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("recovery closes a secret card's form but leaves a link card open", () => {
   const threadId = ThreadId.make("thread_secret_recovery");
   const runId = RunId.make("run_secret_recovery");
@@ -727,6 +795,7 @@ it.effect(
           ["provider-turn.updated", "cancelled"],
           ["message.updated", null],
           ["turn-item.updated", "cancelled"],
+          ["turn-item.updated", "completed"],
           ["provider-thread.updated", "idle"],
           ["provider-session.updated", "stopped"],
         ],
