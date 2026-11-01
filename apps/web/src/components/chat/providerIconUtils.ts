@@ -1,5 +1,6 @@
 import type { ProviderDriverKind } from "@t3tools/contracts";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
+import { escape as escapeRegExp } from "effect/RegExp";
 
 export type ModelEsque = {
   slug: string;
@@ -12,10 +13,6 @@ export type ModelEsque = {
   isLegacy?: boolean | undefined;
   isUnavailable?: boolean | undefined;
 };
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 function stripLeadingQualifier(value: string, qualifier: string | null | undefined): string {
   const trimmedQualifier = qualifier?.trim();
