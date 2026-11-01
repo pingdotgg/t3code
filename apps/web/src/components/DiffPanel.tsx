@@ -50,6 +50,7 @@ import {
   getRenderablePatch,
   resolveDiffThemeName,
   resolveFileDiffPath,
+  type RenderablePatch,
 } from "../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
 import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
@@ -127,6 +128,27 @@ function getCachedFileEntry(fileDiff: FileDiffMetadata) {
   };
   fileEntryCache.set(fileDiff, entry);
   return entry;
+}
+
+// Pierre loads expanded lines into the parsed file it was given, so a patch has to keep its parse
+// across re-renders and refetches that return the same text. The four most recent are kept.
+const recentPatchParses: Array<{ key: string; patch: string; parse: RenderablePatch | null }> = [];
+
+function getCachedRenderablePatch(
+  patch: string | undefined,
+  cacheScope: string,
+  options: { compactPartialHunkOffsets: boolean; ignoreWhitespace?: boolean },
+) {
+  if (patch === undefined) return null;
+  const key = `${cacheScope}:${options.compactPartialHunkOffsets}:${options.ignoreWhitespace}`;
+  const index = recentPatchParses.findIndex((entry) => entry.key === key && entry.patch === patch);
+  const entry =
+    index === -1
+      ? { key, patch, parse: getRenderablePatch(patch, cacheScope, options) }
+      : recentPatchParses.splice(index, 1)[0]!;
+  recentPatchParses.unshift(entry);
+  recentPatchParses.splice(4);
+  return entry.parse;
 }
 
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
@@ -477,7 +499,7 @@ export default function DiffPanel({
     isGitSelection && selectedGitSource?.truncated && selectedGitSource.files
       ? selectedGitSource
       : null;
-  const renderablePatch = getRenderablePatch(
+  const renderablePatch = getCachedRenderablePatch(
     lazySource ? undefined : selectedPatch,
     `diff-panel:${resolvedTheme}`,
     {
