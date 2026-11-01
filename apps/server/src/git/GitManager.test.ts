@@ -1769,6 +1769,91 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  function squashMergeIntoRemoteMain(repoDir: string, branch: string) {
+    return Effect.gen(function* () {
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", branch]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "squash.txt"), "one\ntwo\n");
+      yield* runGit(repoDir, ["add", "squash.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Feature work"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", branch]);
+      // The host squash-merges: a new commit on main with the branch's tree, not the branch's commit.
+      const squash = yield* runGit(repoDir, [
+        "commit-tree",
+        "HEAD^{tree}",
+        "-p",
+        "origin/main",
+        "-m",
+        "Feature work (#217)",
+      ]);
+      yield* runGit(repoDir, ["push", "origin", `${squash.stdout.trim()}:refs/heads/main`]);
+      return (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+    });
+  }
+
+  const squashMergedPr = (branch: string, headSha: string): FakeChangeRequest => ({
+    number: 217,
+    title: "Feature work",
+    url: "https://github.com/pingdotgg/t3code/pull/217",
+    baseRefName: "main",
+    headRefName: branch,
+    headSha,
+    state: "merged",
+    mergedAt: "2026-04-02T15:00:00Z",
+    updatedAt: "2026-04-02T15:00:00Z",
+  });
+
+  it.effect("status reports nothing to ship after a squash merge deleted the remote branch", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const branch = "feature/squash-deleted";
+      const headSha = yield* squashMergeIntoRemoteMain(repoDir, branch);
+      yield* runGit(repoDir, ["push", "origin", "--delete", branch]);
+      yield* runGit(repoDir, ["fetch", "--prune", "origin"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: { prListSequence: [[squashMergedPr(branch, headSha)]] },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr?.state).toBe("merged");
+      expect(status.hasUpstream).toBe(false);
+      expect({
+        aheadCount: status.aheadCount,
+        aheadOfDefaultCount: status.aheadOfDefaultCount,
+      }).toEqual({ aheadCount: 0, aheadOfDefaultCount: 0 });
+    }),
+  );
+
+  it.effect("status reports nothing to ship after a squash merge kept the remote branch", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const branch = "feature/squash-kept";
+      const headSha = yield* squashMergeIntoRemoteMain(repoDir, branch);
+      yield* runGit(repoDir, ["fetch", "--prune", "origin"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: { prListSequence: [[squashMergedPr(branch, headSha)]] },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr?.state).toBe("merged");
+      expect(status.hasUpstream).toBe(true);
+      expect({
+        aheadCount: status.aheadCount,
+        aheadOfDefaultCount: status.aheadOfDefaultCount,
+      }).toEqual({ aheadCount: 0, aheadOfDefaultCount: 0 });
+    }),
+  );
+
   it.each([
     [
       "https://github.example.com/team/repository/pull/42?tab=files",
