@@ -4486,6 +4486,7 @@ function isClaudeTranscriptConversationLine(
 interface PendingClaudeSubagentLaunch {
   readonly model?: string;
   readonly effort?: string;
+  readonly inheritModel?: boolean;
   readonly ownerToolUseId?: string;
 }
 
@@ -4498,8 +4499,15 @@ function claudeSubagentModelSelection(
   instanceId: ModelSelection["instanceId"],
   model: string,
   effort: string | undefined,
+  inheritedSelection?: ModelSelection,
 ): ModelSelection {
   const selection = resolveClaudeCatalogModelSelection(catalog, instanceId, model);
+  const options = new Map(
+    [
+      ...(inheritedSelection?.model === selection.model ? (inheritedSelection.options ?? []) : []),
+      ...(selection.options ?? []),
+    ].map((option) => [option.id, option] as const),
+  );
   const descriptor = getClaudeCatalogModelCapabilities(
     catalog,
     selection.model,
@@ -4508,15 +4516,11 @@ function claudeSubagentModelSelection(
     effort !== undefined &&
     descriptor?.type === "select" &&
     descriptor.options.some((option) => option.id === effort);
-  return offered
-    ? {
-        ...selection,
-        options: [
-          ...(selection.options?.filter((option) => option.id !== "effort") ?? []),
-          { id: "effort", value: effort },
-        ],
-      }
-    : selection;
+  if (offered) {
+    options.delete("effort");
+    options.set("effort", { id: "effort", value: effort });
+  }
+  return { ...selection, ...(options.size > 0 ? { options: [...options.values()] } : {}) };
 }
 
 const PENDING_CLAUDE_SUBAGENT_CAP = 64;
@@ -4544,9 +4548,10 @@ function rememberClaudeSubagentLaunch(
   toolUseId: string,
   input: ClaudeNativeToolInput,
   ownerToolUseId: string | null,
+  defaultModel: string | undefined,
 ): void {
   if (context.subagentsByToolUseId.has(toolUseId)) return;
-  const requested = firstStringInputField(input, ["model"]);
+  const requested = firstStringInputField(input, ["model"]) ?? (defaultModel?.trim() || undefined);
   const model =
     requested !== "inherit"
       ? requested && canonicalClaudeSubagentModel(catalog, requested)
@@ -4557,11 +4562,13 @@ function rememberClaudeSubagentLaunch(
   const launch: PendingClaudeSubagentLaunch = {
     ...(model === undefined || pending.get(toolUseId)?.model !== undefined ? {} : { model }),
     ...(effort === undefined ? {} : { effort }),
+    inheritModel: requested === undefined || requested === "inherit",
     ...(ownerToolUseId === null ? {} : { ownerToolUseId }),
   };
   if (
     launch.model !== undefined ||
     launch.effort !== undefined ||
+    launch.inheritModel === true ||
     launch.ownerToolUseId !== undefined
   ) {
     rememberPendingClaudeSubagentLaunch(pending, toolUseId, launch);
@@ -6706,6 +6713,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly title?: string;
           readonly model?: string;
           readonly effort?: string;
+          readonly inheritModel?: boolean;
           readonly owner?: ActiveClaudeSubagent;
           readonly nativeTaskType?: string;
           readonly progress?: string;
@@ -6809,6 +6817,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   .effort)
               : existingSubagent.effort;
           const model = input.model ?? priorTask?.model ?? null;
+          const inheritedSelection =
+            existingSubagent?.task.modelSelection ??
+            (input.inheritModel
+              ? (input.owner?.task.modelSelection ?? input.context.input.modelSelection)
+              : undefined);
           const task = {
             ...(priorTask ?? {
               id: nodeId,
@@ -6846,8 +6859,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   modelSelection: claudeSubagentModelSelection(
                     modelCatalog,
                     input.context.input.modelSelection.instanceId,
-                    model || input.context.input.modelSelection.model,
+                    model || inheritedSelection?.model || input.context.input.modelSelection.model,
                     effort,
+                    inheritedSelection,
                   ),
                 }
               : {}),
@@ -9491,6 +9505,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
                 ...(model === undefined ? {} : { model }),
                 ...(launch?.effort === undefined ? {} : { effort: launch.effort }),
+                ...(launch?.inheritModel === true ? { inheritModel: true } : {}),
                 ...(owner === undefined ? {} : { owner }),
                 ...(isWorkflow
                   ? {
@@ -9657,6 +9672,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 toolUse.id,
                 nativeToolInput,
                 parentToolUseIdFromSdkMessage(message),
+                adapterOptions.environment.CLAUDE_CODE_SUBAGENT_MODEL,
               );
               continue;
             }
@@ -10257,6 +10273,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeRequestId,
               nativeToolInput,
               null,
+              adapterOptions.environment.CLAUDE_CODE_SUBAGENT_MODEL,
             );
           } else if (startToolCall && !heldForEcho) {
             yield* ensureToolCallStarted({
