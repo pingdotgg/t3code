@@ -219,7 +219,7 @@ const requireGrantCommand = Command.make("require-grant", {
                   ? [
                       "This is this shell's scan. The server notices a first grant within a minute",
                       "(five if it cannot read that device). After you remove the last grant, the",
-                      "owner rule returns within five minutes.",
+                      "owner rule returns within five minutes, once it can read every device.",
                     ]
                   : []),
               ]

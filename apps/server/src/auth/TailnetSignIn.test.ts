@@ -1561,6 +1561,24 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       },
     );
 
+    it.effect("a host tagged during a scan does not admit its former owner", () => {
+      const tailnet = withLaptop();
+      return Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        tailnet.hold = { address: LAPTOP_ADDRESS, started, release };
+        const phone = yield* refusalOf(signIn(makeDpopKey())).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        // Tagged with no owner set, the host has no owner, so only grants could let in.
+        tailnet.status = hostStatus({
+          Peer: peers,
+          Self: { ...hostStatus().Self, Tags: ["tag:server"] },
+        });
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(phone)).toBe("policy_unknown");
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
     it.effect("a grant sign-in on another account does not lock the owner out here", () => {
       const tailnet = withLaptop();
       const home = tailnet.status;

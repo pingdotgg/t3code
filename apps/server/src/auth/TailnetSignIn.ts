@@ -286,7 +286,13 @@ export const make = Effect.gen(function* () {
       // device that joined since the scanned list was not looked up, so "no grants" is
       // unproven; a grant found still stands, as it only turns the owner rule off.
       const after = yield* host.freshStatus;
-      if (after.selfNodeId !== account || (yield* Ref.get(switchSeen))) {
+      // Tagging the host or untagging it changes who owns it, so the owner a sign-in read
+      // before the scan may no longer be the owner.
+      if (
+        after.selfNodeId !== account ||
+        (yield* Ref.get(switchSeen)) ||
+        (after.selfTags.length === 0) !== (status.selfTags.length === 0)
+      ) {
         return yield* Effect.fail(["this host"]);
       }
       if (
