@@ -367,9 +367,9 @@ export const OpenCodeDriver: ProviderDriver<
           effectiveConfig.enabled && isLocalOpenCodeServerUrl(effectiveConfig.serverUrl)
             ? probeOpenCodeBinary(effectiveConfig.binaryPath, processEnv).pipe(
                 Effect.map((probed) => probed.version),
-                Effect.orElseSucceed(() => undefined),
+                Effect.orElseSucceed(() => null),
               )
-            : Effect.succeed(undefined),
+            : Effect.void,
         provider: checkOpenCodeProviderStatus(
           effectiveConfig,
           host.paths.cwd,

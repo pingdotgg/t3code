@@ -101,22 +101,29 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("distinguishes an updated CLI from an older running loopback server", () =>
-    Effect.gen(function* () {
-      const runtime = {
-        ...openCode2Runtime,
-        runOpenCodeCommand: () =>
-          Effect.succeed({ stdout: "opencode v2.1.2\n", stderr: "", code: 0 }),
-      } as OpenCodeRuntime.OpenCodeRuntime["Service"];
-      const instance = yield* create(
-        { serverUrl: "http://127.0.0.1:4096" },
-        replayOpenCodeServer(OPENCODE_2_RESPONSES, ""),
-      ).pipe(Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime));
+  it.effect.each(["2.1.2", null])(
+    "reports the installed CLI version independently of the loopback server (%s)",
+    (installedVersion) =>
+      Effect.gen(function* () {
+        const runtime = {
+          ...openCode2Runtime,
+          runOpenCodeCommand: () =>
+            Effect.succeed({
+              stdout:
+                installedVersion === null ? "unrecognized" : `opencode v${installedVersion}\n`,
+              stderr: "",
+              code: 0,
+            }),
+        } as OpenCodeRuntime.OpenCodeRuntime["Service"];
+        const instance = yield* create(
+          { serverUrl: "http://127.0.0.1:4096" },
+          replayOpenCodeServer(OPENCODE_2_RESPONSES, ""),
+        ).pipe(Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime));
 
-      const snapshot = yield* instance.snapshot.refresh;
-      assert.strictEqual(snapshot.version, "2.0.18");
-      assert.strictEqual(snapshot.installedVersion, "2.1.2");
-    }).pipe(Effect.scoped),
+        const snapshot = yield* instance.snapshot.refresh;
+        assert.strictEqual(snapshot.version, "2.0.18");
+        assert.strictEqual(snapshot.installedVersion, installedVersion);
+      }).pipe(Effect.scoped),
   );
 
   it.effect("skips the installed CLI probe when a localhost provider is disabled", () =>
