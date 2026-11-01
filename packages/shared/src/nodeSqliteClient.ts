@@ -629,6 +629,8 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
     yield* warn("Node SQLite lacks transaction-state or statement-authorizer support");
     return undefined;
   }
+  // These are the writer's first statements, before callers set their own wait.
+  writer.exec("PRAGMA busy_timeout = 5000;");
   const version = String(writer.prepare("SELECT sqlite_version() AS version").get()?.version);
   const [major = 0, minor = 0] = version.split(".").map(Number);
   // Older SQLite treats NOOP as PASSIVE, which would checkpoint on the writer.
