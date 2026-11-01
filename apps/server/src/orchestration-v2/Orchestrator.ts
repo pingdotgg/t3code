@@ -13815,7 +13815,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           stored.event.payload.status === "running",
       ),
       Stream.runForEach(deliverStartupQueuedMessages),
-      Effect.forkDetach,
+      Effect.forkScoped,
     );
 
   // A child whose run ends while its background tasks or its own subagents still run has no
