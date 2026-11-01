@@ -73,6 +73,13 @@ Fix: restart T3 Code on the host. For the background service, run
 The host's T3 Connect address did not resolve, refused the connection, failed a
 secure (TLS) connection, or did not answer in time.
 
+A DNS failure on the host does not prove the address fails on other networks.
+After tunnel setup, a cached not-found answer can persist until it expires.
+Allow time for DNS caches to refresh, then check again. If it persists, compare
+DNS answers for the hostname shown in the diagnosis, both on the host and another
+network. The public record may be missing, or the host's network may have a stale
+or filtered answer.
+
 Fix:
 
 1. Make sure the host is awake and online.

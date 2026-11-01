@@ -658,7 +658,9 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
                 ? "This environment was removed from T3 Connect. Turn it on to link it again."
                 : managedTunnelActive
                   ? reachability?.status === "unreachable"
-                    ? "T3 Connect is on, but other devices cannot reach this environment."
+                    ? reachability.cause === "dns_failed"
+                      ? "T3 Connect is on, but this machine could not verify reachability."
+                      : "T3 Connect is on, but other devices cannot reach this environment."
                     : reachability?.status === "reachable"
                       ? "This environment is available to your other devices through T3 Connect."
                       : "T3 Connect is on. Reachability has not been checked yet."
