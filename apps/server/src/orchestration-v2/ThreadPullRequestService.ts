@@ -159,7 +159,13 @@ export const make = Effect.gen(function* () {
       readThreadSnapshot(request),
       projectStore.listShells(),
     ]);
-    const snapshotThreads = threadSnapshot.threads;
+    // Subagent children refresh after their own runs; sweeping them costs a lookup each per minute.
+    const snapshotThreads =
+      request.threadId === null
+        ? threadSnapshot.threads.filter(
+            (thread) => thread.lineage.relationshipToParent !== "subagent",
+          )
+        : threadSnapshot.threads;
     const projects = new Map(projectShells.map((project) => [project.id, project]));
     if (request.backfill) {
       for (const thread of snapshotThreads) {
