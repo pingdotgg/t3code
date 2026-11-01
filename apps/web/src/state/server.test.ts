@@ -2,8 +2,10 @@ import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connect
 import { EnvironmentId, type KeybindingRule, type ServerConfig } from "@t3tools/contracts";
 import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import { Atom, AtomRegistry } from "effect/reactivity";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { environmentCatalog } from "../connection/catalog";
+import { desktopHomeEnvironmentIdAtom } from "./primaryEnvironment";
 import { resolveShortcutCommand } from "../keybindings";
 import { createShortcutKeybindingsAtom } from "./server";
 
@@ -122,5 +124,30 @@ describe("createShortcutKeybindingsAtom", () => {
 
     harness.registry.set(harness.primaryEnvironmentIdAtom, null);
     expect(harness.cmdN()).toBe("chat.newLocal");
+  });
+});
+
+describe("desktopHomeEnvironmentIdAtom", () => {
+  it("discovers an identity created after the desktop starts", () => {
+    let homeId: string | null = null;
+    vi.stubGlobal("window", { desktopBridge: { getHomeEnvironmentId: () => homeId } });
+    try {
+      const catalog = { isReady: false, entries: new Map() };
+      const registry = AtomRegistry.make({
+        initialValues: [[environmentCatalog.catalogValueAtom, catalog]],
+      });
+      registries.push(registry);
+      registry.subscribe(desktopHomeEnvironmentIdAtom, () => {});
+      expect(registry.get(desktopHomeEnvironmentIdAtom)).toBeNull();
+
+      homeId = "desktop-home";
+      registry.ensureNode(environmentCatalog.catalogValueAtom).setInitialValue({
+        ...catalog,
+        isReady: true,
+      });
+      expect(registry.get(desktopHomeEnvironmentIdAtom)).toBe(homeId);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

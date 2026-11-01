@@ -1,3 +1,4 @@
+import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import {
   boundAttachmentIds,
   buildExpiredTerminalContextToastCopy,
@@ -1227,5 +1228,27 @@ describe("deriveWorkspaceMutationId", () => {
     expect(deriveWorkspaceMutationId([item("reply", "assistant_message", "completed")], null)).toBe(
       null,
     );
+  });
+});
+
+describe("Open in for the desktop home", () => {
+  it("shows both local environments when the primary has a separate WSL home", () => {
+    const primaryEnvironmentId = EnvironmentId.make("wsl");
+    const desktopHomeEnvironmentId = EnvironmentId.make("desktop-home");
+    for (const [activeThreadEnvironmentId, visible] of [
+      [primaryEnvironmentId, true],
+      [desktopHomeEnvironmentId, true],
+      [EnvironmentId.make("other"), false],
+    ] as const) {
+      expect(
+        shouldShowOpenInPicker({
+          activeProjectName: "Project",
+          activeThreadEnvironmentId,
+          primaryEnvironmentId,
+          desktopHomeEnvironmentId,
+          remoteOpenMode: "local-exec",
+        }),
+      ).toBe(visible);
+    }
   });
 });
