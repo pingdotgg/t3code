@@ -71,23 +71,21 @@ function MarkdownImage(props: {
   readonly alt: string | null;
   readonly onPreview: (source: FilePreviewSource) => void;
 }) {
-  const media = usePullRequestMediaUrl(props.href);
+  const href = normalizeNativeMarkdownUrl(props.href);
+  const media = usePullRequestMediaUrl(href);
   const context = useContext(PullRequestMediaContext);
   const withGallery = useFilePreviewGallery();
   return (
     <ThreadMarkdownImageView
       uri={media.uri}
-      sourceKey={props.href}
+      sourceKey={href}
       cacheKey={media.cacheKey}
-      unavailable={
-        media.unavailable || !/^https?:\/\//i.test(normalizeNativeMarkdownUrl(props.href))
-      }
-
+      unavailable={media.unavailable || !/^https?:\/\//i.test(href)}
       alt={props.alt}
       onPressPreview={(source) =>
         props.onPreview(
           withGallery({
-            ...pullRequestImageSource(props.href, context),
+            ...pullRequestImageSource(href, context),
             name: source.name,
             sourceIdentifier: source.sourceIdentifier,
           }),
@@ -157,7 +155,9 @@ function PullRequestMarkdownContent(props: {
         textStyle={styles.nativeTextStyle}
         onLinkPress={openLink}
         renderImage={renderImage}
-        onImagePress={(href) => setPreview(pullRequestImageSource(href, mediaContext))}
+        onImagePress={(href) =>
+          setPreview(pullRequestImageSource(normalizeNativeMarkdownUrl(href), mediaContext))
+        }
       />
       <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
     </FilePreviewGallery>
