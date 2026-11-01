@@ -183,6 +183,44 @@ function codexFileChangeApprovalPrompt(input: {
   return input.grantRoot?.trim() || undefined;
 }
 
+function codexFileSystemPathLabel(
+  path: CodexSchema.PermissionsRequestApprovalParams__FileSystemPath,
+): string {
+  if (path.type === "path") return path.path;
+  if (path.type === "glob_pattern") return `glob ${path.pattern}`;
+  const special = path.value;
+  switch (special.kind) {
+    case "root":
+      return "entire filesystem (/)";
+    case "minimal":
+      return "minimal system paths";
+    case "project_roots":
+      return special.subpath ? `project roots/${special.subpath}` : "project roots";
+    case "tmpdir":
+      return "$TMPDIR";
+    case "slash_tmp":
+      return "/tmp";
+    case "unknown":
+      return special.subpath ? `${special.path}/${special.subpath}` : special.path;
+  }
+}
+
+function codexPermissionsApprovalPrompt(
+  permissions: CodexSchema.PermissionsRequestApprovalParams["permissions"],
+): string | undefined {
+  const fileSystem = permissions.fileSystem;
+  const grants = new Set([
+    ...(fileSystem?.entries ?? []).map(
+      ({ access, path }) => `${access} ${codexFileSystemPathLabel(path)}`,
+    ),
+    ...(fileSystem?.write ?? []).map((path) => `write ${path}`),
+    ...(fileSystem?.read ?? []).map((path) => `read ${path}`),
+  ]);
+  // Accepting grants every line, so none are truncated.
+  const lines = [...(permissions.network?.enabled === true ? ["Network access"] : []), ...grants];
+  return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
 // Reasoning-effort changes preserve the tokenizer and context window; other changes need fresh telemetry.
 export function canReuseCodexContextUsage(previous: ModelSelection, next: ModelSelection): boolean {
   return modelSelectionsEqual(
@@ -4117,10 +4155,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly nativeRequestId: string;
           readonly requestKind: ProviderRequestKind;
           readonly prompt?: string | null;
+          readonly reason?: string | null;
           readonly appName?: string;
           readonly options?: ReadonlyArray<ProviderApprovalOption>;
         }) {
           const createdAt = yield* DateTime.now;
+          const reason = trimText(input.reason);
           const { owner, subagent } = approvalOwnerCodexTurn(input.context);
           const parentNodeId =
             subagent?.subagentNodeId ??
@@ -4200,6 +4240,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ...(input.prompt === null || input.prompt === undefined
               ? {}
               : { prompt: input.prompt }),
+            ...(reason === undefined || reason === input.prompt?.trim() ? {} : { reason }),
             ...(input.appName === undefined ? {} : { appName: input.appName }),
             ...(input.options === undefined ? {} : { options: input.options }),
           };
@@ -5353,7 +5394,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeItemId: payload.itemId,
               nativeRequestId: payload.itemId,
               requestKind,
-              ...(payload.reason === undefined ? {} : { prompt: payload.reason }),
+              prompt: codexPermissionsApprovalPrompt(payload.permissions) ?? payload.reason ?? null,
+              reason: payload.reason ?? null,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
