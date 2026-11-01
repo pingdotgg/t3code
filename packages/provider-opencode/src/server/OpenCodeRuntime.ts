@@ -277,8 +277,9 @@ export class OpenCodeRuntime extends Context.Service<
   }
 >()("@t3tools/provider-opencode/server/OpenCodeRuntime") {}
 
-function parseServerUrlFromOutput(output: string): string | null {
-  for (const line of output.split("\n")) {
+export function parseServerUrlFromOutput(output: string): string | null {
+  // The last element is an unfinished line; a chunk can end mid-URL.
+  for (const line of output.split("\n").slice(0, -1)) {
     const match = line.match(/server listening on\s+(https?:\/\/[^\s]+)/i);
     if (match?.[1]) return match[1];
   }
