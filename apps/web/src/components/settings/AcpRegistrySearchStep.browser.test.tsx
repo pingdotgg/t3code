@@ -1,6 +1,12 @@
-import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "@t3tools/contracts";
+import {
+  AcpRegistrySearchInput,
+  EnvironmentId,
+  ProviderDriverKind,
+  type AcpRegistrySearchAgent,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 
@@ -115,6 +121,31 @@ it("rechecks the grant before preparing an agent", async () => {
 
   expect(state.prepare).not.toHaveBeenCalled();
   expect(onPrepared).not.toHaveBeenCalled();
+});
+
+it("bounds pasted registry searches before debounce and submission", async () => {
+  setup();
+  const isSearchInput = Schema.is(AcpRegistrySearchInput);
+  state.search.mockImplementation(({ input }: { readonly input: unknown }) => {
+    state.error = isSearchInput(input) ? null : "Invalid registry search query";
+    state.result = { agents: [] };
+  });
+  await using screen = await render(<Step />);
+  const searchbox = screen.getByRole("searchbox", { name: "Search ACP Registry" });
+
+  await searchbox.fill("agent".repeat(26));
+  await vi.waitFor(() => {
+    expect(state.search).toHaveBeenLastCalledWith({
+      environmentId,
+      input: { query: "agent".repeat(24) },
+    });
+  });
+  await userEvent.keyboard("{Enter}");
+  expect(state.refresh).toHaveBeenCalledTimes(1);
+
+  await expect.element(searchbox).toHaveValue("agent".repeat(24));
+  await expect.element(screen.getByText("No compatible agents found")).toBeVisible();
+  await expect.element(screen.getByText("Invalid registry search query")).not.toBeInTheDocument();
 });
 
 it("leaves out Registry agents that T3 Code supports as their own providers", async () => {
