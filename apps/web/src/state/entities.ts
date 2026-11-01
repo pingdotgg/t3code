@@ -5,6 +5,7 @@ import type {
   EnvironmentThread,
   EnvironmentThreadShell,
   EnvironmentThreadStructure,
+  ThreadStructure,
   ThreadStructureVisibleTurnItem,
 } from "@t3tools/client-runtime/state/shell";
 import {
@@ -21,7 +22,6 @@ import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   OrchestrationV2ProjectedTurnItem,
-  OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadShell,
   ThreadId,
 } from "@t3tools/contracts";
@@ -365,13 +365,9 @@ function shellParentThreadId(
     : thread.lineage.parentThreadId;
 }
 
-/** Retains unchanged reachable shells so unrelated streams do not re-render the panel. */
 export function selectThreadRelationshipShells(
   threadId: ThreadId,
-  projection: Pick<
-    OrchestrationV2ThreadProjection,
-    "thread" | "subagents" | "contextTransfers"
-  > | null,
+  projection: Pick<ThreadStructure, "thread" | "subagents" | "contextTransfers"> | null,
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
   const named = new Set<string>([threadId]);
@@ -397,13 +393,14 @@ export function selectThreadRelationshipShells(
   );
 }
 
+// Holds through this thread's streamed text and unrelated thread updates.
 const relationshipShellsAtomFamily = Atom.family((key: string) => {
   const ref = parseThreadKey(key);
   let previous: ReadonlyArray<OrchestrationV2ThreadShell> = [];
   return Atom.make((get) => {
     const next = selectThreadRelationshipShells(
       ref.threadId,
-      get(environmentThreadDetails.threadAtom(ref))?.projection ?? null,
+      get(environmentThreadDetails.quietThreadAtom(ref))?.projection ?? null,
       get(environmentThreadShells.environmentThreadsAtom(ref.environmentId)),
     );
     if (arrayElementsEqual(previous, next)) return previous;
