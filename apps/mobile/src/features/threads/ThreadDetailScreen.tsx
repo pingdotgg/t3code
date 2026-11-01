@@ -1121,6 +1121,12 @@ function ThreadDetailBody(
     },
     [floatingCoverageTarget],
   );
+  // Android has no settle pass after the first landing, which can stop short of the end. When the
+  // pill's room was reserved before load, no coverage animation follows to repin it.
+  const handleMessagesLoad = () => {
+    if (Platform.OS !== "android" || floatingCoverageTarget === 0) return;
+    if (settledFloatingCoverageRef.current === floatingCoverageTarget) scheduleOverlayRepin(50);
+  };
   const userInputCoverageApplies = Platform.OS === "ios" && activeUserInputRequestId !== null;
   const questionStatusSpace = useAnimatedStyle(() => ({ height: floatingControlCoverage.value }));
   const combinedContentInsetEndAdjustment = useSharedValue(
@@ -1502,6 +1508,7 @@ function ThreadDetailBody(
                 usesAutomaticContentInsets={props.usesAutomaticContentInsets}
                 onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
                 onEndFollowEnabledChange={handleEndFollowEnabledChange}
+                onMessagesLoad={handleMessagesLoad}
                 skills={selectedProviderSkills}
                 onUseArtifactTemplate={handleUseArtifactTemplate}
               />
