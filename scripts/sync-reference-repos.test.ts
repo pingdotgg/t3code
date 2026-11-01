@@ -8,9 +8,10 @@ import { referenceRepos } from "./lib/reference-repos.ts";
 import { planReferenceRepoSync, resolveReferenceRepoRef } from "./sync-reference-repos.ts";
 
 const effectSmol = referenceRepos[0]!;
+const alchemyEffect = referenceRepos[1]!;
 
 it.layer(NodeServices.layer)("sync-reference-repos", (it) => {
-  it.effect("resolves the effect-smol tag from the root catalog", () =>
+  it.effect("resolves reference tags from the root catalog", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -19,13 +20,14 @@ it.layer(NodeServices.layer)("sync-reference-repos", (it) => {
       });
       yield* fs.writeFileString(
         path.join(rootDir, "pnpm-workspace.yaml"),
-        "catalog:\n  effect: 4.0.0-beta.73\n",
+        "catalog:\n  alchemy: 2.0.0-beta.84\n  effect: 4.0.0-beta.73\n",
       );
 
       assert.equal(
         yield* resolveReferenceRepoRef(effectSmol, rootDir, false),
         "effect@4.0.0-beta.73",
       );
+      assert.equal(yield* resolveReferenceRepoRef(alchemyEffect, rootDir, false), "v2.0.0-beta.84");
     }),
   );
 
