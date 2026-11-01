@@ -240,6 +240,7 @@ overrides:
   expo-audio: 58.0.9
   expo-network: 58.0.3
   "@clerk/expo-native-components": 0.4.0
+  "@cursor/sdk": 1.0.38
   expo-sharing: 58.0.19
   expo-widgets: 58.0.20
   "@ff-labs/fff-node": 0.11.0
@@ -398,6 +399,8 @@ patchedDependencies:
   # Observe the owned host exit independently of descendants retaining its stdio.
   "@muse-code/sdk@1.4.6": patches/@muse-code__sdk@1.4.6.patch
   app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
+  # Local agents honor the attribution settings in the user's Cursor CLI cli-config.json.
+  "@cursor/sdk@1.0.38": patches/@cursor__sdk@1.0.38.patch
 
 peerDependencyRules:
   allowAny:
