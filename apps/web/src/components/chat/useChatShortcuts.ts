@@ -106,7 +106,9 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       return;
     const context = input.getShortcutContext(event.target);
     if (context.terminalFocus || context.previewFocus || context.modelPickerOpen) return;
+    // The narrow right panel sheet closes on Escape and ignores defaultPrevented.
     event.preventDefault();
+    event.stopPropagation();
     input.closeThreadFind();
   });
   const handleSideChatShortcut = useEffectEvent((event: KeyboardEvent) => {

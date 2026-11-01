@@ -240,6 +240,15 @@ it("closes the side chat's find for Escape in its find input and elsewhere in it
     <SideChat toggles={[]} stops={[]} findCloses={findCloses} />,
     options,
   );
+  // Stands in for the narrow right panel sheet, which also closes on an Escape that reaches it.
+  const sheetEscapes: string[] = [];
+  const onSheetKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Escape") sheetEscapes.push("sheet");
+  };
+  document.addEventListener("keydown", onSheetKeyDown);
+  using _sheet = {
+    [Symbol.dispose]: () => document.removeEventListener("keydown", onSheetKeyDown),
+  };
 
   await userEvent.click(screen.getByLabelText("Side chat find"));
   await userEvent.keyboard("{Escape}");
@@ -247,4 +256,5 @@ it("closes the side chat's find for Escape in its find input and elsewhere in it
   await userEvent.keyboard("{Escape}");
 
   expect(findCloses).toEqual(["side", "side"]);
+  expect(sheetEscapes).toEqual([]);
 });
