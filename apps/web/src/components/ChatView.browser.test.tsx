@@ -7,6 +7,9 @@ import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 import { AppRoot } from "~/AppRoot";
+// The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
+// takes 6-11s; importing it here keeps that out of the test's timeout.
+import "~/components/ChatView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { getRouter } from "~/router";

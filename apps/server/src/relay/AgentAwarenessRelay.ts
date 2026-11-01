@@ -369,7 +369,6 @@ export const make = Effect.gen(function* () {
   const scope = yield* Effect.scope;
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
   const startedAt = (yield* DateTime.now).epochMilliseconds;
-  const activeSnapshotPublishedRef = yield* Ref.make(false);
   const catchUpRequests = yield* Queue.dropping<void>(1);
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
 
@@ -759,23 +758,25 @@ export const make = Effect.gen(function* () {
   // s to 60 s. A linked environment keeps the 5 s retry, because `t3 connect
   // publish` can turn publishing on from another process. Keep this untraced:
   // an unlinked environment can retry for the lifetime of the process.
-  const publishActiveThreadsOnceWhenConfigured = Effect.fnUntraced(function* (
+  const publishActiveThreadsWhenConfigured = Effect.fnUntraced(function* (
     logEnabledWhenReady: boolean,
   ) {
     let unlinkedRetryDelayMs = 5_000;
-    while (!(yield* Ref.get(activeSnapshotPublishedRef))) {
+    while (true) {
       const result = yield* publishActiveThreadsUnsafe.pipe(
         Effect.orElseSucceed(() => "failed" as const),
       );
       if (result === "published") {
-        yield* Ref.set(activeSnapshotPublishedRef, true);
         if (logEnabledWhenReady) {
           const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
           yield* Effect.logInfo("agent activity publishing enabled after link reconciliation", {
             relayUrl: relayConfig?.url,
           });
         }
-        return;
+        logEnabledWhenReady = false;
+        unlinkedRetryDelayMs = 5_000;
+        yield* Queue.take(catchUpRequests);
+        continue;
       }
       const retryDelayMs = result === "unlinked" ? unlinkedRetryDelayMs : 5_000;
       yield* Effect.race(Effect.sleep(retryDelayMs), Queue.take(catchUpRequests));
@@ -826,7 +827,7 @@ export const make = Effect.gen(function* () {
       }
       yield* forkParked(
         Effect.sleep("1 second").pipe(
-          Effect.andThen(publishActiveThreadsOnceWhenConfigured(startupState !== "enabled")),
+          Effect.andThen(publishActiveThreadsWhenConfigured(startupState !== "enabled")),
         ),
       );
       yield* forkParked(
