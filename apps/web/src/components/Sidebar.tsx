@@ -2908,7 +2908,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const collapsed = !isMobile && !sidebarOpen;
     if (collapsed) setSidebarOpen(true);
     if (projectScopeMenuState.open) {
-      if (!collapsed) setProjectScopeMenuOpen(false);
+      setProjectScopeMenuOpen(false);
       return;
     }
     const activeElement = document.activeElement;
