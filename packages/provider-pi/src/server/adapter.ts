@@ -30,6 +30,7 @@ import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -414,6 +415,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const agentScope = yield* AgentScope;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -425,6 +427,67 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       detail,
       ...(payload === undefined ? {} : { payload }),
     });
+
+  const readForkSession = Effect.fn("PiAdapter.readForkSession")(
+    function* (file: string, targetId?: string) {
+      const contents = yield* fileSystem.readFileString(file);
+      if (targetId !== undefined && !contents.includes(targetId)) return null;
+      const records: Array<unknown> = [];
+      for (const line of contents.split("\n")) {
+        if (line.trim().length === 0) continue;
+        const record = Option.getOrNull(decodePiSessionLine(line));
+        if (record === null) return null;
+        records.push(record);
+      }
+      if (recordField(records[0], "type") !== "session" || recordField(records[0], "version") !== 3)
+        return null;
+      const entries = records.slice(1);
+      const listing = piSessionListing({
+        entries,
+        leafId: recordString(entries.at(-1), "id") ?? null,
+      });
+      return listing === null
+        ? null
+        : { listing, parentSession: recordString(records[0], "parentSession") };
+    },
+    Effect.orElseSucceed(() => null),
+  );
+
+  const findForkSource = Effect.fn("PiAdapter.findForkSource")(function* (
+    sourceFile: string,
+    boundary: PiForkBoundary,
+    createdAt: DateTime.Utc,
+  ) {
+    const targetRef = boundary.type === "uncaptured" ? boundary.target?.nativeTurnRef : undefined;
+    if (
+      boundary.type !== "uncaptured" ||
+      targetRef?.strength !== "strong" ||
+      targetRef.nativeId === null
+    )
+      return sourceFile;
+    const current = yield* readForkSession(sourceFile);
+    if (current === null || current.listing.entries.has(targetRef.nativeId)) return sourceFile;
+    const directory = path.dirname(sourceFile);
+    const files = yield* fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
+    const matches = new Map<string, string | undefined>();
+    for (const name of files) {
+      const file = path.resolve(directory, name);
+      if (file === path.resolve(sourceFile) || !name.endsWith(".jsonl")) continue;
+      const session = yield* readForkSession(file, targetRef.nativeId);
+      if (
+        session === null ||
+        piPreviousSessionForkBoundary(session.listing, boundary, createdAt) === undefined
+      )
+        continue;
+      matches.set(
+        file,
+        session.parentSession === undefined ? undefined : path.resolve(session.parentSession),
+      );
+    }
+    // Pi fork copies retain entry IDs and point to their source with parentSession.
+    const roots = [...matches].filter(([, parent]) => parent === undefined || !matches.has(parent));
+    return roots.length === 1 ? roots[0]![0] : sourceFile;
+  });
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
@@ -3019,6 +3082,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     target: { type: "provider_turn", providerTurn: target },
                     providerThreadTurns: sourceTurns,
                   });
+            const forkSourceFile = yield* findForkSource(sourceFile, boundary, source.createdAt);
             // CLI --fork uses Pi's own session format and sets the destination cwd. RPC
             // switch_session/clone alone would retain the source cwd.
             const forkLaunch = buildPiRpcLaunch({
@@ -3033,7 +3097,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               Effect.gen(function* () {
                 const forkConnection = yield* makePiRpcConnection({
                   command: options.settings.binaryPath || "pi",
-                  args: [...forkLaunch.args, "--fork", sourceFile],
+                  args: [...forkLaunch.args, "--fork", forkSourceFile],
                   cwd,
                   env: forkLaunch.env,
                 });
@@ -3042,11 +3106,26 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   Effect.ignore,
                   Effect.forkScoped,
                 );
+                let forkBoundary = boundary;
+                if (forkSourceFile !== sourceFile && boundary.type === "uncaptured") {
+                  const listing = piSessionListing(
+                    yield* forkConnection.request({ type: "get_entries" }),
+                  );
+                  const recovered =
+                    listing === null
+                      ? undefined
+                      : piPreviousSessionForkBoundary(listing, boundary, source.createdAt);
+                  if (recovered === undefined)
+                    return yield* protocolError(
+                      "Pi fork target is no longer recoverable in its previous session",
+                    );
+                  forkBoundary = recovered;
+                }
                 const beforeEntry =
-                  boundary.type === "nothing"
+                  forkBoundary.type === "nothing"
                     ? null
                     : yield* piForkEntry(
-                        boundary,
+                        forkBoundary,
                         source.createdAt,
                         forkConnection.request({ type: "get_entries" }),
                       );
@@ -3061,7 +3140,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 }
                 const state = yield* forkConnection.request({ type: "get_state" });
                 const file = recordString(state, "sessionFile");
-                if (file === undefined || file === sourceFile) {
+                if (file === undefined || file === sourceFile || file === forkSourceFile) {
                   return yield* protocolError("Pi fork did not create a distinct session file");
                 }
                 return file;
@@ -3122,6 +3201,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
 interface PiSessionEntry {
   readonly parentId: string | null;
+  readonly isMessage: boolean;
   readonly isUserMessage: boolean;
   /** Pi's `timestamp` as epoch milliseconds; null when missing or unparsable. */
   readonly timestamp: number | null;
@@ -3131,6 +3211,8 @@ interface PiSessionListing {
   readonly entries: ReadonlyMap<string, PiSessionEntry>;
   readonly leafId: string | null;
 }
+
+const decodePiSessionLine = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 function piSessionListing(data: unknown): PiSessionListing | null {
   const leafId = recordField(data, "leafId");
@@ -3151,6 +3233,8 @@ function piSessionEntries(entries: unknown): ReadonlyMap<string, PiSessionEntry>
     const timestamp = recordString(entry, "timestamp");
     byId.set(id, {
       parentId,
+      isMessage:
+        recordField(entry, "type") === "message" || recordField(entry, "type") === "custom_message",
       isUserMessage:
         recordField(entry, "type") === "message" &&
         recordString(recordField(entry, "message"), "role") === "user",
@@ -3275,6 +3359,46 @@ function piUncapturedForkEntry(
   return earliest;
 }
 
+function piPreviousSessionForkBoundary(
+  listing: PiSessionListing,
+  boundary: Extract<PiForkBoundary, { type: "uncaptured" }>,
+  createdAt: DateTime.Utc,
+): PiForkBoundary | undefined {
+  const target = boundary.target;
+  const ref = target?.nativeTurnRef;
+  if (
+    ref?.strength !== "strong" ||
+    ref.nativeId === null ||
+    target?.startedAt == null ||
+    target.completedAt === null
+  )
+    return undefined;
+  const entry = listing.entries.get(ref.nativeId);
+  const end = DateTime.toEpochMillis(target.completedAt);
+  if (
+    entry?.isUserMessage !== true ||
+    entry.timestamp === null ||
+    entry.timestamp < DateTime.toEpochMillis(target.startedAt) ||
+    entry.timestamp > end
+  )
+    return undefined;
+  const walk = walkPiBranch(listing.entries, listing.leafId, ref.nativeId);
+  if (walk?.reachedStop !== true) return undefined;
+  const before = piUncapturedForkEntry(listing, boundary, createdAt);
+  if (before !== undefined) return { type: "entry", entryId: before };
+  let current = listing.leafId;
+  while (current !== null && current !== ref.nativeId) {
+    const message = listing.entries.get(current);
+    if (
+      message === undefined ||
+      (message.isMessage && (message.timestamp === null || message.timestamp > end))
+    )
+      return undefined;
+    current = message.parentId;
+  }
+  return { type: "nothing" };
+}
+
 function piSubagentOutput(result: unknown): string {
   const stopReason = recordString(result, "stopReason");
   const failed =
@@ -3366,6 +3490,7 @@ function piUiResponse(
 export type PiAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
+  | Path.Path
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
   | ProviderHost.ProviderHost;
