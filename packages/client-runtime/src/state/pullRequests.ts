@@ -7,11 +7,15 @@ import {
   PullRequestListResult,
   PullRequestChecks,
   PullRequestDiffResult,
+  PullRequestChangeBreakdown,
   PullRequestFilesViewedResult,
   PullRequestLinkedThreadsResult,
   type EnvironmentId,
   type PullRequestActor,
   type PullRequestActionInput,
+  type PullRequestListInput,
+  type PullRequestListStatsInput,
+  type PullRequestListStatsResult,
   type PullRequestDetail,
   type PullRequestDiffInput,
   type PullRequestRef,
@@ -35,6 +39,7 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentQueryAtomFamily,
+  type QueryAnswerHandler,
 } from "./runtime.ts";
 import { createPullRequestRouter } from "./pullRequestRouting.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
@@ -53,6 +58,26 @@ export class EnvironmentHttpConnectionNotReadyError extends Data.TaggedError(
 )<{ readonly message: string }> {}
 
 const LINKED_PULL_REQUEST_IDLE_TTL_MS = 5_000;
+
+function normalizePullRequestQuery<A>(
+  query: (target: { readonly environmentId: EnvironmentId; readonly input: PullRequestRef }) => A,
+) {
+  return ({
+    environmentId,
+    input: { projectId, host, repository, number, allowStale, expectedAccountId },
+  }: Parameters<typeof query>[0]) =>
+    query({
+      environmentId,
+      input: {
+        projectId,
+        ...(host === undefined ? {} : { host }),
+        repository,
+        number,
+        ...(allowStale === undefined ? {} : { allowStale }),
+        ...(expectedAccountId === undefined ? {} : { expectedAccountId }),
+      },
+    });
+}
 
 function writableQueryFamily<A, E>(
   family: (target: {
@@ -76,22 +101,7 @@ function writableQueryFamily<A, E>(
       (refresh) => refresh(source),
     ).pipe(Atom.setIdleTTL(5 * 60_000)),
   );
-  return ({
-    environmentId,
-    input: { projectId, host, repository, number, allowStale },
-  }: Parameters<typeof family>[0]) =>
-    writable(
-      family({
-        environmentId,
-        input: {
-          projectId,
-          ...(host === undefined ? {} : { host }),
-          repository,
-          number,
-          ...(allowStale === undefined ? {} : { allowStale }),
-        },
-      }),
-    );
+  return normalizePullRequestQuery((target) => writable(family(target)));
 }
 
 /** Restart pre-mutation reads before patching so they cannot restore stale values. */
@@ -105,7 +115,7 @@ function updateCached<A, E>(
   registry.update(atom, AsyncResult.map(update));
 }
 
-function createPullRequestRefreshAtomFamily<R, E>(
+function makePullRequestRefreshAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return createEnvironmentRpcSubscriptionAtomFamily(runtime, {
@@ -114,9 +124,25 @@ function createPullRequestRefreshAtomFamily<R, E>(
   });
 }
 
+const refreshFamiliesByRuntime = new WeakMap<
+  object,
+  ReturnType<typeof makePullRequestRefreshAtomFamily>
+>();
+
+function createPullRequestRefreshAtomFamily<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+): ReturnType<typeof makePullRequestRefreshAtomFamily<R, E>> {
+  const existing = refreshFamiliesByRuntime.get(runtime);
+  if (existing) return existing as ReturnType<typeof makePullRequestRefreshAtomFamily<R, E>>;
+  const refreshes = makePullRequestRefreshAtomFamily(runtime);
+  refreshFamiliesByRuntime.set(runtime, refreshes);
+  return refreshes;
+}
+
 export function createLinkedPullRequestSummaryAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
   refreshes = createPullRequestRefreshAtomFamily(runtime),
+  onAnswer?: QueryAnswerHandler<PullRequestRef, PullRequestSummary>,
 ) {
   const routedRequest = createPullRequestRouter();
   return createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -128,7 +154,17 @@ export function createLinkedPullRequestSummaryAtomFamily<R, E>(
     idleTtlMs: LINKED_PULL_REQUEST_IDLE_TTL_MS,
     refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     isFinal: (summary) => summary.state === "merged",
+    ...(onAnswer === undefined ? {} : { onAnswer }),
   });
+}
+
+/** Lets a client record what each answer says where it lands, rather than watching the data. */
+export interface PullRequestAnswerHandlers {
+  readonly list?: QueryAnswerHandler<PullRequestListInput, PullRequestListResult>;
+  readonly listStats?: QueryAnswerHandler<PullRequestListStatsInput, PullRequestListStatsResult>;
+  readonly detail?: QueryAnswerHandler<PullRequestRef, PullRequestDetail>;
+  readonly checks?: QueryAnswerHandler<PullRequestRef, PullRequestChecks | null>;
+  readonly reviewGuide?: QueryAnswerHandler<PullRequestRef, PullRequestReviewGuideResult>;
 }
 
 export function createPullRequestStackAtomFamily<R, E>(
@@ -166,6 +202,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     EnvironmentRegistry | PullRequestDiffLoader.PullRequestDiffLoader | R,
     E
   >,
+  onAnswer: PullRequestAnswerHandlers = {},
 ) {
   const refreshes = createPullRequestRefreshAtomFamily(runtime);
   const commandScheduler = createAtomCommandScheduler();
@@ -192,11 +229,24 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       execute: (input) => routedRequest(WS_METHODS.pullRequestsDetail, input),
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+      ...(onAnswer.detail === undefined ? {} : { onAnswer: onAnswer.detail }),
     }),
   );
   const preview = writableQueryFamily(
     createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:preview",
+      persistence: persistQuery(PullRequestPreview),
+      tag: WS_METHODS.pullRequestsPreview,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsPreview, input),
+      staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    }),
+  );
+  // Hover cards read their own atoms, so a pending or failed hover read never decides where a
+  // click on the same link goes.
+  const previewCard = writableQueryFamily(
+    createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:preview-card",
       persistence: persistQuery(PullRequestPreview),
       tag: WS_METHODS.pullRequestsPreview,
       execute: (input) => routedRequest(WS_METHODS.pullRequestsPreview, input),
@@ -220,6 +270,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       execute: (input) => routedRequest(WS_METHODS.pullRequestsReviewGuide, input),
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+      ...(onAnswer.reviewGuide === undefined ? {} : { onAnswer: onAnswer.reviewGuide }),
     }),
   );
   const reviewerCandidates = writableQueryFamily(
@@ -296,6 +347,14 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       refreshIntervalMs: 10_000,
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     }),
+    // For callers that open a thread from the answer: a persisted one reads as final before
+    // the connection is known, and a kept one can predate the thread.
+    linkedThreadsUncached: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:linked-threads-uncached",
+      tag: WS_METHODS.pullRequestsLinkedThreads,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
     list: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:list",
       persistence: persistQuery(PullRequestListResult),
@@ -303,6 +362,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 30_000,
       refreshTrigger: ({ environmentId, input }) =>
         input.cursors === undefined ? refreshes({ environmentId, input: {} }) : undefined,
+      ...(onAnswer.list === undefined ? {} : { onAnswer: onAnswer.list }),
     }),
     /**
      * Its own query because the listing is quicker without them — measured over twelve
@@ -315,17 +375,27 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       tag: WS_METHODS.pullRequestsListStats,
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+      ...(onAnswer.listStats === undefined ? {} : { onAnswer: onAnswer.listStats }),
+    }),
+    filterOptions: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:filter-options",
+      tag: WS_METHODS.pullRequestsFilterOptions,
+      staleTimeMs: 5 * 60_000,
     }),
     detail,
     preview,
-    checks: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:pull-requests:checks",
-      persistence: persistQuery(Schema.NullOr(PullRequestChecks)),
-      tag: WS_METHODS.pullRequestsChecks,
-      execute: (input) => routedRequest(WS_METHODS.pullRequestsChecks, input),
-      staleTimeMs: 45_000,
-      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
-    }),
+    previewCard,
+    checks: normalizePullRequestQuery(
+      createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: "environment-data:pull-requests:checks",
+        persistence: persistQuery(Schema.NullOr(PullRequestChecks)),
+        tag: WS_METHODS.pullRequestsChecks,
+        execute: (input) => routedRequest(WS_METHODS.pullRequestsChecks, input),
+        staleTimeMs: 45_000,
+        refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+        ...(onAnswer.checks === undefined ? {} : { onAnswer: onAnswer.checks }),
+      }),
+    ),
     activity,
     threadComments: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:thread-comments",
@@ -372,6 +442,14 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       execute: (input) => routedRequest(WS_METHODS.pullRequestsFilesViewed, input),
       staleTimeMs: 15_000,
     }),
+    changeBreakdown: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:change-breakdown",
+      persistence: persistQuery(PullRequestChangeBreakdown),
+      tag: WS_METHODS.pullRequestsChangeBreakdown,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsChangeBreakdown, input),
+      staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    }),
     /**
      * One write in flight per change request: the host applies these in order, and a reader
      * ticking down a file list faster than the round trip would otherwise race their own presses.
@@ -394,7 +472,10 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       // every preceding action, and preparing outside the lane could reorder the clicks.
       execute: runAction,
       onSuccess: ({ environmentId, input }, registry) =>
-        Effect.sync(() => registry.refresh(preview({ environmentId, input }))),
+        Effect.sync(() => {
+          registry.refresh(preview({ environmentId, input }));
+          registry.refresh(previewCard({ environmentId, input }));
+        }),
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),
@@ -454,7 +535,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         Effect.sync(() => {
           const { reviewers, requested } = target.input;
           const candidatesAtom = reviewerCandidates(target);
-          const candidates = Option.getOrNull(AsyncResult.value(registry.get(candidatesAtom)));
+          const candidates = AsyncResult.getOrElse(registry.get(candidatesAtom), () => null);
           const selected =
             candidates?.candidates.filter((candidate) =>
               reviewers.some(
@@ -540,7 +621,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         Effect.sync(() => {
           const { labels, applied } = target.input;
           const candidatesAtom = labelCandidates(target);
-          const candidates = Option.getOrNull(AsyncResult.value(registry.get(candidatesAtom)));
+          const candidates = AsyncResult.getOrElse(registry.get(candidatesAtom), () => null);
           const names = new Set(labels);
           updateCached(registry, candidatesAtom, (value) => ({
             ...value,
@@ -592,6 +673,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         Effect.sync(() => {
           if (input.reference !== undefined) {
             registry.refresh(preview({ environmentId, input: input.reference }));
+            registry.refresh(previewCard({ environmentId, input: input.reference }));
           }
         }),
       scheduler: commandScheduler,

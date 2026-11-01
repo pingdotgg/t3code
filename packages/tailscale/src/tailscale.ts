@@ -14,7 +14,14 @@ export const DEFAULT_TAILSCALE_SERVE_PORT = 443;
  * A CLI that never answers takes longer than this to fail, because the kill
  * that follows the timeout also takes time (`taskkill` on Windows).
  */
-export const TAILSCALE_STATUS_TIMEOUT = Duration.millis(3_500);
+const TAILSCALE_STATUS_TIMEOUT = Duration.millis(3_500);
+/**
+ * How long a probe killed on timeout gets to exit after SIGTERM before its
+ * process group is SIGKILLed. Without it the spawner never escalates, so a group
+ * member that ignores SIGTERM outlives the call. Short because the timeout error
+ * only surfaces once cleanup finishes, and a healthy `tailscale` exits at once.
+ */
+const TAILSCALE_KILL_GRACE = Duration.millis(500);
 const TAILSCALE_SERVE_TIMEOUT = Duration.seconds(10);
 const TAILSCALE_PROBE_TIMEOUT = Duration.millis(2_500);
 
@@ -125,6 +132,7 @@ export class TailscaleStatusParseError extends Schema.TaggedError<TailscaleStatu
 const TailscaleStatusSelf = Schema.Struct({
   DNSName: Schema.optional(Schema.Unknown),
   TailscaleIPs: Schema.optional(Schema.Unknown),
+  CapMap: Schema.optional(Schema.Unknown),
 });
 
 const TailscaleStatusJson = Schema.Struct({
@@ -136,6 +144,12 @@ export type TailscaleStatusJson = typeof TailscaleStatusJson.Type;
 export interface TailscaleStatus {
   readonly magicDnsName: string | null;
   readonly tailnetIpv4Addresses: readonly string[];
+  /**
+   * `tailscale serve --https` needs the `https` capability, which the control
+   * plane grants once the tailnet enables HTTPS certificates. `null` when the
+   * CLI reports no capability map (older CLI), so callers still attempt serve.
+   */
+  readonly httpsServeEnabled: boolean | null;
 }
 
 const collectStdout = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
@@ -160,14 +174,6 @@ function normalizeMagicDnsName(status: TailscaleStatusJson): string | null {
   const normalized = dnsName.trim().replace(/\.$/u, "");
   return normalized.length > 0 ? normalized : null;
 }
-
-export const parseTailscaleMagicDnsName = (
-  rawStatusJson: string,
-): Effect.Effect<string | null, TailscaleStatusParseError> =>
-  decodeTailscaleStatusJson(rawStatusJson).pipe(
-    Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
-    Effect.map(normalizeMagicDnsName),
-  );
 
 export function isTailscaleIpv4Address(address: string): boolean {
   const parts = address.split(".");
@@ -203,9 +209,14 @@ export const parseTailscaleStatus = (
         }
       }
 
+      const capMap = parsed.Self?.CapMap;
       return {
         magicDnsName: normalizeMagicDnsName(parsed),
         tailnetIpv4Addresses,
+        httpsServeEnabled:
+          typeof capMap === "object" && capMap !== null && !Array.isArray(capMap)
+            ? Object.hasOwn(capMap, "https")
+            : null,
       };
     }),
   );
@@ -222,8 +233,11 @@ const readTailscaleOutput = Effect.fn("tailscale.readTailscaleOutput")(function*
     subcommand,
     argumentCount: args.length,
   };
+  const command = ChildProcess.make(executable, [...args], {
+    forceKillAfter: TAILSCALE_KILL_GRACE,
+  });
   return yield* Effect.gen(function* () {
-    const child = yield* spawner.spawn(ChildProcess.make(executable, [...args])).pipe(
+    const child = yield* spawner.spawn(command).pipe(
       Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
       // Spawning can also fail as a defect rather than a typed error - a
       // non-directory entry on PATH makes node throw ENOTDIR synchronously.
@@ -272,6 +286,57 @@ const readTailscaleOutput = Effect.fn("tailscale.readTailscaleOutput")(function*
 
 export const readTailscaleStatus = readTailscaleOutput("status", ["status", "--json"]).pipe(
   Effect.flatMap(parseTailscaleStatus),
+);
+
+const TailscaleExitNodeJson = Schema.Struct({
+  ExitNodeStatus: Schema.optional(Schema.Struct({ Online: Schema.optional(Schema.Unknown) })),
+  Peer: Schema.optional(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        ExitNode: Schema.optional(Schema.Unknown),
+        HostName: Schema.optional(Schema.Unknown),
+        DNSName: Schema.optional(Schema.Unknown),
+      }),
+    ),
+  ),
+});
+
+const decodeTailscaleExitNodeJson = Schema.decodeEffect(
+  Schema.fromJsonString(TailscaleExitNodeJson),
+);
+
+export interface TailscaleExitNode {
+  readonly name: string | null;
+  readonly online: boolean;
+}
+
+/**
+ * `ExitNodeStatus` is present only while an exit node is in use, but it has no
+ * name. The name comes from the peer marked `ExitNode: true`.
+ */
+export const parseTailscaleExitNode = (
+  rawStatusJson: string,
+): Effect.Effect<TailscaleExitNode | null, TailscaleStatusParseError> =>
+  decodeTailscaleExitNodeJson(rawStatusJson).pipe(
+    Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
+    Effect.map((parsed) => {
+      if (parsed.ExitNodeStatus === undefined) return null;
+      const peer = Object.values(parsed.Peer ?? {}).find(
+        (candidate) => candidate.ExitNode === true,
+      );
+      // The DNS label is the tailnet machine name; HostName is the OS name and ignores renames.
+      const dnsLabel = typeof peer?.DNSName === "string" ? (peer.DNSName.split(".")[0] ?? "") : "";
+      const hostName = typeof peer?.HostName === "string" ? peer.HostName.trim() : "";
+      return {
+        name: dnsLabel || hostName || null,
+        online: parsed.ExitNodeStatus.Online === true,
+      };
+    }),
+  );
+
+export const readTailscaleExitNode = readTailscaleOutput("status", ["status", "--json"]).pipe(
+  Effect.flatMap(parseTailscaleExitNode),
 );
 
 const TailscalePrefsJson = Schema.Struct({

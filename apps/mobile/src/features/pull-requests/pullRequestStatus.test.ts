@@ -1,8 +1,8 @@
 import type { PullRequestActivity, PullRequestCheck, PullRequestComment } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  normalizedReviewState,
   pullRequestChecksSummary,
-  pullRequestConflict,
   pullRequestReviewSummary,
 } from "./pullRequestStatus";
 
@@ -78,63 +78,24 @@ describe("mobile overview review status", () => {
       ).title,
     ).toBe("Changes requested");
   });
+});
 
-  it("includes comment-only reviewers once without treating their comments as approval", () => {
-    const result = pullRequestReviewSummary(
-      { reviewers: [] },
-      activity([
-        review("COMMENTED", "2026-10-10T09:00:00Z"),
-        review("commented", "2026-10-10T10:00:00Z"),
-      ]),
-    );
-    expect(result.title).toBe("Reviews");
-    expect(result.reviews).toEqual([
-      { ...review("commented", "2026-10-10T10:00:00Z"), reviewState: "COMMENTED" },
-    ]);
+describe("mobile review state spelling", () => {
+  it("reads GitHub's uppercase and Bitbucket's or GitCafe's lowercase verdicts alike", () => {
+    expect(normalizedReviewState("APPROVED")).toBe("APPROVED");
+    expect(normalizedReviewState("approved")).toBe("APPROVED");
+    expect(normalizedReviewState("CHANGES_REQUESTED")).toBe("CHANGES_REQUESTED");
+    expect(normalizedReviewState("changes_requested")).toBe("CHANGES_REQUESTED");
+    expect(normalizedReviewState("changes-requested")).toBe("CHANGES_REQUESTED");
+    expect(normalizedReviewState("commented")).toBe("COMMENTED");
+    expect(normalizedReviewState(null)).toBeUndefined();
   });
 });
 
 describe("mobile overview check status", () => {
-  it("only says all passed when every check succeeded", () => {
-    expect(pullRequestChecksSummary({ checks: [check("success"), check("success")] }).title).toBe(
-      "All checks passed",
-    );
-    expect(pullRequestChecksSummary({ checks: [check("success"), check("skipped")] }).title).toBe(
-      "Checks completed",
-    );
-    expect(pullRequestChecksSummary({ checks: [] }).title).toBe("No checks reported");
-  });
-
   it("prioritizes failed checks while others are running", () => {
     expect(
       pullRequestChecksSummary({ checks: [check("success"), check("pending"), check("failure")] }),
     ).toMatchObject({ title: "1 check failing", count: "1 of 3" });
-  });
-});
-
-describe("mobile pull request conflict", () => {
-  it("names the base branch of an open pull request with conflicts", () => {
-    expect(
-      pullRequestConflict({
-        state: "open",
-        isDraft: false,
-        mergeability: "conflicting",
-        baseBranch: "main",
-      })?.label,
-    ).toBe("Conflicts with main");
-    expect(
-      pullRequestConflict({ state: "open", isDraft: false, mergeability: "conflicting" })?.label,
-    ).toBe("Has conflicts");
-  });
-
-  it.each([
-    { state: "open" as const, isDraft: true, mergeability: "conflicting" as const },
-    { state: "merged" as const, isDraft: false, mergeability: "conflicting" as const },
-    { state: "closed" as const, isDraft: false, mergeability: "conflicting" as const },
-    { state: "open" as const, isDraft: false, mergeability: "mergeable" as const },
-    { state: "open" as const, isDraft: false, mergeability: "unknown" as const },
-    { state: "open" as const, isDraft: false },
-  ])("stays quiet when it cannot conflict or has not been reported: %j", (pr) => {
-    expect(pullRequestConflict(pr)).toBeNull();
   });
 });

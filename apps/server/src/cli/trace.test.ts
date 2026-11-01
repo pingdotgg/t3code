@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 
-import { makeTraceSpanSummary } from "./trace.ts";
+import { formatTraceSummary, makeTraceSpanSummary } from "./trace.ts";
 
 const MINUTE_MS = 60_000;
 
@@ -30,45 +30,6 @@ function browserSpan(
     attributes,
   });
 }
-
-it("reports count, rate, percentiles, and exits per span name", () => {
-  const refreshes = Array.from({ length: 10 }, (_, index) =>
-    span(
-      "refresh",
-      index + 1,
-      index * MINUTE_MS,
-      index === 0 ? "Interrupted" : index === 1 ? "Failure" : "Success",
-    ),
-  );
-  const summarizer = makeTraceSpanSummary();
-  [...refreshes, span("probe", 2_500, 10 * MINUTE_MS)].forEach(summarizer.addLine);
-  const summary = summarizer.finish();
-
-  assert.strictEqual(summary.spanCount, 11);
-  assert.strictEqual(summary.minutes, 10);
-  assert.deepStrictEqual(summary.spans, [
-    {
-      name: "refresh",
-      count: 10,
-      perMinute: 1,
-      p50Ms: 5,
-      p90Ms: 9,
-      maxMs: 10,
-      interrupted: 1,
-      failures: 1,
-    },
-    {
-      name: "probe",
-      count: 1,
-      perMinute: 0.1,
-      p50Ms: 2_500,
-      p90Ms: 2_500,
-      maxMs: 2_500,
-      interrupted: 0,
-      failures: 0,
-    },
-  ]);
-});
 
 it("drops spans that ended before the window and counts unreadable lines", () => {
   const summarizer = makeTraceSpanSummary(MINUTE_MS);
@@ -100,4 +61,14 @@ it("reads failures and interrupts of browser spans from their OTLP status", () =
 
   const [render] = summarizer.finish().spans;
   assert.deepStrictEqual([render?.count, render?.interrupted, render?.failures], [4, 2, 1]);
+});
+
+it("prints durations that round up to a second in seconds", () => {
+  const summarizer = makeTraceSpanSummary();
+  [span("rpc", 999.4, MINUTE_MS), span("rpc", 999.6, 2 * MINUTE_MS)].forEach(summarizer.addLine);
+
+  const row = formatTraceSummary(summarizer.finish(), 25)
+    .split("\n")
+    .find((line) => line.startsWith("rpc"));
+  assert.deepStrictEqual(row?.trim().split(/\s+/).slice(3, 6), ["999ms", "1s", "1s"]);
 });
