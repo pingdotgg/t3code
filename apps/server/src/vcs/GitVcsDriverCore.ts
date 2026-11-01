@@ -396,35 +396,6 @@ function parseUpstreamRefByFirstSeparator(
   };
 }
 
-function parseTrackingBranchByUpstreamRef(stdout: string, upstreamRef: string): string | null {
-  for (const line of stdout.split("\n")) {
-    const trimmedLine = line.trim();
-    if (trimmedLine.length === 0) {
-      continue;
-    }
-    const [branchNameRaw, upstreamBranchRaw = ""] = trimmedLine.split("\t");
-    const branchName = branchNameRaw?.trim() ?? "";
-    const candidateUpstreamRef = upstreamBranchRaw.trim();
-    if (branchName.length === 0 || candidateUpstreamRef.length === 0) {
-      continue;
-    }
-    if (candidateUpstreamRef === upstreamRef) {
-      return branchName;
-    }
-  }
-
-  return null;
-}
-
-function deriveLocalBranchNameFromRemoteRef(branchName: string): string | null {
-  const separatorIndex = branchName.indexOf("/");
-  if (separatorIndex <= 0 || separatorIndex === branchName.length - 1) {
-    return null;
-  }
-  const localBranch = branchName.slice(separatorIndex + 1).trim();
-  return localBranch.length > 0 ? localBranch : null;
-}
-
 function gitCommandContext(
   input: Pick<GitVcsDriver.ExecuteGitInput, "operation" | "cwd" | "args">,
 ) {
@@ -4735,74 +4706,41 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const switchRef: GitVcsDriver.GitVcsDriver["Service"]["switchRef"] = Effect.fn("switchRef")(
     function* (input) {
+      const refExists = (operationName: string, ref: string) =>
+        executeGit(operationName, input.cwd, ["show-ref", "--verify", "--quiet", ref], {
+          timeoutMs: 5_000,
+          allowNonZeroExit: true,
+        }).pipe(Effect.map((result) => result.exitCode === 0));
+
       const [localInputExists, remoteExists] = yield* Effect.all(
         [
-          executeGit(
-            "GitVcsDriver.switchRef.localInputExists",
-            input.cwd,
-            ["show-ref", "--verify", "--quiet", `refs/heads/${input.refName}`],
-            {
-              timeoutMs: 5_000,
-              allowNonZeroExit: true,
-            },
-          ).pipe(Effect.map((result) => result.exitCode === 0)),
-          executeGit(
-            "GitVcsDriver.switchRef.remoteExists",
-            input.cwd,
-            ["show-ref", "--verify", "--quiet", `refs/remotes/${input.refName}`],
-            {
-              timeoutMs: 5_000,
-              allowNonZeroExit: true,
-            },
-          ).pipe(Effect.map((result) => result.exitCode === 0)),
+          refExists("GitVcsDriver.switchRef.localInputExists", `refs/heads/${input.refName}`),
+          refExists("GitVcsDriver.switchRef.remoteExists", `refs/remotes/${input.refName}`),
         ],
         { concurrency: "unbounded" },
       );
 
-      const localTrackingBranch =
+      const remoteBranchTarget =
         remoteExists && !localInputExists
-          ? yield* executeGit(
-              "GitVcsDriver.switchRef.localTrackingBranch",
-              input.cwd,
-              ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)", "refs/heads"],
-              {
-                timeoutMs: 5_000,
-                allowNonZeroExit: true,
-              },
-            ).pipe(
-              Effect.map((result) =>
-                result.exitCode === 0
-                  ? parseTrackingBranchByUpstreamRef(result.stdout, input.refName)
-                  : null,
-              ),
-            )
+          ? yield* resolveBranchName(input.cwd, `refs/remotes/${input.refName}`)
           : null;
+      const localTargetExists =
+        remoteBranchTarget !== null &&
+        (yield* refExists(
+          "GitVcsDriver.switchRef.localTrackedBranchExists",
+          `refs/heads/${remoteBranchTarget}`,
+        ));
 
-      const localTrackedBranchCandidate = deriveLocalBranchNameFromRemoteRef(input.refName);
-      const localTrackedBranchTargetExists =
-        remoteExists && !localInputExists && !localTrackingBranch && localTrackedBranchCandidate
-          ? yield* executeGit(
-              "GitVcsDriver.switchRef.localTrackedBranchTargetExists",
-              input.cwd,
-              ["show-ref", "--verify", "--quiet", `refs/heads/${localTrackedBranchCandidate}`],
-              {
-                timeoutMs: 5_000,
-                allowNonZeroExit: true,
-              },
-            ).pipe(Effect.map((result) => result.exitCode === 0))
-          : false;
+      const checkoutArgs =
+        remoteBranchTarget !== null && !localTargetExists
+          ? ["checkout", "--track", "-b", remoteBranchTarget, `refs/remotes/${input.refName}`]
+          : ["checkout", remoteBranchTarget ?? input.refName];
 
-      const checkoutArgs = localInputExists
-        ? ["checkout", input.refName]
-        : remoteExists && !localTrackingBranch && localTrackedBranchTargetExists
-          ? ["checkout", input.refName]
-          : remoteExists && !localTrackingBranch
-            ? ["checkout", "--track", input.refName]
-            : remoteExists && localTrackingBranch
-              ? ["checkout", localTrackingBranch]
-              : ["checkout", input.refName];
-
-      yield* refuseOptionLikeRefName("GitVcsDriver.switchRef", input.cwd, checkoutArgs.at(-1));
+      yield* refuseOptionLikeRefName(
+        "GitVcsDriver.switchRef",
+        input.cwd,
+        remoteBranchTarget ?? input.refName,
+      );
 
       // A stale ref must not turn into a path checkout that discards local edits.
       yield* executeGitWithStableDiagnostics(
