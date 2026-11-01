@@ -272,6 +272,45 @@ describe("acpToolCallDiffPatch", () => {
         "",
       ].join("\n"),
     );
+    assert.equal(
+      acpToolCallDiffPatch([
+        {
+          type: "diff",
+          changes: [{ operation: "modify", path: "/repo/a.ts" }],
+          patch: {
+            format: "git_patch",
+            text: "diff --git a/repo/a.ts b/repo/a.ts\n@@ -1 +1 @@\n-a\n+A\n",
+          },
+        },
+        {
+          type: "diff",
+          changes: [{ operation: "modify", path: "/repo/b.ts" }],
+          patch: {
+            format: "git_patch",
+            text: "diff --git a/repo/b.ts b/repo/b.ts\n@@ -1 +1 @@\n-b\n+B\n",
+          },
+        },
+        { type: "diff", path: "/repo/c.ts", oldText: "c\n", newText: "C\n" },
+      ]),
+      [
+        "diff --git a/repo/a.ts b/repo/a.ts",
+        "@@ -1 +1 @@",
+        "-a",
+        "+A",
+        "",
+        "diff --git a/repo/b.ts b/repo/b.ts",
+        "@@ -1 +1 @@",
+        "-b",
+        "+B",
+        "",
+        "--- /repo/c.ts",
+        "+++ /repo/c.ts",
+        "@@ -1,1 +1,1 @@",
+        "-c",
+        "+C",
+        "",
+      ].join("\n"),
+    );
   });
 });
 

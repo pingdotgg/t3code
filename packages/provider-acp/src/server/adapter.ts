@@ -908,7 +908,7 @@ export function acpToolCallDiffPatch(content: unknown): string | undefined {
     const diff = unknownRecord(entry);
     return diff?.type === "diff" ? [diff] : [];
   });
-  for (const diff of diffs) {
+  const patches = diffs.flatMap((diff) => {
     const patch = unknownRecord(diff.patch);
     if (typeof patch?.text === "string") {
       const change =
@@ -924,15 +924,15 @@ export function acpToolCallDiffPatch(content: unknown): string | undefined {
         const before = change.operation === "add" ? "/dev/null" : JSON.stringify(`a/${oldPath}`);
         const after =
           change.operation === "delete" ? "/dev/null" : JSON.stringify(`b/${change.path}`);
-        return `diff --git ${JSON.stringify(`a/${oldPath}`)} ${JSON.stringify(`b/${change.path}`)}\n--- ${before}\n+++ ${after}\n${patch.text.trimStart()}`;
+        return [
+          `diff --git ${JSON.stringify(`a/${oldPath}`)} ${JSON.stringify(`b/${change.path}`)}\n--- ${before}\n+++ ${after}\n${patch.text.trimStart()}`,
+        ];
       }
-      return patch.text;
+      return [patch.text];
     }
-  }
-  const v1Patches = diffs.flatMap((diff) => {
     if (typeof diff.path !== "string" || typeof diff.newText !== "string") return [];
     const oldText = typeof diff.oldText === "string" ? diff.oldText : undefined;
-    const patch = structuredPatch(
+    const structured = structuredPatch(
       oldText === undefined ? "/dev/null" : diff.path,
       diff.path,
       oldText ?? "",
@@ -944,9 +944,11 @@ export function acpToolCallDiffPatch(content: unknown): string | undefined {
         maxEditLength: oldText && diff.newText ? ACP_V1_DIFF_MAX_EDITS : Number.POSITIVE_INFINITY,
       },
     );
-    return patch === undefined || patch.hunks.length === 0 ? [] : [patch];
+    return structured === undefined || structured.hunks.length === 0
+      ? []
+      : [formatPatch(structured, FILE_HEADERS_ONLY)];
   });
-  return v1Patches.length === 0 ? undefined : formatPatch(v1Patches, FILE_HEADERS_ONLY);
+  return patches.length === 0 ? undefined : patches.join("\n");
 }
 
 function pathFromToolCall(toolCall: AcpToolCallState): string | undefined {
