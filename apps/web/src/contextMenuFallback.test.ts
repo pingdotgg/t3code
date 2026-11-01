@@ -237,4 +237,16 @@ describe("showContextMenuFallback", () => {
 
     await expect(selectionPromise).resolves.toBe("rename");
   });
+
+  it.each([
+    { at: { x: 100, y: 100 }, left: "100px", top: "100px" },
+    { at: { x: 1200, y: 760 }, left: "1020px", top: "640px" },
+  ])("opens at $at.x,$at.y on the side of the pointer that fits", ({ at, left, top }) => {
+    void showContextMenuFallback([{ id: "rename", label: "Rename" }], at);
+    const menu = (document as unknown as FakeDocument)
+      .querySelectorAll("div")
+      .find((element) => element.dataset.contextMenu === "true");
+
+    expect(menu?.style).toMatchObject({ left, top });
+  });
 });

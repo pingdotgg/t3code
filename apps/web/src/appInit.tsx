@@ -40,6 +40,7 @@ import {
 import { syncBrowserChromeTheme } from "./hooks/useTheme";
 import { startThreadVisitedMigration } from "./hooks/useThreadVisitedMigration";
 import { installDesktopPasteAsText } from "./lib/desktopPasteAsText";
+import { installDesktopWindowContextMenu } from "./lib/desktopWindowContextMenu";
 import {
   syncDocumentElectronPlatformClasses,
   syncDocumentWindowControlsOverlayClass,
@@ -177,6 +178,7 @@ export function startAppServices(): AppRouter {
   }
 
   installDesktopPasteAsText(window.desktopBridge, window);
+  installDesktopWindowContextMenu(window.desktopBridge);
 
   startClientAppearance();
   startDocumentTitle();

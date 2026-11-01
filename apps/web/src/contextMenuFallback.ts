@@ -196,14 +196,30 @@ function createIconElement(name: string, tone: "neutral" | "destructive"): SVGSV
   return svg;
 }
 
-function clampMenuPosition(menu: HTMLDivElement, preferredLeft: number, preferredTop: number) {
+/** Like a native menu, a menu opened at a point moves to the point's other side when it overflows. */
+function flipAtPoint(start: number, size: number, limit: number): number {
+  return start + size > limit - 4 && start - size >= 4 ? start - size : start;
+}
+
+function clampMenuPosition(
+  menu: HTMLDivElement,
+  preferredLeft: number,
+  preferredTop: number,
+  atPoint = false,
+) {
   const rect = menu.getBoundingClientRect();
   const left = Math.min(
-    Math.max(4, preferredLeft),
+    Math.max(
+      4,
+      atPoint ? flipAtPoint(preferredLeft, rect.width, window.innerWidth) : preferredLeft,
+    ),
     Math.max(4, window.innerWidth - rect.width - 4),
   );
   const top = Math.min(
-    Math.max(4, preferredTop),
+    Math.max(
+      4,
+      atPoint ? flipAtPoint(preferredTop, rect.height, window.innerHeight) : preferredTop,
+    ),
     Math.max(4, window.innerHeight - rect.height - 4),
   );
   menu.style.left = `${left}px`;
@@ -477,6 +493,17 @@ export function showContextMenuFallback<T extends string>(
         label.textContent = item.label;
         button.appendChild(label);
 
+        if (item.shortcut && !hasChildren) {
+          // Matches MenuShortcut in components/ui/menu.
+          const shortcut = document.createElement("kbd");
+          shortcut.className =
+            "ms-auto ps-4 font-medium font-sans text-secondary-label text-xs tracking-widest";
+          shortcut.style.cssText =
+            "margin-inline-start:auto;padding-inline-start:1rem;font-family:var(--font-sans,system-ui,sans-serif);font-size:0.75rem;font-weight:500;letter-spacing:0.1em;color:var(--contrast-secondary-label);";
+          shortcut.textContent = item.shortcut;
+          button.appendChild(shortcut);
+        }
+
         if (hasChildren) {
           button.setAttribute("aria-haspopup", "menu");
           button.setAttribute("aria-expanded", "false");
@@ -581,7 +608,7 @@ export function showContextMenuFallback<T extends string>(
       submenuTriggerStack[level] = parentTrigger;
 
       requestAnimationFrame(() => {
-        clampMenuPosition(menu, preferredLeft, preferredTop);
+        clampMenuPosition(menu, preferredLeft, preferredTop, level === 0);
       });
     };
 

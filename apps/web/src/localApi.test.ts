@@ -71,4 +71,26 @@ describe("LocalApi", () => {
 
     await expect(createLocalApi().dialogs.confirm("Delete this thread?")).resolves.toBe(false);
   });
+
+  it.each([
+    { platform: "darwin", native: true },
+    { platform: "win32", native: false },
+    { platform: "linux", native: false },
+  ])("draws $platform desktop context menus in the page unless on macOS", async (row) => {
+    const showContextMenu = vi.fn(async () => "rename");
+    Object.defineProperty(testWindow(), "desktopBridge", {
+      configurable: true,
+      value: { getClientPlatform: () => row.platform, showContextMenu },
+    });
+    showContextMenuFallbackMock.mockResolvedValue("rename");
+    const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi();
+
+    await expect(api.contextMenu.show([{ id: "rename", label: "Rename" }])).resolves.toBe("rename");
+    await api.contextMenu.close();
+
+    expect(showContextMenu).toHaveBeenCalledTimes(row.native ? 1 : 0);
+    expect(showContextMenuFallbackMock).toHaveBeenCalledTimes(row.native ? 0 : 1);
+    expect(dismissContextMenuMock).toHaveBeenCalledTimes(row.native ? 0 : 1);
+  });
 });

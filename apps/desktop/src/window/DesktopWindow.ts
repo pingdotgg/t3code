@@ -25,6 +25,8 @@ import {
   SNAP_SHOT_EVENT_CHANNEL,
   TRACKPAD_SCROLL_BEGIN_CHANNEL,
   TRACKPAD_SCROLL_END_CHANNEL,
+  WINDOW_CONTEXT_MENU_CHANNEL,
+  WINDOW_CONTEXT_MENU_RESULT_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
 import { PASSKEY_BRIDGE_ARGUMENT } from "../preview/GuestProtocol.ts";
@@ -36,6 +38,12 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
+import {
+  buildWindowContextMenu,
+  makeInPageContextMenus,
+  toNativeContextMenuTemplate,
+  type WindowContextMenuAction,
+} from "./WindowContextMenu.ts";
 
 const TITLEBAR_HEIGHT = 40;
 // Match --workspace-topbar-height in apps/web/src/index.css; native macOS buttons stay 14 points at any zoom.
@@ -531,66 +539,61 @@ export const make = Effect.gen(function* () {
     ): void => {
       if (contextMenuContents.has(contents)) return;
       contextMenuContents.add(contents);
+      // Native menus ignore the app theme. macOS keeps them; elsewhere the app's own page draws
+      // the menu. Guests and popups have no app page to draw in, so they stay native.
+      const inPageMenus =
+        environment.platform !== "darwin" && contents === ownerWindow.webContents
+          ? makeInPageContextMenus((request) => {
+              if (!contents.isDestroyed()) contents.send(WINDOW_CONTEXT_MENU_CHANNEL, request);
+            })
+          : null;
+      if (inPageMenus) {
+        contents.ipc.on(WINDOW_CONTEXT_MENU_RESULT_CHANNEL, (_event, result: unknown) =>
+          inPageMenus.resolve(result),
+        );
+      }
       contents.on("context-menu", (event, params) => {
         event.preventDefault();
         if (contents.isDestroyed() || ownerWindow.isDestroyed()) return;
         // Right-clicking a guest may leave native editing roles targeting the host renderer.
         contents.focus();
 
-        const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
-
-        if (params.misspelledWord) {
-          for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
-            menuTemplate.push({
-              label: suggestion,
-              click: () => {
-                if (!contents.isDestroyed()) contents.replaceMisspelling(suggestion);
-              },
-            });
-          }
-          if (params.dictionarySuggestions.length === 0) {
-            menuTemplate.push({ label: "No suggestions", enabled: false });
-          }
-          menuTemplate.push({ type: "separator" });
-        }
-
-        if (Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))) {
-          menuTemplate.push(
-            {
-              label: "Copy Link",
-              click: () => {
-                void runPromise(electronShell.copyText(params.linkURL));
-              },
-            },
-            { type: "separator" },
-          );
-        }
-
-        if (params.mediaType === "image") {
-          menuTemplate.push({
-            label: "Copy Image",
-            click: () => {
+        const entries = buildWindowContextMenu(
+          params,
+          Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL)),
+        );
+        const run = (action: WindowContextMenuAction) => {
+          if (contents.isDestroyed()) return;
+          switch (action.type) {
+            case "replace-misspelling":
+              contents.replaceMisspelling(action.word);
+              return;
+            case "copy-link":
+              void runPromise(electronShell.copyText(params.linkURL));
+              return;
+            case "copy-image":
               void runPromise(
                 Effect.tryPromise(() => copyContextMenuImage(contents, params)).pipe(
                   Effect.catch(() => logWindowWarning("failed to copy context-menu image")),
                 ),
               );
-            },
-          });
-          menuTemplate.push({ type: "separator" });
+              return;
+            case "edit":
+              contents[action.role]();
+              return;
+          }
+        };
+
+        if (inPageMenus) {
+          // Electron reports window points; the page positions in CSS pixels.
+          const zoomFactor = contents.getZoomFactor();
+          inPageMenus.show(entries, { x: params.x / zoomFactor, y: params.y / zoomFactor }, run);
+          return;
         }
-
-        menuTemplate.push(
-          { role: "cut", enabled: params.editFlags.canCut },
-          { role: "copy", enabled: params.editFlags.canCopy },
-          { role: "paste", enabled: params.editFlags.canPaste },
-          { role: "selectAll", enabled: params.editFlags.canSelectAll },
-        );
-
         void runPromise(
           electronMenu.popupTemplate({
             window: ownerWindow,
-            template: menuTemplate,
+            template: toNativeContextMenuTemplate(entries, run),
             ...(params.frame ? { frame: params.frame } : {}),
           }),
         );

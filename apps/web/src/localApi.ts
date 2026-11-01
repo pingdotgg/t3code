@@ -6,6 +6,11 @@ import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientP
 
 let cachedApi: LocalApi | undefined;
 
+/** Native menus ignore the app theme, so only macOS, where they match the system, keeps them. */
+export function usesNativeContextMenus(): boolean {
+  return window.desktopBridge?.getClientPlatform() === "darwin";
+}
+
 export function createLocalApi(): LocalApi {
   return {
     dialogs: {
@@ -44,14 +49,14 @@ export function createLocalApi(): LocalApi {
         items: readonly ContextMenuItem<T>[],
         position?: { x: number; y: number },
       ): Promise<T | null> => {
-        if (window.desktopBridge) {
+        if (window.desktopBridge && usesNativeContextMenus()) {
           return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
         }
         return showContextMenuFallback(items, position);
       },
       // Unlike native menus, the DOM fallback needs dismissal when underlying state disappears.
       close: async () => {
-        if (!window.desktopBridge) {
+        if (!usesNativeContextMenus()) {
           dismissContextMenu();
         }
       },

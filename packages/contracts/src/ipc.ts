@@ -28,9 +28,18 @@ export interface ContextMenuItem<T extends string = string> {
   disabled?: boolean;
   header?: boolean;
   icon?: string;
+  /** Keyboard shortcut hint shown at the end of the row, such as "Ctrl+C". */
+  shortcut?: string;
   separatorBefore?: boolean;
   checked?: boolean;
   children?: readonly ContextMenuItem<T>[];
+}
+
+/** A right-click the page left unhandled, which the desktop shell asks the page to draw. */
+export interface DesktopWindowContextMenuRequest {
+  readonly requestId: number;
+  readonly items: readonly ContextMenuItem[];
+  readonly position: { readonly x: number; readonly y: number };
 }
 
 export type QuitShortcutHintEvent =
@@ -44,6 +53,7 @@ export interface ContextMenuItemSchemaType {
   readonly disabled?: boolean;
   readonly header?: boolean;
   readonly icon?: string;
+  readonly shortcut?: string;
   readonly separatorBefore?: boolean;
   readonly checked?: boolean;
   readonly children?: readonly ContextMenuItemSchemaType[];
@@ -56,6 +66,7 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
   disabled: Schema.optionalKey(Schema.Boolean),
   header: Schema.optionalKey(Schema.Boolean),
   icon: Schema.optionalKey(Schema.String),
+  shortcut: Schema.optionalKey(Schema.String),
   separatorBefore: Schema.optionalKey(Schema.Boolean),
   checked: Schema.optionalKey(Schema.Boolean),
   children: Schema.optionalKey(
@@ -1092,6 +1103,8 @@ export interface DesktopBridge {
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },
   ) => Promise<T | null>;
+  onWindowContextMenu: (listener: (request: DesktopWindowContextMenuRequest) => void) => () => void;
+  resolveWindowContextMenu: (requestId: number, itemId: string | null) => void;
   receiveProviderAuthCallback: (authorizationUrl: string) => Promise<string>;
   cancelProviderAuthCallback: (authorizationUrl: string) => Promise<void>;
   openExternal: (url: string) => Promise<boolean>;

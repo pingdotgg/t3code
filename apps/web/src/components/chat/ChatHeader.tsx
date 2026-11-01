@@ -24,7 +24,7 @@ import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
-import { readLocalApi } from "~/localApi";
+import { readLocalApi, usesNativeContextMenus } from "~/localApi";
 import { threadEnvironment } from "../../state/threads";
 import { canShareWithGuestAtom } from "./guestShareAvailability";
 import { useAtomValue } from "@effect/atom-react";
@@ -229,7 +229,7 @@ export const ChatHeader = memo(function ChatHeader({
     if (isTrailingDoubleClick(event.detail)) return;
     const clickedChevron =
       (event.target as HTMLElement).closest("[data-thread-title-chevron]") !== null;
-    if (event.detail === 0 || clickedChevron || window.desktopBridge === undefined) {
+    if (event.detail === 0 || clickedChevron || !usesNativeContextMenus()) {
       openTitleMenuNow();
       return;
     }
