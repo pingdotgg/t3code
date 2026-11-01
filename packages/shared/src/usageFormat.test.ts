@@ -2,7 +2,20 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { UsageSource } from "@t3tools/contracts";
 
-import { formatHourShort, makeWindow, usageSourceMessages } from "./usageFormat.ts";
+import {
+  formatHourShort,
+  formatMalformedUsageWarning,
+  makeWindow,
+  usageSourceMessagesByProvider,
+} from "./usageFormat.ts";
+
+const codexMessages = (sources: readonly UsageSource[]) =>
+  usageSourceMessagesByProvider(sources).get("codex") ?? [];
+
+const skipped = (count: number) =>
+  count === 1
+    ? "1 usage record couldn't be read, so totals may be low."
+    : `${count} usage records couldn't be read, so totals may be low.`;
 
 function malformedSource(count: number, overrides: Partial<UsageSource> = {}): UsageSource {
   return {
@@ -17,21 +30,24 @@ function malformedSource(count: number, overrides: Partial<UsageSource> = {}): U
     skippedFiles: 0,
     malformedRecords: count,
     distinctSessions: 1,
-    message: `${count} malformed or inconsistent usage record(s) were skipped; usage may be incomplete.`,
+    message: formatMalformedUsageWarning(count),
     ...overrides,
   };
 }
 
 describe("usage source messages", () => {
-  it("combines different skipped-record counts into one warning", () => {
+  it("keeps each provider's skipped records on that provider", () => {
     const codex = malformedSource(1);
     const claude = malformedSource(11, {
       fingerprint: { ...codex.fingerprint, provider: "claude", resolvedHomePath: "/demo/claude" },
     });
 
-    expect(usageSourceMessages([codex, claude])).toEqual([
-      "12 malformed or inconsistent usage record(s) were skipped; usage may be incomplete.",
-    ]);
+    expect(usageSourceMessagesByProvider([codex, claude])).toEqual(
+      new Map([
+        ["codex", [skipped(1)]],
+        ["claude", [skipped(11)]],
+      ]),
+    );
   });
 
   it.each([
@@ -45,15 +61,9 @@ describe("usage source messages", () => {
         fingerprint: { ...source.fingerprint, hostId: "other-demo-host" },
       });
 
-      expect(usageSourceMessages([source, source, otherHost, otherHost])).toEqual([
-        `${total} malformed or inconsistent usage record(s) were skipped; usage may be incomplete.`,
-      ]);
-      expect(usageSourceMessages([source, source])).toEqual([
-        `${first} malformed or inconsistent usage record(s) were skipped; usage may be incomplete.`,
-      ]);
-      expect(usageSourceMessages([otherHost, otherHost])).toEqual([
-        `${second} malformed or inconsistent usage record(s) were skipped; usage may be incomplete.`,
-      ]);
+      expect(codexMessages([source, source, otherHost, otherHost])).toEqual([skipped(total)]);
+      expect(codexMessages([source, source])).toEqual([skipped(first)]);
+      expect(codexMessages([otherHost, otherHost])).toEqual([skipped(second)]);
     },
   );
 
@@ -63,17 +73,13 @@ describe("usage source messages", () => {
       fingerprint: { ...source.fingerprint, volumeId: "other-demo-volume" },
     });
 
-    expect(usageSourceMessages([source, otherMachine])).toEqual([
-      "12 malformed or inconsistent usage record(s) were skipped; usage may be incomplete.",
-    ]);
+    expect(codexMessages([source, otherMachine])).toEqual([skipped(12)]);
   });
 
   it("uses the largest count when connected environments report the same source", () => {
     const source = malformedSource(1);
 
-    expect(usageSourceMessages([source, malformedSource(11), source])).toEqual([
-      "11 malformed or inconsistent usage record(s) were skipped; usage may be incomplete.",
-    ]);
+    expect(codexMessages([source, malformedSource(11), source])).toEqual([skipped(11)]);
   });
 
   it("retains other diagnostics beside the combined warning", () => {
@@ -86,16 +92,17 @@ describe("usage source messages", () => {
     });
 
     expect(
-      usageSourceMessages([
+      usageSourceMessagesByProvider([
         { ...source, message: `${readFailure} ${source.message}` },
         { ...source, malformedRecords: 0, message: readFailure },
         cursor,
       ]),
-    ).toEqual([
-      readFailure,
-      cursor.message,
-      "1 malformed or inconsistent usage record(s) were skipped; usage may be incomplete.",
-    ]);
+    ).toEqual(
+      new Map([
+        ["codex", [readFailure, skipped(1)]],
+        ["cursor", [cursor.message]],
+      ]),
+    );
   });
 
   it("includes cached diagnostics when a transcript directory is missing", () => {
@@ -110,21 +117,21 @@ describe("usage source messages", () => {
         "No transcript directory on this environment. 2 malformed or inconsistent usage record(s) were skipped; usage may be incomplete.",
     });
 
-    expect(usageSourceMessages([source, missing, missing])).toEqual([
+    expect(codexMessages([source, missing, missing])).toEqual([
       "No transcript directory on this environment.",
-      "3 malformed or inconsistent usage record(s) were skipped; usage may be incomplete.",
+      skipped(3),
     ]);
   });
 
   it("omits empty missing sources, healthy sources, and diagnostics handled by an action", () => {
     expect(
-      usageSourceMessages([
+      usageSourceMessagesByProvider([
         malformedSource(0, { status: "missing" }),
         malformedSource(1, { status: "ok" }),
         malformedSource(1, { action: "enableCursorKeychain" }),
       ]),
-    ).toEqual([]);
-    expect(usageSourceMessages([])).toEqual([]);
+    ).toEqual(new Map());
+    expect(usageSourceMessagesByProvider([])).toEqual(new Map());
   });
 });
 
