@@ -298,6 +298,24 @@ function nextRunAt(
   }
 }
 
+/**
+ * Next run after an interrupted run. A one-time task counts from the run's start
+ * (`lastRunAt`), so a manual run that began before its time does not use it up.
+ */
+function nextRunAfterRun(
+  task: Pick<ScheduledTask, "enabled" | "schedule" | "lastRunAt">,
+  now: DateTime.DateTime,
+): string | null {
+  const startedAt =
+    task.schedule.type === "once" && task.lastRunAt !== null
+      ? DateTime.make(task.lastRunAt)
+      : Option.none();
+  return nextRunAt(
+    task,
+    Option.getOrElse(startedAt, () => now),
+  );
+}
+
 /** An enabled one-time task with a past time would never run, so saving it is an error. */
 function requireFutureOnce(
   task: Pick<ScheduledTask, "enabled" | "schedule">,
@@ -553,6 +571,7 @@ export const layer = Layer.effect(
     const saveTask = (
       task: ScheduledTask,
       requireExisting: boolean,
+      keepNextRun: boolean,
       webhook: {
         readonly token: string | null;
         readonly secret: string | null;
@@ -623,7 +642,11 @@ export const layer = Layer.effect(
           interaction_mode = excluded.interaction_mode,
           creation_source = excluded.creation_source,
           updated_at = excluded.updated_at,
-          next_run_at = excluded.next_run_at,
+          -- A run that completes while this save is in flight already moved next_run_at.
+          next_run_at = CASE
+            WHEN ${keepNextRun ? 1 : 0} = 1 THEN scheduled_tasks.next_run_at
+            ELSE excluded.next_run_at
+          END,
           -- Only rotate changes a live token, so a save racing a rotation
           -- cannot bring the old URL back.
           webhook_token = CASE
@@ -715,7 +738,7 @@ export const layer = Layer.effect(
           UPDATE scheduled_tasks
           SET last_run_status = 'failed',
               last_run_error = ${message},
-              next_run_at = ${nextRunAt(source, now)},
+              next_run_at = ${nextRunAfterRun(source, now)},
               updated_at = ${iso(now)},
               run_count = run_count + CASE WHEN EXISTS (
                 SELECT 1 FROM scheduled_task_webhook_pending
@@ -1054,7 +1077,7 @@ export const layer = Layer.effect(
                 UPDATE scheduled_tasks
                 SET last_run_status = 'failed',
                     last_run_error = 'Run was interrupted by a server restart.',
-                    next_run_at = ${nextRunAt(decoded.success, now)},
+                    next_run_at = ${nextRunAfterRun(decoded.success, now)},
                     updated_at = ${iso(now)},
                     run_count = run_count + CASE WHEN EXISTS (
                       SELECT 1 FROM scheduled_task_webhook_pending
@@ -1239,7 +1262,7 @@ export const layer = Layer.effect(
         lastRunError: existingTask?.lastRunError ?? null,
         runCount: existingTask?.runCount ?? 0,
       };
-      yield* saveTask(task, input.requireExisting === true, webhook);
+      yield* saveTask(task, input.requireExisting === true, scheduleUnchanged, webhook);
       yield* notifyChanged;
       return { task: (yield* findTask(id)) ?? task };
     });

@@ -7,7 +7,7 @@ import {
   ScheduledTaskId,
   type ScheduledTask,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type {
   SidebarProjectGroupMember,
@@ -171,6 +171,8 @@ describe("editing scheduled task branch settings", () => {
 });
 
 describe("one-time scheduled tasks", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it("round-trips the run time through the local date-time input", () => {
     const runAt = "2026-11-03T17:00:42.000Z";
     const draft = taskToDraft({ ...legacyTask, schedule: { type: "once", runAt } });
@@ -179,6 +181,25 @@ describe("one-time scheduled tasks", () => {
     const moved = scheduleFromDraft({ ...draft, runAt: "2026-11-04T09:30" });
     expect(moved).toEqual({ type: "once", runAt: new Date("2026-11-04T09:30").toISOString() });
     expect(scheduleFromDraft({ ...draft, runAt: "" })).toBeNull();
+  });
+
+  it("rejects a skipped daylight saving time and keeps a repeated hour exact", () => {
+    vi.stubEnv("TZ", "America/Los_Angeles");
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "once", runAt: "2027-03-14T18:00:00.000Z" },
+    });
+    expect(scheduleFromDraft({ ...draft, runAt: "2027-03-14T02:30" })).toBeNull();
+    // 01:00 happens twice on 2026-11-01; the second one is 09:00 UTC.
+    const repeated = {
+      ...draft,
+      runAt: "2026-11-01T01:00",
+      savedRunAt: "2026-11-01T09:00:00.000Z",
+    };
+    expect(scheduleFromDraft(repeated)).toEqual({
+      type: "once",
+      runAt: "2026-11-01T09:00:00.000Z",
+    });
   });
 });
 

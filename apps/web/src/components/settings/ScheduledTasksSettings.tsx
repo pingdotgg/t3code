@@ -1596,20 +1596,27 @@ function ScheduledTaskEditorForm({
                     mode === "interval" ||
                     mode === "webhook"
                   )
-                    setDraft((current) => ({
-                      ...current,
-                      scheduleMode: mode,
-                      runAt:
+                    setDraft((current) => {
+                      const suggested =
                         mode === "once" && !current.runAt
-                          ? toDateTimeLocalValue(
-                              new Date(Math.ceil(Date.now() / 3_600_000) * 3_600_000),
-                            )
-                          : current.runAt,
-                      prompt:
-                        mode === "webhook" && !current.prompt.trim()
-                          ? DEFAULT_WEBHOOK_PROMPT
-                          : current.prompt,
-                    }));
+                          ? new Date(Math.ceil(Date.now() / 3_600_000) * 3_600_000)
+                          : null;
+                      return {
+                        ...current,
+                        scheduleMode: mode,
+                        // Keep the instant too, so an hour that repeats when clocks go back stays exact.
+                        ...(suggested === null
+                          ? {}
+                          : {
+                              runAt: toDateTimeLocalValue(suggested),
+                              savedRunAt: suggested.toISOString(),
+                            }),
+                        prompt:
+                          mode === "webhook" && !current.prompt.trim()
+                            ? DEFAULT_WEBHOOK_PROMPT
+                            : current.prompt,
+                      };
+                    });
                 }}
               >
                 <Toggle value="fixed">At a time</Toggle>

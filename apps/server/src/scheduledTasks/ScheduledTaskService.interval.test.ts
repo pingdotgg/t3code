@@ -4,6 +4,7 @@ import { ScheduledTaskUpsertInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { afterEach, vi } from "vite-plus/test";
 
@@ -174,6 +175,72 @@ it.effect("runs a one-time schedule once and rejects past times", () =>
         .pipe(Effect.flip);
       expect(past.message).toBe("The run time has passed. Pick a time in the future.");
     }).pipe(Effect.provide(slowLaunchLayer));
+  }).pipe(
+    Effect.provideService(ServerActivation, Effect.never),
+    Effect.provide(SqlitePersistence.layerMemory),
+  ),
+);
+
+const onceInput = {
+  ...input,
+  commandId: "once-race",
+  schedule: { type: "once", runAt: "2026-11-01T08:00:00Z" },
+};
+
+it.effect("keeps a one-time run used up when a run completes during a title save", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-11-01T07:00:00.000Z"));
+    // The project check runs between the save's read and write, so it stands in for a
+    // scheduled run that completes in that gap.
+    const completeRunMidSave = Layer.unwrap(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        return Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          isScratchProject: () =>
+            sql`UPDATE scheduled_tasks SET next_run_at = NULL`.pipe(Effect.as(false), Effect.orDie),
+        });
+      }),
+    );
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(Layer.merge(dependencies, completeRunMidSave)),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const worktree = { type: "worktree", baseRef: "main" };
+      const created = yield* service.upsert(
+        yield* decodeInput({ ...onceInput, workspaceStrategy: { type: "root" } }),
+      );
+      expect(created.task.nextRunAt).toBe("2026-11-01T08:00:00.000Z");
+      const renamed = yield* service.upsert(
+        yield* decodeInput({ ...onceInput, workspaceStrategy: worktree, title: "Renamed" }),
+      );
+      expect(renamed.task.nextRunAt).toBeNull();
+    }).pipe(Effect.provide(layer));
+  }).pipe(
+    Effect.provideService(ServerActivation, Effect.never),
+    Effect.provide(SqlitePersistence.layerMemory),
+  ),
+);
+
+it.effect("keeps a one-time run after a restart interrupts an earlier manual run", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-11-01T07:59:00.000Z"));
+    const sql = yield* SqlClient.SqlClient;
+    const created = yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      return yield* service.upsert(yield* decodeInput(onceInput));
+    }).pipe(Effect.provide(serviceLayer));
+    yield* sql`UPDATE scheduled_tasks SET last_run_status = 'running', last_run_at = '2026-11-01T07:59:00.000Z'`;
+
+    yield* TestClock.setTime(Date.parse("2026-11-01T08:05:00.000Z"));
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const [task] = (yield* service.list()).tasks;
+      expect(task?.id).toBe(created.task.id);
+      expect(task?.lastRunStatus).toBe("failed");
+      expect(task?.nextRunAt).toBe("2026-11-01T08:00:00.000Z");
+    }).pipe(Effect.provide(serviceLayer));
   }).pipe(
     Effect.provideService(ServerActivation, Effect.never),
     Effect.provide(SqlitePersistence.layerMemory),

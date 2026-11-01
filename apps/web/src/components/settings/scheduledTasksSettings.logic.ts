@@ -107,10 +107,17 @@ export function toDateTimeLocalValue(date: Date): string {
 }
 
 export function scheduleDraftErrors(draft: DraftState) {
-  if (draft.scheduleMode === "once")
-    return Number.isNaN(new Date(draft.runAt).getTime())
-      ? [{ title: "Invalid run time", description: "Pick a date and time." }]
-      : [];
+  if (draft.scheduleMode === "once") {
+    const runAt = new Date(draft.runAt);
+    if (Number.isNaN(runAt.getTime()))
+      return [{ title: "Invalid run time", description: "Pick a date and time." }];
+    // A time skipped by a daylight saving change parses to a different clock time.
+    if (toDateTimeLocalValue(runAt) !== draft.runAt)
+      return [
+        { title: "Invalid run time", description: "That time does not exist in your time zone." },
+      ];
+    return [];
+  }
   if (draft.scheduleMode !== "webhook") return [];
   if (parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes) === undefined)
     return [
