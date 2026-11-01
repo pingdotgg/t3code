@@ -1144,7 +1144,8 @@ export const layerMcpTransport = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
   path: "/mcp",
-  protocols: [McpProtocol.v2025_06_18],
+  // The first protocol is the fallback for clients that offer an unknown version.
+  protocols: [McpProtocol.v2025_06_18, McpProtocol.v2026_07_28],
   allowSessionTermination: true,
 }).pipe(Layer.provide(layerMcpAuthMiddleware));
 
