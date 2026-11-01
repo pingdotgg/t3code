@@ -761,16 +761,32 @@ export class PreviewAutomationTabNotFoundError extends Schema.TaggedError<Previe
   }
 }
 
+export const PreviewAutomationSnapshotStage = Schema.Literals([
+  "metrics",
+  "frames",
+  "page state",
+  "screenshot",
+  "accessibility tree",
+]);
+
+export const PreviewAutomationTimeoutDetail = Schema.Struct({
+  timeoutMs: Schema.Int.check(Schema.isGreaterThan(0)),
+  pendingStages: Schema.Array(PreviewAutomationSnapshotStage).check(Schema.isMaxLength(5)),
+});
+
 export class PreviewAutomationTimeoutError extends Schema.TaggedError<PreviewAutomationTimeoutError>()(
   "PreviewAutomationTimeoutError",
   {
     ...PreviewAutomationRequestErrorFields,
     ...PreviewAutomationOptionalRemoteDiagnosticFields,
+    pendingStages: Schema.optional(PreviewAutomationTimeoutDetail.fields.pendingStages),
   },
 ) {
   override get message(): string {
     const summary = `Preview automation ${this.operation} timed out after ${this.timeoutMs}ms.`;
-    return summary;
+    return this.pendingStages?.length
+      ? `${summary} Waiting for: ${this.pendingStages.join(", ")}.`
+      : summary;
   }
 }
 
