@@ -2001,6 +2001,137 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect.each([
+    { label: "ends at the target", hasLaterWakes: false, reject: null, copies: false },
+    { label: "also contains later wakes", hasLaterWakes: true, reject: null, copies: false },
+    { label: "has native fork copies", hasLaterWakes: true, reject: null, copies: true },
+    { label: "is ambiguous", hasLaterWakes: false, reject: "duplicate", copies: false },
+    {
+      label: "has an unrelated matching entry ID",
+      hasLaterWakes: false,
+      reject: "timestamp",
+      copies: false,
+    },
+  ])(
+    "natively forks a target from a previous session that $label",
+    ({ hasLaterWakes, reject, copies }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const directory = yield* fileSystem.makeTempDirectoryScoped();
+        const previousFile = `${directory}/previous.jsonl`;
+        const currentFile = `${directory}/current.jsonl`;
+        const forkFile = `${directory}/forked.jsonl`;
+        const previousEntries = (
+          hasLaterWakes ? UNCAPTURED_TURN_TREE.entries : TURN_ONE_ENTRIES
+        ).map((entry) =>
+          reject === "timestamp" && entry.id === "u1"
+            ? { ...entry, timestamp: DateTime.formatIso(at(-10)) }
+            : entry,
+        );
+        const currentEntries = [
+          sessionMessage("wake3", null, "user", 210),
+          sessionMessage("wake3-answer", "wake3", "assistant", 220),
+        ];
+        for (const [file, entries] of [
+          [previousFile, previousEntries],
+          [currentFile, currentEntries],
+        ] as const) {
+          yield* fileSystem.writeFileString(
+            file,
+            [
+              {
+                type: "session",
+                version: 3,
+                id: file,
+                timestamp: DateTime.formatIso(at(0)),
+                cwd: "/workspace",
+              },
+              ...entries,
+            ]
+              .map((record) => encodeJsonLine(record))
+              .join("\n") + "\n",
+          );
+        }
+        if (reject === "duplicate")
+          yield* fileSystem.copyFile(previousFile, `${directory}/duplicate.jsonl`);
+        if (copies) {
+          let parentSession = previousFile;
+          for (const name of ["copy", "descendant"]) {
+            const file = `${directory}/${name}.jsonl`;
+            yield* fileSystem.writeFileString(
+              file,
+              [{ type: "session", version: 3, id: name, parentSession }, ...previousEntries]
+                .map((record) => encodeJsonLine(record))
+                .join("\n") + "\n",
+            );
+            parentSession = file;
+          }
+        }
+        const fake = yield* makeFakePi;
+        const forkFake = yield* makeFakePi;
+        const { runtime } = yield* openRuntime(fake, "default", THREAD_ID, SESSION_ID, {
+          ...forkFake,
+          spawner: ChildProcessSpawner.make((command) => {
+            const fromPrevious =
+              ChildProcess.isStandardCommand(command) && command.args.includes(previousFile);
+            forkFake.queueEntries(
+              fromPrevious
+                ? {
+                    entries: [
+                      ...previousEntries,
+                      {
+                        type: "thinking_level_change",
+                        id: "setting",
+                        parentId: previousEntries.at(-1)!.id,
+                        timestamp: DateTime.formatIso(at(300)),
+                        thinkingLevel: "off",
+                      },
+                    ],
+                    leafId: "setting",
+                  }
+                : { entries: currentEntries, leafId: "wake3-answer" },
+            );
+            return forkFake.spawner.spawn(command);
+          }),
+        });
+        fake.queueState({ sessionFile: currentFile });
+        const source = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        const turns = uncapturedTurns(source.id);
+        forkFake.queueState({ sessionFile: forkFile });
+        fake.queueState({ sessionFile: forkFile });
+        const result = yield* runtime
+          .forkThread({
+            sourceProviderThread: source,
+            sourceProviderTurns: turns,
+            providerTurnId: turns[0]!.id,
+            targetThreadId: ThreadId.make("fork-target"),
+          })
+          .pipe(Effect.result);
+        if (reject !== null) {
+          assert.equal(result._tag, "Failure");
+          assert.isFalse(forkFake.allRequests().some((request) => request.type === "fork"));
+          return;
+        }
+        assert.equal(result._tag, "Success");
+        if (result._tag !== "Success") return;
+        assert.equal(result.success.nativeThreadRef?.nativeId, forkFile);
+        const args = forkFake.lastSpawn().args;
+        assert.equal(args[args.indexOf("--fork") + 1], previousFile);
+        assert.deepEqual(
+          forkFake
+            .allRequests()
+            .filter((request) => request.type === "fork")
+            .map((request) => request.entryId),
+          hasLaterWakes ? ["u2"] : [],
+        );
+        assert.isFalse(fake.allRequests().some((request) => request.type === "fork"));
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("presents explicitly namespaced MCP extension tools", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
