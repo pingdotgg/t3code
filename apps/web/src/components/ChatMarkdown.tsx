@@ -233,6 +233,8 @@ interface ChatMarkdownProps {
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
   isStreaming?: boolean;
   skills?: ReadonlyArray<ServerProviderSkill>;
+  /** The `/command` this text opens with, shown apart from the prose after it. */
+  leadingCommand?: string | null;
   className?: string;
   lineBreaks?: boolean;
   parseRawHtml?: boolean;
@@ -496,6 +498,7 @@ function useChatMarkdownState({
   onTaskListChange,
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
+  leadingCommand = null,
   onUseArtifactTemplate,
   onRunShellCommand,
   imageBaseDir,
@@ -904,6 +907,7 @@ function useChatMarkdownState({
     renderContextReference,
     headingLevelOffset,
     imageBaseDir,
+    leadingCommand,
     workspaceMutationId,
     inlineCodeFileLinkMetaByText,
     inline,
@@ -964,6 +968,18 @@ function selectInlineCode(event: ReactMouseEvent<HTMLElement>) {
   window.getSelection()?.selectAllChildren(event.currentTarget);
 }
 
+function highlightLeadingCommand(children: ReactNode, command: string): ReactNode {
+  const [first, ...rest] = React.Children.toArray(children);
+  if (typeof first !== "string" || !first.startsWith(command)) return children;
+  return [
+    <span key="leading-command" className="text-info-foreground">
+      {command}
+    </span>,
+    first.slice(command.length),
+    ...rest,
+  ];
+}
+
 const CHAT_MARKDOWN_COMPONENTS = {
   h1: markdownHeadingRenderer(1),
   h2: markdownHeadingRenderer(2),
@@ -981,9 +997,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
     }
     return <div {...props}>{children}</div>;
   },
-  p: function MarkdownParagraph({ node: _node, children, ...props }) {
-    const { skills, threadRef } = use(ChatMarkdownRendererContext);
-    return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills, threadRef)}</p>;
+  p: function MarkdownParagraph({ node, children, ...props }) {
+    const { leadingCommand, skills, threadRef } = use(ChatMarkdownRendererContext);
+    const content =
+      leadingCommand && node?.position?.start.offset === 0
+        ? highlightLeadingCommand(children, leadingCommand)
+        : children;
+    return <p {...props}>{renderSkillInlineMarkdownChildren(content, skills, threadRef)}</p>;
   },
   blockquote: function MarkdownBlockquote({ node: _node, children, ...props }) {
     const alert =

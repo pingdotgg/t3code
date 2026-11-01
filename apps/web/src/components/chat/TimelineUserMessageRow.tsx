@@ -25,6 +25,7 @@ import {
   isImageAttachment,
   isVideoAttachment,
 } from "../../types";
+import { leadingSlashCommand } from "../../composer-logic";
 import ChatMarkdown from "../ChatMarkdown";
 import {
   CalendarClockIcon,
@@ -1174,6 +1175,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       cwd={props.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
       skills={props.skills}
+      leadingCommand={leadingSlashCommand(props.text, ctx.slashCommands)}
       className="text-foreground"
       lineBreaks
       parseRawHtml={false}
