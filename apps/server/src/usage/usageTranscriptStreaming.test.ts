@@ -2,8 +2,10 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeZlib from "node:zlib";
 
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
 import { TEST_FORMATS } from "./usageTestFormats.ts";
 import {
@@ -108,6 +110,49 @@ async function scan(
 }
 
 describe("large usage records", () => {
+  it("skips JSON projection for oversized lines without usage markers", async () => {
+    const path = NodePath.join(dir, "unrelated.jsonl");
+    await NodeFSP.writeFile(
+      path,
+      JSON.stringify({ type: "response_item", payload: { content } }) +
+        "\n" +
+        codex.map((line) => JSON.stringify(line)).join("\n") +
+        "\n",
+    );
+    const parseProjected = vi.fn(TEST_FORMATS.codex.parseProjected);
+    const result = await readWithDefaultThreshold(
+      path,
+      { ...TEST_FORMATS.codex, parseProjected },
+      undefined,
+      { streamingThresholdBytes: 256 * 1024 },
+    );
+    expect(result?.records.map((record) => record.totals)).toEqual([
+      {
+        uncachedInputTokens: 75,
+        cachedInputTokens: 20,
+        cacheCreationTokens: 5,
+        outputTokens: 99,
+        reasoningTokens: 10,
+      },
+    ]);
+    expect(parseProjected).not.toHaveBeenCalled();
+  });
+
+  it("projects oversized usage lines in compressed transcripts", async () => {
+    const path = NodePath.join(dir, "archived.jsonl.zst");
+    await NodeFSP.writeFile(path, NodeZlib.zstdCompressSync(JSON.stringify(claude()) + "\n"));
+    const result = await readTranscriptRecords(path, "claude");
+    expect(result?.records.map((record) => record.totals)).toEqual([
+      {
+        uncachedInputTokens: 100,
+        cachedInputTokens: 20,
+        cacheCreationTokens: 5,
+        outputTokens: 99,
+        reasoningTokens: 0,
+      },
+    ]);
+  });
+
   it("streams Muse completion envelopes and resumes a partial appended event", async () => {
     const entry = {
       schema_version: 1,
