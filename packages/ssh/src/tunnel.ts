@@ -648,6 +648,10 @@ ADOPTED_PID=""
 if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
   DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
+  if ! server_running "$DEFAULT_RUNTIME_PID"; then
+    DEFAULT_RUNTIME_PID=""
+    DEFAULT_REMOTE_PORT=""
+  fi
 fi
 # The managed server runs on the default home, so it writes the default
 # runtime file too. When that file names the PID this launcher recorded as
@@ -728,6 +732,7 @@ if [ -z "$REMOTE_PORT" ]; then
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+  printf '%s\\n' "$DEFAULT_SERVER_HOME" >"$SERVER_HOME_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
   if ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
     printf 'Remote T3 server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2

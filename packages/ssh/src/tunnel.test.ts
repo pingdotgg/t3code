@@ -177,6 +177,7 @@ process.stdout.write(args[0] === "__ssh-helper"
           `#!${process.execPath}
 const fs = require("node:fs");
 const args = process.argv.slice(2);
+if (args[0] === "serve") process.exit(0);
 if (args[0] !== "__ssh-helper") process.exit(21);
 switch (args[1]) {
   case "home-dir": process.stdout.write(process.env.T3CODE_HOME); break;
@@ -184,7 +185,11 @@ switch (args[1]) {
     const runtime = JSON.parse(fs.readFileSync(args[2], "utf8"));
     process.stdout.write(runtime.pid + " " + runtime.port); break;
   }
-  case "wait-ready": process.exit(args[2] === process.env.T3_FIXTURE_READY_PORT ? 0 : 22); break;
+  case "pick-port": process.stdout.write("41774"); break;
+  case "wait-ready": {
+    if (args[2] === "41774" && fs.readFileSync(process.env.T3_FIXTURE_STATE_DIR + "/server-home", "utf8").trim() !== process.env.T3CODE_HOME) process.exit(24);
+    process.exit(args[2] === process.env.T3_FIXTURE_READY_PORT ? 0 : 22); break;
+  }
   default: process.exit(23);
 }`,
           { mode: 0o700 },
@@ -208,6 +213,7 @@ switch (args[1]) {
                 T3_FIXTURE_ZOMBIE: zombie,
                 T3CODE_HOME: customHome,
                 T3_FIXTURE_READY_PORT: readyPort,
+                T3_FIXTURE_STATE_DIR: stateDir,
               },
               extendEnv: false,
             }),
@@ -246,8 +252,12 @@ switch (args[1]) {
           "old runner stays intact",
         );
         zombie = "1";
-        readyPort = "41773";
-        assert.deepEqual(yield* launch, { remotePort: 41773, remoteServerKind: "external" });
+        readyPort = "41774";
+        assert.deepEqual(yield* launch, { remotePort: 41774, remoteServerKind: "managed" });
+        assert.strictEqual(
+          (yield* fs.readFileString(path.join(stateDir, "server-home"))).trim(),
+          customHome,
+        );
         assert.isTrue(yield* external.isRunning);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
