@@ -70,6 +70,9 @@ vi.mock("./devAutoConnect", () => ({
   autoConnectReport: () => ({ connecting: false, error: null }),
   devAutoConnectAttemptAtom: {},
 }));
+vi.mock("../../state/presentation", () => ({
+  useEnvironmentPresentation: () => ({ presentation: null }),
+}));
 vi.mock("../../state/use-remote-environment-registry", () => ({
   setPendingConnectionError: (message: string | null) => {
     harness.pendingConnectionError = message;

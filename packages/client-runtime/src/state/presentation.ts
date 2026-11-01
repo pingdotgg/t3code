@@ -36,7 +36,12 @@ function sameConnection(
   left: EnvironmentConnectionPresentation,
   right: EnvironmentConnectionPresentation,
 ): boolean {
-  return left.phase === right.phase && left.error === right.error && left.traceId === right.traceId;
+  return (
+    left.phase === right.phase &&
+    left.error === right.error &&
+    left.traceId === right.traceId &&
+    left.credentialRejected === right.credentialRejected
+  );
 }
 
 function withoutProviders(

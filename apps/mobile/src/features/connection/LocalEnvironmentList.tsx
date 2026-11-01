@@ -15,7 +15,7 @@ export function LocalEnvironmentList({
   ...rowActions
 }: Pick<
   EnvironmentRowProps,
-  "onReconnect" | "onRemove" | "onSetEnabled" | "onUpdate" | "opensDetails"
+  "onReconnect" | "onPairAgain" | "onRemove" | "onSetEnabled" | "onUpdate" | "opensDetails"
 > & {
   readonly environments: ReadonlyArray<EnvironmentRowProps["environment"]>;
   readonly expandedId: EnvironmentId | null;

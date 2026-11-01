@@ -9,11 +9,12 @@ import {
 } from "./catalog.ts";
 import {
   BearerConnectionTarget,
+  ConnectionBlockedError,
   ConnectionTransientError,
   RelayConnectionTarget,
   type SupervisorConnectionState,
 } from "./model.ts";
-import { environmentMcpUrl, presentConnectionState } from "./presentation.ts";
+import { environmentMcpUrl, pairAgainAddress, presentConnectionState } from "./presentation.ts";
 
 const TARGET = new BearerConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -166,5 +167,78 @@ describe("connection presentation", () => {
       error: null,
       traceId: null,
     });
+  });
+
+  it("offers pairing again only when the paired address's credential is refused", () => {
+    const blocked = (
+      reason: "authentication" | "configuration",
+      failure: Partial<Pick<ConnectionBlockedError, "hop" | "via">> = {
+        hop: "server",
+        via: "direct",
+      },
+    ) =>
+      presentConnectionState(
+        supervisorState({
+          phase: "blocked",
+          lastFailure: new ConnectionBlockedError({ reason, detail: "Refused.", ...failure }),
+        }),
+      );
+    const relay = new RelayConnectionTarget({
+      environmentId: TARGET.environmentId,
+      label: TARGET.label,
+    });
+    const relayOnly: ConnectionCatalogEntry = { ...ENTRY, target: relay, profile: Option.none() };
+
+    expect(pairAgainAddress({ entry: ENTRY, connection: blocked("authentication") })).toBe(
+      "https://environment.example.test",
+    );
+    expect(pairAgainAddress({ entry: ENTRY, connection: blocked("configuration") })).toBeNull();
+    // T3 Connect signs in through the account, so a new pairing code would not help.
+    expect(
+      pairAgainAddress({ entry: relayOnly, connection: blocked("authentication") }),
+    ).toBeNull();
+    // With a T3 Connect route as well, a refused sign-in says nothing about the paired address.
+    const mixed: ConnectionCatalogEntry = {
+      ...ENTRY,
+      alternateRoutes: [{ target: relay, profile: Option.none() }],
+    };
+    expect(
+      pairAgainAddress({
+        entry: mixed,
+        connection: blocked("authentication", { hop: "server", via: "relay" }),
+      }),
+    ).toBeNull();
+    expect(pairAgainAddress({ entry: mixed, connection: blocked("authentication") })).toBe(
+      "https://environment.example.test",
+    );
+
+    // A learned route borrows the paired route's credential, so pairing it would
+    // mint nothing; the paired address is the one to pair again.
+    const learnedConnectionId = `learned:tailnet@${TARGET.connectionId}`;
+    const learned: ConnectionRoute = {
+      target: new BearerConnectionTarget({ ...TARGET, connectionId: learnedConnectionId }),
+      profile: Option.some(
+        new BearerConnectionProfile({
+          connectionId: learnedConnectionId,
+          environmentId: TARGET.environmentId,
+          label: TARGET.label,
+          httpBaseUrl: "https://machine.tailnet.example.test",
+          wsBaseUrl: "wss://machine.tailnet.example.test",
+          learned: true,
+        }),
+      ),
+    };
+    const learnedFirst: ConnectionCatalogEntry = {
+      ...ENTRY,
+      ...learned,
+      alternateRoutes: [{ target: ENTRY.target, profile: ENTRY.profile }],
+    };
+    expect(pairAgainAddress({ entry: learnedFirst, connection: blocked("authentication") })).toBe(
+      "https://environment.example.test",
+    );
+    const learnedOnly: ConnectionCatalogEntry = { ...ENTRY, ...learned };
+    expect(
+      pairAgainAddress({ entry: learnedOnly, connection: blocked("authentication") }),
+    ).toBeNull();
   });
 });

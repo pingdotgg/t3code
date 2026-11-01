@@ -20,6 +20,7 @@ import {
   hasSavedBearerRoute,
   connectionStatusText,
   environmentMcpUrl,
+  pairAgainAddress,
 } from "@t3tools/client-runtime/connection";
 import * as Option from "effect/Option";
 
@@ -78,6 +79,7 @@ type SavedBackendListRowProps = {
   onSetEnabled: (environmentId: EnvironmentId, enabled: boolean) => void;
   onRemove: (environment: EnvironmentPresentation) => void;
   onAddRoute: (environment: EnvironmentPresentation) => void;
+  onPairAgain: (environment: EnvironmentPresentation, host: string) => void;
 };
 
 function savedBackendStatus(environment: EnvironmentPresentation): {
@@ -117,6 +119,7 @@ export function SavedBackendListRow({
   onSetEnabled,
   onRemove,
   onAddRoute,
+  onPairAgain,
 }: SavedBackendListRowProps) {
   const [routesOpen, setRoutesOpen] = useState(false);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
@@ -213,6 +216,7 @@ export function SavedBackendListRow({
       (lastDescriptor === undefined ? null : { environment: lastDescriptor }),
   );
   const routeCount = connectionRoutes(environment.entry).length;
+  const pairAgainHost = enabled ? pairAgainAddress(environment) : null;
   const subtitleText = [
     environmentTransportLabel(environment, connectedTarget),
     // The headline below names the failure in full.
@@ -239,6 +243,13 @@ export function SavedBackendListRow({
       ? `\nUpdate available: ${versionMismatch.serverVersion} → ${versionMismatch.clientVersion}`
       : ""
   }`;
+
+  const pairAgainAction =
+    pairAgainHost === null ? null : (
+      <Button size="xs" variant="outline" onClick={() => onPairAgain(environment, pairAgainHost)}>
+        Pair again
+      </Button>
+    );
 
   return (
     <EnvironmentRow
@@ -321,6 +332,7 @@ export function SavedBackendListRow({
               onToggle={() => setDiagnosisOpen((open) => !open)}
             />
           ) : null}
+          {pairAgainAction ? <div className="mt-1 sm:hidden">{pairAgainAction}</div> : null}
           {serverUpdateState.status !== "idle" ? (
             <div className="mt-1 max-w-md">
               <ServerUpdateProgress state={serverUpdateState} />
@@ -382,6 +394,7 @@ export function SavedBackendListRow({
           appearance="icon"
         />
       ) : null}
+      {pairAgainAction ? <div className="hidden sm:block">{pairAgainAction}</div> : null}
       <Tooltip>
         <TooltipTrigger
           render={
