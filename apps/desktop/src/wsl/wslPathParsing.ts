@@ -45,6 +45,10 @@ export function extractDistroFromUncPath(windowsPath: string): string | null {
   return DISTRO_NAME_PATTERN.test(candidate) ? candidate : null;
 }
 
+export function linuxPathToWslUncPath(distro: string, linuxPath: string): string {
+  return `\\\\wsl.localhost\\${distro}${linuxPath.replaceAll("/", "\\")}`;
+}
+
 export function wslUncPathToLinuxPath(windowsPath: string): string | null {
   const match = /^\\\\(?:wsl\.localhost|wsl\$)\\([^\\]+)(?:\\(.*))?$/i.exec(windowsPath.trim());
   if (!match) return null;
@@ -92,8 +96,7 @@ export function resolveWslPickFolderDefaultPath(
     return homePath;
   }
 
-  const toUncPath = (linuxPath: string) =>
-    `\\\\wsl.localhost\\${distroName}${linuxPath.replaceAll("/", "\\")}`;
+  const toUncPath = (linuxPath: string) => linuxPathToWslUncPath(distroName, linuxPath);
 
   const normalizedUserHome = userHome && userHome.startsWith("/") ? userHome : null;
 

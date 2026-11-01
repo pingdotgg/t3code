@@ -26,6 +26,10 @@ export const DesktopBackendBootstrap = Schema.Struct({
   desktopTelemetryControlFd: Schema.optionalKey(PositiveInt),
   desktopBrowserFd: Schema.optionalKey(PositiveInt),
   desktopBrowserControlFd: Schema.optionalKey(PositiveInt),
+  // wsl.exe drops the browser channel fds, so a WSL primary gets this instead
+  // and the desktop dials the channel over a WebSocket that presents it.
+  // See `DESKTOP_BROWSER_SOCKET_PATH`.
+  desktopBrowserSocketSecret: Schema.optionalKey(TrimmedNonEmptyString),
   resourceMonitorPath: Schema.optionalKey(TrimmedNonEmptyString),
 });
 

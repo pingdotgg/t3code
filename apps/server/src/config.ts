@@ -101,6 +101,7 @@ export class ServerConfig extends Context.Service<
     readonly desktopTelemetryControlFd?: number | undefined;
     readonly desktopBrowserFd?: number | undefined;
     readonly desktopBrowserControlFd?: number | undefined;
+    readonly desktopBrowserSocketSecret?: string | undefined;
     readonly resourceMonitorPath?: string | undefined;
     readonly autoBootstrapProjectFromCwd: boolean;
     readonly logWebSocketEvents: boolean;
@@ -115,6 +116,16 @@ export class ServerConfig extends Context.Service<
 }
 
 export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config);
+
+/** Whether the desktop app that launched this server can reach its browser channel. */
+export const hasDesktopBrowserChannel = (
+  config: Pick<
+    ServerConfig["Service"],
+    "desktopBrowserFd" | "desktopBrowserControlFd" | "desktopBrowserSocketSecret"
+  >,
+) =>
+  (config.desktopBrowserFd !== undefined && config.desktopBrowserControlFd !== undefined) ||
+  config.desktopBrowserSocketSecret !== undefined;
 
 export const otlpResource = (
   config: Pick<ServerConfig["Service"], "mode" | "otelEnvironment">,

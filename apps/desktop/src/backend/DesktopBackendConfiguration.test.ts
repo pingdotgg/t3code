@@ -839,6 +839,48 @@ describe("DesktopBackendConfiguration", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("gives only a WSL-only primary the browser channel socket secret", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const primary = yield* configuration.resolvePrimary;
+        const besideWindows = yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+
+        assert.equal(primary.executablePath, "wsl.exe");
+        assert.match(primary.bootstrap.desktopBrowserSocketSecret ?? "", /^[0-9a-f]{64}$/);
+        // Only the primary's tabs render natively.
+        assert.isUndefined(besideWindows.bootstrap.desktopBrowserSocketSecret);
+      }).pipe(
+        Effect.provide(
+          layerBackendConfiguration().pipe(
+            Layer.provideMerge(layerServerExposure),
+            Layer.provideMerge(
+              DesktopAppSettings.layerTest({
+                ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+                wslBackendEnabled: true,
+                wslOnly: true,
+                wslDistro: "Ubuntu",
+              }),
+            ),
+            Layer.provideMerge(DesktopWslServerTree.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+              }),
+            ),
+            Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect(
     "resolvePrimary marks a removed persisted WSL distro as a fatal preflight failure",
     () =>

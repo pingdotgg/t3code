@@ -33,3 +33,11 @@ export const DesktopBrowserCommand = Schema.Union([
   }),
 ]);
 export type DesktopBrowserCommand = typeof DesktopBrowserCommand.Type;
+
+/**
+ * Carries the channel, one event or command per frame, when the backend could
+ * not inherit its fds, as inside WSL. The upgrade request presents the
+ * bootstrap's `desktopBrowserSocketSecret` in this header.
+ */
+export const DESKTOP_BROWSER_SOCKET_PATH = "/api/desktop-browser";
+export const DESKTOP_BROWSER_SOCKET_SECRET_HEADER = "x-t3-desktop-browser-secret";

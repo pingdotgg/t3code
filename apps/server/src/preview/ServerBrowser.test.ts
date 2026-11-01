@@ -380,6 +380,9 @@ const dependencies = Layer.mergeAll(
       ),
     pointer: () => Effect.void,
     turn: (threadId, active) => Effect.sync(() => desktopTurns.emit("turn", threadId, active)),
+    acceptsSocket: false,
+    authorizesSocket: () => false,
+    serveSocket: () => Effect.void,
   }),
   PreviewAgentActivity.layer,
 ).pipe(

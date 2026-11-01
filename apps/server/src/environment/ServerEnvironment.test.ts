@@ -122,6 +122,38 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       }
     }),
   );
+  it.effect("advertises desktopBrowser only when the desktop can reach the browser channel", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped();
+      const config = yield* makeServerConfig(baseDir);
+      yield* fs.makeDirectory(config.stateDir, { recursive: true });
+      const descriptorFor = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =>
+        Effect.gen(function* () {
+          const environment = yield* ServerEnvironment.ServerEnvironment;
+          return yield* environment.getDescriptor;
+        }).pipe(
+          Effect.provide(
+            ServerEnvironment.layer.pipe(
+              Layer.provide(layerEmptySecretStore),
+              Layer.provide(ServerConfig.layer({ ...config, mode: "desktop", ...overrides })),
+            ),
+          ),
+        );
+
+      const withChannel = yield* descriptorFor({
+        desktopBrowserFd: 6,
+        desktopBrowserControlFd: 7,
+      });
+      expect(withChannel.capabilities.desktopBrowser).toBe(true);
+      // A WSL primary gets no fds through wsl.exe; the desktop dials it with this secret instead.
+      const wslPrimary = yield* descriptorFor({ desktopBrowserSocketSecret: "secret" });
+      expect(wslPrimary.capabilities.desktopBrowser).toBe(true);
+      const withoutChannel = yield* descriptorFor({});
+      expect(withoutChannel.capabilities.serverBrowser).toBe(true);
+      expect(withoutChannel.capabilities.desktopBrowser).toBe(false);
+    }),
+  );
   it.effect.each([
     { name: "missing", content: undefined },
     { name: "empty", content: "" },

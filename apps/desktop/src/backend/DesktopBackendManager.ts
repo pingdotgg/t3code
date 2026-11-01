@@ -15,9 +15,13 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as Socket from "effect/socket/Socket";
+import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
 import {
   SERVER_EXIT_CODE_STATE_DIR_OWNED,
+  DESKTOP_BROWSER_SOCKET_PATH,
+  DESKTOP_BROWSER_SOCKET_SECRET_HEADER,
   DesktopBackendBootstrap,
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
@@ -30,6 +34,7 @@ import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
+import { linuxPathToWslUncPath } from "../wsl/wslPathParsing.ts";
 
 const INITIAL_RESTART_DELAY = Duration.millis(500);
 const MAX_RESTART_DELAY = Duration.seconds(10);
@@ -45,6 +50,8 @@ const BACKEND_READINESS_PATH = "/.well-known/t3/environment";
 // Three restarts without readiness is about 2 s of backoff: past a blip, early enough to help.
 const STARTUP_FAILURE_RESTART_ATTEMPTS = 3;
 const STARTUP_FAILURE_OUTPUT_CHARS = 4_000;
+const DESKTOP_BROWSER_SOCKET_RETRY = Duration.seconds(1);
+const DESKTOP_BROWSER_SOCKET_MAX_RETRY = Duration.seconds(30);
 const { logWarning: logBackendProcessWarning } =
   DesktopObservability.makeComponentLogger("desktop-backend-process");
 
@@ -189,7 +196,10 @@ export type BackendProcessError = typeof BackendProcessError.Type;
 interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   readonly desktopTelemetryStream: Stream.Stream<Uint8Array>;
   readonly desktopBrowserStream?: Stream.Stream<Uint8Array>;
-  readonly onDesktopBrowserCommand?: (line: string) => Effect.Effect<void>;
+  readonly onDesktopBrowserCommand?: (
+    line: string,
+    serverPath?: (path: string) => string,
+  ) => Effect.Effect<void>;
   readonly onDesktopTelemetryControl?: (
     message: DesktopTelemetryControlMessageValue,
   ) => Effect.Effect<void>;
@@ -379,6 +389,64 @@ function drainBackendOutput(
   );
 }
 
+const socketTextDecoder = new TextDecoder();
+
+/**
+ * Carries the browser channel to a backend that could not inherit its fds, as
+ * inside WSL. Reconnects, backing off, until the backend process's scope
+ * interrupts it.
+ */
+const bridgeDesktopBrowserSocket = Effect.fn("desktop.backendProcess.bridgeDesktopBrowserSocket")(
+  function* (input: {
+    readonly httpBaseUrl: URL;
+    readonly secret: string;
+    readonly events: Stream.Stream<Uint8Array>;
+    readonly onCommand: (line: string) => Effect.Effect<void>;
+  }) {
+    const url = new URL(DESKTOP_BROWSER_SOCKET_PATH, input.httpBaseUrl);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    const connect = Effect.gen(function* () {
+      const socket = yield* Socket.makeWebSocket(url.href, {
+        headers: { [DESKTOP_BROWSER_SOCKET_SECRET_HEADER]: input.secret },
+      });
+      const reader = yield* socket.reader;
+      const writer = yield* socket.writer;
+      yield* input.events.pipe(
+        Stream.runForEach((line) => writer.write(line)),
+        Effect.forkScoped,
+      );
+      return yield* reader.pull.pipe(
+        Effect.flatMap((frames) =>
+          Effect.forEach(
+            frames.flatMap((frame) =>
+              (typeof frame === "string" ? frame : socketTextDecoder.decode(frame)).split("\n"),
+            ),
+            (line) => (line.length === 0 ? Effect.void : input.onCommand(line)),
+            { discard: true },
+          ),
+        ),
+        Effect.forever,
+      );
+    }).pipe(Effect.scoped);
+    return yield* connect.pipe(
+      Effect.catchCause((cause) =>
+        logBackendProcessWarning("desktop browser socket stopped", {
+          url: url.href,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+      Effect.repeat(
+        Schedule.exponential(DESKTOP_BROWSER_SOCKET_RETRY).pipe(
+          Schedule.modifyDelay(({ duration }) =>
+            Effect.succeed(Duration.min(duration, DESKTOP_BROWSER_SOCKET_MAX_RETRY)),
+          ),
+        ),
+      ),
+    );
+  },
+  Effect.provide(NodeSocket.layerWebSocketConstructor),
+);
+
 const encodeBootstrapJson = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
 const decodeDesktopTelemetryControlLine = Schema.decodeUnknownEffect(
   Schema.fromJsonString(DesktopTelemetryControlMessage),
@@ -561,7 +629,31 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     ),
   );
 
-  yield* probeReadiness().pipe(Effect.repeat({ while: (ready) => !ready }), Effect.forkScoped);
+  const desktopBrowserSocketSecret = options.bootstrap.desktopBrowserSocketSecret;
+  const onDesktopBrowserCommand = options.onDesktopBrowserCommand;
+  const runningDistro = options.runningDistro;
+  // The backend asks for downloads on its own disk, which this app reaches over \\wsl.localhost.
+  const serverPath =
+    runningDistro === undefined
+      ? undefined
+      : (path: string) => linuxPathToWslUncPath(runningDistro, path);
+  const bridgeDesktopBrowser =
+    desktopBrowserSocketSecret !== undefined &&
+    options.desktopBrowserStream !== undefined &&
+    onDesktopBrowserCommand !== undefined
+      ? bridgeDesktopBrowserSocket({
+          httpBaseUrl: options.httpBaseUrl,
+          secret: desktopBrowserSocketSecret,
+          events: options.desktopBrowserStream,
+          onCommand: (line) => onDesktopBrowserCommand(line, serverPath),
+        })
+      : Effect.void;
+
+  yield* probeReadiness().pipe(
+    Effect.repeat({ while: (ready) => !ready }),
+    Effect.andThen(bridgeDesktopBrowser),
+    Effect.forkScoped,
+  );
 
   const exit = yield* handle.exitCode.pipe(
     Effect.map((exitCode) => ({

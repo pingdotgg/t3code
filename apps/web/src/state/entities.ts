@@ -329,6 +329,21 @@ export function useEnvironmentSupportsServerBrowser(environmentId: EnvironmentId
   );
 }
 
+// Older primary servers do not advertise this capability. Preserve their native rendering.
+export function useEnvironmentHasDesktopBrowser(environmentId: EnvironmentId | null): boolean {
+  const configs = useServerConfigs();
+  const config = environmentId === null ? undefined : configs.get(environmentId);
+  return config !== undefined && config.environment.capabilities.desktopBrowser !== false;
+}
+
+export function readEnvironmentHasDesktopBrowser(environmentId: EnvironmentId | null): boolean {
+  const config =
+    environmentId === null
+      ? undefined
+      : appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId);
+  return config !== undefined && config.environment.capabilities.desktopBrowser !== false;
+}
+
 export function readEnvironmentSupportsServerBrowser(environmentId: EnvironmentId): boolean {
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities

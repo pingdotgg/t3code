@@ -736,6 +736,7 @@ const layerMakeRoutes = Layer.mergeAll(
     GuestHttp.layer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
+    DesktopBrowserChannel.socketRouteLayer,
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,
   ),
@@ -757,10 +758,11 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(PeerLinkRequests.layer),
   // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
   Layer.provide(layerPullRequestService),
-  // The same activity instance RunExecutionService reports to, by layer memoization.
+  // The route and browser share the channel; the browser shares agent activity with run execution.
   Layer.provide(
     ServerBrowser.layer.pipe(
-      Layer.provide(Layer.merge(DesktopBrowserChannel.layer, PreviewAgentActivity.layer)),
+      Layer.provide(PreviewAgentActivity.layer),
+      Layer.provideMerge(DesktopBrowserChannel.layer),
     ),
   ),
   Layer.provide(PreviewBrowser.layer),

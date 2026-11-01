@@ -5,12 +5,14 @@ import { createCdpRelayConnection, type CdpRelayTarget } from "./CdpRelay.ts";
 const makeTarget = (
   send: CdpRelayTarget["send"],
   setDownloadDirectory: CdpRelayTarget["setDownloadDirectory"] = () => {},
+  serverPath: CdpRelayTarget["serverPath"] = (path) => path,
 ): CdpRelayTarget => ({
   send,
   targetId: async () => "GUEST-TARGET",
   url: () => "http://localhost:4719/",
   title: () => "Fixture",
   userAgent: () => "Electron",
+  serverPath,
   setDownloadDirectory,
 });
 
@@ -204,6 +206,52 @@ describe("CDP relay downloads", () => {
     expect(written).toEqual([
       { method: "Browser.downloadWillBegin", params: { guid: "g1", suggestedFilename: "r.csv" } },
     ]);
+  });
+
+  it("maps downloads and directory uploads to the WSL server's disk", async () => {
+    const send = vi.fn(async () => ({}));
+    const directories: Array<string | null> = [];
+    const relay = makeRelay(
+      makeTarget(
+        send,
+        (directory) => directories.push(directory),
+        (path) => `\\\\wsl.localhost\\Ubuntu${path.replaceAll("/", "\\")}`,
+      ),
+      () => {},
+    );
+    relay.receive(
+      JSON.stringify({
+        id: 1,
+        method: "Browser.setDownloadBehavior",
+        params: { behavior: "allowAndName", downloadPath: "/tmp/artifacts", eventsEnabled: true },
+      }),
+    );
+    await settle();
+    expect(directories).toEqual(["\\\\wsl.localhost\\Ubuntu\\tmp\\artifacts"]);
+    expect(send).toHaveBeenCalledWith(
+      "Browser.setDownloadBehavior",
+      {
+        behavior: "allowAndName",
+        downloadPath: "\\\\wsl.localhost\\Ubuntu\\tmp\\artifacts",
+        eventsEnabled: true,
+      },
+      undefined,
+    );
+    relay.receive(
+      JSON.stringify({
+        id: 2,
+        method: "DOM.setFileInputFiles",
+        params: { objectId: "input", files: ["/home/user/assets"] },
+        sessionId: "t3-preview-page",
+      }),
+    );
+    await settle();
+    expect(send).toHaveBeenLastCalledWith(
+      "DOM.setFileInputFiles",
+      { objectId: "input", files: ["\\\\wsl.localhost\\Ubuntu\\home\\user\\assets"] },
+      undefined,
+      undefined,
+    );
   });
 });
 
