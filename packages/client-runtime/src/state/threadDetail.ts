@@ -442,16 +442,45 @@ export function createEnvironmentThreadDetailAtoms<E>(
     ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-worktree:${key}`)),
   );
   const pendingRequestsAtomFamily = Atom.family((key: string) => {
+    // Selected arrays omit streamed rows, so only the raw arrays can validate an exact replacement.
+    let previousRaw: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems"> | null =
+      null;
     let previous: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems"> | null =
       null;
     let value: PendingThreadRequests | null = null;
     return Atom.make((get) => {
       const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
       if (projection === null) {
+        previousRaw = null;
         previous = null;
         value = null;
         return value;
       }
+      const raw = { runtimeRequests: projection.runtimeRequests, turnItems: projection.turnItems };
+      if (previousRaw !== null && previousRaw.runtimeRequests === raw.runtimeRequests) {
+        if (previousRaw.turnItems === raw.turnItems) {
+          previousRaw = raw;
+          return value;
+        }
+        const replacedIndex = getProjectionArrayReplacementIndex(
+          previousRaw.turnItems,
+          raw.turnItems,
+        );
+        if (replacedIndex !== undefined) {
+          const before = previousRaw.turnItems[replacedIndex]!;
+          const after = raw.turnItems[replacedIndex]!;
+          if (
+            before.type !== "approval_request" &&
+            before.type !== "user_input_request" &&
+            after.type !== "approval_request" &&
+            after.type !== "user_input_request"
+          ) {
+            previousRaw = raw;
+            return value;
+          }
+        }
+      }
+      previousRaw = raw;
       const runtimeRequests = projection.runtimeRequests.filter(
         (request) => request.status === "pending",
       );
