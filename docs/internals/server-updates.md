@@ -91,8 +91,11 @@ and maintenance turns such as `/compact` before dispatching. Intent and delivery
 refuse a thread that is archived, settled, or still snoozed, a cut turn whose provider
 turn already ended, and a run waiting on the user: an approval, question, or secret that was pending,
 or that recovery closed on the cut turn. Message-capable questions stay answerable, so
-they do not block. Delivery also stops after three consecutive continuations in one
-`restartContinuationOfRunId` chain, so a turn that crashes the server cannot loop. Stable
+they do not block. New continuation intents persist a cumulative process-loss count;
+delivery stops before the fourth crash recovery of an unfinished turn, regardless
+of elapsed time. Planned shutdowns and completed turns reset it. A live continuation
+retains its preceding intent past outbox retention so cleanup cannot erase the count.
+Legacy intents without a count keep the five-minute chain guard. Stable
 command and message IDs prevent duplicate submissions after an outbox retry. Codex
 resumes without adding provider prompt text unless the turn lost background work;
 other adapters receive the continuation message through their normal turn path.
