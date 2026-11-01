@@ -72,17 +72,16 @@ function permissionRequest(
   };
 }
 
-function runtimePolicy(input: {
-  readonly runtimeMode: RuntimeMode;
-  readonly approvalPolicy?: unknown;
-  readonly sandboxPolicy?: unknown;
-}) {
+function runtimePolicy(
+  input: Pick<
+    ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+    "runtimeMode" | "approvalPolicy" | "sandboxPolicy" | "delegatedExecution"
+  >,
+) {
   return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-    runtimeMode: input.runtimeMode,
     interactionMode: "default",
     cwd: "/workspace",
-    ...(input.approvalPolicy === undefined ? {} : { approvalPolicy: input.approvalPolicy }),
-    ...(input.sandboxPolicy === undefined ? {} : { sandboxPolicy: input.sandboxPolicy }),
+    ...input,
   });
 }
 
@@ -219,6 +218,16 @@ describe("Grok permission prompts", () => {
       disposition?.(runtimePolicy({ runtimeMode: "auto" }), permissionRequest("read")),
       "ask",
     );
+    const unrestricted = runtimePolicy({
+      runtimeMode: "full-access",
+      delegatedExecution: {
+        providerInstanceId: ProviderInstanceId.make("grok"),
+        cwd: "/workspace",
+        sandboxPolicy: { type: "dangerFullAccess", networkAccess: true },
+      },
+    });
+    assert.equal(disposition?.(unrestricted, permissionRequest("execute")), "deny");
+    assert.equal(disposition?.(unrestricted, permissionRequest("read")), "deny");
     const readOnly = runtimePolicy({
       runtimeMode: "auto",
       approvalPolicy: "never",
@@ -298,6 +307,26 @@ describe("Grok launch permission mode", () => {
     }),
   );
 
+  it.effect("launches an inherited unrestricted grant without native subagents or sandbox", () =>
+    Effect.gen(function* () {
+      const base = policy("full-access");
+      const delegatedExecution = {
+        providerInstanceId: ProviderInstanceId.make("grok-launch-test"),
+        cwd: base.cwd!,
+        sandboxPolicy: { type: "dangerFullAccess" as const, networkAccess: true as const },
+      };
+      assert.deepEqual(yield* launchArgs({ ...base, delegatedExecution }), [
+        ["--sandbox", "off", "--no-subagents", "agent", "--always-approve", "stdio"],
+      ]);
+      assert.deepEqual(yield* launchArgs({ ...base, delegatedExecution, runtimeMode: "auto" }), []);
+      assert.deepEqual(yield* launchArgs({ ...base, delegatedExecution, cwd: "/other" }), []);
+      assert.deepEqual(
+        yield* launchArgs({ ...base, delegatedExecution, sandboxPolicy: { type: "readOnly" } }),
+        [],
+      );
+    }),
+  );
+
   it.effect("launches a thread stored as Auto-accept edits asking", () =>
     Effect.gen(function* () {
       const snapshot = yield* buildInitialGrokProviderSnapshot(LAUNCH_TEST_GROK_SETTINGS);
@@ -369,7 +398,7 @@ describe("Grok native questions", () => {
     layerHost,
   );
 
-  it.live("keeps x.ai multi-select questions live and returns all selected answers", () =>
+  it.live("keeps x.ai multi-select questions live under unrestricted delegation", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -494,9 +523,14 @@ describe("Grok native questions", () => {
         }),
       });
       const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "approval-required",
+        runtimeMode: "full-access",
         interactionMode: "default",
         cwd: workspace,
+        delegatedExecution: {
+          providerInstanceId: instanceId,
+          cwd: workspace,
+          sandboxPolicy: { type: "dangerFullAccess", networkAccess: true },
+        },
       });
       const modelSelection = { instanceId, model: "grok-build" };
       const runtime = yield* adapter.openSession({

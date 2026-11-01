@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 
 import {
+  type DelegatedExecution,
   type ChatAttachment,
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
@@ -277,6 +278,13 @@ export interface AcpAdapterV2Flavor {
     text: string,
     turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
   ) => Effect.Effect<string, never, ChildProcessSpawner.ChildProcessSpawner>;
+  readonly validateRuntimePolicy?: (
+    policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+    initialPolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+  ) => string | undefined;
+  readonly captureDelegatedExecution?: (
+    policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+  ) => DelegatedExecution | undefined;
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly clientCapabilitiesMeta?: NonNullable<
@@ -1464,6 +1472,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
     }),
     openSession: Effect.fn("AcpAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
+        const validateRuntimePolicy = (policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) => {
+          const detail = flavor.validateRuntimePolicy?.(policy, input.runtimePolicy);
+          return detail === undefined
+            ? Effect.void
+            : Effect.fail(new ProviderAdapter.ProviderAdapterProtocolError({ driver, detail }));
+        };
+        yield* validateRuntimePolicy(input.runtimePolicy);
         const sessionScope = yield* Effect.scope;
         let itemIdentityVersion: 2 | undefined =
           input.initialProviderItemIdentityVersion ??
@@ -7467,6 +7482,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         const startTurnUnlocked = Effect.fn("AcpAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
+            yield* validateRuntimePolicy(turnInput.runtimePolicy);
             yield* awaitRuntimeTeardown();
             const existing = yield* Ref.get(activeTurn);
             if (existing !== null) {
@@ -7955,6 +7971,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           providerSessionId: input.providerSessionId,
           providerSession,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          ...(flavor.captureDelegatedExecution === undefined
+            ? {}
+            : {
+                getDelegatedExecution: Effect.fn("AcpAdapterV2.getDelegatedExecution")(
+                  function* (runId) {
+                    const turn = yield* Ref.get(activeTurn);
+                    return turn?.input.runId === runId
+                      ? flavor.captureDelegatedExecution?.(turn.input.runtimePolicy)
+                      : undefined;
+                  },
+                ),
+              }),
           ...(flavor.getModelContextWindow === undefined
             ? {}
             : {

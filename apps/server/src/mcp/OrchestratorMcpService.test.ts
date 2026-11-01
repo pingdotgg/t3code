@@ -1630,6 +1630,188 @@ describe("OrchestratorMcpService provider resolution", () => {
     );
   });
 
+  it.effect.each(["explicit", "inherited", "grok"] as const)(
+    "dispatches bounded %s approval policy to the caller's explicit local environment",
+    (policySource) =>
+      Effect.gen(function* () {
+        const dispatched = yield* Ref.make<ReadonlyArray<OrchestrationV2ServerCommand>>([]);
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          runId: parentRunId,
+          parentNodeId,
+          origin: "app_owned",
+          createdBy: "agent",
+          driver: "codex",
+          providerInstanceId: codexInstanceId,
+          providerThreadId: null,
+          childThreadId,
+          nativeTaskRef: null,
+          prompt: "Bounded local test",
+          title: null,
+          model: "gpt-5.4",
+          status: "running",
+          result: null,
+          startedAt: null,
+          completedAt: null,
+        };
+        const original = parentProjection([task]);
+        const parent = {
+          ...original,
+          thread: {
+            ...original.thread,
+            providerInstanceId: codexInstanceId,
+            runtimeMode: policySource === "grok" ? ("full-access" as const) : ("auto" as const),
+            ...(policySource === "inherited"
+              ? {
+                  delegatedExecution: {
+                    providerInstanceId: codexInstanceId,
+                    cwd: "/workspace",
+                    sandboxPolicy: { type: "readOnly" as const, networkAccess: false },
+                  },
+                }
+              : {}),
+          },
+        };
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            getThreadRecords: (threadId) =>
+              Effect.succeed(threadId === parentThreadId ? parent : childProjection),
+            dispatch: (command) =>
+              Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+                Effect.as({
+                  sequence: 1,
+                  storedEvents: [
+                    {
+                      sequence: 1,
+                      commandId: null,
+                      event: { type: "subagent.updated", payload: task },
+                    },
+                  ],
+                } as never),
+              ),
+          }),
+          providerRegistryLayer([
+            providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+            providerSnapshot({
+              instanceId: ProviderInstanceId.make("grok"),
+              driver: ProviderDriverKind.make("grok"),
+              model: "grok-test",
+            }),
+          ]),
+          adapterRegistryLayer([codexInstanceId, ProviderInstanceId.make("grok")]),
+          ServerSettings.layerTest(),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const result = yield* service.delegateTask(scope, {
+            task: "Bounded local test",
+            target: {
+              environmentId: scope.environmentId,
+              ...(policySource === "grok"
+                ? { providerInstanceId: ProviderInstanceId.make("grok"), model: "grok-test" }
+                : {}),
+            },
+            mode: "async",
+            ...(policySource !== "inherited" ? { approvalPolicy: "never" as const } : {}),
+          });
+          assert.equal(result.status, "running");
+          const commands = yield* Ref.get(dispatched);
+          assert.lengthOf(commands, 1);
+          const command = commands[0];
+          assert.equal(command?.type, "delegated_task.request");
+          if (command?.type === "delegated_task.request") {
+            assert.equal(command.approvalPolicy, "never");
+            assert.equal(
+              command.modelSelection.instanceId,
+              policySource === "grok" ? ProviderInstanceId.make("grok") : codexInstanceId,
+            );
+            assert.equal(command.runtimeMode, policySource === "grok" ? "full-access" : "auto");
+          }
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+      }),
+  );
+
+  it.effect.each(["worktree", "provider", "remote", "inherited-worktree"] as const)(
+    "rejects unsupported bounded %s before dispatch",
+    (kind) =>
+      Effect.gen(function* () {
+        const grokId = ProviderInstanceId.make("grok");
+        const original = parentProjection([]);
+        const parent = {
+          ...original,
+          thread: {
+            ...original.thread,
+            ...(kind === "provider" ? { runtimeMode: "auto" as const } : {}),
+            ...(kind === "inherited-worktree"
+              ? {
+                  delegatedExecution: {
+                    providerInstanceId: codexInstanceId,
+                    cwd: "/workspace",
+                    sandboxPolicy: { type: "readOnly" as const, networkAccess: false },
+                  },
+                }
+              : {}),
+          },
+        };
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            getThreadRecords: () => Effect.succeed(parent),
+            dispatch: () => Effect.die("Unsupported bounded request reached dispatch"),
+          }),
+          ServerSettings.layerTest(),
+          providerRegistryLayer([
+            providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+            providerSnapshot({
+              instanceId: grokId,
+              driver: ProviderDriverKind.make("grok"),
+              model: "grok-test",
+            }),
+          ]),
+          adapterRegistryLayer([codexInstanceId, grokId]),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const error = yield* service
+            .delegateTask(scope, {
+              task: "Bounded test",
+              ...(kind === "inherited-worktree" ? {} : { approvalPolicy: "never" as const }),
+              ...(kind === "worktree" || kind === "inherited-worktree"
+                ? { isolation: "worktree" as const }
+                : {}),
+              ...(kind === "provider"
+                ? { target: { providerInstanceId: grokId, model: "grok-test" } }
+                : {}),
+              ...(kind === "remote"
+                ? { target: { environmentId: EnvironmentId.make("remote") } }
+                : {}),
+            })
+            .pipe(Effect.flip);
+          assert.equal(error.code, "invalid_request");
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+      }),
+  );
+
   it.effect("rejects delegation to a provider without a registered adapter", () =>
     Effect.gen(function* () {
       const forkOnlyInstanceId = ProviderInstanceId.make("forkOnly");

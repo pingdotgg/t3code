@@ -7542,6 +7542,62 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
 
+      let delegatedExecution = parentProjection.thread.delegatedExecution;
+      if (command.approvalPolicy === "never" || delegatedExecution !== undefined) {
+        const refuse = (cause: string) =>
+          new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause,
+          });
+        const unrestrictedGrok =
+          targetAdapter.driver === "grok" &&
+          parentProjection.thread.runtimeMode === "full-access" &&
+          command.runtimeMode === "full-access" &&
+          (delegatedExecution === undefined ||
+            (delegatedExecution.sandboxPolicy.type === "dangerFullAccess" &&
+              delegatedExecution.providerInstanceId === command.modelSelection.instanceId));
+        if (
+          (!unrestrictedGrok &&
+            (targetAdapter.driver !== "codex" ||
+              command.modelSelection.instanceId !== parentRun.providerInstanceId)) ||
+          command.workspaceStrategy !== undefined ||
+          command.runtimeMode !== parentProjection.thread.runtimeMode
+        ) {
+          return yield* refuse(
+            "Bounded delegation requires the same Codex provider, or Grok with unrestricted parent access, unchanged runtime mode and shared directory.",
+          );
+        }
+        const turn = parentProjection.providerTurns.find(
+          (turn) => turn.runAttemptId === parentRun.activeAttemptId && turn.status === "running",
+        );
+        const thread = parentProjection.providerThreads.find(
+          (thread) => thread.id === turn?.providerThreadId,
+        );
+        if (thread === undefined || thread.providerSessionId === null)
+          return yield* refuse("No active native parent turn for bounded delegation.");
+        const session = yield* providerSessions
+          .get(thread.providerSessionId)
+          .pipe(Effect.mapError(() => refuse("Parent session unavailable.")));
+        if (Option.isNone(session) || session.value.getDelegatedExecution === undefined)
+          return yield* refuse("Provider cannot capture effective parent limits.");
+        const captured = yield* session.value.getDelegatedExecution(
+          parentRun.id,
+          targetAdapter.driver,
+        );
+        if (captured === undefined)
+          return yield* refuse(
+            "Effective Codex permissions are unavailable or cannot be reproduced. Custom profiles and external/full-access sandboxes are unsupported. No child was dispatched.",
+          );
+        if (unrestrictedGrok && captured.sandboxPolicy.type !== "dangerFullAccess")
+          return yield* refuse(
+            "Grok noninteractive delegation requires verified unrestricted parent access.",
+          );
+        delegatedExecution = unrestrictedGrok
+          ? { ...captured, providerInstanceId: command.modelSelection.instanceId }
+          : captured;
+      }
+
       const now = command.createdAt ?? (yield* DateTime.now);
       const taskNodeId = idAllocator.derive.delegatedTaskNode({
         commandId: command.commandId,
@@ -7574,6 +7630,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           createdBy: command.createdBy,
           creationSource: command.creationSource,
         }),
+        ...(delegatedExecution === undefined ? {} : { delegatedExecution }),
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,
         ...(command.workspaceStrategy === undefined ? {} : { branch: null, worktreePath: null }),

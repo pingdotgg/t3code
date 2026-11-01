@@ -2284,6 +2284,10 @@ const make = Effect.gen(function* () {
             provider.supportedRuntimeModes.length === 0
               ? {}
               : { runtimeModes: [...provider.supportedRuntimeModes] }),
+            delegatedApprovalPolicies:
+              provider.driver === "codex" || provider.driver === "grok"
+                ? (["inherit", "never"] as const)
+                : (["inherit"] as const),
             canRunChildTask: constraints.length === 0,
             canRunCrossProviderChildTask: constraints.length === 0,
             constraints: [...constraints],
@@ -2302,10 +2306,24 @@ const make = Effect.gen(function* () {
       };
     }),
     delegateTask: Effect.fn("OrchestratorMcpService.delegateTask")(function* (callerScope, input) {
+      yield* requireCapability(callerScope);
+      const parentCeiling =
+        callerScope.thread === undefined
+          ? undefined
+          : (yield* threadManagement
+              .getThreadRecords(callerScope.thread.threadId, [])
+              .pipe(Effect.mapError(threadManagementFailure))).thread.delegatedExecution;
+      const bounded = input.approvalPolicy === "never" || parentCeiling !== undefined;
       const environmentId =
         input.target === undefined
           ? undefined
           : PeerForwarding.remoteTarget(callerScope, input.target.environmentId);
+      if (bounded && environmentId !== undefined) {
+        return yield* failure(
+          "invalid_request",
+          "Bounded delegation does not support remote environments.",
+        );
+      }
       if (input.target !== undefined && environmentId !== undefined) {
         yield* requireCapability(callerScope);
         const scope = yield* requireThreadScope(callerScope, "delegate_task");
@@ -2364,6 +2382,29 @@ const make = Effect.gen(function* () {
         parent.thread.interactionMode,
         input.interactionMode,
       );
+      const targetDriver = providers.find(
+        (provider) => provider.instanceId === target.modelSelection.instanceId,
+      )?.driver;
+      const unrestrictedGrok =
+        targetDriver === "grok" &&
+        parent.thread.runtimeMode === "full-access" &&
+        runtimeMode === "full-access" &&
+        (parentCeiling === undefined ||
+          (parentCeiling.sandboxPolicy.type === "dangerFullAccess" &&
+            target.modelSelection.instanceId === parentCeiling.providerInstanceId));
+      if (
+        bounded &&
+        (input.isolation === "worktree" ||
+          (!unrestrictedGrok &&
+            (target.modelSelection.instanceId !== parent.thread.providerInstanceId ||
+              targetDriver !== "codex")) ||
+          runtimeMode !== parent.thread.runtimeMode)
+      ) {
+        return yield* failure(
+          "invalid_request",
+          "Bounded delegation requires the same Codex provider, or Grok with unrestricted parent access, unchanged runtime mode and shared directory. No child was dispatched.",
+        );
+      }
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
       if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
         const project = yield* requireProject(parent.thread.projectId);
@@ -2400,6 +2441,7 @@ const make = Effect.gen(function* () {
       const result = yield* threadManagement
         .dispatch({
           type: "delegated_task.request",
+          ...(bounded ? { approvalPolicy: "never" as const } : {}),
           createdBy: "agent",
           creationSource: "mcp",
           commandId,

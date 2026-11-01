@@ -13,6 +13,7 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 
 export interface McpCredentialRequest {
+  readonly boundedExecution?: boolean;
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
   /** False omits the preview capability wherever the token is honored. Defaults to full access. */
@@ -107,6 +108,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerSessionId,
           providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
           subagent: request.subagent === true,
+          boundedExecution: request.boundedExecution === true,
         },
         client: undefined,
         capabilities: new Set<McpInvocationContext.McpCapability>([

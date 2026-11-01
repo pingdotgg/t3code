@@ -233,6 +233,7 @@ type DelegateTaskInput = {
   mode?: "async" | "wait";
   timeoutMs?: number;
   clientRequestId?: string;
+  approvalPolicy?: "inherit" | "never";
   runtimeMode?: "inherit" | "approval-required" | "auto-accept-edits" | "full-access";
   interactionMode?: "inherit" | "plan" | "default";
 };
@@ -251,6 +252,37 @@ lists `runtimeModes` only for a provider that offers some of the modes, and
 omits it for a provider that offers all of them. When the target lists
 `runtimeModes`, an explicit `runtimeMode` outside that list is refused, and an
 inherited mode steps down to the broadest mode the target offers.
+
+`approvalPolicy: "never"` disables tool approval prompts while retaining the
+parent's effective filesystem and network limits. Codex supports this
+on the same provider instance, runtime mode, and shared working directory.
+T3 captures the active native policy and persists it on the child. Follow-ups
+and grandchildren inherit that ceiling even when the option is omitted.
+`orchestrator_capabilities` lists `delegatedApprovalPolicies` per provider.
+
+Grok also supports `approvalPolicy: "never"` from a verified unrestricted Codex
+parent, or an already authorized Grok child. The parent must use Full access,
+with an active native `dangerFullAccess` policy and no custom permission profile.
+T3 records unrestricted access on the child and preserves its Grok instance and
+working directory for follow-ups and grandchildren. This mode adds no filesystem
+or network confinement. Restricted Codex parents cannot delegate to Grok this way.
+Grok retains its native deny rules. Residual tool approvals are rejected, while
+clarification questions still wait. Native Grok subagents are disabled; use T3
+`delegate_task` for descendants.
+
+Unsupported providers, remote delegation, worktree relocation, custom permission
+profiles, and external sandboxes fail before child dispatch. Codex full-access
+delegation remains unsupported.
+T3 never substitutes a broader policy. Approval callbacks are denied immediately,
+including unexpected legacy callbacks. A task clarification question still waits
+for an operator answer. T3 never supplies an answer automatically.
+
+Bounded child credentials can call only `orchestrator_capabilities`,
+`delegate_task`, `task_status`, and `task_cancel` on T3's MCP server. Other T3
+tools are refused because they could start work outside the provider sandbox.
+Use the provider's sandboxed tools for the task itself. Existing delegation and
+runtime-mode defaults are unchanged when `approvalPolicy` is omitted on an
+unbounded parent.
 
 Each independent delegated review round uses a new `delegate_task` call with the
 original brief, prior findings, responses, and unresolved objections. Track each

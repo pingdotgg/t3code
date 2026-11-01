@@ -340,3 +340,103 @@ passed as `--wsl-runtime`; see the
 Add `--signed` after configuring the platform credentials in the
 [release runbook](./release.md). macOS passkeys need a signed, provisioned app; follow the
 [Connect setup](./connect-setup.md#desktop-passkeys) for local signing and renderer HMR.
+
+## Test noninteractive delegation locally
+
+### Test bounded Codex delegation
+
+Use an isolated Codex home authenticated for the selected model. The test uses
+disposable Git workspaces and an in-memory T3 database. It does not start a
+server, install the candidate, or touch a running T3 instance.
+
+From `apps/server`, run:
+
+```sh
+T3_BOUNDED_CODEX_E2E=1 \
+T3_BOUNDED_CODEX_HOME=/absolute/path/to/isolated-codex-home \
+vp test run src/orchestration-v2/testkit/BoundedDelegation.live.test.ts
+```
+
+The model defaults to `gpt-6.1-sol`. Set `T3_BOUNDED_CODEX_MODEL` to another
+model available to the same authenticated account if needed. The test runs the
+real Codex app-server through `OrchestratorMcpService.delegateTask`, the
+orchestrator, and the adapter. HTTP MCP transport is not exercised. It verifies allowed
+writes, denied sibling-path writes, no pending human approvals, rejection of
+worktree relocation, and matching child and grandchild permission ceilings.
+It writes `bounded-delegation-receipt.json` in the isolated Codex home.
+On macOS, run this test outside an enclosing Seatbelt sandbox so Codex can
+create its own sandbox. Do not disable the child sandbox to make it pass.
+
+### Test unrestricted Grok delegation
+
+Keep `T3_BOUNDED_CODEX_HOME` set to an isolated authenticated Codex home.
+Use a separate, absolute `T3_UNRESTRICTED_GROK_HOME` authenticated for Grok.
+In that Grok home's `config.toml`, configure the fixture's deny rule and exclude
+ambient user skills, instructions, and hooks. Disable managed configuration and
+updates in this disposable home:
+
+```toml
+[cli]
+auto_update = false
+
+[features]
+managed_config = false
+
+[permission]
+deny = ["Bash(touch *)"]
+
+[skills]
+ignore = ["~/.agents", "~/.claude", "~/.codex", "~/.cursor"]
+
+[compat.claude]
+skills = false
+agents = false
+hooks = false
+rules = false
+mcps = false
+
+[compat.codex]
+skills = false
+hooks = false
+
+[compat.cursor]
+skills = false
+agents = false
+hooks = false
+rules = false
+mcps = false
+```
+
+Run from `apps/server`, without `T3_BOUNDED_CODEX_E2E`:
+
+```sh
+T3_UNRESTRICTED_GROK_E2E=1 \
+T3_BOUNDED_CODEX_HOME=/absolute/path/to/isolated-codex-home \
+T3_UNRESTRICTED_GROK_HOME=/absolute/path/to/isolated-grok-home \
+vp test run src/orchestration-v2/testkit/BoundedDelegation.live.test.ts
+```
+
+The Grok model defaults to `grok-4.7`. Set `T3_UNRESTRICTED_GROK_MODEL`
+to another model available to the isolated account if needed. This mode uses
+a full-access Codex parent and verifies allowed fixture writes, native
+`Bash(touch *)` rejection, no pending or historical human approvals, and
+matching child and grandchild grants. It adds no filesystem or network
+confinement and does not test denied sibling-path writes. Its
+`bounded-delegation-receipt.json` records `filesystemConfinement: false` in
+the isolated Codex home.
+
+To test rejection of a restricted Codex parent before Grok startup, replace
+`T3_UNRESTRICTED_GROK_E2E=1` with `T3_GROK_RESTRICTED_PARENT_E2E=1`.
+Keep both isolated home variables set. This mode writes
+`grok-restricted-parent-receipt.json` in the isolated Codex home and verifies
+zero child startups. Enable only one live-test mode per invocation.
+
+Run the local regression tests separately:
+
+```sh
+vp test run src/orchestration-v2/Adapters/codexDelegatedExecution.test.ts \
+  src/orchestration-v2/Adapters/CodexAdapterV2.test.ts \
+  src/orchestration-v2/Adapters/GrokAdapterV2.test.ts \
+  src/orchestration-v2/RuntimePolicy.test.ts \
+  src/mcp/OrchestratorMcpService.test.ts src/mcp/McpToolAccess.test.ts
+```

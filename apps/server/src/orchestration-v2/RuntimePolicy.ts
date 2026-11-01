@@ -53,6 +53,9 @@ export class RuntimePolicyV2 extends Context.Service<RuntimePolicyV2, RuntimePol
 export const layer: Layer.Layer<RuntimePolicyV2> = Layer.succeed(RuntimePolicyV2, {
   resolve: Effect.fn("RuntimePolicyV2.resolve")(function (input) {
     return Effect.succeed({
+      ...(input.thread.delegatedExecution === undefined
+        ? {}
+        : { delegatedExecution: input.thread.delegatedExecution }),
       runtimeMode: input.thread.runtimeMode,
       interactionMode: input.thread.interactionMode,
       cwd: input.thread.worktreePath,
@@ -83,10 +86,8 @@ export const layerFromProjectStore: Layer.Layer<
     return RuntimePolicyV2.of({
       resolve: Effect.fn("RuntimePolicyV2.resolve")(function* (input) {
         const instance = yield* providerInstances.getInstance(input.modelSelection.instanceId);
-        const supportedRuntimeModes =
-          instance === undefined
-            ? undefined
-            : (yield* instance.snapshot.getSnapshot).supportedRuntimeModes;
+        const snapshot = instance === undefined ? undefined : yield* instance.snapshot.getSnapshot;
+        const supportedRuntimeModes = snapshot?.supportedRuntimeModes;
         const cwd =
           input.thread.worktreePath ??
           (yield* projects.get(input.thread.projectId).pipe(
@@ -112,7 +113,25 @@ export const layerFromProjectStore: Layer.Layer<
               }),
             ),
           ));
+        if (
+          input.thread.delegatedExecution !== undefined &&
+          ((input.thread.delegatedExecution.sandboxPolicy.type === "dangerFullAccess"
+            ? snapshot?.driver !== "grok" || input.thread.runtimeMode !== "full-access"
+            : snapshot?.driver !== "codex") ||
+            input.modelSelection.instanceId !==
+              input.thread.delegatedExecution.providerInstanceId ||
+            cwd !== input.thread.delegatedExecution.cwd)
+        ) {
+          return yield* new RuntimePolicyResolveError({
+            projectId: input.thread.projectId,
+            providerInstanceId: input.modelSelection.instanceId,
+            cause: "Bounded delegation cannot change provider or working directory.",
+          });
+        }
         return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          ...(input.thread.delegatedExecution === undefined
+            ? {}
+            : { delegatedExecution: input.thread.delegatedExecution }),
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
           cwd,
