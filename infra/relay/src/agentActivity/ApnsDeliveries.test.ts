@@ -8,9 +8,11 @@ import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
 import * as NodeCrypto from "node:crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import {
@@ -665,6 +667,80 @@ describe("ApnsDeliveries", () => {
       ),
     );
   });
+
+  it.effect.each(["push_notification", "live_activity_update", "live_activity_end"] as const)(
+    "preserves the signed deadline through delayed %s deliveries",
+    (kind) => {
+      const requests: HttpClientRequest.HttpClientRequest[] = [];
+      const waiting = { ...state, phase: "waiting_for_input" as const };
+      const waitingAggregate = {
+        ...aggregate,
+        activities: [{ ...aggregate.activities[0]!, phase: waiting.phase }],
+      };
+      return Effect.gen(function* () {
+        const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+        for (const milliseconds of Array.from({ length: 1_000 }, (_, index) => index)) {
+          const createdAtMs = Date.parse("2026-09-04T12:00:00.000Z");
+          const expiresAtMs = createdAtMs + 90_000 + milliseconds;
+          const payload = makeApnsDeliveryJobPayload({
+            kind,
+            userId: target.user_id,
+            deviceId: target.device_id,
+            token: kind === "push_notification" ? "apns-device-token" : "activity-token",
+            aggregate: kind === "push_notification" ? null : waitingAggregate,
+            notification:
+              kind === "push_notification"
+                ? {
+                    title: "Thread",
+                    body: "Input: Project",
+                    environmentId: "env",
+                    threadId: "thread",
+                    deepLink: "/",
+                  }
+                : null,
+            createdAt: DateTime.formatIso(DateTime.makeUnsafe(createdAtMs)),
+            expiresAt: DateTime.formatIso(DateTime.makeUnsafe(expiresAtMs)),
+            jobId: `${kind}-${milliseconds}`,
+          });
+          const signed = signApnsDeliveryJob({
+            secret: config.apnsDeliveryJobSigningSecret,
+            payload,
+          });
+          for (const delay of [0, 45_000, 89_999]) {
+            yield* TestClock.setTime(createdAtMs + delay);
+            const result = yield* deliveries.processSignedJob(signed);
+            expect(result.apnsStatus).toBe(200);
+            const expirySeconds = Number(requests.at(-1)!.headers["apns-expiration"]);
+            expect(Number.isInteger(expirySeconds)).toBe(true);
+            expect(expirySeconds * 1_000).toBeLessThanOrEqual(expiresAtMs);
+            expect((expirySeconds + 1) * 1_000).toBeGreaterThan(expiresAtMs);
+          }
+          for (const expiredBy of [0, 1]) {
+            yield* TestClock.setTime(expiresAtMs + expiredBy);
+            const before = requests.length;
+            const error = yield* Effect.flip(deliveries.processSignedJob(signed));
+            expect(error._tag).toBe("ApnsDeliveryJobExpired");
+            expect(requests).toHaveLength(before);
+          }
+        }
+        expect(requests).toHaveLength(3_000);
+      }).pipe(
+        Effect.provide(
+          layerFor({
+            attempts: [],
+            activityStates: [waiting],
+            currentTargets: [{ ...target, push_token: "apns-device-token" }],
+            config: signingConfig,
+            execute: (request) =>
+              Effect.sync(() => {
+                requests.push(request);
+                return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+              }),
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect("skips duplicate signed queue jobs before calling APNs", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
