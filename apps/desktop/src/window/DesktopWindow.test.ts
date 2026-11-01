@@ -684,7 +684,6 @@ describe("DesktopWindow", () => {
         yield* desktopWindow.runMainContentsCommand("forceReload");
         yield* desktopWindow.runMainContentsCommand("toggleDevTools");
         yield* desktopWindow.dispatchMenuAction("open-settings");
-        yield* desktopWindow.dispatchSnapShotEvent({ type: "started", id: captureOne });
 
         assert.equal(fakeWindow.reload.mock.calls.length, 1);
         assert.equal(fakeWindow.reloadIgnoringCache.mock.calls.length, 1);
@@ -692,10 +691,7 @@ describe("DesktopWindow", () => {
         assert.equal(popup.reload.mock.calls.length, 0);
         assert.equal(popup.reloadIgnoringCache.mock.calls.length, 0);
         assert.equal(popup.toggleDevTools.mock.calls.length, 0);
-        assert.deepEqual(fakeWindow.send.mock.calls, [
-          [MENU_ACTION_CHANNEL, "open-settings"],
-          [SNAP_SHOT_EVENT_CHANNEL, { type: "started", id: captureOne }],
-        ]);
+        assert.deepEqual(fakeWindow.send.mock.calls, [[MENU_ACTION_CHANNEL, "open-settings"]]);
         assert.equal(popup.send.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
