@@ -513,7 +513,11 @@ const make = Effect.gen(function* () {
       for (const { alongside, rule } of pendingLateDefaults) {
         if (
           customConfig.some((entry) => isSameKeybindingRule(entry, alongside)) &&
-          !customConfig.some((entry) => hasSameShortcutContext(entry, rule))
+          !customConfig.some(
+            (entry) =>
+              hasSameShortcutContext(entry, rule) ||
+              isSameKeybindingRule(entry, { ...rule, when: "false" }),
+          )
         ) {
           missingDefaults.push(rule);
         }
@@ -647,8 +651,18 @@ const make = Effect.gen(function* () {
           const customConfig = yield* loadWritableCustomKeybindingsConfig();
           const rule = keybindingRuleFromInput(input);
           const replaceTarget = replaceTargetFromUpsertInput(input);
+          // Keep sibling defaults when unassigning a rule before defaults have been persisted.
+          const sourceConfig =
+            rule.when === "false" &&
+            replaceTarget &&
+            !customConfig.some((entry) => entry.command === rule.command)
+              ? [
+                  ...customConfig,
+                  ...DEFAULT_KEYBINDINGS.filter((entry) => entry.command === rule.command),
+                ]
+              : customConfig;
           const nextConfig = [
-            ...customConfig.filter((entry) => {
+            ...sourceConfig.filter((entry) => {
               if (replaceTarget) {
                 return (
                   !isSameKeybindingRule(entry, replaceTarget) && !isSameKeybindingRule(entry, rule)

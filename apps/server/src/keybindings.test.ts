@@ -444,6 +444,47 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(layerKeybindings())),
   );
 
+  it.effect("unassigns a shortcut without restoring it on startup and can reassign it", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, []);
+      const keybindings = yield* Keybindings.Keybindings;
+      const target = SharedKeybindings.DEFAULT_KEYBINDINGS.find(
+        (rule) => rule.command === "composer.sendBackground",
+      )!;
+      const siblings = SharedKeybindings.DEFAULT_KEYBINDINGS.filter(
+        (rule) => rule.command === target.command && rule !== target,
+      );
+      const removed = yield* keybindings.upsertKeybindingRule({
+        ...target,
+        when: "false",
+        replace: target,
+      });
+      const expected = SharedKeybindings.compileResolvedKeybindingsConfig([
+        ...siblings,
+        { ...target, when: "false" },
+      ]);
+      assert.deepEqual(
+        removed.filter((rule) => rule.command === target.command),
+        expected,
+      );
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      const snapshot = yield* keybindings.getSnapshot;
+      assert.deepEqual(
+        snapshot.keybindings.filter((rule) => rule.command === target.command),
+        expected,
+      );
+      const restored = yield* keybindings.upsertKeybindingRule({
+        ...target,
+        replace: { ...target, when: "false" },
+      });
+      assert.deepEqual(
+        restored.filter((rule) => rule.command === target.command),
+        SharedKeybindings.compileResolvedKeybindingsConfig([...siblings, target]),
+      );
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
   it.effect("removes a hand-written keybinding targeted by its settings spelling", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
