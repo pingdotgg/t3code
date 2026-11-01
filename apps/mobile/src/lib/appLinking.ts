@@ -1,5 +1,8 @@
 import type { NavigationState, PartialState } from "@react-navigation/native";
 
+import { settingsNavigationState, settingsOpenIn } from "../features/settings/settings-navigation";
+import type { RootStackResetAction } from "./root-stack-reset";
+
 /**
  * The Expo dev client launches the app via
  * <scheme>://expo-development-client/?url=<packager> — that URL addresses
@@ -113,4 +116,57 @@ export function updateLinkedRoute(
     }
   }
   return state;
+}
+
+function sameRoute(link: LinkRoute, live: NavigationState["routes"][number] | undefined) {
+  return (
+    live?.name === link.name &&
+    !link.state &&
+    JSON.stringify(live.params) === JSON.stringify(link.params)
+  );
+}
+
+/**
+ * A running app's link must keep the live root and the keys of the routes under its page: the
+ * workspace navigator keys on the root, and replacing it hangs a collapsed iOS split view. The
+ * linked page itself opens fresh so its params apply again. Settings opens as its button does.
+ * `fallback` is React Navigation's own action, whose reset rehydrates under new keys.
+ */
+export function runningAppLinkAction<Action extends { readonly type: string }>(
+  link: LinkState,
+  root: NavigationState | undefined,
+  fallback: Action | undefined,
+): Action | RootStackResetAction | undefined {
+  if (!root) return fallback;
+  if (settingsOpenIn(link.routes)) {
+    const top = link.routes.at(-1)!;
+    const routes = [
+      ...settingsNavigationState(root, undefined).routes,
+      ...(top.name === "Settings" ? [] : [{ name: top.name, params: top.params }]),
+    ];
+    return {
+      type: "RESET",
+      payload: { ...root, index: routes.length - 1, routes },
+      target: root.key,
+    };
+  }
+  if (fallback?.type !== "RESET") return fallback;
+  const home = root.routes.find((route) => route.name === "Home");
+  let leading = 0;
+  while (
+    leading < link.routes.length - 1 &&
+    sameRoute(link.routes[leading]!, root.routes[leading])
+  ) {
+    leading += 1;
+  }
+  const routes = link.routes.map((route, index) =>
+    index < leading ? root.routes[index]! : route.name === "Home" && home ? home : route,
+  );
+  const payload = {
+    ...root,
+    index: link.index ?? routes.length - 1,
+    routes,
+    stale: false as const,
+  };
+  return { type: "RESET", payload, target: root.key };
 }
