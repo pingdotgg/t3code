@@ -166,3 +166,97 @@ describe("preview stream agent pointer", () => {
     });
   });
 });
+
+describe("preview stream accessible view", () => {
+  beforeEach(() => vi.stubGlobal("WebSocket", FakeSocket));
+  afterEach(() => vi.unstubAllGlobals());
+  const document = {
+    document: "1:loader",
+    version: 3,
+    truncated: false,
+    root: { id: "0.1", role: "document", children: [{ id: "0.2", role: "button", name: "Go" }] },
+  };
+  const connect = () => {
+    const onAccessibility = vi.fn();
+    const onAccessibilityNotice = vi.fn();
+    const onConnectedChange = vi.fn();
+    const client = createPreviewStreamClient(target, {
+      onFrame: vi.fn(),
+      onAccessibility,
+      onAccessibilityNotice,
+      onViewport: vi.fn(),
+      onConnectedChange,
+      onUnauthorized: vi.fn(),
+    });
+    const socket = FakeSocket.current;
+    socket.dispatchEvent(new Event("open"));
+    return { client, socket, onAccessibility, onAccessibilityNotice };
+  };
+
+  it("lets a read-only viewer subscribe without granting it page actions", () => {
+    const { client, socket, onAccessibility } = connect();
+    socket.control({ canOperate: false, controller: "agent", generation: 1, dialog: null });
+    socket.message(JSON.stringify({ type: "accessibility", document }));
+    expect(onAccessibility).not.toHaveBeenCalled();
+    client.accessibility(true);
+    expect(socket.sent).toEqual(['{"type":"accessibility","enabled":true}']);
+    socket.message(JSON.stringify({ type: "accessibility", document }));
+    expect(onAccessibility).toHaveBeenLastCalledWith(document);
+    expect(
+      client.send({
+        type: "accessibilityAction",
+        document: document.document,
+        node: "0.2",
+        action: "activate",
+      }),
+    ).toBe(false);
+    expect(socket.sent).toHaveLength(1);
+    client.stop();
+  });
+
+  it("drops documents that break the contract and clears on off, reset and disconnect", () => {
+    const { client, socket, onAccessibility, onAccessibilityNotice } = connect();
+    client.accessibility(true);
+    socket.message(
+      JSON.stringify({ type: "accessibility", document: { ...document, root: { role: "x" } } }),
+    );
+    socket.message(
+      JSON.stringify({ type: "accessibility", document: { ...document, version: -1 } }),
+    );
+    expect(onAccessibility).not.toHaveBeenCalled();
+    socket.message(JSON.stringify({ type: "accessibility", document }));
+    socket.message(JSON.stringify({ type: "accessibilityNotice", message: "The page changed." }));
+    expect(onAccessibilityNotice).toHaveBeenCalledWith("The page changed.");
+    socket.message(JSON.stringify({ type: "accessibility", document: null }));
+    expect(onAccessibility).toHaveBeenLastCalledWith(null);
+
+    socket.message(JSON.stringify({ type: "accessibility", document }));
+    client.accessibility(false);
+    expect(onAccessibility).toHaveBeenLastCalledWith(null);
+    expect(socket.sent.at(-1)).toBe('{"type":"accessibility","enabled":false}');
+
+    client.accessibility(true);
+    socket.message(JSON.stringify({ type: "accessibility", document }));
+    onAccessibility.mockClear();
+    socket.dispatchEvent(new CloseEvent("close", { code: 1012 }));
+    expect(onAccessibility).toHaveBeenCalledExactlyOnceWith(null);
+    client.stop();
+  });
+
+  it("resubscribes after a reconnect", () => {
+    vi.useFakeTimers();
+    try {
+      const { client, socket } = connect();
+      client.accessibility(true);
+      socket.dispatchEvent(new CloseEvent("close", { code: 1012 }));
+      vi.advanceTimersByTime(500);
+      const next = FakeSocket.current;
+      expect(next).not.toBe(socket);
+      next.dispatchEvent(new Event("open"));
+      expect(next.sent).toEqual(['{"type":"accessibility","enabled":true}']);
+      client.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

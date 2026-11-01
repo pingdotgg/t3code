@@ -12,6 +12,8 @@ import {
   type BrowserProfile,
   type PreviewReportProfilesInput,
   PREVIEW_AUTOMATION_SERVER_OPERATIONS,
+  PreviewAccessibilityAction,
+  type PreviewAccessibilityDocument,
   PreviewViewportSetting as PreviewViewportSettingSchema,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type PreviewAutomationActionEvent,
@@ -85,6 +87,7 @@ import * as PreviewBrowser from "./PreviewBrowser.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import { presentAsChrome, ServerBrowserContexts } from "./ServerBrowserContexts.ts";
 import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
+import { AccessibilityNotice, ServerBrowserAccessibility } from "./ServerBrowserAccessibility.ts";
 import { installPdfDocumentNavigation, isPdfAssetUrl } from "./PdfDocumentNavigation.ts";
 
 const SERVER_HOST_CLIENT_ID = SERVER_BROWSER_AUTOMATION_CLIENT_ID;
@@ -100,6 +103,7 @@ const DESKTOP_ATTACH_TIMEOUT = "10 seconds";
 const VIEWER_OUTPUT_LIMIT = 64;
 const RECORDING_SCREENCAST = { format: "jpeg", quality: 90, everyNthFrame: 1 } as const;
 const decodeViewportSetting = Schema.decodeUnknownSync(PreviewViewportSettingSchema);
+const decodeAccessibilityAction = Schema.decodeUnknownOption(PreviewAccessibilityAction);
 const AGENT_CURSOR_MOVE_MS = 160;
 const AGENT_CURSOR_CLICK_LEAD_MS = 40;
 /** A dialog blocks page script, so a desktop size read gives up after this. */
@@ -202,12 +206,17 @@ export type ServerBrowserViewerOutput =
       readonly fileName: string;
       readonly sizeBytes: number;
     }
+  | { readonly _tag: "accessibility"; readonly document: PreviewAccessibilityDocument | null }
+  | { readonly _tag: "accessibilityNotice"; readonly message: string }
   | { readonly _tag: "gone" }
   | { readonly _tag: "reconnect" };
 
 export interface ServerBrowserViewer {
   readonly output: Queue.Dequeue<ServerBrowserViewerOutput>;
+  /** Page input; ignored for read-only viewers. */
   readonly input: (message: unknown) => Effect.Effect<void>;
+  /** Read-only viewers may subscribe too; actions still go through `input`. */
+  readonly accessibility: (enabled: boolean) => Effect.Effect<void>;
 }
 
 export type ProfileReporter = (input: PreviewReportProfilesInput) => Effect.Effect<void>;
@@ -256,6 +265,7 @@ interface ViewerState {
   readonly pressedKeys: Map<string, { key: string; code: string }>;
   readonly pressedButtons: Map<"left" | "middle" | "right", { x: number; y: number }>;
   readonly push: (output: ServerBrowserViewerOutput) => void;
+  readonly offer: (output: ServerBrowserViewerOutput) => boolean;
   readonly pause: () => Promise<void>;
   readonly resume: () => Promise<void>;
   scrolledAt: number;
@@ -292,6 +302,7 @@ interface ServerTab {
   readonly networkEntries: Array<PreviewAutomationNetworkEntry>;
   readonly actionTimeline: Array<PreviewAutomationActionEvent>;
   readonly control: SessionControl;
+  readonly accessibility: ServerBrowserAccessibility;
   agentOperating: boolean;
   fileChooserIntercepted: boolean;
   readonly onFileChooser: (chooser: FileChooser) => void;
@@ -735,6 +746,7 @@ const make = Effect.gen(function* () {
     // A desktop page outlives the connection unless its session closed with it.
     const end = tab.desktop && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
     for (const viewer of tab.viewers) viewer.push({ _tag: end });
+    void tab.accessibility.close();
     void tab.control.close().catch(constVoid);
     if (tab.desktop) void tab.desktop.close().catch(constVoid);
     else void tab.page.close().catch(constVoid);
@@ -834,6 +846,9 @@ const make = Effect.gen(function* () {
       networkEntries: [],
       actionTimeline: [],
       control,
+      accessibility: new ServerBrowserAccessibility(page, (cause) =>
+        runFork(Effect.logDebug("server preview accessibility capture failed", { cause })),
+      ),
       agentOperating: false,
       fileChooserIntercepted: false,
       onFileChooser: (chooser) => {
@@ -2495,6 +2510,7 @@ const make = Effect.gen(function* () {
       canOperate: input.canOperate,
       pressedKeys: new Map(),
       pressedButtons: new Map(),
+      offer: (next) => Queue.offerUnsafe(output, next),
       push: (next) => {
         // Dropped frames must still release Chromium.
         if (Queue.offerUnsafe(output, next)) return;
@@ -2506,12 +2522,19 @@ const make = Effect.gen(function* () {
           if (dropped._tag === "Failure") return;
           const items = [...dropped.value, next];
           // Without its latest size and control the viewer cannot map input at all.
-          const state = (["control", "viewport"] as const).flatMap(
-            (tag) => items.findLast((item) => item._tag === tag) ?? [],
-          );
+          // Semantics are only resent when they change, so the newest must survive.
+          const latest: ReadonlyArray<ServerBrowserViewerOutput["_tag"]> =
+            next._tag === "gone"
+              ? ["control", "viewport"]
+              : ["control", "viewport", "accessibility"];
+          const state = latest.flatMap((tag) => items.findLast((item) => item._tag === tag) ?? []);
           // Everything else is one-time; if it no longer fits, the oldest goes first.
           const rest = items.filter(
-            (item) => item._tag !== "frame" && item._tag !== "control" && item._tag !== "viewport",
+            (item) =>
+              item._tag !== "frame" &&
+              item._tag !== "control" &&
+              item._tag !== "viewport" &&
+              item._tag !== "accessibility",
           );
           for (const item of [...rest.slice(state.length - VIEWER_OUTPUT_LIMIT), ...state])
             Queue.offerUnsafe(output, item);
@@ -2561,6 +2584,8 @@ const make = Effect.gen(function* () {
     let screencastStarted = false;
     session.on("Page.screencastFrame", (frame) => {
       screencastStarted = true;
+      // A repaint is the cheapest signal that the page's semantics may have changed.
+      tab.accessibility.invalidate();
       if (framesInFlight > 0) mayHaveDropped = true;
       framesInFlight += 1;
       const arrivedAt = Date.now();
@@ -2608,13 +2633,49 @@ const make = Effect.gen(function* () {
     // An idle page does not repaint for a new screencast, so the viewer
     // starts from a still unless a live frame beat it.
     if (!screencastStarted) yield* Effect.promise(pushStill);
+    let accessible = false;
+    yield* Effect.addFinalizer(() =>
+      Effect.promise(() => tab.accessibility.unsubscribe(viewer.id)),
+    );
+    const runAccessibilityAction = async (raw: Record<string, unknown>) => {
+      const action = decodeAccessibilityAction(raw);
+      if (Option.isNone(action)) return;
+      const notice = await tab.control
+        .human(viewer.id, () => tab.accessibility.act(action.value))
+        .catch((cause: unknown) =>
+          cause instanceof BrowserControlInterrupted
+            ? AccessibilityNotice.notController
+            : AccessibilityNotice.stale,
+        );
+      if (notice !== null) viewer.push({ _tag: "accessibilityNotice", message: notice });
+    };
     return {
       output,
+      accessibility: (enabled: boolean) =>
+        Effect.promise(async () => {
+          if (enabled === accessible) return;
+          accessible = enabled;
+          if (!enabled) {
+            viewer.push({ _tag: "accessibility", document: null });
+            await tab.accessibility.unsubscribe(viewer.id);
+            return;
+          }
+          await tab.accessibility
+            .subscribe(viewer.id, (document) => viewer.offer({ _tag: "accessibility", document }))
+            .catch(() => {
+              accessible = false;
+              viewer.push({
+                _tag: "accessibilityNotice",
+                message: AccessibilityNotice.unavailable,
+              });
+            });
+        }),
       input: (raw: unknown) =>
         Effect.promise(async () => {
           if (!viewer.canOperate) return;
           const message = asRecord(raw);
           if (!message) return;
+          if (message.type === "accessibilityAction") return runAccessibilityAction(message);
           try {
             if (message.type === "takeControl") {
               const taking = tab.control.take(viewer.id);

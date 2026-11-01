@@ -3,6 +3,7 @@ import {
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
   PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE,
+  PreviewAccessibilitySubscription,
   PreviewStreamHostSetup,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -41,6 +42,8 @@ type Frame = Extract<ServerBrowser.ServerBrowserViewerOutput, { readonly _tag: "
 
 const isAck = (message: unknown) =>
   typeof message === "object" && message !== null && "type" in message && message.type === "ack";
+
+const isAccessibilitySubscription = Schema.is(PreviewAccessibilitySubscription);
 
 const parseMessage = (chunk: Uint8Array | string): unknown => {
   try {
@@ -162,10 +165,13 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
             case "fileChooserClosed":
             case "popup":
             case "pointer":
-            case "probe": {
+            case "probe":
+            case "accessibilityNotice": {
               const { _tag: type, ...data } = output;
               return write(JSON.stringify({ type, ...data }));
             }
+            case "accessibility":
+              return write(JSON.stringify({ type: "accessibility", document: output.document }));
             case "gone":
               return gone.pipe(Effect.andThen(Effect.interrupt));
             case "reconnect":
@@ -178,6 +184,11 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
       // Incoming messages share the session span; frame acknowledgements are frequent.
       const receive = Effect.fnUntraced(function* (chunk: Uint8Array | string) {
         const message = parseMessage(chunk);
+        if (isAccessibilitySubscription(message)) {
+          return yield* viewer
+            .accessibility(message.enabled)
+            .pipe(Effect.forkScoped, Effect.asVoid);
+        }
         // Ownership serializes actions in the service. Keep reading so dialog
         // replies and takeover can unblock an action already waiting on the page.
         if (!isAck(message))

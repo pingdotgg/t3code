@@ -16,6 +16,7 @@ import {
 } from "@t3tools/client-runtime/preview/server-browser-stream";
 import type {
   EnvironmentId,
+  PreviewAccessibilityDocument,
   PreviewStreamHostSetup,
   PreviewViewportSetting,
 } from "@t3tools/contracts";
@@ -41,6 +42,7 @@ import { toastManager } from "~/components/ui/toast";
 import { cn } from "~/lib/utils";
 import { refreshPreviewStreamAccess, usePreviewStreamAccess } from "~/state/previewStream";
 import { observeResize } from "~/lib/observeResize";
+import { type PreviewAccessibleNotice, PreviewAccessibleView } from "./PreviewAccessibleView";
 
 export interface ServerBrowserHandle {
   readonly navigate: (url: string) => void;
@@ -181,6 +183,12 @@ export function ServerBrowserSurface(props: {
   const [promptText, setPromptText] = useState("");
   const [fileChooser, setFileChooser] = useState<PreviewStreamFileChooser | null>(null);
   const [agentCursor, setAgentCursor] = useState<AgentCursorPlacement | null>(null);
+  const [accessibleView, setAccessibleView] = useState(false);
+  const [accessibleDocument, setAccessibleDocument] = useState<PreviewAccessibilityDocument | null>(
+    null,
+  );
+  const [accessibleNotice, setAccessibleNotice] = useState<PreviewAccessibleNotice | null>(null);
+  const accessibleViewWanted = useEffectEvent(() => accessibleView);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const answerFileChooser = (files: ReadonlyArray<File>) => {
     const chooser = fileChooser;
@@ -430,6 +438,9 @@ export function ServerBrowserSurface(props: {
           clearInput();
         },
         onHostSetup: setHostSetup,
+        onAccessibility: setAccessibleDocument,
+        onAccessibilityNotice: (message) =>
+          setAccessibleNotice((current) => ({ message, id: (current?.id ?? 0) + 1 })),
         onUnauthorized: () => {
           const refusals = ++unauthorizedRef.current;
           if (refusals >= MAX_UNAUTHORIZED_REFUSALS) {
@@ -445,6 +456,7 @@ export function ServerBrowserSurface(props: {
       },
     );
     clientRef.current = client;
+    client.accessibility(accessibleViewWanted());
     return () => {
       painter.stop();
       if (refreshTimer !== null) clearTimeout(refreshTimer);
@@ -755,18 +767,33 @@ export function ServerBrowserSurface(props: {
         <span role="status" className="text-xs text-muted-foreground">
           {previewStreamControlLabel(control)}
         </span>
-        {control?.canOperate ? (
+        <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="xs"
-            disabled={control.controller === "another-viewer"}
-            onClick={() =>
-              send({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
-            }
+            aria-pressed={accessibleView}
+            disabled={pdfUrl !== null}
+            onClick={() => {
+              const next = !accessibleView;
+              setAccessibleView(next);
+              clientRef.current?.accessibility(next);
+            }}
           >
-            {control.controller === "you" ? "Release control" : "Take control"}
+            Accessible view
           </Button>
-        ) : null}
+          {control?.canOperate ? (
+            <Button
+              variant="outline"
+              size="xs"
+              disabled={control.controller === "another-viewer"}
+              onClick={() =>
+                send({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
+              }
+            >
+              {control.controller === "you" ? "Release control" : "Take control"}
+            </Button>
+          ) : null}
+        </div>
       </div>
       <div className="relative min-h-0 flex-1">
         {pdfUrl ? (
@@ -775,6 +802,14 @@ export function ServerBrowserSurface(props: {
             type="application/pdf"
             title="PDF document"
             className="absolute inset-0 z-10 size-full border-0"
+          />
+        ) : null}
+        {accessibleView && !pdfUrl ? (
+          <PreviewAccessibleView
+            document={accessibleDocument}
+            canAct={control?.controller === "you"}
+            notice={accessibleNotice}
+            onAction={(action) => clientRef.current?.send(action) ?? false}
           />
         ) : null}
         <canvas
@@ -802,7 +837,7 @@ export function ServerBrowserSurface(props: {
           autoComplete="off"
           autoCorrect="off"
           spellCheck={false}
-          disabled={pdfUrl !== null || control?.controller !== "you"}
+          disabled={accessibleView || pdfUrl !== null || control?.controller !== "you"}
           defaultValue={INPUT_SENTINEL}
           onFocus={(event) => resetInput(event.currentTarget)}
           className="sr-only top-0 left-0 text-base"
