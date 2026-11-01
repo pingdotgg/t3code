@@ -100,6 +100,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
     otelEnvironment: OtelEnvironment.none,
     devAllowedOrigins: [],
+    mcpResourceAliases: [],
   } as const;
 
   const openBootstrapFd = Effect.fn(function* (payload: DesktopBackendBootstrapValue) {
@@ -300,6 +301,50 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       expect(serialized).not.toContain(secret);
       expect(desktop.devAuthToken).toBeUndefined();
       expect(staticWeb.devAuthToken).toBeUndefined();
+    }),
+  );
+
+  it.effect("reads MCP resource aliases and refuses any that a client could not send exactly", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "t3-cli-mcp-aliases-" })),
+      );
+      const resolveWith = (aliases: string) =>
+        resolveServerConfig(minimalWebFlags(baseDir), Option.none()).pipe(
+          Effect.provide(
+            Layer.merge(
+              NetService.layer,
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({ env: { T3CODE_MCP_RESOURCE_ALIASES: aliases } }),
+              ),
+            ),
+          ),
+        );
+
+      const config = yield* resolveWith(
+        " https://tunnel.example/v1/mcp/tunnel_abc ,,https://gateway.example/mcp",
+      );
+      expect(config.mcpResourceAliases).toEqual([
+        "https://tunnel.example/v1/mcp/tunnel_abc",
+        "https://gateway.example/mcp",
+      ]);
+      for (const refused of [
+        "http://tunnel.example/mcp",
+        "https://user:hunter2@tunnel.example/mcp",
+        "https://tunnel.example/mcp?",
+        "https://tunnel.example/mcp?tenant=a",
+        "https://tunnel.example/mcp#",
+        "https://Tunnel.example/mcp",
+        "https://tunnel.example:443/mcp",
+        "https://tunnel.example/v1/../mcp",
+        "tunnel.example/mcp",
+      ]) {
+        const error = String(
+          yield* resolveWith(`https://ok.example/mcp,${refused}`).pipe(Effect.flip),
+        );
+        expect(error).toContain("T3CODE_MCP_RESOURCE_ALIASES entry 2");
+        expect(error).not.toContain("hunter2");
+      }
     }),
   );
 

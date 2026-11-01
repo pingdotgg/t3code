@@ -42,7 +42,17 @@ const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(ServerEnvironment.layerIdentity),
   Layer.provide(layerConfig),
 );
-const makeLayerRoutes = (capture: (auth: EnvironmentAuth.EnvironmentAuth["Service"]) => void) =>
+const layerConfigWithAliases = (mcpResourceAliases: ReadonlyArray<string>) =>
+  Layer.effect(
+    ServerConfig.ServerConfig,
+    Effect.gen(function* () {
+      return ServerConfig.make({ ...(yield* ServerConfig.ServerConfig), mcpResourceAliases });
+    }),
+  ).pipe(Layer.provide(layerConfig));
+const makeLayerRoutes = (
+  capture: (auth: EnvironmentAuth.EnvironmentAuth["Service"]) => void,
+  mcpResourceAliases: ReadonlyArray<string>,
+) =>
   Layer.mergeAll(
     Layer.effectDiscard(
       EnvironmentAuth.EnvironmentAuth.pipe(Effect.tap((auth) => Effect.sync(() => capture(auth)))),
@@ -59,7 +69,7 @@ const makeLayerRoutes = (capture: (auth: EnvironmentAuth.EnvironmentAuth["Servic
     ),
   ).pipe(
     Layer.provideMerge(layerEnvironmentAuth),
-    Layer.provide(layerConfig),
+    Layer.provide(layerConfigWithAliases(mcpResourceAliases)),
     Layer.provideMerge(
       HttpPlatform.layer.pipe(
         Layer.provideMerge(NodeServices.layer),
@@ -90,6 +100,7 @@ type Handler = (request: Request) => Effect.Effect<Response>;
 
 const withRoutes = <A, E>(
   use: (handler: Handler, auth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
+  mcpResourceAliases: ReadonlyArray<string> = [],
 ) =>
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
@@ -97,7 +108,7 @@ const withRoutes = <A, E>(
     let routerAuth: EnvironmentAuth.EnvironmentAuth["Service"] | undefined;
     const layerRoutes = makeLayerRoutes((auth) => {
       routerAuth = auth;
-    });
+    }, mcpResourceAliases);
     return yield* Effect.acquireUseRelease(
       Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
       (web) =>
@@ -580,6 +591,190 @@ it.live("one-click approves only access the browser session holds the scopes for
     }),
   ),
 );
+
+it.live(
+  "issues tokens for a configured resource alias, such as a tunnel's address, and no other",
+  () =>
+    Effect.gen(function* () {
+      const tunnel = "https://tunnel.example/v1/mcp/tunnel_abc";
+      const otherTunnel = "https://tunnel.example/v1/mcp/tunnel_def";
+      const authorize = (handler: Handler, clientId: string, resource: string) =>
+        handler(
+          at(
+            `/oauth/mcp/authorize?${new URLSearchParams({ ...authorizeParams(clientId), resource })}`,
+          ),
+        );
+      const refusal = (response: Response) =>
+        new URL(response.headers.get("location")!).searchParams.get("error");
+
+      yield* withRoutes((handler) =>
+        Effect.gen(function* () {
+          const clientId = yield* registeredClientId(handler);
+          expect(refusal(yield* authorize(handler, clientId, tunnel))).toBe("invalid_target");
+        }),
+      );
+
+      yield* withRoutes(
+        (handler, auth) =>
+          Effect.gen(function* () {
+            const clientId = yield* registeredClientId(handler);
+            for (const foreign of [
+              `${tunnel}/`,
+              `${tunnel}/other`,
+              `${tunnel}?tenant=other`,
+              `${tunnel}#`,
+              "https://user@tunnel.example/v1/mcp/tunnel_abc",
+              "https://tunnel.example/v1/mcp/tunnel_xyz",
+              "http://tunnel.example/v1/mcp/tunnel_abc",
+            ]) {
+              expect(refusal(yield* authorize(handler, clientId, foreign))).toBe("invalid_target");
+            }
+            const handoff = yield* authorize(handler, clientId, tunnel);
+            expect(handoff.headers.get("location")).toMatch(/^\/connect-agent\?/);
+            const pairing = yield* auth.issuePairingCredential();
+            const foreignDecision = yield* decide(
+              handler,
+              { ...authorizeParams(clientId), resource: `${tunnel}?tenant=other` },
+              { _tag: "pairing-code", access: "read-only", code: pairing.credential },
+            );
+            expect(new URL(foreignDecision.redirectTo!).searchParams.get("error")).toBe(
+              "invalid_target",
+            );
+
+            const signIn = (resource: string) =>
+              Effect.gen(function* () {
+                const pairing = yield* auth.issuePairingCredential();
+                const approved = yield* decide(
+                  handler,
+                  { ...authorizeParams(clientId), resource },
+                  { _tag: "pairing-code", access: "read-only", code: pairing.credential },
+                );
+                const callback = new URL(approved.redirectTo!);
+                expect(callback.searchParams.get("iss")).toBe(ORIGIN);
+                return callback.searchParams.get("code")!;
+              });
+            const exchange = (code: string, resource?: string, origin = ORIGIN) =>
+              handler(
+                at("/oauth/mcp/token", {
+                  ...form({
+                    grant_type: "authorization_code",
+                    code,
+                    redirect_uri: authorizeParams(clientId).redirect_uri,
+                    client_id: clientId,
+                    code_verifier: verifier,
+                    ...(resource === undefined ? {} : { resource }),
+                  }),
+                  headers: {
+                    "content-type": "application/x-www-form-urlencoded",
+                    host: new URL(origin).host,
+                  },
+                }),
+              );
+
+            const token = yield* exchange(yield* signIn(tunnel), tunnel).pipe(
+              Effect.flatMap(json<{ access_token: string }>),
+            );
+            const client = yield* auth.authenticateMcpClient(
+              HttpServerRequest.fromWeb(
+                at("/mcp", { headers: { authorization: `Bearer ${token.access_token}` } }),
+              ),
+            );
+            expect(client.access).toBe("read-only");
+            expect((yield* exchange(yield* signIn(tunnel))).status).toBe(200);
+            expect((yield* exchange(yield* signIn(`${ORIGIN}/mcp`), `${ORIGIN}/mcp`)).status).toBe(
+              200,
+            );
+            const otherOrigin = "https://other.example";
+            for (const origin of [ORIGIN, otherOrigin]) {
+              const onOrigin = (path: string) =>
+                at(path, { headers: { host: new URL(origin).host } });
+              const metadata = yield* handler(
+                onOrigin("/.well-known/oauth-protected-resource/mcp"),
+              ).pipe(Effect.flatMap(json<unknown>));
+              expect(metadata).toMatchObject({
+                resource: `${origin}/mcp`,
+                authorization_servers: [origin],
+              });
+              const server = yield* handler(
+                onOrigin("/.well-known/oauth-authorization-server"),
+              ).pipe(Effect.flatMap(json<unknown>));
+              expect(server).toMatchObject({
+                issuer: origin,
+                authorization_endpoint: `${origin}/oauth/mcp/authorize`,
+                token_endpoint: `${origin}/oauth/mcp/token`,
+                registration_endpoint: `${origin}/oauth/mcp/register`,
+              });
+            }
+            expect((yield* exchange(yield* signIn(tunnel), tunnel, otherOrigin)).status).toBe(200);
+            expect((yield* exchange(yield* signIn(tunnel), undefined, otherOrigin)).status).toBe(
+              200,
+            );
+            expect(
+              (yield* exchange(yield* signIn(`${ORIGIN}/mcp`), `${ORIGIN}/mcp`, otherOrigin))
+                .status,
+            ).toBe(400);
+            expect(
+              (yield* exchange(yield* signIn(`${ORIGIN}/mcp`), undefined, otherOrigin)).status,
+            ).toBe(400);
+            for (const other of [`${ORIGIN}/mcp`, otherTunnel, `${tunnel}?tenant=other`]) {
+              expect((yield* exchange(yield* signIn(tunnel), other)).status).toBe(400);
+            }
+            expect((yield* exchange(yield* signIn(`${ORIGIN}/mcp`), tunnel)).status).toBe(400);
+            const spent = yield* signIn(tunnel);
+            expect((yield* exchange(spent, otherTunnel)).status).toBe(400);
+            expect((yield* exchange(spent, tunnel)).status).toBe(400);
+          }),
+        [tunnel, otherTunnel],
+      );
+    }),
+);
+
+it.live("binds one-click approval to the selected MCP resource", () => {
+  const aliases = ["https://gateway.example/mcp/one", "https://gateway.example/mcp/two"];
+  return withRoutes(
+    (handler, auth) =>
+      Effect.gen(function* () {
+        const clientId = yield* registeredClientId(handler);
+        const pairing = yield* auth.issuePairingCredential({
+          scopes: [...AuthStandardClientScopes],
+        });
+        const session = yield* handler(
+          at("/api/auth/browser-session", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: encodeJson({ credential: pairing.credential }),
+          }),
+        );
+        const cookie = session.headers.getSetCookie()[0]!.split(";", 1)[0]!;
+        const resources = [`${ORIGIN}/mcp`, ...aliases];
+        for (const resource of resources) {
+          const params = { ...authorizeParams(clientId), resource };
+          const approval = yield* handler(postJson("/oauth/mcp/approval", params, cookie)).pipe(
+            Effect.flatMap(json<{ csrfToken: string }>),
+          );
+          const decision = {
+            _tag: "browser-session",
+            access: "read-only",
+            csrfToken: approval.csrfToken,
+          };
+          for (const other of resources.filter((value) => value !== resource)) {
+            const changed = yield* decide(
+              handler,
+              { ...params, resource: other },
+              decision,
+              cookie,
+            );
+            expect(changed.status).toBe(400);
+          }
+          const approved = yield* decide(handler, params, decision, cookie);
+          expect(new URL(approved.redirectTo!).searchParams.get("code")).toEqual(
+            expect.any(String),
+          );
+        }
+      }),
+    aliases,
+  );
+});
 
 it("matches loopback redirects on everything but the port, and https redirects exactly", () => {
   const matches = McpOAuth.redirectMatches;
