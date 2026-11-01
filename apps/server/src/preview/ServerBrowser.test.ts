@@ -747,6 +747,47 @@ it.live("enforces provider ownership and explicit targets when a session has mul
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a later agent session of the same thread can close the tab an earlier one opened", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const otherThread = {
+        ...scope,
+        thread: { ...testThread, threadId: ThreadId.make("other-thread"), providerSessionId: "c" },
+      };
+      const foreign = yield* broker
+        .invoke<void>({ scope: otherThread, tabId, operation: "close", input: {} })
+        .pipe(Effect.flip);
+      expect(foreign).toMatchObject({ _tag: "PreviewAutomationTabNotFoundError" });
+      yield* broker.invoke({ scope: asSession("agent-b"), tabId, operation: "close", input: {} });
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: asSession("agent-b"),
+        operation: "status",
+        input: {},
+      });
+      expect(status.tabs).not.toEqual(expect.arrayContaining([expect.objectContaining({ tabId })]));
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("agents still cannot close a server tab the user opened", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      yield* browser.attachViewer(viewerInput(opened.tabId, false));
+      const rejected = yield* broker
+        .invoke<void>({ scope, tabId: opened.tabId, operation: "close", input: {} })
+        .pipe(Effect.flip);
+      expect(rejected).toMatchObject({
+        _tag: "PreviewAutomationControlInterruptedError",
+        reason: "agentMismatch",
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("streams to a read-only viewer without allowing takeover, input, or viewport changes", () =>
   Effect.scoped(
     Effect.gen(function* () {

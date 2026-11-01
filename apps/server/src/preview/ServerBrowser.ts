@@ -1894,7 +1894,12 @@ const make = Effect.gen(function* () {
         "No server preview tab is open for this thread. Call preview_open first.",
       );
     }
-    if (!READ_OPERATIONS.has(request.operation) && !tab.control.agentMayAct(request.agentSessionId))
+    // Any session of the thread may close its agent tabs: the session id rotates on provider restart.
+    if (
+      request.operation !== "close" &&
+      !READ_OPERATIONS.has(request.operation) &&
+      !tab.control.agentMayAct(request.agentSessionId)
+    )
       throw new BrowserControlInterrupted(
         "This tab belongs to another agent session. You can read it, but open your own tab to act.",
         "agentMismatch",
@@ -2067,9 +2072,9 @@ const make = Effect.gen(function* () {
     const tab = await requireTab(request);
     // Closing must unblock an action waiting on a dialog, without queueing behind it.
     if (request.operation === "close") {
-      if (tab.control.agentId !== request.agentSessionId)
+      if (tab.control.agentId === null)
         throw new BrowserControlInterrupted(
-          "Only the agent session that opened this tab can close it.",
+          "Only tabs an agent opened can be closed by an agent.",
           "agentMismatch",
         );
       if (tab.control.controller !== null)
