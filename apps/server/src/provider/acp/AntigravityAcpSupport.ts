@@ -40,6 +40,7 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly clientFileReads?: boolean;
+  readonly clientCapabilities?: AcpSessionRuntime.AcpSessionRuntimeOptions["clientCapabilities"];
   readonly authMethod?: AntigravityAuthMethod;
 }
 
@@ -60,6 +61,7 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
       // The agent offers non-Gemini models only to allowlisted clients such as Zed.
       clientInfo: { name: "zed", version: "0.0.0" },
       clientCapabilities: {
+        ...input.clientCapabilities,
         // Advertising writes swaps the agent's diff edits for whole-file client_edit_file.
         fs: { readTextFile: input.clientFileReads === true, writeTextFile: false },
         terminal: false,

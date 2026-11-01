@@ -11,7 +11,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 
 import * as EffectAcpAgent from "effect-acp/agent";
 import * as AcpError from "effect-acp/errors";
-import type * as AcpSchema from "effect-acp/schema";
+import * as AcpSchema from "effect-acp/schema";
 import type * as AcpCompat from "effect-acp/compat";
 
 import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
@@ -36,6 +36,12 @@ const emitBackgroundToolDuringAnswer =
   process.env.T3_ACP_EMIT_BACKGROUND_TOOL_DURING_ANSWER === "1";
 const emitMcpToolApprovalElicitation =
   process.env.T3_ACP_EMIT_MCP_TOOL_APPROVAL_ELICITATION === "1";
+const emitElicitation = process.env.T3_ACP_EMIT_ELICITATION === "1";
+const elicitationSchema = process.env.T3_ACP_ELICITATION_SCHEMA;
+const decodeElicitationSchema = Schema.decodeUnknownSync(
+  Schema.fromJsonString(AcpSchema.ElicitationSchema),
+);
+const elicitationResponseLogPath = process.env.T3_ACP_ELICITATION_RESPONSE_LOG_PATH;
 const grokKillTaskShape = process.env.T3_ACP_GROK_KILL_TASK_SHAPE;
 const emitGrokBackgroundTaskPoll = process.env.T3_ACP_GROK_BACKGROUND_TASK_COMPLETION === "poll";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
@@ -1539,21 +1545,25 @@ const program = Effect.gen(function* () {
         return yield* finishPrompt(requestedSessionId, "end_turn");
       }
 
-      if (emitMcpToolApprovalElicitation) {
-        yield* agent.client.elicit({
+      if (emitElicitation || emitMcpToolApprovalElicitation) {
+        const response = yield* agent.client.elicit({
           sessionId: requestedSessionId,
           message: "Approve this request?",
           mode: "form",
-          requestedSchema: {
-            type: "object",
-            properties: {
-              approved: { type: "boolean", title: "Approved" },
-            },
-          },
+          requestedSchema: elicitationSchema
+            ? decodeElicitationSchema(elicitationSchema)
+            : {
+                type: "object",
+                properties: {
+                  approved: { type: "boolean", title: "Approved" },
+                },
+              },
           ...(emitMcpToolApprovalElicitation
             ? { _meta: { codex_approval_kind: "mcp_tool_call" } }
             : {}),
         });
+        if (elicitationResponseLogPath)
+          NodeFS.appendFileSync(elicitationResponseLogPath, `${encodeJson(response)}\n`, "utf8");
         return yield* finishPrompt(requestedSessionId, "end_turn");
       }
 

@@ -49,6 +49,7 @@ const PermissionRequest = jsonRpcRequest(
   "session/request_permission",
   AcpSchema.RequestPermissionRequest,
 );
+const ElicitationResponse = jsonRpcResponse(AcpSchema.CreateElicitationResponse);
 const PermissionResponse = jsonRpcResponse(AcpSchema.RequestPermissionResponse);
 const ErrorResponse = Schema.Struct({ id: Schema.String, error: Schema.Unknown });
 const DieResponse = Schema.Struct({
@@ -1202,6 +1203,59 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         "ACP notification handler failed",
         "ACP request handler failed for 'session/request_permission'",
       ]);
+      yield* Scope.close(scope, Exit.void);
+    }),
+  );
+
+  it.effect("hands titled multi-select elicitation fields to the handler", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const scope = yield* Scope.make();
+      const acp = yield* AcpClient.make(stdio).pipe(Effect.provideService(Scope.Scope, scope));
+      const received = yield* Deferred.make<AcpSchema.CreateElicitationRequest>();
+      yield* acp.handleElicitation((request) =>
+        Deferred.succeed(received, request).pipe(
+          Effect.as({ action: "accept" as const, content: { areas: ["ui"] } }),
+        ),
+      );
+      const requestedSchema = {
+        type: "object",
+        properties: {
+          areas: {
+            type: "array",
+            title: "Areas",
+            items: {
+              anyOf: [
+                { const: "api", title: "API", description: "Server routes" },
+                { const: "ui", title: "Interface" },
+              ],
+            },
+          },
+        },
+        required: ["areas"],
+      };
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcRequest("elicitation/create", Schema.Unknown), {
+          jsonrpc: "2.0",
+          id: "elicitation",
+          method: "elicitation/create",
+          params: {
+            sessionId: "session-1",
+            mode: "form",
+            message: "Pick areas",
+            requestedSchema,
+          },
+          headers: [],
+        }),
+      );
+      const response = yield* Queue.take(output).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(ElicitationResponse))),
+      );
+      assert.deepEqual(response.result, { action: "accept", content: { areas: ["ui"] } });
+      const request = yield* Deferred.await(received);
+      assert.deepEqual("requestedSchema" in request && request.requestedSchema, requestedSchema);
       yield* Scope.close(scope, Exit.void);
     }),
   );

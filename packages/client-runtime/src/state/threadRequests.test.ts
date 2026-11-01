@@ -232,6 +232,20 @@ describe("initial user input drafts", () => {
       customAnswer: "  Proposed commit\n\n",
     });
   });
+
+  it("seeds a question with the id __proto__ as its own draft", () => {
+    const seeded = seedUserInputDraftAnswers(
+      [
+        { id: "__proto__", initialAnswer: "Proposed" },
+        { id: "name", initialAnswer: "Control" },
+      ],
+      {},
+    );
+
+    expect(JSON.stringify(seeded)).toBe(
+      '{"__proto__":{"customAnswer":"Proposed"},"name":{"customAnswer":"Control"}}',
+    );
+  });
 });
 const projection: OrchestrationV2ThreadProjection = {
   ...v2Projection,
