@@ -528,6 +528,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
   },
   {
+    id: "close-running-terminals-on-settle",
+    title: "Close running terminals on settle",
+    to: "/settings/threads",
+    searchTerms: ["kill stop dev server shell process cleanup settlement"],
+    scope: "project-defaults",
+  },
+  {
     id: "thread-notifications",
     title: "Thread notifications",
     to: "/settings/general",

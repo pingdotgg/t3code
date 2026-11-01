@@ -1112,11 +1112,23 @@ it.layer(
       const process = ptyAdapter.processes[0]!;
       const before = "café\t界🙂\u0007\u009c\u0085";
       const after = "e\u0301\r\n";
+      const outputReached = yield* Deferred.make<void>();
+      const releaseOutput = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output" && event.data === before
+          ? Deferred.succeed(outputReached, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseOutput)),
+            )
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
 
       process.emitData(before);
+      yield* Deferred.await(outputReached);
       process.emitData("\u001b[5");
       process.emitData(`n${after}`);
       yield* manager.close({ threadId: "thread-1" });
+      yield* Deferred.succeed(releaseOutput, undefined);
 
       expect((yield* manager.open(openInput())).history).toBe(before + after);
     }),

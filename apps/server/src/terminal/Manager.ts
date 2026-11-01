@@ -2346,6 +2346,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const updatedAt = yield* nowIso;
     yield* modifyManagerState((state) => {
       cleanupProcessHandles(session);
+      // Closing must retain output queued behind a slow event listener.
+      while (session.pendingProcessEventIndex < session.pendingProcessEvents.length) {
+        const event = session.pendingProcessEvents[session.pendingProcessEventIndex++];
+        if (event?.type !== "output") break;
+        const sanitized = sanitizeTerminalHistoryChunk(
+          session.pendingHistoryControlSequence,
+          event.data,
+        );
+        session.pendingHistoryControlSequence = sanitized.pendingControlSequence;
+        session.history.append(sanitized.visibleText);
+      }
       session.process = null;
       session.pid = null;
       session.hasRunningSubprocess = false;

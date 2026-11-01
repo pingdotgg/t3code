@@ -1729,6 +1729,25 @@ export function ThreadsSettingsPanel() {
         </SettingsSection>
       ) : null}
 
+      <SettingsSection id="settle" title="On settle">
+        <SettingsRow
+          serverScoped
+          settingKeys={["closeRunningTerminalsOnSettle"]}
+          {...searchableSetting("close-running-terminals-on-settle")}
+          description="Stop all of the thread's terminals, including dev servers, when it settles manually or automatically. Off closes only idle terminals."
+          control={
+            <ScopedSwitch
+              settingKeys={["closeRunningTerminalsOnSettle"]}
+              checked={settings.closeRunningTerminalsOnSettle}
+              onCheckedChange={(checked) =>
+                updateSettings({ closeRunningTerminalsOnSettle: checked })
+              }
+              aria-label="Close running terminals on settle"
+            />
+          }
+        />
+      </SettingsSection>
+
       <SettingsSection id="text-generation" title="Text generation">
         <SettingsRow
           serverScoped
