@@ -93,3 +93,10 @@ it("keeps the file name chip for a file URL autolink", async () => {
 
   expect(content[url]?.label).toBe("guide.md");
 });
+
+it("keeps the file name chip for an inline-code path whose underscores parse as emphasis", async () => {
+  const url = "src/__tests__/a.test.ts";
+  const content = await pillContent([{ url, label: "src/tests/a.test.ts", title: "" }]);
+
+  expect(content[url]?.label).toBe("a.test.ts");
+});

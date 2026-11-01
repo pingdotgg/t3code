@@ -62,6 +62,13 @@ export function withChipIcon(
     : customization;
 }
 
+// Autolinks and inline-code paths link their own text, but the parser keeps backslash escapes
+// (preserveWindowsPaths) and drops emphasis markers, e.g. `src/__tests__/a.ts` reads src/tests/a.ts.
+const LINK_TEXT_MARKUP = /[\\*_~$|^=]/g;
+function isLinkTextOfUrl(label: string, url: string) {
+  return label.replace(LINK_TEXT_MARKUP, "") === url.replace(LINK_TEXT_MARKUP, "");
+}
+
 function presentation(
   url: string,
   props: Pick<SelectableMarkdownTextProps, "linkCustomization" | "skills" | "textStyle">,
@@ -82,12 +89,8 @@ function presentation(
   if (link.kind === "file")
     return {
       // Without a label the native pill shows the authored text, e.g. [the setup steps](docs/guide.md).
-      // An autolink's text is its URL. preserveWindowsPaths keeps backslash escapes in link text.
       label: authoredLabels.every(
-        (label) =>
-          label === url ||
-          isMarkdownFileLinkLabel(label, link.href) ||
-          isMarkdownFileLinkLabel(label.replace(/\\(.)/g, "$1"), link.href),
+        (label) => isMarkdownFileLinkLabel(label, link.href) || isLinkTextOfUrl(label, url),
       )
         ? link.label
         : undefined,
