@@ -3,7 +3,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   getAddProjectInitialQuery,
   getCloneDestinationPath,
-  getCloneDirectoryName,
+  getCloneDirectoryPath,
 } from "@t3tools/client-runtime/operations/projects";
 import {
   type EnvironmentId,
@@ -112,7 +112,10 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   const targetEnvironment = environments.find((env) => env.environmentId === target?.environmentId);
   const defaultPath = getCloneDestinationPath(
     getAddProjectInitialQuery(targetEnvironment?.serverConfig?.settings.addProjectBaseDirectory),
-    getCloneDirectoryName(sourceUrl),
+    getCloneDirectoryPath(
+      sourceUrl,
+      targetEnvironment?.serverConfig?.settings.ghqCloneLayout === true,
+    ),
   );
   const [pathOverride, setPathOverride] = useState<string | null>(null);
   const destinationPath = pathOverride ?? defaultPath;

@@ -75,6 +75,8 @@ const SETTINGS_SEARCH_TERMS = {
     "agent credits",
     "default branch",
     "automatically pull",
+    "clone into host folders",
+    "ghq",
   ],
   SettingsWorktrees: [
     "worktree",

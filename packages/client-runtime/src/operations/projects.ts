@@ -9,6 +9,7 @@ import type {
   SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import { cloneUrlRepositoryPath } from "@t3tools/shared/cloneUrl";
 import { newProjectFolderName } from "@t3tools/shared/path";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
@@ -207,6 +208,26 @@ export function getCloneDirectoryName(repositoryOrRemoteUrl: string | null | und
   return lastSegment.endsWith(".git") ? lastSegment.slice(0, -".git".length) : lastSegment;
 }
 
+/** The folder a clone gets below its base: `<repo>`, or `<host>/<owner>/<repo>` like ghq. */
+export function getCloneDirectoryPath(
+  remoteUrl: string,
+  ghqCloneLayout: boolean,
+  repository = remoteUrl,
+): string {
+  return (
+    (ghqCloneLayout ? cloneUrlRepositoryPath(remoteUrl) : null) ?? getCloneDirectoryName(repository)
+  );
+}
+
+/** The clone's own folder, which folder browsing keeps at the end of the destination. */
+export function getCloneDirectoryLeafName(
+  remoteUrl: string,
+  ghqCloneLayout: boolean,
+  repository = remoteUrl,
+): string {
+  return getCloneDirectoryPath(remoteUrl, ghqCloneLayout, repository).split("/").at(-1) ?? "";
+}
+
 export function getCloneDestinationPath(
   directoryPath: string,
   directoryName: string | null | undefined,
@@ -215,7 +236,8 @@ export function getCloneDestinationPath(
   if (name.length === 0) {
     return directoryPath;
   }
-  return `${ensureBrowseDirectoryPath(directoryPath)}${name}`;
+  const base = ensureBrowseDirectoryPath(directoryPath);
+  return `${base}${base.endsWith("\\") ? name.replaceAll("/", "\\") : name}`;
 }
 
 export function getNewProjectPathPreview(newProjectsRoot: string, name: string): string {
