@@ -1,6 +1,6 @@
 {
   "name": "@t3tools/web",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,7 +12,7 @@
     "test": "vp test run --passWithNoTests --project unit --project browser"
   },
   "dependencies": {
-    "@base-ui/react": "^1.4.1",
+    "@base-ui/react": "^1.9.0",
     "@betteroffice/docx": "0.4.3",
     "@betteroffice/fonts": "0.4.0",
     "@betteroffice/pptx": "0.2.0",

@@ -29,12 +29,12 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 import type { ThreadNowItem } from "./ThreadNow";
 
-/** Subagents waiting on the user, unless the parent is itself waiting on them. */
+/** Subagents and side chats waiting on the user, unless the parent is itself waiting on them. */
 export function childInputNowItem(input: {
   readonly childThreadInputs: ReadonlyArray<EnvironmentThreadShell>;
   readonly parentAwaitingUser: boolean;
   readonly onOpenThread: (threadId: ThreadId) => void;
-}): ThreadNowItem | null {
+}): (ThreadNowItem & { readonly waitingLabel: string }) | null {
   const { childThreadInputs, onOpenThread } = input;
   const first = childThreadInputs[0];
   if (!first || input.parentAwaitingUser) return null;
@@ -47,6 +47,9 @@ export function childInputNowItem(input: {
       <MessageCircleIcon className="text-info-foreground" />
     ),
     title: childThreadInputsTitle(childThreadInputs),
+    waitingLabel: childThreadInputs.every((child) => child.lineage.sideChat === true)
+      ? "Side chat waiting"
+      : "Subagent waiting",
     description: childThreadInputs.map((child, index) => (
       <Fragment key={child.id}>
         {index > 0 ? " " : null}
@@ -181,7 +184,13 @@ export function backgroundWorkNowItem(input: {
     .filter((row) => row.activity)
     .toSorted((left, right) => right.updatedAtMs - left.updatedAtMs)[0];
   const label = (row: (typeof rows)[number]) =>
-    row.isRawCommand ? <span className="font-mono">{row.task.label}</span> : row.task.label;
+    row.isRawCommand ? (
+      <span className="font-mono in-data-[slot=popover-popup]:whitespace-pre-wrap">
+        {row.task.label}
+      </span>
+    ) : (
+      row.task.label
+    );
   const onlyThreadId = only?.childThreadId;
   const startedAtMs = only?.startedAtMs ?? null;
   return {

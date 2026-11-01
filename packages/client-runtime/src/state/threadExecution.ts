@@ -33,6 +33,7 @@ import {
   type ThreadStructure,
   type ThreadStructureRuntime,
 } from "./models.ts";
+import { commandDisplayText } from "../work-log/commandLabel.ts";
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
@@ -374,9 +375,13 @@ export function presentPendingBackgroundWork(
     .map((task): PendingBackgroundWorkItem => {
       const description = task.description?.trim();
       const label =
-        task.kind === "subagent" && description !== undefined
-          ? formatSubagentDisplayTitle(description).trim()
-          : description;
+        description === undefined
+          ? undefined
+          : task.kind === "subagent"
+            ? formatSubagentDisplayTitle(description).trim()
+            : task.kind === "command" || task.kind === "monitor"
+              ? commandDisplayText(description)
+              : description;
       const named = label !== undefined && label.length > 0;
       return {
         taskId: task.taskId,
@@ -436,7 +441,8 @@ const PROVIDER_GOAL_TITLES: Record<OrchestrationV2ProviderGoal["status"], string
 
 function formatGoalTokens(tokens: number): string {
   if (tokens < 1_000) return `${tokens}`;
-  if (tokens < 1_000_000) return `${Math.round(tokens / 1_000)}k`;
+  const thousands = Math.round(tokens / 1_000);
+  if (thousands < 1_000) return `${thousands}k`;
   return `${(tokens / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;
 }
 
