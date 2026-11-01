@@ -108,13 +108,13 @@ describe("claudeUsageResponseToLimits", () => {
   });
 
   it("gives an unstarted session the weekly reset while the weekly limit is spent", () => {
-    const windows = (fiveHourUtilization: number) =>
+    const windows = (fiveHourUtilization: number, fiveHourResetsAt: string | null = null) =>
       claudeUsageResponseToLimits({
         checkedAt,
         response: {
           rate_limits_available: true,
           rate_limits: {
-            five_hour: { utilization: fiveHourUtilization, resets_at: null },
+            five_hour: { utilization: fiveHourUtilization, resets_at: fiveHourResetsAt },
             seven_day: { utilization: 100, resets_at: "2026-07-24T08:59:00Z" },
           },
         },
@@ -129,6 +129,10 @@ describe("claudeUsageResponseToLimits", () => {
       resetsAt: "2026-07-24T08:59:00.000Z",
     });
     expect(windows(12)[0]).not.toHaveProperty("resetsAt");
+    expect(windows(0, "2026-07-18T14:39:00Z")[0]).toHaveProperty(
+      "resetsAt",
+      "2026-07-18T14:39:00.000Z",
+    );
   });
 
   it("leaves an unstarted session without a reset while weekly usage remains", () => {
