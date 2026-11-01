@@ -89,6 +89,8 @@ describe("cachedTestTasks", () => {
       await write("v18", "other");
       expect(readRunSummary(directory, "own")).toBeUndefined();
       await write("v19", "own");
+      await NodeFSP.mkdir(NodePath.join(directory, "corrupt"));
+      await NodeFSP.writeFile(NodePath.join(directory, "corrupt", "last-summary.json"), "{");
       expect(readRunSummary(directory, "own")?.tasks).toHaveLength(3);
     } finally {
       await NodeFSP.rm(directory, { recursive: true, force: true });

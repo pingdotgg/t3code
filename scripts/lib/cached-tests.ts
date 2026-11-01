@@ -30,11 +30,16 @@ const runCommand = (run: string) => `node -e "" ${run}`;
 
 export function readRunSummary(cacheRoot: string, run: string): TaskRunSummary | undefined {
   try {
-    return NodeFS.readdirSync(cacheRoot)
-      .map((entry) => NodePath.join(cacheRoot, entry, "last-summary.json"))
-      .filter((file) => NodeFS.existsSync(file))
-      .map((file): TaskRunSummary => JSON.parse(NodeFS.readFileSync(file, "utf8")))
-      .find((summary) => summary.tasks.some((task) => task.command === runCommand(run)));
+    for (const entry of NodeFS.readdirSync(cacheRoot)) {
+      try {
+        const summary: TaskRunSummary = JSON.parse(
+          NodeFS.readFileSync(NodePath.join(cacheRoot, entry, "last-summary.json"), "utf8"),
+        );
+        if (summary.tasks.some((task) => task.command === runCommand(run))) return summary;
+      } catch {
+        continue;
+      }
+    }
   } catch {
     return undefined;
   }
