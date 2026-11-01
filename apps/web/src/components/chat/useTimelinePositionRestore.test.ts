@@ -1,5 +1,48 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { measuredEndOffset, settleListScroll } from "./useTimelinePositionRestore";
+import {
+  measuredEndOffset,
+  settleListScroll,
+  startTimelinePositionRestore,
+} from "./useTimelinePositionRestore";
+import type { LegendListRef } from "@legendapp/list/react";
+import type { TimelineViewport } from "./timelineViewport";
+
+it("corrects the measured end on the list's first opening", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+    setTimeout(() => callback(0), 16),
+  );
+  const element = { scrollTop: 2_000, scrollHeight: 5_000, clientHeight: 800 };
+  const list = {
+    getState: () => ({ data: [] }),
+    getScrollableNode: () => element,
+    scrollToOffset: async ({ offset }: { offset: number }) => {
+      element.scrollTop = offset;
+    },
+  } as unknown as LegendListRef;
+  const viewport = {
+    holdProgrammaticScroll: () => () => {},
+    subscribe: () => () => {},
+  } as unknown as TimelineViewport;
+  const stop = startTimelinePositionRestore({
+    list,
+    viewport,
+    listIdentityKey: "first",
+    listOpenedOn: "first",
+    rememberedPosition: undefined,
+    citationPending: false,
+    releaseForFind: false,
+    onPositioned: () => {},
+  });
+  try {
+    await vi.advanceTimersByTimeAsync(100);
+    expect(element.scrollTop).toBe(4_200);
+  } finally {
+    stop();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  }
+});
 
 describe("settleListScroll", () => {
   it("hands off when a streaming reply keeps moving the end", async () => {

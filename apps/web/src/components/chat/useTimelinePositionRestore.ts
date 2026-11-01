@@ -116,7 +116,7 @@ export function startTimelinePositionRestore({
         listOpenedOn === listIdentityKey
         ? undefined
         : list.scrollToEnd({ animated: false });
-  const settlesAtEnd = position?.atEnd !== false && scrolling !== undefined;
+  const settlesAtEnd = position?.atEnd !== false;
   void Promise.resolve(scrolling).then(async () => {
     if (cancelled) return;
     if (settlesAtEnd) {
