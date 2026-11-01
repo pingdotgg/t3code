@@ -1573,6 +1573,155 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       }),
   );
 
+  it.effect("steers a message sent before the active provider turn starts once it does", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const threadId = ThreadId.make("runtime-startup-steer");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-startup-steer-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-startup-steer-project"),
+        title: "Startup steer",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const dispatchFollowUp = (id: string, text: string, model = modelSelection.model) =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-startup-steer-${id}`),
+          threadId,
+          messageId: MessageId.make(`runtime-startup-steer-${id}`),
+          text,
+          attachments: [],
+          modelSelection: { ...modelSelection, model },
+          dispatchMode: { type: "start_immediately" },
+          deliveryIntent: "steer",
+        });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-startup-steer-first"),
+        threadId,
+        messageId: MessageId.make("runtime-startup-steer-first"),
+        text: "Start work.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+      });
+      yield* dispatchFollowUp("other-model", "Use another model for this.", "other-model");
+      yield* dispatchFollowUp("rejected", "This promotion was already rejected.");
+      const rejectedRun = (yield* orchestrator.getThreadProjection(threadId)).runs[2]!;
+      yield* orchestrator
+        .dispatch({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make(`command:system:startup-steer:${rejectedRun.id}`),
+          threadId,
+          queuedRunId: rejectedRun.id,
+          targetRunId: (yield* orchestrator.getThreadProjection(threadId)).runs[0]!.id,
+        })
+        .pipe(Effect.flip);
+      yield* dispatchFollowUp("goal", "Check the goal.");
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make("runtime-startup-steer-goal-edit"),
+        threadId,
+        runId: (yield* orchestrator.getThreadProjection(threadId)).runs[3]!.id,
+        text: "/goal finish the work",
+      });
+      yield* dispatchFollowUp("steer", "Also do this.");
+      const steerMessageId = MessageId.make("runtime-startup-steer-steer");
+
+      const starting = yield* orchestrator.getThreadProjection(threadId);
+      const run = starting.runs[0]!;
+      const providerThread = starting.providerThreads[0]!;
+      const now = yield* DateTime.now;
+      const providerSession = {
+        id: providerThread.providerSessionId!,
+        driver,
+        providerInstanceId: modelSelection.instanceId,
+        status: "running" as const,
+        cwd: process.cwd(),
+        model: modelSelection.model,
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      };
+      const sessionSpy = vi.spyOn(sessions, "get").mockReturnValue(
+        Effect.succeedSome({
+          providerSession,
+        } as ProviderAdapter.ProviderAdapterV2SessionRuntime),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => sessionSpy.mockRestore()));
+      const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+      yield* eventSink.write({
+        commandId: CommandId.make("runtime-startup-steer-running"),
+        events: [
+          {
+            id: EventId.make("runtime-startup-steer-run-event"),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "running", startedAt: now },
+          },
+          {
+            id: EventId.make("runtime-startup-steer-session-event"),
+            type: "provider-session.attached",
+            threadId,
+            occurredAt: now,
+            payload: providerSession,
+          },
+          {
+            id: EventId.make("runtime-startup-steer-turn-event"),
+            type: "provider-turn.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: {
+              id: ProviderTurnId.make("runtime-startup-steer-turn"),
+              providerThreadId: providerThread.id,
+              nodeId: run.rootNodeId!,
+              runAttemptId: run.activeAttemptId,
+              nativeTurnRef: null,
+              ordinal: 1,
+              status: "running",
+              startedAt: now,
+              completedAt: null,
+            },
+          },
+        ],
+      });
+
+      yield* eventSink.stream({ threadId, afterSequence }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "turn-item.updated" &&
+            stored.event.payload.type === "user_message" &&
+            stored.event.payload.messageId === steerMessageId,
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).runs.map(
+          (candidate) => candidate.status,
+        ),
+        ["running", "queued", "queued", "queued", "cancelled"],
+      );
+    }),
+  );
+
   it.effect("answers an async question after its provider exits and commits the answer once", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
