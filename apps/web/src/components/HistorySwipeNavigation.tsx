@@ -19,6 +19,7 @@ type SwipeGesture =
       deltas: number[];
       y: number;
       bounds: SwipeBounds;
+      origin: EventTarget | undefined;
     }
   // Not a swipe, or one already decided: the rest of its events are ignored.
   | { kind: "ignored" };
@@ -51,6 +52,7 @@ function isInHorizontalScroller(path: readonly EventTarget[]): boolean {
 
 function lockSwipeAxis(
   pending: Extract<SwipeGesture, { kind: "pending" }>,
+  origin: EventTarget | undefined,
 ): Exclude<SwipeGesture, { kind: "pending" }> {
   const { path, sumX, sumY } = pending;
   if (Math.abs(sumX) <= Math.abs(sumY)) return { kind: "ignored" };
@@ -66,6 +68,7 @@ function lockSwipeAxis(
     deltas: [],
     y: pending.y,
     bounds: readMainContentBounds(),
+    origin,
   };
 }
 
@@ -103,6 +106,11 @@ export function HistorySwipeNavigation() {
       gesture = null;
       contentClaimed = false;
       pointerAt = null;
+      hideIndicator();
+    };
+    const claimContent = () => {
+      contentClaimed = true;
+      gesture = null;
       hideIndicator();
     };
     const isAtPointer = (event: MouseEvent) =>
@@ -147,6 +155,13 @@ export function HistorySwipeNavigation() {
       if (gesture.kind === "tracking") {
         const delta = gesture.direction === "back" ? -event.deltaX : event.deltaX;
         if (event.deltaX === 0 && event.deltaY === 0) return release();
+        // Content can appear under a still pointer while a stale trailing wheel is tracking.
+        // Only a new wheel target is classified, so overflow gained mid-swipe stays history.
+        const path = event.composedPath();
+        if (path[0] !== gesture.origin) {
+          if (isInHorizontalScroller(path)) return claimContent();
+          gesture.origin = path[0];
+        }
         const { direction, distance, y } = gesture;
         // Past its start the swipe picks a direction again: a stale trailing wheel may
         // have opened it, and the next swipe's begin can arrive after its first wheels.
@@ -169,15 +184,11 @@ export function HistorySwipeNavigation() {
         if (event.deltaX === 0 && event.deltaY === 0) return;
         const path = event.composedPath();
         // Claim content scrolling while its layout still exists, before a possible remount.
-        if (isInHorizontalScroller(path)) {
-          contentClaimed = true;
-          gesture = null;
-          return;
-        }
+        if (isInHorizontalScroller(path)) return claimContent();
         gesture.sumX += event.deltaX;
         gesture.sumY += event.deltaY;
         if (Math.abs(gesture.sumX) + Math.abs(gesture.sumY) < SWIPE_AXIS_LOCK_DISTANCE) return;
-        gesture = lockSwipeAxis({ ...gesture, path: [...gesture.path, ...path] });
+        gesture = lockSwipeAxis({ ...gesture, path: [...gesture.path, ...path] }, path[0]);
         if (gesture.kind === "ignored") return;
       }
       setSwipe({

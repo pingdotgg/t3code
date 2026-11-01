@@ -13,6 +13,7 @@ type Step = readonly [
     | "zoom"
     | "move"
     | "move-to-scroller"
+    | "show-scroller"
     | "close-by-key"
     | "pointer-return",
   after?: number | "remount" | "remove" | "close-dialog",
@@ -113,6 +114,30 @@ describe("HistorySwipeNavigation", () => {
         [130],
         ["end"],
       ],
+      "forward",
+    ],
+    [
+      "content appearing at the same position after a trailing history wheel",
+      "none",
+      0,
+      [
+        ["begin"],
+        [130],
+        ["end"],
+        [18],
+        ["show-scroller"],
+        ["begin"],
+        [7, "remove"],
+        [130],
+        ["end"],
+      ],
+      "forward",
+    ],
+    [
+      "a history swipe over content replaced without overflow",
+      "none",
+      0,
+      [[60, "remove"], [70]],
       "forward",
     ],
     [
@@ -232,9 +257,9 @@ describe("HistorySwipeNavigation", () => {
       } else if (event === "move") {
         ({ viewport, content } = mountPanel(screen.container, "none", 0));
         pointerX += 100;
-      } else if (event === "move-to-scroller") {
+      } else if (event === "move-to-scroller" || event === "show-scroller") {
         ({ viewport, content } = mountPanel(screen.container, "shadow", 400));
-        pointerX += 100;
+        if (event === "move-to-scroller") pointerX += 100;
       } else if (event === "close-by-key") {
         content.dispatchEvent(
           new KeyboardEvent("keydown", { key: "d", metaKey: true, bubbles: true, composed: true }),
