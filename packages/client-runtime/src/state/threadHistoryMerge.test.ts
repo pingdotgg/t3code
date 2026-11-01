@@ -131,6 +131,91 @@ describe("threadHistoryMerge", () => {
     ]);
   });
 
+  it("anchors deferred work to the local row when an inherited row shares its id", () => {
+    const sharedId = "item-1";
+    const inherited = {
+      ...row(1),
+      visibility: "inherited" as const,
+      sourceThreadId: "fork-source" as never,
+      item: {
+        ...row(1).item,
+        deferredWork: { cursor: "inherited-cursor", itemCount: 1, lastOrdinal: 1 },
+      },
+    };
+    const local = {
+      ...row(1),
+      item: {
+        ...row(1).item,
+        title: "local anchor",
+        deferredWork: { cursor: "local-cursor", itemCount: 2, lastOrdinal: 4 },
+      },
+    };
+    const projection = {
+      ...v2Projection,
+      turnItems: [local.item],
+      visibleTurnItems: [inherited, local],
+    };
+    const loaded = mergeOlderHistoryIntoProjection(projection, [row(2), row(3)], {
+      anchorId: sharedId as never,
+      nextCursor: null,
+    });
+    expect(
+      loaded.visibleTurnItems.map((entry) => [
+        entry.visibility,
+        entry.sourceThreadId,
+        entry.sourceItemId,
+      ]),
+    ).toEqual([
+      ["inherited", "fork-source", "item-1"],
+      ["local", v2ThreadId, "item-1"],
+      ["local", v2ThreadId, "item-2"],
+      ["local", v2ThreadId, "item-3"],
+    ]);
+    expect(loaded.visibleTurnItems[1]?.item.title).toBe("local anchor");
+    expect(loaded.visibleTurnItems[1]?.item.deferredWork).toBeUndefined();
+    expect(loaded.visibleTurnItems[0]).toMatchObject({
+      visibility: "inherited",
+      sourceThreadId: "fork-source",
+      sourceItemId: "item-1",
+      item: inherited.item,
+    });
+  });
+
+  it("orders equal-ordinal deferred rows by item id", () => {
+    const anchor = {
+      ...row(1),
+      item: {
+        ...row(1).item,
+        ordinal: 5,
+        deferredWork: { cursor: "work", itemCount: 2, lastOrdinal: 5 },
+      },
+    };
+    const twin = {
+      ...row(2),
+      item: { ...row(2).item, id: "item-a" as never, ordinal: 5 },
+      sourceItemId: "item-a" as never,
+    };
+    const laterTwin = {
+      ...row(3),
+      item: { ...row(3).item, id: "item-z" as never, ordinal: 5 },
+      sourceItemId: "item-z" as never,
+    };
+    const projection = {
+      ...v2Projection,
+      turnItems: [anchor.item],
+      visibleTurnItems: [anchor],
+    };
+    const loaded = mergeOlderHistoryIntoProjection(projection, [laterTwin, twin], {
+      anchorId: anchor.sourceItemId,
+      nextCursor: null,
+    });
+    expect(loaded.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual([
+      "item-1",
+      "item-a",
+      "item-z",
+    ]);
+  });
+
   it("fills inherited activity without confusing identical item IDs from different source threads", () => {
     const inherited = (index: number) => ({
       ...row(index),

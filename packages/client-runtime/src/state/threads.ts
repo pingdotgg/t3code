@@ -665,10 +665,19 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     throughEntryId?: string,
     workAnchorId?: string,
   ): Effect.fn.Return<ThreadHistoryController.ThreadHistoryLoadEarlierResult> {
-    const workCursor = (latest: EnvironmentThreadState) =>
-      Option.getOrNull(latest.data)?.visibleTurnItems.find(
-        (row) => row.sourceItemId === workAnchorId,
-      )?.item.deferredWork?.cursor ?? null;
+    const workCursor = (latest: EnvironmentThreadState) => {
+      const projection = Option.getOrNull(latest.data);
+      if (projection === null) return null;
+      const local = projection.visibleTurnItems.find(
+        (row) =>
+          row.sourceItemId === workAnchorId &&
+          (row.visibility === "local" || row.sourceThreadId === projection.thread.id),
+      );
+      const row =
+        local ??
+        projection.visibleTurnItems.find((candidate) => candidate.sourceItemId === workAnchorId);
+      return row?.item.deferredWork?.cursor ?? null;
+    };
     const current = yield* SubscriptionRef.get(state);
     const initialCursor =
       workAnchorId === undefined ? current.history.historyCursor : workCursor(current);
