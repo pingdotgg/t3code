@@ -28,7 +28,7 @@ const runtimeMock = {
     authHeaders: [] as Array<string | null>,
     closeCalls: [] as string[],
     sessionCreateCalls: 0,
-    abortCalls: [] as string[],
+    sessionCalls: [] as string[],
     onSessionCreate: undefined as ((signal?: AbortSignal) => Promise<never>) | undefined,
     onPrompt: undefined as
       | ((signal?: AbortSignal) => Promise<{ data: { parts: ReadonlyArray<unknown> } }>)
@@ -49,7 +49,7 @@ const runtimeMock = {
     this.state.authHeaders.length = 0;
     this.state.closeCalls.length = 0;
     this.state.sessionCreateCalls = 0;
-    this.state.abortCalls.length = 0;
+    this.state.sessionCalls.length = 0;
     this.state.onSessionCreate = undefined;
     this.state.onPrompt = undefined;
     this.state.onAbort = undefined;
@@ -121,8 +121,12 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
           input: { readonly sessionID: string },
           options?: { readonly signal?: AbortSignal },
         ) => {
-          runtimeMock.state.abortCalls.push(input.sessionID);
+          runtimeMock.state.sessionCalls.push(`abort ${input.sessionID}`);
           if (runtimeMock.state.onAbort) return runtimeMock.state.onAbort(options?.signal);
+          return { data: true };
+        },
+        delete: async (input: { readonly sessionID: string }) => {
+          runtimeMock.state.sessionCalls.push(`delete ${input.sessionID}`);
           return { data: true };
         },
         prompt: async (
@@ -244,9 +248,24 @@ const advanceIdleClock = Effect.gen(function* () {
 });
 
 it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
-  it.effect("cancels an in-flight session creation before prompting", () =>
+  it.effect("cancels or times out an in-flight session creation before prompting", () =>
     withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
+        const timedOut = yield* Deferred.make<AbortSignal | undefined>();
+        runtimeMock.state.onSessionCreate = (signal) => {
+          Deferred.doneUnsafe(timedOut, Effect.succeed(signal));
+          return new Promise<never>(() => {});
+        };
+        const timedOutFiber = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+          .pipe(Effect.forkChild);
+        const timedOutSignal = yield* Deferred.await(timedOut);
+        yield* TestClock.adjust(Duration.minutes(3));
+        const timeoutError = yield* Fiber.join(timedOutFiber).pipe(Effect.flip);
+        expect(timeoutError).toBeInstanceOf(TextGenerationError);
+        expect(timeoutError.detail).toBe("OpenCode did not finish generating in time.");
+        expect(timedOutSignal?.aborted).toBe(true);
+
         const started = yield* Deferred.make<AbortSignal | undefined>();
         runtimeMock.state.onSessionCreate = (signal) => {
           Deferred.doneUnsafe(started, Effect.succeed(signal));
@@ -262,7 +281,7 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
         expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
         expect(signal?.aborted).toBe(true);
         expect(runtimeMock.state.promptUrls).toEqual([]);
-        expect(runtimeMock.state.abortCalls).toEqual([]);
+        expect(runtimeMock.state.sessionCalls).toEqual([]);
       }),
     ),
   );
@@ -298,7 +317,10 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
         expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
         expect(signal?.aborted).toBe(true);
         expect(otherSignal?.aborted).toBe(false);
-        expect(runtimeMock.state.abortCalls).toEqual(["cancelled-session"]);
+        expect(runtimeMock.state.sessionCalls).toEqual([
+          "abort cancelled-session",
+          "delete cancelled-session",
+        ]);
         expect(runtimeMock.state.closeCalls).toEqual([]);
 
         otherReply.resolve({
@@ -312,7 +334,11 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
           "http://127.0.0.1:4301",
           "http://127.0.0.1:4301",
         ]);
-        expect(runtimeMock.state.abortCalls).toEqual(["cancelled-session"]);
+        expect(runtimeMock.state.sessionCalls).toEqual([
+          "abort cancelled-session",
+          "delete cancelled-session",
+          "delete other-session",
+        ]);
         expect(runtimeMock.state.closeCalls).toEqual([]);
       }),
     ),
@@ -357,6 +383,34 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("gives up and aborts the session when a prompt never settles", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<AbortSignal | undefined>();
+        let sessionAborts = 0;
+        runtimeMock.state.onPrompt = (signal) => {
+          Deferred.doneUnsafe(started, Effect.succeed(signal));
+          return new Promise<never>(() => {});
+        };
+        runtimeMock.state.onAbort = () => {
+          sessionAborts += 1;
+          return Promise.reject(new Error("abort observed"));
+        };
+        const fiber = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+          .pipe(Effect.forkChild);
+        const signal = yield* Deferred.await(started);
+        yield* TestClock.adjust(Duration.minutes(3));
+
+        const error = yield* Fiber.join(fiber).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(TextGenerationError);
+        expect(error.detail).toBe("OpenCode did not finish generating in time.");
+        expect(signal?.aborted).toBe(true);
+        expect(sessionAborts).toBe(1);
+      }),
+    ),
+  );
+
   it.effect("uses an environment-only password for a locally spawned server", () =>
     withOpenCodeTextGeneration(
       DEFAULT_OPENCODE_SETTINGS,
@@ -397,6 +451,22 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
           textPartCount: 1,
         });
         expect(error.cause).not.toHaveProperty("cause");
+        expect(runtimeMock.state.sessionCalls).toEqual(["delete http://127.0.0.1:4301/session"]);
+      }),
+    ),
+  );
+
+  it.effect("deletes the session when the prompt request rejects", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.promptRequestError = new Error("prompt transport failed");
+
+        const error = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+          .pipe(Effect.flip);
+
+        expect(error.detail).toBe("OpenCode session.prompt request failed.");
+        expect(runtimeMock.state.sessionCalls).toEqual(["delete http://127.0.0.1:4301/session"]);
       }),
     ),
   );
@@ -484,6 +554,10 @@ it.layer(layerOpenCodeTextGenerationExistingServerTest)(
           });
 
           expect(runtimeMock.state.startCalls).toEqual([]);
+          expect(runtimeMock.state.sessionCalls).toEqual([
+            "delete http://127.0.0.1:9999/session",
+            "delete http://127.0.0.1:9999/session",
+          ]);
           expect(runtimeMock.state.promptUrls).toEqual([
             "http://127.0.0.1:9999",
             "http://127.0.0.1:9999",
