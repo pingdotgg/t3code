@@ -203,7 +203,7 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
         if ("error" in body || "message" in body || "code" in body)
           return yield* invalid("Account usage error response");
         // Cursor's JSON omits empty fields, so an idle slice answers `{}`.
-        const data = body.data ?? [];
+        const data = Object.keys(body).length === 0 ? [] : body.data;
         const pagination = body.pagination ?? {};
         if (!Array.isArray(data) || typeof pagination !== "object" || Array.isArray(pagination))
           return yield* invalid("Invalid account usage page");

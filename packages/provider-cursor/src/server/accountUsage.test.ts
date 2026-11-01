@@ -212,6 +212,8 @@ describe("Cursor account history", () => {
         { data: [], error: "upstream error" },
         { message: "Unauthorized" },
         { data: {} },
+        { data: null },
+        { detail: "unknown error envelope" },
         { data: [], pagination: "next" },
         { data: [], pagination: { nextCursor: 2 } },
         { data: [], pagination: { nextCursor: "" } },
