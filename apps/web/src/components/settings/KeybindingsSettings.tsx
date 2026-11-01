@@ -1191,6 +1191,7 @@ function NewKeybindingCommandSelect({
   return (
     <Combobox
       items={commandOptions}
+      defaultOpen
       itemToStringLabel={commandLabel}
       filter={(command, query) =>
         `${command} ${commandLabel(command)}`.toLowerCase().includes(query.trim().toLowerCase())
@@ -1207,7 +1208,7 @@ function NewKeybindingCommandSelect({
         {draft.commandDraft ? commandLabel(draft.commandDraft) : "Command"}
       </ComboboxTrigger>
       <ComboboxPopup className="w-96">
-        <ComboboxSearchInput placeholder="Search actions…" aria-label="Search actions" />
+        <ComboboxSearchInput autoFocus placeholder="Search actions…" aria-label="Search actions" />
         <ComboboxEmpty>No actions found.</ComboboxEmpty>
         <ComboboxList>
           {(command: KeybindingCommandOption) => {
