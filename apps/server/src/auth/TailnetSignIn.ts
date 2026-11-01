@@ -224,7 +224,7 @@ export const make = Effect.gen(function* () {
   const grantsSeen = yield* Ref.make<ReadonlyMap<string | null, number>>(new Map());
   const grantsSeenOn = (account: string | null) =>
     Ref.get(grantsSeen).pipe(Effect.map((counts) => counts.get(account) ?? 0));
-  // Bumped when a grant is seen but its account cannot be confirmed: a scan already running
+  // Bumped when the recheck sees a grant, before it knows the account: a scan already running
   // then may not end on "no grants", as that grant may be this account's.
   const grantsInDoubt = yield* Ref.make(0);
   /** Counts a grant seen on `account`; true when it is the first there. */
@@ -562,17 +562,14 @@ export const make = Effect.gen(function* () {
     const node = lookup.value;
     knownUsers.set(stableNodeId, node.loginName ?? node.userId);
     const decision = yield* decide(node, status);
-    // Each grant the recheck sees, usable or not, counts as a grant sign-in does, so a scan
-    // running meanwhile cannot clear the count, once the host is shown still on this account.
-    // A switch means the grant may be either account's, so no "no grants" stands meanwhile.
+    // A grant, usable or not, may be this account's, so no "no grants" stands from here, kept
+    // or from a scan running meanwhile. Once the host is shown still on this account, it
+    // counts as a grant sign-in does; after a switch it may be either account's.
     if (tailnetGrantScopes(node.capabilities) !== null) {
-      if (yield* stillOnAccount) {
-        yield* countGrant(status.selfNodeId);
-      } else {
-        yield* Ref.update(grantsInDoubt, (count) => count + 1);
-        yield* Ref.update(lastCleanScan, (last) => (last?.granted === false ? null : last));
-        yield* rescanPolicy;
-      }
+      yield* Ref.update(grantsInDoubt, (count) => count + 1);
+      yield* Ref.update(lastCleanScan, (last) => (last?.granted === false ? null : last));
+      yield* rescanPolicy;
+      if (yield* stillOnAccount) yield* countGrant(status.selfNodeId);
     }
     if (decision._tag === "Refused") return { end: decision.reason, node } as const;
     if (yield* blocks.isBlocked({ stableNodeId })) return { end: "blocked", node } as const;

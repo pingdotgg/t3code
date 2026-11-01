@@ -1238,6 +1238,27 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       },
     );
 
+    it.effect("an owner sign-in while the recheck confirms a grant's account is refused", () => {
+      const tailnet = withLaptop();
+      return Effect.gen(function* () {
+        const service = yield* TailnetSignIn.TailnetSignIn;
+        // Signed in by the owner rule, the laptop leaves a "no grants" scan kept for a minute.
+        yield* signInLaptop(makeDpopKey());
+        tailnet.devices = {
+          [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
+        };
+        // The recheck sees the grant and holds on the status read that confirms the account.
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        tailnet.holdFreshRead = { at: (tailnet.freshReads ?? 0) + 2, started, release };
+        const recheck = yield* service.recheckSessions.pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("no_grant");
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(recheck);
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
     it.effect(
       "a grant the recheck cannot tie to an account keeps a running scan from deciding",
       () => {
