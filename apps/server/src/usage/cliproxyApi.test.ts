@@ -392,7 +392,7 @@ describe("CLIProxyAPI built-in management API", () => {
         usageLimits: {
           windows: [
             {
-              id: "subscription",
+              id: kind,
               kind,
               label,
               usedPercent: 37,
@@ -463,10 +463,10 @@ describe("CLIProxyAPI built-in management API", () => {
           ]),
         ).toEqual(
           samePeriod
-            ? [["subscription", "weekly", 25]]
+            ? [["weekly", "weekly", 25]]
             : [
-                ["subscription", "weekly", 25],
-                ["subscription", "monthly", 60],
+                ["weekly", "weekly", 25],
+                ["monthly", "monthly", 60],
               ],
         );
       }
