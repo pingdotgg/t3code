@@ -3,6 +3,7 @@ import type { NavigationState } from "@react-navigation/native";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 
 import type { RecentThreadShortcut } from "../../persistence/imperative";
+import { firstRouteParam } from "../../lib/routeParams";
 
 const MAX_RECENT_THREAD_SHORTCUTS = 3;
 
@@ -15,14 +16,6 @@ const THREAD_SHORTCUT_HREF_PATTERN = /^\/threads\/[^/?#]+\/[^/?#]+$/;
 
 function threadShortcutHref(thread: RecentThreadShortcut): string {
   return `/threads/${encodeURIComponent(thread.environmentId)}/${encodeURIComponent(thread.threadId)}`;
-}
-
-function firstRouteParam(value: string | string[] | undefined): string | null {
-  if (Array.isArray(value)) {
-    return value[0] ?? null;
-  }
-
-  return value ?? null;
 }
 
 /** Never throw: malformed deep-link or restored ids can fail schema constructors during root-stack render. */
