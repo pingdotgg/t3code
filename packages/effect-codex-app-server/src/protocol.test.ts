@@ -1,7 +1,6 @@
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -505,15 +504,8 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       yield* Queue.offer(input, heldChunk);
       yield* Queue.offer(input, laterChunk);
 
-      const pulled = yield* Deferred.await(laterChunkPulled).pipe(
-        Effect.timeoutOption("1 second"),
-        Effect.forkScoped,
-      );
-      yield* TestClock.adjust("1 second");
-      assert.isTrue(
-        Option.isSome(yield* Fiber.join(pulled)),
-        "Expected stdin to keep being read while a notification handler is still running",
-      );
+      // On main the reader stays blocked behind the handler, so this never completes.
+      yield* Deferred.await(laterChunkPulled);
       assert.isUndefined(
         pending.pollUnsafe(),
         "Expected the response to wait for the earlier notification handler",
