@@ -712,6 +712,68 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 
+  it.effect.each([
+    { name: "label to label", from: { label: "Team A" }, to: { label: "Team B" }, switched: true },
+    {
+      name: "label to email",
+      from: { label: "Team A" },
+      to: { email: "b@example.com" },
+      switched: true,
+    },
+    {
+      name: "email to label",
+      from: { email: "a@example.com" },
+      to: { label: "Team B" },
+      switched: true,
+    },
+    { name: "same label", from: { label: "Team A" }, to: { label: "Team A" }, switched: false },
+    {
+      name: "same email with different casing",
+      from: { email: "A@example.com" },
+      to: { email: "a@example.com" },
+      switched: false,
+    },
+  ])("keeps usage with its account on $name refreshes", ({ from, to, switched }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const published = {
+          checkedAt: "2026-04-10T00:05:00.000Z",
+          windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 80 }],
+        } as const;
+        const probed = {
+          checkedAt: "2026-04-10T00:01:00.000Z",
+          windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 10 }],
+        } as const;
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () =>
+            Effect.succeed({
+              ...refreshedSnapshot,
+              auth: { status: "authenticated", type: "accountLogin", ...from },
+              usageLimits: published,
+            }),
+          checkProvider: Effect.succeed({
+            ...refreshedSnapshot,
+            auth: { status: "authenticated", type: "accountLogin", ...to },
+            usageLimits: probed,
+          }),
+          refreshOnInterval: false,
+        });
+        assert.deepStrictEqual(
+          (yield* provider.refresh).usageLimits,
+          switched ? probed : published,
+        );
+        assert.deepStrictEqual(
+          (yield* provider.refresh).usageLimits,
+          switched ? probed : published,
+        );
+      }),
+    ).pipe(Effect.provide(layerProviderHost({ runBackgroundWork: false }))),
+  );
+
   it.effect("keeps sparse usage unavailable after probe failure until a full probe recovers", () =>
     Effect.scoped(
       Effect.gen(function* () {
