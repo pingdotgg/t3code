@@ -16,6 +16,7 @@ import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } fr
 import { codexPlanLabel } from "../provider/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
+import * as ResetCreditCoordinator from "../provider/resetCreditCoordinator.ts";
 import {
   CLAIM_OUTCOMES as CLAUDE_CLAIM_OUTCOMES,
   ClaimResponse as ClaudeClaimResponse,
@@ -185,6 +186,7 @@ const creditRedeemRequestId = Effect.fn("CliproxyApi.creditRedeemRequestId")(fun
 export const makeCliproxyApi = Effect.gen(function* () {
   const client = yield* HttpClient.HttpClient;
   const crypto = yield* Crypto.Crypto;
+  const resetCreditCoordinator = yield* ResetCreditCoordinator.make;
 
   const management = Effect.fn("CliproxyApi.management")(function* (
     config: UsageLimitSourceConfig,
@@ -454,31 +456,31 @@ export const makeCliproxyApi = Effect.gen(function* () {
         detail: "The hub could not read the Claude account's organization.",
       });
     }
-    const body = yield* apiCall(
-      config,
-      account,
-      `${CLAUDE_BASE}/api/organizations/${encodeURIComponent(organization)}/reset_rate_limits`,
-      {
-        program: CLAUDE_RESET_PROGRAM,
-        grant_id: grantId,
-        request_id: yield* creditRedeemRequestId(account.id, grantId).pipe(
-          Effect.provideService(Crypto.Crypto, crypto),
-        ),
-      },
+    const coolingDown = new UsageLimitSourceError({
+      detail: "Claude resets are cooling down. Try again later.",
+    });
+    return yield* resetCreditCoordinator.redeem(
+      yield* encodeJson([config.url, organization, grantId]),
+      (requestId) =>
+        Effect.gen(function* () {
+          const body = yield* apiCall(
+            config,
+            account,
+            `${CLAUDE_BASE}/api/organizations/${encodeURIComponent(organization)}/reset_rate_limits`,
+            { program: CLAUDE_RESET_PROGRAM, grant_id: grantId, request_id: requestId },
+          );
+          const claim = yield* decodeClaudeClaim(body);
+          if (claim.result === "cooldown") return yield* coolingDown;
+          if (claim.result === "unavailable") {
+            return yield* new UsageLimitSourceError({
+              detail:
+                "Claude could not confirm the reset. If you are still limited in a moment, try again.",
+            });
+          }
+          return CLAUDE_CLAIM_OUTCOMES[claim.result];
+        }),
+      (error) => error === coolingDown,
     );
-    const claim = yield* decodeClaudeClaim(body);
-    if (claim.result === "cooldown") {
-      return yield* new UsageLimitSourceError({
-        detail: "Claude resets are cooling down. Try again later.",
-      });
-    }
-    if (claim.result === "unavailable") {
-      return yield* new UsageLimitSourceError({
-        detail:
-          "Claude could not confirm the reset. If you are still limited in a moment, try again.",
-      });
-    }
-    return CLAUDE_CLAIM_OUTCOMES[claim.result];
   });
 
   const consume = Effect.fn("CliproxyApi.consume")(function* (

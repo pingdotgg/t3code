@@ -373,16 +373,19 @@ describe("CLIProxyAPI built-in management API", () => {
   it.effect("claims a Claude grant through the hub and clears only that account's cooldown", () =>
     Effect.gen(function* () {
       let result = "reset";
+      let status = 200;
+      const outcomes = new Map<string, string>();
       const test = fixture({
         accounts: [{ ...accounts[0]!, provider: "claude" }],
-        upstream: (request) => ({
-          status: 200,
-          body: request.url?.endsWith("/api/oauth/profile")
-            ? { organization: { uuid: "org-1" } }
-            : request.url?.endsWith("/reset_rate_limits")
-              ? { result }
-              : claudeUsage,
-        }),
+        upstream: (request) => {
+          if (request.url?.endsWith("/api/oauth/profile")) {
+            return { status: 200, body: { organization: { uuid: "org-1" } } };
+          }
+          const key = request.data!;
+          const outcome = outcomes.get(key) ?? result;
+          if (status === 200) outcomes.set(key, outcome);
+          return { status, body: { result: outcome } };
+        },
       });
       const api = yield* test.api;
       expect(yield* api.consume(config, "first.json", "free_reset")).toEqual({ outcome: "reset" });
@@ -390,11 +393,27 @@ describe("CLIProxyAPI built-in management API", () => {
       expect(yield* api.consume(config, "first.json", "free_reset")).toEqual({
         outcome: "nothingToReset",
       });
+      status = 503;
+      expect(
+        (yield* api.consume(config, "first.json", "free_reset").pipe(Effect.result))._tag,
+      ).toBe("Failure");
+      status = 200;
+      result = "reset";
+      expect(yield* api.consume(config, "first.json", "free_reset")).toEqual({ outcome: "reset" });
+      result = "cooldown";
+      expect(
+        (yield* api.consume(config, "first.json", "free_reset").pipe(Effect.result))._tag,
+      ).toBe("Failure");
+      result = "reset";
+      expect(yield* api.consume(config, "first.json", "free_reset")).toEqual({ outcome: "reset" });
       const claims = test.requests.filter((request) =>
         request.body?.url?.endsWith("/api/organizations/org-1/reset_rate_limits"),
       );
-      expect(claims).toHaveLength(2);
-      expect(claims[0]?.body?.data).toBe(claims[1]?.body?.data);
+      expect(claims).toHaveLength(6);
+      expect(claims[0]?.body?.data).not.toBe(claims[1]?.body?.data);
+      expect(claims[1]?.body?.data).not.toBe(claims[2]?.body?.data);
+      expect(claims[2]?.body?.data).toBe(claims[3]?.body?.data);
+      expect(claims[4]?.body?.data).not.toBe(claims[5]?.body?.data);
       expect(JSON.parse(claims[0]?.body?.data ?? "{}")).toMatchObject({
         program: "cedar_ember",
         grant_id: "free_reset",
@@ -404,7 +423,7 @@ describe("CLIProxyAPI built-in management API", () => {
         test.requests
           .filter((request) => request.path.endsWith("/reset-quota"))
           .map((request) => request.body?.auth_index),
-      ).toEqual(["a"]);
+      ).toEqual(["a", "a", "a"]);
     }),
   );
 
