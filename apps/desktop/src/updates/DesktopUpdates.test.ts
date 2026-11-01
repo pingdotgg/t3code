@@ -5,6 +5,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
@@ -18,8 +19,9 @@ import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
-import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
+import { flushCallbacks, makeHarness, makeSshHarness } from "./updatesTestHarness.ts";
 
 describe("DesktopUpdates", () => {
   it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
@@ -415,7 +417,13 @@ describe("DesktopUpdates", () => {
 
   it.effect("records the version an install hands to the installer", () => {
     let recordsAtStop: ReadonlyArray<string> = [];
+    const ssh = makeSshHarness();
+    let forwardsAtHandoff = -1;
     const harness = makeHarness({
+      sshLayer: ssh.layer,
+      quitAndInstall: Effect.sync(() => {
+        forwardsAtHandoff = ssh.forwardCount();
+      }),
       stopBackend: Effect.sync(() => {
         recordsAtStop = [...harness.installRecords.values()];
       }),
@@ -424,11 +432,16 @@ describe("DesktopUpdates", () => {
     return Effect.scoped(
       Effect.gen(function* () {
         const updates = yield* DesktopUpdates.DesktopUpdates;
+        const environment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
+        const connection = yield* environment.ensureEnvironment(ssh.target);
+        assert.isTrue(ssh.isReachable(connection.httpBaseUrl));
         yield* updates.configure;
         harness.emit("update-downloaded", { version: "1.2.4" });
         yield* flushCallbacks;
 
         assert.isTrue((yield* updates.install).accepted);
+        assert.equal(forwardsAtHandoff, 0, "the installer must not inherit local SSH forwards");
+        assert.equal(ssh.remoteStopCount(), 0);
         assert.deepEqual(
           recordsAtStop.map((record) => JSON.parse(record)),
           [{ fromVersion: "1.2.3", targetVersion: "1.2.4" }],
@@ -436,6 +449,97 @@ describe("DesktopUpdates", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
+
+  it.effect(
+    "recovers a timed-out SSH drain and owns a connection that finishes after recovery",
+    () =>
+      Effect.gen(function* () {
+        const launching = yield* Deferred.make<void>();
+        const releaseLaunch = yield* Deferred.make<void>();
+        const backendStopped = yield* Deferred.make<void>();
+        const installFinished = yield* Deferred.make<void>();
+        const ssh = makeSshHarness({
+          beforeRemoteLaunch: Deferred.succeed(launching, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseLaunch)),
+          ),
+        });
+        const harness = makeHarness({
+          sshLayer: ssh.layer,
+          stopBackend: Deferred.succeed(backendStopped, undefined).pipe(Effect.asVoid),
+        });
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            const environment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
+            const desktopState = yield* DesktopState.DesktopState;
+            const pool = yield* DesktopBackendPool.DesktopBackendPool;
+            yield* updates.configure;
+            harness.emit("update-downloaded", { version: "1.2.4" });
+            yield* flushCallbacks;
+
+            const connecting = yield* environment
+              .ensureEnvironment(ssh.target)
+              .pipe(Effect.forkScoped);
+            yield* Deferred.await(launching);
+            const installing = yield* updates.install.pipe(
+              Effect.ensuring(Deferred.succeed(installFinished, undefined)),
+              Effect.forkScoped,
+            );
+            yield* TestClock.adjust(Duration.zero);
+            assert.isTrue(yield* Ref.get(desktopState.quitting));
+            assert.isFalse(
+              yield* Deferred.isDone(backendStopped),
+              "a blocked SSH drain must not stop a running backend",
+            );
+            assert.isTrue((yield* (yield* pool.primary).snapshot).desiredRunning);
+            const refused = yield* environment
+              .ensureEnvironment({ ...ssh.target, alias: "another-host", hostname: "another-host" })
+              .pipe(Effect.exit);
+            assert.isTrue(Exit.isFailure(refused), "new ensures must wait for update recovery");
+
+            // Allow ample preparation time without reaching the archive launch's 15-minute limit.
+            yield* TestClock.adjust(Duration.minutes(1));
+            assert.isTrue(
+              yield* Deferred.isDone(installFinished),
+              "install must abort its blocked SSH drain before remote startup finishes",
+            );
+            const result = yield* Fiber.join(installing);
+            assert.isTrue(result.accepted);
+            assert.isFalse(result.completed);
+            assert.equal(result.state.status, "error");
+            assert.equal(result.state.errorContext, "install");
+            assert.equal(harness.quitAndInstalls(), 0);
+            assert.isFalse(yield* Ref.get(desktopState.quitting));
+            assert.isFalse(yield* updates.isInstallActive);
+            assert.isFalse(yield* updates.isActionActive);
+            assert.isFalse(yield* Deferred.isDone(backendStopped));
+            assert.isTrue((yield* (yield* pool.primary).snapshot).desiredRunning);
+            assert.notInclude(harness.installSteps, "startBackend");
+            assert.notInclude(harness.installSteps, "destroyAll");
+            assert.equal(harness.updateRestartMarkers.size, 0);
+            assert.equal(harness.installRecords.size, 0);
+
+            yield* Deferred.succeed(releaseLaunch, undefined);
+            const lateConnection = yield* Fiber.join(connecting);
+            assert.isTrue(ssh.isReachable(lateConnection.httpBaseUrl));
+            assert.isTrue(ssh.isReachable(lateConnection.wsBaseUrl));
+            const reconnected = yield* environment.ensureEnvironment(ssh.target);
+            assert.equal(reconnected.httpBaseUrl, lateConnection.httpBaseUrl);
+            assert.equal(reconnected.wsBaseUrl, lateConnection.wsBaseUrl);
+            assert.equal(ssh.forwardCount(), 1, "the late forward must remain registered");
+            assert.equal(ssh.remoteStopCount(), 0);
+            assert.equal(
+              harness.quitAndInstalls(),
+              0,
+              "an aborted drain must never hand off later",
+            );
+          }).pipe(Effect.ensuring(Deferred.succeed(releaseLaunch, undefined))),
+        ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+        assert.equal(ssh.forwardCount(), 0);
+        assert.equal(ssh.remoteStopCount(), 1, "normal shutdown must own the late managed remote");
+      }),
+  );
 
   it.effect("flags an install that did not apply and keeps the flag through checks", () => {
     const harness = makeHarness({
@@ -499,35 +603,139 @@ describe("DesktopUpdates", () => {
     }),
   );
 
-  it.effect("keeps windows and restarts backends when quitAndInstall fails", () => {
-    const harness = makeHarness({
-      quitAndInstall: Effect.fail(
-        new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
-          channel: "latest",
-          isSilent: true,
-          isForceRunAfter: true,
-          cause: new Error("installer refused"),
-        }),
-      ),
-    });
+  it.effect.each(["typed failure", "thrown error", "interruption"] as const)(
+    "keeps windows usable and allows SSH reconnect after installer %s",
+    (failure) => {
+      const ssh = makeSshHarness();
+      const installerStarted = Deferred.makeUnsafe<void>();
+      const harness = makeHarness({
+        sshLayer: ssh.layer,
+        quitAndInstall:
+          failure === "typed failure"
+            ? Effect.fail(
+                new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+                  channel: "latest",
+                  isSilent: true,
+                  isForceRunAfter: true,
+                  cause: new Error("installer refused"),
+                }),
+              )
+            : failure === "thrown error"
+              ? Effect.sync(() => {
+                  throw new Error("installer threw");
+                })
+              : Deferred.succeed(installerStarted, undefined).pipe(Effect.andThen(Effect.never)),
+      });
 
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const desktopState = yield* DesktopState.DesktopState;
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-        harness.emit("update-downloaded", { version: "1.2.4" });
-        yield* flushCallbacks;
+      return Effect.gen(function* () {
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const desktopState = yield* DesktopState.DesktopState;
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            const environment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
+            const connection = yield* environment.ensureEnvironment(ssh.target);
+            assert.isTrue(ssh.isReachable(connection.httpBaseUrl));
+            assert.isTrue(ssh.isReachable(connection.wsBaseUrl));
+            yield* updates.configure;
+            harness.emit("update-downloaded", { version: "1.2.4" });
+            yield* flushCallbacks;
 
-        const result = yield* updates.install;
-        assert.isTrue(result.accepted);
-        assert.isFalse(yield* Ref.get(desktopState.quitting));
-        assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
-        assert.equal(harness.updateRestartMarkers.size, 0);
-        assert.equal(harness.installRecords.size, 0);
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
+            if (failure === "interruption") {
+              const installing = yield* updates.install.pipe(Effect.forkScoped);
+              yield* Deferred.await(installerStarted);
+              yield* Fiber.interrupt(installing);
+            } else {
+              const result = yield* updates.install;
+              assert.isTrue(result.accepted);
+              assert.equal(result.state.errorContext, "install");
+            }
+            assert.isFalse(yield* Ref.get(desktopState.quitting));
+            assert.notInclude(harness.installSteps, "destroyAll");
+            assert.equal(ssh.remoteStopCount(), 0);
+            const reconnected = yield* environment.ensureEnvironment(ssh.target);
+            assert.isTrue(ssh.isReachable(reconnected.httpBaseUrl));
+            assert.isTrue(ssh.isReachable(reconnected.wsBaseUrl));
+            assert.equal(ssh.remoteStopCount(), 0);
+            const pool = yield* DesktopBackendPool.DesktopBackendPool;
+            assert.equal(
+              (yield* (yield* pool.primary).snapshot).desiredRunning,
+              failure !== "interruption",
+            );
+            if (failure === "interruption") {
+              assert.notInclude(harness.installSteps, "startBackend");
+              assert.isFalse(yield* updates.isActionActive);
+              assert.isFalse(yield* updates.isInstallActive);
+            }
+            assert.equal(harness.updateRestartMarkers.size, 0);
+            assert.equal(harness.installRecords.size, 0);
+          }),
+        ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+        if (failure === "interruption") {
+          assert.equal(ssh.forwardCount(), 0);
+          assert.equal(
+            ssh.remoteStopCount(),
+            1,
+            "normal shutdown must still own the managed remote",
+          );
+        }
+      });
+    },
+  );
+
+  it.effect.each(["reconnect", "quit without reconnect"] as const)(
+    "allows %s after a failed update when the old SSH port is unavailable",
+    (nextAction) => {
+      const ssh = makeSshHarness();
+      let originalUrl = "";
+      const harness = makeHarness({
+        sshLayer: ssh.layer,
+        quitAndInstall: Effect.sync(() => {
+          assert.equal(ssh.forwardCount(), 0);
+          ssh.occupyPort(originalUrl);
+        }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+                channel: "latest",
+                isSilent: true,
+                isForceRunAfter: true,
+                cause: new Error("installer refused"),
+              }),
+            ),
+          ),
+        ),
+      });
+
+      return Effect.gen(function* () {
+        yield* Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          const environment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
+          const connection = yield* environment.ensureEnvironment(ssh.target);
+          originalUrl = connection.httpBaseUrl;
+          assert.isTrue(ssh.isReachable(originalUrl));
+          yield* updates.configure;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+
+          const result = yield* updates.install;
+          assert.isTrue(result.accepted);
+          assert.equal(result.state.errorContext, "install");
+          assert.equal(ssh.remoteStopCount(), 0, "update recovery must keep the remote running");
+
+          if (nextAction === "reconnect") {
+            const reconnected = yield* environment.ensureEnvironment(ssh.target);
+            assert.notEqual(new URL(reconnected.httpBaseUrl).port, new URL(originalUrl).port);
+            assert.isTrue(ssh.isReachable(reconnected.httpBaseUrl));
+            assert.isTrue(ssh.isReachable(reconnected.wsBaseUrl));
+            assert.equal(ssh.remoteStopCount(), 0);
+          }
+        }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)), Effect.scoped);
+
+        assert.equal(ssh.forwardCount(), 0);
+        assert.equal(ssh.remoteStopCount(), 1, "normal shutdown must still own the managed remote");
+      });
+    },
+  );
 
   it.effect("keeps the disabled primary stopped when quitAndInstall fails", () => {
     const harness = makeHarness({
@@ -658,6 +866,60 @@ describe("DesktopUpdates", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
+
+  it.effect.each(["during preparation", "after handoff"] as const)(
+    "recovers when the native installer reports an error %s",
+    (timing) => {
+      const ssh = makeSshHarness();
+      const harness = makeHarness({
+        sshLayer: ssh.layer,
+        stopBackend:
+          timing === "during preparation"
+            ? Effect.sync(() => {
+                harness.emit("error", new Error("native installer refused"));
+              })
+            : Effect.void,
+      });
+
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const desktopState = yield* DesktopState.DesktopState;
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          const environment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
+          const connection = yield* environment.ensureEnvironment(ssh.target);
+          assert.isTrue(ssh.isReachable(connection.httpBaseUrl));
+          yield* updates.configure;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+
+          const { changes } = yield* updates.subscribe;
+          const recovered = yield* Stream.runHead(changes).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* updates.install;
+          if (timing === "after handoff") {
+            assert.deepEqual(harness.installSteps, ["quitAndInstall"]);
+            harness.emit("error", new Error("native installer refused"));
+          } else {
+            assert.equal(harness.quitAndInstalls(), 0);
+          }
+          assert.equal(Option.getOrThrow(yield* Fiber.join(recovered)).errorContext, "install");
+
+          assert.isFalse(yield* Ref.get(desktopState.quitting));
+          assert.deepEqual(
+            harness.installSteps,
+            timing === "after handoff" ? ["quitAndInstall", "startBackend"] : ["startBackend"],
+          );
+          assert.equal((yield* updates.getState).errorContext, "install");
+          assert.equal(ssh.remoteStopCount(), 0);
+          const reconnected = yield* environment.ensureEnvironment(ssh.target);
+          assert.isTrue(ssh.isReachable(reconnected.httpBaseUrl));
+          assert.isTrue(ssh.isReachable(reconnected.wsBaseUrl));
+          assert.equal(ssh.remoteStopCount(), 0);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    },
+  );
 
   it.effect("rejects a prepared install when the downloaded version changed", () => {
     const harness = makeHarness();

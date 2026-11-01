@@ -1,6 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { DesktopUpdateState } from "@t3tools/contracts";
+import * as NetService from "@t3tools/shared/Net";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 import * as FileSystem from "effect/FileSystem";
 import * as PlatformError from "effect/PlatformError";
 import * as Layer from "effect/Layer";
@@ -9,6 +15,8 @@ import * as Option from "effect/Option";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
+import * as DesktopSshPasswordPrompts from "../ssh/DesktopSshPasswordPrompts.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -30,6 +38,7 @@ export interface UpdatesHarnessOptions {
   readonly stopBackend?: Effect.Effect<void>;
   readonly startBackend?: Effect.Effect<void>;
   readonly backendDesiredRunning?: boolean;
+  readonly sshLayer?: Layer.Layer<DesktopSshEnvironment.DesktopSshEnvironment>;
   readonly backendInstances?: ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>;
   readonly env?: Record<string, string | undefined>;
   readonly platform?: NodeJS.Platform;
@@ -168,6 +177,23 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
           ]
         : [stubBackendInstance]),
   );
+  const layerSsh =
+    options.sshLayer ??
+    Layer.succeed(
+      DesktopSshEnvironment.DesktopSshEnvironment,
+      DesktopSshEnvironment.DesktopSshEnvironment.of({
+        discoverHosts: Effect.fn("DesktopSshEnvironment.discoverHosts")(() => Effect.succeed([])),
+        resolveHost: Effect.fn("DesktopSshEnvironment.resolveHost")(() => Effect.die("unused")),
+        ensureEnvironment: Effect.fn("DesktopSshEnvironment.ensureEnvironment")(() =>
+          Effect.die("unused"),
+        ),
+        disconnectEnvironment: Effect.fn("DesktopSshEnvironment.disconnectEnvironment")(() =>
+          Effect.die("unused"),
+        ),
+        closeLocalForwards: Effect.void,
+        reopenLocalForwards: Effect.void,
+      }),
+    );
 
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -274,6 +300,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     Layer.provideMerge(layerUpdater),
     Layer.provideMerge(layerWindow),
     Layer.provideMerge(layerBackend),
+    Layer.provideMerge(layerSsh),
     Layer.provideMerge(DesktopState.layer),
     Layer.provideMerge(layerSettings),
     Layer.provideMerge(
@@ -313,5 +340,130 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         listener(payload);
       }
     },
+  };
+}
+
+// Model the process-owned loopback listeners while exercising the real desktop SSH service.
+export function makeSshHarness(
+  options: { readonly beforeRemoteLaunch?: Effect.Effect<void> } = {},
+) {
+  const listeners = new Set<number>();
+  const occupiedPorts = new Set<number>();
+  let remoteStops = 0;
+  let nextPort = 41_773;
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.gen(function* () {
+      const args = command._tag === "StandardCommand" ? command.args : [];
+      const forward = args.includes("-N");
+      const port = forward ? Number(args[args.indexOf("-L") + 1]?.split(":")[0]) : 0;
+      const bindFailed = forward && occupiedPorts.has(port);
+      if (forward && !bindFailed) listeners.add(port);
+      const stdin = command._tag === "StandardCommand" ? command.options.stdin : undefined;
+      if (
+        args.includes("sh") &&
+        !args.includes("-l") &&
+        stdin &&
+        typeof stdin === "object" &&
+        "stream" in stdin &&
+        Stream.isStream(stdin.stream)
+      ) {
+        const script = yield* stdin.stream.pipe(
+          Stream.decodeText(),
+          Stream.runFold(
+            () => "",
+            (text, chunk) => text + chunk,
+          ),
+        );
+        // Log-tail diagnostics also use sh -s; only the stop script terminates the remote.
+        if (script.includes('kill "$REMOTE_PID"')) remoteStops += 1;
+      }
+      const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const stdout = forward
+        ? Stream.empty
+        : Stream.fromEffect(
+            (args.includes("-l") ? (options.beforeRemoteLaunch ?? Effect.void) : Effect.void).pipe(
+              Effect.as(new TextEncoder().encode('{"remotePort":3773,"serverKind":"managed"}\n')),
+            ),
+          );
+      return ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(123),
+        stdout,
+        stderr: bindFailed
+          ? Stream.make(new TextEncoder().encode("bind: Address already in use"))
+          : Stream.empty,
+        all: stdout,
+        exitCode:
+          forward && !bindFailed
+            ? Deferred.await(exited)
+            : Effect.succeed(ChildProcessSpawner.ExitCode(bindFailed ? 255 : 0)),
+        isRunning: Effect.sync(() => forward && !bindFailed && listeners.has(port)),
+        kill: () =>
+          Effect.sync(() => {
+            listeners.delete(port);
+          }).pipe(
+            Effect.andThen(Deferred.succeed(exited, ChildProcessSpawner.ExitCode(143))),
+            Effect.asVoid,
+          ),
+        stdin: Sink.drain,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+        unref: Effect.succeed(Effect.void),
+      });
+    }),
+  );
+  const isReachable = (url: string) => listeners.has(Number(new URL(url).port));
+  const layer = DesktopSshEnvironment.layer({
+    resolveCliRunner: Effect.succeed({ archiveVersion: "1.2.3" }),
+  }).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.sync(() =>
+              HttpClientResponse.fromWeb(
+                request,
+                new Response("", {
+                  status: isReachable(request.url) ? 200 : 503,
+                }),
+              ),
+            ),
+          ),
+        ),
+        Layer.succeed(NetService.NetService, {
+          canListenOnHost: Effect.fn("NetService.canListenOnHost")((port: number) =>
+            Effect.sync(() => !occupiedPorts.has(port) && !listeners.has(port)),
+          ),
+          isPortAvailableOnLoopback: Effect.fn("NetService.isPortAvailableOnLoopback")(
+            (port: number) => Effect.sync(() => !occupiedPorts.has(port) && !listeners.has(port)),
+          ),
+          hasListenerOnHost: Effect.fn("NetService.hasListenerOnHost")(() => Effect.succeed(false)),
+          reserveLoopbackPort: Effect.fn("NetService.reserveLoopbackPort")(() =>
+            Effect.sync(() => nextPort++),
+          ),
+          findAvailablePort: Effect.fn("NetService.findAvailablePort")((preferred: number) =>
+            Effect.succeed(preferred),
+          ),
+        }),
+        Layer.succeed(DesktopSshPasswordPrompts.DesktopSshPasswordPrompts, {
+          request: Effect.fn("DesktopSshPasswordPrompts.request")(() =>
+            Effect.die("unexpected password prompt"),
+          ),
+          resolve: Effect.fn("DesktopSshPasswordPrompts.resolve")(() =>
+            Effect.die("unexpected password response"),
+          ),
+        }),
+      ),
+    ),
+  );
+  return {
+    layer,
+    isReachable,
+    occupyPort: (url: string) => occupiedPorts.add(Number(new URL(url).port)),
+    forwardCount: () => listeners.size,
+    remoteStopCount: () => remoteStops,
+    target: { alias: "devbox", hostname: "devbox", username: null, port: null },
   };
 }
