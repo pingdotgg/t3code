@@ -571,6 +571,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const snapshotReads = yield* Queue.unbounded<number>();
   const candidateReads = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
   const settings = yield* Ref.make(options.settings ?? DEFAULT_SERVER_SETTINGS);
+  const settingsReadCount = yield* Ref.make(0);
   const settingsChanges = yield* PubSub.unbounded<ContractServerSettings>();
   const mergedPullRequests = yield* PubSub.unbounded<PullRequestService.PullRequestMergeEvent>();
   const commands = yield* Ref.make<ReadonlyArray<AutoSettleCommand>>([]);
@@ -640,7 +641,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const serverSettings = ServerSettings.ServerSettingsService.of({
     start: Effect.void,
     ready: Effect.void,
-    getSettings: Ref.get(settings),
+    getSettings: Ref.update(settingsReadCount, (count) => count + 1).pipe(
+      Effect.andThen(Ref.get(settings)),
+    ),
     updateSettings,
     updateProviderInstance: () => Effect.die("Unexpected provider mutation"),
     withSettingsSnapshot: (use) => Ref.get(settings).pipe(Effect.flatMap(use)),
@@ -710,6 +713,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     activation,
     snapshots,
     snapshotReadCount,
+    settingsReadCount,
     snapshotReads,
     candidateReads,
     commands,
@@ -746,6 +750,37 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementServiceV2 worker", () => {
+  it.effect("skips settings and PR decisions for recent branchless threads", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const threads = Array.from({ length: 32 }, (_, index) =>
+          makeThread(`recent-${index}`, {
+            updatedAt: DateTime.makeUnsafe(NOW),
+            latestUserMessageAt: DateTime.makeUnsafe(Date.parse(NOW) - 2 * DAY_MS),
+          }),
+        );
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(threads),
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 3 },
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          assert.deepEqual(yield* Ref.get(fixture.commands), []);
+          assert.deepEqual(yield* Ref.get(fixture.branchCalls), []);
+          assert.equal(yield* Ref.get(fixture.settingsReadCount), 2);
+          yield* fixture.updateSettings({ sidebarAutoSettleAfterDays: 1 });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* service.drain;
+          assert.deepEqual(
+            new Set((yield* Ref.get(fixture.commands)).map((command) => command.threadId)),
+            new Set(threads.map((thread) => thread.id)),
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
   it.effect("settles a merged pull request stored only in the thread links", () =>
     Effect.scoped(
       Effect.gen(function* () {
