@@ -2980,7 +2980,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { concurrency: 2 },
     );
     const stagedDeletions = new Set(stagedDeletionsStdout.split("\0").filter(Boolean));
-    const pathsToAdd = untrackedPaths.filter((relativePath) => !stagedDeletions.has(relativePath));
+    // Only a nested repository is listed with a trailing slash. With no commits it cannot be indexed:
+    // Git before 2.53 fails the add, and later versions accept it and then fail every diff.
+    const pathsToAdd = yield* Effect.filter(
+      untrackedPaths.filter((relativePath) => !stagedDeletions.has(relativePath)),
+      (relativePath) =>
+        relativePath.endsWith("/")
+          ? executeGit(
+              "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.nestedRepositoryHead",
+              path.resolve(cwd, relativePath),
+              ["rev-parse", "--verify", "--quiet", "HEAD"],
+              { allowNonZeroExit: true },
+            ).pipe(Effect.map((result) => result.exitCode !== 1))
+          : Effect.succeed(true),
+      { concurrency: 16 },
+    );
     if (pathsToAdd.length === 0) return undefined;
 
     const indexPath = path.isAbsolute(indexValue.trim())
