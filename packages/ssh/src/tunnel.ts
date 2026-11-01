@@ -141,6 +141,7 @@ export interface SshEnvironmentManagerShape {
   readonly disconnectEnvironment: (
     target: DesktopSshEnvironmentTarget,
   ) => Effect.Effect<void, SshEnvironmentEffectError, SshEnvironmentEffectContext>;
+  readonly stopTunnels: Effect.Effect<void>;
 }
 
 const RemoteLaunchResult = Schema.Struct({
@@ -1774,7 +1775,20 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     );
   });
 
-  return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment });
+  // Update installs exit before scopes close; remote servers stay up for the relaunched app.
+  const stopTunnels = Effect.sync(() => {
+    const entries = [...tunnels.values()];
+    tunnels.clear();
+    return entries;
+  }).pipe(
+    Effect.flatMap((entries) =>
+      Effect.forEach(entries, closeTunnelEntry, { concurrency: "unbounded", discard: true }),
+    ),
+    Effect.uninterruptible,
+    Effect.withSpan("ssh/tunnel.stopTunnels"),
+  );
+
+  return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment, stopTunnels });
 });
 
 /**
