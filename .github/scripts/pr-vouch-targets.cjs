@@ -3,11 +3,9 @@
 const MAX_MATRIX_JOBS = 256;
 const TRUST_LIST_PATH = ".github/VOUCHED.td";
 
-// Maps each GitHub handle in a VOUCHED.td file to "vouched" or "denounced",
-// read the way mitchellh/vouch check-user reads it (vouch/file.nu parse-line
-// and parse-handle, vouch/lib.nu check-user): the whole handle is lowercased,
-// details start at the first space, an entry without a platform applies to
-// GitHub, and the first entry for a handle decides its status.
+// Reads handles the way mitchellh/vouch check-user does: the whole handle is
+// lowercased, details start at the first space, an entry without a platform
+// applies to GitHub, and the first entry for a handle decides its status.
 function parseTrustList(text) {
   const statuses = new Map();
   for (const rawLine of text.split("\n")) {
