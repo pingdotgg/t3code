@@ -441,6 +441,7 @@ export const layerWithOptions = (
       const prepareMcpSession = (
         threadId: ThreadId,
         providerInstanceId: ProviderInstanceId,
+        onPrepared?: (prepared: PreparedMcpCredential) => void,
       ): Effect.Effect<PreparedMcpCredential> =>
         options.configureMcp === false
           ? mcpSessions
@@ -485,21 +486,31 @@ export const layerWithOptions = (
                     // A credential issued while the lineage read failed is replaced once it works.
                     (resolved.thread.subagent === true) === subagent
                   ) {
-                    return { mcpCredentialId: existing.providerSessionId, issued: false };
+                    const prepared = { mcpCredentialId: existing.providerSessionId, issued: false };
+                    onPrepared?.(prepared);
+                    return prepared;
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
                 }
-                yield* mcpSessionRegistry.revokeThread(threadId);
-                const credential = yield* mcpSessionRegistry.issue({
-                  threadId,
-                  providerInstanceId,
-                  browserToolsAvailable,
-                  capabilities,
-                  subagent,
+                const issue = Effect.gen(function* () {
+                  yield* mcpSessionRegistry.revokeThread(threadId);
+                  const credential = yield* mcpSessionRegistry.issue({
+                    threadId,
+                    providerInstanceId,
+                    browserToolsAvailable,
+                    capabilities,
+                    subagent,
+                  });
+                  yield* mcpSessions.set(credential.config);
+                  reserveMcpCredential(threadId, credential.config.providerSessionId);
+                  const prepared = {
+                    mcpCredentialId: credential.config.providerSessionId,
+                    issued: true,
+                  };
+                  onPrepared?.(prepared);
+                  return prepared;
                 });
-                yield* mcpSessions.set(credential.config);
-                reserveMcpCredential(threadId, credential.config.providerSessionId);
-                return { mcpCredentialId: credential.config.providerSessionId, issued: true };
+                return yield* onPrepared === undefined ? issue : Effect.uninterruptible(issue);
               }),
             );
       const clearMcpSession = (threadId: ThreadId, mcpCredentialId?: string) =>
@@ -1087,8 +1098,7 @@ export const layerWithOptions = (
                           Array.from(current.values()).some(
                             (other) =>
                               other !== entry &&
-                              (other.attachedThreadIds.has(threadId) ||
-                                other.mcpCredentialIdByThread.get(threadId) === mcpCredentialId),
+                              other.mcpCredentialIdByThread.get(threadId) === mcpCredentialId,
                           );
                         return heldElsewhere
                           ? Effect.void
@@ -1363,8 +1373,13 @@ export const layerWithOptions = (
                 .get(sessionKey(input.providerSessionId))
                 ?.attachedThreadIds.has(input.threadId) === true;
             if (attached === undefined && !reclaimsCredential) return;
-            const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
-            preparedForCleanup = prepared;
+            const prepared = yield* prepareMcpSession(
+              input.threadId,
+              input.providerInstanceId,
+              (prepared) => {
+                preparedForCleanup = prepared;
+              },
+            );
             if (prepared.mcpCredentialId !== undefined) {
               const mcpCredentialId = prepared.mcpCredentialId;
               yield* Ref.update(sessions, (current) => {
@@ -1373,8 +1388,16 @@ export const layerWithOptions = (
                 if (entry === undefined) return current;
                 const mcpCredentialIdByThread = new Map(entry.mcpCredentialIdByThread);
                 mcpCredentialIdByThread.set(input.threadId, mcpCredentialId);
+                const loadedProviderThreadKeyByThread = new Map(
+                  entry.loadedProviderThreadKeyByThread,
+                );
+                if (reclaimsCredential) loadedProviderThreadKeyByThread.delete(input.threadId);
                 const updated = new Map(current);
-                updated.set(key, { ...entry, mcpCredentialIdByThread });
+                updated.set(key, {
+                  ...entry,
+                  mcpCredentialIdByThread,
+                  loadedProviderThreadKeyByThread,
+                });
                 return updated;
               });
             }
@@ -1422,10 +1445,8 @@ export const layerWithOptions = (
                           Array.from(current.values()).some(
                             (other) =>
                               other.runtime !== attachedRuntime &&
-                              (other.attachedThreadIds.has(input.threadId) ||
-                                (mcpCredentialId !== undefined &&
-                                  other.mcpCredentialIdByThread.get(input.threadId) ===
-                                    mcpCredentialId)),
+                              mcpCredentialId !== undefined &&
+                              other.mcpCredentialIdByThread.get(input.threadId) === mcpCredentialId,
                           );
                         return held
                           ? Effect.void

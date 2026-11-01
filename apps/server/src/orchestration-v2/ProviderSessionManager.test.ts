@@ -481,6 +481,7 @@ function layerTest(input: {
     readonly armed: Ref.Ref<boolean>;
     readonly paused: Deferred.Deferred<void>;
   };
+  readonly afterMcpSet?: Ref.Ref<Effect.Effect<void>>;
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
   readonly backgroundTasksEndWithProcess?: boolean;
@@ -534,6 +535,22 @@ function layerTest(input: {
     input.pauseResolve === undefined
       ? layerTestMcpRegistry
       : layerPausingMcpRegistry(input.pauseResolve);
+  const layerMcpSessions =
+    input.afterMcpSet === undefined
+      ? McpProviderSessions.layer
+      : Layer.effect(
+          McpProviderSessions.McpProviderSessions,
+          Effect.gen(function* () {
+            const delegate = yield* McpProviderSessions.McpProviderSessions;
+            return McpProviderSessions.McpProviderSessions.of({
+              ...delegate,
+              set: (config) =>
+                delegate
+                  .set(config)
+                  .pipe(Effect.andThen(Ref.get(input.afterMcpSet!)), Effect.flatten),
+            });
+          }),
+        ).pipe(Layer.provide(McpProviderSessions.layer));
   const layerProviderEventIngestorTest = ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -556,14 +573,14 @@ function layerTest(input: {
     layerConfiguredEventSink,
     IdAllocator.layer,
     layerConfiguredMcpRegistry,
-    McpProviderSessions.layer,
+    layerMcpSessions,
     ProviderSessionManager.layerWithOptions({
       idleTimeoutMs: input.idleTimeoutMs,
       ...(input.maxIdlePinMs === undefined ? {} : { maxIdlePinMs: input.maxIdlePinMs }),
     }).pipe(
       Layer.provide(
         Layer.mergeAll(
-          layerRegistry.pipe(Layer.provideMerge(McpProviderSessions.layer)),
+          layerRegistry.pipe(Layer.provideMerge(layerMcpSessions)),
           CommandOutputHub.layer.pipe(
             Layer.provide(Layer.merge(layerConfiguredEventSink, layerTestStores)),
           ),
@@ -2281,11 +2298,12 @@ it.effect(
     }),
 );
 
-it.effect(
-  "ProviderSessionManagerV2 takes the thread's MCP credential back when a run returns to a still-attached session",
-  () =>
+it.effect.each([false, true])(
+  "ProviderSessionManagerV2 takes the thread's MCP credential back when a run returns to a still-attached session, interrupted=%s",
+  (interrupted) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
+      const afterMcpSet = yield* Ref.make<Effect.Effect<void>>(Effect.void);
       const effect = Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -2304,7 +2322,31 @@ it.effect(
         yield* eventSink.write({
           events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
         });
-        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        yield* runtime.resumeThread({ providerThread, modelSelection, runtimePolicy });
+        yield* runtime.resumeThread({ providerThread, modelSelection, runtimePolicy });
+        assert.equal((yield* Ref.get(state)).resumeCount, 1);
+        const staleSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId: staleSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
 
         // The thread switches to another provider, whose attach replaces the
         // thread's credential while this session stays attached.
@@ -2315,9 +2357,31 @@ it.effect(
         });
         yield* mcpSessions.set(otherProvider.config);
 
+        if (interrupted) {
+          const published = yield* Deferred.make<void>();
+          const resume = yield* Deferred.make<void>();
+          yield* Ref.set(
+            afterMcpSet,
+            Deferred.succeed(published, undefined).pipe(Effect.andThen(Deferred.await(resume))),
+          );
+          const reclaim = yield* manager
+            .open({ threadId, providerSessionId, modelSelection, runtimePolicy })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(published);
+          const issued = yield* mcpSessions.read(threadId);
+          reclaim.interruptUnsafe();
+          yield* Deferred.succeed(resume, undefined);
+          yield* Fiber.await(reclaim);
+          assert.isUndefined(yield* registry.resolve(tokenOf(issued)));
+          assert.isUndefined(yield* mcpSessions.read(threadId));
+          return;
+        }
+
         // The thread switches back and its next turn reuses this session.
         yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
-        assert.equal((yield* Ref.get(state)).openCount, 1);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        yield* runtime.resumeThread({ providerThread, modelSelection, runtimePolicy });
+        assert.equal((yield* Ref.get(state)).resumeCount, 2);
 
         const reclaimed = yield* mcpSessions.read(threadId);
         assert.equal(reclaimed?.providerInstanceId, modelSelection.instanceId);
@@ -2333,7 +2397,7 @@ it.effect(
         assert.isUndefined(yield* mcpSessions.read(threadId));
       });
 
-      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000 })));
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, afterMcpSet })));
     }),
 );
 

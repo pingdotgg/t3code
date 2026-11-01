@@ -107,6 +107,28 @@ describe("Pi project trust", () => {
 });
 
 describe("Pi MCP tool results", () => {
+  it("refreshes a reused client's credential before the next turn", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "pi-mcp-reclaim-"));
+    try {
+      const credentialPath = NodePath.join(directory, "credential");
+      await NodeFSP.writeFile(credentialPath, "Bearer fixture-token");
+      const bridge = await loadMcpBridge({ credentialPath });
+      const tool = bridge.tools.find((tool) => tool.name === "mcp__t3-code__delegate_task")!;
+      await tool.execute("first", {});
+      assert.equal(bridge.transports.at(-1)?.authorization, "Bearer fixture-token");
+      await NodeFSP.writeFile(credentialPath, "Bearer reclaimed-token");
+      await bridge.handlers.get("before_agent_start")!(
+        { systemPrompt: "base" },
+        { ui: { notify: assert.fail } },
+      );
+      await tool.execute("second", {});
+      assert.equal(bridge.transports.at(-1)?.authorization, "Bearer reclaimed-token");
+      assert.equal(bridge.requests.filter((request) => request.method === "initialize").length, 2);
+    } finally {
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("returns mixed screenshot blocks and typed script output without repeating structured text", async () => {
     const content = [
       { type: "text", text: "Browser screenshot" },
