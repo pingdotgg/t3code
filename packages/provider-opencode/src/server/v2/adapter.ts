@@ -45,6 +45,7 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
@@ -518,6 +519,17 @@ const isContinuation = (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =
 const wakeTurnId = (sessionId: string, attemptId: string) => `${sessionId}:wake:${attemptId}`;
 const isWakeTurn = (turn: OrchestrationV2ProviderTurn) =>
   turn.nativeTurnRef?.nativeId?.includes(":wake:") === true;
+
+// ChatGPT-backed OpenAI models put the usage-limit reset in the 429 body as Unix seconds.
+const decodeUsageLimitBody = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ error: Schema.Struct({ resets_at: Schema.Finite }) })),
+);
+const usageLimitResetAt = (body: string | undefined) =>
+  decodeUsageLimitBody(body).pipe(
+    Option.flatMap(({ error }) => DateTime.make(error.resets_at * 1000)),
+    Option.map(DateTime.formatIso),
+    Option.getOrNull,
+  );
 
 const INTERRUPT_TIMEOUT = "10 seconds";
 const INSTRUCTIONS_KEY = "t3-code";
@@ -2137,6 +2149,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               message: readableProviderErrorMessage(message, status, response?.body),
               code: type,
               class: usageLimit ? "usage_limit" : "provider_error",
+              resetAt: usageLimitResetAt(response?.body),
             }),
           });
         }
