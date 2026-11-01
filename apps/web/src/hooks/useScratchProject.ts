@@ -12,7 +12,11 @@ import type { AtomRegistry } from "effect/reactivity";
 import { useContext } from "react";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
-import { type EnvironmentPresentation, useEnvironments } from "~/state/environments";
+import {
+  type EnvironmentPresentation,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "~/state/environments";
 import { projectEnvironment } from "~/state/projects";
 import { type NewThreadHandler, useNewThreadHandler } from "./useHandleNewThread";
 
@@ -32,6 +36,7 @@ type ScratchEnvironment = Pick<EnvironmentPresentation, "connection" | "serverCo
 
 export function createScratchProjectActions(input: {
   readonly environments: () => Iterable<ScratchEnvironment>;
+  readonly primaryEnvironmentId: () => EnvironmentId | null;
   readonly registry: AtomRegistry.AtomRegistry;
   readonly handleNewThread: NewThreadHandler;
 }) {
@@ -43,8 +48,11 @@ export function createScratchProjectActions(input: {
     return availableScratchWorkspaceRoot(environment?.connection.phase, environment?.serverConfig);
   };
 
-  const scratchEnvironmentId = (current: EnvironmentId | null): EnvironmentId | null => {
-    if (current !== null) return scratchWorkspaceRootFor(current) !== null ? current : null;
+  // The primary (local) environment wins; `fallback` only applies when it offers no scratch root.
+  const scratchEnvironmentId = (fallback: EnvironmentId | null): EnvironmentId | null => {
+    const primary = input.primaryEnvironmentId();
+    if (primary !== null && scratchWorkspaceRootFor(primary) !== null) return primary;
+    if (fallback !== null && scratchWorkspaceRootFor(fallback) !== null) return fallback;
     const offering = [...input.environments()].filter(
       (entry) => scratchWorkspaceRootFor(entry.environmentId) !== null,
     );
@@ -85,10 +93,12 @@ export function createScratchProjectActions(input: {
 
 export function useScratchProject() {
   const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const registry = useContext(RegistryContext);
   const handleNewThread = useNewThreadHandler();
   return createScratchProjectActions({
     environments: () => environments,
+    primaryEnvironmentId: () => primaryEnvironmentId,
     registry,
     handleNewThread,
   });

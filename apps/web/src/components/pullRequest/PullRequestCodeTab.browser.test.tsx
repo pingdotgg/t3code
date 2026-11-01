@@ -50,7 +50,7 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
   };
 });
 
-const mocks = vi.hoisted(() => ({ paged: false }));
+const mocks = vi.hoisted(() => ({ paged: false, diffCommits: [] as Array<string | undefined> }));
 
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
@@ -62,8 +62,10 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
     ...actual,
     pullRequestEnvironment: {
       ...actual.pullRequestEnvironment,
-      diff: (({ input }: { input: { cursor?: string } }) =>
-        mocks.paged ? pagedDiffAtom(input.cursor ?? "first") : diffAtom) as never,
+      diff: (({ input }: { input: { cursor?: string; commit?: string } }) => {
+        mocks.diffCommits.push(input.commit);
+        return mocks.paged ? pagedDiffAtom(input.cursor ?? "first") : diffAtom;
+      }) as never,
     },
   };
 });
@@ -125,6 +127,7 @@ const detail: PullRequestDetailView = {
 
 function setup({ paged }: { paged: boolean }) {
   mocks.paged = paged;
+  mocks.diffCommits = [];
 }
 
 const tab = (
@@ -198,4 +201,38 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
   await screen.rerender(tab(0, { path: "late.ts", nonce: 1 }));
 
   await expectFileHeaderShown(screen, container, "late.ts");
+});
+
+it("never requests the diff of a selected commit the pull request no longer has", async () => {
+  setup({ paged: false });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  // The timeline can open a commit that a force-push removed from the pull request.
+  await using screen = await render(
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      reference={detail}
+      detail={{
+        ...detail,
+        commits: [
+          {
+            oid: "kept",
+            messageHeadline: "Kept commit",
+            committedDate: "2026-09-01T00:00:00Z",
+          },
+        ],
+      }}
+      selectedCommitOid="gone"
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+    />,
+    { container },
+  );
+
+  await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+  await expect
+    .element(screen.getByRole("button", { name: "Diff scope: All commits" }))
+    .toBeVisible();
+  expect(mocks.diffCommits).not.toContain("gone");
 });

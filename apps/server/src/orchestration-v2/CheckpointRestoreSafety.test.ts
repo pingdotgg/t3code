@@ -64,6 +64,7 @@ it.effect.each([
       id: otherId,
       projectId,
       deletedAt: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: otherId },
       worktreePath:
         owner === "ancestor" || owner === "conversation"
           ? parent
@@ -201,4 +202,53 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
     );
     assert.isTrue(isolated);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each([
+  { sideChat: "answering questions", running: false, toolItems: 0, isolated: true },
+  { sideChat: "running", running: true, toolItems: 0, isolated: false },
+  { sideChat: "after running tools", running: false, toolItems: 1, isolated: false },
+] as const)(
+  "a side chat $sideChat shares the parent's worktree: $isolated",
+  ({ running, toolItems, isolated }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const worktreePath = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-v2-restore-side-chat-",
+      });
+      const parentId = ThreadId.make("restore-side-chat-parent");
+      const sideChat = {
+        id: ThreadId.make("restore-side-chat"),
+        projectId: ProjectId.make("restore-project"),
+        deletedAt: null,
+        worktreePath,
+        activeRunId: running ? "side-chat-run" : null,
+        lineage: {
+          parentThreadId: parentId,
+          relationshipToParent: "fork",
+          rootThreadId: parentId,
+          sideChat: true,
+        },
+      };
+      const result = yield* isCheckpointRestoreIsolated(
+        { id: parentId, worktreePath },
+        { cwd: worktreePath },
+        {
+          fileSystem,
+          path,
+          projections: {
+            getShellSnapshot: () => Effect.succeed({ threads: [sideChat], archivedThreads: [] }),
+            getThreadRecords: () =>
+              Effect.succeed({
+                turnItems: Array.from({ length: toolItems }, () => ({ type: "command_execution" })),
+              }),
+            getCheckpointContext: () => Effect.succeed({ checkpointScopes: [] }),
+            getThreadProviderContext: () => Effect.succeed({ providerSessions: [] }),
+          } as never,
+          projects: {} as never,
+        },
+      );
+      assert.equal(result, isolated);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
