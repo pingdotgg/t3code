@@ -2343,9 +2343,8 @@ export const make = Effect.gen(function* () {
     const created = yield* findOpenPr(cwd, headContext).pipe(
       Effect.catch((error) =>
         Effect.logWarning("GitManager.runPrStep lookup after create failed", {
-          cwd,
-          headBranch: headContext.headBranch,
-          cause: error,
+          provider: provider.kind,
+          errorTag: error._tag,
         }).pipe(Effect.as(null)),
       ),
     );
