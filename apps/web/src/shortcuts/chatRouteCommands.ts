@@ -7,15 +7,12 @@ import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { dispatchPreviewAction, type PreviewAction } from "../components/preview/previewActionBus";
 import { isAppModalPage } from "../components/sidebar/mainAppLocation";
-import { shouldCreateNewThreadInCurrentProject } from "../components/Sidebar.logic";
 import { createNewThreadHandler, resolveDefaultProjectRef } from "../hooks/useHandleNewThread";
 import { createScratchProjectActions } from "../hooks/useScratchProject";
 import { getClientSettings } from "../hooks/useSettings";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { readProjects, readThreadShell } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
@@ -77,15 +74,6 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       handleNewThread,
     };
   };
-  // Grouped like the sidebar, so the shortcut and the New thread button agree.
-  const readProjectGroups = () =>
-    buildSidebarProjectSnapshots({
-      projects: readProjects(),
-      groupScratchProjects: true,
-      settings: selectProjectGroupingSettings(getClientSettings()),
-      primaryEnvironmentId: appAtomRegistry.get(primaryEnvironmentIdAtom),
-      resolveEnvironmentLabel: () => null,
-    });
   const canOperatePreview = (environmentId: EnvironmentId) =>
     readEnvironmentScope(environmentId, AuthPreviewOperateScope);
 
@@ -123,19 +111,9 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         void scratch.startScratchThread(environmentId);
       },
       "chat.new": (event) => {
-        // The boring sidebar's folders already show the context, so it starts in
-        // the current project like the legacy sidebar did.
+        // Folder sidebars create in their current project.
         const { boringSidebarEnabled, legacySidebarEnabled } = getClientSettings();
-        const groups = readProjectGroups();
-        if (
-          !boringSidebarEnabled &&
-          !legacySidebarEnabled &&
-          !shouldCreateNewThreadInCurrentProject(
-            false,
-            groups.filter((group) => !group.archived).length,
-            groups.length,
-          )
-        ) {
+        if (!boringSidebarEnabled && !legacySidebarEnabled) {
           claim(event);
           openCommandPalette({ open: "new-thread-in" });
           return;
