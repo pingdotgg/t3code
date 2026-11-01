@@ -10,7 +10,9 @@ import {
 } from "@t3tools/contracts";
 import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
@@ -176,6 +178,12 @@ function matchesThreadSnapshot(
   );
 }
 
+// A pre-allocated draft id's probe runs before its send's launch commits the
+// thread, so "missing" is not definitive until no launch can be in flight.
+const THREAD_PENDING_CREATION_PROBE_DELAY_START_MILLIS = 250;
+const THREAD_PENDING_CREATION_PROBE_DELAY_MAX_MILLIS = 8000;
+const THREAD_PENDING_CREATION_PROBE_BUDGET_MILLIS = 90_000;
+
 function cachedThreadState(value: EnvironmentThreadState): EnvironmentThreadState {
   return {
     ...value,
@@ -253,6 +261,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   };
   if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
   const awaitingCompletion = yield* Ref.make(false);
+  const pendingCreationBudgetStartMillis = yield* Ref.make<number | undefined>(undefined);
   const applyLock = yield* Semaphore.make(1);
   // Save only completed data/cursor updates. A canceled scope must not cache
   // a cursor whose event has not reached the data yet.
@@ -402,6 +411,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   ) {
     const waiting = yield* Ref.get(awaitingCompletion);
     const sequence = yield* SubscriptionRef.get(lastSequence);
+    yield* Ref.set(pendingCreationBudgetStartMillis, undefined);
     // Atomic with concurrent history meta updates: never get-then-set the whole
     // state when only the projection changes. Bounded installs pass history so
     // projection + cursor persist together in one enqueue.
@@ -449,6 +459,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
   const setDeleted = Effect.fn("EnvironmentThreadState.setDeleted")(function* () {
     yield* Ref.set(awaitingCompletion, false);
+    yield* Ref.set(pendingCreationBudgetStartMillis, undefined);
     yield* SubscriptionRef.set(state, {
       data: Option.none(),
       status: "deleted",
@@ -965,45 +976,69 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               }),
             ),
           );
-          const httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
-            yield* snapshotLoader.load(prepared, threadId);
-          switch (httpResult._tag) {
-            case "present": {
-              if (canLoadHistory && httpResult.history !== undefined) {
-                yield* Ref.set(acceptsBoundedSocketSnapshots, true);
+          let budgetStartMillis = yield* Ref.get(pendingCreationBudgetStartMillis);
+          let missingProbes = 0;
+          probe: for (;;) {
+            const httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
+              yield* snapshotLoader.load(prepared, threadId);
+            switch (httpResult._tag) {
+              case "present": {
+                if (canLoadHistory && httpResult.history !== undefined) {
+                  yield* Ref.set(acceptsBoundedSocketSnapshots, true);
+                }
+                // Atomic projection + progressive meta so a settled bounded window
+                // never persists as a complete full-timeline cache entry. Socket
+                // snapshots still go through applyItem (resetHistory).
+                yield* applyLock.withPermits(1)(
+                  Effect.gen(function* () {
+                    yield* SubscriptionRef.set(lastSequence, httpResult.snapshot.snapshotSequence);
+                    const history: ThreadHistoryMeta =
+                      httpResult.history !== undefined
+                        ? {
+                            historyCursor: httpResult.history.historyCursor,
+                            hasMoreHistory: httpResult.history.hasMoreHistory,
+                            loading: false,
+                            error: null,
+                            expanded: false,
+                            latestLocalTurnOrdinal:
+                              httpResult.history.latestLocalTurnOrdinal ?? null,
+                          }
+                        : EMPTY_THREAD_HISTORY_META;
+                    yield* setThread(httpResult.snapshot.projection, { history });
+                    yield* remember;
+                  }),
+                );
+                current = yield* SubscriptionRef.get(state);
+                break probe;
               }
-              // Atomic projection + progressive meta so a settled bounded window
-              // never persists as a complete full-timeline cache entry. Socket
-              // snapshots still go through applyItem (resetHistory).
-              yield* applyLock.withPermits(1)(
-                Effect.gen(function* () {
-                  yield* SubscriptionRef.set(lastSequence, httpResult.snapshot.snapshotSequence);
-                  const history: ThreadHistoryMeta =
-                    httpResult.history !== undefined
-                      ? {
-                          historyCursor: httpResult.history.historyCursor,
-                          hasMoreHistory: httpResult.history.hasMoreHistory,
-                          loading: false,
-                          error: null,
-                          expanded: false,
-                          latestLocalTurnOrdinal: httpResult.history.latestLocalTurnOrdinal ?? null,
-                        }
-                      : EMPTY_THREAD_HISTORY_META;
-                  yield* setThread(httpResult.snapshot.projection, { history });
-                  yield* remember;
-                }),
-              );
-              current = yield* SubscriptionRef.get(state);
-              break;
-            }
-            case "missing": {
-              yield* setDeleted();
-              // A 404 also means "not created yet". Only a delete event may outlive this mount.
-              if (resumeCache?.owner === owner) resumeCache.snapshot = undefined;
-              return yield* Effect.never;
-            }
-            case "unavailable": {
-              break;
+              case "missing": {
+                // The send holding this pre-allocated id commits seconds later;
+                // probe with backoff until the budget lapses, then treat the id
+                // as deleted. Only a confirmed missing starts the deadline, so
+                // an exit on transport failure leaves no stale start behind.
+                if (budgetStartMillis === undefined) {
+                  budgetStartMillis = yield* Clock.currentTimeMillis;
+                  yield* Ref.set(pendingCreationBudgetStartMillis, budgetStartMillis);
+                }
+                const elapsedMillis = (yield* Clock.currentTimeMillis) - budgetStartMillis;
+                if (elapsedMillis >= THREAD_PENDING_CREATION_PROBE_BUDGET_MILLIS) {
+                  yield* setDeleted();
+                  // A 404 also means "not created yet". Only a delete event may outlive this mount.
+                  if (resumeCache?.owner === owner) resumeCache.snapshot = undefined;
+                  return yield* Effect.never;
+                }
+                const delay = Math.min(
+                  THREAD_PENDING_CREATION_PROBE_DELAY_START_MILLIS * 2 ** missingProbes,
+                  THREAD_PENDING_CREATION_PROBE_DELAY_MAX_MILLIS,
+                  THREAD_PENDING_CREATION_PROBE_BUDGET_MILLIS - elapsedMillis,
+                );
+                missingProbes += 1;
+                yield* Effect.sleep(Duration.millis(delay));
+                continue probe;
+              }
+              case "unavailable": {
+                break probe;
+              }
             }
           }
         }

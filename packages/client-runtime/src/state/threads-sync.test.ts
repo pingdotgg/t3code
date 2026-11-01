@@ -15,6 +15,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -112,6 +113,10 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     readonly latestLocalTurnOrdinal?: number | null;
   };
   readonly httpSnapshot?: ThreadSnapshotLoadResult;
+  /** Verdicts consumed in order; the last verdict repeats for later probes. */
+  readonly httpSnapshots?: ReadonlyArray<ThreadSnapshotLoadResult>;
+  /** Virtual clock time each load consumes, simulating probe request time. */
+  readonly httpSnapshotCostMillis?: number;
   /** The test sends the completion marker itself instead of the fake server sending it first. */
   readonly completionMarker?: boolean;
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
@@ -178,12 +183,25 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   );
   const snapshotLoader = ThreadSnapshotLoader.ThreadSnapshotLoader.of({
     load: (_prepared, threadId) =>
-      Ref.update(loaderCalls, (count) => count + 1).pipe(
-        Effect.as(
-          threadId === THREAD_ID
-            ? (options?.httpSnapshot ??
-                ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult))
-            : ({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult),
+      (options?.httpSnapshotCostMillis !== undefined
+        ? Effect.sleep(Duration.millis(options.httpSnapshotCostMillis))
+        : Effect.void
+      ).pipe(
+        Effect.andThen(
+          Ref.modify(loaderCalls, (count) => {
+            const call = count + 1;
+            const verdict: ThreadSnapshotLoadResult =
+              threadId === THREAD_ID
+                ? options?.httpSnapshots !== undefined
+                  ? (options.httpSnapshots[
+                      Math.min(call - 1, options.httpSnapshots.length - 1)
+                    ] ?? {
+                      _tag: "unavailable",
+                    })
+                  : (options?.httpSnapshot ?? { _tag: "unavailable" })
+                : { _tag: "unavailable" };
+            return [verdict, call];
+          }),
         ),
       ),
   });
@@ -446,6 +464,133 @@ describe("EnvironmentThreads", () => {
       }),
   );
 
+  it.effect(
+    "retries a pending pre-allocated id's missing probe until its send commits the thread",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({
+          // Verdicts consumed in call order; the last one repeats. The loop backs
+          // off through the missing verdicts (250ms, 500ms, 1000ms, 2s) until the
+          // thread commits and the fifth probe finds it.
+          httpSnapshots: [
+            { _tag: "missing" },
+            { _tag: "missing" },
+            { _tag: "missing" },
+            { _tag: "missing" },
+            { _tag: "present", snapshot: { snapshotSequence: 5, projection: BASE_PROJECTION } },
+          ],
+        });
+        yield* awaitThreadState(h.observed, (value) => value.status === "synchronizing");
+
+        // The clock jump releases the 250ms, 500ms and 1000ms sleeps; three probes
+        // see "missing", then the fifth (after the 2s sleep) finds the thread.
+        yield* TestClock.adjust("2 seconds");
+        yield* TestClock.adjust("4 seconds");
+        const state = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+        expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+        expect(yield* Ref.get(h.loaderCalls)).toBe(5);
+        expect(yield* SubscriptionRef.get(h.subscriptionCount)).toBe(1);
+        yield* Effect.yieldNow;
+        expect(yield* Ref.get(h.lastSubscribeAfterSequence)).toBe(5);
+      }),
+  );
+
+  it.effect("treats an id as deleted once the pending-creation probe budget lapses", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        httpSnapshot: { _tag: "missing" },
+      });
+      yield* awaitThreadState(h.observed, (value) => value.status === "synchronizing");
+
+      // Backoff delays cap at 8s; the budget lapses after 17 probes.
+      for (let i = 0; i < 20; i++) {
+        yield* TestClock.adjust("10 seconds");
+      }
+      const state = yield* awaitThreadState(h.observed, (value) => value.status === "deleted");
+      expect(Option.isNone(state.data)).toBe(true);
+      expect(yield* Ref.get(h.loaderCalls)).toBe(17);
+      // The parked subscription must not have opened the socket.
+      expect(yield* SubscriptionRef.get(h.subscriptionCount)).toBe(0);
+    }),
+  );
+
+  it.effect("counts probe request time against the pending-creation budget", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        httpSnapshot: { _tag: "missing" },
+        httpSnapshotCostMillis: 30_000,
+      });
+      yield* awaitThreadState(h.observed, (value) => value.status === "synchronizing");
+
+      // The deadline starts at the first confirmed missing, then every 30s
+      // request counts against it; sleep-only accounting probes ~17 times.
+      for (let i = 0; i < 10; i++) {
+        yield* TestClock.adjust("30 seconds");
+      }
+      const state = yield* awaitThreadState(h.observed, (value) => value.status === "deleted");
+      expect(Option.isNone(state.data)).toBe(true);
+      expect(yield* Ref.get(h.loaderCalls)).toBe(4);
+      expect(yield* SubscriptionRef.get(h.subscriptionCount)).toBe(0);
+    }),
+  );
+
+  it.effect("keeps the retained budget across a failed probe and a socket round trip", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        httpSnapshots: [
+          ...Array.from({ length: 15 }, () => ({ _tag: "missing" }) as const),
+          { _tag: "unavailable" },
+          { _tag: "missing" },
+        ],
+      });
+      yield* awaitThreadState(h.observed, (value) => value.status === "synchronizing");
+
+      // 15 missing probes spend ~80s of budget, then a foreground wakeup
+      // replaces the attempt. Its first probe hits a transport failure and
+      // falls back to the socket, which must not clear or restart the
+      // deadline; the next attempt's first missing finishes it.
+      yield* TestClock.adjust("80 seconds");
+      yield* Queue.offer(h.wakeups, "application-active");
+      // The replacement attempt must actually run before time advances any
+      // further: the resubscription opens the socket.
+      const socketOpens = yield* SubscriptionRef.changes(h.subscriptionCount).pipe(
+        Stream.filter((count) => count >= 1),
+        Stream.runHead,
+      );
+      expect(Option.isSome(socketOpens)).toBe(true);
+
+      yield* Queue.offer(h.wakeups, "application-active");
+      yield* TestClock.adjust("12 seconds");
+      const state = yield* awaitThreadState(h.observed, (value) => value.status === "deleted");
+      expect(Option.isNone(state.data)).toBe(true);
+      expect(yield* Ref.get(h.loaderCalls)).toBe(23);
+      expect(yield* SubscriptionRef.get(h.subscriptionCount)).toBe(1);
+    }),
+  );
+
+  it.effect("a transport failure during the first probe does not start the deadline", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        httpSnapshots: [{ _tag: "unavailable" }, { _tag: "missing" }],
+      });
+      yield* awaitThreadState(h.observed, (value) => value.status === "synchronizing");
+
+      // The only probe exits on a transport failure and falls back to the
+      // socket, so the deadline must not begin until a missing is confirmed;
+      // a stale start would delete the thread on the next attempt's first
+      // missing instead of giving it a full budget.
+      yield* TestClock.adjust("100 seconds");
+      yield* Queue.offer(h.wakeups, "application-active");
+      yield* TestClock.adjust("2 seconds");
+      // Post-fix the first missing starts a fresh budget and backoff keeps
+      // probing (calls 2-5); a stale start would have deleted at call 2.
+      expect(yield* Ref.get(h.loaderCalls)).toBe(5);
+      yield* TestClock.adjust("95 seconds");
+      const state = yield* awaitThreadState(h.observed, (value) => value.status === "deleted");
+      expect(Option.isNone(state.data)).toBe(true);
+    }),
+  );
+
   it.effect("flushes newer data after an older background write completes", () =>
     Effect.gen(function* () {
       const writing = yield* Deferred.make<void>();
@@ -682,6 +827,8 @@ describe("EnvironmentThreads", () => {
       yield* Effect.scoped(
         Effect.gen(function* () {
           const first = yield* makeHarness({ httpSnapshot: { _tag: "missing" }, resumeCache });
+          yield* awaitThreadState(first.observed, (value) => value.status === "synchronizing");
+          yield* TestClock.adjust("90 seconds");
           yield* awaitThreadState(first.observed, (value) => value.status === "deleted");
         }),
       );
