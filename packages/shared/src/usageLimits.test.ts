@@ -132,6 +132,9 @@ describe("new thread model fallback", () => {
     ["antigravity", ["gemini-weekly"], "antigravity-default", true],
     ["opencode", ["go_weekly"], "opencode/big-pickle", false],
     ["opencode", ["go_weekly"], "opencode-go/big-pickle", true],
+    ["claudeAgent", ["seven_day_fable"], "claude-fable-5-1", true],
+    ["claudeAgent", ["seven_day_fable"], "claude-opus-5-5", false],
+    ["claudeAgent", ["seven_day"], "claude-opus-5-5", true],
   ] as const)("matches %s pools %s to %s", (driver, ids, model, usesFallback) => {
     const defaultSelection = { ...selection, model };
     expect(
@@ -150,6 +153,25 @@ describe("new thread model fallback", () => {
         ],
       }).selection,
     ).toEqual(usesFallback ? fallback : defaultSelection);
+  });
+  it("falls back to another model on the same Claude instance when only its model limit is spent", () => {
+    const claude = provider({
+      instanceId: fallback.instanceId,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      usageLimits: {
+        checkedAt: limited.checkedAt,
+        windows: [{ ...window, id: "seven_day_fable", usedPercent: 100 }],
+      },
+    });
+    const opus = { ...fallback, model: "claude-opus-5-5" };
+    expect(
+      resolveNewThreadModelSelection({
+        ...defaults,
+        defaultSelection: fallback,
+        fallbackSelection: opus,
+        providers: [claude],
+      }).selection,
+    ).toEqual(opus);
   });
 });
 
