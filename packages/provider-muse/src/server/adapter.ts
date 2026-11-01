@@ -30,6 +30,7 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -322,6 +323,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const commands = yield* Semaphore.make(1);
       const eventPermit = yield* Semaphore.make(1);
       let host: MuseSdkHost;
+      let hostScope: Scope.Closeable;
       let hostEpoch = 0;
       let closed = false;
       let broken = false;
@@ -1668,6 +1670,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       );
       const launchHost = Effect.fnUntraced(function* () {
         const epoch = ++hostEpoch;
+        const owned = yield* Scope.fork(scope);
         const mcpSession = yield* mcpSessions.read(input.threadId);
         const environment = McpProviderSession.withAgentDeviceEnvironment(
           options.environment,
@@ -1684,10 +1687,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         const scopeUnit = launch.unit;
         const stopScope =
           scopeUnit === undefined ? Effect.void : yield* Effect.cached(agentScope.stop(scopeUnit));
-        yield* Scope.addFinalizer(scope, stopScope);
+        yield* Scope.addFinalizer(owned, stopScope);
         const processExited = yield* Deferred.make<ProcessExit>();
         // Observe raw exit before acquisition: inherited stdout can also block startup cleanup.
-        yield* Deferred.await(processExited).pipe(Effect.andThen(stopScope), Effect.forkIn(scope));
+        yield* Deferred.await(processExited).pipe(Effect.andThen(stopScope), Effect.forkIn(owned));
         const created = yield* Effect.acquireRelease(
           createMuseSdkHostEffect(
             {
@@ -1713,22 +1716,23 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           ),
           (created) =>
             Effect.gen(function* () {
-              if (host === created) {
+              if (epoch === hostEpoch) {
                 closed = true;
                 hostEpoch++;
               }
-              const close = Effect.tryPromise(() => created.close());
               // SDK shutdown sends SIGKILL after 10s + 2s, but inherited pipes can
-              // keep its close promise pending. Let the scope reap those holders.
-              yield* (
-                scopeUnit === undefined
-                  ? close
-                  : close.pipe(Effect.interruptible, Effect.timeoutOption("13 seconds"))
-              ).pipe(Effect.ignore);
+              // keep its close promise pending. Stop waiting then; the scope unit,
+              // when there is one, reaps those holders.
+              yield* Effect.tryPromise(() => created.close()).pipe(
+                Effect.interruptible,
+                Effect.timeoutOption("13 seconds"),
+                Effect.ignore,
+              );
             }),
           { interruptible: true },
-        ).pipe(Effect.provideService(Scope.Scope, scope));
+        ).pipe(Effect.provideService(Scope.Scope, owned));
         host = created;
+        hostScope = owned;
         created.connection.onNotification((notification) => {
           Queue.offerUnsafe(inbox, {
             type: "notification",
@@ -1771,7 +1775,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         void created.exited.then(reportExit);
         yield* Deferred.await(processExited).pipe(
           Effect.tap((exit) => Effect.sync(() => reportExit(exit))),
-          Effect.forkIn(scope),
+          Effect.forkIn(owned),
         );
       });
       yield* Effect.addFinalizer(() =>
@@ -1841,30 +1845,59 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             : undefined;
           const startModel = yield* resolveModel(args.modelSelection);
           const permissionProfile = musePermissionProfile(args.runtimePolicy.runtimeMode);
-          const result = yield* request(
-            requestedId ? "session/resume" : "session/start",
-            requestedId
-              ? { excludeItems: true, ...(config ? { config } : {}), permissionProfile }
-              : {
-                  workspaceRoot: cwd,
-                  ...(config ? { config } : {}),
-                  ...(startModel ? { modelId: startModel } : {}),
-                  providerId: "meta",
-                  approvalMode: museApprovalMode(args.runtimePolicy.runtimeMode),
-                  permissionProfile,
-                },
-          ).pipe(
-            Effect.catch((error) => {
-              missingNativeSession =
-                requestedId !== undefined &&
-                error.payload instanceof MspError &&
-                (error.payload.kind === "sessionNotFound" || error.payload.kind === "notFound");
-              return Effect.fail(error);
-            }),
-            Effect.flatMap((value) => decode(MuseSessionResult, value)),
-          );
-          if (result.session.sessionId !== nativeSessionId)
-            return yield* protocolError("Muse returned a different session identity");
+          const open = Effect.gen(function* () {
+            const result = yield* request(
+              requestedId ? "session/resume" : "session/start",
+              requestedId
+                ? { excludeItems: true, ...(config ? { config } : {}), permissionProfile }
+                : {
+                    workspaceRoot: cwd,
+                    ...(config ? { config } : {}),
+                    ...(startModel ? { modelId: startModel } : {}),
+                    providerId: "meta",
+                    approvalMode: museApprovalMode(args.runtimePolicy.runtimeMode),
+                    permissionProfile,
+                  },
+            ).pipe(
+              Effect.catch((error) => {
+                missingNativeSession =
+                  requestedId !== undefined &&
+                  error.payload instanceof MspError &&
+                  (error.payload.kind === "sessionNotFound" || error.payload.kind === "notFound");
+                return Effect.fail(error);
+              }),
+              Effect.flatMap((value) => decode(MuseSessionResult, value)),
+            );
+            if (result.session.sessionId !== nativeSessionId)
+              return yield* protocolError("Muse returned a different session identity");
+            return result;
+          });
+          let result = yield* open;
+          // Muse Code 1.4.12 never starts session MCP servers on a host whose resume replays
+          // queued work, and MSP cannot reload them. Closing the host cancels one replayed
+          // item, so resume on fresh hosts until one comes back idle.
+          if (config)
+            for (let relaunch = 0; result.session.activeTurnId; relaunch++) {
+              if (relaunch === 5) {
+                yield* Effect.logWarning(
+                  "Muse kept replaying queued work; T3 tools are unavailable",
+                );
+                break;
+              }
+              yield* Effect.logWarning("Muse replayed queued work without T3 tools; relaunching");
+              const replaying = hostScope;
+              yield* eventPermit.withPermits(1)(
+                Effect.sync(() => {
+                  hostEpoch++;
+                  wake = undefined;
+                }),
+              );
+              // Muse leases a session to one live host, so the replacement waits for
+              // this host's bounded shutdown before it resumes.
+              yield* Scope.close(replaying, Exit.void);
+              yield* launchHost();
+              result = yield* open;
+            }
           if (requestedId)
             yield* request("session/setApprovalMode", {
               mode: museApprovalMode(args.runtimePolicy.runtimeMode),
