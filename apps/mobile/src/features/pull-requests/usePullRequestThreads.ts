@@ -1,7 +1,12 @@
 import { AsyncResult } from "effect/reactivity";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Dialog from "../../components/ui/Dialog";
-import { useNavigation, useNavigationState, useRoute } from "@react-navigation/native";
+import {
+  StackActions,
+  useNavigation,
+  useNavigationState,
+  useRoute,
+} from "@react-navigation/native";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import {
   AuthOrchestrationOperateScope,
@@ -15,7 +20,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
 import { useRef, useState } from "react";
 import { Platform } from "react-native";
-import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
+import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 import { pullRequestComposerContext } from "../../lib/composerContext";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { uuidv4 } from "../../lib/uuid";
@@ -56,8 +61,7 @@ export function usePullRequestThreads(
   };
   const key = JSON.stringify(reference);
   const route = useRoute();
-  // The iOS split host projects detail screens beneath a synthetic workspace
-  // route. Its parent's focus flag is not the visible detail's focus flag.
+  // The iOS synthetic workspace parent's focus differs from the visible detail's focus.
   const focused = useNavigationState((state) => state.routes[state.index]?.key === route.key);
   const relations = useEnvironmentQuery(
     pr && supported && focused ? composerPullRequests.linkedThreads(reference) : null,
@@ -72,13 +76,16 @@ export function usePullRequestThreads(
   const canAsk = !connected || canOperate;
   const canCheckout = useEnvironmentScope(target.environmentId, AuthSourceControlWriteScope);
   const navigation = useNavigation();
-  const selectAndroidWorkspace = useAndroidWorkspaceSelection();
+  const selectDetail = useSelectWorkspaceDetail();
   const pending = useRef(false);
   const previousPrompts = useRef(new Map<string, string>());
   const openThread = (thread: LinkedThread) => {
-    const destination = { environmentId: params.environmentId, threadId: thread.id };
-    if (Platform.OS === "android") selectAndroidWorkspace({ name: "Thread", params: destination });
-    else navigation.navigate("Thread", destination);
+    openThreadRoute({ environmentId: params.environmentId, threadId: thread.id });
+  };
+  // Android shows one page at a time; iOS opens the thread over the pull request, so Back returns.
+  const openThreadRoute = (destination: ReactNavigation.RootParamList["Thread"]) => {
+    if (Platform.OS === "android") selectDetail({ name: "Thread", params: destination });
+    else navigation.dispatch(StackActions.push("Thread", destination));
   };
   const [busy, setBusy] = useState(false);
   const ask = async (thread?: LinkedThread, task: PullRequestAgentTask = "ask") => {
@@ -153,10 +160,7 @@ export function usePullRequestThreads(
       );
       previousPrompts.current.set(draftKey, pullRequestAgentPrompt(task, terminology));
       if (thread) openThread(thread);
-      else
-        navigation.navigate("Thread", {
-          draft: { draftId: draftKey, title: `Ask about #${pr.number}` },
-        });
+      else openThreadRoute({ draft: { draftId: draftKey, title: `Ask about #${pr.number}` } });
     });
     pending.current = false;
     setBusy(false);

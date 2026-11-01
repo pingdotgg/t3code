@@ -1,10 +1,31 @@
 import type { Root, RootContent } from "mdast";
-import { unified } from "unified";
+import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import { remarkKeepWindowsProsePaths } from "@t3tools/shared/markdownWindowsPaths";
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
-const parser = unified().use(remarkParse).use(remarkGfm);
+const parser = unified().use(remarkParse).use(remarkGfm).use(remarkKeepWindowsProsePaths);
 export type MarkdownNode = Root | RootContent;
+
+interface MarkdownEdit {
+  readonly start: number;
+  readonly end: number;
+  readonly content: string;
+}
+
+function applyMarkdownEdits(markdown: string, edits: MarkdownEdit[]): string {
+  if (edits.length === 0) return markdown;
+  const parts: string[] = [];
+  let offset = 0;
+  // AST traversal emits disjoint edits in source order.
+  for (const edit of edits) {
+    parts.push(markdown.slice(offset, edit.start), edit.content);
+    offset = edit.end;
+  }
+  parts.push(markdown.slice(offset));
+  return parts.join("");
+}
 
 function decodeCodePoint(codePoint: number, entity: string): string {
   if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
@@ -142,8 +163,10 @@ function markdownHtmlTags(content: string): RegExpExecArray[] {
       }
     }
     if (closingIndex === -1) {
-      if (fenced) codeRanges.push({ start: opening.index, end: content.length });
-      continue;
+      if (!fenced) continue;
+      // An unclosed fence runs to the end of the content, so no later opener matters.
+      codeRanges.push({ start: opening.index, end: content.length });
+      break;
     }
     const closing = delimiters[closingIndex]!;
     codeRanges.push({ start: opening.index, end: closing.index + closing[0].length });
@@ -261,35 +284,82 @@ export function markdownWithHtml(markdown: string): string {
   return markdown;
 }
 
-const INLINE_CODE_SPAN = /`+([^`\r\n]+)`+/g;
+// Start only at the beginning of a backtick run to avoid retrying every suffix.
+const INLINE_CODE_SPAN = /(?<!`)`+([^`\r\n]+)`+/g;
 
 export function markdownWithInlineFileLinks(markdown: string, fileLink: RegExp): string {
-  if (![...markdown.matchAll(INLINE_CODE_SPAN)].some(([, code]) => fileLink.test(code!.trim())))
-    return markdown;
-  const edits: Array<{ start: number; end: number; content: string }> = [];
+  return transformNativeMarkdown(markdown, fileLink, false);
+}
+
+function transformNativeMarkdown(
+  markdown: string,
+  fileLink: RegExp | undefined,
+  tableBreaks: boolean,
+): string {
+  const breakTables = tableBreaks && mayHaveTableUnderText(markdown);
+  let linkFiles = false;
+  if (fileLink) {
+    for (const [, code] of markdown.matchAll(INLINE_CODE_SPAN)) {
+      if (fileLink.test(code!.trim())) {
+        linkFiles = true;
+        break;
+      }
+    }
+  }
+  if (!linkFiles && !breakTables) return markdown;
+  const edits: MarkdownEdit[] = [];
+  const fileEdits: MarkdownEdit[] = [];
+  let rewritesPipe = false;
   const visit = (node: MarkdownNode) => {
-    if (node.type === "inlineCode") {
+    if (linkFiles && node.type === "inlineCode") {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
       const escaped = node.value.replace(/[\\[\]&]/g, "\\$&");
       if (
         start !== undefined &&
         end !== undefined &&
-        fileLink.test(node.value) &&
+        fileLink?.test(node.value) &&
         !/[<>]/.test(node.value)
-      )
-        edits.push({
+      ) {
+        const edit = {
           start,
           end,
           content: `[${escaped}](<${escaped}>)`,
-        });
+        };
+        edits.push(edit);
+        fileEdits.push(edit);
+        if (node.value.includes("|")) rewritesPipe = true;
+      }
     } else if (node.type !== "link" && node.type !== "linkReference" && "children" in node)
-      node.children.forEach(visit);
+      node.children.forEach((child, index) => {
+        const previous = node.children[index - 1];
+        const start = child.position?.start;
+        if (
+          breakTables &&
+          child.type === "table" &&
+          previous?.type === "paragraph" &&
+          start?.offset !== undefined &&
+          previous.position?.end.line === start.line - 1
+        ) {
+          let lineStart = start.offset;
+          while (lineStart > 0 && !/[\r\n]/.test(markdown[lineStart - 1]!)) lineStart -= 1;
+          // Replace only the container prefix, leaving cell edits disjoint from the table break.
+          const [, header = "", , ending = "\n", markers = ""] =
+            /^([ \t>]*)([^\r\n]*)(\r\n|\r|\n)([ \t>]*)/.exec(markdown.slice(lineStart)) ?? [];
+          edits.push({
+            start: lineStart,
+            end: lineStart + header.length,
+            content: `${markers.trimEnd()}${ending}${markers}`,
+          });
+        }
+        visit(child);
+      });
   };
   visit(parser.parse(markdown));
-  for (const edit of edits.reverse())
-    markdown = markdown.slice(0, edit.start) + edit.content + markdown.slice(edit.end);
-  return markdown;
+  // Rewritten pipes can change table structure, so preserve the original pass ordering.
+  if (breakTables && rewritesPipe)
+    return markdownWithTableBreaks(applyMarkdownEdits(markdown, fileEdits));
+  return applyMarkdownEdits(markdown, edits);
 }
 
 // A delimiter row such as `|---|:--:|`, possibly inside a blockquote or list item.
@@ -302,7 +372,6 @@ function isTableDelimiterRow(line: string): boolean {
     .every((cell) => /^:?-+:?$/.test(cell.trim()));
 }
 
-// Cheap pre-check for a delimiter row two lines below text, so most messages skip the parse.
 function mayHaveTableUnderText(markdown: string): boolean {
   if (!markdown.includes("|")) return false;
   const lines = markdown.split(/\r\n|\r|\n/);
@@ -312,48 +381,118 @@ function mayHaveTableUnderText(markdown: string): boolean {
   return false;
 }
 
-/**
- * GFM lets a table interrupt a paragraph, but the native parser (md4c) only starts a table
- * on a paragraph's first line, so a table right under a line of text renders as one
- * run-on paragraph. Insert the blank line md4c needs before each such table.
- */
+/** md4c starts tables only at paragraph starts; insert breaks to match GFM. */
 export function markdownWithTableBreaks(markdown: string): string {
-  if (!mayHaveTableUnderText(markdown)) return markdown;
-  const lineStarts: number[] = [];
-  const visit = (node: MarkdownNode) => {
-    if (!("children" in node)) return;
-    node.children.forEach((child, index) => {
-      const previous = node.children[index - 1];
-      const start = child.position?.start;
-      if (
-        child.type === "table" &&
-        previous?.type === "paragraph" &&
-        start?.offset !== undefined &&
-        previous.position?.end.line === start.line - 1
-      )
-        lineStarts.push(
-          Math.max(
-            markdown.lastIndexOf("\n", start.offset - 1),
-            markdown.lastIndexOf("\r", start.offset - 1),
-          ) + 1,
-        );
-      visit(child);
-    });
-  };
-  visit(parser.parse(markdown));
-  for (const lineStart of lineStarts.reverse()) {
-    // The header row may be a lazy line without its container markers (`>` or list indent),
-    // so copy the delimiter row's markers onto the blank line and the header row.
-    const [, header = "", cells = "", ending = "\n", markers = ""] =
-      /^([ \t>]*)([^\r\n]*)(\r\n|\r|\n)([ \t>]*)/.exec(markdown.slice(lineStart)) ?? [];
-    markdown =
-      markdown.slice(0, lineStart) +
-      `${markers.trimEnd()}${ending}${markers}${cells}` +
-      markdown.slice(lineStart + header.length + cells.length);
+  return transformNativeMarkdown(markdown, undefined, true);
+}
+
+// `>` covers a destination continued on a blockquote line.
+const WINDOWS_DESTINATION = /\](?:\(|:)[\s>]*<?(?:[A-Za-z]:[\\/]|\\\\)/;
+
+interface DestinationToken {
+  readonly start: { readonly offset: number };
+  readonly end: { readonly offset: number };
+}
+
+/**
+ * Markdown reads `C:\work\.t3` as `C:\work.t3`. Web keeps authored Windows destinations
+ * literally (see `remarkKeepWindowsPaths` in shared), so escape their backslashes to give
+ * both parsers here the same path. `\&` stays an escape, as `markdownWithHtml` emits it.
+ * Expects authored Markdown: already escaped output would be escaped twice.
+ */
+function markdownWithWindowsPathDestinations(markdown: string): string {
+  // Skips the extra parse for the common message that has no Windows destination.
+  if (!WINDOWS_DESTINATION.test(markdown)) return markdown;
+  const edits: MarkdownEdit[] = [];
+  function record(
+    this: { resume(): string; sliceSerialize(token: DestinationToken): string },
+    token: DestinationToken,
+  ) {
+    this.resume();
+    const authored = this.sliceSerialize(token);
+    if (!isWindowsAbsolutePath(authored) || !authored.includes("\\") || /[<>]/.test(authored))
+      return;
+    const start = token.start.offset;
+    const end = token.end.offset;
+    const escaped = authored.replace(/\\(?!&)/g, "\\\\");
+    // A bare destination ends at an unescaped `)`, so wrap it to keep `\)` inside.
+    const angled = markdown[start - 1] === "<";
+    edits.push({ start, end, content: angled ? escaped : `<${escaped}>` });
   }
-  return markdown;
+  unified()
+    .use(remarkParse)
+    .use(remarkGfm)
+    .use(function (this: Processor) {
+      (this.data().fromMarkdownExtensions ??= []).push({
+        exit: { resourceDestinationString: record, definitionDestinationString: record },
+      });
+    })
+    .parse(markdown);
+  return applyMarkdownEdits(markdown, edits);
+}
+
+// HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
+export function markdownForNativeParsing(markdown: string): string {
+  return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
 }
 
 export function parseMarkdownDocument(markdown: string): Root {
-  return parser.parse(markdownWithHtml(markdown));
+  return parser.parse(markdownForNativeParsing(markdown));
+}
+
+export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
+  return transformNativeMarkdown(markdownForNativeParsing(markdown), fileLink, true);
+}
+
+/** Native media slots only cover standalone images; nested file embeds must become links. */
+export function markdownWithFileEmbeds(
+  markdown: string,
+  label: (href: string, standalone: boolean) => string | null,
+): { markdown: string; fileHrefs: ReadonlySet<string> } {
+  const fileHrefs = new Set<string>();
+  if (!markdown.includes("![")) return { markdown, fileHrefs };
+  const root = parser.parse(markdown);
+  const topLevelBlocks = new Set<MarkdownNode>(root.children);
+  const definitions = new Map<string, string>();
+  const collect = (node: MarkdownNode) => {
+    if (node.type === "definition") {
+      const identifier = node.identifier.toUpperCase();
+      if (!definitions.has(identifier)) definitions.set(identifier, node.url);
+    }
+    if ("children" in node) node.children.forEach(collect);
+  };
+  collect(root);
+  const edits: Array<{ start: number; end: number; content: string }> = [];
+  const visit = (node: MarkdownNode, standalone = false, insideLink = false) => {
+    if (node.type === "image" || node.type === "imageReference") {
+      const href =
+        node.type === "image" ? node.url : definitions.get(node.identifier.toUpperCase());
+      const name = href === undefined ? null : label(href, standalone);
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (href !== undefined && name !== null && start !== undefined && end !== undefined) {
+        const text = name.replace(/[\\[\]`*_~|&<>]/g, "\\$&");
+        const url = href.replace(/[\\&]/g, "\\$&").replace(/</g, "%3C").replace(/>/g, "%3E");
+        edits.push({ start, end, content: insideLink ? text : `[${text}](<${url}>)` });
+        fileHrefs.add(href);
+      }
+    }
+    if ("children" in node)
+      node.children.forEach((child) =>
+        visit(
+          child,
+          node.type === "paragraph" && node.children.length === 1 && topLevelBlocks.has(node),
+          insideLink || node.type === "link" || node.type === "linkReference",
+        ),
+      );
+  };
+  visit(root);
+  const parts: string[] = [];
+  let offset = 0;
+  for (const edit of edits) {
+    parts.push(markdown.slice(offset, edit.start), edit.content);
+    offset = edit.end;
+  }
+  parts.push(markdown.slice(offset));
+  return { markdown: parts.join(""), fileHrefs };
 }

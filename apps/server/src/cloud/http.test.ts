@@ -13,7 +13,6 @@ import {
 } from "@t3tools/contracts/relay";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpServer } from "effect/http";
 import * as Etag from "effect/http/Etag";
@@ -78,7 +77,7 @@ const layerLinkProofRoutes = HttpApiBuilder.layer(LinkProofTestApi).pipe(
   Layer.provide(AuthHttp.layerAuthenticatedAuth),
   Layer.provide(CloudLink.layer),
   Layer.provide(
-    Layer.mock(ConnectReachability.ConnectReachability)({ latest: Effect.succeed(Option.none()) }),
+    Layer.mock(ConnectReachability.ConnectReachability)({ latest: Effect.succeedNone }),
   ),
   Layer.provide(EnvironmentAuth.layer),
   Layer.provide([

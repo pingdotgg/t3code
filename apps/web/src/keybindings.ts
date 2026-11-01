@@ -107,8 +107,7 @@ export function shortcutConflictKey(
 
 function shortcutForContext(binding: ResolvedKeybindingRule, context: ShortcutMatchContext) {
   const shortcut = binding.shortcut;
-  // Existing installs persist Mod+Enter. Resolve its alternate chord against
-  // the send preference without rewriting saved or remapped shortcuts.
+  // Resolve persisted Mod+Enter against send preference without rewriting saved shortcuts.
   if (
     context.composerRequiresModifier &&
     binding.command === "composer.sendAlternate" &&
@@ -278,9 +277,7 @@ export function shouldShowThreadJumpHintsForModifiers(
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
-  // The embedded terminal owns keystrokes while it has focus: the Ghostty surface encodes the
-  // keydown and can write the pressed key into the shell before our window-level shortcut handling
-  // ever runs, regardless of any configured `when` clause on the jump command.
+  // Ghostty can write keys to the shell before window shortcuts run, regardless of the when clause.
   if (resolveContext(options).terminalFocus) {
     return false;
   }
@@ -465,10 +462,6 @@ export function terminalNavigationShortcutData(
       return moveLine;
     }
     return null;
-  }
-
-  if (event.ctrlKey && !event.metaKey && !event.altKey) {
-    return moveWord;
   }
 
   if (event.altKey && !event.metaKey && !event.ctrlKey) {

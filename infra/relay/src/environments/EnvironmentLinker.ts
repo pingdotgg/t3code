@@ -287,11 +287,7 @@ const make = Effect.gen(function* () {
           stage: "validate_origin",
         });
       }
-      // Downgrading a managed link to publish-only must release the tunnel and
-      // DNS that were provisioned for it — nothing else cleans them up until a
-      // full unlink. Best effort: a cleanup failure must not block the link
-      // itself, and the provider treats an absent allocation as already
-      // deprovisioned, so retrying on every non-tunnel link is cheap.
+      // Non-tunnel links must release provisioned tunnel/DNS resources; best-effort deprovision is idempotent.
       if (!input.request.managedTunnelsEnabled) {
         yield* managedEndpointProvider
           .deprovision({
@@ -316,10 +312,7 @@ const make = Effect.gen(function* () {
           })
         : null;
       const endpoint = provisioned?.endpoint ?? verified.endpoint;
-      // The secure-endpoint requirement only matters when the relay advertises
-      // this endpoint for other devices to reach (managed tunnel). Publish-only
-      // links are reached out of band (e.g. Tailscale) and their stored endpoint
-      // is never used for routing, so a nominal endpoint is acceptable.
+      // Only advertised managed endpoints need secure URLs; publish-only links route out of band.
       if (input.request.managedTunnelsEnabled && !isSecureManagedEndpoint(endpoint)) {
         return yield* new EnvironmentLinkProofInvalid({
           userId: input.userId,

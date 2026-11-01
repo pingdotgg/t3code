@@ -8,8 +8,7 @@ import * as Path from "effect/Path";
 import * as ServerConfig from "../config.ts";
 import * as ResourceMonitorBinary from "./ResourceMonitorBinary.ts";
 
-// The override checks POSIX exec bits on a real file under a linux platform
-// mock; NTFS never reports those bits, so the check cannot be satisfied there.
+// NTFS lacks POSIX exec bits required by this Linux-mocked override check.
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 
 describe("ResourceMonitorBinary", () => {

@@ -34,6 +34,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   buildPullRequestTimeline,
   groupPullRequestTimelineConversations,
+  type PullRequestTimelineRow,
   isPullRequestVerdictStale,
   newestPullRequestCommitAt,
   pullRequestReviewOutcome,
@@ -41,7 +42,7 @@ import {
   type PullRequestTimelineEvent,
   type PullRequestTimelineThread,
 } from "./pullRequestDetail.logic";
-import { canEditPullRequestComment } from "./pullRequestEditing.logic";
+import { canEditPullRequestComment } from "@t3tools/client-runtime/pull-request-editing";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
@@ -56,6 +57,7 @@ import {
   pullRequestReviewOutcomeToneClassName,
 } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
+import { LegendList, type LegendListRef } from "@legendapp/list/react";
 
 interface ReactionSurface {
   readonly canReact: boolean;
@@ -201,8 +203,6 @@ function ConversationCard({
   });
 
   const save = async (body: string) => {
-    // A review's own summary is not a kind any host rewrites, which is why `editable` is never
-    // one; the check is here because the comment's own type still allows it.
     if (editable === null || saving || editable.kind === "review") return;
     setSaving(true);
     const result = await updateComment({
@@ -350,9 +350,7 @@ function ConversationGroup({
               <div className="mt-1 space-y-1">
                 {events.map((event) => (
                   <ConversationCard
-                    // Named with the pull request too: a remark's id is the host's own, and two
-                    // pull requests can hand out the same one — which would leave one card's open
-                    // editor standing over the other's remark.
+                    // Host comment ids can collide across pull requests.
                     key={`${reactions.reference.projectId}#${reactions.reference.number}:${event.id}`}
                     event={event}
                     editable={editable.get(event.id) ?? null}
@@ -638,7 +636,7 @@ export function PullRequestTimelineTab({
   onOpenCommit,
   onRefresh,
 }: {
-  scrollerRef: (node: HTMLDivElement | null) => void;
+  scrollerRef: (node: HTMLElement | null) => void;
   detail: PullRequestDetailView;
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | null;
@@ -670,66 +668,81 @@ export function PullRequestTimelineTab({
     void readLocalApi()?.shell.openExternal(url);
   };
 
-  return (
-    <div ref={scrollerRef} className="scrollbar-gutter-both h-full overflow-y-auto px-4 py-5">
-      <div className="mx-auto max-w-3xl">
-        <div className="relative">
-          <span aria-hidden className="absolute bottom-5 left-[15px] top-1 w-px bg-border/45" />
-          {rows.map((row) => {
-            if (row.kind === "comments") {
-              return (
-                <ConversationGroup
-                  key={`comments:${row.events[0]?.id ?? "empty"}`}
-                  events={row.events}
-                  editable={editable}
-                  cwd={detail.workspaceRoot}
-                  onOpen={openOnHost}
-                  reactions={reactions}
-                />
-              );
-            }
-            const event = row.event;
-            if (event.thread !== undefined) {
-              return (
-                <ReviewThreadEvent
-                  key={`${reactions.reference.projectId}#${reactions.reference.number}:thread:${event.id}:${event.thread.isResolved}:${pullRequestReviewOutcome(event.reviewState) === "dismissed"}`}
-                  event={event}
-                  thread={event.thread}
-                  editable={editable}
-                  cwd={detail.workspaceRoot}
-                  onOpen={openOnHost}
-                  reactions={reactions}
-                />
-              );
-            }
-            if (event.kind === "commit") {
-              return <CommitEvent key={event.id} event={event} onOpen={onOpenCommit} />;
-            }
-            const outcome = pullRequestReviewOutcome(event.reviewState);
-            if (outcome !== null) {
-              return (
-                <ReviewVerdictEvent
-                  key={event.id}
-                  event={event}
-                  outcome={outcome}
-                  stale={isPullRequestVerdictStale(event.at, newestCommitAt)}
-                  cwd={detail.workspaceRoot}
-                  onOpen={openOnHost}
-                  reactions={reactions}
-                />
-              );
-            }
-            return <LifecycleEvent key={event.id} event={event} term={term} />;
-          })}
-        </div>
+  const rowKey = (row: PullRequestTimelineRow) => {
+    if (row.kind === "comments") return `comments:${row.events[0]?.id ?? "empty"}`;
+    const event = row.event;
+    // A thread's resolution or dismissal remounts it, so its disclosure starts in the new state.
+    return event.thread === undefined
+      ? event.id
+      : `thread:${event.id}:${event.thread.isResolved}:${pullRequestReviewOutcome(event.reviewState) === "dismissed"}`;
+  };
+  const renderRow = ({ item: row }: { item: PullRequestTimelineRow }) => {
+    if (row.kind === "comments") {
+      return (
+        <ConversationGroup
+          events={row.events}
+          editable={editable}
+          cwd={detail.workspaceRoot}
+          onOpen={openOnHost}
+          reactions={reactions}
+        />
+      );
+    }
+    const event = row.event;
+    if (event.thread !== undefined) {
+      return (
+        <ReviewThreadEvent
+          event={event}
+          thread={event.thread}
+          editable={editable}
+          cwd={detail.workspaceRoot}
+          onOpen={openOnHost}
+          reactions={reactions}
+        />
+      );
+    }
+    if (event.kind === "commit") return <CommitEvent event={event} onOpen={onOpenCommit} />;
+    const outcome = pullRequestReviewOutcome(event.reviewState);
+    if (outcome !== null) {
+      return (
+        <ReviewVerdictEvent
+          event={event}
+          outcome={outcome}
+          stale={isPullRequestVerdictStale(event.at, newestCommitAt)}
+          cwd={detail.workspaceRoot}
+          onOpen={openOnHost}
+          reactions={reactions}
+        />
+      );
+    }
+    return <LifecycleEvent event={event} term={term} />;
+  };
 
-        {events.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
-            <PullRequestGlyph.pullRequest className="mb-2 size-5" />
-            <p className="text-xs">No activity yet.</p>
-          </div>
-        ) : null}
+  if (events.length === 0) {
+    return (
+      <div ref={scrollerRef} className="scrollbar-gutter-both h-full overflow-y-auto px-4 py-5">
+        <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+          <PullRequestGlyph.pullRequest className="mb-2 size-5" />
+          <p className="text-xs">No activity yet.</p>
+        </div>
       </div>
-    </div>
+    );
+  }
+
+  // Virtualized: a large pull request has thousands of events, and mounting every one stalls
+  // the page. The connector line is drawn by the content container, behind the rows.
+  return (
+    <LegendList<PullRequestTimelineRow>
+      ref={(list: LegendListRef | null) => scrollerRef(list?.getScrollableNode() ?? null)}
+      data={rows}
+      extraData={{ editable, reactions, newestCommitAt }}
+      keyExtractor={rowKey}
+      renderItem={renderRow}
+      estimatedItemSize={140}
+      className="scrollbar-gutter-both h-full px-4"
+      contentContainerClassName="relative mx-auto w-full max-w-3xl before:absolute before:bottom-10 before:left-[15px] before:top-6 before:w-px before:bg-border/45"
+      ListHeaderComponent={<div className="h-5" />}
+      ListFooterComponent={<div className="h-5" />}
+    />
   );
 }

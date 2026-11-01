@@ -63,15 +63,12 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
     ...(onAddToMachine ? [{ value: ADD_MACHINE_VALUE, label: "Add to another machine" }] : []),
   ];
 
-  // The static label carries the xs control's height (h-7 sm:h-6) as well as
-  // its padding: the composer context strip has no min-height of its own, and
-  // the glass seam joining it to the composer assumes a fixed strip height, so
-  // a shorter label would drag the seam out of line whenever this label is the
-  // only thing in the strip.
+  // Match the xs control's height and padding: the composer strip has no min-height,
+  // and its glass seam assumes that height even when this label is the only control.
   if (envLocked || (onEnvironmentChange === undefined && onAddToMachine === undefined)) {
     const lockedRow = (
       <span
-        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-xs sm:h-6"
+        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-sm sm:h-6 sm:text-xs"
         data-composer-context-control
       >
         <EnvironmentMachineIcon
