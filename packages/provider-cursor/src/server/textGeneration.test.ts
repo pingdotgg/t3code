@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
 import { beforeEach, vi } from "vite-plus/test";
 
+import { buildCursorDiscoveredModelsFromSdk } from "./status.ts";
 import { makeCursorTextGeneration } from "./textGeneration.ts";
 import * as CursorSdk from "./CursorSdk.ts";
 
@@ -99,6 +100,62 @@ describe("CursorTextGeneration", () => {
       yield* generation.generateCommitMessage(input);
       expect(cursorSdkMock.create).toHaveBeenLastCalledWith(
         expect.objectContaining({ apiKey: "second-browser-key" }),
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("sends every catalog parameter when the selection leaves them unset", () =>
+    Effect.gen(function* () {
+      const models = buildCursorDiscoveredModelsFromSdk([
+        {
+          id: "grok-4.5",
+          displayName: "Grok 4.5",
+          parameters: [
+            {
+              id: "effort",
+              displayName: "Effort",
+              values: [{ value: "low" }, { value: "medium" }, { value: "high" }],
+            },
+            { id: "fast", displayName: "Fast", values: [{ value: "false" }, { value: "true" }] },
+          ],
+          variants: [
+            {
+              displayName: "Grok 4.5 High Fast",
+              isDefault: true,
+              params: [
+                { id: "effort", value: "high" },
+                { id: "fast", value: "true" },
+              ],
+            },
+          ],
+        },
+      ]);
+      const generation = yield* makeCursorTextGeneration(
+        cursorSettings,
+        { CURSOR_API_KEY: "test-cursor-key" },
+        undefined,
+        undefined,
+        () => models,
+      );
+
+      yield* generation.generateCommitMessage({
+        cwd: process.cwd(),
+        branch: "feature/cursor",
+        stagedSummary: "M file.ts",
+        stagedPatch: "diff",
+        modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "grok-4.5"),
+      });
+
+      expect(cursorSdkMock.create).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          model: {
+            id: "grok-4.5",
+            params: [
+              { id: "effort", value: "high" },
+              { id: "fast", value: "false" },
+            ],
+          },
+        }),
       );
     }).pipe(Effect.provide(layerTest)),
   );

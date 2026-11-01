@@ -5,7 +5,11 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { type ProviderSetupError, TextGenerationError } from "@t3tools/contracts";
+import {
+  type ProviderSetupError,
+  type ServerProviderModel,
+  TextGenerationError,
+} from "@t3tools/contracts";
 import type { CursorSettings } from "../settings.ts";
 
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
@@ -48,6 +52,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   environment?: NodeJS.ProcessEnv,
   resolveApiKey?: Effect.Effect<string, ProviderSetupError>,
   withAccess?: CursorAuth["withAccess"],
+  getModels?: () => ReadonlyArray<ServerProviderModel>,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const { Agent, SqliteLocalAgentStore } = yield* CursorSdk.CursorSdk;
@@ -101,7 +106,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       const agentOptions = {
         apiKey,
         mode: "plan",
-        model: cursorSdkModelSelection(modelSelection),
+        model: cursorSdkModelSelection(modelSelection, getModels?.() ?? []),
         local: {
           cwd,
           store,
