@@ -225,7 +225,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         : failure?._tag === "ProviderSetupError"
           ? failure.detail.trim() || "Antigravity could not complete its local health check."
           : missingInstallation
-            ? "Antigravity is not installed or its executable could not be found."
+            ? "Antigravity ACP runtime is not installed or its executable could not be found."
             : failure
               ? "Antigravity could not complete its local health check."
               : `Antigravity did not respond to its local health check within ${HEALTH_CHECK_TIMEOUT}.`;
