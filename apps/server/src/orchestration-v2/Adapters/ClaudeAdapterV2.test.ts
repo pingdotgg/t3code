@@ -125,6 +125,33 @@ const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 const AUTO_COMPACT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
   autoCompactWindow: "300000",
 });
+const CUSTOM_CONTEXT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
+  customModels: [
+    {
+      slug: "gateway-route",
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "contextWindow",
+            label: "Context Window",
+            type: "select",
+            options: [
+              { id: "default", label: "Provider default", isDefault: true },
+              { id: "1m", label: "1M" },
+            ],
+          },
+          { id: "thinking", label: "Thinking", type: "boolean" },
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select",
+            options: [{ id: "high", label: "High", isDefault: true }],
+          },
+        ],
+      },
+    },
+  ],
+});
 const CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
   customModels: [
     "opus",
@@ -3004,7 +3031,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
       const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-        settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
+        settings: options?.settings ?? { ...DEFAULT_CLAUDE_SETTINGS, homePath: attachmentsDir },
         environment: options?.environment ?? {},
         attachmentsDir,
         fileSystem,
@@ -4923,6 +4950,79 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
   });
+
+  it.effect("keeps custom context accounting and query reuse aligned with explicit options", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: CUSTOM_CONTEXT_CLAUDE_SETTINGS,
+        freshQueueOnReopen: true,
+      });
+      for (const [index, [contextWindow, thinking, model, maxTokens, opens]] of (
+        [
+          ["default", false, "gateway-route", null, 1],
+          ["1m", false, "gateway-route", 1_000_000, 1],
+          ["1m", true, "gateway-route[1m]", 1_000_000, 2],
+          ["1m", true, "gateway-route[1m]", 1_000_000, 2],
+          ["default", false, "gateway-route", null, 3],
+        ] as const
+      ).entries()) {
+        const ordinal = index + 1;
+        const modelSelection = {
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          model: "gateway-route",
+          options: [
+            { id: "contextWindow", value: contextWindow },
+            { id: "thinking", value: thinking },
+          ],
+        } satisfies ModelSelection;
+        const turn = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`custom-options:${ordinal}`),
+          providerTurnOrdinal: ordinal,
+          text: "Reply OK.",
+          attachments: [],
+          modelSelection,
+        });
+        yield* harness.runtime.startTurn(turn);
+        assert.strictEqual(harness.getOpenedOptions()?.model, model);
+        assert.propertyVal(harness.getOpenedOptions()?.settings, "alwaysThinkingEnabled", thinking);
+        assert.lengthOf(harness.processQueues, opens);
+        assert.strictEqual(
+          harness.runtime.getModelContextWindow?.(modelSelection) ?? null,
+          maxTokens,
+        );
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({ uuid: `custom-text:${ordinal}`, text: "OK" }),
+        );
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: `custom-result:${ordinal}`, result: "OK" }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const usage = harness.events
+          .flatMap((event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.runAttemptId === turn.attemptId &&
+            event.providerTurn.tokenUsage
+              ? [event.providerTurn.tokenUsage]
+              : [],
+          )
+          .at(-1);
+        assert.isDefined(usage);
+        assert.strictEqual(usage?.maxTokens, maxTokens);
+      }
+      assert.deepEqual(harness.liveSelectionChanges, [
+        { model: "gateway-route[1m]" },
+        { effortLevel: "high", fastMode: null, ultracode: null },
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
 
   it.effect(
     "applies model, effort and Fast changes to a process running a background shell, but not thinking or a cleared effort",
@@ -12497,12 +12597,67 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     "synthetic-after",
     "inherit",
     "unknown",
+    "requested-parent",
+    "configured-default",
+    "configured-extended",
+    "settings-default",
+    "settings-extended",
+    "settings-project",
+    "settings-local",
+    "settings-launch",
+    "settings-inherit",
+    "settings-callback",
   ] as const)(
     "records the subagent model from %s without inheriting the parent override",
     (source) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const harness = yield* makeWakeHarness;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-child-model-home-",
+          });
+          const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-child-model-cwd-" });
+          if (source.startsWith("settings-")) {
+            yield* fileSystem.writeFileString(
+              path.join(home, "settings.json"),
+              JSON.stringify({
+                env: {
+                  CLAUDE_CODE_SUBAGENT_MODEL:
+                    source === "settings-extended" ? "claude-opus-4-6[1m]" : "claude-opus-4-6",
+                },
+              }),
+            );
+          }
+          if (source === "settings-local" || source === "settings-project") {
+            yield* fileSystem.makeDirectory(path.join(cwd, ".claude"));
+            yield* fileSystem.writeFileString(
+              path.join(
+                cwd,
+                ".claude",
+                source === "settings-local" ? "settings.local.json" : "settings.json",
+              ),
+              '{"env":{"CLAUDE_CODE_SUBAGENT_MODEL":"claude-opus-4-6[1m]"}}',
+            );
+          }
+          const harness = yield* makeWakeHarnessWithOptions({
+            settings: {
+              ...DEFAULT_CLAUDE_SETTINGS,
+              homePath: home,
+              launchArgs:
+                source === "settings-launch" || source === "settings-inherit"
+                  ? `--settings '{"env":{"CLAUDE_CODE_SUBAGENT_MODEL":"${source === "settings-inherit" ? "inherit" : "claude-opus-4-6[1m]"}"}}'`
+                  : "",
+            },
+            environment:
+              source === "configured-default"
+                ? { CLAUDE_CODE_SUBAGENT_MODEL: "claude-opus-4-6" }
+                : source === "configured-extended"
+                  ? { CLAUDE_CODE_SUBAGENT_MODEL: "claude-opus-4-6[1m]" }
+                  : source.startsWith("settings-")
+                    ? { CLAUDE_CODE_SUBAGENT_MODEL: "haiku" }
+                    : {},
+          });
           const now = yield* DateTime.now;
           const toolUseId = "toolu-subagent-model";
           const parentModel = "claude-opus-4-6";
@@ -12517,9 +12672,39 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               attemptId: RunAttemptId.make("attempt-subagent-model"),
               text: "Spawn a Haiku subagent.",
               attachments: [],
-              modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, model: parentModel },
+              runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+                ...CLAUDE_TEST_RUNTIME_POLICY,
+                cwd,
+              }),
+              modelSelection: {
+                ...CLAUDE_TEST_MODEL_SELECTION,
+                model: parentModel,
+                options: [
+                  ...CLAUDE_TEST_MODEL_SELECTION.options,
+                  { id: "contextWindow", value: "1m" },
+                ],
+              },
             }),
           );
+          if (source === "settings-callback") {
+            const permission = yield* Effect.promise(() =>
+              harness.getOpenedOptions()!.canUseTool!(
+                "Agent",
+                { subagent_type: "general-purpose", prompt: "Solve the puzzle." },
+                {
+                  signal: new AbortController().signal,
+                  toolUseID: toolUseId,
+                  requestId: "request-subagent-model",
+                },
+              ),
+            ).pipe(Effect.forkScoped);
+            const request = yield* Queue.take(harness.runtimeRequestReceipts);
+            yield* harness.runtime.respondToRuntimeRequest({
+              requestId: request.runtimeRequest.id,
+              decision: "accept",
+            });
+            yield* Fiber.join(permission);
+          }
           const observed = claudeSdkFrame({
             type: "assistant",
             parent_tool_use_id: toolUseId,
@@ -12552,9 +12737,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     input: {
                       description: "Haiku puzzle",
                       subagent_type: "general-purpose",
-                      ...(source === "unknown"
+                      ...(source === "unknown" ||
+                      source.startsWith("configured-") ||
+                      source.startsWith("settings-")
                         ? {}
-                        : { model: source === "inherit" ? "inherit" : "haiku" }),
+                        : {
+                            model:
+                              source === "inherit"
+                                ? "inherit"
+                                : source === "requested-parent"
+                                  ? parentModel
+                                  : "haiku",
+                          }),
                       prompt: "Solve the puzzle.",
                     },
                   },
@@ -12593,18 +12787,47 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const initialModel =
             source === "observed-before"
               ? observedSlug
-              : source === "inherit"
-                ? parentModel
-                : source === "unknown"
-                  ? null
-                  : "claude-haiku-5-5";
+              : source === "configured-extended" ||
+                  source === "settings-extended" ||
+                  source === "settings-project" ||
+                  source === "settings-local" ||
+                  source === "settings-launch"
+                ? `${parentModel}[1m]`
+                : source === "inherit" ||
+                    source === "requested-parent" ||
+                    source === "configured-default" ||
+                    source === "settings-default" ||
+                    source === "settings-callback" ||
+                    source === "settings-inherit"
+                  ? parentModel
+                  : source === "unknown"
+                    ? null
+                    : "claude-haiku-5-5";
           assert.equal(subagents[0]?.subagent.model, initialModel);
           assert.equal(
             subagents.at(-1)?.subagent.model,
             source.startsWith("observed") ? observedSlug : initialModel,
           );
           const child = harness.events.find((event) => event.type === "app_thread.created");
-          assert.equal(child?.appThread.modelSelection?.model, initialModel ?? parentModel);
+          assert.equal(
+            child?.appThread.modelSelection?.model,
+            source === "configured-extended" || source.startsWith("settings-")
+              ? parentModel
+              : (initialModel ?? parentModel),
+          );
+          assert.equal(
+            getModelSelectionStringOptionValue(child?.appThread.modelSelection, "contextWindow"),
+            source === "inherit" ||
+              source === "unknown" ||
+              source === "configured-extended" ||
+              source === "settings-extended" ||
+              source === "settings-project" ||
+              source === "settings-local" ||
+              source === "settings-launch" ||
+              source === "settings-inherit"
+              ? "1m"
+              : undefined,
+          );
         }).pipe(
           Effect.provide(
             Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -12613,13 +12836,60 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("resolves a subagent's model and effort against the instance's custom models", () =>
+  it.effect.each([
+    {
+      route: "bare",
+      reportedModel: "gateway-route",
+      tagged: false,
+      selection: { model: "gateway-route", options: [{ id: "effort", value: "high" }] },
+      contextWindow: undefined,
+    },
+    {
+      route: "expanded",
+      reportedModel: "gateway-route[1m]",
+      tagged: false,
+      selection: {
+        model: "gateway-route",
+        options: [
+          { id: "contextWindow", value: "1m" },
+          { id: "effort", value: "high" },
+        ],
+      },
+      contextWindow: 1_000_000,
+    },
+    {
+      route: "explicitly tagged",
+      reportedModel: "gateway-route[1m]",
+      tagged: true,
+      selection: { model: "gateway-route[1m]", options: [{ id: "effort", value: "high" }] },
+      contextWindow: 1_000_000,
+    },
+    {
+      route: "unconfigured",
+      reportedModel: "unconfigured-route[1m]",
+      tagged: false,
+      selection: { model: "unconfigured-route[1m]" },
+      contextWindow: undefined,
+    },
+  ])("resolves custom subagent models, effort, and $route context", (testCase) =>
     Effect.scoped(
       Effect.gen(function* () {
         const TUNED_TOOL_USE_ID = "toolu-effort-custom-tuned";
         const SHADOW_TOOL_USE_ID = "toolu-effort-custom-shadow";
+        const CONTEXT_TOOL_USE_ID = "toolu-context-custom";
         const harness = yield* makeWakeHarnessWithOptions({
-          settings: CUSTOM_MODEL_CLAUDE_SETTINGS,
+          settings: {
+            ...CUSTOM_MODEL_CLAUDE_SETTINGS,
+            customModels: [
+              ...CUSTOM_MODEL_CLAUDE_SETTINGS.customModels,
+              ...CUSTOM_CONTEXT_CLAUDE_SETTINGS.customModels,
+              ...(testCase.tagged
+                ? CUSTOM_CONTEXT_CLAUDE_SETTINGS.customModels.flatMap((entry) =>
+                    typeof entry === "string" ? [] : [{ ...entry, slug: "gateway-route[1m]" }],
+                  )
+                : []),
+            ],
+          },
         });
         const now = yield* DateTime.now;
         yield* harness.runtime.startTurn(
@@ -12665,12 +12935,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     prompt: "Check another thing.",
                   },
                 },
+                {
+                  type: "tool_use",
+                  id: CONTEXT_TOOL_USE_ID,
+                  name: "Agent",
+                  input: {
+                    description: "Context",
+                    subagent_type: "general-purpose",
+                    model: "gateway-route",
+                    effort: "high",
+                    prompt: "Check the context window.",
+                  },
+                },
               ],
             },
             uuid: "00000000-0000-4000-8000-000000000231",
             session_id: WAKE_NATIVE_SESSION,
           }),
-          ...[TUNED_TOOL_USE_ID, SHADOW_TOOL_USE_ID].map((id, index) =>
+          ...[TUNED_TOOL_USE_ID, SHADOW_TOOL_USE_ID, CONTEXT_TOOL_USE_ID].map((id, index) =>
             claudeSdkFrame({
               type: "system",
               subtype: "task_started",
@@ -12682,8 +12964,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               session_id: WAKE_NATIVE_SESSION,
             }),
           ),
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: CONTEXT_TOOL_USE_ID,
+            message: {
+              model: testCase.reportedModel,
+              id: "msg_custom_context_observed",
+              type: "message",
+              role: "assistant",
+              content: [{ type: "text", text: "Checking." }],
+            },
+            uuid: "00000000-0000-4000-8000-000000000235",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
           makeResultFrame({
-            uuid: "00000000-0000-4000-8000-000000000234",
+            uuid: "00000000-0000-4000-8000-000000000236",
             result: "Spawned the subagents.",
           }),
         ]) {
@@ -12706,7 +13001,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             options: [{ id: "effort", value: "brutal" }],
           },
           [`task-${SHADOW_TOOL_USE_ID}`]: { instanceId, model: "opus" },
+          [`task-${CONTEXT_TOOL_USE_ID}`]: { instanceId, ...testCase.selection },
         });
+        assert.strictEqual(
+          harness.runtime.getModelContextWindow?.(selections[`task-${CONTEXT_TOOL_USE_ID}`]),
+          testCase.contextWindow,
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -12715,7 +13015,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("gives a nested subagent its own effort, else the one its owner runs at", () =>
+  it.effect("keeps nested subagent context while allowing their own effort", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const OUTER_TOOL_USE_ID = "toolu-effort-outer";
@@ -12726,7 +13026,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const parentSelection = {
           instanceId: CLAUDE_TEST_MODEL_SELECTION.instanceId,
           model: "claude-opus-4-6",
-          options: [{ id: "effort", value: "high" }],
+          options: [
+            { id: "contextWindow", value: "1m" },
+            { id: "effort", value: "high" },
+          ],
         } satisfies ModelSelection;
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -12826,6 +13129,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             : [],
         );
         assert.deepEqual(childEfforts, ["low", "low", "max"]);
+        const childContexts = harness.events.flatMap((event) =>
+          event.type === "app_thread.created" && event.appThread.id !== harness.threadId
+            ? [getModelSelectionStringOptionValue(event.appThread.modelSelection, "contextWindow")]
+            : [],
+        );
+        assert.deepEqual(childContexts, ["1m", "1m", "1m"]);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
