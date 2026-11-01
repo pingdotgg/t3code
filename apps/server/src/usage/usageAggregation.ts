@@ -92,7 +92,7 @@ export function resolveModelAliases(
 }
 
 const matchesSelector = (record: UsageRecord) => (selector: UsageModelSelector) =>
-  selector.model === record.model &&
+  selector.model === record.model.trim() &&
   (selector.provider === undefined || selector.provider === record.provider);
 
 /** Matches original IDs, so an alias cannot pull excluded usage into a kept model. */

@@ -67,12 +67,17 @@ const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unkno
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJsonString = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
 
-function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"): string {
+function claudeLine(
+  id: number,
+  outputTokens: number,
+  model = "claude-fable-5",
+  sessionId = "session-1",
+): string {
   return `${JSON.stringify({
     type: "assistant",
     timestamp: "2026-08-01T10:00:00Z",
     requestId: `req_${id}`,
-    sessionId: "session-1",
+    sessionId,
     message: {
       id: `msg_${id}`,
       model,
@@ -2080,15 +2085,13 @@ describe("UsageService", () => {
   it.live("filters original model IDs before aliases, pricing, buckets and session counts", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
-      const line = (id: number, sessionId: string, model: string, outputTokens: number) =>
-        claudeLine(id, outputTokens, model).replace('"session-1"', JSON.stringify(sessionId));
       yield* Effect.promise(() =>
         NodeFSP.writeFile(
           transcript,
-          line(1, "mixed", "orbit-1", 3) +
-            line(2, "mixed", "orbit-2", 5) +
-            line(3, "mixed", "drift-9", 7) +
-            line(4, "excluded-only", "drift-9", 11),
+          claudeLine(1, 3, "orbit-1", "mixed") +
+            claudeLine(2, 5, "orbit-2", "mixed") +
+            claudeLine(3, 7, "drift-9", "mixed") +
+            claudeLine(4, 11, "drift-9", "excluded-only"),
         ),
       );
       const rates = {
@@ -2096,7 +2099,12 @@ describe("UsageService", () => {
         "orbit-2": { input_cost_per_token: 0.000002, output_cost_per_token: 0.00002 },
       };
       const include = {
-        include: [{ provider: "claude" as const, model: "orbit-1" }, { model: "orbit-2" }],
+        // The codex selector must not match the Claude drift-9 records.
+        include: [
+          { provider: "claude", model: "orbit-1" },
+          { model: "orbit-2" },
+          { provider: "codex", model: "drift-9" },
+        ],
       };
       const exclude = { exclude: [{ model: "drift-9" }] };
       const HOURLY: UsageSummaryInput = {

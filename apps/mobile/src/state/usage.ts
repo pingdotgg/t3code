@@ -59,7 +59,10 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       const result = get(
         serverEnvironment.usageSummary({
           environmentId,
-          input: usageSummaryInput(input, get(serverEnvironment.settingsValueAtom(environmentId))),
+          input: usageSummaryInput(
+            input,
+            get(serverEnvironment.usageModelFilterAtom(environmentId)),
+          ),
         }),
       );
       const summary = AsyncResult.getOrElse(result, () => null);

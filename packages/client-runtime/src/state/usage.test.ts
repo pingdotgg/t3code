@@ -1,5 +1,4 @@
 import {
-  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -78,12 +77,8 @@ function harness(ids = ["a"], modelFilters: Record<string, UsageModelFilter> = {
         requested.push(target);
         return get(target.environmentId).query;
       },
-      settingsValueAtom: (environmentId: EnvironmentId) => {
-        const usageModelFilter = modelFilters[environmentId];
-        return Atom.make(
-          usageModelFilter === undefined ? null : { ...DEFAULT_SERVER_SETTINGS, usageModelFilter },
-        );
-      },
+      usageModelFilterAtom: (environmentId: EnvironmentId) =>
+        Atom.make<UsageModelFilter | undefined>(modelFilters[environmentId]),
       refreshUsageRates: {
         label: "test:rates",
         requiredScopes: () => [],

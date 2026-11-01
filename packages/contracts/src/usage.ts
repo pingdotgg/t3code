@@ -108,9 +108,12 @@ export const UsagePricing = Schema.Struct({
 });
 export type UsagePricing = typeof UsagePricing.Type;
 
-/** Matches a provider's original model ID, before usage model aliases apply. Omit provider to match any. */
+/**
+ * Matches a provider's original model ID, before usage model aliases apply. Omit provider to
+ * match any; a string provider lets older clients carry selectors for providers they lack.
+ */
 export const UsageModelSelector = Schema.Struct({
-  provider: Schema.optional(UsageProviderKind),
+  provider: Schema.optional(TrimmedNonEmptyString),
   model: TrimmedNonEmptyString,
 });
 export type UsageModelSelector = typeof UsageModelSelector.Type;

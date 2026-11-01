@@ -1363,8 +1363,8 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
 
-  /** Sent by the Usage tab with each summary request to this environment; edit in settings.json. */
-  usageModelFilter: Schema.optionalKey(UsageModelFilter),
+  /** Sent by the Usage tab with each summary request to this environment; edit in settings.json. Invalid values are ignored. */
+  usageModelFilter: ForwardCompatibleOptional(UsageModelFilter),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 

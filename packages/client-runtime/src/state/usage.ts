@@ -1,7 +1,7 @@
 import type {
   EnvironmentId,
   ServerProvider,
-  ServerSettings,
+  UsageModelFilter,
   UsageSummary,
   UsageSummaryInput,
 } from "@t3tools/contracts";
@@ -47,9 +47,8 @@ export function cursorKeychainAccessEnvironments<
 /** The Usage tab asks each environment with that environment's configured model filter. */
 export function usageSummaryInput(
   input: UsageSummaryInput,
-  settings: Pick<ServerSettings, "usageModelFilter"> | null,
+  modelFilter: UsageModelFilter | undefined,
 ): UsageSummaryInput {
-  const modelFilter = settings?.usageModelFilter;
   return modelFilter === undefined ? input : { ...input, modelFilter };
 }
 
@@ -96,7 +95,7 @@ export async function refreshUsage({
   registry: AtomRegistry.AtomRegistry;
   server: Pick<
     ReturnType<typeof createServerEnvironmentAtoms>,
-    "usageSummary" | "refreshUsageRates" | "settingsValueAtom"
+    "usageSummary" | "refreshUsageRates" | "usageModelFilterAtom"
   >;
   presentations: Pick<ReturnType<typeof createEnvironmentPresentationAtoms>, "presentationAtom">;
   environmentIds: readonly EnvironmentId[];
@@ -106,7 +105,7 @@ export async function refreshUsage({
     environmentIds.map(async (environmentId) => {
       const query = server.usageSummary({
         environmentId,
-        input: usageSummaryInput(input, registry.get(server.settingsValueAtom(environmentId))),
+        input: usageSummaryInput(input, registry.get(server.usageModelFilterAtom(environmentId))),
       });
       const presentation = presentations.presentationAtom(environmentId);
       const controller = new AbortController();
