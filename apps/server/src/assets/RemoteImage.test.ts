@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as RemoteImage from "./RemoteImage.ts";
@@ -20,6 +21,14 @@ function fixture(respond: (url: string) => Response) {
 it.effect(
   "reads an image without browser CORS headers and follows signed redirects without credentials",
   () => {
+    const clientSpans: Array<Tracer.Span> = [];
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        if (options.kind === "client") clientSpans.push(span);
+        return span;
+      },
+    });
     const test = fixture((url) =>
       url === "https://images.example.com/image"
         ? new Response(null, {
@@ -31,6 +40,7 @@ it.effect(
     return Effect.gen(function* () {
       const images = yield* RemoteImage.RemoteImage;
       const result = yield* images.read("https://images.example.com/image");
+      expect(clientSpans).toEqual([]);
       expect(result.mimeType).toBe("image/png");
       expect(new TextDecoder().decode(result.bytes)).toBe("png");
       expect(test.requests.map(({ url }) => url)).toEqual([
@@ -41,7 +51,7 @@ it.effect(
         expect(headers.authorization).toBeUndefined();
         expect(headers.cookie).toBeUndefined();
       }
-    }).pipe(Effect.provide(test.layer));
+    }).pipe(Effect.provide(test.layer), Effect.withTracer(tracer), Effect.withTracerEnabled(true));
   },
 );
 

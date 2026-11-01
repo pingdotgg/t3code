@@ -67,7 +67,10 @@ const make = Effect.gen(function* () {
               HttpClientRequest.setHeader("accept-encoding", "identity"),
             ),
           )
-          .pipe(Effect.mapError((cause) => new RemoteImageError({ reason: "request", cause })));
+          .pipe(
+            Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
+            Effect.mapError((cause) => new RemoteImageError({ reason: "request", cause })),
+          );
         if (response.status >= 300 && response.status < 400) {
           if (!response.headers.location || hop >= MAX_REDIRECTS) {
             return yield* new RemoteImageError({ reason: "redirects" });
