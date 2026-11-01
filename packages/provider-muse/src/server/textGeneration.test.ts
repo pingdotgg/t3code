@@ -226,6 +226,18 @@ it.layer(NodeServices.layer)("Muse text generation", (it) => {
     }),
   );
 
+  // regression: #23726 a reply that echoes the schema key replaced the seed title with "title"
+  it.effect("fails a thread title reply that is only the schema key", () =>
+    Effect.gen(function* () {
+      const test = fixture(finish('{"title":"title"}'));
+      const service = yield* test.make;
+      expect(yield* service.generateThreadTitle(titleInput).pipe(Effect.flip)).toMatchObject({
+        _tag: "TextGenerationError",
+        operation: "generateThreadTitle",
+      });
+    }),
+  );
+
   it.effect("settles a completed turn even when its start acknowledgement never arrives", () =>
     Effect.gen(function* () {
       const test = fixture(finish('{"title":"Fix login form"}'), false);
