@@ -4,6 +4,7 @@ import type * as React from "react";
 
 import { cn } from "~/lib/utils";
 import { buttonVariants } from "./button";
+import { renderClosingPositioner } from "./closing-positioner";
 import { Input, type InputProps } from "./input";
 import { Spinner } from "./spinner";
 
@@ -24,6 +25,7 @@ function MenuPopup({
   align = "center",
   alignOffset,
   side = "bottom",
+  collisionAvoidance,
   anchor,
   keepMounted = false,
   width = "default",
@@ -33,6 +35,7 @@ function MenuPopup({
   sideOffset?: MenuPrimitive.Positioner.Props["sideOffset"];
   alignOffset?: MenuPrimitive.Positioner.Props["alignOffset"];
   side?: MenuPrimitive.Positioner.Props["side"];
+  collisionAvoidance?: MenuPrimitive.Positioner.Props["collisionAvoidance"];
   anchor?: MenuPrimitive.Positioner.Props["anchor"];
   keepMounted?: boolean;
   width?: "default" | "content";
@@ -43,8 +46,10 @@ function MenuPopup({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
+        collisionAvoidance={collisionAvoidance}
         className="z-[130]"
         data-slot="menu-positioner"
+        render={renderClosingPositioner}
         side={side}
         sideOffset={sideOffset}
       >
