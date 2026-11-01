@@ -10,7 +10,7 @@ import {
   createThreadEnvironmentAtoms,
   createThreadFamilyAtoms,
 } from "@t3tools/client-runtime/state/threads";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
@@ -48,6 +48,16 @@ export const childThreadApprovalsAtom = createChildThreadApprovalsAtom({
   childThreadInputsAtom: environmentThreadShells.childThreadInputsAtom,
   pendingRequestsAtom: environmentThreadDetails.pendingRequestsAtom,
 });
+
+const EMPTY_QUEUE_WORKFLOW_ATOM = Atom.make<null>(null);
+
+export function useThreadQueueWorkflow(target: ScopedThreadRef | null) {
+  return useAtomValue(
+    target === null
+      ? EMPTY_QUEUE_WORKFLOW_ATOM
+      : environmentThreadDetails.queueWorkflowAtom(target),
+  );
+}
 
 // Long enough for the opened screen to subscribe; its subscription keeps the thread after this.
 const OPENING_THREAD_HOLD_MS = 3_000;

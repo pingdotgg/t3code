@@ -170,7 +170,11 @@ vi.mock("../state/session", () => ({
   usePreparedConnection: () => ({ _tag: "Some", value: { httpBaseUrl: "https://example.com" } }),
 }));
 vi.mock("../state/atom-registry", () => ({ appAtomRegistry: {} }));
-vi.mock("../state/threads", () => ({ environmentThreadShells: {}, threadEnvironment: {} }));
+vi.mock("../state/threads", () => ({
+  environmentThreadShells: {},
+  threadEnvironment: {},
+  useThreadQueueWorkflow: () => null,
+}));
 vi.mock("../state/entities", () => ({
   useLiveThreadLinkLabels: (text: string) => text,
   useThreadChipIcons: () => new Map(),
