@@ -264,6 +264,30 @@ export function buildFileDiffContentVersion(fileDiff: FileDiffMetadata): number 
   return hash;
 }
 
+const fileEntryCache = new WeakMap<
+  FileDiffMetadata,
+  { fileDiff: FileDiffMetadata; fileKey: string; fileVersion: number }
+>();
+
+/** Give repeated blocks independent viewer state without tying identity to patch content. */
+export function buildFileDiffEntries(files: ReadonlyArray<FileDiffMetadata>) {
+  const occurrences = new Map<string, number>();
+  return files.map((fileDiff) => {
+    let entry = fileEntryCache.get(fileDiff);
+    if (!entry) {
+      entry = {
+        fileDiff,
+        fileKey: buildFileDiffIdentityKey(fileDiff),
+        fileVersion: buildFileDiffContentVersion(fileDiff),
+      };
+      fileEntryCache.set(fileDiff, entry);
+    }
+    const occurrence = occurrences.get(entry.fileKey) ?? 0;
+    occurrences.set(entry.fileKey, occurrence + 1);
+    return occurrence === 0 ? entry : { ...entry, fileKey: `${entry.fileKey}\u0000${occurrence}` };
+  });
+}
+
 export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
 [data-diffs-header],
 [data-diff],
