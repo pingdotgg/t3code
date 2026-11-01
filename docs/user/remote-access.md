@@ -266,11 +266,14 @@ that port is in use, Settings shows the port it uses, and other devices add the
 laptop by name with that port.
 
 To cut off one device on one machine, open **Settings → Environments** on a
-device that can manage access there (its scopes include `access:write` and `orchestration:read`: one
-paired with a default `t3 pair` code, one whose grant includes `admin`, or your
-own devices while your policy grants none), and **Block** it under **Tailscale
-devices on <machine>**. Its sessions there end now, and **Unblock** undoes it. A
-browser preview or device screen it already has open keeps working, clicks and
+device that can manage access there, and **Block** it under **Tailscale devices
+on <machine>**. On that machine itself, the list is in **Settings → Sharing &
+access**. A device can manage access when its scopes include `access:write` and
+`orchestration:read`: one paired with a default `t3 pair` code, one whose grant
+includes `admin`, or your own devices while your policy grants none.
+
+A blocked device's sessions on that machine end now, and **Unblock** undoes it.
+A browser preview or device screen it already has open keeps working, clicks and
 typing included, until it closes. A device that rejoins Tailscale gets a new ID,
 so block it again or remove it from your tailnet.
 
