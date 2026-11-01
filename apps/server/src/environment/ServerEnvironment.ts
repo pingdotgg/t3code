@@ -22,6 +22,7 @@ import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import { databaseMigrationHead } from "../persistence/databaseMigrationHead.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { worktreeFastEnv } from "../vcs/worktreeFast.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
 
@@ -84,11 +85,13 @@ function platformArch(
 
 const probeWorktreeFast = Effect.fn("ServerEnvironment.probeWorktreeFast")(function* (
   processRunner: ProcessRunner.ProcessRunner["Service"],
+  env: NodeJS.ProcessEnv,
 ) {
   const installed = yield* processRunner
     .run({
       command: "git",
       args: ["worktree-fast", "--version"],
+      env,
       timeout: "5 seconds",
       timeoutBehavior: "timedOutResult",
     })
@@ -225,9 +228,16 @@ export const make = Effect.gen(function* () {
   // Re-probed after a minute so installing the tool shows up without a server restart.
   const readWorktreeFastCapability =
     hostPlatform === "darwin"
-      ? (yield* probeWorktreeFast(yield* ProcessRunner.ProcessRunner).pipe(
-          Effect.cachedWithTTL("1 minute"),
-        )).pipe(Effect.map((worktreeFast) => ({ worktreeFast })))
+      ? (yield* probeWorktreeFast(
+          yield* ProcessRunner.ProcessRunner,
+          worktreeFastEnv({
+            bundledPath: serverConfig.worktreeFastPath,
+            pathEnv: (yield* HostProcess.Environment).PATH,
+            dirname: path.dirname,
+          }),
+        ).pipe(Effect.cachedWithTTL("1 minute"))).pipe(
+          Effect.map((worktreeFast) => ({ worktreeFast })),
+        )
       : Effect.succeed({});
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,

@@ -22,6 +22,7 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 import gnomeCaptureBundle from "../apps/desktop/gnome-extension/bundle.json" with { type: "json" };
+import worktreeFastSource from "../native/worktree-fast/source.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
 import {
@@ -152,6 +153,8 @@ export function resolveResourceMonitorRustTargets(
   }
   return [arch === "arm64" ? "aarch64-pc-windows-msvc" : "x86_64-pc-windows-msvc"];
 }
+
+export const WORKTREE_FAST_EXECUTABLE_NAME = "git-worktree-fast";
 
 export function resourceMonitorExecutableName(platform: typeof BuildPlatform.Type): string {
   return platform === "win" ? "t3-resource-monitor.exe" : "t3-resource-monitor";
@@ -472,6 +475,18 @@ export class ResourceMonitorBuildOutputMissingError extends Schema.TaggedError<R
 ) {
   override get message(): string {
     return `Resource monitor build for ${this.rustTarget} did not produce ${this.binaryPath}.`;
+  }
+}
+
+export class WorktreeFastBuildOutputMissingError extends Schema.TaggedError<WorktreeFastBuildOutputMissingError>()(
+  "WorktreeFastBuildOutputMissingError",
+  {
+    binaryPath: Schema.String,
+    rustTarget: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `git-worktree-fast build for ${this.rustTarget} did not produce ${this.binaryPath}.`;
   }
 }
 
@@ -991,6 +1006,8 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/windows-server/**/*",
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
+  "!apps/desktop/prod-resources/worktree-fast",
+  "!apps/desktop/prod-resources/worktree-fast/**/*",
   "!apps/desktop/gnome-extension",
   "!apps/desktop/gnome-extension/**/*",
 ] as const;
@@ -1088,6 +1105,12 @@ export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
+  },
+] as const;
+export const MAC_WORKTREE_FAST_EXTRA_RESOURCES = [
+  {
+    from: "apps/desktop/prod-resources/worktree-fast",
+    to: "worktree-fast",
   },
 ] as const;
 export const LINUX_CAPTURE_EXTRA_RESOURCES = [
@@ -1957,16 +1980,20 @@ export const preflightMacDesktopBuild = Effect.fn("preflightMacDesktopBuild")(fu
   const reuseResourceMonitor = yield* Config.Boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
     Config.withDefault(false),
   );
+  const reuseWorktreeFast = yield* Config.Boolean("T3CODE_DESKTOP_REUSE_WORKTREE_FAST").pipe(
+    Config.withDefault(false),
+  );
   const checks = yield* Effect.all(
     {
-      rust: reuseResourceMonitor
-        ? Effect.succeed(true)
-        : Effect.all([
-            desktopBuildProbeSucceeds(ChildProcess.make("cargo", ["--version"]), "cargo"),
-            Effect.forEach(rustTargets, rustTargetIsInstalled).pipe(
-              Effect.map((results) => results.every(Boolean)),
-            ),
-          ]).pipe(Effect.map(([cargo, targets]) => cargo && targets)),
+      rust:
+        reuseResourceMonitor && reuseWorktreeFast
+          ? Effect.succeed(true)
+          : Effect.all([
+              desktopBuildProbeSucceeds(ChildProcess.make("cargo", ["--version"]), "cargo"),
+              Effect.forEach(rustTargets, rustTargetIsInstalled).pipe(
+                Effect.map((results) => results.every(Boolean)),
+              ),
+            ]).pipe(Effect.map(([cargo, targets]) => cargo && targets)),
       clang: desktopBuildProbeSucceeds(ChildProcess.make("clang", ["--version"]), "clang"),
       make: desktopBuildProbeSucceeds(ChildProcess.make("make", ["--version"]), "make"),
       sips: desktopBuildProbeSucceeds(ChildProcess.make("sips", ["--help"]), "sips"),
@@ -2421,6 +2448,77 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
   }
 });
 
+/** Builds the revision pinned in native/worktree-fast/source.json, which also keys the CI cache. */
+export const stageWorktreeFast = Effect.fn("stageWorktreeFast")(function* (input: {
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly arch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // CI skips Rust on cache hits; allow reuse without rebuilding.
+  const reuseWorktreeFast = yield* Config.Boolean("T3CODE_DESKTOP_REUSE_WORKTREE_FAST").pipe(
+    Config.withDefault(false),
+  );
+  const builtBinaries: string[] = [];
+
+  for (const rustTarget of resolveResourceMonitorRustTargets("mac", input.arch)) {
+    const installRoot = path.join(input.repoRoot, "native/worktree-fast/target", rustTarget);
+    if (!reuseWorktreeFast) {
+      const spawnCommand = yield* resolveSpawnCommand("cargo", [
+        "install",
+        "--locked",
+        "--git",
+        worktreeFastSource.repository,
+        "--rev",
+        worktreeFastSource.rev,
+        "--target",
+        rustTarget,
+        "--root",
+        installRoot,
+        WORKTREE_FAST_EXECUTABLE_NAME,
+      ]);
+      yield* runCommand(
+        ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+          cwd: input.repoRoot,
+          shell: spawnCommand.shell,
+        }),
+        {
+          label: `cargo install git-worktree-fast (${rustTarget})`,
+          verbose: input.verbose,
+        },
+      );
+    }
+
+    const binaryPath = path.join(installRoot, "bin", WORKTREE_FAST_EXECUTABLE_NAME);
+    if (!(yield* fs.exists(binaryPath))) {
+      return yield* new WorktreeFastBuildOutputMissingError({ binaryPath, rustTarget });
+    }
+    if (reuseWorktreeFast) {
+      yield* Effect.log(`[desktop-artifact] Reusing cached git-worktree-fast (${rustTarget}).`);
+    }
+    builtBinaries.push(binaryPath);
+  }
+
+  const destinationDirectory = path.join(input.stageResourcesDir, "worktree-fast");
+  const destinationPath = path.join(destinationDirectory, WORKTREE_FAST_EXECUTABLE_NAME);
+  yield* fs.remove(destinationDirectory, { recursive: true, force: true }).pipe(Effect.ignore);
+  yield* fs.makeDirectory(destinationDirectory, { recursive: true });
+  if (builtBinaries.length === 1) {
+    yield* fs.copyFile(builtBinaries[0]!, destinationPath);
+  } else {
+    yield* runCommand(
+      ChildProcess.make("lipo", ["-create", ...builtBinaries, "-output", destinationPath]),
+      {
+        label: "lipo git-worktree-fast universal binary",
+        verbose: input.verbose,
+      },
+    );
+  }
+  yield* fs.chmod(destinationPath, 0o755);
+});
+
 export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (input: {
   readonly repoRoot: string;
   readonly stageResourcesDir: string;
@@ -2793,6 +2891,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       : {}),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      ...(platform === "mac" ? MAC_WORKTREE_FAST_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
@@ -3762,6 +3861,14 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     arch: options.arch,
     verbose: options.verbose,
   });
+  if (options.platform === "mac") {
+    yield* stageWorktreeFast({
+      repoRoot,
+      stageResourcesDir,
+      arch: options.arch,
+      verbose: options.verbose,
+    });
+  }
   if (options.platform === "linux") {
     for (const backend of ["kde", "hyprland"] as const)
       yield* stageLinuxCaptureHelper({

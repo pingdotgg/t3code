@@ -196,7 +196,8 @@ are, and cleanup covers both the default folder and the custom one.
 ## Faster worktree checkouts on macOS
 
 On a Mac, [git-worktree-fast](https://github.com/mweinbach/worktree-fast) can clone a commit you
-prepared earlier instead of checking out every file. Install it, prepare commits with
+prepared earlier instead of checking out every file. The desktop app includes it; when T3 Code runs
+another way, the setting shows the command to install it. Prepare commits with
 `git worktree-fast prepare` or `git worktree-fast auto enable` in the repository, then turn on
 **Settings → Worktrees → Use git-worktree-fast** under Advanced. The setting is per machine. Commits
 you have not prepared, and any failure, use Git's normal checkout, and the worktrees it makes are

@@ -271,28 +271,30 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
   );
 
   it.effect.each([
-    { platform: "darwin", exitCode: 0, worktreeFast: { installed: true } },
-    { platform: "darwin", exitCode: 1, worktreeFast: { installed: false } },
-    { platform: "linux", exitCode: 0, worktreeFast: undefined },
+    { platform: "darwin", location: "on PATH", worktreeFast: { installed: true } },
+    { platform: "darwin", location: "bundled", worktreeFast: { installed: true } },
+    { platform: "darwin", location: "missing", worktreeFast: { installed: false } },
+    { platform: "linux", location: "on PATH", worktreeFast: undefined },
   ] as const)(
-    "offers git-worktree-fast on $platform when its version probe exits $exitCode",
-    ({ platform, exitCode, worktreeFast }) =>
+    "offers git-worktree-fast on $platform when it is $location",
+    ({ platform, location, worktreeFast }) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const baseDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-server-environment-worktree-fast-test-",
         });
+        const bundledDirectory = "/Applications/T3 Code.app/Contents/Resources/worktree-fast";
+        const found = (command: ChildProcess.Command) =>
+          ChildProcess.isStandardCommand(command) &&
+          command.args[0] === "worktree-fast" &&
+          (location === "on PATH" ||
+            (location === "bundled" &&
+              command.options.env?.PATH?.endsWith(`:${bundledDirectory}`) === true));
         const spawner = ChildProcessSpawner.make((command) =>
           Effect.succeed(
             ChildProcessSpawner.makeHandle({
               pid: ChildProcessSpawner.ProcessId(1),
-              exitCode: Effect.succeed(
-                ChildProcessSpawner.ExitCode(
-                  ChildProcess.isStandardCommand(command) && command.args[0] === "worktree-fast"
-                    ? exitCode
-                    : 1,
-                ),
-              ),
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(found(command) ? 0 : 1)),
               isRunning: Effect.succeed(false),
               kill: () => Effect.void,
               unref: Effect.succeed(Effect.void),
@@ -310,7 +312,20 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
           const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
           return yield* serverEnvironment.getDescriptor;
         }).pipe(
-          Effect.provide(layerServerEnvironment(baseDir)),
+          Effect.provide(
+            ServerEnvironment.layer.pipe(
+              Layer.provide(ServerSecretStore.layer),
+              Layer.provide(
+                Layer.effect(
+                  ServerConfig.ServerConfig,
+                  Effect.gen(function* () {
+                    const config = yield* ServerConfig.ServerConfig;
+                    return { ...config, worktreeFastPath: `${bundledDirectory}/git-worktree-fast` };
+                  }),
+                ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir))),
+              ),
+            ),
+          ),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(HostProcess.Platform, platform),
         );

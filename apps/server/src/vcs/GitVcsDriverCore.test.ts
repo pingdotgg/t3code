@@ -4280,6 +4280,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const { initialBranch } = yield* initRepoWithCommit(cwd);
           const worktreePath = pathService.join(yield* makeTmpDir(), "repo", "feature-fast");
           const subcommands: string[] = [];
+          const searchPaths: Array<string | undefined> = [];
+          const bundledDirectory = "/Applications/T3 Code.app/Contents/Resources/worktree-fast";
           const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
           const spawner = ChildProcessSpawner.make((command) => {
             if (!ChildProcess.isStandardCommand(command)) return delegate.spawn(command);
@@ -4289,6 +4291,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             if (index === -1 || command.args[index + 1] !== "add") return delegate.spawn(command);
             subcommands.push(command.args[index]!);
             if (command.args[index] === "worktree") return delegate.spawn(command);
+            searchPaths.push(command.options.env?.PATH);
             if (outcome === "succeeds") {
               const args = command.args.map((arg, position) =>
                 position === index ? "worktree" : arg,
@@ -4305,7 +4308,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const driver = yield* makeGitVcsDriverCore().pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.provideService(HostProcess.Platform, platform),
-            Effect.provide(layerServerConfig),
+            Effect.provideService(ServerConfig.ServerConfig, {
+              ...(yield* ServerConfig.ServerConfig),
+              worktreeFastPath: `${bundledDirectory}/git-worktree-fast`,
+            }),
           );
 
           const created = yield* driver
@@ -4316,6 +4322,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             .pipe(Effect.exit);
 
           assert.deepEqual(subcommands, [...ran]);
+          for (const searchPath of searchPaths) {
+            assert.equal(searchPath, `${process.env.PATH}:${bundledDirectory}`);
+          }
           assert.equal(Exit.isSuccess(created), outcome !== "leaves a folder");
           if (Exit.isSuccess(created)) {
             assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), "feature/fast");
