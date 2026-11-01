@@ -42,6 +42,7 @@ import {
 import {
   AssetWorkspaceAssetNotFoundError,
   AuthPreviewOperateScope,
+  editorOpensFiles,
   type EditorId,
   type EnvironmentId,
   type ServerConfig,
@@ -630,7 +631,8 @@ function useChatMarkdownState({
     markdownServerConfigFieldsAtom(environmentId),
   );
   const projects = useProjects();
-  const [preferredEditor] = usePreferredEditor(availableEditors);
+  const fileEditors = availableEditors.filter(editorOpensFiles);
+  const [preferredEditor] = usePreferredEditor(fileEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
   const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {

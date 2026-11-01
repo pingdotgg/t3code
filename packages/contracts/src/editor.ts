@@ -12,6 +12,7 @@ type EditorDefinition = {
   readonly launchStyle: EditorLaunchStyle;
   readonly remoteScheme?: string;
   readonly jetbrainsProductCode?: string;
+  readonly workspaceOnly?: true;
 };
 
 export const EDITORS = [
@@ -145,6 +146,13 @@ export const EDITORS = [
     launchStyle: "line-column",
     jetbrainsProductCode: "WS",
   },
+  {
+    id: "github-desktop",
+    label: "GitHub Desktop",
+    commands: ["github"],
+    launchStyle: "direct-path",
+    workspaceOnly: true,
+  },
   { id: "file-manager", label: "File Manager", commands: null, launchStyle: "direct-path" },
 ] as const satisfies ReadonlyArray<EditorDefinition>;
 
@@ -161,6 +169,11 @@ export const LaunchEditorInput = Schema.Struct({
   reveal: Schema.optional(Schema.Boolean),
 });
 export type LaunchEditorInput = typeof LaunchEditorInput.Type;
+
+export const editorOpensFiles = (id: EditorId): boolean => {
+  const editor: EditorDefinition | undefined = EDITORS.find((candidate) => candidate.id === id);
+  return editor?.workspaceOnly !== true;
+};
 
 const remoteSchemeOf = (editor: EditorDefinition): string | undefined =>
   editor.remoteScheme ?? (editor.jetbrainsProductCode === undefined ? undefined : "jetbrains");
