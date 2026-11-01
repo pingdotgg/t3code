@@ -74,6 +74,13 @@ describe("DesktopTelemetryReceiver", () => {
       yield* applySnapshot({ ...message, environment: { NODE_EXTRA_CA_CERTS: null } });
       expect(fingerprints(NodeTls.getCACertificates("default"))).toEqual(fingerprints([baseline]));
       expect(environment.NODE_EXTRA_CA_CERTS).toBeUndefined();
+
+      NodeTls.setDefaultCACertificates([]);
+      yield* fs.writeFileString(certificatePath, extra);
+      const applyOpaqueTrust = makeApplyDesktopShellEnvironmentSnapshot(environment, "darwin");
+      yield* applyOpaqueTrust(message);
+      expect(NodeTls.getCACertificates("default")).toEqual([]);
+      expect(environment.NODE_EXTRA_CA_CERTS).toBe(certificatePath);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

@@ -238,6 +238,13 @@ export function makeApplyDesktopShellEnvironmentSnapshot(
             return false;
           });
         }
+        // --use-openssl-ca roots are not enumerable; replacing the list would discard them.
+        if (baseCertificates.length === 0) {
+          yield* Effect.logWarning(
+            "Preserving non-enumerable TLS trust. Restart to apply updated desktop shell certificates.",
+          );
+          return;
+        }
         const fs = yield* FileSystem.FileSystem;
         const file = message.environment.NODE_EXTRA_CA_CERTS;
         const bundle = file ? yield* fs.readFileString(file) : undefined;
