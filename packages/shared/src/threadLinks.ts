@@ -97,7 +97,13 @@ export function threadLinkRefs(
   messageEnvironmentId: EnvironmentId,
 ): ReadonlyArray<ScopedThreadRef> {
   const refs = new Map<string, ScopedThreadRef>();
-  for (const match of markdown.matchAll(THREAD_LINK_OUTSIDE_CODE)) {
+  // Hermes's matchAll clones Babel's regex wrapper and loses its named groups.
+  THREAD_LINK_OUTSIDE_CODE.lastIndex = 0;
+  for (
+    let match = THREAD_LINK_OUTSIDE_CODE.exec(markdown);
+    match !== null;
+    match = THREAD_LINK_OUTSIDE_CODE.exec(markdown)
+  ) {
     const href = match.groups?.href ?? match.groups?.autolink;
     const link = href === undefined ? null : parseThreadLinkHref(href);
     if (link === null) continue;
