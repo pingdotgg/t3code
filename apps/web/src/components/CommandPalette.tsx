@@ -120,6 +120,7 @@ import { useScratchProject } from "../hooks/useScratchProject";
 import { useStartTriage } from "../hooks/useStartTriage";
 import { pickTriageEnvironment } from "../lib/triageTarget";
 import { useNewProject } from "../hooks/useNewProject";
+import { ProjectFavicon } from "./ProjectFavicon";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
 import { reportProjectFailure, useProjectPin } from "../hooks/useProjectGroupUpdate";
 import {
@@ -652,6 +653,11 @@ function OpenCommandPaletteDialog(props: {
     activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
   const scratchTargetEnvironmentId = scratchEnvironmentId(currentProjectEnvironmentId);
+  const scratchProject = projects.find(
+    (project) =>
+      project.environmentId === scratchTargetEnvironmentId &&
+      isScratchProject(project, scratchWorkspaceRootFor(project.environmentId)),
+  );
   const supportsTriage = (environmentId: EnvironmentId | null) =>
     environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
       ?.environment.capabilities.triage === true;
@@ -833,14 +839,19 @@ function OpenCommandPaletteDialog(props: {
           isPreferred,
         })),
       );
+      const noProjectTitle = scratchProject?.title ?? "No project";
       return [
         ...projectItems.slice(0, noProjectIndex),
         {
           kind: "action" as const,
           value: NEW_THREAD_NO_PROJECT_VALUE,
-          searchTerms: ["no project", "without project", "none"],
-          title: "No project",
-          icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
+          searchTerms: [noProjectTitle, "no project", "without project", "none"],
+          title: noProjectTitle,
+          icon: scratchProject ? (
+            <ProjectFavicon project={scratchProject} className={ITEM_ICON_CLASS} />
+          ) : (
+            <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />
+          ),
           shortcutCommand: "chat.newWithoutProject" as const,
           run: () => startScratchThread(scratchTargetEnvironmentId),
         },
@@ -1256,9 +1267,22 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:new-thread-without-project",
-      searchTerms: ["new thread", "no project", "without project", "none", "chat"],
-      title: "New thread without a project",
-      icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
+      searchTerms: [
+        scratchProject?.title ?? "No project",
+        "new thread",
+        "no project",
+        "without project",
+        "none",
+        "chat",
+      ],
+      title: scratchProject
+        ? `New thread in ${scratchProject.title} (without a project)`
+        : "New thread without a project",
+      icon: scratchProject ? (
+        <ProjectFavicon project={scratchProject} className={ITEM_ICON_CLASS} />
+      ) : (
+        <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />
+      ),
       shortcutCommand: "chat.newWithoutProject",
       run: () => startScratchThread(scratchTargetEnvironmentId),
     });
