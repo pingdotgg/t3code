@@ -148,9 +148,15 @@ const PriorToolCall = Schema.Struct({
 const McpToolUseCall = Schema.Struct({
   tool: Schema.String,
   args: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-  /** Only a call the tool accepted counts. */
+  /** Only a settled call the tool accepted counts. Only for delegate_task: no other tool's mock decodes its input. */
   ok: Schema.optional(Schema.Boolean),
-});
+}).check(
+  Schema.makeFilter((call) =>
+    call.ok === undefined || call.tool === "delegate_task"
+      ? true
+      : `ok is only checked for delegate_task, the one tool the runner decodes; got ${call.tool}.`,
+  ),
+);
 type McpToolUseCall = typeof McpToolUseCall.Type;
 
 /** Grading rules. Tool names are bare: `delegate_task`, `Bash`, `Agent`. */
@@ -1461,7 +1467,9 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun) =>
   const found = ({ tool, args = {}, ok }: McpToolUseCall) =>
     calls.some(
       (call) =>
-        tool.split("|").includes(call.tool) && matches(args, call.input) && !(ok && call.failed),
+        tool.split("|").includes(call.tool) &&
+        matches(args, call.input) &&
+        (ok !== true || call.failed === false),
     );
   const label = ({ tool, args }: McpToolUseCall) => (args ? `${tool} ${valueText(args)}` : tool);
   for (const call of expect.calls ?? []) add(`calls ${label(call)}`, found(call));

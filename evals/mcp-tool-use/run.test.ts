@@ -103,6 +103,43 @@ const failed = (expect: Parameters<typeof gradeSample>[0], run: SampleRun) =>
     .filter((check) => !check.pass)
     .map((check) => check.check);
 
+it("counts an ok call only once it settled as accepted", () => {
+  const expect_ = {
+    calls: [{ tool: "delegate_task", ok: true }],
+    callsMustNot: [{ tool: "delegate_task", ok: true, args: { resultSchema: "~{" } }],
+  };
+  const run = (failed?: boolean): SampleRun => ({
+    calls: [
+      {
+        step: 0,
+        tool: "delegate_task",
+        input: { task: "Review.", resultSchema: { type: "object" } },
+        ...(failed === undefined ? {} : { failed }),
+      },
+    ],
+    text: "",
+    stopReason: "end_turn",
+  });
+  // Unsettled: the early stop grades mid-run, before the answer marks the call.
+  expect(failed(expect_, run())).toEqual([expect.stringMatching(/^calls delegate_task/)]);
+  expect(failed(expect_, run(false))).toEqual([
+    expect.stringMatching(/^callsMustNot delegate_task/),
+  ]);
+});
+
+it("refuses ok on a tool the runner does not decode", () => {
+  const [line] = NodeFS.readFileSync(
+    new URL("./cases/orchestration.ndjson", import.meta.url),
+    "utf8",
+  ).split("\n");
+  const withOk = (tool: string) =>
+    JSON.stringify({ ...JSON.parse(line!), expect: { calls: [{ tool, ok: true }] } });
+  expect(() => decodeDeviceCase(withOk("schedule_task"))).toThrow(
+    "ok is only checked for delegate_task",
+  );
+  expect(decodeDeviceCase(withOk("delegate_task")).expect.calls?.[0]?.ok).toBe(true);
+});
+
 it("passes the resultSchema case only for an accepted call with the whole verdict shape", () => {
   const verdictCase = NodeFS.readFileSync(
     new URL("./cases/orchestration.ndjson", import.meta.url),
