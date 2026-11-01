@@ -171,37 +171,12 @@ export function readPathFromLaunchctl(
   }
 }
 
-function mergePathLists(
-  preferredPath: string | undefined,
-  inheritedPath: string | undefined,
-  platform: NodeJS.Platform,
-  sanitizeEntry: (entry: string) => string = (entry) => entry,
-  comparisonKey: (entry: string) => string = (entry) => entry,
-): string | undefined {
-  const delimiter = pathDelimiterForPlatform(platform);
-  const merged: string[] = [];
-  const seen = new Set<string>();
-
-  for (const pathValue of [preferredPath, inheritedPath]) {
-    if (!pathValue) continue;
-    for (const rawEntry of pathValue.split(delimiter)) {
-      const entry = sanitizeEntry(rawEntry.trim());
-      const key = comparisonKey(entry);
-      if (!entry || !key || seen.has(key)) continue;
-      seen.add(key);
-      merged.push(entry);
-    }
-  }
-
-  return merged.length > 0 ? merged.join(delimiter) : undefined;
-}
-
 export function mergePathEntries(
   preferredPath: string | undefined,
   inheritedPath: string | undefined,
   platform: NodeJS.Platform,
 ): string | undefined {
-  return mergePathLists(preferredPath, inheritedPath, platform);
+  return mergeDelimitedPaths(preferredPath, inheritedPath, platform);
 }
 
 function envCaptureStart(name: string): string {
@@ -419,12 +394,37 @@ function sanitizePathEntry(entry: string, platform: NodeJS.Platform): string {
   return platform === "win32" ? entry.replaceAll('"', "") : entry;
 }
 
+function mergeDelimitedPaths(
+  preferredPath: string | undefined,
+  inheritedPath: string | undefined,
+  platform: NodeJS.Platform,
+  sanitizeEntry: (entry: string) => string = (entry) => entry,
+  comparisonKey: (entry: string) => string = (entry) => entry,
+): string | undefined {
+  const delimiter = pathDelimiterForPlatform(platform);
+  const merged: string[] = [];
+  const seen = new Set<string>();
+
+  for (const pathValue of [preferredPath, inheritedPath]) {
+    if (!pathValue) continue;
+    for (const rawEntry of pathValue.split(delimiter)) {
+      const entry = sanitizeEntry(rawEntry.trim());
+      const key = comparisonKey(entry);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      merged.push(entry);
+    }
+  }
+
+  return merged.length > 0 ? merged.join(delimiter) : undefined;
+}
+
 export function mergePathValues(
   preferredPath: string | undefined,
   inheritedPath: string | undefined,
   platform: NodeJS.Platform,
 ): string | undefined {
-  return mergePathLists(
+  return mergeDelimitedPaths(
     preferredPath,
     inheritedPath,
     platform,
