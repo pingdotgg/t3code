@@ -1030,7 +1030,7 @@ const withAdvertisedSchemas = Effect.fn("McpHttpServer.withAdvertisedSchemas")(f
               ...options,
               tool: new McpSchema.Tool({
                 ...options.tool,
-                inputSchema: advertisedJsonSchema(tool),
+                inputSchema: advertisedJsonSchema(tool, options.tool.inputSchema),
               }),
             },
       );

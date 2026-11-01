@@ -459,6 +459,49 @@ it.effect("advertises the compact input schema for every registered tool", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("preserves advertised schemas when registration can reuse a conversion", () => {
+  const named = Schema.Struct({ value: Schema.optional(Schema.String) }).annotate({
+    identifier: "NamedInput",
+    description: "A named input",
+  });
+  const parameters = Schema.Struct({
+    target: Schema.optional(
+      Schema.Union([
+        Schema.Struct({ kind: Schema.Literal("url"), url: Schema.String }),
+        Schema.Struct({ kind: Schema.Literal("number"), number: Schema.Int }),
+      ]),
+    ),
+    requiredNull: Schema.NullOr(Schema.String),
+  }).annotate({ description: "An input with optional and required fields" });
+  const fixtures = Toolkit.make(
+    Tool.make("plain", { parameters }),
+    Tool.make("strict", { parameters }).annotate(Tool.Strict, true),
+    Tool.make("nestedReference", { parameters: Schema.Struct({ input: named }) }),
+    Tool.dynamic("dynamic", {
+      parameters,
+    }),
+  );
+  const handler = McpToolAccess.reads(() => Effect.void);
+  const layer = McpHttpServer.toolkitRegistration(
+    fixtures,
+    McpToolAccess.toLayer(fixtures, {
+      plain: handler,
+      strict: handler,
+      nestedReference: handler,
+      dynamic: handler,
+    }),
+  ).pipe(Layer.provideMerge(McpServer.McpServer.layer));
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    for (const { tool } of server.tools) {
+      const original = Object.values(fixtures.tools).find((fixture) => fixture.name === tool.name)!;
+      expect(tool.inputSchema, tool.name).toEqual(advertisedJsonSchema(original));
+      expect(tool.description, tool.name).toEqual(Tool.getDescription(original));
+    }
+    expect(server.tools).toHaveLength(4);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("checks each preview_act action against that action's own input", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1027,6 +1070,12 @@ it.effect("hides tools for links and refuses another environment while the beta 
             ),
           })
           .pipe(Effect.flatMap((response) => response.json));
+      const listResponse = yield* rpc("tools/list", {});
+      expect(listResponse).toMatchObject({
+        result: {
+          tools: [{ name: "where", inputSchema: advertisedJsonSchema(LinksToolkit.tools.where) }],
+        },
+      });
       const listed = () =>
         rpc("tools/list", {}).pipe(
           Effect.map((body) =>

@@ -43,3 +43,13 @@ it("drops JSON noise, merges tagged unions, and keeps null where it is required"
     required: ["beforeRunId", "every"],
   });
 });
+
+it("retains root references when registration has inlined them", () => {
+  const parameters = Schema.Struct({ value: Schema.String }).annotate({ identifier: "Root" });
+  const tool = Tool.make("referenced", { parameters });
+  const document = Schema.toJsonSchemaDocument(parameters);
+  const registered = { ...document.definitions.Root, $defs: document.definitions };
+
+  expect(advertisedJsonSchema(tool, registered)).toEqual(advertisedJsonSchema(tool));
+  expect(advertisedJsonSchema(tool, registered)).toHaveProperty("$ref", "#/$defs/Root");
+});

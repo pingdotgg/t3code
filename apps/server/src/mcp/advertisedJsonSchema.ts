@@ -102,5 +102,16 @@ const compact = (schema: Json, optional: boolean): Json => {
  * the `null` branch of optional properties. A tagged union of objects becomes one object.
  * Decoding still uses the full schema, so each tag's own required fields still apply.
  */
-export const advertisedJsonSchema = (tool: Tool.Any) =>
-  compact(Tool.getJsonSchema(tool), false) as ReturnType<typeof Tool.getJsonSchema>;
+export const advertisedJsonSchema = (
+  tool: Tool.Any,
+  registeredInputSchema?: ReturnType<typeof Tool.getJsonSchema>,
+) => {
+  const reusable =
+    registeredInputSchema !== undefined &&
+    !Tool.isDynamic(tool) &&
+    Tool.getStrictMode(tool) !== true &&
+    !Object.hasOwn(registeredInputSchema, "$defs");
+  return compact(reusable ? registeredInputSchema : Tool.getJsonSchema(tool), false) as ReturnType<
+    typeof Tool.getJsonSchema
+  >;
+};
