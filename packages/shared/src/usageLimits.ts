@@ -256,6 +256,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
   const hubNames = new Map<string, LimitAccount["displayName"]>();
+  const planSources = new Map<string, LimitAccount>();
   const merge = (key: string, next: LimitAccount) => {
     // The first hub to report an account names it, matching the source label it keeps.
     if (next.sourceLabel !== null && !hubNames.has(key)) hubNames.set(key, next.displayName);
@@ -276,6 +277,14 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     ) {
       creditSources.set(key, next);
     }
+    const previousPlan = planSources.get(key);
+    if (
+      next.plan &&
+      (!previousPlan ||
+        Date.parse(next.limits.checkedAt) > Date.parse(previousPlan.limits.checkedAt))
+    ) {
+      planSources.set(key, next);
+    }
     const previous = accounts.get(key);
     if (!previous) {
       accounts.set(key, next);
@@ -295,7 +304,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       ...previous,
       // A hub names its accounts the same on every machine; instances signed in elsewhere do not.
       displayName: hubNames.get(key) ?? previous.displayName ?? next.displayName,
-      plan: previous.plan ?? next.plan,
+      plan: planSources.get(key)?.plan ?? previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
