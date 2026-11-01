@@ -8747,8 +8747,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachments: [],
           }),
         );
-        const userMessageUuid = harness.offeredMessages.at(-1)?.uuid;
-        if (userMessageUuid === undefined) return yield* Effect.die("Missing native user message");
         acknowledge = harness.offerAndWait(
           makeResultFrame({
             uuid: "00000000-0000-4000-8000-000000000620",
@@ -8756,7 +8754,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             subtype: "error_during_execution",
             errors: ["Error: Request was aborted."],
             terminalReason: "aborted_streaming",
-            userMessageUuid,
           }),
         );
         yield* harness.until(() =>
