@@ -64,11 +64,15 @@ export interface SkippedMachine {
 }
 
 /** Skip current and app-hosted servers; the latter update with the app and would relaunch mid-run.
- * Desktop-managed servers use their own feed. */
+ * Desktop-managed servers use their own feed. Each server's updater checks that it can install the
+ * release before it restarts, so no registry precheck runs here. */
 export function collectServerUpdateTargets(
   machines: ReadonlyArray<UpdateEverythingMachine>,
   targetVersion: string,
-): { readonly targets: ServerUpdateTarget[]; readonly skipped: SkippedMachine[] } {
+): {
+  readonly targets: ServerUpdateTarget[];
+  readonly skipped: SkippedMachine[];
+} {
   const targets: ServerUpdateTarget[] = [];
   const skipped: SkippedMachine[] = [];
   for (const machine of machines) {
@@ -105,14 +109,15 @@ export function collectServerUpdateTargets(
       skip(`on the ${cliReleaseChannelOf(serverVersion)} channel`);
       continue;
     }
-    targets.push({
+    const target: ServerUpdateTarget = {
       environmentId: machine.environmentId,
       serverLabel: machine.label,
       selfUpdate,
       installation: config.environment.capabilities.serverInstallation,
       desktopAppUpdate,
       targetVersion,
-    });
+    };
+    targets.push(target);
   }
   return { targets, skipped };
 }
