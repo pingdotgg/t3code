@@ -290,7 +290,7 @@ describe("sourceControlClients repository keys", () => {
     ["git@ssh.dev.azure.com:v3/o/p", "ssh.dev.azure.com/v3/o/p"],
     ["ssh.dev.azure.com/v3/o/p/r", "ssh.dev.azure.com/v3/o/p/r"],
     ["C:/repos/project", "c:/repos/project"],
-    ["git@ssh.bitbucket.org:Owner/Repo.git", "bitbucket.org/owner/repo"],
+    ["git@altssh.bitbucket.org:Owner/Repo.git", "bitbucket.org/owner/repo"],
     ["ssh://git@ssh.github.com:443/Owner/Repo.git", "github.com/owner/repo"],
     ["git@altssh.gitlab.com:Group/Sub/Repo.git", "gitlab.com/group/sub/repo"],
     ["git@ssh.example.com:Owner/Repo.git", "ssh.example.com/owner/repo"],

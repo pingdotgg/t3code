@@ -127,9 +127,9 @@ export const definition = defineSourceControl({
           baseUrl: `https://${host}`,
         }
       : null,
-  // `ssh.bitbucket.org` is the SSH-only host for networks that block port 22; it serves the web host's repositories.
+  // `altssh.bitbucket.org` is the SSH-only host for networks that block port 22; it serves the web host's repositories.
   repositoryKeyFromRemote: (key) => {
-    const match = /^ssh\.bitbucket\.org\/(.+)$/u.exec(key);
+    const match = /^altssh\.bitbucket\.org\/(.+)$/u.exec(key);
     return match === null ? null : `bitbucket.org/${match[1]}`;
   },
   isChangeRequestInRepository: (identity, link) =>
