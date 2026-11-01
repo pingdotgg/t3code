@@ -20,6 +20,45 @@ const writeSkill = Effect.fn(function* (
 });
 
 it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
+  it.effect("discovers the signed-in account's synced org skills under anthropic-skills", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const org = "11111111-1111-4111-8111-111111111111";
+      const account = "22222222-2222-4222-8222-222222222222";
+      const synced = path.join(configDir, "skills", "synced");
+      yield* writeSkill(
+        path.join(synced, `${org}_${account}`),
+        "pdf",
+        "---\ndescription: PDFs.\n---\n",
+      );
+      yield* writeSkill(
+        path.join(synced, `33333333-3333-4333-8333-333333333333_${account}`),
+        "other-org",
+        "# Other org",
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, ".claude.json"),
+        JSON.stringify({
+          oauthAccount: { organizationUuid: org.toUpperCase(), accountUuid: account },
+        }),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir });
+      assert.deepEqual(skills, [
+        {
+          name: "anthropic-skills:pdf",
+          path: path.join(synced, `${org}_${account}`, "pdf", "SKILL.md"),
+          enabled: true,
+          scope: "user",
+          description: "PDFs.",
+        },
+      ]);
+    }),
+  );
+
   it.effect("discovers enabled plugin skills with manifest names and ignores skill overrides", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -12,6 +12,8 @@ import { parse as parseYamlDocument } from "yaml";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 
+import { claudeAccountConfigPath } from "../claudeResetCredits.ts";
+
 type ClaudeSkillScope = "user" | "project";
 
 type ClaudeSkillRoot = {
@@ -409,6 +411,42 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
   return roots;
 });
 
+const ClaudeAccount = Schema.fromJsonString(
+  Schema.Struct({
+    oauthAccount: Schema.optional(
+      Schema.Struct({
+        organizationUuid: Schema.optional(Schema.String),
+        accountUuid: Schema.optional(Schema.String),
+      }),
+    ),
+  }),
+);
+
+// claude.ai org skills sync into one `<org>_<account>` bucket per login; the CLI loads only the
+// signed-in bucket and namespaces its skills as `anthropic-skills:<name>`.
+const discoverSyncedSkillRoot = Effect.fn("discoverSyncedSkillRoot")(function* (
+  configDirPath: string,
+  accountConfigPath: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const account = yield* fileSystem.readFileString(accountConfigPath).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(ClaudeAccount)),
+    Effect.map((config) => config.oauthAccount),
+    Effect.orElseSucceed(() => undefined),
+  );
+  const organization = account?.organizationUuid?.trim().toLowerCase();
+  if (!organization) return [];
+  const bucket = `${organization}_${account?.accountUuid?.trim().toLowerCase() || "unbound"}`;
+  return [
+    {
+      directory: path.join(configDirPath, "skills", "synced", bucket),
+      scope: "user" as const,
+      prefix: "anthropic-skills",
+    },
+  ];
+});
+
 const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   environment: NodeJS.ProcessEnv,
@@ -514,6 +552,14 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       cwd,
       enabledPlugins,
       environment ?? process.env,
+    )),
+    ...(yield* discoverSyncedSkillRoot(
+      configDirPath,
+      yield* claudeAccountConfigPath(
+        config.homePath.trim() || (environment ?? process.env).CLAUDE_CONFIG_DIR?.trim()
+          ? configDirPath
+          : undefined,
+      ),
     )),
   ];
 
