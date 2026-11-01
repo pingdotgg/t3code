@@ -2997,7 +2997,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             }),
           ).pipe(
             Effect.asVoid,
+            // OpenCode answers only when generation ends; once admitted, the event stream owns the outcome.
             Effect.tapError((cause) =>
+              Deferred.isDoneUnsafe(receipt) ||
               abortController.signal.aborted ||
               turn.finalized ||
               turn.admissionGeneration !== generation
