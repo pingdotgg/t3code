@@ -256,7 +256,26 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
   const planSources = new Map<string, LimitAccount>();
+  const windowSources = new Map<
+    string,
+    Map<string, { window: ServerProviderUsageWindow; checkedAt: number }>
+  >();
   const merge = (key: string, next: LimitAccount) => {
+    // Sources can omit windows; a newer partial read must not advance the
+    // timestamps of windows it did not report.
+    let windows = windowSources.get(key);
+    if (!windows) {
+      windows = new Map();
+      windowSources.set(key, windows);
+    }
+    const checkedAt = Date.parse(next.limits.checkedAt);
+    for (const window of next.limits.windows) {
+      const id = `${window.kind}:${window.id}`;
+      const previous = windows.get(id);
+      if (!previous || checkedAt > previous.checkedAt) {
+        windows.set(id, { window, checkedAt });
+      }
+    }
     // Prefer hub redemption to clear its routing cooldown too; displayed balance still follows the freshest read.
     const previousHub = hubRedeems.get(key);
     if (
@@ -309,6 +328,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
       limits: {
         ...winner.limits,
+        windows: [...windows.values()].map((entry) => entry.window),
         ...(creditSource?.limits.resetCredits
           ? { resetCredits: creditSource.limits.resetCredits }
           : { resetCredits: undefined }),
