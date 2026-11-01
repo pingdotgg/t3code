@@ -51,6 +51,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@bsky.app/expo-scroll-edge-effect": "0.1.10",
     "@clerk/expo": "catalog:",
     "@clerk/expo-native-components": "0.4.0",
     "@effect/atom-react": "catalog:",
