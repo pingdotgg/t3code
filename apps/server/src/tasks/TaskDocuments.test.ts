@@ -253,6 +253,65 @@ describe("TaskDocuments", () => {
       }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
+  it.effect("reconciles a changed file ID only when explicitly requested", () =>
+    Effect.gen(function* () {
+      const { fs, path, directory, target, service } = yield* setup;
+      const original = yield* service.register({ path: target });
+      const duplicateId = "b8cf0bb8-531f-4d13-9aa3-3219ee85e623";
+      const replacementId = "c9df1cc9-642f-4e24-8bb4-432a0ff96f34";
+      const duplicate = path.join(directory, "other.md");
+      const replacement = path.join(directory, "replacement.md");
+      yield* fs.writeFileString(duplicate, fixture.replace(fileId, duplicateId));
+      yield* service.register({ path: duplicate });
+      yield* fs.writeFileString(replacement, fixture.replace(fileId, replacementId));
+
+      expect(
+        yield* service.relink({ ...original.summary, path: replacement }).pipe(Effect.flip),
+      ).toMatchObject({ reason: "identity-changed" });
+      yield* fs.writeFileString(replacement, fixture.replace(fileId, duplicateId));
+      expect(
+        yield* service
+          .relink({ ...original.summary, path: replacement, reconcileIdentity: true })
+          .pipe(Effect.flip),
+      ).toMatchObject({ reason: "duplicate-id" });
+
+      yield* fs.writeFileString(replacement, fixture.replace(fileId, replacementId));
+      const relinked = yield* service.relink({
+        ...original.summary,
+        path: replacement,
+        reconcileIdentity: true,
+      });
+      expect(relinked.summary).toMatchObject({
+        taskDocumentId: original.summary.taskDocumentId,
+        canonicalPath: replacement,
+        locatorVersion: original.summary.locatorVersion + 1,
+        observedFileId: replacementId,
+        availability: "available",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("reads task metadata from bare-CR frontmatter closed with ...", () =>
+    Effect.gen(function* () {
+      const { fs, path, directory, service } = yield* setup;
+      const id = "d0ae6d1e-5375-4e9a-817d-721cb4fdb91d";
+      const target = path.join(directory, "bare-cr.md");
+      yield* fs.writeFileString(
+        target,
+        `---\rid: ${id}\rtitle: "CR task"\rstate: "Ready"\rpinned: true\r...\r# Body\r`,
+      );
+
+      const opened = yield* service.register({ path: target });
+      expect(opened.summary).toMatchObject({
+        observedFileId: id,
+        title: "CR task",
+        state: "Ready",
+        pinned: true,
+        availability: "available",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
   it.effect(
     "relinks a missing file without recreating its old locator, and unregisters without deletion",
     () =>

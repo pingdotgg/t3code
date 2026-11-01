@@ -26,6 +26,7 @@ export function useTaskCatalogue(environmentId: EnvironmentId) {
   const canRead = useAtomValue(taskDocumentEnvironment.list.permissionAtom(environmentId));
   const canRegister = useAtomValue(taskDocumentEnvironment.register.permissionAtom(environmentId));
   const canCreate = useAtomValue(taskDocumentEnvironment.create.permissionAtom(environmentId));
+  const canRelink = useAtomValue(taskDocumentEnvironment.relink.permissionAtom(environmentId));
   const available = supported && canRead;
   const { data: revision } = useEnvironmentQuery(
     available ? taskDocumentEnvironment.catalogueChanges({ environmentId, input: {} }) : null,
@@ -53,6 +54,7 @@ export function useTaskCatalogue(environmentId: EnvironmentId) {
     available,
     canRegister: available && canRegister,
     canCreate: available && canCreate,
+    canRelink: available && canRelink,
     tasks: available && catalogue.environmentId === environmentId ? catalogue.tasks : EMPTY_TASKS,
   };
 }

@@ -36,6 +36,10 @@ export function createTaskDocumentEnvironmentAtoms<R, E>(
       label: "task-documents:save",
       tag: WS_METHODS.taskDocumentsSave,
     }),
+    relink: createEnvironmentRpcCommand(runtime, {
+      label: "task-documents:relink",
+      tag: WS_METHODS.taskDocumentsRelink,
+    }),
     readRecovery: createEnvironmentRpcCommand(runtime, {
       label: "task-documents:read-recovery",
       tag: WS_METHODS.taskDocumentsReadRecovery,

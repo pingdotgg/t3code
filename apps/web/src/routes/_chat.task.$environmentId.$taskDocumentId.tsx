@@ -6,8 +6,9 @@ import { lazy, Suspense } from "react";
 import { Spinner } from "../components/ui/spinner";
 import { SidebarInset } from "../components/ui/sidebar";
 import { buildThreadRouteParams } from "../threadRoutes";
-import { useThreadShells } from "../state/entities";
+import { useProjects, useThreadShells } from "../state/entities";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useEnvironmentProviders } from "../state/environments";
 
 const TaskDocumentPane = lazy(() => import("../components/tasks/TaskDocumentPane"));
 const isTaskDocumentId = Schema.is(TaskDocumentId);
@@ -45,6 +46,8 @@ function TaskThreadLinks(props: {
   readonly taskDocumentId: TaskDocumentId;
 }) {
   const { environmentId } = props;
+  const projects = useProjects();
+  const providersByEnvironment = useEnvironmentProviders();
   const threads = useThreadShells().filter(
     (thread) =>
       thread.environmentId === environmentId && thread.taskDocumentId === props.taskDocumentId,
@@ -56,17 +59,43 @@ function TaskThreadLinks(props: {
       className="max-h-1/3 shrink-0 overflow-auto border-t border-border p-2"
     >
       <ul className="flex flex-col gap-px">
-        {threads.map((thread) => (
-          <li key={thread.id}>
-            <Link
-              to="/$environmentId/$threadId"
-              params={buildThreadRouteParams(scopeThreadRef(environmentId, thread.id))}
-              className="flex h-7 items-center rounded-md px-2 text-sm hover:bg-accent"
-            >
-              <span className="truncate">{thread.title}</span>
-            </Link>
-          </li>
-        ))}
+        {threads.map((thread) => {
+          const project = projects.find(
+            (candidate) =>
+              candidate.environmentId === environmentId && candidate.id === thread.projectId,
+          );
+          const providerId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
+          const provider = providersByEnvironment
+            .get(environmentId)
+            ?.find((candidate) => candidate.instanceId === providerId);
+          const providerLabel =
+            thread.runtime?.providerName ??
+            provider?.displayName ??
+            provider?.driver ??
+            thread.modelSelection.model;
+          return (
+            <li key={thread.id}>
+              <Link
+                to="/$environmentId/$threadId"
+                params={buildThreadRouteParams(scopeThreadRef(environmentId, thread.id))}
+                className="flex min-h-11 items-center rounded-md px-2 py-1 text-sm hover:bg-accent"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{thread.title}</span>
+                  <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground text-xs">
+                    <span className="min-w-0 truncate">
+                      {project?.title ?? "Project unavailable"}
+                    </span>
+                    <span className="shrink-0 rounded bg-muted px-1.5 py-0.5">{providerLabel}</span>
+                    <span className="shrink-0 rounded bg-muted px-1.5 py-0.5">
+                      {thread.runtime?.status ?? "idle"}
+                    </span>
+                  </span>
+                </span>
+              </Link>
+            </li>
+          );
+        })}
       </ul>
     </nav>
   );

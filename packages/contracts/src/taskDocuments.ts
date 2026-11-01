@@ -64,6 +64,7 @@ export const RelinkTaskDocumentInput = Schema.Struct({
   ...TaskDocumentRef.fields,
   locatorVersion: NonNegativeInt,
   path: TrimmedNonEmptyString,
+  reconcileIdentity: Schema.optional(Schema.Boolean),
 });
 export type RelinkTaskDocumentInput = typeof RelinkTaskDocumentInput.Type;
 export const TaskDocumentRecoveryRef = Schema.Struct({

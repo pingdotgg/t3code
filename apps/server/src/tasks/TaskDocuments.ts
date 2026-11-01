@@ -94,8 +94,13 @@ const decodeRecovery = Schema.decodeUnknownEffect(Schema.fromJsonString(TaskDocu
 const encodeRecovery = Schema.encodeEffect(Schema.fromJsonString(TaskDocumentRecovery));
 
 function metadata(contents: string) {
-  const frontmatter = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(contents)?.[1];
-  const document = parseDocument(frontmatter ?? "", { uniqueKeys: true });
+  const frontmatter =
+    /^\uFEFF?---[ \t]*(?:\r\n|\r|\n)([\s\S]*?)(?:\r\n|\r|\n)(?:---|\.\.\.)[ \t]*(?:\r\n|\r|\n|$)/.exec(
+      contents,
+    )?.[1];
+  const document = parseDocument((frontmatter ?? "").replace(/\r(?!\n)/g, "\n"), {
+    uniqueKeys: true,
+  });
   const get = (key: string): unknown =>
     document.errors.length === 0 ? document.get(key) : undefined;
   const id = decodeUuid(get("id"));
@@ -563,10 +568,10 @@ const make = Effect.gen(function* () {
       return yield* new TaskDocumentError({ reason: "unsupported" });
     const file = yield* read(input.path);
     yield* unique(file, row.taskDocumentId);
-    if (file.metadata.fileId !== row.observedFileId)
+    if (file.metadata.fileId !== row.observedFileId && input.reconcileIdentity !== true)
       return yield* new TaskDocumentError({ reason: "identity-changed" });
     yield* mapIo(
-      sql`UPDATE task_documents SET canonical_path = ${file.canonicalPath}, locator_version = locator_version + 1 WHERE task_document_id = ${row.taskDocumentId}`,
+      sql`UPDATE task_documents SET canonical_path = ${file.canonicalPath}, file_id = ${file.metadata.fileId}, locator_version = locator_version + 1 WHERE task_document_id = ${row.taskDocumentId}`,
     );
     yield* notify(row.taskDocumentId);
     yield* syncWatches();

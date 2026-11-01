@@ -29,3 +29,9 @@ If the file changes on disk with no unsaved edits, the document refreshes. If yo
 T3 Code checks for changes before saving, but another app can still write in the instant before the save completes.
 
 On narrow windows, or while a tool is maximized, the task icon in the top-right controls opens the document in a drawer.
+
+## Navigate and maintain tasks
+
+The sidebar groups tasks by their Markdown state, with tasks that have no state under **No state**. Pinned tasks appear under **Pinned** and show their state there. In a task document, choose **Edit task properties** to change its title, state, or pin; these changes stay in the draft until you save. Task state does not settle or archive its threads.
+
+If a task file moves or its ID changes, open the task and choose **Relink task file**. Enter the new path on the same machine. To adopt a different file ID while keeping the task's existing threads, select **Reconcile a different task ID**. T3 Code still rejects an ID already used by another registered task.

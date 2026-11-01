@@ -12,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { CodeIcon, EyeIcon, MaximizeIcon, PlusIcon, SaveIcon } from "lucide-react";
+import { CodeIcon, EyeIcon, MaximizeIcon, PencilIcon, PlusIcon, SaveIcon } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -37,6 +37,8 @@ import { useProjects } from "~/state/entities";
 import { readTaskUpdateInstructionsPath, taskDocumentEnvironment } from "~/state/taskDocuments";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { TaskPropertiesDialog } from "./TaskPropertiesDialog";
+import { TaskRelinkDialog } from "./TaskRelinkDialog";
 import { type TaskSession, useTaskCatalogue, useTaskDocument } from "./useTaskDocuments";
 
 const splitDocumentPath = (path: string) => {
@@ -273,14 +275,18 @@ export default function TaskDocumentPane(props: {
     environmentId,
     taskDocumentId,
   );
-  const { tasks } = useTaskCatalogue(environmentId);
+  const { tasks, canRelink } = useTaskCatalogue(environmentId);
   const navigate = useNavigate();
   const projects = useProjects();
   const { openScratchProject } = useScratchProject();
   const handleNewThread = useNewThreadHandler();
   const [showDisk, setShowDisk] = useState(false);
+  const [showProperties, setShowProperties] = useState(false);
+  const [showRelink, setShowRelink] = useState(false);
   const { base, draft, disk, recovery, error, saving, view } = state;
   const summary = base?.summary ?? null;
+  const catalogueTask = tasks.find((candidate) => candidate.taskDocumentId === taskDocumentId);
+  const relinkTask = summary ?? catalogueTask;
   const { directory, name } = splitDocumentPath(summary?.canonicalPath ?? "");
   const dirty = base !== null && draft !== base.contents;
 
@@ -328,10 +334,42 @@ export default function TaskDocumentPane(props: {
     );
   }
   if (base === null) {
+    const canRelinkMissing =
+      relinkTask != null &&
+      (relinkTask.availability === "missing" || relinkTask.availability === "identity-changed");
     return error ? (
-      <p role="alert" className="m-auto p-6 text-center text-muted-foreground text-sm">
-        {error}
-      </p>
+      <section className="m-auto flex max-w-xl flex-col items-center gap-3 p-6 text-center">
+        <h2 className="font-medium text-base">{relinkTask?.title ?? "Task file unavailable"}</h2>
+        <p role="alert" className="text-muted-foreground text-sm">
+          {relinkTask?.availability === "missing"
+            ? "This task file is missing from its saved path."
+            : error}
+        </p>
+        {relinkTask ? (
+          <code className="max-w-full break-all text-muted-foreground text-xs">
+            {relinkTask.canonicalPath}
+          </code>
+        ) : null}
+        {canRelinkMissing ? (
+          canRelink ? (
+            <Button size="sm" variant="outline" onClick={() => setShowRelink(true)}>
+              Relink task file
+            </Button>
+          ) : (
+            <p className="text-muted-foreground text-xs">
+              You do not have permission to relink task files on this environment.
+            </p>
+          )
+        ) : null}
+        {showRelink && relinkTask ? (
+          <TaskRelinkDialog
+            environmentId={environmentId}
+            task={relinkTask}
+            onRelink={(document) => session.acceptRead(session.beginRead(), document)}
+            onClose={() => setShowRelink(false)}
+          />
+        ) : null}
+      </section>
     ) : (
       <div className="m-auto p-6">
         <Spinner />
@@ -346,7 +384,7 @@ export default function TaskDocumentPane(props: {
       onKeyDown={(event) => {
         if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
           event.preventDefault();
-          void save();
+          if (summary?.availability === "available") void save();
         }
       }}
     >
@@ -378,10 +416,22 @@ export default function TaskDocumentPane(props: {
           variant="ghost"
           aria-label="Save task document"
           title="Save task document"
-          disabled={!canSave || !dirty || disk !== null || saving}
+          disabled={
+            !canSave || summary?.availability !== "available" || !dirty || disk !== null || saving
+          }
           onClick={() => void save()}
         >
           {saving ? <Spinner /> : <SaveIcon />}
+        </Button>
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          aria-label="Edit task properties"
+          title="Edit task properties"
+          disabled={!canSave || summary?.availability !== "available" || disk !== null}
+          onClick={() => setShowProperties(true)}
+        >
+          <PencilIcon />
         </Button>
         <Button
           size="icon-xs"
@@ -415,6 +465,21 @@ export default function TaskDocumentPane(props: {
           taskDocumentId={taskDocumentId}
           thread={thread}
         />
+      ) : null}
+      {summary?.availability === "identity-changed" ? (
+        <Notice
+          actions={
+            canRelink ? (
+              <Button size="xs" variant="outline" onClick={() => setShowRelink(true)}>
+                Relink task file
+              </Button>
+            ) : null
+          }
+        >
+          This file has a different task ID. Relink it to keep this task's threads attached before
+          editing.
+          {!canRelink ? " You do not have permission to relink task files here." : ""}
+        </Notice>
       ) : null}
       {error ? <Notice>{error} Your draft is kept.</Notice> : null}
       {!canSave ? <Notice>You can read this task but not edit it here.</Notice> : null}
@@ -477,11 +542,29 @@ export default function TaskDocumentPane(props: {
             taskDocumentId={taskDocumentId}
             name={name}
             contents={draft}
-            editable={canSave && disk === null}
+            editable={canSave && summary?.availability === "available" && disk === null}
             session={session}
           />
         </DiffWorkerPoolProvider>
       )}
+      {showProperties && summary ? (
+        <TaskPropertiesDialog
+          contents={draft}
+          title={summary.title}
+          state={summary.state}
+          pinned={summary.pinned}
+          onApply={(contents) => session.edit(contents)}
+          onClose={() => setShowProperties(false)}
+        />
+      ) : null}
+      {showRelink && relinkTask ? (
+        <TaskRelinkDialog
+          environmentId={environmentId}
+          task={relinkTask}
+          onRelink={(document) => session.acceptRead(session.beginRead(), document)}
+          onClose={() => setShowRelink(false)}
+        />
+      ) : null}
     </section>
   );
 }
