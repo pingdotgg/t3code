@@ -340,6 +340,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
   private var pendingScrollAnimated = false
   private var isProgrammaticScrollActive = false
   private var rowsDecodeGeneration = 0
+  private var rowsDecodeCancellation: ReviewDiffRowPreparation?
   private var tokensDecodeGeneration = 0
 
   let onDebug = EventDispatcher()
@@ -387,6 +388,10 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     scrollView.addSubview(contentView)
   }
 
+  deinit {
+    rowsDecodeCancellation?.cancel()
+  }
+
   public override func layoutSubviews() {
     super.layoutSubviews()
     let anchor = contentView.viewportWidth != bounds.width ? contentView.viewportRowAnchor() : nil
@@ -426,10 +431,15 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
 
   func setRowsJson(_ rowsJson: String) {
     contentView.cancelRowPreparation()
+    rowsDecodeCancellation?.cancel()
+    let cancellation = ReviewDiffRowPreparation()
+    rowsDecodeCancellation = cancellation
     rowsDecodeGeneration += 1
     let generation = rowsDecodeGeneration
 
     payloadDecodeQueue.async { [weak self] in
+      // Check weak liveness without retaining the view or reading its UIKit state.
+      guard !cancellation.isCancelled, self != nil else { return }
       guard let data = rowsJson.data(using: .utf8) else {
         return
       }
@@ -601,6 +611,8 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     self.contentResetKey = contentResetKey
     lastVisibleRangeDebugKey = ""
     contentView.cancelRowPreparation()
+    rowsDecodeCancellation?.cancel()
+    rowsDecodeCancellation = nil
     rowsDecodeGeneration += 1
     tokensDecodeGeneration += 1
     contentView.tokensByRowId = [:]
