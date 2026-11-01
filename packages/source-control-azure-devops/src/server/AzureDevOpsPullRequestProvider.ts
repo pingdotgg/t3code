@@ -1,5 +1,7 @@
 import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Request from "effect/Request";
+import * as RequestResolver from "effect/RequestResolver";
 import * as Semaphore from "effect/Semaphore";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
@@ -113,6 +115,18 @@ function toChangeRequest(pullRequest: AzureDevOpsPullRequest): ProviderChangeReq
   };
 }
 
+/** Cache checks stagger reads across scheduler ticks; allow time to batch. */
+export const SUMMARY_BATCH_WINDOW = "10 millis";
+
+/** Active pull requests one shared listing reads, past which a pull request is read on its own. */
+const SUMMARY_LISTING_LIMIT = 100;
+
+class SummaryRead extends Request.Class<
+  { readonly cwd: string; readonly repository: string; readonly number: number },
+  AzureDevOpsPullRequest,
+  AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError
+> {}
+
 export const make = Effect.gen(function* () {
   const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
   const diffSpawns = yield* Semaphore.make(MAX_DIFF_SPAWNS);
@@ -140,6 +154,58 @@ export const make = Effect.gen(function* () {
     );
 
   const EMPTY_DIFF_SLICE: ProviderDiffSlice = { patch: "", truncated: false, nextCursor: null };
+
+  /**
+   * Azure cannot read several pull requests by number and each read is its own `az` process, so
+   * reads asked for together in one repository share one listing of its active pull requests.
+   * One the listing lacks is read on its own, as is every one when the listing fails, unless `az`
+   * refuses every read (missing, signed out or rate limited): then they all fail at once.
+   */
+  const summaryResolver = RequestResolver.makeGrouped<SummaryRead, string>({
+    key: ({ request }) => `${request.cwd}\0${request.repository}`,
+    resolver: Effect.fn("AzureDevOpsPullRequestProvider.summaryResolver")((entries) => {
+      const read = (entry: Request.Entry<SummaryRead>) =>
+        Request.completeEffect(
+          entry,
+          cli.getPullRequest({ cwd: entry.request.cwd, number: entry.request.number }),
+        );
+      if (entries.length === 1) return read(entries[0]);
+      const answer = (listed: ReadonlyMap<number, AzureDevOpsPullRequest>) =>
+        Effect.forEach(
+          entries,
+          (entry) => {
+            const pullRequest = listed.get(entry.request.number);
+            return pullRequest === undefined ? read(entry) : Request.succeed(entry, pullRequest);
+          },
+          { concurrency: "unbounded", discard: true },
+        );
+      const failAll = (error: AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError) =>
+        Effect.forEach(entries, (entry) => Request.fail(entry, error), { discard: true });
+      const { cwd, repository } = entries[0].request;
+      return cli
+        .listPullRequests({
+          cwd,
+          repository,
+          state: "open",
+          involvement: "all",
+          viewer: "",
+          limit: SUMMARY_LISTING_LIMIT,
+        })
+        .pipe(
+          Effect.flatMap((listing) =>
+            answer(new Map(listing.items.map((item) => [item.number, item]))),
+          ),
+          Effect.catchTags(
+            {
+              AzureDevOpsCliUnavailableError: failAll,
+              AzureDevOpsCliAuthenticationError: failAll,
+              AzureDevOpsCliRateLimitError: failAll,
+            },
+            () => answer(new Map()),
+          ),
+        );
+    }),
+  }).pipe(RequestResolver.setDelay(SUMMARY_BATCH_WINDOW));
 
   // PR locations are immutable; caching avoids full PR reads for viewed-file checks.
   const locations = new Map<string, AzureDevOpsRepositoryLocation>();
@@ -289,7 +355,10 @@ export const make = Effect.gen(function* () {
       ),
 
     getChangeRequestSummary: (input) =>
-      cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
+      Effect.request(
+        new SummaryRead({ cwd: input.cwd, repository: input.repository, number: input.number }),
+        summaryResolver,
+      ).pipe(
         Effect.mapError(fail("getChangeRequestSummary")),
         Effect.map((pullRequest): ProviderChangeRequestSummary => ({
           number: pullRequest.number,
