@@ -13,6 +13,7 @@ export function ProjectMonogram({
   readonly color: ProjectIconColor;
   readonly className?: string | undefined;
 }) {
+  const glyphCount = Array.from(monogramSegmenter.segment(text)).length;
   // Wrap the tile to avoid menu/button SVG margin trimming.
   return (
     <span
@@ -22,23 +23,22 @@ export function ProjectMonogram({
       <svg
         viewBox="0 0 16 16"
         className={cn(
-          "size-full overflow-hidden rounded-[25%] font-mono select-none",
+          "size-full overflow-hidden rounded-[25%] font-sans select-none",
           projectIconColorClassName(color),
         )}
         style={{
-          backgroundColor: "color-mix(in srgb, currentColor 14%, transparent)",
+          backgroundColor: "color-mix(in srgb, currentColor 16%, transparent)",
         }}
       >
         <text
           x="8"
-          y="10.8"
+          y="11.4"
           textAnchor="middle"
           fill="currentColor"
-          className="font-mono"
-          fontSize="8.25"
-          fontWeight="700"
-          textLength={Array.from(monogramSegmenter.segment(text)).length === 1 ? 6 : 12}
-          lengthAdjust="spacingAndGlyphs"
+          className="font-sans"
+          fontSize={glyphCount === 1 ? 9.5 : 7.5}
+          fontWeight="600"
+          {...(glyphCount > 1 ? { textLength: 12, lengthAdjust: "spacingAndGlyphs" as const } : {})}
           textRendering="geometricPrecision"
         >
           {text}
