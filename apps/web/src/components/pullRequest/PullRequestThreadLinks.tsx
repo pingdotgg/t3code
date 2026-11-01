@@ -185,9 +185,7 @@ function EnabledPullRequestThreadLinks({
               environmentId,
               input: {
                 threadId: currentThreadRef.threadId,
-                host: watchableLink.host,
-                repository: watchableLink.repository,
-                number: watchableLink.number,
+                ...normalizeThreadPullRequestKey(watchableLink),
                 watching: watchableLink.watch === undefined,
               },
             })
