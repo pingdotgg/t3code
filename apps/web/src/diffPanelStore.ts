@@ -180,23 +180,75 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
   ),
 );
 
+/** null inherits settings.diffFilesCollapsed so Collapse all can apply to files that arrive later. */
+export type DiffFileFoldOverride = "expanded" | "folded" | null;
+
+export interface DiffFileFoldState {
+  readonly foldOverride: DiffFileFoldOverride;
+  readonly toggledFileKeys: ReadonlySet<string>;
+}
+
+export const EMPTY_DIFF_FILE_FOLD_STATE: DiffFileFoldState = {
+  foldOverride: null,
+  toggledFileKeys: new Set(),
+};
+
+export function resolveDiffFileFoldOverride(
+  foldOverride: DiffFileFoldOverride,
+  diffFilesCollapsed: boolean,
+): "expanded" | "folded" {
+  return foldOverride ?? (diffFilesCollapsed ? "folded" : "expanded");
+}
+
+export function isDiffFileFoldCollapsed(
+  fileKey: string,
+  foldOverride: "expanded" | "folded",
+  toggledFileKeys: ReadonlySet<string>,
+): boolean {
+  const foldedByDefault = foldOverride === "folded";
+  return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
+}
+
+export function toggleDiffFileFoldKey(
+  fileKey: string,
+  toggledFileKeys: ReadonlySet<string>,
+): ReadonlySet<string> {
+  const next = new Set(toggledFileKeys);
+  if (next.has(fileKey)) next.delete(fileKey);
+  else next.add(fileKey);
+  return next;
+}
+
 interface DiffPanelSessionStoreState {
-  collapsedFileKeysByScopeKey: Record<string, ReadonlySet<string>>;
-  updateCollapsedFileKeys: (
+  collapsedFileKeysByScopeKey: Record<string, DiffFileFoldState>;
+  updateFoldState: (
     scopeKey: string,
-    defaults: ReadonlySet<string>,
-    update: (current: ReadonlySet<string>) => ReadonlySet<string>,
+    update: (current: DiffFileFoldState) => DiffFileFoldState,
+    diffFilesCollapsed: boolean,
   ) => void;
 }
 
 // Session-only so folds survive right-panel switches without changing reload defaults.
 export const useDiffPanelSessionStore = create<DiffPanelSessionStoreState>()((set) => ({
   collapsedFileKeysByScopeKey: {},
-  updateCollapsedFileKeys: (scopeKey, defaults, update) =>
+  updateFoldState: (scopeKey, update, diffFilesCollapsed) =>
     set((state) => {
-      const current = state.collapsedFileKeysByScopeKey[scopeKey] ?? defaults;
-      const next = update(current);
-      if (next === current) return state;
+      const current = state.collapsedFileKeysByScopeKey[scopeKey] ?? EMPTY_DIFF_FILE_FOLD_STATE;
+      const updated = update(current);
+      const next =
+        updated === current
+          ? current
+          : {
+              ...updated,
+              foldOverride: resolveDiffFileFoldOverride(updated.foldOverride, diffFilesCollapsed),
+            };
+      if (
+        next === current ||
+        (next.foldOverride === current.foldOverride &&
+          next.toggledFileKeys === current.toggledFileKeys)
+      ) {
+        return state;
+      }
       return {
         collapsedFileKeysByScopeKey: { ...state.collapsedFileKeysByScopeKey, [scopeKey]: next },
       };
