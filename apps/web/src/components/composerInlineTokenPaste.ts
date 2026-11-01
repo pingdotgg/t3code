@@ -10,6 +10,26 @@ import {
   formatComposerContextReference,
   replaceComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
+
+export function readPastedComposerLink(
+  clipboardData: Pick<DataTransfer, "getData">,
+): string | null {
+  const text = clipboardData.getData("text/plain").trim();
+  if (!text || /^https?:\/\//i.test(text)) return null;
+  if (clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) return null;
+  const html = clipboardData.getData("text/html");
+  if (!html || !/<a[\s>]/i.test(html)) return null;
+  const document = new DOMParser().parseFromString(html, "text/html");
+  if (document.querySelector("[data-t3-context-fragment]")) return null;
+  const links = document.querySelectorAll("a[href]");
+  if (links.length !== 1) return null;
+  const link = links[0]!;
+  const label = link.textContent?.trim();
+  if (label !== text || document.body.textContent?.trim() !== text) return null;
+  const href = link.getAttribute("href")?.trim();
+  return href && /^https?:\/\/\S+$/i.test(href) && URL.canParse(href) ? href : null;
+}
+
 export function readPastedComposerContext(
   clipboardData: Pick<DataTransfer, "getData">,
 ): ComposerContextClipboardFragment | null {

@@ -199,6 +199,97 @@ it("lets composition replace selected text without surrounding it", async () => 
   expect(serializeEditorDoc(editor.state.doc).value).toBe('"');
 });
 
+it.each([
+  {
+    name: "a titled browser link",
+    plain: "Example report",
+    html: '<a href="https://example.com/report">Example report</a>',
+    expected: "https://example.com/report",
+    richText: true,
+  },
+  {
+    name: "a titled link in plain mode",
+    plain: "Example report",
+    html: '<a href="https://example.com/report">Example report</a>',
+    expected: "https://example.com/report",
+    richText: false,
+  },
+  {
+    name: "a browser HTML fragment with nested label formatting",
+    plain: "Example report",
+    html: '<html><body><!--StartFragment--><p><a href="https://example.com/report?q=one&amp;page=2"><strong>Example report</strong></a></p><!--EndFragment--></body></html>',
+    expected: "https://example.com/report?q=one&page=2",
+    richText: true,
+  },
+  {
+    name: "a destination containing Markdown and composer syntax",
+    plain: "Example report",
+    html: '<a href="https://example.com/_report_/$HOME?q=**value**">Example report</a>',
+    expected: "https://example.com/_report_/$HOME?q=**value**",
+    richText: true,
+  },
+  {
+    name: "an explicit plain-text URL",
+    plain: "https://example.com/original",
+    html: '<a href="https://example.com/other">https://example.com/original</a>',
+    expected: "https://example.com/original",
+    richText: true,
+  },
+  {
+    name: "text surrounding a link",
+    plain: "Read Example report now",
+    html: '<p>Read <a href="https://example.com/report">Example report</a> now</p>',
+    expected: "Read Example report now",
+    richText: true,
+  },
+  {
+    name: "multiple links",
+    plain: "First Second",
+    html: '<a href="https://example.com/first">First</a> <a href="https://example.com/second">Second</a>',
+    expected: "First Second",
+    richText: true,
+  },
+  {
+    name: "a non-web destination",
+    plain: "Example report",
+    html: '<a href="javascript:alert(1)">Example report</a>',
+    expected: "Example report",
+    richText: true,
+  },
+  {
+    name: "an unrelated HTML label",
+    plain: "Original clipboard text",
+    html: '<a href="https://example.com/report">Example report</a>',
+    expected: "Original clipboard text",
+    richText: true,
+  },
+  {
+    name: "T3 context clipboard HTML",
+    plain: "Example report",
+    html: '<div data-t3-context-fragment="context"><a href="https://example.com/report">Example report</a></div>',
+    expected: "Example report",
+    richText: true,
+  },
+  {
+    name: "an invalid web destination",
+    plain: "Example report",
+    html: '<a href="https://">Example report</a>',
+    expected: "Example report",
+    richText: true,
+  },
+])("preserves the destination or original text when pasting $name", async (fixture) => {
+  await using screen = await mountEditor("", fixture.richText);
+  const { editor } = screen;
+  await act(async () => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", fixture.plain);
+    clipboardData.setData("text/html", fixture.html);
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(fixture.expected);
+  expect(editor.state.doc.textContent).toBe(fixture.expected);
+});
+
 it("keeps unknown dollar names editable when restoring and pasting a draft", async () => {
   const value = "echo $HOME $PATH $anything $notaskill $20 $20k $babysit ";
   await using screen = await mountEditor(value, true, [babysit]);
