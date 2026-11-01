@@ -563,6 +563,10 @@ function shellCandidateFromCommand(
   if (platform !== "win32" && shellName === "zsh") {
     return { shell: command, args: ["-o", "nopromptsp"] };
   }
+  // Login shells load ~/.bash_profile, matching macOS terminal startup.
+  if (platform === "darwin" && shellName === "bash") {
+    return { shell: command, args: ["-l"] };
+  }
   return { shell: command };
 }
 
