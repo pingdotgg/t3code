@@ -670,8 +670,10 @@ const setUp = Effect.fn("cli.up")(function* (
         yield* Console.log("Removed a Tailscale Serve mapping an earlier run left.");
       }
       if (leftover.otherAccounts.length > 0) {
+        yield* Console.log(formatNextSteps(routes, false));
+        const one = leftover.otherAccounts.length === 1;
         return yield* upError(
-          `A Tailscale Serve mapping an earlier run left is on another Tailscale account: ${leftover.otherAccounts.join(", ")}. Switch Tailscale to it and run this again, or delete ${record} if that account is gone.`,
+          `A Tailscale Serve mapping an earlier run left may remain on ${one ? "another Tailscale account" : "other Tailscale accounts"}: ${leftover.otherAccounts.join(", ")}. Switch Tailscale to ${one ? "it" : "each"} and run this again, or delete ${record} if ${one ? "that account is" : "they are"} gone.`,
         );
       }
     }

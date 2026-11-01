@@ -55,7 +55,7 @@ const remedyFor = (cause: ClaimError, manualCommand: string) => {
     case "permission-denied":
       return "On Linux, run `sudo tailscale set --operator=$USER` to let this user configure Serve.";
     case "not-logged-in":
-      return "Run `tailscale up` to log in.";
+      return "Run `tailscale up` to sign in.";
     default:
       return `Run \`${manualCommand}\` by hand to see why.`;
   }
@@ -219,6 +219,7 @@ export const layer = (options: {
         // Recorded before the claim, since a claim can apply the mapping and still fail.
         // Release removes only a root that points here, so it is safe when none landed.
         // Checked on every try, since Tailscale may have switched accounts since the last.
+        yield* Ref.set(releasing, null);
         const now = yield* currentAccount();
         if ((yield* Ref.get(account)) !== now.key) {
           // An unreadable record may name a mapping to remove, so Serve waits for it.

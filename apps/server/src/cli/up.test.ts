@@ -409,7 +409,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     },
     {
       label: "a Serve record on another Tailscale account names it and the way out",
-      prints: "another Tailscale account: me@work.example on work.example. Switch",
+      prints: "may remain on another Tailscale account: me@work.example on work.example. Switch",
       fails: true,
       installed: false,
       tailscale: TAGGED_HOST,
