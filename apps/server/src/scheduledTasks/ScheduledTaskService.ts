@@ -642,9 +642,13 @@ export const layer = Layer.effect(
           interaction_mode = excluded.interaction_mode,
           creation_source = excluded.creation_source,
           updated_at = excluded.updated_at,
-          -- A run that completes while this save is in flight already moved next_run_at.
+          -- Keep a next_run_at that a finishing run moved during this save, unless
+          -- another edit changed the schedule or enabled state meanwhile.
           next_run_at = CASE
-            WHEN ${keepNextRun ? 1 : 0} = 1 THEN scheduled_tasks.next_run_at
+            WHEN ${keepNextRun ? 1 : 0} = 1
+              AND scheduled_tasks.schedule_json = excluded.schedule_json
+              AND scheduled_tasks.enabled = excluded.enabled
+            THEN scheduled_tasks.next_run_at
             ELSE excluded.next_run_at
           END,
           -- Only rotate changes a live token, so a save racing a rotation
@@ -729,7 +733,12 @@ export const layer = Layer.effect(
     // runDueTasks skips 'running' rows forever, and the dispatch may already have gone out,
     // so next_run_at must advance. Pending webhook attempts count only with their completion.
     const releaseStuckRun = Effect.fn("ScheduledTaskService.releaseStuckRun")(
-      function* (task: ScheduledTask, message: string, pendingDeliveryId?: string) {
+      function* (
+        task: ScheduledTask,
+        startedAtIso: string,
+        message: string,
+        pendingDeliveryId?: string,
+      ) {
         const now = yield* localNow;
         const reread = yield* Effect.result(findTask(task.id));
         if (Result.isSuccess(reread) && reread.success === null) return;
@@ -738,7 +747,7 @@ export const layer = Layer.effect(
           UPDATE scheduled_tasks
           SET last_run_status = 'failed',
               last_run_error = ${message},
-              next_run_at = ${nextRunAfterRun(source, now)},
+              next_run_at = ${nextRunAfterRun({ ...source, lastRunAt: startedAtIso }, now)},
               updated_at = ${iso(now)},
               run_count = run_count + CASE WHEN EXISTS (
                 SELECT 1 FROM scheduled_task_webhook_pending
@@ -748,7 +757,7 @@ export const layer = Layer.effect(
         `;
         yield* notifyChanged;
       },
-      (effect, task, _message, _pendingDeliveryId) =>
+      (effect, task, _startedAtIso, _message, _pendingDeliveryId) =>
         effect.pipe(
           Effect.catch((cause) =>
             Effect.logWarning("Could not release stuck schedule task run", {
@@ -781,10 +790,9 @@ export const layer = Layer.effect(
         return { task, threadId: null };
       }
 
+      const startedAt = yield* localNow;
+      const startedAtIso = iso(startedAt);
       return yield* Effect.gen(function* () {
-        const startedAt = yield* localNow;
-        const startedAtIso = iso(startedAt);
-
         // Re-read stale poll snapshots so deleted, paused or postponed tasks cannot fire.
         const active = yield* findTask(task.id);
         if (active === null) {
@@ -981,7 +989,9 @@ export const layer = Layer.effect(
         }
         return { task: completed, threadId };
       }).pipe(
-        Effect.onError((cause) => releaseStuckRun(task, errorMessage(cause), webhook?.deliveryId)),
+        Effect.onError((cause) =>
+          releaseStuckRun(task, startedAtIso, errorMessage(cause), webhook?.deliveryId),
+        ),
         Effect.ensuring(
           Ref.update(activeRuns, (active) => {
             const next = new Set(active);

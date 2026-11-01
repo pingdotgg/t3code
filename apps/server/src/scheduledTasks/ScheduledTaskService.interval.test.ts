@@ -187,40 +187,48 @@ const onceInput = {
   schedule: { type: "once", runAt: "2026-11-01T08:00:00Z" },
 };
 
-it.effect("keeps a one-time run used up when a run completes during a title save", () =>
-  Effect.gen(function* () {
-    yield* TestClock.setTime(Date.parse("2026-11-01T07:00:00.000Z"));
-    // The project check runs between the save's read and write, so it stands in for a
-    // scheduled run that completes in that gap.
-    const completeRunMidSave = Layer.unwrap(
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        return Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-          namedProjectsRoot: "/projects",
-          isScratchProject: () =>
-            sql`UPDATE scheduled_tasks SET next_run_at = NULL`.pipe(Effect.as(false), Effect.orDie),
-        });
-      }),
-    );
-    const layer = ScheduledTaskService.layer.pipe(
-      Layer.provide(Layer.merge(dependencies, completeRunMidSave)),
-    );
-    yield* Effect.gen(function* () {
-      const service = yield* ScheduledTaskService.ScheduledTaskService;
-      const worktree = { type: "worktree", baseRef: "main" };
-      const created = yield* service.upsert(
-        yield* decodeInput({ ...onceInput, workspaceStrategy: { type: "root" } }),
+it.effect.each([
+  { change: "a run completes", pause: false, expected: null },
+  { change: "another client pauses the task", pause: true, expected: "2026-11-01T08:00:00.000Z" },
+] as const)(
+  "a title save keeps the stored next run only while nothing else changed: $change",
+  ({ pause, expected }) =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-11-01T07:00:00.000Z"));
+      // The project check runs between the save's read and write, so it stands in for
+      // a concurrent write in that gap.
+      const writeMidSave = Layer.unwrap(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          return Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () =>
+              sql`UPDATE scheduled_tasks SET next_run_at = NULL, enabled = ${pause ? 0 : 1}`.pipe(
+                Effect.as(false),
+                Effect.orDie,
+              ),
+          });
+        }),
       );
-      expect(created.task.nextRunAt).toBe("2026-11-01T08:00:00.000Z");
-      const renamed = yield* service.upsert(
-        yield* decodeInput({ ...onceInput, workspaceStrategy: worktree, title: "Renamed" }),
+      const layer = ScheduledTaskService.layer.pipe(
+        Layer.provide(Layer.merge(dependencies, writeMidSave)),
       );
-      expect(renamed.task.nextRunAt).toBeNull();
-    }).pipe(Effect.provide(layer));
-  }).pipe(
-    Effect.provideService(ServerActivation, Effect.never),
-    Effect.provide(SqlitePersistence.layerMemory),
-  ),
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const worktree = { type: "worktree", baseRef: "main" };
+        yield* service.upsert(
+          yield* decodeInput({ ...onceInput, workspaceStrategy: { type: "root" } }),
+        );
+        const renamed = yield* service.upsert(
+          yield* decodeInput({ ...onceInput, workspaceStrategy: worktree, title: "Renamed" }),
+        );
+        expect(renamed.task.enabled).toBe(true);
+        expect(renamed.task.nextRunAt).toBe(expected);
+      }).pipe(Effect.provide(layer));
+    }).pipe(
+      Effect.provideService(ServerActivation, Effect.never),
+      Effect.provide(SqlitePersistence.layerMemory),
+    ),
 );
 
 it.effect("keeps a one-time run after a restart interrupts an earlier manual run", () =>

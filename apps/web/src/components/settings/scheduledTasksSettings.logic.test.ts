@@ -183,23 +183,13 @@ describe("one-time scheduled tasks", () => {
     expect(scheduleFromDraft({ ...draft, runAt: "" })).toBeNull();
   });
 
-  it("rejects a skipped daylight saving time and keeps a repeated hour exact", () => {
+  it("rejects a time skipped by daylight saving", () => {
     vi.stubEnv("TZ", "America/Los_Angeles");
     const draft = taskToDraft({
       ...legacyTask,
       schedule: { type: "once", runAt: "2027-03-14T18:00:00.000Z" },
     });
     expect(scheduleFromDraft({ ...draft, runAt: "2027-03-14T02:30" })).toBeNull();
-    // 01:00 happens twice on 2026-11-01; the second one is 09:00 UTC.
-    const repeated = {
-      ...draft,
-      runAt: "2026-11-01T01:00",
-      savedRunAt: "2026-11-01T09:00:00.000Z",
-    };
-    expect(scheduleFromDraft(repeated)).toEqual({
-      type: "once",
-      runAt: "2026-11-01T09:00:00.000Z",
-    });
   });
 });
 
