@@ -63,7 +63,7 @@ export function deriveLatestContextWindowSnapshot(
     readonly item: ThreadStructureTurnItem;
   }>,
   liveUsage?: OrchestrationV2ProviderTurnTokenUsage | null,
-  providerThread?: Pick<OrchestrationV2ProviderThread, "contextUsage" | "updatedAt"> | null,
+  providerThread?: Pick<OrchestrationV2ProviderThread, "id" | "contextUsage" | "updatedAt"> | null,
 ): ContextWindowSnapshot | null {
   if (liveUsage != null) {
     const usedTokens = Math.max(0, liveUsage.usedTokens);
@@ -138,6 +138,14 @@ export function deriveLatestContextWindowSnapshot(
       continue;
     }
     const payload = entry.item;
+    // A retired provider thread's compaction says nothing about the active conversation.
+    if (
+      providerThread != null &&
+      payload.providerThreadId != null &&
+      payload.providerThreadId !== providerThread.id
+    ) {
+      continue;
+    }
     const usedTokens = asFiniteNumber(payload.afterTokenCount);
     if (usedTokens === null || usedTokens < 0) {
       continue;
