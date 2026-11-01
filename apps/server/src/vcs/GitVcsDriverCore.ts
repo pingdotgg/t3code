@@ -543,17 +543,15 @@ function redactGitFailureText(text: string, args: readonly string[]): string {
       spans.push({ start: match.index, end: match.index + match[0].length });
     }
   }
-  for (const arg of args) {
-    const value = arg.startsWith("-")
-      ? arg.includes("=")
-        ? arg.slice(arg.indexOf("=") + 1)
-        : ""
-      : arg;
-    if (value.length === 0) continue;
-    let start = text.indexOf(value);
-    while (start !== -1) {
-      spans.push({ start, end: start + value.length });
-      start = text.indexOf(value, start + 1);
+  for (const arg of args.slice(1)) {
+    const values = arg.includes("=") ? [arg, arg.slice(arg.indexOf("=") + 1)] : [arg];
+    for (const value of values) {
+      if (value.length === 0) continue;
+      let start = text.indexOf(value);
+      while (start !== -1) {
+        spans.push({ start, end: start + value.length });
+        start = text.indexOf(value, start + 1);
+      }
     }
   }
   spans.sort((left, right) => left.start - right.start);
