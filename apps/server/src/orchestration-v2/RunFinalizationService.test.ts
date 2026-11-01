@@ -1,4 +1,4 @@
-import { assert, it, vi } from "@effect/vitest";
+import { assert, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
   RunId,
@@ -15,28 +15,37 @@ import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RunFinalization from "./RunFinalizationService.ts";
 
-it.effect("refreshes workspace after checkpoint capture without reading history", () => {
-  const threadId = ThreadId.make("thread_finalize");
-  const runId = RunId.make("run_finalize");
-  const scopeId = CheckpointScopeId.make("scope_finalize");
-  const capture = vi.fn(() => Effect.void);
-  const refresh = vi.fn(() => Effect.void);
-  const checkpointContext = {
-    runs: [],
-    checkpointScopes: [{ id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" }],
-    checkpoints: [],
-  };
+it.effect("completes finalization when the post-checkpoint workspace refresh fails", () => {
+  const threadId = ThreadId.make("thread_refresh_failure");
+  const runId = RunId.make("run_refresh_failure");
+  const scopeId = CheckpointScopeId.make("scope_refresh_failure");
+  const captured: string[] = [];
   const layer = RunFinalization.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({ execute: capture }),
+        Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({
+          execute: () =>
+            Effect.sync(() => {
+              captured.push("checkpoint");
+            }),
+        }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getThreadProjection: () =>
-            Effect.die("workspace refresh must not load transcript history"),
-          getCheckpointContext: () => Effect.succeed(checkpointContext),
+          getCheckpointContext: () =>
+            Effect.succeed({
+              runs: [],
+              checkpointScopes: [{ id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" }],
+              checkpoints: [],
+            }),
         }),
         Layer.succeed(RunFinalization.RunFinalizationObserver, {
-          refresh,
+          refresh: () =>
+            Effect.gen(function* () {
+              captured.push("refresh");
+              return yield* new RunFinalization.RunFinalizationRefreshError({
+                cwd: "/repo",
+                cause: new Error("Git command timed out"),
+              });
+            }),
           refreshAfterTurn: () => Effect.void,
         }),
       ),
@@ -45,8 +54,7 @@ it.effect("refreshes workspace after checkpoint capture without reading history"
   return Effect.gen(function* () {
     const service = yield* RunFinalization.RunFinalizationService;
     yield* service.finalize({ threadId, runId, scopeId });
-    assert.equal(capture.mock.calls.length, 1);
-    assert.deepEqual(refresh.mock.calls[0], [{ cwd: "/repo", threadId, runId }]);
+    assert.deepEqual(captured, ["checkpoint", "refresh"]);
   }).pipe(Effect.provide(layer));
 });
 

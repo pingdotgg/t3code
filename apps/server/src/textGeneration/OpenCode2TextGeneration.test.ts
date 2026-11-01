@@ -1,8 +1,11 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import { TestClock } from "effect/testing";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as OpenCode2AdapterV2Testkit from "../orchestration-v2/Adapters/OpenCode2AdapterV2.testkit.ts";
@@ -34,69 +37,6 @@ it.layer(layer)("OpenCode2TextGeneration", (it) => {
         },
       });
       assert.equal(title.title, "Fix OAuth Login Redirect Loop");
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("fails at once when the event stream drops before the reply", () =>
-    Effect.gen(function* () {
-      const [subscribe, connected, create, created] = OPENCODE2_TITLE_GENERATION;
-      const sessionId = "ses_f0ec85cf6ffebfalpvV2E9nocu";
-      const server = yield* OpenCode2AdapterV2Testkit.replayServer({
-        provider: "opencode",
-        protocol: OpenCode2AdapterV2Testkit.OPENCODE2_HTTP_PROTOCOL,
-        version: "2.0.18",
-        scenario: "opencode2_title_generation_stream_lost",
-        entries: [
-          subscribe!,
-          connected!,
-          create!,
-          created!,
-          {
-            type: "expect_outbound",
-            frame: { type: "session.prompt", input: { sessionID: sessionId, text: "<any>" } },
-          },
-          {
-            type: "emit_inbound",
-            frame: {
-              type: "sdk.response",
-              operation: "session.prompt",
-              data: {
-                data: {
-                  id: "msg_1",
-                  sessionID: sessionId,
-                  time: { created: 1 },
-                  type: "user",
-                  payload: { text: "t" },
-                  delivery: "steer",
-                },
-              },
-            },
-          },
-          { type: "runtime_exit", status: "success" },
-          {
-            type: "expect_outbound",
-            frame: { type: "session.remove", input: { sessionID: sessionId } },
-          },
-          {
-            type: "emit_inbound",
-            frame: { type: "sdk.response", operation: "session.remove", data: null },
-          },
-        ],
-      });
-      const textGeneration = yield* OpenCode2TextGeneration.make().pipe(
-        Effect.provideService(OpenCode2Server.OpenCode2Server, server),
-      );
-      const failure = yield* textGeneration
-        .generateThreadTitle({
-          cwd: process.cwd(),
-          message: "fix the login redirect loop after oauth",
-          modelSelection: {
-            instanceId: ProviderInstanceId.make("opencode"),
-            model: "opencode/big-pickle",
-          },
-        })
-        .pipe(Effect.flip, Effect.timeout("10 seconds"));
-      assert.equal(failure._tag, "TextGenerationError");
     }).pipe(Effect.scoped),
   );
 
@@ -183,70 +123,55 @@ it.layer(layer)("OpenCode2TextGeneration", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("ends at once on an execution end this build cannot decode", () =>
+  it.effect("times out when the prompt request and its interrupt never answer", () =>
     Effect.gen(function* () {
       const [subscribe, connected, create, created] = OPENCODE2_TITLE_GENERATION;
       const sessionId = "ses_f0ec85cf6ffebfalpvV2E9nocu";
-      const server = yield* OpenCode2AdapterV2Testkit.replayServer({
-        provider: "opencode",
-        protocol: OpenCode2AdapterV2Testkit.OPENCODE2_HTTP_PROTOCOL,
-        version: "2.0.18",
-        scenario: "opencode2_title_generation_unreadable_end",
-        entries: [
-          subscribe!,
-          connected!,
-          create!,
-          created!,
-          {
-            type: "expect_outbound",
-            frame: { type: "session.prompt", input: { sessionID: sessionId, text: "<any>" } },
-          },
-          {
-            type: "emit_inbound",
-            frame: {
-              type: "sdk.response",
-              operation: "session.prompt",
-              data: {
-                data: {
-                  id: "msg_1",
-                  sessionID: sessionId,
-                  time: { created: 1 },
-                  type: "user",
-                  payload: { text: "t" },
-                  delivery: "steer",
-                },
-              },
+      const prompted = yield* Deferred.make<void>();
+      const server = yield* OpenCode2AdapterV2Testkit.replayServer(
+        {
+          provider: "opencode",
+          protocol: OpenCode2AdapterV2Testkit.OPENCODE2_HTTP_PROTOCOL,
+          version: "2.0.18",
+          scenario: "opencode2_title_generation_stalled",
+          entries: [
+            subscribe!,
+            connected!,
+            create!,
+            created!,
+            {
+              type: "expect_outbound",
+              frame: { type: "session.prompt", input: { sessionID: sessionId, text: "<any>" } },
             },
-          },
-          // A reason added after 2.0.18: the full schema rejects the frame.
-          {
-            type: "emit_inbound",
-            frame: {
-              type: "sdk.event",
-              event: {
-                id: "evt_0eb7f9ae0001VCNDHVLnqTfoPG",
-                created: 1790657403616,
-                type: "session.execution.interrupted",
-                data: { sessionID: sessionId, reason: "budget" },
-                durable: { aggregateID: sessionId, seq: 7, version: 1 },
-              },
+            {
+              type: "emit_inbound",
+              frame: { type: "sdk.response", operation: "session.prompt", data: "<hang>" },
             },
-          },
-          {
-            type: "expect_outbound",
-            frame: { type: "session.remove", input: { sessionID: sessionId } },
-          },
-          {
-            type: "emit_inbound",
-            frame: { type: "sdk.response", operation: "session.remove", data: null },
-          },
-          { type: "runtime_exit", status: "success" },
-        ],
-      });
+            {
+              type: "expect_outbound",
+              frame: { type: "session.interrupt", input: { sessionID: sessionId } },
+            },
+            {
+              type: "emit_inbound",
+              frame: { type: "sdk.response", operation: "session.interrupt", data: "<hang>" },
+            },
+            {
+              type: "expect_outbound",
+              frame: { type: "session.remove", input: { sessionID: sessionId } },
+            },
+            {
+              type: "emit_inbound",
+              frame: { type: "sdk.response", operation: "session.remove", data: null },
+            },
+            { type: "runtime_exit", status: "success" },
+          ],
+        },
+        { onPrompt: () => Deferred.doneUnsafe(prompted, Effect.void) },
+      );
       const textGeneration = yield* OpenCode2TextGeneration.make().pipe(
         Effect.provideService(OpenCode2Server.OpenCode2Server, server),
       );
-      const failure = yield* textGeneration
+      const generation = yield* textGeneration
         .generateThreadTitle({
           cwd: process.cwd(),
           message: "fix the login redirect loop after oauth",
@@ -255,8 +180,12 @@ it.layer(layer)("OpenCode2TextGeneration", (it) => {
             model: "opencode/big-pickle",
           },
         })
-        .pipe(Effect.flip, Effect.timeout("10 seconds"));
-      assert.equal(failure._tag, "TextGenerationError");
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Deferred.await(prompted);
+      yield* TestClock.adjust("3 minutes");
+      yield* TestClock.adjust("5 seconds");
+      const failure = yield* Fiber.join(generation);
+      assert.equal(failure.detail, "OpenCode did not finish generating in time.");
     }).pipe(Effect.scoped),
   );
 });

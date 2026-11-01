@@ -93,8 +93,11 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   font-family: var(--font-sans) !important;
   font-size: 12px !important;
   line-height: 1 !important;
+  /* Collapsed items are never remeasured: the painted header must match diffHeaderHeight.
+     Center controls in that height instead of adding padding to their intrinsic height. */
+  height: 32px !important;
   min-height: 32px !important;
-  padding-block: 6px !important;
+  padding-block: 0 !important;
   padding-inline: 8px 12px !important;
 }
 
@@ -142,8 +145,7 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 }
 
 /* Pierre clips file names with overflow: hidden for its start ellipsis. A 1em line box cuts off
-   descenders. Only the clipped names get room: 16px plus the header's 12px of padding stays
-   inside its 32px min-height, which diffHeaderHeight assumes. */
+   descenders; give the clipped names room inside the fixed-height header. */
 [data-diffs-header] :is([data-title], [data-prev-name]) {
   line-height: 16px !important;
 }
@@ -179,7 +181,7 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 }
 
 /* Expanding a file mounts its body all at once; easing it in matches the 200ms the app's
-   collapsibles take. Appearance only — the viewer owns geometry, so height cannot animate.
+   collapsibles take. Appearance only: the viewer owns geometry, so height cannot animate.
    Departing content cuts, the same one-way rule the pull request chrome fold follows. */
 [data-diff],
 [data-file] {
@@ -240,16 +242,12 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
           itemMetrics: {
             diffHeaderHeight: 32,
             hunkSeparatorHeight: 24,
-            // Pierre uses its general file spacing as a fallback in expanded-file layout paths.
-            // Keep it zero alongside the explicit paddingTop or expanding the first file can
-            // reintroduce the library's default 8px gap above its header.
+            // Zero both spacing and paddingTop; Pierre's expanded-file fallback otherwise adds an 8px header
+            // gap.
             spacing: 0,
             paddingTop: 0,
-            // Unlike the gap above, the 8px under a file's last line is painted
-            // unconditionally by Pierre's stylesheet (`--diffs-gap-fallback`), so the metric has
-            // to count it: at zero every expanded file's virtual height ran 8px short of its
-            // rendered height, and the end of the list sat past the reachable scroll range —
-            // one clipped file row per expanded file above it.
+            // Include Pierre's 8px --diffs-gap-fallback in metrics or each expanded file loses a scrollable
+            // row.
             paddingBottom: 8,
           },
           layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },

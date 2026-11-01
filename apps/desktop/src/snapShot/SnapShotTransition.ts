@@ -26,7 +26,7 @@ export type SnapShotAnimationDestination = {
   readonly details?: SnapShotAnimationDetails | undefined;
 };
 
-export function snapShotAnimationDurationMs(
+function snapShotAnimationDurationMs(
   source: Electron.Rectangle,
   target: Electron.Rectangle,
 ): number {
@@ -52,6 +52,7 @@ type ActiveTransition = {
   details?: SnapShotAnimationDetails | undefined;
   timer?: Fiber.Fiber<void> | undefined;
   flight?: Promise<void> | undefined;
+  landed?: boolean | undefined;
 };
 
 type SnapShotTransitionOptions = {
@@ -63,7 +64,7 @@ type SnapShotTransitionOptions = {
     | undefined;
 };
 
-export function snapShotAnimationOverlayBounds(
+function snapShotAnimationOverlayBounds(
   displays: ReadonlyArray<Pick<Electron.Display, "bounds">>,
 ): Electron.Rectangle {
   const firstDisplay = displays[0];
@@ -206,6 +207,10 @@ export class SnapShotTransition {
   private readonly alwaysOnTopLevel: SnapShotTransitionOptions["alwaysOnTopLevel"];
   private readonly showWindow: (window: Electron.BaseWindow) => void;
 
+  get isAnimating(): boolean {
+    return this.active?.flight !== undefined && !this.active.landed;
+  }
+
   constructor(options: SnapShotTransitionOptions = {}) {
     this.boundOverlayToCaptureDisplays = options.boundOverlayToCaptureDisplays ?? false;
     this.waitForCompositorFrame = options.waitForCompositorFrame ?? false;
@@ -305,8 +310,7 @@ export class SnapShotTransition {
         }
       }
       if (this.waitForCompositorFrame) {
-        // Cover the source with a composited snapshot before the caller reveals T3.
-        // Decoding and renderer animation frames alone can leave a transparent gap.
+        // Renderer frames alone can leave a transparent gap; composite the snapshot before revealing T3.
         await Promise.all(
           overlays.map(async (overlay) => {
             if (this.active !== active || overlay.window.isDestroyed()) return;
@@ -350,7 +354,9 @@ export class SnapShotTransition {
       }
       return;
     }
-    active.flight = this.runFlight(active, destination);
+    active.flight = this.runFlight(active, destination).finally(() => {
+      active.landed = true;
+    });
   }
 
   private async runFlight(
@@ -401,8 +407,7 @@ export class SnapShotTransition {
         );
         if (this.active !== active || overlay.window.isDestroyed()) return;
         if (this.waitForCompositorFrame) {
-          // Read back one pixel after preparation to flush queued compositor work
-          // before the animation clock starts on any of the display surfaces.
+          // Read back one pixel to flush compositor work before starting any display's animation clock.
           await overlay.window.webContents.capturePage({ x: 0, y: 0, width: 1, height: 1 });
         }
         return overlay;

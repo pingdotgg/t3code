@@ -5,11 +5,7 @@ import type {
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  buildHomeProjectScopes,
-  findHomeProjectScope,
-  sortHomeProjectScopes,
-} from "./homeThreadList";
+import { buildHomeProjectScopes, findHomeProjectScope } from "./homeThreadList";
 import { makeThreadShellFixture } from "../../test-fixtures";
 import { buildThreadListV2Items } from "../threads/threadListV2";
 
@@ -122,49 +118,6 @@ describe("home project scopes", () => {
     ).toEqual([threads[1]!.id]);
   });
 
-  it("builds one v2 scope for the same repository across environments", () => {
-    const localEnvironmentId = EnvironmentId.make("environment-local");
-    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
-    const repositoryIdentity = {
-      canonicalKey: "github.com/pingdotgg/t3code",
-      locator: {
-        source: "git-remote" as const,
-        remoteName: "origin",
-        remoteUrl: "git@github.com:pingdotgg/t3code.git",
-      },
-    };
-    const projects = [
-      makeProject({
-        environmentId: localEnvironmentId,
-        id: ProjectId.make("project-local"),
-        title: "t3code",
-        repositoryIdentity,
-      }),
-      makeProject({
-        environmentId: remoteEnvironmentId,
-        id: ProjectId.make("project-remote"),
-        title: "t3code",
-        repositoryIdentity,
-      }),
-    ];
-
-    const scopes = buildHomeProjectScopes({
-      projects,
-      environmentId: null,
-      projectGroupingMode: "repository",
-    });
-
-    expect(scopes).toHaveLength(1);
-    expect(scopes[0]?.title).toBe("t3code");
-    expect(scopes[0]?.projects).toEqual(projects);
-    expect(scopes[0]?.projectRefs).toEqual(
-      projects.map((project) => ({
-        environmentId: project.environmentId,
-        projectId: project.id,
-      })),
-    );
-  });
-
   it("keeps repository identity from an older duplicate when the freshness winner lacks it", () => {
     const localEnvironmentId = EnvironmentId.make("environment-local");
     const remoteEnvironmentId = EnvironmentId.make("environment-remote");
@@ -212,126 +165,6 @@ describe("home project scopes", () => {
       ProjectId.make("project-remote-fresh"),
     );
     expect(scopes[0]?.projectRefs).toHaveLength(3);
-  });
-
-  it("sorts v2 project scopes by their grouped thread activity", () => {
-    const environmentId = EnvironmentId.make("environment-1");
-    const olderProject = makeProject({
-      environmentId,
-      id: ProjectId.make("project-older"),
-      title: "Older project",
-    });
-    const newerProject = makeProject({
-      environmentId,
-      id: ProjectId.make("project-newer"),
-      title: "Newer project",
-    });
-    const scopes = buildHomeProjectScopes({
-      projects: [newerProject, olderProject],
-      environmentId: null,
-      projectGroupingMode: "separate",
-    });
-
-    expect(
-      sortHomeProjectScopes({
-        scopes,
-        threads: [
-          makeThread({
-            environmentId,
-            id: ThreadId.make("thread-older-project"),
-            projectId: olderProject.id,
-            title: "Most recently active",
-            updatedAt: "2026-06-03T00:00:00.000Z",
-          }),
-          makeThread({
-            environmentId,
-            id: ThreadId.make("thread-newer-project"),
-            projectId: newerProject.id,
-            title: "Less recently active",
-            updatedAt: "2026-06-02T00:00:00.000Z",
-          }),
-        ],
-        pendingTasks: [],
-        projectSortOrder: "updated_at",
-      }).map((scope) => scope.representative.id),
-    ).toEqual([olderProject.id, newerProject.id]);
-  });
-
-  it("sorts invalid project creation timestamps after valid ones", () => {
-    const environmentId = EnvironmentId.make("environment-1");
-    const invalidProject = makeProject({
-      environmentId,
-      id: ProjectId.make("project-invalid"),
-      title: "A invalid timestamp",
-      createdAt: "invalid",
-    });
-    const validProject = makeProject({
-      environmentId,
-      id: ProjectId.make("project-valid"),
-      title: "Z valid timestamp",
-      createdAt: "2026-06-02T00:00:00.000Z",
-    });
-    const scopes = buildHomeProjectScopes({
-      projects: [invalidProject, validProject],
-      environmentId: null,
-      projectGroupingMode: "separate",
-    });
-
-    expect(
-      sortHomeProjectScopes({
-        scopes,
-        threads: [],
-        pendingTasks: [],
-        projectSortOrder: "created_at",
-      }).map((scope) => scope.representative.id),
-    ).toEqual([validProject.id, invalidProject.id]);
-  });
-
-  it("uses the freshest member when a grouped scope has no activity", () => {
-    const localEnvironmentId = EnvironmentId.make("environment-local");
-    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
-    const repositoryIdentity = {
-      canonicalKey: "github.com/pingdotgg/t3code",
-      locator: {
-        source: "git-remote" as const,
-        remoteName: "origin",
-        remoteUrl: "git@github.com:pingdotgg/t3code.git",
-      },
-    };
-    const olderMember = makeProject({
-      environmentId: localEnvironmentId,
-      id: ProjectId.make("project-older-member"),
-      title: "t3code",
-      updatedAt: "2026-06-01T00:00:00.000Z",
-      repositoryIdentity,
-    });
-    const newerMember = makeProject({
-      environmentId: remoteEnvironmentId,
-      id: ProjectId.make("project-newer-member"),
-      title: "t3code",
-      updatedAt: "2026-06-03T00:00:00.000Z",
-      repositoryIdentity,
-    });
-    const otherProject = makeProject({
-      environmentId: localEnvironmentId,
-      id: ProjectId.make("project-other"),
-      title: "other",
-      updatedAt: "2026-06-02T00:00:00.000Z",
-    });
-    const scopes = buildHomeProjectScopes({
-      projects: [olderMember, newerMember, otherProject],
-      environmentId: null,
-      projectGroupingMode: "repository",
-    });
-
-    expect(
-      sortHomeProjectScopes({
-        scopes,
-        threads: [],
-        pendingTasks: [],
-        projectSortOrder: "updated_at",
-      })[0]?.key,
-    ).toBe(scopes.find((scope) => scope.projects.length === 2)?.key);
   });
 
   it("does not merge unrelated repositories that share a title", () => {

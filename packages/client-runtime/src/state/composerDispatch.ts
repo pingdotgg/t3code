@@ -5,8 +5,11 @@ export function resolveComposerDispatchMode(input: {
   readonly running: boolean;
   readonly alternateModifier: boolean;
   readonly activeTurnDefault?: ActiveTurnComposerAction;
+  /** False while the active turn cannot take steering input, such as during compaction. */
+  readonly canSteer?: boolean;
 }): ComposerDispatchMode {
   if (!input.running) return "auto";
+  if (input.canSteer === false) return "queue";
   const defaultAction = input.activeTurnDefault ?? "steer";
   if (input.alternateModifier) return defaultAction === "queue" ? "steer" : "queue";
   return defaultAction;

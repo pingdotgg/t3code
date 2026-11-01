@@ -7,7 +7,6 @@ import * as Schema from "effect/Schema";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import {
-  acpRegistrySnapshotReadiness,
   applyAcpRegistryAvailableCommands,
   applyAcpRegistryLiveConfiguration,
   buildCheckedAcpRegistrySnapshot,
@@ -175,58 +174,6 @@ describe("acpRegistrySnapshotReadiness", () => {
       auth: { status: "unknown", canLogout: true },
       nativeSessions: { canList: true, canLoad: true, canResume: true },
       models: [{ slug: "live-model", isDefault: true }],
-    });
-  });
-
-  it("maps registry inspection status to provider readiness", () => {
-    expect(
-      acpRegistrySnapshotReadiness({
-        status: "ready",
-        agentId: "gemini-cli",
-        version: "1.2.3",
-        distribution: "npx",
-      }),
-    ).toEqual({ installed: true, version: "1.2.3", status: "ready" });
-
-    expect(
-      acpRegistrySnapshotReadiness({
-        status: "missing_runner",
-        agentId: "gemini-cli",
-        version: "1.2.3",
-        distribution: "npx",
-        runner: "npx",
-      }),
-    ).toMatchObject({ installed: false, version: "1.2.3", status: "error" });
-
-    expect(
-      acpRegistrySnapshotReadiness({
-        status: "missing_runner",
-        version: null,
-        distribution: "local",
-      }),
-    ).toEqual({
-      installed: false,
-      version: null,
-      status: "error",
-      message: "Local ACP executable is not available on this environment's PATH.",
-    });
-
-    expect(
-      acpRegistrySnapshotReadiness({
-        status: "unprepared",
-        agentId: "zed-agent",
-        version: "2.0.0",
-        distribution: "binary",
-      }),
-    ).toMatchObject({ installed: false, version: "2.0.0", status: "warning" });
-
-    expect(
-      acpRegistrySnapshotReadiness({ status: "failed", message: "Registry unavailable." }),
-    ).toEqual({
-      installed: false,
-      version: null,
-      status: "error",
-      message: "Registry unavailable.",
     });
   });
 

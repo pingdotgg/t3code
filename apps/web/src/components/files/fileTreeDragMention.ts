@@ -13,7 +13,6 @@ export interface FileTreeDragStartEvent {
 }
 
 export interface FileTreeDragMentionHost {
-  deselect(treePath: string): void;
   /** The path a dragged row mentions; defaults to the tree path itself. */
   mentionPath?(treePath: string): string;
 }
@@ -22,7 +21,7 @@ export interface FileTreeDragMentionController {
   isDragInProgress(): boolean;
   handleSelectionChange(selectedPaths: ReadonlyArray<string>): void;
   handleDragStart(event: FileTreeDragStartEvent): void;
-  handleDragEnd(): void;
+  handleDragEnd(deselect: (treePath: string) => void): void;
 }
 
 const itemPathOf = (node: unknown): string | null => {
@@ -47,8 +46,7 @@ export function createFileTreeDragMentionController(
       if (event.dataTransfer === null) {
         return;
       }
-      // Only drags that originate on a tree row are mentions; a text/plain
-      // fallback would also tag drags of selected text from the panel chrome.
+      // Require a tree-row origin; text/plain fallback would misclassify selected panel text as a mention.
       let itemPath: string | null = null;
       for (const node of event.composedPath()) {
         itemPath = itemPathOf(node);
@@ -74,12 +72,12 @@ export function createFileTreeDragMentionController(
       draggedPaths = dragged;
       event.dataTransfer.setData(COMPOSER_MENTION_DRAG_TYPE, mentions.join(" "));
     },
-    handleDragEnd() {
+    handleDragEnd(deselect) {
       if (draggedPaths.length === 0) {
         return;
       }
       for (const path of draggedPaths) {
-        host.deselect(path);
+        deselect(path);
       }
       draggedPaths = [];
     },

@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
 
 import {
   GitManagerError,
@@ -31,6 +32,7 @@ import {
 import * as GitManager from "./GitManager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 
 export class GitWorkflowService extends Context.Service<
   GitWorkflowService,
@@ -50,6 +52,7 @@ export class GitWorkflowService extends Context.Service<
     readonly localStatus: (
       input: VcsStatusInput,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
+    readonly currentBranch: (cwd: string) => Effect.Effect<string | null, GitManagerServiceError>;
     readonly remoteStatus: (
       input: VcsStatusInput,
       options?: GitManager.GitRemoteStatusOptions,
@@ -96,6 +99,14 @@ export class GitWorkflowService extends Context.Service<
       readonly fallbackRemoteName: string;
     }) => Effect.Effect<
       { readonly commitSha: string; readonly remoteRefName: string },
+      GitCommandError
+    >;
+    readonly resolveWorktreeBaseRemote: GitVcsDriver.GitVcsDriver["Service"]["resolveWorktreeBaseRemote"];
+    readonly fetchWorktreeBaseCommit: (input: {
+      readonly cwd: string;
+      readonly refName: string;
+    }) => Effect.Effect<
+      { readonly commitSha: string; readonly remoteRefName: string } | null,
       GitCommandError
     >;
     readonly removeWorktree: (
@@ -163,6 +174,14 @@ export const make = Effect.gen(function* () {
   const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
+  const fileSystem = yield* FileSystem.FileSystem;
+
+  // Nested projects and path aliases must share the checkout's branch-mutation lease.
+  const withCheckoutLease = <A, E, R>(rootPath: string, effect: Effect.Effect<A, E, R>) =>
+    fileSystem.realPath(rootPath).pipe(
+      Effect.orElseSucceed(() => rootPath),
+      Effect.flatMap((cwd) => withWorkspaceLease(cwd, effect)),
+    );
 
   const ensureGit = Effect.fn("GitWorkflowService.ensureGit")(function* (
     operation: string,
@@ -179,13 +198,7 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    if (handle.kind !== "git") {
-      return yield* new GitManagerError({
-        operation,
-        cwd,
-        detail: `The ${operation} workflow currently supports Git repositories only; detected ${handle.kind}. (${cwd})`,
-      });
-    }
+    return handle;
   });
 
   const ensureGitCommand = Effect.fn("GitWorkflowService.ensureGitCommand")(function* (
@@ -204,14 +217,7 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    if (handle.kind !== "git") {
-      return yield* new GitCommandError({
-        operation,
-        command: "vcs-route",
-        cwd,
-        detail: `The ${operation} command currently supports Git repositories only; detected ${handle.kind}.`,
-      });
-    }
+    return handle;
   });
 
   const detectGitRepositoryForStatus = Effect.fn("GitWorkflowService.detectGitRepositoryForStatus")(
@@ -229,13 +235,6 @@ export const make = Effect.gen(function* () {
       );
       if (!handle) {
         return false;
-      }
-      if (handle.kind !== "git") {
-        return yield* new GitManagerError({
-          operation,
-          cwd,
-          detail: `The ${operation} workflow currently supports Git repositories only; detected ${handle.kind}. (${cwd})`,
-        });
       }
       return true;
     },
@@ -259,14 +258,6 @@ export const make = Effect.gen(function* () {
     if (!handle) {
       return false;
     }
-    if (handle.kind !== "git") {
-      return yield* new GitCommandError({
-        operation,
-        command: "vcs-route",
-        cwd,
-        detail: `The ${operation} command currently supports Git repositories only; detected ${handle.kind}.`,
-      });
-    }
     return true;
   });
 
@@ -279,8 +270,8 @@ export const make = Effect.gen(function* () {
       ensureGit(operation, input.cwd).pipe(Effect.andThen(run(input)));
 
   return GitWorkflowService.of({
-    isRepository: (cwd) =>
-      registry.detect({ cwd }).pipe(
+    isRepository: Effect.fn("GitWorkflowService.isRepository")(function (cwd) {
+      return registry.detect({ cwd }).pipe(
         Effect.map((handle) => handle?.kind === "git"),
         Effect.mapError(
           (cause) =>
@@ -291,9 +282,10 @@ export const make = Effect.gen(function* () {
               cause,
             }),
         ),
-      ),
-    hasCommit: (input) =>
-      ensureGitCommand("GitWorkflowService.hasCommit", input.cwd).pipe(
+      );
+    }),
+    hasCommit: Effect.fn("GitWorkflowService.hasCommit")(function (input) {
+      return ensureGitCommand("GitWorkflowService.hasCommit", input.cwd).pipe(
         Effect.andThen(
           git.execute({
             operation: "GitWorkflowService.hasCommit",
@@ -303,10 +295,11 @@ export const make = Effect.gen(function* () {
           }),
         ),
         Effect.map((result) => result.exitCode === 0),
-      ),
-    hasRefNamed: (input) =>
-      // No ref name holds a pattern character, and one here would widen the match.
-      /[*?[\\]/.test(input.refName)
+      );
+    }),
+    hasRefNamed: Effect.fn("GitWorkflowService.hasRefNamed")(function (input) {
+      // Pattern characters would widen the ref match.
+      return /[*?[\\]/.test(input.refName)
         ? Effect.succeed(false)
         : ensureGitCommand("GitWorkflowService.hasRefNamed", input.cwd).pipe(
             Effect.andThen(
@@ -322,100 +315,182 @@ export const make = Effect.gen(function* () {
               }),
             ),
             Effect.map((result) => result.stdout.trim().length > 0),
-          ),
-    status: (input) =>
-      detectGitRepositoryForStatus("GitWorkflowService.status", input.cwd).pipe(
+          );
+    }),
+    status: Effect.fn("GitWorkflowService.status")(function (input) {
+      return detectGitRepositoryForStatus("GitWorkflowService.status", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
           isGitRepository ? gitManager.status(input) : Effect.succeed(nonRepositoryStatus()),
         ),
-      ),
-    localStatus: (input) =>
-      detectGitRepositoryForStatus("GitWorkflowService.localStatus", input.cwd).pipe(
+      );
+    }),
+    localStatus: Effect.fn("GitWorkflowService.localStatus")(function (input) {
+      return detectGitRepositoryForStatus("GitWorkflowService.localStatus", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
           isGitRepository
             ? gitManager.localStatus(input)
             : Effect.succeed(nonRepositoryLocalStatus()),
         ),
-      ),
-    remoteStatus: (input, options) =>
-      detectGitRepositoryForStatus("GitWorkflowService.remoteStatus", input.cwd).pipe(
+      );
+    }),
+    currentBranch: Effect.fn("GitWorkflowService.currentBranch")(function* (cwd) {
+      if (!(yield* detectGitRepositoryForStatus("GitWorkflowService.currentBranch", cwd))) {
+        return null;
+      }
+      const result = yield* git.execute({
+        operation: "GitWorkflowService.currentBranch",
+        cwd,
+        args: ["symbolic-ref", "--quiet", "HEAD"],
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+      });
+      if (result.exitCode === 0) {
+        return result.stdout.trim().replace(/^refs\/heads\//, "") || null;
+      }
+      if (result.exitCode === 1) return null;
+      return yield* new GitCommandError({
+        operation: "GitWorkflowService.currentBranch",
+        command: "git symbolic-ref",
+        cwd,
+        argumentCount: 3,
+        ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+        stdoutLength: result.stdout.length,
+        stderrLength: result.stderr.length,
+        detail: "Failed to read the checked-out branch.",
+      });
+    }),
+    remoteStatus: Effect.fn("GitWorkflowService.remoteStatus")(function (input, options) {
+      return detectGitRepositoryForStatus("GitWorkflowService.remoteStatus", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
           isGitRepository ? gitManager.remoteStatus(input, options) : Effect.succeed(null),
         ),
-      ),
+      );
+    }),
     invalidateLocalStatus: gitManager.invalidateLocalStatus,
     invalidateRemoteStatus: gitManager.invalidateRemoteStatus,
     invalidateStatus: gitManager.invalidateStatus,
-    pullCurrentBranch: (cwd) =>
-      ensureGitCommand("GitWorkflowService.pullCurrentBranch", cwd).pipe(
+    pullCurrentBranch: Effect.fn("GitWorkflowService.pullCurrentBranch")(function (cwd) {
+      return ensureGitCommand("GitWorkflowService.pullCurrentBranch", cwd).pipe(
         Effect.andThen(git.pullCurrentBranch(cwd)),
-      ),
-    runStackedAction: (input, options) =>
-      ensureGit("GitWorkflowService.runStackedAction", input.cwd).pipe(
-        Effect.andThen(gitManager.runStackedAction(input, options)),
-      ),
+      );
+    }),
+    runStackedAction: Effect.fn("GitWorkflowService.runStackedAction")(function (input, options) {
+      return ensureGit("GitWorkflowService.runStackedAction", input.cwd).pipe(
+        Effect.flatMap((handle) =>
+          withCheckoutLease(
+            handle.repository.rootPath,
+            gitManager.runStackedAction(input, options),
+          ),
+        ),
+      );
+    }),
     resolvePullRequest: routeGitManager(
       "GitWorkflowService.resolvePullRequest",
       gitManager.resolvePullRequest,
     ),
-    preparePullRequestThread: routeGitManager(
-      "GitWorkflowService.preparePullRequestThread",
-      gitManager.preparePullRequestThread,
+    preparePullRequestThread: Effect.fn("GitWorkflowService.preparePullRequestThread")(
+      function (input) {
+        return ensureGit("GitWorkflowService.preparePullRequestThread", input.cwd).pipe(
+          Effect.flatMap((handle) =>
+            input.mode === "local"
+              ? withCheckoutLease(
+                  handle.repository.rootPath,
+                  gitManager.preparePullRequestThread(input),
+                )
+              : gitManager.preparePullRequestThread(input),
+          ),
+        );
+      },
     ),
-    listRefs: (input) =>
-      detectGitRepositoryForCommand("GitWorkflowService.listRefs", input.cwd).pipe(
+    listRefs: Effect.fn("GitWorkflowService.listRefs")(function (input) {
+      return detectGitRepositoryForCommand("GitWorkflowService.listRefs", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
           isGitRepository ? git.listRefs(input) : Effect.succeed(nonRepositoryListRefs()),
         ),
-      ),
-    createWorktree: (input, options) =>
-      ensureGitCommand("GitWorkflowService.createWorktree", input.cwd).pipe(
+      );
+    }),
+    createWorktree: Effect.fn("GitWorkflowService.createWorktree")(function (input, options) {
+      return ensureGitCommand("GitWorkflowService.createWorktree", input.cwd).pipe(
         Effect.andThen(gitManager.createWorktree(input, options)),
-      ),
-    listLocalBranchNames: (cwd) =>
-      ensureGitCommand("GitWorkflowService.listLocalBranchNames", cwd).pipe(
+      );
+    }),
+    listLocalBranchNames: Effect.fn("GitWorkflowService.listLocalBranchNames")(function (cwd) {
+      return ensureGitCommand("GitWorkflowService.listLocalBranchNames", cwd).pipe(
         Effect.andThen(git.listLocalBranchNames(cwd)),
-      ),
-    fetchRemote: (input) =>
-      ensureGitCommand("GitWorkflowService.fetchRemote", input.cwd).pipe(
+      );
+    }),
+    fetchRemote: Effect.fn("GitWorkflowService.fetchRemote")(function (input) {
+      return ensureGitCommand("GitWorkflowService.fetchRemote", input.cwd).pipe(
         Effect.andThen(git.fetchRemote(input)),
-      ),
-    remoteExists: (input) =>
-      ensureGitCommand("GitWorkflowService.remoteExists", input.cwd).pipe(
+      );
+    }),
+    remoteExists: Effect.fn("GitWorkflowService.remoteExists")(function (input) {
+      return ensureGitCommand("GitWorkflowService.remoteExists", input.cwd).pipe(
         Effect.andThen(git.remoteExists(input)),
-      ),
-    remoteBranchExists: (input) =>
-      ensureGitCommand("GitWorkflowService.remoteBranchExists", input.cwd).pipe(
+      );
+    }),
+    remoteBranchExists: Effect.fn("GitWorkflowService.remoteBranchExists")(function (input) {
+      return ensureGitCommand("GitWorkflowService.remoteBranchExists", input.cwd).pipe(
         Effect.andThen(git.remoteBranchExists(input)),
-      ),
-    resolveRemoteTrackingCommit: (input) =>
-      ensureGitCommand("GitWorkflowService.resolveRemoteTrackingCommit", input.cwd).pipe(
-        Effect.andThen(git.resolveRemoteTrackingCommit(input)),
-      ),
-    removeWorktree: (input) =>
-      ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
+      );
+    }),
+    resolveRemoteTrackingCommit: Effect.fn("GitWorkflowService.resolveRemoteTrackingCommit")(
+      function (input) {
+        return ensureGitCommand("GitWorkflowService.resolveRemoteTrackingCommit", input.cwd).pipe(
+          Effect.andThen(git.resolveRemoteTrackingCommit(input)),
+        );
+      },
+    ),
+    resolveWorktreeBaseRemote: Effect.fn("GitWorkflowService.resolveWorktreeBaseRemote")(
+      function (input) {
+        return ensureGitCommand("GitWorkflowService.resolveWorktreeBaseRemote", input.cwd).pipe(
+          Effect.andThen(git.resolveWorktreeBaseRemote(input)),
+        );
+      },
+    ),
+    fetchWorktreeBaseCommit: Effect.fn("GitWorkflowService.fetchWorktreeBaseCommit")(
+      function (input) {
+        return ensureGitCommand("GitWorkflowService.fetchWorktreeBaseCommit", input.cwd).pipe(
+          Effect.andThen(git.fetchWorktreeBaseCommit(input)),
+        );
+      },
+    ),
+    removeWorktree: Effect.fn("GitWorkflowService.removeWorktree")(function (input) {
+      return ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
         Effect.andThen(git.removeWorktree(input)),
-      ),
-    pruneWorktrees: (input) =>
-      ensureGitCommand("GitWorkflowService.pruneWorktrees", input.cwd).pipe(
+      );
+    }),
+    pruneWorktrees: Effect.fn("GitWorkflowService.pruneWorktrees")(function (input) {
+      return ensureGitCommand("GitWorkflowService.pruneWorktrees", input.cwd).pipe(
         Effect.andThen(git.pruneWorktrees(input)),
-      ),
-    deleteLocalBranch: (input) =>
-      ensureGitCommand("GitWorkflowService.deleteLocalBranch", input.cwd).pipe(
+      );
+    }),
+    deleteLocalBranch: Effect.fn("GitWorkflowService.deleteLocalBranch")(function (input) {
+      return ensureGitCommand("GitWorkflowService.deleteLocalBranch", input.cwd).pipe(
         Effect.andThen(git.deleteLocalBranch(input)),
-      ),
-    createRef: (input) =>
-      ensureGitCommand("GitWorkflowService.createRef", input.cwd).pipe(
-        Effect.andThen(git.createRef(input)),
-      ),
-    switchRef: (input) =>
-      ensureGitCommand("GitWorkflowService.switchRef", input.cwd).pipe(
-        Effect.andThen(Effect.scoped(git.switchRef(input))),
-      ),
-    renameBranch: (input) =>
-      ensureGit("GitWorkflowService.renameBranch", input.cwd).pipe(
+      );
+    }),
+    createRef: Effect.fn("GitWorkflowService.createRef")(function (input) {
+      return ensureGitCommand("GitWorkflowService.createRef", input.cwd).pipe(
+        Effect.flatMap((handle) =>
+          input.switchRef
+            ? withCheckoutLease(handle.repository.rootPath, git.createRef(input))
+            : git.createRef(input),
+        ),
+      );
+    }),
+    switchRef: Effect.fn("GitWorkflowService.switchRef")(function (input) {
+      return ensureGitCommand("GitWorkflowService.switchRef", input.cwd).pipe(
+        Effect.flatMap((handle) =>
+          withCheckoutLease(handle.repository.rootPath, Effect.scoped(git.switchRef(input))),
+        ),
+      );
+    }),
+    renameBranch: Effect.fn("GitWorkflowService.renameBranch")(function (input) {
+      return ensureGit("GitWorkflowService.renameBranch", input.cwd).pipe(
         Effect.andThen(git.renameBranch(input)),
-      ),
+      );
+    }),
   });
 });
 

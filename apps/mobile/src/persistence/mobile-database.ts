@@ -8,13 +8,6 @@ import type { SQLiteDatabase } from "expo-sqlite";
 
 const DATABASE_NAME = "t3code-client.db";
 const DATABASE_SCHEMA_VERSION = 1;
-const LEGACY_CACHE_DIRECTORIES = [
-  "connection-shell-snapshots",
-  "shell-snapshots",
-  "connection-thread-snapshots",
-  "connection-server-configs",
-  "connection-vcs-refs",
-] as const;
 
 export const ClientCacheKind = Schema.Literals([
   "shell",
@@ -76,120 +69,6 @@ export class MobileDatabaseError extends Schema.TaggedError<MobileDatabaseError>
 
 function databaseError(operation: typeof MobileDatabaseOperation.Type) {
   return (cause: unknown) => new MobileDatabaseError({ operation, cause });
-}
-
-interface LegacyCacheRecord {
-  readonly environmentId: string;
-  readonly kind: ClientCacheKind;
-  readonly cacheKey: string;
-  readonly schemaVersion: number;
-  readonly payload: string;
-}
-
-function objectRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
-}
-
-export function decodeLegacyCacheRecord(
-  directoryName: (typeof LEGACY_CACHE_DIRECTORIES)[number],
-  payload: string,
-): LegacyCacheRecord | null {
-  let parsed: Record<string, unknown> | null;
-  try {
-    parsed = objectRecord(JSON.parse(payload));
-  } catch {
-    return null;
-  }
-  if (
-    parsed === null ||
-    typeof parsed.environmentId !== "string" ||
-    typeof parsed.schemaVersion !== "number"
-  ) {
-    return null;
-  }
-
-  switch (directoryName) {
-    case "connection-shell-snapshots":
-    case "shell-snapshots":
-      return {
-        environmentId: parsed.environmentId,
-        kind: "shell",
-        cacheKey: "snapshot",
-        schemaVersion: parsed.schemaVersion,
-        payload,
-      };
-    case "connection-thread-snapshots":
-      return typeof parsed.threadId === "string"
-        ? {
-            environmentId: parsed.environmentId,
-            kind: "thread",
-            cacheKey: parsed.threadId,
-            schemaVersion: parsed.schemaVersion,
-            payload,
-          }
-        : null;
-    case "connection-server-configs":
-      return {
-        environmentId: parsed.environmentId,
-        kind: "server-config",
-        cacheKey: "config",
-        schemaVersion: parsed.schemaVersion,
-        payload,
-      };
-    case "connection-vcs-refs":
-      return typeof parsed.cwd === "string"
-        ? {
-            environmentId: parsed.environmentId,
-            kind: "vcs-refs",
-            cacheKey: parsed.cwd,
-            schemaVersion: parsed.schemaVersion,
-            payload,
-          }
-        : null;
-  }
-}
-
-async function migrateLegacyFileCaches(database: SQLiteDatabase): Promise<boolean> {
-  try {
-    const { Directory, File, Paths } = await import("expo-file-system");
-    let complete = true;
-    const listFiles = (
-      directory: InstanceType<typeof Directory>,
-    ): Array<InstanceType<typeof File>> =>
-      directory.list().flatMap((entry) => (entry instanceof File ? [entry] : listFiles(entry)));
-
-    for (const directoryName of LEGACY_CACHE_DIRECTORIES) {
-      try {
-        const directory = new Directory(Paths.document, directoryName);
-        if (!directory.exists) continue;
-        for (const file of listFiles(directory)) {
-          const payload = await file.text();
-          const record = decodeLegacyCacheRecord(directoryName, payload);
-          if (record === null) continue;
-          await database.runAsync(
-            `INSERT INTO client_cache
-              (environment_id, kind, cache_key, schema_version, payload, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)
-             ON CONFLICT (environment_id, kind, cache_key) DO NOTHING`,
-            record.environmentId,
-            record.kind,
-            record.cacheKey,
-            record.schemaVersion,
-            record.payload,
-            Date.now(),
-          );
-        }
-        directory.delete();
-      } catch (cause) {
-        complete = false;
-        console.warn(`[mobile-database] could not migrate legacy cache ${directoryName}`, cause);
-      }
-    }
-    return complete;
-  } catch (cause) {
-    console.warn("[mobile-database] could not load legacy cache migration", cause);
-    return false;
-  }
 }
 
 export class MobileDatabase extends Context.Service<
@@ -279,10 +158,7 @@ const makeAvailable = Effect.gen(function* () {
             `);
       });
       if ((schema?.user_version ?? 0) < DATABASE_SCHEMA_VERSION) {
-        const migrated = await migrateLegacyFileCaches(database);
-        if (migrated) {
-          await database.execAsync(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION};`);
-        }
+        await database.execAsync(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION};`);
       }
     },
     catch: databaseError("migrate"),
@@ -319,8 +195,7 @@ const makeAvailable = Effect.gen(function* () {
       (environmentId, kind, cacheKey, schemaVersion, payload) =>
         Effect.tryPromise({
           try: async () => {
-            // Diffs can be large. Keep the offline PR cache within 32 MiB and 256
-            // responses per environment, and don't let one huge diff evict it all.
+            // Bound offline PR caches to 32 MiB and 256 responses per environment; reject huge diffs that would evict everything.
             if (
               kind === "pull-request" &&
               new TextEncoder().encode(payload).length > 4 * 1024 * 1024

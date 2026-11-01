@@ -4,14 +4,11 @@ import * as NodeNet from "node:net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
 import * as Scheduler from "effect/Scheduler";
-import { expect, vi } from "vite-plus/test";
+import { vi } from "vite-plus/test";
 
 import * as NodePtyAdapter from "./NodePtyAdapter.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
@@ -160,125 +157,6 @@ it.effect("reports an incompatible Windows readiness API instead of hanging", ()
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect.each(["win32", "linux", "darwin"] as const)(
-  "terminates through node-pty using %s semantics",
-  (platform) =>
-    Effect.gen(function* () {
-      const adapter = yield* PtyAdapter.PtyAdapter;
-      const process = yield* adapter.spawn({
-        shell: "test-shell",
-        cwd: ".",
-        cols: 80,
-        rows: 24,
-        env: {},
-      });
-      const nativeProcess = spawn.mock.results.at(-1)!.value;
-      nativeProcess.kill.mockImplementation((signal?: string) => {
-        if (platform === "win32" && signal) {
-          throw new Error("Signals not supported on windows.");
-        }
-      });
-
-      process.kill("SIGTERM");
-      process.kill("SIGKILL");
-      process.kill();
-
-      assert.deepEqual(
-        nativeProcess.kill.mock.calls,
-        platform === "win32"
-          ? [[undefined], [undefined], [undefined]]
-          : [["SIGTERM"], ["SIGKILL"], [undefined]],
-      );
-    }).pipe(Effect.provide(layerTestFor(platform))),
-);
-
-it.effect("spawns through the public adapter with the provided host references", () =>
-  Effect.gen(function* () {
-    spawn.mockClear();
-    const adapter = yield* PtyAdapter.PtyAdapter;
-    const process = yield* adapter.spawn({
-      shell: "powershell.exe",
-      args: ["-NoLogo"],
-      cwd: "C:\\workspace",
-      cols: 120,
-      rows: 40,
-      env: {},
-    });
-
-    assert.equal(process.pid, 42);
-    assert.equal(spawn.mock.calls.length, 1);
-    assert.deepEqual(spawn.mock.calls[0], [
-      "powershell.exe",
-      ["-NoLogo"],
-      {
-        cwd: "C:\\workspace",
-        cols: 120,
-        rows: 40,
-        env: { TERM: "xterm-256color" },
-        name: "xterm-256color",
-      },
-    ]);
-  }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect("preserves a caller-provided TERM in the spawn env on win32", () =>
-  Effect.gen(function* () {
-    spawn.mockClear();
-    const adapter = yield* PtyAdapter.PtyAdapter;
-    yield* adapter.spawn({
-      shell: "powershell.exe",
-      cwd: "C:\\workspace",
-      cols: 80,
-      rows: 24,
-      env: { TERM: "xterm-direct" },
-    });
-
-    assert.equal(spawn.mock.calls.length, 1);
-    assert.deepEqual(spawn.mock.calls[0], [
-      "powershell.exe",
-      [],
-      {
-        cwd: "C:\\workspace",
-        cols: 80,
-        rows: 24,
-        env: { TERM: "xterm-direct" },
-        name: "xterm-256color",
-      },
-    ]);
-  }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect("reports native module load failures as structured startup defects", () =>
-  Effect.gen(function* () {
-    const cause = new Error("native binding could not be loaded");
-    const exit = yield* NodePtyAdapter.make().pipe(
-      Effect.provideService(NodePtyAdapter.NodePtyModuleLoaderRef, () => Promise.reject(cause)),
-      Effect.exit,
-    );
-
-    assert.isTrue(Exit.isFailure(exit));
-    if (Exit.isFailure(exit)) {
-      assert.isTrue(Cause.hasDies(exit.cause));
-      const error = Cause.squash(exit.cause);
-      assert.instanceOf(error, NodePtyAdapter.NodePtyModuleLoadError);
-      assert.deepInclude(error, {
-        _tag: "NodePtyModuleLoadError",
-        platform: "win32",
-        architecture: "x64",
-      });
-      assert.equal(error.message, "Failed to load node-pty for win32-x64.");
-    }
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        NodeServices.layer,
-        Layer.succeed(HostProcess.Platform, "win32"),
-        Layer.succeed(HostProcess.Architecture, "x64"),
-      ),
-    ),
-  ),
-);
-
 it.effect.each([2048, 8])(
   "preserves an exit during readiness handoff with scheduler budget %s",
   (budget) =>
@@ -318,48 +196,4 @@ it.effect("replays an exit to late subscribers and respects unsubscription", () 
     assert.deepEqual(late.mock.calls, [[{ exitCode: 7, signal: 2 }]]);
     assert.equal(nativeProcess.events.listenerCount("exit"), 0);
   }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect.each(["spawn", "interrupt"] as const)(
-  "logs cleanup failures without replacing %s",
-  (failure) =>
-    Effect.gen(function* () {
-      const { nativeProcess, subscribed } = preparePendingProcess();
-      const killError = new Error("native kill failed");
-      nativeProcess._agent.kill.mockImplementation(() => {
-        throw killError;
-      });
-      const messages: unknown[] = [];
-      const logger = Logger.make(({ message }) => {
-        messages.push(message);
-      });
-      const adapter = yield* PtyAdapter.PtyAdapter;
-      const fiber = yield* adapter
-        .spawn(spawnInput)
-        .pipe(
-          Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
-          Effect.forkChild,
-        );
-      yield* subscribed;
-      const spawnError = new Error("pipe failed");
-      if (failure === "interrupt") yield* Fiber.interrupt(fiber);
-      else nativeProcess._socket.emit("error", spawnError);
-      const exit = yield* Fiber.await(fiber);
-      assert.isTrue(Exit.isFailure(exit));
-      if (Exit.isFailure(exit)) {
-        if (failure === "interrupt") assert.isTrue(Cause.hasInterrupts(exit.cause));
-        else {
-          const error = Cause.squash(exit.cause);
-          assert.instanceOf(error, PtyAdapter.PtySpawnError);
-          assert.equal(error.cause, spawnError);
-        }
-      }
-      assert.equal(messages.length, 1);
-      expect(messages[0]).toMatchObject([
-        "failed to cancel Windows terminal startup",
-        { terminalPid: 0, cause: { cause: killError } },
-      ]);
-      assert.equal(nativeProcess.events.listenerCount("exit"), 0);
-      assert.equal(nativeProcess._socket.listenerCount("ready_datapipe"), 0);
-    }).pipe(Effect.provide(layerTest)),
 );

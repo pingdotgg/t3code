@@ -1,3 +1,5 @@
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { Button } from "../../components/ui/Button";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -13,8 +15,8 @@ import { useNavigation } from "@react-navigation/native";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppBar } from "../../components/ui/AppBar";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { useCallback, useMemo, useRef, type ComponentProps } from "react";
-import { Platform, Pressable, RefreshControl, useWindowDimensions, View } from "react-native";
+import { useMemo, useRef, type ComponentProps } from "react";
+import { Platform, RefreshControl, useWindowDimensions, View } from "react-native";
 import { GestureDetector, useNativeGesture } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
@@ -22,7 +24,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import { relativeTime } from "../../lib/time";
+import { RelativeTime } from "../../components/RelativeTime";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useServerConfigs } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
@@ -191,7 +193,6 @@ function ArchivedThreadRow(props: {
     props.thread.environmentId,
     AuthOrchestrationOperateScope,
   );
-  const timestamp = relativeTime(props.thread.archivedAt ?? props.thread.updatedAt);
   const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
     Boolean(part),
   );
@@ -217,7 +218,7 @@ function ArchivedThreadRow(props: {
             {props.thread.title}
           </Text>
           <Text className="min-w-[30px] text-right text-xs tabular-nums text-foreground-tertiary">
-            {timestamp}
+            <RelativeTime timestamp={props.thread.archivedAt ?? props.thread.updatedAt} />
           </Text>
         </View>
         {subtitle.length > 0 ? (
@@ -279,9 +280,9 @@ function ArchiveError(props: { readonly message: string; readonly onRetry: () =>
         Could not load every archive
       </Text>
       <Text className="mt-1 text-sm text-foreground-muted">{props.message}</Text>
-      <Pressable className="mt-3 self-start active:opacity-60" onPress={props.onRetry}>
-        <Text className="text-sm font-t3-bold text-danger-foreground">Try again</Text>
-      </Pressable>
+      <View className="mt-3">
+        <Button label="Try again" tone="secondary" onPress={props.onRetry} />
+      </View>
     </View>
   );
 }
@@ -339,55 +340,46 @@ export function ArchivedThreadsScreen(props: {
     }
     return items;
   }, [environmentLabelsById, props.groups, serverConfigs]);
-  const handleSwipeableWillOpen = useCallback((methods: SwipeableMethods) => {
+  const handleSwipeableWillOpen = (methods: SwipeableMethods) => {
     if (openSwipeableRef.current && openSwipeableRef.current !== methods) {
       openSwipeableRef.current.close();
     }
     openSwipeableRef.current = methods;
-  }, []);
-  const handleSwipeableClose = useCallback((methods: SwipeableMethods) => {
+  };
+  const handleSwipeableClose = (methods: SwipeableMethods) => {
     if (openSwipeableRef.current === methods) {
       openSwipeableRef.current = null;
     }
-  }, []);
+  };
   const isInitialLoad = props.isLoading && props.groups.length === 0 && props.error === null;
   const isFiltered = props.searchQuery.trim().length > 0 || props.selectedEnvironmentId !== null;
-  const renderListItem = useCallback(
-    ({ item }: { item: ArchivedThreadListItem }) => {
-      if (item.kind === "project") {
-        return (
-          <View className="pt-4">
-            <ProjectGroupLabel
-              environmentLabel={item.environmentLabel}
-              environmentMachine={item.environmentMachine}
-              project={item.project}
-            />
-          </View>
-        );
-      }
-
+  const renderListItem = ({ item }: { item: ArchivedThreadListItem }) => {
+    if (item.kind === "project") {
       return (
-        <ArchivedThreadRow
-          environmentLabel={item.environmentLabel}
-          isFirst={item.isFirst}
-          isLast={item.isLast}
-          onDelete={() => onDeleteThread(item.thread)}
-          onSwipeableClose={handleSwipeableClose}
-          onSwipeableWillOpen={handleSwipeableWillOpen}
-          onUnarchive={() => onUnarchiveThread(item.thread)}
-          simultaneousSwipeGesture={archiveScrollGesture}
-          thread={item.thread}
-        />
+        <View className="pt-4">
+          <ProjectGroupLabel
+            environmentLabel={item.environmentLabel}
+            environmentMachine={item.environmentMachine}
+            project={item.project}
+          />
+        </View>
       );
-    },
-    [
-      archiveScrollGesture,
-      handleSwipeableClose,
-      handleSwipeableWillOpen,
-      onDeleteThread,
-      onUnarchiveThread,
-    ],
-  );
+    }
+
+    return (
+      <ArchivedThreadRow
+        environmentLabel={item.environmentLabel}
+        isFirst={item.isFirst}
+        isLast={item.isLast}
+        onDelete={() => onDeleteThread(item.thread)}
+        onSwipeableClose={handleSwipeableClose}
+        onSwipeableWillOpen={handleSwipeableWillOpen}
+        onUnarchive={() => onUnarchiveThread(item.thread)}
+        simultaneousSwipeGesture={archiveScrollGesture}
+        thread={item.thread}
+      />
+    );
+  };
   const listEmptyComponent = useMemo(() => {
     if (isInitialLoad) {
       return (
@@ -411,8 +403,7 @@ export function ArchivedThreadsScreen(props: {
   }, [isFiltered, isInitialLoad]);
 
   return (
-    // Keep the list inside this native container. Form-sheet resizing otherwise
-    // treats the flattened background as a header and shrinks the list to zero.
+    // Without this native container, formSheet resizing mistakes the background for a header and collapses the list.
     <View collapsable={false} className="flex-1 bg-sheet">
       <ArchivedThreadsHeader
         environments={props.environments}
@@ -428,6 +419,7 @@ export function ArchivedThreadsScreen(props: {
       <SettingsScreenContent>
         <GestureDetector gesture={archiveScrollGesture}>
           <LegendList
+            renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
             className="flex-1"
             contentContainerStyle={{
               paddingBottom: 32,

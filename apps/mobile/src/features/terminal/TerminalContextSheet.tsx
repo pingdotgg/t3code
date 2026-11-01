@@ -58,6 +58,7 @@ export function TerminalContextSheet(props: {
   return (
     <Sheet title="Terminal output" onClose={props.onClose}>
       <ScrollView
+        nestedScrollEnabled
         className="flex-1"
         contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
         contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 20 }}
@@ -66,41 +67,43 @@ export function TerminalContextSheet(props: {
           Tap the first and last line to select a range.
         </Text>
         <View className="overflow-hidden rounded-xl bg-card-alt">
-          {lines.map((line, index) => (
-            <Pressable
-              key={index}
-              accessibilityRole="button"
-              accessibilityLabel={`Line ${index + 1}: ${line}`}
-              accessibilityState={{ selected: index >= range.start && index <= range.end }}
-              onPress={() => {
-                if (anchor === null) {
-                  setAnchor(index);
-                  setRange({ start: index, end: index });
-                } else {
-                  setRange({ start: Math.min(anchor, index), end: Math.max(anchor, index) });
-                  setAnchor(null);
+          {lines.map(
+            (line, index) => (
+              /* oxlint-disable react/no-array-index-key -- Selection is addressed by line number in this captured terminal snapshot. */ <Pressable
+                key={index}
+                accessibilityRole="button"
+                accessibilityLabel={`Line ${index + 1}: ${line}`}
+                accessibilityState={{ selected: index >= range.start && index <= range.end }}
+                onPress={() => {
+                  if (anchor === null) {
+                    setAnchor(index);
+                    setRange({ start: index, end: index });
+                  } else {
+                    setRange({ start: Math.min(anchor, index), end: Math.max(anchor, index) });
+                    setAnchor(null);
+                  }
+                }}
+                className={
+                  index >= range.start && index <= range.end
+                    ? "flex-row gap-3 bg-primary/10 px-3 py-2"
+                    : "flex-row gap-3 px-3 py-2"
                 }
-              }}
-              className={
-                index >= range.start && index <= range.end
-                  ? "flex-row gap-3 bg-primary/10 px-3 py-2"
-                  : "flex-row gap-3 px-3 py-2"
-              }
-            >
-              <Text
-                className="w-8 text-right text-sm text-foreground-muted"
-                style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
               >
-                {index + 1}
-              </Text>
-              <Text
-                className="flex-1 text-sm text-foreground"
-                style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
-              >
-                {line || " "}
-              </Text>
-            </Pressable>
-          ))}
+                <Text
+                  className="w-8 text-right text-sm text-foreground-muted"
+                  style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
+                >
+                  {index + 1}
+                </Text>
+                <Text
+                  className="flex-1 text-sm text-foreground"
+                  style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
+                >
+                  {line || " "}
+                </Text>
+              </Pressable>
+            ) /* oxlint-enable react/no-array-index-key */,
+          )}
         </View>
       </ScrollView>
       <View

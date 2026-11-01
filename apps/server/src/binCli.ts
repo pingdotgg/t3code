@@ -10,14 +10,15 @@ import * as NetService from "@t3tools/shared/Net";
 import packageJson from "../package.json" with { type: "json" };
 import { acpMcpBridgeCommand, acpMcpCallCommand } from "./cli/acpMcpBridge.ts";
 import { authCommand } from "./cli/auth.ts";
+import { environmentCommand } from "./cli/environment.ts";
 import { appCommand } from "./cli/app.ts";
 import { browserCommand } from "./cli/browser.ts";
-import { connectCommand } from "./cli/connect.ts";
 import { pairCommand } from "./cli/pair.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
-import { keepOutboundFetchOnHttp1 } from "./outboundHttp.ts";
+import { extendConnectionAttemptTimeout, keepOutboundFetchOnHttp1 } from "./outboundHttp.ts";
 import { sharedServerCommandFlags } from "./cli/config.ts";
 import { projectCommand } from "./cli/project.ts";
+import { threadCommand } from "./cli/thread.ts";
 import { runDefaultServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 import { uninstallCommand } from "./cli/uninstall.ts";
 import { serviceLauncherCommand } from "./cli/serviceLauncher.ts";
@@ -27,6 +28,7 @@ import { serviceCommand } from "./cli/service.ts";
 import { servicePreflightCommand } from "./cli/servicePreflight.ts";
 import { themeCommand } from "./cli/theme.ts";
 import { traceCommand } from "./cli/trace.ts";
+import { connectCommand, statusCommand, upCommand } from "./cli/up.ts";
 
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
@@ -55,22 +57,15 @@ const connectUnavailableCommand = Command.make("connect", {
 );
 
 /**
- * [fork:lockdown] Upstream registers a `triage` command that seeds a local
- * coding agent to read the state database, provider event log, and terminal
- * logs, then file a public issue on pingdotgg/t3code. On a machine holding
- * proprietary code that evidence is the confidential material, and upstream's
- * redaction step covers credentials and home paths but not source, prompts, or
- * repo identities. This fork does not register it.
- *
- * [fork:lockdown] Upstream also registers `update`, which downloads a
- * pingdotgg/t3code GitHub release archive and runs it. This fork runs only
- * builds it provisioned (invariant 2), so it does not register that either.
- * `cli/update.ts` stays because `uninstall` reuses its launcher helpers.
- * Tripwire: binCli.test.ts asserts `triage` and `update` are absent from the CLI.
+ * [fork:lockdown] Upstream's `triage` (files local logs and state as a public upstream issue) and
+ * `update` (downloads and runs a release archive) are not registered; invariants 2 and 4.
+ * `cli/update.ts` stays for `uninstall`'s launcher helpers. Tripwire: binCli.test.ts.
  */
 export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
   Command.make("t3", { ...sharedServerCommandFlags }).pipe(
-    Command.withDescription("Run the T3 Code server."),
+    Command.withDescription(
+      "Run T3 Code in this terminal and open it in your browser. To use it from your other devices, run `t3 up`.",
+    ),
     Command.withHandler(runDefaultServerCommand),
     Command.withSubcommands([
       Command.make("help").pipe(
@@ -86,8 +81,12 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       appCommand,
       pairCommand,
       authCommand,
+      environmentCommand,
       browserCommand,
       projectCommand,
+      threadCommand,
+      upCommand,
+      statusCommand,
       serviceCommand,
       uninstallCommand,
       serviceLauncherCommand,
@@ -104,6 +103,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
 export const cli = makeCli();
 
 export function runCli() {
+  extendConnectionAttemptTimeout();
   keepOutboundFetchOnHttp1();
   Command.run(cli, { version: packageJson.version }).pipe(
     Effect.scoped,

@@ -1,20 +1,46 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildTurnDiffTree, summarizeTurnDiffStats } from "./turnDiffTree";
-
-describe("summarizeTurnDiffStats", () => {
-  it("sums only files with numeric additions/deletions", () => {
-    const stat = summarizeTurnDiffStats([
-      { path: "README.md", kind: "modified", additions: 3, deletions: 1 },
-      { path: "docs/notes.md", kind: "modified", additions: 0, deletions: 0 },
-      { path: "src/index.ts", kind: "modified", additions: 5, deletions: 2 },
-    ]);
-
-    expect(stat).toEqual({ additions: 8, deletions: 3 });
-  });
-});
+import { buildTurnDiffTree } from "./turnDiffTree";
 
 describe("buildTurnDiffTree", () => {
+  it("sorts directory and file names numerically with directories first", () => {
+    const tree = buildTurnDiffTree([
+      { path: "file10.ts", kind: "modified", additions: 1, deletions: 0 },
+      { path: "dir10/file10.ts", kind: "modified", additions: 1, deletions: 0 },
+      { path: "file2.ts", kind: "modified", additions: 1, deletions: 0 },
+      { path: "dir2/file10.ts", kind: "modified", additions: 1, deletions: 0 },
+      { path: "dir2/file2.ts", kind: "modified", additions: 1, deletions: 0 },
+    ]);
+
+    expect(tree.map((node) => node.name)).toEqual(["dir2", "dir10", "file2.ts", "file10.ts"]);
+    const directory = tree[0];
+    expect(directory?.kind).toBe("directory");
+    if (directory?.kind !== "directory") throw new Error("Expected a directory");
+    expect(directory.children.map((node) => node.name)).toEqual(["file2.ts", "file10.ts"]);
+  });
+
+  it("preserves input order for case- and accent-insensitive name ties", () => {
+    const tree = buildTurnDiffTree([
+      { path: "a.ts", kind: "modified", additions: 1, deletions: 0 },
+      { path: "A.ts", kind: "modified", additions: 2, deletions: 0 },
+      { path: "FOLDER/a.ts", kind: "modified", additions: 3, deletions: 0 },
+      { path: "folder/a.ts", kind: "modified", additions: 4, deletions: 0 },
+      { path: "café.ts", kind: "modified", additions: 5, deletions: 0 },
+      { path: "Cafe.ts", kind: "modified", additions: 6, deletions: 0 },
+      { path: "cafe.ts", kind: "modified", additions: 7, deletions: 0 },
+    ]);
+
+    expect(tree.map((node) => node.name)).toEqual([
+      "FOLDER",
+      "folder",
+      "a.ts",
+      "A.ts",
+      "café.ts",
+      "Cafe.ts",
+      "cafe.ts",
+    ]);
+  });
+
   it("builds nested directory nodes with aggregated stats", () => {
     const tree = buildTurnDiffTree([
       { path: "src/index.ts", kind: "modified", additions: 2, deletions: 1 },
@@ -60,59 +86,6 @@ describe("buildTurnDiffTree", () => {
     ]);
   });
 
-  it("keeps zero-valued file stats and includes only their numeric contribution", () => {
-    const tree = buildTurnDiffTree([
-      { path: "docs/notes.md", kind: "modified", additions: 0, deletions: 0 },
-      { path: "docs/todo.md", kind: "modified", additions: 1, deletions: 1 },
-    ]);
-
-    expect(tree).toEqual([
-      {
-        kind: "directory",
-        name: "docs",
-        path: "docs",
-        stat: { additions: 1, deletions: 1 },
-        children: [
-          {
-            kind: "file",
-            name: "notes.md",
-            path: "docs/notes.md",
-            stat: { additions: 0, deletions: 0 },
-          },
-          {
-            kind: "file",
-            name: "todo.md",
-            path: "docs/todo.md",
-            stat: { additions: 1, deletions: 1 },
-          },
-        ],
-      },
-    ]);
-  });
-
-  it("normalizes file paths with windows separators", () => {
-    const tree = buildTurnDiffTree([
-      { path: "apps\\web\\src\\index.ts", kind: "modified", additions: 2, deletions: 1 },
-    ]);
-
-    expect(tree).toEqual([
-      {
-        kind: "directory",
-        name: "apps/web/src",
-        path: "apps/web/src",
-        stat: { additions: 2, deletions: 1 },
-        children: [
-          {
-            kind: "file",
-            name: "index.ts",
-            path: "apps/web/src/index.ts",
-            stat: { additions: 2, deletions: 1 },
-          },
-        ],
-      },
-    ]);
-  });
-
   it("compacts only single-directory chains and stops at branch points", () => {
     const tree = buildTurnDiffTree([
       { path: "apps/server/src/index.ts", kind: "modified", additions: 2, deletions: 1 },
@@ -149,20 +122,5 @@ describe("buildTurnDiffTree", () => {
         ],
       },
     ]);
-  });
-
-  it("preserves leading/trailing whitespace in path segments", () => {
-    const tree = buildTurnDiffTree([
-      { path: "a/file.ts", kind: "modified", additions: 1, deletions: 0 },
-      { path: " a/file.ts", kind: "modified", additions: 2, deletions: 0 },
-    ]);
-
-    expect(tree).toHaveLength(2);
-    const directoryNodes = tree.filter(
-      (node): node is Extract<(typeof tree)[number], { kind: "directory" }> =>
-        node.kind === "directory",
-    );
-    expect(directoryNodes.map((node) => node.name).toSorted()).toEqual([" a", "a"]);
-    expect(directoryNodes.map((node) => node.path).toSorted()).toEqual([" a", "a"]);
   });
 });

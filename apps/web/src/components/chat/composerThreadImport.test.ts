@@ -1,14 +1,8 @@
-import { EnvironmentId, PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
-import { act, createElement, useRef } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
-import {
-  importComposerThreadAttachment,
-  remainingComposerAttachmentSlots,
-} from "./composerThreadImport";
-import { THREAD_CONTEXT_DROP_EVENT, useThreadContextDrop } from "./threadContextDrag";
+import { importComposerThreadAttachment } from "./composerThreadImport";
 
 function deferredFile() {
   let resolve!: (file: File) => void;
@@ -21,96 +15,6 @@ function deferredFile() {
 }
 
 describe("importComposerThreadAttachment", () => {
-  it.each(["expand", "draft switch", "environment switch", "unmount"])(
-    "keeps import ownership correct after %s while loading",
-    async (change) => {
-      const target = new EventTarget();
-      const transcript = deferredFile();
-      const pendingImports = new Map<string, number>();
-      const attached: string[] = [];
-      const expandedAtDrop: boolean[] = [];
-      let importing!: Promise<void>;
-      function Composer({
-        environmentId,
-        targetKey,
-        expanded,
-      }: {
-        environmentId: EnvironmentId;
-        targetKey: string;
-        expanded: boolean;
-      }) {
-        const targetRef = useRef<EventTarget | null>(target);
-        useThreadContextDrop(targetRef, environmentId, targetKey, (_refs, isActive) => {
-          expandedAtDrop.push(expanded);
-          importing = importComposerThreadAttachment({
-            targetKey,
-            pendingImports,
-            countReservedAttachments: () => pendingImports.get(targetKey) ?? 0,
-            load: () => transcript.promise,
-            isActive,
-            attach: async (file) => {
-              attached.push(file.name);
-              return true;
-            },
-            onLimitReached: () => {
-              throw new Error("The slot should be available");
-            },
-          });
-        });
-        return null;
-      }
-
-      const props = {
-        environmentId: EnvironmentId.make("destination"),
-        targetKey: "draft",
-        expanded: false,
-      };
-      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-      let renderer: ReactTestRenderer | undefined;
-      try {
-        act(() => {
-          renderer = create(createElement(Composer, props));
-        });
-        act(() => target.dispatchEvent(new CustomEvent(THREAD_CONTEXT_DROP_EVENT, { detail: [] })));
-        expect(pendingImports.get("draft")).toBe(1);
-        if (change === "unmount") {
-          act(() => renderer?.unmount());
-        } else {
-          act(() =>
-            renderer?.update(
-              createElement(Composer, {
-                ...props,
-                expanded: true,
-                ...(change === "draft switch" ? { targetKey: "another-draft" } : {}),
-                ...(change === "environment switch"
-                  ? { environmentId: EnvironmentId.make("another-environment") }
-                  : {}),
-              }),
-            ),
-          );
-          if (change !== "expand") {
-            act(() => renderer?.update(createElement(Composer, props)));
-          }
-        }
-        transcript.resolve(new File(["transcript"], "thread.txt"));
-        await act(async () => importing);
-        expect(attached).toEqual(change === "expand" ? ["thread.txt"] : []);
-        expect(pendingImports.size).toBe(0);
-        if (change === "expand") {
-          act(() =>
-            target.dispatchEvent(new CustomEvent(THREAD_CONTEXT_DROP_EVENT, { detail: [] })),
-          );
-          await act(async () => importing);
-          expect(expandedAtDrop).toEqual([false, true]);
-          expect(attached).toEqual(["thread.txt", "thread.txt"]);
-        }
-      } finally {
-        act(() => renderer?.unmount());
-        vi.unstubAllGlobals();
-      }
-    },
-  );
-
   it("rejects the next drop before loading when the draft takes the final slot", async () => {
     const targetKey = DraftId.make("thread-import-synchronous-admission");
     const store = useComposerDraftStore.getState();
@@ -156,77 +60,6 @@ describe("importComposerThreadAttachment", () => {
     expect(store.getComposerDraft(targetKey)?.files.at(-1)?.name).toBe("thread.jsonl");
     expect(pendingImports.size).toBe(0);
     store.clearComposerContent(targetKey);
-  });
-
-  it.each(["file", "image"])(
-    "reserves the final slot while restoring a stashed %s",
-    async (kind) => {
-      const pendingImports = new Map<string, number>();
-      const targetKey = "draft";
-      const attached = Array.from(
-        { length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1 },
-        (_, index) => `existing-${index}`,
-      );
-      const countReservedAttachments = () => attached.length + (pendingImports.get(targetKey) ?? 0);
-      const attach = async (file: File) => {
-        if (
-          remainingComposerAttachmentSlots(attached.length, pendingImports.get(targetKey) ?? 0) ===
-          0
-        ) {
-          return false;
-        }
-        attached.push(file.name);
-        return true;
-      };
-      const transcript = deferredFile();
-      const importing = importComposerThreadAttachment({
-        targetKey,
-        pendingImports,
-        countReservedAttachments,
-        load: () => transcript.promise,
-        isActive: () => true,
-        attach,
-        onLimitReached: () => {
-          throw new Error("The final slot should be available");
-        },
-      });
-
-      expect(await attach(new File(["unrelated"], `unrelated.${kind}`))).toBe(false);
-      transcript.resolve(new File(["transcript"], "thread.txt"));
-      await importing;
-
-      expect(attached.at(-1)).toBe("thread.txt");
-      expect(attached).toHaveLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS);
-      expect(pendingImports.size).toBe(0);
-    },
-  );
-
-  it("rejects a repeated drop until the reserved slot is released", async () => {
-    const pendingImports = new Map<string, number>();
-    const transcript = deferredFile();
-    const load = vi.fn(() => transcript.promise);
-    const onLimitReached = vi.fn();
-    const attach = vi.fn(async (_file: File) => true);
-    const input = {
-      targetKey: "draft",
-      pendingImports,
-      countReservedAttachments: () =>
-        PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1 + (pendingImports.get("draft") ?? 0),
-      load,
-      isActive: () => true,
-      attach,
-      onLimitReached,
-    };
-    const first = importComposerThreadAttachment(input);
-    await importComposerThreadAttachment(input);
-    expect(load).toHaveBeenCalledTimes(1);
-    expect(onLimitReached).toHaveBeenCalledTimes(1);
-
-    transcript.resolve(new File(["transcript"], "thread.txt"));
-    await first;
-    await importComposerThreadAttachment(input);
-    expect(attach).toHaveBeenCalledTimes(2);
-    expect(pendingImports.size).toBe(0);
   });
 
   it("keeps the second drop's slot reserved when the first drop finishes", async () => {

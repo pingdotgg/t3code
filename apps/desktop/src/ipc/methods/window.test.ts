@@ -8,8 +8,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
 
-import type * as Electron from "electron";
-
 const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
   focusedWebContents: vi.fn(),
   ownerWindow: vi.fn(),
@@ -22,13 +20,12 @@ vi.mock("electron", () => ({
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
+import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
-import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import {
   getLocalEnvironmentBootstraps,
-  getWindowFullscreenState,
-  pasteAsText,
+  getRelayTelemetryEnabled,
   pickProjectFavicon,
   probeRemoteEditors,
 } from "./window.ts";
@@ -86,23 +83,6 @@ const bootstrapsLayer = (instances: ReadonlyArray<DesktopBackendManager.DesktopB
   Layer.merge(DesktopBackendPool.layerTest([...instances]), backendConfigurationLayer);
 
 describe("getLocalEnvironmentBootstraps", () => {
-  it.effect("publishes the concrete running distro without replacing the stable instance id", () =>
-    Effect.gen(function* () {
-      const result = yield* getLocalEnvironmentBootstraps.handler();
-
-      assert.deepEqual(result, [
-        {
-          id: "wsl:default",
-          label: "WSL (Ubuntu)",
-          runningDistro: "Ubuntu",
-          httpBaseUrl: "http://127.0.0.1:3774/",
-          wsBaseUrl: "ws://127.0.0.1:3774/",
-          bootstrapToken: "bootstrap-token",
-        },
-      ]);
-    }).pipe(Effect.provide(bootstrapsLayer([defaultWslInstance]))),
-  );
-
   it.effect("hands out the current window's token to a backend launched with the secret", () =>
     Effect.gen(function* () {
       const result = yield* getLocalEnvironmentBootstraps.handler();
@@ -197,63 +177,22 @@ describe("getLocalEnvironmentBootstraps", () => {
   });
 });
 
-describe("getWindowFullscreenState", () => {
-  it.effect("reads the current native window state", () => {
-    const window = { isFullScreen: () => true } as Electron.BrowserWindow;
-
-    return Effect.gen(function* () {
-      assert.isTrue(yield* getWindowFullscreenState.handler());
-    }).pipe(
-      Effect.provide(
-        Layer.mock(ElectronWindow.ElectronWindow)({
-          currentMainOrFirst: Effect.succeedSome(window),
-        }),
-      ),
-    );
-  });
-});
-
-describe("pasteAsText", () => {
-  it.effect(
-    "pastes into the focused guest only after the main renderer acknowledges the menu action",
-    () => {
-      const paste = vi.fn();
-      const mainPaste = vi.fn();
-      const window = {
-        webContents: { id: 42, paste: mainPaste },
-        isDestroyed: () => false,
-      } as unknown as Electron.BrowserWindow;
-      focusedWebContents.mockReturnValue({ paste, isDestroyed: () => false });
-      ownerWindow.mockReturnValue(window);
-
-      return Effect.gen(function* () {
-        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
-        assert.equal(paste.mock.calls.length, 1);
-        assert.equal(mainPaste.mock.calls.length, 0);
-
-        yield* pasteAsText.handler(undefined, { sender: { id: 99 } });
-        assert.equal(paste.mock.calls.length, 1);
-        ownerWindow.mockReturnValue({}); // A focused PiP/other BrowserWindow.
-        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
-        assert.equal(paste.mock.calls.length, 1);
-        ownerWindow.mockReturnValue(null); // Detached contents.
-        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
-        assert.equal(paste.mock.calls.length, 1);
-        ownerWindow.mockReturnValue(window);
-        focusedWebContents.mockReturnValue({ paste, isDestroyed: () => true });
-        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
-        assert.equal(paste.mock.calls.length, 1);
-        focusedWebContents.mockReturnValue(null);
-        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
-        assert.equal(paste.mock.calls.length, 1);
-      }).pipe(
-        Effect.provide(
-          Layer.mock(ElectronWindow.ElectronWindow)({
-            main: Effect.succeedSome(window),
+describe("getRelayTelemetryEnabled", () => {
+  it.effect("reads the desktop host opt-out before returning the renderer policy", () =>
+    Effect.gen(function* () {
+      assert.isFalse(
+        yield* getRelayTelemetryEnabled.handler().pipe(
+          Effect.provideService(HostProcess.Environment, {
+            T3CODE_TELEMETRY_ENABLED: "false",
           }),
         ),
       );
-    },
+      assert.isTrue(
+        yield* getRelayTelemetryEnabled
+          .handler()
+          .pipe(Effect.provideService(HostProcess.Environment, {})),
+      );
+    }),
   );
 });
 
@@ -287,7 +226,22 @@ describe("pickProjectFavicon", () => {
             filters: [
               {
                 name: "Images",
-                extensions: ["avif", "gif", "ico", "jpeg", "jpg", "png", "svg", "webp", "icns"],
+                extensions: [
+                  "avif",
+                  "bmp",
+                  "gif",
+                  "ico",
+                  "heic",
+                  "heif",
+                  "jpeg",
+                  "jpg",
+                  "png",
+                  "svg",
+                  "tif",
+                  "tiff",
+                  "webp",
+                  "icns",
+                ],
               },
             ],
           },

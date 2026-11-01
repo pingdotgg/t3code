@@ -2,11 +2,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-// Expo's fingerprint ignores the app version, so binaries of different majors
-// share a runtime version whenever native code is unchanged, and a production
-// OTA from main would reach every older store binary. Hashing the major
-// version keeps each major's OTAs on its own binaries: a new major reaches
-// users only once its store build is promoted.
+// Include the major version, which Expo ignores, to prevent OTAs reaching older store binaries.
 const appConfig = fs.readFileSync(path.join(__dirname, "app.config.ts"), "utf8");
 const version =
   process.env.T3CODE_MOBILE_VERSION ??

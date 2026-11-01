@@ -50,12 +50,14 @@ export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(
       ),
     );
   }
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const store: SdkCredentialStore = {
     load: () =>
-      Effect.runPromise(
+      runPromise(
         credentials.get.pipe(
           Effect.flatMap(
             Option.match({
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - The SDK credential API requires undefined, not void.
               onNone: () => Effect.succeed(undefined),
               onSome: (bytes) =>
                 decodeCredentials(new TextDecoder().decode(bytes)).pipe(
@@ -65,9 +67,14 @@ export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(
           ),
         ),
       ),
-    save: (value) =>
-      Effect.runPromise(
-        encodeCredentials(value).pipe(
+    // The SDK can supply undefined optional fields despite its exact optional types.
+    save: ({ email, apiKeyExpiresAtMs, ...requiredFields }) =>
+      runPromise(
+        encodeCredentials({
+          ...requiredFields,
+          ...(email === undefined ? {} : { email }),
+          ...(apiKeyExpiresAtMs === undefined ? {} : { apiKeyExpiresAtMs }),
+        }).pipe(
           Effect.mapError(
             () =>
               new ProviderSetupError({
@@ -79,7 +86,7 @@ export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(
           Effect.flatMap((encoded) => credentials.set(new TextEncoder().encode(encoded))),
         ),
       ),
-    clear: () => Effect.runPromise(credentials.remove),
+    clear: () => runPromise(credentials.remove),
   };
   return { store, binding: credentials.binding };
 });

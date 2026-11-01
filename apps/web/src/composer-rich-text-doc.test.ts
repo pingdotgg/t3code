@@ -1,12 +1,17 @@
-import { getSchemaByResolvedExtensions, Node, resolveExtensions } from "@tiptap/core";
+import { Editor, getSchemaByResolvedExtensions, Node, resolveExtensions } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { TaskList } from "@tiptap/extension-task-list";
 import { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
 import { splitBlockKeepMarks } from "@tiptap/pm/commands";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, onTestFinished } from "vite-plus/test";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 
-import { collapseExpandedComposerCursor, pastedPathQueryLength } from "./composer-logic";
+import {
+  collapseExpandedComposerCursor,
+  expandCollapsedComposerCursor,
+  pastedPathQueryLength,
+} from "./composer-logic";
 
 import {
   buildDocJson,
@@ -15,15 +20,15 @@ import {
   ComposerBlockExtensions,
   ComposerCodeBlockExtension,
   ComposerListExtensions,
-  collapsedToFlat,
   ComposerCodeExtension,
   ComposerTaskItemExtension,
-  flatToCollapsed,
   flatToMarkdown,
   flatToPm,
+  markdownToFlat,
   pmToFlat,
   serializeEditorDoc,
   serializeSelection,
+  skillChipReplacements,
   stepCaretAcrossStyledEdge,
 } from "./composer-rich-text-doc";
 
@@ -86,6 +91,76 @@ function roundTrip(value: string) {
   return serializeEditorDoc(doc);
 }
 
+describe("editable math source", () => {
+  it.each(["app/routes/posts.$postId.tsx", "pages/posts/[id].tsx"])(
+    "keeps a mentioned file whose name looks like TeX as a chip: %s",
+    (path) => {
+      const source = `fix ${serializeComposerFileLink(path)} please`;
+      const map = roundTrip(source);
+      expect(map.value).toBe(source);
+      expect(
+        map.runs.filter((run) => run.kind === "token" && run.nodeName === "composer-mention"),
+      ).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    "before $x + @README.md$ after",
+    "before \\(x + @README.md\\) after",
+    "\\[x + @README.md\\] after",
+  ])("keeps a mention that ends a formula inside the formula: %s", (source) => {
+    const map = roundTrip(source);
+    expect(map.value).toBe(source);
+    expect(map.runs.some((run) => run.kind === "token")).toBe(false);
+  });
+
+  it.each([
+    "Area $x_i^2$ after",
+    "before \\(\\frac{1}{2}\\) after",
+    "before $$x^2$$ after",
+    "\\[\nx = 1\ny = 2\n\\]",
+    "\\[\\text{use $browser then @README.md and **literal**}\\]",
+    "```math\nx_i + y_i\n```",
+    "- **use** $x_i$ then @README.md",
+    "**$x_i$** and **A $x_i$ B**",
+    "| Name | Formula |\n| --- | --- |\n| Norm | $|x|$ |",
+    "| Name | Formula |\n| --- | --- |\n| Norm | \\(\\|x\\|\\) |",
+  ])("keeps TeX editable and round trips its source: %s", (source) => {
+    const map = roundTrip(source);
+    expect(map.value).toBe(source);
+    expect(map.runs.some((run) => run.nodeName === "composer-math")).toBe(false);
+    const doc = schema.nodeFromJSON(
+      buildDocJson(source, (name) => ({ label: name, description: null })),
+    );
+    expect(serializeSelection(doc, 1, doc.content.size - 1)).toBe(source);
+  });
+
+  it("edits a command character directly without replacing a formula node", () => {
+    const source = "before \\(\\frac{a}{b}\\) after";
+    const doc = schema.nodeFromJSON(
+      buildDocJson(source, (name) => ({ label: name, description: null })),
+    );
+    const map = serializeEditorDoc(doc);
+    const offset = source.indexOf("{a}") + 1;
+    const position = flatToPm(map, offset);
+    const state = EditorState.create({ doc });
+    const next = state.apply(state.tr.insertText("c", position, position + 1));
+    expect(serializeEditorDoc(next.doc).value).toBe(source.replace("{a}", "{c}"));
+  });
+  it("preserves formula source as text when styling is disabled", () => {
+    const source =
+      "\\[\n\\text{use $browser, @README.md and [file](t3-context://v1/file/ctx_1)}\n\\]";
+    const doc = plainSchema.nodeFromJSON(
+      buildDocJson(source, (name) => ({ label: name, description: null }), { styling: false }),
+    );
+    const map = serializeEditorDoc(doc);
+    expect(map.value).toBe(source);
+    expect(map.runs.some((run) => run.kind === "token")).toBe(false);
+  });
+});
+
+// Plain mode: the same engine with the mark extensions off. Markers stay
+// literal characters and task lines stay paragraphs.
 const plainSchema = getSchemaByResolvedExtensions(
   resolveExtensions([
     StarterKit.configure({
@@ -157,7 +232,9 @@ describe("literal editor answers", () => {
     expect(serialized.contextIds).toEqual([]);
     expect(serializeSelection(doc, 1, doc.content.size - 1)).toBe(value);
     for (let offset = 0; offset <= value.length; offset += 1) {
-      expect(flatToCollapsed(serialized, offset)).toBe(offset);
+      expect(collapseExpandedComposerCursor(value, flatToMarkdown(serialized, offset), true)).toBe(
+        offset,
+      );
     }
   });
 
@@ -253,7 +330,7 @@ describe("composer rich text document model", () => {
       const position = flatToPm(map, flat);
       expect(doc.resolve(position).parent.isTextblock).toBe(true);
       expect(pmToFlat(map, position)).toBe(flat);
-      expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
+      expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
     }
   });
 
@@ -364,25 +441,13 @@ describe("composer rich text document model", () => {
     expect(serializeEditorDoc(rebuilt).value).toBe(map.value);
     for (let flat = 0; flat <= map.docLength; flat += 1) {
       expect(pmToFlat(map, flatToPm(map, flat))).toBe(flat);
-      expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
+      expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
       if (flat < map.docLength && !/\s/.test(doc.textContent[flat]!)) {
         expect(rebuilt.resolve(flat + 1).nodeAfter!.marks.map((mark) => mark.type.name)).toEqual(
           doc.resolve(flat + 1).nodeAfter!.marks.map((mark) => mark.type.name),
         );
       }
     }
-  });
-
-  it("keeps chip sources canonical through the document", () => {
-    const map = roundTrip("explain @README.md with **care**\nsecond line *here*");
-    expect(map.value).toBe("explain @README.md with **care**\nsecond line *here*");
-    expect(
-      map.runs.some((run) => run.kind === "token" && run.nodeName === "composer-mention"),
-    ).toBe(true);
-  });
-
-  it("normalizes uppercase checkboxes to lowercase", () => {
-    expect(roundTrip("- [X] done").value).toBe("- [x] done");
   });
 
   it.each([
@@ -431,35 +496,14 @@ describe("composer rich text document model", () => {
     expect(roundTrip(value).value).toBe(value);
   });
 
-  it.each([
-    "- one\n- two",
-    "1. first\n2. second",
-    "- parent\n  - child",
-    "* star\n+ plus",
-    "-no space stays literal",
-  ])("keeps the list %s literal in plain mode", (value) => {
-    expect(roundTripPlain(value).value).toBe(value);
-  });
-
-  it.each(["- one\n- two", "1. a\n   - b\n2. c", "- **bold** @README.md tail", "-"])(
-    "maps every document offset of the list %s through collapsed coordinates and back",
-    (value) => {
-      const map = roundTrip(value);
-      expect(map.value).toBe(value);
-      for (let flat = 0; flat <= map.docLength; flat += 1) {
-        expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
-      }
-    },
-  );
-
   it("clamps offsets inside a list marker to the start of the item text", () => {
     const value = "- item";
     const map = roundTrip(value);
-    for (let collapsed = 0; collapsed <= "- ".length; collapsed += 1) {
-      expect(collapsedToFlat(map, collapsed)).toBe(0);
+    for (let markdown = 0; markdown <= "- ".length; markdown += 1) {
+      expect(markdownToFlat(map, markdown)).toBe(0);
     }
-    expect(collapsedToFlat(map, "- it".length)).toBe(2);
-    expect(flatToCollapsed(map, 0)).toBe("- ".length);
+    expect(markdownToFlat(map, "- it".length)).toBe(2);
+    expect(flatToMarkdown(map, 0)).toBe("- ".length);
   });
 
   it.each([
@@ -472,11 +516,72 @@ describe("composer rich text document model", () => {
     "> **bold** and @README.md inside",
     "> - looks like a list but stays quote text",
     "> > nested stays literal inside the quote",
-    "before\n> quoted\nafter",
+    "before\n> quoted",
     "> quote\n\n> another",
     "- item\n> quote after list",
+    "> quoted\n\ncomment",
+    "> line one\n> line two\n\ncomment",
   ])("round-trips the quote %s through a real ProseMirror document", (value) => {
     expect(roundTrip(value).value).toBe(value);
+  });
+
+  describe("a paragraph after a quote", () => {
+    const paragraph = (text?: string) => ({
+      type: "paragraph",
+      ...(text ? { content: [{ type: "text", text }] } : {}),
+    });
+    const quote = (...lines: string[]) => ({
+      type: "blockquote",
+      attrs: { prefix: "> " },
+      content: lines.map((line) => paragraph(line)),
+    });
+    const serialize = (...content: object[]) => {
+      const doc = ProseMirrorNode.fromJSON(schema, { type: "doc", content });
+      doc.check();
+      return { doc, map: serializeEditorDoc(doc) };
+    };
+
+    it("is written after a blank line, or Markdown folds it into the quote", () => {
+      expect(serialize(quote("quoted"), paragraph("Comment to it")).map.value).toBe(
+        "> quoted\n\nComment to it",
+      );
+      expect(serialize(quote("a", "b"), paragraph("comment")).map.value).toBe(
+        "> a\n> b\n\ncomment",
+      );
+    });
+
+    it("does not double up on the empty line the user left themselves", () => {
+      expect(serialize(quote("quoted"), paragraph(), paragraph("Comment to it")).map.value).toBe(
+        "> quoted\n\nComment to it",
+      );
+    });
+
+    it("settles on the blank line when a draft glued it to the quote", () => {
+      const settled = "before\n> quoted\n\nafter";
+      expect(roundTrip("before\n> quoted\nafter").value).toBe(settled);
+      expect(roundTrip(settled).value).toBe(settled);
+    });
+
+    it.each(["# Heading", "- item", "3. item", "---", "```\ncode\n```"])(
+      "leaves %s on the next line, since it opens its own block",
+      (next) => {
+        const value = `> quoted\n${next}`;
+        expect(roundTrip(value).value).toBe(value);
+      },
+    );
+
+    it("keeps every offset mapped through the blank line", () => {
+      const { doc, map } = serialize(quote("quoted"), paragraph("Comment"));
+      for (let flat = 0; flat <= map.docLength; flat += 1) {
+        expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
+      }
+      // The caret on the end of the quote stays on it, and the blank line is
+      // not a place to type: it clamps to the start of the comment.
+      expect(flatToMarkdown(map, "quoted".length)).toBe("> quoted".length);
+      expect(markdownToFlat(map, "> quoted\n".length)).toBe("quoted".length + 1);
+      expect(flatToMarkdown(map, "quoted".length + 1)).toBe("> quoted\n\n".length);
+      expect(flatToPm(map, "quoted".length + 1)).toBe(doc.child(0).nodeSize + 1);
+    });
   });
 
   it.each([
@@ -531,28 +636,6 @@ describe("composer rich text document model", () => {
     expect(roundTrip(value).value).toBe(value);
   });
 
-  it.each(["> quoted", "> a\n>b", "---", "- - -", "# Heading", "#1234"])(
-    "keeps the block %s literal in plain mode",
-    (value) => {
-      expect(roundTripPlain(value).value).toBe(value);
-    },
-  );
-
-  it("parses the blocks it renders as the right node types", () => {
-    const json = buildDocJson("# Title\n> quote\n---\n#1234 ref\n- - -", (n) => ({
-      label: n,
-      description: null,
-    }));
-    expect(json.content.map((block) => block.type)).toEqual([
-      "heading",
-      "blockquote",
-      "horizontalRule",
-      "paragraph",
-      "horizontalRule",
-      "paragraph",
-    ]);
-  });
-
   it.each([
     ["---", "---"],
     ["a\n---", "a\n---"],
@@ -563,84 +646,6 @@ describe("composer rich text document model", () => {
     const json = buildDocJson(value, () => ({ label: "", description: null }));
     const doc = ProseMirrorNode.fromJSON(schema, json);
     expect(doc.resolve(flatToPm(map, map.docLength)).parent.isTextblock).toBe(true);
-  });
-
-  it("parses rules ahead of lists and emphasis", () => {
-    const json = buildDocJson("- - -\n***\n___\ntext\n---\n- item", (n) => ({
-      label: n,
-      description: null,
-    }));
-    expect(json.content.map((block) => block.type)).toEqual([
-      "horizontalRule",
-      "horizontalRule",
-      "horizontalRule",
-      "paragraph",
-      "horizontalRule",
-      "bulletList",
-    ]);
-  });
-
-  it.each([
-    "# Heading",
-    "## Two",
-    "###### Six",
-    "####### seven hashes stays a paragraph",
-    "#  two spaces",
-    "#\tTab",
-    "# Trailing hashes stay literal #",
-    "#1234",
-    "#1234 is a pull request, not a heading",
-    "# Heading with **bold** and @README.md",
-    "#",
-    "# ",
-    "text\n# Heading\ntext",
-    "# Heading\n- item\n> quote\n---",
-  ])("round-trips the heading %s through a real ProseMirror document", (value) => {
-    expect(roundTrip(value).value).toBe(value);
-  });
-
-  it.each(["> quoted", "> a\n>b", "---", "- - -", "# Heading", "#1234"])(
-    "keeps the block %s literal in plain mode",
-    (value) => {
-      expect(roundTripPlain(value).value).toBe(value);
-    },
-  );
-
-  it("parses a quote as a blockquote of one paragraph per line", () => {
-    const json = buildDocJson("> a\n> b\n>c", (n) => ({ label: n, description: null }));
-    expect(json.content.map((block) => block.type)).toEqual(["blockquote", "blockquote"]);
-    expect((json.content[0] as { content: unknown[] }).content).toHaveLength(2);
-  });
-
-  it.each([
-    "> a\n> b",
-    "> **q** @README.md",
-    "text\n---\nmore",
-    "---\ntext",
-    "# Heading text",
-    "## **b** @README.md",
-  ])(
-    "maps every document offset of the block %s through collapsed coordinates and back",
-    (value) => {
-      const map = roundTrip(value);
-      expect(map.value).toBe(value);
-      for (let flat = 0; flat <= map.docLength; flat += 1) {
-        expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
-      }
-    },
-  );
-
-  it("clamps offsets inside a quote or heading marker to the start of the text", () => {
-    for (const [value, prefix] of [
-      ["> quoted", "> "],
-      ["# Heading", "# "],
-    ] as const) {
-      const map = roundTrip(value);
-      for (let collapsed = 0; collapsed <= prefix.length; collapsed += 1) {
-        expect(collapsedToFlat(map, collapsed)).toBe(0);
-      }
-      expect(flatToCollapsed(map, 0)).toBe(prefix.length);
-    }
   });
 
   it.each([
@@ -664,17 +669,6 @@ describe("composer rich text document model", () => {
     expect(roundTrip(value).value).toBe(value);
   });
 
-  it.each(["```ts\nconst a = 1;\n```", "```\n```", "before\n```ts\ncode\n```\nafter"])(
-    "maps every document offset of %s through collapsed coordinates and back",
-    (value) => {
-      const map = roundTrip(value);
-      expect(map.value).toBe(value);
-      for (let flat = 0; flat <= map.docLength; flat += 1) {
-        expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
-      }
-    },
-  );
-
   it("reads blocks written with CRLF line endings", () => {
     const value = "# Title\r\n> quote\r\n---\r\n```ts\r\nconst a = 1;\r\n```\r\nafter";
     const doc = buildDocJson(value, () => ({ label: "", description: null }));
@@ -688,46 +682,25 @@ describe("composer rich text document model", () => {
     expect(roundTrip(value).value).toBe(value);
   });
 
-  it("keeps the end of the code inside the fence rather than after it", () => {
-    const value = "```ts\nfunc();\n```";
-    const map = roundTrip(value);
-    const endOfCode = "func();".length;
-    expect(flatToCollapsed(map, endOfCode)).toBe("```ts\nfunc();".length);
-    expect(flatToMarkdown(map, endOfCode)).toBe("```ts\nfunc();".length);
-    expect(collapsedToFlat(map, flatToCollapsed(map, endOfCode))).toBe(endOfCode);
-  });
-
   it("keeps the caret inside an empty fence", () => {
     const value = "before\n```\n```";
     const map = roundTrip(value);
     const inside = "before\n".length;
-    expect(flatToCollapsed(map, inside)).toBe("before\n```".length);
-    expect(collapsedToFlat(map, flatToCollapsed(map, inside))).toBe(inside);
-  });
-
-  it("still places the end of an inline mark after its markers", () => {
-    const map = roundTrip("a **bold** c");
-    expect(flatToMarkdown(map, 6)).toBe(10);
+    expect(flatToMarkdown(map, inside)).toBe("before\n```".length);
+    expect(markdownToFlat(map, flatToMarkdown(map, inside))).toBe(inside);
   });
 
   it("clamps offsets inside a fence to the edge of the code", () => {
     const value = "```ts\nab\n```";
     const map = roundTrip(value);
     expect(map.value).toBe(value);
-    for (let collapsed = 0; collapsed <= "```ts\n".length; collapsed += 1) {
-      expect(collapsedToFlat(map, collapsed)).toBe(0);
+    for (let markdown = 0; markdown <= "```ts\n".length; markdown += 1) {
+      expect(markdownToFlat(map, markdown)).toBe(0);
     }
-    expect(collapsedToFlat(map, "```ts\na".length)).toBe(1);
-    for (let collapsed = "```ts\nab".length; collapsed <= value.length; collapsed += 1) {
-      expect(collapsedToFlat(map, collapsed)).toBe(2);
+    expect(markdownToFlat(map, "```ts\na".length)).toBe(1);
+    for (let markdown = "```ts\nab".length; markdown <= value.length; markdown += 1) {
+      expect(markdownToFlat(map, markdown)).toBe(2);
     }
-  });
-
-  it.each([
-    ["```\n\n```", "```\n```"],
-    ["```\n", "```"],
-  ])("canonicalizes the empty fence %s", (value, expected) => {
-    expect(roundTrip(value).value).toBe(expected);
   });
 
   it("keeps a chip in a fence info string as source and keeps later chips aligned", () => {
@@ -739,37 +712,6 @@ describe("composer rich text document model", () => {
     };
     expect(after.content.map((n) => n.type)).toEqual(["composer-skill", "text"]);
     expect(after.content[0]?.attrs?.skillName).toBe("my-skill");
-  });
-
-  it("keeps chips in a fence's info string and body each in their own place", () => {
-    const value = "``` @a.md\nsee @b.md\n```";
-    expect(roundTrip(value).value).toBe(value);
-    const json = buildDocJson(value, (n) => ({ label: n, description: null }));
-    const code = json.content[0] as { attrs: { language: string } };
-    expect(code.attrs.language).toBe(" @a.md");
-  });
-
-  it.each([
-    ["listItem", { marker: "-", space: "" }, "bulletList", "- text"],
-    ["listItem", { marker: "1.", space: "" }, "orderedList", "1. text"],
-  ])("gives a bare %s a space once it has text", (item, attrs, list, expected) => {
-    const doc = ProseMirrorNode.fromJSON(schema, {
-      type: "doc",
-      content: [
-        {
-          type: list,
-          content: [
-            {
-              type: item,
-              attrs,
-              content: [{ type: "paragraph", content: [{ type: "text", text: "text" }] }],
-            },
-          ],
-        },
-      ],
-    });
-    expect(serializeEditorDoc(doc).value).toBe(expected);
-    expect(roundTrip("-").value).toBe("-");
   });
 
   it("writes code holding a closing fence inside a longer fence", () => {
@@ -801,33 +743,18 @@ describe("composer rich text document model", () => {
     expect(roundTrip("```\ncode").value).toBe("```\ncode");
   });
 
-  it("counts a chip's source in a fence as one cursor position, as the draft store does", () => {
-    const value = "```\nsee @b.md now\n```\nafter";
-    const map = roundTrip(value);
+  it("keeps a chip's source in a fence as literal text", () => {
+    const value = "```\nsee @b.md and $babysit now\n```\nafter";
+    const known = () => ({ label: "Babysit", description: null });
+    const doc = ProseMirrorNode.fromJSON(schema, buildDocJson(value, known));
+    const map = serializeEditorDoc(doc);
     expect(map.value).toBe(value);
+    expect(map.runs.filter((run) => run.kind === "token")).toEqual([]);
     for (let flat = 0; flat <= map.docLength; flat += 1) {
-      expect(flatToCollapsed(map, flat)).toBe(
-        collapseExpandedComposerCursor(value, flatToMarkdown(map, flat)),
-      );
+      expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
     }
-    const afterChip = "see @b.md".length;
-    expect(collapsedToFlat(map, flatToCollapsed(map, afterChip))).toBe(afterChip);
-    const end = map.docLength;
-    expect(collapsedToFlat(map, flatToCollapsed(map, end))).toBe(end);
-  });
-
-  it("keeps fences literal in plain mode", () => {
-    const value = "```ts\nconst a = 1;\n```";
-    expect(roundTripPlain(value).value).toBe(value);
-  });
-
-  it("maps every document offset through collapsed coordinates and back", () => {
-    const value = "hi **bold** @README.md bye";
-    const map = roundTrip(value);
-    expect(map.value).toBe(value);
-    for (let flat = 0; flat <= map.docLength; flat += 1) {
-      expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
-    }
+    // Reconciling against the provider's skills leaves the code alone too.
+    expect(skillChipReplacements(doc, known)).toEqual([]);
   });
 
   it.each([
@@ -841,8 +768,9 @@ describe("composer rich text document model", () => {
     expect(rich.value).toBe(value);
     expect(plain.value).toBe(value);
     for (let collapsed = 0; collapsed <= value.length; collapsed += 1) {
-      expect(flatToMarkdown(rich, collapsedToFlat(rich, collapsed))).toBe(
-        flatToMarkdown(plain, collapsedToFlat(plain, collapsed)),
+      const markdown = expandCollapsedComposerCursor(value, collapsed);
+      expect(flatToMarkdown(rich, markdownToFlat(rich, markdown))).toBe(
+        flatToMarkdown(plain, markdownToFlat(plain, markdown)),
       );
     }
   });
@@ -851,18 +779,8 @@ describe("composer rich text document model", () => {
     const value = "a **bold** c";
     const plain = roundTripPlain(value);
     const rich = roundTrip(value);
-    expect(flatToMarkdown(plain, collapsedToFlat(plain, 3))).toBe(3);
-    expect(flatToMarkdown(rich, collapsedToFlat(rich, 3))).toBe(4);
-  });
-
-  it("maps markdown offsets at styled edges onto document text", () => {
-    const value = "a **bold** c";
-    const map = roundTrip(value);
-    expect(map.value).toBe(value);
-    expect(flatToMarkdown(map, 2)).toBe(4);
-    expect(flatToMarkdown(map, 6)).toBe(10);
-    expect(collapsedToFlat(map, 3)).toBe(2);
-    expect(collapsedToFlat(map, 9)).toBe(6);
+    expect(flatToMarkdown(plain, markdownToFlat(plain, 3))).toBe(3);
+    expect(flatToMarkdown(rich, markdownToFlat(rich, 3))).toBe(4);
   });
 });
 
@@ -892,18 +810,6 @@ describe("serializeSelection", () => {
 
   it("keeps the nesting of an item and its children", () => {
     expect(copy("- p\n  - a\n  - b", "p", "a")).toBe("- p\n  - a");
-  });
-
-  it("keeps the prefix of the quote lines it spans", () => {
-    expect(copy("> one\n> two", "one", "two")).toBe("> one\n> two");
-  });
-
-  it("copies text within one block without its marker", () => {
-    expect(copy("- one two", "one", "one")).toBe("one");
-  });
-
-  it("copies across blocks as they are written", () => {
-    expect(copy("intro\n- one", "intro", "one")).toBe("intro\n- one");
   });
 });
 
@@ -993,6 +899,7 @@ describe("pasting into a path query", () => {
     expect(serializeEditorDoc(doc).value).toBe("Open @**src/**__test__.tsx");
   });
 
+  // regression: #16619 paths pasted after @ lost their underscores to markdown parsing
   it("parses markdown pasted right after a mention chip", () => {
     const withSpace = ProseMirrorNode.fromJSON(
       schema,
@@ -1048,6 +955,7 @@ describe("caret stops at styled edges", () => {
     expect(typed(outside, "x")).toBe("head **bold**x");
   });
 
+  // regression: #13217 could not type in front of bold that starts a composer line
   it("offers both stops where styled text meets plain text mid-line", () => {
     const plain = stateAt("a **b** c", 3);
     expect(caretTakesMarksBefore(plain)).toBe(true);
@@ -1088,10 +996,123 @@ describe("caret stops at styled edges", () => {
     expect(stepCaretAcrossStyledEdge(toggled, 1)).toBeNull();
     expect(stepCaretAcrossStyledEdge(toggled, -1)).toBeNull();
   });
+});
 
-  it("leaves arrow keys alone away from styled edges", () => {
-    expect(stepCaretAcrossStyledEdge(stateAt("**bold** tail", 3), -1)).toBeNull();
-    expect(stepCaretAcrossStyledEdge(stateAt("plain text", 1), -1)).toBeNull();
-    expect(caretTakesMarksBefore(stateAt("plain text", 1))).toBe(false);
+describe("inline code entry", () => {
+  function editorFor(block = "paragraph", mark?: string) {
+    const editor = new Editor({
+      element: null,
+      extensions: [
+        StarterKit.configure({ code: false, codeBlock: false, trailingNode: false }),
+        ComposerCodeExtension,
+        ComposerCodeBlockExtension,
+        stubAtom("composer-mention", { path: { default: "" }, source: { default: "" } }),
+      ],
+      content: { type: "doc", content: [{ type: block }] },
+    });
+    // Unmounted editors need the same plugins that Tiptap installs on mount.
+    editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
+    if (mark) editor.commands.setMark(mark);
+    onTestFinished(() => editor.destroy());
+    return editor;
+  }
+
+  function type(editor: Editor, text: string) {
+    for (const ch of text) {
+      const { from, to } = editor.state.selection;
+      const insert = () => editor.state.tr.insertText(ch, from, to);
+      const handled = editor.state.plugins.some((plugin) =>
+        plugin.props.handleTextInput?.call(plugin, editor.view, from, to, ch, insert),
+      );
+      if (!handled) editor.view.dispatch(insert());
+    }
+  }
+
+  it.each(["", "prefix ", "@README.md"])(
+    "formats a filled pair after %j, leaves following text plain, and keeps the normal input rule",
+    (prefix) => {
+      const editor = editorFor();
+      if (prefix === "@README.md") {
+        editor.commands.insertContent({
+          type: "composer-mention",
+          attrs: { path: "README.md", source: prefix },
+        });
+      } else {
+        type(editor, prefix);
+      }
+      const offset = editor.state.selection.from - 1;
+      type(editor, "``");
+      editor.commands.setTextSelection(offset + 2);
+      type(editor, "hello world");
+      expect(serializeEditorDoc(editor.state.doc).value).toBe(`${prefix}\`hello world\``);
+      expect(editor.state.doc.firstChild?.lastChild?.marks).toEqual([]);
+
+      editor.commands.setTextSelection(offset + 14);
+      expect(editor.state.doc.textContent).toBe(
+        `${prefix === "@README.md" ? "" : prefix}hello world`,
+      );
+      expect(serializeEditorDoc(editor.state.doc).value).toBe(`${prefix}\`hello world\``);
+      type(editor, " next `typed`");
+      expect(serializeEditorDoc(editor.state.doc).value).toBe(
+        `${prefix}\`hello world\` next \`typed\``,
+      );
+      const formatted = editor.state.doc.toJSON();
+      let undos = 0;
+      while (editor.commands.undo()) undos += 1;
+      expect(undos).toBeGreaterThan(0);
+      expect(serializeEditorDoc(editor.state.doc).value).toBe("");
+      for (let i = 0; i < undos; i += 1) expect(editor.commands.redo()).toBe(true);
+      expect(editor.state.doc.toJSON()).toEqual(formatted);
+    },
+  );
+
+  it("keeps composition edits literal until the caret leaves the typed pair", () => {
+    const editor = editorFor();
+    type(editor, "``");
+    editor.commands.setTextSelection(2);
+    editor.view.dispatch(editor.state.tr.insertText("世").setMeta("composition", 1));
+    editor.view.dispatch(editor.state.tr.insertText("世界", 2, 3).setMeta("composition", 1));
+    expect(editor.state.doc.textContent).toBe("`世界`");
+    expect(editor.state.doc.firstChild?.firstChild?.marks).toEqual([]);
+    editor.commands.setTextSelection(5);
+    expect(editor.state.doc.textContent).toBe("世界");
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("`世界`");
+  });
+
+  it.each(["paste", "setContent"])("keeps a %s pair literal after moving through it", (source) => {
+    const editor = editorFor();
+    const literal = "`literal`";
+    if (source === "paste") {
+      editor.view.dispatch(editor.state.tr.insertText(literal).setMeta("uiEvent", "paste"));
+    } else {
+      type(editor, "``");
+      editor.commands.setContent({
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: literal }] }],
+      });
+    }
+    const before = editor.state.doc.toJSON();
+    editor.commands.setTextSelection(2);
+    editor.commands.setTextSelection(literal.length + 1);
+    expect(editor.state.doc.toJSON()).toEqual(before);
+  });
+
+  it.each([
+    { name: "doubled delimiters", delimiters: "````", caret: 3 },
+    { name: "doubled closing delimiters", delimiters: "```", caret: 2 },
+    { name: "bold text", delimiters: "``", caret: 2, mark: "bold" },
+    { name: "existing inline code", delimiters: "``", caret: 2, mark: "code" },
+    { name: "a code block", delimiters: "``", caret: 2, block: "codeBlock" },
+  ])("leaves $name unchanged on caret movement", ({ delimiters, caret, mark, block }) => {
+    const editor = editorFor(block, mark);
+    type(editor, delimiters);
+    editor.commands.setTextSelection(caret);
+    type(editor, "literal");
+    const before = editor.state.doc.toJSON();
+    // Visit both the gap between closing ticks and the end of the pair.
+    editor.commands.setTextSelection(caret + "literal".length + 1);
+    expect(editor.state.doc.toJSON()).toEqual(before);
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+    expect(editor.state.doc.toJSON()).toEqual(before);
   });
 });

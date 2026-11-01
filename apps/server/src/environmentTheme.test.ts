@@ -1,11 +1,10 @@
 import { EnvironmentThemeFile } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -68,33 +67,6 @@ const currentThemes = Effect.gen(function* () {
 });
 
 it.layer(NodeServices.layer)("environment theme", (it) => {
-  it.effect("publishes nothing when the machine has no theme files", () =>
-    withEnvironmentThemes(
-      {},
-      Effect.gen(function* () {
-        assert.deepEqual(yield* currentThemes, []);
-      }),
-    ),
-  );
-
-  it.effect("publishes each file under its filename as the id", () =>
-    withEnvironmentThemes(
-      {
-        "nightfall.json": encodeThemeFile(NIGHTFALL_THEME),
-        "shared-light.json": encodeThemeFile(SHARED_THEME),
-      },
-      Effect.gen(function* () {
-        const themes = yield* currentThemes;
-        assert.deepEqual(
-          themes.map((theme) => theme.id),
-          ["nightfall", "shared-light"],
-        );
-        assert.deepEqual(themes[0], { id: "nightfall", ...NIGHTFALL_THEME });
-        assert.deepEqual(themes[1], { id: "shared-light", ...SHARED_THEME });
-      }),
-    ),
-  );
-
   it.effect("follows the directory rather than the set read at start", () =>
     withEnvironmentThemes(
       { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
@@ -118,17 +90,6 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     ),
   );
 
-  it.effect("streams the current set first", () =>
-    withEnvironmentThemes(
-      { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
-      Effect.gen(function* () {
-        const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
-        const first = yield* environmentTheme.streamChanges.pipe(Stream.runHead);
-        assert.deepEqual(Option.getOrNull(first), [{ id: "nightfall", ...NIGHTFALL_THEME }]);
-      }),
-    ),
-  );
-
   it.effect("never replays a set older than the snapshot it started from", () =>
     withEnvironmentThemes(
       { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
@@ -142,10 +103,19 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
           path.join(environmentThemesDir, "shared-light.json"),
           encodeThemeFile(SHARED_THEME),
         );
-        const first = yield* environmentTheme.streamChanges.pipe(Stream.runHead);
+        const seen = yield* Queue.unbounded<ReadonlyArray<{ readonly id: string }>>();
+        yield* Stream.runForEach(environmentTheme.streamChanges, (themes) =>
+          Queue.offer(seen, themes),
+        ).pipe(Effect.forkScoped);
         assert.deepEqual(
-          Option.getOrNull(first)?.map((theme) => theme.id),
+          (yield* Queue.take(seen)).map((theme) => theme.id),
           ["nightfall", "shared-light"],
+        );
+        yield* fs.remove(path.join(environmentThemesDir, "nightfall.json"));
+        yield* currentThemes;
+        assert.deepEqual(
+          (yield* Queue.take(seen)).map((theme) => theme.id),
+          ["shared-light"],
         );
       }),
     ),
@@ -203,47 +173,5 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
         );
       }),
     ),
-  );
-});
-
-// Kept outside the it.layer block above because only the top-level `it` exposes
-// `live`.
-describe("environment theme watching", () => {
-  it.live("streams a set for every change to the directory", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-theme-watch-" });
-      const themesDir = path.join(baseDir, "userdata", "themes");
-      yield* fs.makeDirectory(themesDir, { recursive: true });
-
-      yield* Effect.gen(function* () {
-        const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
-        const seen = yield* Queue.unbounded<ReadonlyArray<{ readonly id: string }>>();
-        yield* Stream.runForEach(environmentTheme.streamChanges, (themes) =>
-          Queue.offer(seen, themes),
-        ).pipe(Effect.forkScoped);
-
-        assert.deepEqual(yield* Queue.take(seen), []);
-
-        const staging = path.join(baseDir, "staged.json");
-        yield* fs.writeFileString(staging, encodeThemeFile(NIGHTFALL_THEME));
-        yield* fs.rename(staging, path.join(themesDir, "nightfall.json"));
-        assert.deepEqual(
-          (yield* Queue.take(seen)).map((theme) => theme.id),
-          ["nightfall"],
-        );
-
-        yield* fs.remove(path.join(themesDir, "nightfall.json"));
-        assert.deepEqual(yield* Queue.take(seen), []);
-      }).pipe(
-        Effect.provide(
-          EnvironmentTheme.layer.pipe(
-            Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
-          ),
-        ),
-        Effect.timeout("30 seconds"),
-      );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

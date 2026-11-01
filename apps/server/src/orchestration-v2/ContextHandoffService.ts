@@ -1,7 +1,9 @@
 import {
+  type OrchestrationV2AppThread,
   OrchestrationV2ContextHandoff,
   type OrchestrationV2TurnItem,
   type OrchestrationV2Run,
+  type OrchestrationV2ThreadProjection,
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
@@ -22,6 +24,8 @@ import {
   selectHistory,
 } from "@t3tools/provider-core/server/handoffBudget";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
+import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
 
 export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandoffPrepareError>()(
   "ContextHandoffPrepareError",
@@ -49,12 +53,6 @@ export interface ContextHandoffServiceV2Shape {
     readonly toProviderInstanceId: ProviderInstanceId;
     readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
     readonly createdAt: DateTime.Utc;
-  }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
-  readonly prepare: (input: {
-    readonly threadId: ThreadId;
-    readonly targetRunId: RunId;
-    readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
-    readonly toProviderThreadId: ProviderThreadId;
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
   readonly prepareForkDelta: (input: {
     readonly sourceThreadId: ThreadId;
@@ -86,6 +84,19 @@ export interface ContextHandoffServiceV2Shape {
     readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
     readonly createdAt: DateTime.Utc;
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
+  /** Parent activity after the fork point, prepended to a side chat's first provider turn. */
+  readonly prepareSideChatContext: (input: {
+    readonly threadId: ThreadId;
+    readonly parentThreadId: ThreadId;
+    readonly targetRunId: RunId;
+    readonly transferId: NonNullable<OrchestrationV2ContextHandoff["transferId"]>;
+    readonly toProviderThreadId: ProviderThreadId;
+    readonly fromProviderInstanceId: ProviderInstanceId;
+    readonly toProviderInstanceId: ProviderInstanceId;
+    readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
+    readonly parentItems: ReadonlyArray<OrchestrationV2TurnItem>;
+    readonly createdAt: DateTime.Utc;
+  }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
 }
 
 export class ContextHandoffServiceV2 extends Context.Service<
@@ -101,7 +112,97 @@ function compactText(text: string, maxLength = 240): string {
   return `${compacted.slice(0, maxLength - 3)}...`;
 }
 
-function summarizeDeltaItem(item: OrchestrationV2TurnItem): string | null {
+export function visibleDeltaRunOrdinals(
+  projection: { readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal">> },
+  items: ReadonlyArray<Pick<OrchestrationV2TurnItem, "runId">>,
+): OrchestrationV2ContextHandoff["coveredRunOrdinals"] {
+  const ordinalByRunId = new Map(projection.runs.map((run) => [run.id, run.ordinal]));
+  let from = Infinity;
+  let to = -Infinity;
+  for (const item of items) {
+    const ordinal = item.runId === null ? undefined : ordinalByRunId.get(item.runId);
+    if (ordinal === undefined) continue;
+    from = Math.min(from, ordinal);
+    to = Math.max(to, ordinal);
+  }
+  return from === Infinity ? { from: 1, to: 1 } : { from, to };
+}
+
+/** Drops rolled-back runs and cancelled queued messages, which are not part of the conversation. */
+export function visibleConversationItems(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "attempts">,
+  items: ReadonlyArray<OrchestrationV2TurnItem>,
+): ReadonlyArray<OrchestrationV2TurnItem> {
+  const visible = createOrchestrationV2TurnItemVisibility({
+    runs: projection.runs,
+    attempts: projection.attempts,
+    items,
+  });
+  return items.filter(visible);
+}
+
+type ForkHistorySource = Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "attempts">;
+
+/** Visible rows of `source`'s own runs through `throughRun`, plus its v1 imported rows. */
+const readOwnHistoryItems = Effect.fn("orchestrationV2.contextHandoff.readOwnHistoryItems")(
+  function* (
+    projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords">,
+    source: ForkHistorySource,
+    throughRun: Pick<OrchestrationV2Run, "ordinal">,
+  ) {
+    const { turnItems } = yield* projectionStore.getThreadRecords(source.thread.id, ["turnItems"], {
+      turnItemRunIds: [
+        ...source.runs.filter((run) => run.ordinal <= throughRun.ordinal).map((run) => run.id),
+        ...(source.thread.historyOrigin === "v1_import" ? [null] : []),
+      ],
+    });
+    return visibleConversationItems(source, turnItems);
+  },
+);
+
+/** History `thread` shows from its fork ancestors, oldest first. Side chats inherit no rows. */
+export const readInheritedHandoffItems = Effect.fn(
+  "orchestrationV2.contextHandoff.readInheritedHandoffItems",
+)(function* (
+  projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords">,
+  thread: OrchestrationV2AppThread,
+) {
+  const segments: Array<ReadonlyArray<OrchestrationV2TurnItem>> = [];
+  const seen = new Set([thread.id]);
+  let current = thread;
+  while (
+    current.forkedFrom?.type === "run" &&
+    current.lineage.sideChat !== true &&
+    !seen.has(current.forkedFrom.threadId)
+  ) {
+    const { threadId, runId } = current.forkedFrom;
+    seen.add(threadId);
+    const source = yield* projectionStore
+      .getThreadRecords(threadId, ["runs", "attempts"])
+      .pipe(Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }));
+    const forkRun = source?.runs.find((run) => run.id === runId);
+    if (source === null || forkRun === undefined) break;
+    segments.unshift(yield* readOwnHistoryItems(projectionStore, source, forkRun));
+    current = source.thread;
+  }
+  return segments.flat();
+});
+
+/** What a portable fork from `throughRun` of `source` carries: inherited rows, then its own. */
+export const readForkHistoryItems = Effect.fn(
+  "orchestrationV2.contextHandoff.readForkHistoryItems",
+)(function* (
+  projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords">,
+  source: ForkHistorySource,
+  throughRun: Pick<OrchestrationV2Run, "ordinal">,
+) {
+  return [
+    ...(yield* readInheritedHandoffItems(projectionStore, source.thread)),
+    ...(yield* readOwnHistoryItems(projectionStore, source, throughRun)),
+  ];
+});
+
+export function summarizeDeltaItem(item: OrchestrationV2TurnItem): string | null {
   switch (item.type) {
     case "user_message":
       return `- User: ${compactText(item.text)}`;
@@ -140,6 +241,41 @@ function makeForkDeltaSummary(input: {
     ...(itemLines.length === 0 ? ["- No user-visible delta items."] : itemLines),
   ].join("\n");
 }
+
+const SIDE_CHAT_CONTEXT_MAX_CHARS = 8_000;
+
+/** `digest` holds `summarizeDeltaItem` lines for parent items after the fork point, oldest first. */
+export function makeSideChatContext(input: {
+  readonly parentThreadId: ThreadId;
+  readonly digest: ReadonlyArray<string>;
+}): string {
+  const framing =
+    "You are in a side chat beside the main thread. The main thread may still be running in the same worktree. Answer the user's questions; do not continue or redo the main thread's task.";
+  const header = "Main thread activity since this side chat's starting point:";
+  const truncated = "- Earlier items truncated.";
+  const footer = `Use t3_thread_read on thread ${input.parentThreadId} to see the main thread's live state.`;
+  const kept: Array<string> = [];
+  // The cap covers the whole block, so the fixed lines are reserved before any digest line.
+  let remaining =
+    SIDE_CHAT_CONTEXT_MAX_CHARS - [framing, "", header, truncated, "", footer].join("\n").length;
+  for (const line of input.digest.toReversed()) {
+    if (line.length + 1 > remaining) break;
+    kept.unshift(line);
+    remaining -= line.length + 1;
+  }
+  return [
+    framing,
+    ...(kept.length === 0
+      ? []
+      : ["", header, ...(kept.length < input.digest.length ? [truncated] : []), ...kept]),
+    "",
+    footer,
+  ].join("\n");
+}
+
+/** Side chat context is prepended to the provider prompt, never replayed as budgeted history. */
+export const isSideChatContextHandoff = (handoff: OrchestrationV2ContextHandoff): boolean =>
+  handoff.strategy === "manual_context" && handoff.transferId != null;
 
 function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>): string {
   const sections = items.flatMap((item) => {
@@ -200,30 +336,6 @@ function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>):
     remaining -= suffix.length + 2;
   }
   return [header, ...selected].join("\n\n");
-}
-
-export function providerMessageWithContextHandoff(input: {
-  readonly handoff: OrchestrationV2ContextHandoff;
-  readonly userText: string;
-}): string {
-  return providerMessageWithContextHandoffs({
-    handoffs: [input.handoff],
-    userText: input.userText,
-  });
-}
-
-function providerMessageWithContextHandoffs(input: {
-  readonly handoffs: ReadonlyArray<OrchestrationV2ContextHandoff>;
-  readonly userText: string;
-}): string {
-  const handoffSections = input.handoffs.flatMap((handoff) => {
-    const label =
-      handoff.strategy === "fork_delta_summary"
-        ? "merge_back / fork_delta_summary"
-        : handoff.strategy;
-    return [`Context handoff (${label}):`, handoff.summaryText, ""];
-  });
-  return [...handoffSections, "User message:", input.userText].join("\n");
 }
 
 const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffService.layer")(
@@ -293,49 +405,6 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         } satisfies OrchestrationV2ContextHandoff;
       },
     );
-
-    const prepare = Effect.fn("orchestrationV2.contextHandoff.prepare")(function* (input: {
-      readonly threadId: ThreadId;
-      readonly targetRunId: RunId;
-      readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
-      readonly toProviderThreadId: ProviderThreadId;
-    }) {
-      const now = yield* DateTime.now;
-      const handoffId = yield* idAllocator.allocate
-        .contextHandoff({
-          threadId: input.threadId,
-          fromProviderInstanceId: ProviderInstanceId.make("manual"),
-          toProviderInstanceId: ProviderInstanceId.make("manual"),
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ContextHandoffPrepareError({
-                threadId: input.threadId,
-                targetRunId: input.targetRunId,
-                fromProviderThreadIds: Array.from(input.fromProviderThreadIds),
-                toProviderThreadId: input.toProviderThreadId,
-                cause,
-              }),
-          ),
-        );
-      return {
-        id: handoffId,
-        transferId: null,
-        threadId: input.threadId,
-        targetRunId: input.targetRunId,
-        fromProviderThreadIds: Array.from(input.fromProviderThreadIds),
-        toProviderThreadId: input.toProviderThreadId,
-        coveredRunOrdinals: { from: 1, to: 1 },
-        strategy: "manual_context",
-        status: "ready",
-        summaryMessageId: null,
-        summaryText: "Manual context handoff.",
-        createdByProviderInstanceId: null,
-        createdAt: now,
-        updatedAt: now,
-      } satisfies OrchestrationV2ContextHandoff;
-    });
 
     const prepareForkDelta = Effect.fn("orchestrationV2.contextHandoff.prepareForkDelta")(
       function* (input: {
@@ -485,11 +554,56 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       } satisfies OrchestrationV2ContextHandoff;
     });
 
+    const prepareSideChatContext = Effect.fn(
+      "orchestrationV2.contextHandoff.prepareSideChatContext",
+    )(function* (input: Parameters<ContextHandoffServiceV2Shape["prepareSideChatContext"]>[0]) {
+      const handoffId = yield* idAllocator.allocate
+        .contextHandoff({
+          threadId: input.threadId,
+          fromProviderInstanceId: input.fromProviderInstanceId,
+          toProviderInstanceId: input.toProviderInstanceId,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ContextHandoffPrepareError({
+                threadId: input.threadId,
+                targetRunId: input.targetRunId,
+                fromProviderThreadIds: [],
+                toProviderThreadId: input.toProviderThreadId,
+                cause,
+              }),
+          ),
+        );
+      return {
+        id: handoffId,
+        transferId: input.transferId,
+        threadId: input.threadId,
+        targetRunId: input.targetRunId,
+        fromProviderThreadIds: [],
+        toProviderThreadId: input.toProviderThreadId,
+        coveredRunOrdinals: input.coveredRunOrdinals,
+        strategy: "manual_context",
+        status: "ready",
+        summaryMessageId: null,
+        summaryText: makeSideChatContext({
+          parentThreadId: input.parentThreadId,
+          digest: input.parentItems.flatMap((item) => {
+            const line = summarizeDeltaItem(item);
+            return line === null ? [] : [line];
+          }),
+        }),
+        createdByProviderInstanceId: null,
+        createdAt: input.createdAt,
+        updatedAt: input.createdAt,
+      } satisfies OrchestrationV2ContextHandoff;
+    });
+
     return ContextHandoffServiceV2.of({
       prepareLegacyImport,
-      prepare,
       prepareForkDelta,
       prepareProviderHandoff,
+      prepareSideChatContext,
     });
   },
 );

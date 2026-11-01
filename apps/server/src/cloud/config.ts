@@ -48,10 +48,10 @@ export function isAgentActivityPublishingEnabledValue(value: string | null): boo
  * Mirrors the per-publish gate in AgentAwarenessRelay, so the descriptor
     capability never advertises publishing that the publisher would skip.
  */
-export const readAgentActivityPublishingActive = (
+export const readAgentActivityPublishingActive: (
   secrets: ServerSecretStore.ServerSecretStore["Service"],
-): Effect.Effect<boolean> =>
-  Effect.gen(function* () {
+) => Effect.Effect<boolean> = Effect.fn("config.readAgentActivityPublishingActive")(
+  function* (secrets: ServerSecretStore.ServerSecretStore["Service"]) {
     const readSecretString = (name: string) =>
       secrets
         .get(name)
@@ -65,8 +65,7 @@ export const readAgentActivityPublishingActive = (
       readSecretString(RELAY_URL_SECRET),
       readSecretString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
     ]);
-    // Empty strings are as unconfigured as missing files: the publisher's
-    // truthiness gate skips them, so the capability must too.
+    // Match the publisher, which treats empty strings as unconfigured.
     return (
       isAgentActivityPublishingEnabledValue(enabled) &&
       url !== null &&
@@ -74,7 +73,9 @@ export const readAgentActivityPublishingActive = (
       environmentCredential !== null &&
       environmentCredential !== ""
     );
-  }).pipe(Effect.orElseSucceed(() => false));
+  },
+  Effect.orElseSucceed(() => false),
+);
 
 const readSecretString = (name: string) =>
   ServerSecretStore.ServerSecretStore.pipe(

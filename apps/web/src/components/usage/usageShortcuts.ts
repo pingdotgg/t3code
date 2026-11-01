@@ -17,7 +17,7 @@ export const WINDOW_OPTIONS = [
 ] as const;
 
 // Month to date has no keybinding; the period commands above are a fixed set.
-export const MONTH_TO_DATE_OPTION = { days: "mtd", label: "This month" } as const;
+const MONTH_TO_DATE_OPTION = { days: "mtd", label: "This month" } as const;
 export const PERIOD_OPTIONS = [...WINDOW_OPTIONS, MONTH_TO_DATE_OPTION] as const;
 
 export function resolveUsageShortcut(
@@ -31,7 +31,9 @@ export function resolveUsageShortcut(
       target.tagName === "TEXTAREA" ||
       target.tagName === "SELECT" ||
       target.isContentEditable ||
-      target.closest('[role="dialog"], [aria-modal="true"], [data-slot$="popup"]'))
+      target.closest(
+        '[role="dialog"]:not([data-app-modal]), [aria-modal="true"]:not([data-app-modal]), [data-slot$="popup"]:not([data-app-modal])',
+      ))
   ) {
     return null;
   }

@@ -1,5 +1,5 @@
 diff --git a/lib/module/views/NativeStackView.native.js b/lib/module/views/NativeStackView.native.js
-index 6882090..011ad0e 100644
+index 6882090..f1e14e1 100644
 --- a/lib/module/views/NativeStackView.native.js
 +++ b/lib/module/views/NativeStackView.native.js
 @@ -17,8 +17,12 @@ const ANDROID_DEFAULT_HEADER_HEIGHT = 56;
@@ -15,7 +15,15 @@ index 6882090..011ad0e 100644
    index,
    focused,
    shouldFreeze,
-@@ -305,7 +309,8 @@ const SceneView = /*#__PURE__*/React.memo(function SceneView({
+@@ -144,6 +148,7 @@ const SceneView = /*#__PURE__*/React.memo(function SceneView({
+     sheetAllowedDetents = [1.0],
+     sheetLargestUndimmedDetentIndex = -1,
+     sheetGrabberVisible = false,
++    sheetPrefersHorizontalBars = false,
+     sheetCornerRadius = -1.0,
+     sheetElevation = 24,
+     sheetExpandsWhenScrolledToEdge = true,
+@@ -305,7 +310,8 @@ const SceneView = /*#__PURE__*/React.memo(function SceneView({
        }
      }
    });
@@ -25,7 +33,15 @@ index 6882090..011ad0e 100644
      route: route,
      navigation: navigation,
      children: /*#__PURE__*/_jsx(ScreenStackItem, {
-@@ -427,6 +432,7 @@ const SceneView = /*#__PURE__*/React.memo(function SceneView({
+@@ -333,6 +339,7 @@ const SceneView = /*#__PURE__*/React.memo(function SceneView({
+       sheetAllowedDetents: sheetAllowedDetents,
+       sheetLargestUndimmedDetentIndex: sheetLargestUndimmedDetentIndex,
+       sheetGrabberVisible: sheetGrabberVisible,
++      sheetPrefersHorizontalBars: sheetPrefersHorizontalBars,
+       sheetInitialDetentIndex: sheetInitialDetentIndex,
+       sheetCornerRadius: sheetCornerRadius,
+       sheetElevation: sheetElevation,
+@@ -427,6 +434,7 @@ const SceneView = /*#__PURE__*/React.memo(function SceneView({
    });
  });
  export function NativeStackView({
@@ -33,7 +49,7 @@ index 6882090..011ad0e 100644
    state,
    navigation,
    descriptors,
-@@ -444,6 +450,17 @@ export function NativeStackView({
+@@ -444,6 +452,17 @@ export function NativeStackView({
    return /*#__PURE__*/_jsx(SafeAreaProviderCompat, {
      children: /*#__PURE__*/_jsx(ScreenStack, {
        style: styles.container,
@@ -51,7 +67,7 @@ index 6882090..011ad0e 100644
        children: state.routes.concat(state.preloadedRoutes).map((route, index) => {
          const descriptor = descriptors[route.key] ?? preloadedDescriptors[route.key];
          const isFocused = state.index === index;
-@@ -460,6 +477,7 @@ export function NativeStackView({
+@@ -460,6 +479,7 @@ export function NativeStackView({
          // due to component being unmounted. To avoid this, we don't freeze the previous screen there
          const shouldFreeze = isFabric() ? !isPreloaded && !isFocused && !isBelowFocused && !isModalOnIos : !isPreloaded && !isFocused && !isModalOnIos;
          return /*#__PURE__*/_jsx(SceneView, {
@@ -60,7 +76,7 @@ index 6882090..011ad0e 100644
            focused: isFocused,
            shouldFreeze: shouldFreeze,
 diff --git a/lib/module/views/useHeaderConfigProps.js b/lib/module/views/useHeaderConfigProps.js
-index 08055b2..8718847 100644
+index 08055b2..ccf1fde 100644
 --- a/lib/module/views/useHeaderConfigProps.js
 +++ b/lib/module/views/useHeaderConfigProps.js
 @@ -18,6 +18,12 @@ const processBarButtonItems = (items, colors, fonts) => {
@@ -174,10 +190,19 @@ index 08055b2..8718847 100644
      headerRightBarButtonItems: processBarButtonItems(rightItems, colors, fonts),
      experimental_userInterfaceStyle: dark ? 'dark' : 'light'
 diff --git a/lib/typescript/src/types.d.ts b/lib/typescript/src/types.d.ts
-index 27a3d8e..3adf86e 100644
+index 27a3d8e..7312e4e 100644
 --- a/lib/typescript/src/types.d.ts
 +++ b/lib/typescript/src/types.d.ts
-@@ -903,6 +903,8 @@ type SharedHeaderItem = {
+@@ -694,6 +694,8 @@ export type NativeStackNavigationOptions = {
+      * @platform ios
+      */
+     sheetGrabberVisible?: boolean;
++    /** Requests horizontal bars on iOS 27.1+. Defaults to UIKit automatic placement. */
++    sheetPrefersHorizontalBars?: boolean;
+     /**
+      * The largest sheet detent for which a view underneath won't be dimmed.
+      * Works only when `presentation` is set to `formSheet`.
+@@ -903,6 +905,8 @@ type SharedHeaderItem = {
       * Read more: https://developer.apple.com/documentation/uikit/uibarbuttonitem/sharesbackground
       */
      sharesBackground?: boolean;
@@ -186,7 +211,7 @@ index 27a3d8e..3adf86e 100644
      /**
       * An identifier used to match items across transitions.
       * Only available from iOS 26.0 and later.
-@@ -1148,6 +1150,13 @@ export type NativeStackHeaderItemSpacing = {
+@@ -1148,6 +1152,13 @@ export type NativeStackHeaderItemSpacing = {
   */
  export type NativeStackHeaderItemCustom = {
      type: 'custom';
@@ -232,10 +257,19 @@ index d533cd9..857b7ad 100644
  //# sourceMappingURL=NativeStackView.native.d.ts.map
 \ No newline at end of file
 diff --git a/src/types.tsx b/src/types.tsx
-index 5d63f41..e9c53ee 100644
+index 5d63f41..f949a11 100644
 --- a/src/types.tsx
 +++ b/src/types.tsx
-@@ -959,6 +959,8 @@ type SharedHeaderItem = {
+@@ -746,6 +746,8 @@ export type NativeStackNavigationOptions = {
+    * @platform ios
+    */
+   sheetGrabberVisible?: boolean;
++  /** Requests horizontal bars on iOS 27.1+. Defaults to UIKit automatic placement. */
++  sheetPrefersHorizontalBars?: boolean;
+   /**
+    * The largest sheet detent for which a view underneath won't be dimmed.
+    * Works only when `presentation` is set to `formSheet`.
+@@ -959,6 +961,8 @@ type SharedHeaderItem = {
     * Read more: https://developer.apple.com/documentation/uikit/uibarbuttonitem/sharesbackground
     */
    sharesBackground?: boolean;
@@ -244,7 +278,7 @@ index 5d63f41..e9c53ee 100644
    /**
     * An identifier used to match items across transitions.
     * Only available from iOS 26.0 and later.
-@@ -1213,6 +1215,13 @@ export type NativeStackHeaderItemSpacing = {
+@@ -1213,6 +1217,13 @@ export type NativeStackHeaderItemSpacing = {
   */
  export type NativeStackHeaderItemCustom = {
    type: 'custom';
@@ -259,7 +293,7 @@ index 5d63f41..e9c53ee 100644
     * A React Element to display as the item.
     */
 diff --git a/src/views/NativeStackView.native.tsx b/src/views/NativeStackView.native.tsx
-index aa13bc7..ab4a9d1 100644
+index aa13bc7..225daf9 100644
 --- a/src/views/NativeStackView.native.tsx
 +++ b/src/views/NativeStackView.native.tsx
 @@ -52,7 +52,14 @@ function isFabric() {
@@ -285,7 +319,15 @@ index aa13bc7..ab4a9d1 100644
    index,
    focused,
    shouldFreeze,
-@@ -434,7 +442,7 @@ const SceneView = React.memo(function SceneView({
+@@ -199,6 +207,7 @@ const SceneView = React.memo(function SceneView({
+     sheetAllowedDetents = [1.0],
+     sheetLargestUndimmedDetentIndex = -1,
+     sheetGrabberVisible = false,
++    sheetPrefersHorizontalBars = false,
+     sheetCornerRadius = -1.0,
+     sheetElevation = 24,
+     sheetExpandsWhenScrolledToEdge = true,
+@@ -434,7 +443,7 @@ const SceneView = React.memo(function SceneView({
        );
  
    return (
@@ -294,7 +336,15 @@ index aa13bc7..ab4a9d1 100644
        <ScreenStackItem
          screenId={route.key}
          activityState={isPreloaded ? 0 : 2}
-@@ -571,11 +579,12 @@ const SceneView = React.memo(function SceneView({
+@@ -463,6 +472,7 @@ const SceneView = React.memo(function SceneView({
+         sheetAllowedDetents={sheetAllowedDetents}
+         sheetLargestUndimmedDetentIndex={sheetLargestUndimmedDetentIndex}
+         sheetGrabberVisible={sheetGrabberVisible}
++        sheetPrefersHorizontalBars={sheetPrefersHorizontalBars}
+         sheetInitialDetentIndex={sheetInitialDetentIndex}
+         sheetCornerRadius={sheetCornerRadius}
+         sheetElevation={sheetElevation}
+@@ -571,11 +581,12 @@ const SceneView = React.memo(function SceneView({
            </HeaderHeightContext.Provider>
          </AnimatedHeaderHeightContext.Provider>
        </ScreenStackItem>
@@ -308,7 +358,7 @@ index aa13bc7..ab4a9d1 100644
    state: StackNavigationState<ParamListBase>;
    navigation: NativeStackNavigationHelpers;
    descriptors: NativeStackDescriptorMap;
-@@ -586,6 +595,7 @@ type Props = {
+@@ -586,6 +597,7 @@ type Props = {
  };
  
  export function NativeStackView({
@@ -316,7 +366,7 @@ index aa13bc7..ab4a9d1 100644
    state,
    navigation,
    descriptors,
-@@ -633,6 +643,7 @@ export function NativeStackView({
+@@ -633,6 +645,7 @@ export function NativeStackView({
  
            return (
              <SceneView

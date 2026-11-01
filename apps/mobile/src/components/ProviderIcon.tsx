@@ -1,12 +1,16 @@
 import { Image } from "expo-image";
 import { Defs, LinearGradient, Path, Stop, Svg } from "react-native-svg";
 import { View } from "react-native";
-import { providerInstanceInitials } from "@t3tools/client-runtime/state/provider-instance-display";
+import {
+  normalizeProviderAccentColor,
+  providerAccentForegroundColor,
+  providerInstanceInitials,
+} from "@t3tools/client-runtime/state/provider-instance-display";
 import { useId, useState } from "react";
 import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { AppText as Text } from "./ui/AppText";
-import { getProviderClient } from "../lib/providerClients";
+import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
 
 type ProviderIconProps = {
   readonly provider: string | null | undefined;
@@ -156,40 +160,44 @@ export function ProviderInstanceIcon(props: {
   readonly showBadge?: boolean;
   readonly surfaceColor: string;
 }) {
+  const accentColor = normalizeProviderAccentColor(props.accentColor);
   return (
     <View style={{ position: "relative" }}>
       <View style={{ opacity: 0.6 }}>
         <ProviderIcon iconUrl={props.iconUrl} provider={props.provider} size={props.size} />
       </View>
       {props.showBadge ? (
+        // An absolute badge alone is capped at icon width and clips initials.
         <View
-          className={props.accentColor ? undefined : "bg-card"}
-          style={{
-            position: "absolute",
-            right: -3,
-            bottom: -3,
-            height: 12,
-            minWidth: 12,
-            paddingHorizontal: 2,
-            borderRadius: 999,
-            borderWidth: 1,
-            borderColor: props.surfaceColor,
-            backgroundColor: props.accentColor,
-            alignItems: "center",
-            justifyContent: "center",
-          }}
+          pointerEvents="none"
+          style={{ position: "absolute", right: -3, bottom: -3, width: 32, alignItems: "flex-end" }}
         >
-          <Text
-            className={props.accentColor ? undefined : "text-foreground-muted"}
+          <View
+            className={accentColor ? undefined : "bg-card"}
             style={{
-              fontSize: 7,
-              fontWeight: "600",
-              lineHeight: 9,
-              color: props.accentColor ? "#ffffff" : undefined,
+              height: 12,
+              minWidth: 12,
+              paddingHorizontal: 2,
+              borderRadius: 999,
+              borderWidth: 1,
+              borderColor: props.surfaceColor,
+              backgroundColor: accentColor,
+              alignItems: "center",
+              justifyContent: "center",
             }}
           >
-            {providerInstanceInitials(props.displayName)}
-          </Text>
+            <Text
+              className={accentColor ? undefined : "text-foreground-muted"}
+              style={{
+                fontSize: 7,
+                fontWeight: "600",
+                lineHeight: 9,
+                color: accentColor ? providerAccentForegroundColor(accentColor) : undefined,
+              }}
+            >
+              {providerInstanceInitials(props.displayName)}
+            </Text>
+          </View>
         </View>
       ) : null}
     </View>

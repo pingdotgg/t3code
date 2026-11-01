@@ -1,13 +1,9 @@
-/**
- * A 2.x server serves every location from one process, so an instance shares
- * one server across all of its threads and directories.
- */
+// One OpenCode 2 process serves all directories; share it across instance threads.
 import type { OpenCodeClient } from "@opencode/client/effect";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
-import * as Layer from "effect/Layer";
 import * as P from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as HttpClientError from "effect/http/HttpClientError";
@@ -37,17 +33,13 @@ export class OpenCode2Server extends Context.Service<
  * OpenCode 2 always requires one and prints a generated one to stdout
  * otherwise, so T3 supplies its own and keeps it in memory.
  */
-export const generatePassword = Effect.gen(function* () {
+const generatePassword = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const bytes = yield* crypto.randomBytes(32).pipe(Effect.orDie);
   return Redacted.make(Base64Url.encode(bytes), { label: "OPENCODE_PASSWORD" });
 });
 
-/**
- * `OPENCODE_PASSWORD` wins over `OPENCODE_SERVER_PASSWORD` in OpenCode 2, so
- * the inherited 1.x variable is dropped to keep the T3 password the only one in
- * play.
- */
+/** OPENCODE_PASSWORD overrides OPENCODE_SERVER_PASSWORD; drop the inherited 1.x variable. */
 export const serverEnvironment = (
   environment: NodeJS.ProcessEnv,
   password: Redacted.Redacted,
@@ -56,7 +48,6 @@ export const serverEnvironment = (
   return { ...rest, OPENCODE_PASSWORD: Redacted.value(password) };
 };
 
-/** The client wraps HTTP failures in a `ClientError`; this unwraps either shape. */
 const httpFailureOf = (cause: unknown): HttpClientError.HttpClientError | undefined => {
   if (HttpClientError.isHttpClientError(cause)) return cause;
   if (
@@ -69,12 +60,7 @@ const httpFailureOf = (cause: unknown): HttpClientError.HttpClientError | undefi
   return undefined;
 };
 
-/**
- * Only a transport failure means the server is unreachable; a 401 without the
- * 2.x error body is still a rejected password (1.x sends it empty), and any
- * other failed status is a server error. A 2xx the client cannot decode is not
- * OpenCode 2 (1.x answers with HTML).
- */
+// Empty 401s still reject passwords; undecodable 2xx may be 1.x HTML, not OpenCode 2.
 const describeInfoFailure = (cause: unknown) => {
   const failure = httpFailureOf(cause);
   if (failure?.reason._tag === "TransportError") {
@@ -88,12 +74,7 @@ const describeInfoFailure = (cause: unknown) => {
   return "The server is not an OpenCode 2 server.";
 };
 
-/**
- * `/health` and friends answer 200 with the web UI's HTML on every version, so
- * only this endpoint proves readiness. Details are fixed text because they
- * reach clients and a `serverUrl` can carry credentials; the underlying failure
- * stays in `cause`.
- */
+/** Only server info proves readiness; keep credential-bearing failure details out of client text. */
 export const verifyServer = (client: OpenCodeClient) =>
   client.server.info().pipe(
     Effect.timeoutOrElse({
@@ -136,12 +117,15 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
   readonly environment: NodeJS.ProcessEnv;
 }) {
   const opencode = yield* OpenCode2Client.OpenCode2Client;
-  const connectTo = (url: string, password: Redacted.Redacted, external: boolean) =>
-    Effect.gen(function* () {
-      const api = yield* opencode.connect({ baseUrl: url, password });
-      const version = yield* verifyServer(api.client);
-      return { ...api, url, version, external } satisfies OpenCode2Connection;
-    });
+  const connectTo = Effect.fn("OpenCode2Server.connectTo")(function* (
+    url: string,
+    password: Redacted.Redacted,
+    external: boolean,
+  ) {
+    const api = yield* opencode.connect({ baseUrl: url, password });
+    const version = yield* verifyServer(api.client);
+    return { ...api, url, version, external } satisfies OpenCode2Connection;
+  });
   let latest: OpenCode2Connection | undefined;
   const remember = (connection: OpenCode2Connection) =>
     Effect.sync(() => {
@@ -155,10 +139,11 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
       Effect.tap(remember),
     );
     return OpenCode2Server.of({
-      withConnection: (use) =>
-        Effect.suspend(() => (latest === undefined ? connect : Effect.succeed(latest))).pipe(
+      withConnection: Effect.fn("OpenCode2Server.withConnection")(function (use) {
+        return Effect.suspend(() => (latest === undefined ? connect : Effect.succeed(latest))).pipe(
           Effect.flatMap(use),
-        ),
+        );
+      }),
     });
   }
 
@@ -170,14 +155,12 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
     verify: (url) => connectTo(url, password, false).pipe(Effect.flatMap(remember)),
   });
   return OpenCode2Server.of({
-    withConnection: (use) =>
-      owner.withServer((server) =>
+    withConnection: Effect.fn("OpenCode2Server.withConnection")(function (use) {
+      return owner.withServer((server) =>
         latest?.url === server.url
           ? use(latest)
           : Effect.die(new Error("OpenCode 2 server was lent before verification.")),
-      ),
+      );
+    }),
   });
 });
-
-export const layer = (input: Parameters<typeof make>[0]) =>
-  Layer.effect(OpenCode2Server, make(input));

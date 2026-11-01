@@ -1,29 +1,31 @@
 import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
-import {
-  AuthAdministrativeScopes,
-  AuthRelayReadScope,
-  AuthRelayWriteScope,
-  type AuthSessionState,
-} from "@t3tools/contracts";
+import { AuthRelayReadScope, AuthRelayWriteScope, type AuthSessionState } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 import {
   CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
   ConnectOnboardingOptOutSchema,
   EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
 } from "~/cloud/connectOnboarding";
+import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { isHostedStaticApp } from "~/hostedPairing";
 import {
   useEnvironments,
   usePrimaryEnvironment,
   usePrimaryEnvironmentId,
 } from "~/state/environments";
 import { environmentSession, readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import {
+  type T3ConnectAccountPageUrl,
+  useT3ConnectAccountPage,
+} from "../clerk/T3ConnectAccountPages";
 import { CloudEnvironmentConnectRows } from "./CloudEnvironmentConnectList";
+import { TunnelLimitAlert } from "./TunnelUsage";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Dialog } from "../ui/dialog";
@@ -42,8 +44,7 @@ type OnboardingStep = "publish" | "devices";
 const EMPTY_SESSION_STATE_ATOM = Atom.make(AsyncResult.initial<AuthSessionState>());
 
 function ConfiguredConnectOnboardingDialog() {
-  // Mirrors ManagedRelayAuthProvider: a pending Clerk session must not read as
-  // signed-out, or its later activation would look like a fresh sign-in.
+  // Pending Clerk sessions must not look signed out or activation would look like a new sign-in.
   const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
   const [optOutState, setOptOutState] = useLocalStorage(
     CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
@@ -51,7 +52,10 @@ function ConfiguredConnectOnboardingDialog() {
     ConnectOnboardingOptOutSchema,
   );
 
-  const { isReady: environmentsReady } = useEnvironments();
+  const { environments, isReady: environmentsReady } = useEnvironments();
+  // The empty hosted home already adds account computers after sign-in.
+  const homeScreenAddsComputers =
+    isHostedStaticApp() && environmentsReady && environments.length === 0;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const primarySessionState = useAtomValue(
     primaryEnvironmentId === null
@@ -65,6 +69,7 @@ function ConfiguredConnectOnboardingDialog() {
     primaryEnvironmentId === null ? environmentsReady : primarySessionState._tag !== "Initial";
 
   const controller = useCloudLinkController();
+  const accountPage = useT3ConnectAccountPage();
   const showPublishStep = canManageRelay && controller.linkState.target !== null;
   const steps: ReadonlyArray<OnboardingStep> = showPublishStep
     ? ["publish", "devices"]
@@ -77,76 +82,55 @@ function ConfiguredConnectOnboardingDialog() {
   const [publishAgentActivity, setPublishAgentActivity] = useState(true);
   const [dontShowAgain, setDontShowAgain] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
-  const prefilledFromLinkStateRef = useRef(false);
-  const observedAccountRef = useRef<string | null | undefined>(undefined);
+  const [prefilledFromLinkState, setPrefilledFromLinkState] = useState(false);
+  // Start undefined so an existing account never looks like a fresh sign-in.
+  const [observedAccount, setObservedAccount] = useState<string | null | undefined>(undefined);
 
-  useEffect(() => {
-    if (step === "publish" && sessionScopesKnown && !showPublishStep && !isApplying) {
-      setStep("devices");
-    }
-  }, [isApplying, sessionScopesKnown, showPublishStep, step]);
+  if (step === "publish" && sessionScopesKnown && !showPublishStep && !isApplying) {
+    setStep("devices");
+  }
 
   const optOutAccounts = optOutState.optOutAccounts;
 
-  useEffect(() => {
-    if (!isLoaded) return;
-    // A loaded-but-incomplete snapshot (signed in, user id not yet populated)
-    // must not be recorded as signed-out — the next render would then look
-    // like a fresh sign-in on a cold load.
-    if (isSignedIn && !userId) return;
-    const previousAccount = observedAccountRef.current;
+  // A signed-in snapshot without userId is incomplete; recording signed-out would fake a fresh sign-in.
+  if (isLoaded && !(isSignedIn && !userId)) {
     const nextAccount = isSignedIn && userId ? userId : null;
-    observedAccountRef.current = nextAccount;
-    if (previousAccount !== undefined && previousAccount !== nextAccount && nextAccount !== null) {
-      setRequestedAccount(nextAccount);
+    if (nextAccount !== observedAccount) {
+      setObservedAccount(nextAccount);
+      if (observedAccount !== undefined && nextAccount !== null) {
+        setRequestedAccount(nextAccount);
+      }
     }
-  }, [isLoaded, isSignedIn, userId]);
+  }
 
-  // A manageable session implies a primary environment, so when the scopes
-  // allow publishing, wait for the connection target too — otherwise the
-  // wizard could open on the devices step moments before the publish step
-  // becomes available and freeze there.
+  if (openForAccount !== null && (!isSignedIn || userId !== openForAccount)) {
+    setOpenForAccount(null);
+  }
+  if (requestedAccount !== null && (!isSignedIn || userId !== requestedAccount)) {
+    setRequestedAccount(null);
+  }
+
+  // Wait for the publish target before opening; otherwise the wizard can freeze on devices before publish
+  // becomes available.
   const publishStepDecided = !canManageRelay || controller.linkState.target !== null;
 
-  useEffect(() => {
-    if (requestedAccount === null || openForAccount !== null) return;
-    if (optOutAccounts.includes(requestedAccount)) {
+  if (requestedAccount !== null && openForAccount === null) {
+    if (homeScreenAddsComputers || optOutAccounts.includes(requestedAccount)) {
       setRequestedAccount(null);
-      return;
-    }
-    if (!sessionScopesKnown || !publishStepDecided) return;
-    setRequestedAccount(null);
-    prefilledFromLinkStateRef.current = false;
-    setExposeEnvironment(true);
-    setPublishAgentActivity(true);
-    setDontShowAgain(false);
-    setStep(canManageRelay && controller.linkState.target !== null ? "publish" : "devices");
-    setOpenForAccount(requestedAccount);
-  }, [
-    canManageRelay,
-    controller.linkState.target,
-    openForAccount,
-    optOutAccounts,
-    publishStepDecided,
-    requestedAccount,
-    sessionScopesKnown,
-  ]);
-
-  useEffect(() => {
-    if (openForAccount !== null && (!isSignedIn || userId !== openForAccount)) {
-      setOpenForAccount(null);
-    }
-    if (requestedAccount !== null && (!isSignedIn || userId !== requestedAccount)) {
+    } else if (sessionScopesKnown && publishStepDecided) {
       setRequestedAccount(null);
+      setPrefilledFromLinkState(false);
+      setExposeEnvironment(true);
+      setPublishAgentActivity(true);
+      setDontShowAgain(false);
+      setStep(canManageRelay && controller.linkState.target !== null ? "publish" : "devices");
+      setOpenForAccount(requestedAccount);
     }
-  }, [isSignedIn, openForAccount, requestedAccount, userId]);
+  }
 
   const linkStateData = controller.linkState.data;
-  useEffect(() => {
-    if (openForAccount === null || prefilledFromLinkStateRef.current || linkStateData === null) {
-      return;
-    }
-    prefilledFromLinkStateRef.current = true;
+  if (openForAccount !== null && !prefilledFromLinkState && linkStateData !== null) {
+    setPrefilledFromLinkState(true);
     if (
       linkStateData.linked &&
       linkStateData.linkRevoked !== true &&
@@ -155,7 +139,7 @@ function ConfiguredConnectOnboardingDialog() {
       setExposeEnvironment(linkStateData.managedTunnelActive ?? linkStateData.linked);
       setPublishAgentActivity(linkStateData.publishAgentActivity);
     }
-  }, [linkStateData, openForAccount]);
+  }
 
   const complete = () => {
     if (isApplying) return;
@@ -181,8 +165,7 @@ function ConfiguredConnectOnboardingDialog() {
       return;
     }
     if (linkStateData === null || controller.linkState.error !== null) return;
-    // The wizard only ever enables — with both toggles off there is nothing to
-    // apply, and an existing link must not be torn down from onboarding.
+    // Onboarding only enables links; both toggles off must preserve existing links.
     if (!exposeEnvironment && !publishAgentActivity) {
       setStep("devices");
       return;
@@ -204,6 +187,15 @@ function ConfiguredConnectOnboardingDialog() {
     setStep("devices");
   };
 
+  const openAccountPage = accountPage.open;
+  // The account page is a Clerk modal, so close this dialog before it opens.
+  const leaveForAccountPage = openAccountPage
+    ? (page: T3ConnectAccountPageUrl) => {
+        complete();
+        openAccountPage(page);
+      }
+    : null;
+
   return (
     <Dialog
       open={openForAccount !== null}
@@ -216,7 +208,7 @@ function ConfiguredConnectOnboardingDialog() {
           title="Set up T3 Connect"
           description={
             <>
-              Mesh your devices together — publish this environment and connect the rest, all in one
+              Mesh your devices together. Publish this environment and connect the rest, all in one
               place.
             </>
           }
@@ -247,6 +239,8 @@ function ConfiguredConnectOnboardingDialog() {
               publishAgentActivity={publishAgentActivity}
               disabled={isApplying || !canManageRelay || linkStateData === null}
               operationError={controller.operationError ?? controller.linkState.error}
+              tunnelLimit={controller.tunnelLimit}
+              onOpenAccountPage={leaveForAccountPage}
               onExposeEnvironmentChange={(enabled) => {
                 if (
                   primaryEnvironmentId !== null &&
@@ -298,6 +292,8 @@ function ConfiguredConnectOnboardingDialog() {
           )}
         </WizardFooter>
       </WizardPopup>
+      {/* Base UI renders Root children while closed, so this keeps the account page mounted. */}
+      {accountPage.portals}
     </Dialog>
   );
 }
@@ -312,6 +308,8 @@ function PublishStep({
   publishAgentActivity,
   disabled,
   operationError,
+  tunnelLimit,
+  onOpenAccountPage,
   onExposeEnvironmentChange,
   onPublishAgentActivityChange,
 }: {
@@ -319,6 +317,8 @@ function PublishStep({
   readonly publishAgentActivity: boolean;
   readonly disabled: boolean;
   readonly operationError: string | null;
+  readonly tunnelLimit: number | null;
+  readonly onOpenAccountPage: ((page: T3ConnectAccountPageUrl) => void) | null;
   readonly onExposeEnvironmentChange: (enabled: boolean) => void;
   readonly onPublishAgentActivityChange: (enabled: boolean) => void;
 }) {
@@ -341,7 +341,25 @@ function PublishStep({
         />
       </div>
       {operationError ? <p className="text-xs text-destructive">{operationError}</p> : null}
+      {tunnelLimit !== null ? (
+        <OnboardingTunnelLimitAlert onOpenAccountPage={onOpenAccountPage} />
+      ) : null}
     </div>
+  );
+}
+
+function OnboardingTunnelLimitAlert({
+  onOpenAccountPage,
+}: {
+  readonly onOpenAccountPage: ((page: T3ConnectAccountPageUrl) => void) | null;
+}) {
+  const { upgrade } = useManagedTunnelUsage();
+  return (
+    <TunnelLimitAlert
+      upgrade={upgrade}
+      onLinkT3Chat={onOpenAccountPage ? () => onOpenAccountPage("t3-chat") : null}
+      onManageTunnels={onOpenAccountPage ? () => onOpenAccountPage("t3-connect") : null}
+    />
   );
 }
 

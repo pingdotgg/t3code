@@ -5,97 +5,173 @@ import {
   decodeFilePreviewText,
   FILE_TEXT_PREVIEW_MAX_BYTES,
   hostPreviewMimeTypeFromExtension,
-  isWorkspaceAudioPreviewPath,
-  isWorkspaceBrowserPreviewPath,
+  isWorkspaceFontPreviewPath,
   isWorkspaceImagePreviewPath,
   isWorkspacePreviewEntryPath,
-  isWorkspaceVideoPreviewPath,
   mediaKindFromPath,
+  officePreviewKind,
 } from "./filePreview.ts";
 
 describe("workspace file previews", () => {
-  it.each(["report.html", "report.HTM", "document#draft.pdf", "reports?old/document.pdf"])(
-    "recognizes browser preview path %s",
-    (path) => {
-      expect(isWorkspaceBrowserPreviewPath(path)).toBe(true);
-      expect(isWorkspacePreviewEntryPath(path)).toBe(true);
+  it.each([
+    ["zip", "archive", "application/zip"],
+    ["jar", "archive", "application/java-archive"],
+    ["tar", "archive", "application/x-tar"],
+    ["gz", "archive", "application/gzip"],
+    ["tgz", "archive", "application/gzip"],
+    ["sqlite", "sqlite", "application/vnd.sqlite3"],
+    ["sqlite3", "sqlite", "application/vnd.sqlite3"],
+    ["db", "sqlite", "application/vnd.sqlite3"],
+  ])("recognizes binary preview %s", (extension, kind, mimeType) => {
+    const name = `files#draft/sample.${extension.toUpperCase()}`;
+    expect(filePreviewKind({ name, mimeType: "application/octet-stream" })).toBe(kind);
+    expect(filePreviewKind({ name: "download", mimeType })).toBe(kind);
+    expect(isWorkspacePreviewEntryPath(name)).toBe(true);
+    expect(isWorkspacePreviewEntryPath(`${name}?download=1`)).toBe(false);
+    expect(hostPreviewMimeTypeFromExtension(`.${extension}`)).toBe(mimeType);
+  });
+  it("previews a TypeScript file the OS labels as MPEG transport stream as text", () => {
+    expect(filePreviewKind({ name: "clamp.ts", mimeType: "video/mp2t" })).toBe("text");
+  });
+  it("recognizes compound archives and MIME aliases", () => {
+    expect(filePreviewKind({ name: "archive.tar.gz" })).toBe("archive");
+    expect(filePreviewKind({ name: "download", mimeType: "application/x-gzip" })).toBe("archive");
+    expect(filePreviewKind({ name: "download", mimeType: "application/x-sqlite3" })).toBe("sqlite");
+    expect(filePreviewKind({ name: "misleading.zip", mimeType: "application/pdf" })).toBe("pdf");
+  });
+  it.each(["ttf", "otf", "woff", "woff2"])(
+    "previews %s fonts through signed host assets",
+    (extension) => {
+      expect(
+        filePreviewKind({ name: `sample.${extension}`, mimeType: "application/octet-stream" }),
+      ).toBe("font");
+      expect(filePreviewKind({ name: "download", mimeType: `font/${extension}` })).toBe("font");
+      expect(isWorkspaceFontPreviewPath(`/tmp/sample.${extension.toUpperCase()}`)).toBe(true);
+      expect(isWorkspacePreviewEntryPath(`sample.${extension}`)).toBe(true);
+      expect(hostPreviewMimeTypeFromExtension(`.${extension}`)).toBe(`font/${extension}`);
+      expect(isWorkspaceFontPreviewPath(`sample.${extension}?download=1`)).toBe(false);
+      expect(filePreviewKind({ name: `sample.${extension}`, mimeType: "application/zip" })).toBe(
+        "archive",
+      );
     },
   );
-
   it.each([
-    "icon.png",
-    "photo.JPEG",
-    "animation.gif",
-    "vector#mark.svg",
-    "photo?edited.JPEG",
-    "images#archive/icon.png",
-    "texture.webp",
-    "image.avif",
-  ])("recognizes image preview path %s", (path) => {
-    expect(isWorkspaceImagePreviewPath(path)).toBe(true);
-    expect(isWorkspacePreviewEntryPath(path)).toBe(true);
+    [
+      "quarterly-report.DOCX",
+      "docx",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ],
+    [
+      "finance#q4/operating-plan.xlsx",
+      "xlsx",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ],
+    [
+      "slides?review/quarterly-review.pptx",
+      "pptx",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ],
+    ["notes.odt", "odt", "application/vnd.oasis.opendocument.text"],
+    ["budget.ods", "ods", "application/vnd.oasis.opendocument.spreadsheet"],
+    ["deck.odp", "odp", "application/vnd.oasis.opendocument.presentation"],
+    ["notes.rtf", "rtf", "application/rtf"],
+    ["guide.epub", "epub", "application/epub+zip"],
+    ["analysis.ipynb", "ipynb", "application/x-ipynb+json"],
+  ])("recognizes Office assets at literal path %s", (name, kind, mimeType) => {
+    expect(officePreviewKind({ name })).toBe(kind);
+    expect(filePreviewKind({ name, mimeType: "application/octet-stream" })).toBe(kind);
+    expect(isWorkspacePreviewEntryPath(name)).toBe(true);
+    expect(hostPreviewMimeTypeFromExtension(`.${kind}`)).toBe(mimeType);
+    expect(filePreviewKind({ name: "download", mimeType })).toBe(kind);
+    expect(filePreviewKind({ name, mimeType: "application/zip" })).toBe("archive");
   });
-
+  // regression: #10311 previews classify by the literal filename, not URL-like suffixes
   it.each([
-    "README.md",
-    "src/index.ts",
     "image.png.ts",
-    "png",
     "image.png#notes.txt",
-    "image.svg?notes.txt",
-    "document.pdf?download=1",
-    "report.html#notes.txt",
     "image%2Epng",
+    "report.docx#notes.txt",
+    "report.xlsx?download=1",
+    "slides%2Epptx",
+    "report.docm",
+    "guide.epub?download=1",
+    "analysis.ipynb#notes.txt",
+    "report.odt.ts",
+    "slides.ppt",
   ])("rejects non-preview path %s", (path) => {
     expect(isWorkspacePreviewEntryPath(path)).toBe(false);
   });
 
+  it.each(["picture.bmp", "photo.heic", "photo.heif", "scan.tif", "scan.TIFF"])(
+    "recognizes image preview path %s",
+    (path) => {
+      expect(isWorkspaceImagePreviewPath(path)).toBe(true);
+      expect(isWorkspacePreviewEntryPath(path)).toBe(true);
+    },
+  );
+
   it("serves audio in place from the host like video and browser documents", () => {
-    expect(isWorkspaceAudioPreviewPath("notes/recording.WAV")).toBe(true);
-    expect(isWorkspaceAudioPreviewPath("recording.wav.ts")).toBe(false);
     expect(hostPreviewMimeTypeFromExtension(".m4a")).toBe("audio/mp4");
+    expect(hostPreviewMimeTypeFromExtension(".weba")).toBe("audio/webm");
     expect(hostPreviewMimeTypeFromExtension(".mp4")).toBe("video/mp4");
     expect(hostPreviewMimeTypeFromExtension(".txt")).toBeNull();
+    expect(hostPreviewMimeTypeFromExtension(".constructor")).toBeNull();
+    expect(hostPreviewMimeTypeFromExtension(".toString")).toBeNull();
+    expect(hostPreviewMimeTypeFromExtension(".__proto__")).toBeNull();
+    expect(hostPreviewMimeTypeFromExtension(".webm-audio")).toBe("audio/webm");
   });
 });
 
 describe("media path parsing", () => {
+  // regression: #9023 media kind comes from the decoded pathname, ignoring query and hash
   it.each([
     ["https://cdn.example/clip.webm?download=1#t=2", "video"],
     ["https://example.com/download?name=recording.mp4", null],
-    ["https://example.png", null],
     ["images%2Fresult%2Epng", "image"],
-    ["images/result%23v2.png", "image"],
     ["images/result.png%23secret.txt", null],
-    ["images/result.png%3Fsecret.txt", null],
-    ["/tmp/100%.png", "image"],
+    ["/tmp/tone.MP3", "audio"],
+    ["./tone.wav", "audio"],
+    ["tone.ogg", "audio"],
+    ["tone.m4a", "audio"],
+    ["tone.flac", "audio"],
+    ["tone.aac", "audio"],
+    ["tone.opus", "audio"],
+    ["tone.webm-audio", "audio"],
+    ["tone.webm", "video"],
+    ["https://example.com/tone%2Emp3?download=1", "audio"],
+    ["data.csv", null],
+    ["report.pdf", null],
+    ["report.docx", null],
+    ["archive.zip", null],
   ])("classifies the decoded pathname of %s", (source, kind) => {
     expect(mediaKindFromPath(source)).toBe(kind);
-  });
-
-  it.each([
-    ["recording.mp4#t=2", "video", false],
-    ["recording%2Emp4", "video", false],
-    ["recording#take2.mp4", null, true],
-    ["recording?take2.mp4", null, true],
-  ])("distinguishes authored URLs from literal filenames in %s", (source, kind, literalVideo) => {
-    expect(mediaKindFromPath(source)).toBe(kind);
-    expect(isWorkspaceVideoPreviewPath(source)).toBe(literalVideo);
   });
 });
 
 describe("attachment preview classification", () => {
   it.each([
     ["example.json", "application/octet-stream", "text"],
-    ["README.md", "text/plain", "markdown"],
-    ["component.tsx", "", "text"],
     ["report.pdf", "application/pdf", "pdf"],
     ["page.HTML", "", "html"],
+    ["diagram.mmd", "", "mermaid"],
+    ["diagram.MERMAID", "text/plain", "mermaid"],
+    ["download", "text/vnd.mermaid", "mermaid"],
+    ["source-code.otf", "application/vnd.oasis.opendocument.formula-template", "font"],
+    ["notes.rtf", "application/rtf", "rtf"],
+    ["notes.rtf", "", "rtf"],
+    ["download", "text/rtf", "rtf"],
+    ["analysis.IPYNB", "application/json", "ipynb"],
+    ["clip.weba", "", "audio"],
+    ["image.bmp", "application/octet-stream", "image"],
+    ["photo.heic", "application/octet-stream", "image"],
+    ["scan.tiff", "application/octet-stream", "image"],
     ["recording.mp3", "", "audio"],
+    ["recording.webm-audio", "", "audio"],
+    ["recording.webm", "audio/webm", "audio"],
     ["payload", "application/problem+json", "text"],
-    ["archive.zip", "application/zip", "unsupported"],
+    ["archive.zip", "application/zip", "archive"],
     ["misleading.json", "application/pdf", "pdf"],
-    ["misleading.pdf", "application/zip", "unsupported"],
+    ["misleading.pdf", "application/zip", "archive"],
   ])("classifies %s (%s) as %s", (name, mimeType, expected) => {
     expect(filePreviewKind({ name, mimeType })).toBe(expected);
   });
@@ -103,6 +179,12 @@ describe("attachment preview classification", () => {
     expect(() => decodeFilePreviewText(new Uint8Array([65, 0, 66]))).toThrow("binary");
     expect(() => decodeFilePreviewText(new Uint8Array([255]))).toThrow("UTF-8");
   });
+  it.each(["doc", "xls", "ppt", "7z", "rar"])(
+    "retains the binary fallback for %s, which opencode does not render",
+    (extension) => {
+      expect(filePreviewKind({ name: `sample.${extension}` })).toBe("unsupported");
+    },
+  );
   it("does not corrupt a multi-byte character at the preview boundary", () => {
     const bytes = new Uint8Array(FILE_TEXT_PREVIEW_MAX_BYTES + 1).fill(97);
     bytes[FILE_TEXT_PREVIEW_MAX_BYTES - 1] = 0xe2;

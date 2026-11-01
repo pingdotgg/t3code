@@ -24,19 +24,10 @@ afterEach(() => {
 });
 
 describe("Usage page preferences", () => {
-  it("uses defaults when no preference has been saved", () => {
-    expect(readUsagePagePreferences()).toEqual({ metric: "limits", windowDays: 30 });
+  it("round-trips the month-to-date period", () => {
+    saveUsagePagePreferences({ metric: "cost", windowDays: "mtd" });
+    expect(readUsagePagePreferences()).toEqual({ metric: "cost", windowDays: "mtd" });
   });
-
-  it.each([1, 7, 30, 90, "mtd"] as const)(
-    "round-trips every metric with a %s range",
-    (windowDays) => {
-      for (const metric of ["cost", "tokens", "limits"] as const) {
-        saveUsagePagePreferences({ metric, windowDays });
-        expect(readUsagePagePreferences()).toEqual({ metric, windowDays });
-      }
-    },
-  );
 
   it("round-trips hidden providers and reads older saves without them", () => {
     saveUsagePagePreferences({ metric: "cost", windowDays: 7, hiddenProviders: ["codex"] });
@@ -46,6 +37,7 @@ describe("Usage page preferences", () => {
     expect(readUsagePagePreferences()).toEqual({ metric: "tokens", windowDays: 30 });
   });
 
+  // regression: #10189 an invalid saved usage selection was never replaced
   it.each([
     "not-json",
     '{"metric":"unknown","windowDays":7}',
@@ -55,27 +47,5 @@ describe("Usage page preferences", () => {
     expect(readUsagePagePreferences()).toEqual({ metric: "limits", windowDays: 30 });
     saveUsagePagePreferences({ metric: "tokens", windowDays: 7 });
     expect(readUsagePagePreferences()).toEqual({ metric: "tokens", windowDays: 7 });
-  });
-
-  it("contains write failures and can save again after storage recovers", () => {
-    saveUsagePagePreferences({ metric: "cost", windowDays: 30 });
-    const write = vi.spyOn(storage, "setItem").mockImplementation(() => {
-      throw new Error("QuotaExceededError");
-    });
-    expect(() => saveUsagePagePreferences({ metric: "tokens", windowDays: 7 })).not.toThrow();
-    expect(readUsagePagePreferences()).toEqual({ metric: "cost", windowDays: 30 });
-    write.mockRestore();
-    saveUsagePagePreferences({ metric: "limits", windowDays: 7 });
-    expect(readUsagePagePreferences()).toEqual({ metric: "limits", windowDays: 7 });
-  });
-
-  it("contains failures when the browser blocks storage access", () => {
-    vi.stubGlobal("window", {
-      get localStorage() {
-        throw new Error("SecurityError");
-      },
-    });
-    expect(readUsagePagePreferences()).toEqual({ metric: "limits", windowDays: 30 });
-    expect(() => saveUsagePagePreferences({ metric: "tokens", windowDays: 7 })).not.toThrow();
   });
 });

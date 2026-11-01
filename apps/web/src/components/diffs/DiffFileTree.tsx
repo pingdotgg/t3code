@@ -1,11 +1,11 @@
 import type { GitStatusEntry } from "@pierre/trees";
 import { FileTree, useFileTree, useFileTreeSelector } from "@pierre/trees/react";
 import { ChevronsDownUp, ChevronsUpDown } from "lucide";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
-import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "../files/fileTreeExpansion";
@@ -16,6 +16,7 @@ import {
   buildDiffFileTreeUpdates,
   compareDiffFileTreeEntries,
   collectDirectoryPaths,
+  diffFileTreeModel,
   diffFileTreePositions,
   type DiffFileTreeEntry,
 } from "./diffFileTree.logic";
@@ -44,9 +45,12 @@ export function DiffFileTree({
   className,
 }: DiffFileTreeProps) {
   const { resolvedTheme } = useTheme();
-  const paths = useMemo(() => entries.map((entry) => entry.path), [entries]);
-  const directoryPaths = useMemo(() => collectDirectoryPaths(paths), [paths]);
-  const positions = useMemo(() => diffFileTreePositions(paths), [paths]);
+  const paths = entries.map((entry) => entry.path);
+  const presented = diffFileTreeModel(paths);
+  const modelPaths = presented.paths;
+  const icons = presented.icons;
+  const directoryPaths = collectDirectoryPaths(modelPaths);
+  const positions = diffFileTreePositions(modelPaths);
   const [ordering] = useState(() => {
     let currentPositions: ReadonlyMap<string, number> = new Map();
     return {
@@ -56,31 +60,32 @@ export function DiffFileTree({
       },
     };
   });
-  const gitStatus = useMemo<ReadonlyArray<GitStatusEntry>>(
-    () => entries.map((entry) => ({ path: entry.path, status: entry.status })),
-    [entries],
-  );
-  const filePathsRef = useRef<ReadonlySet<string>>(new Set(paths));
-  const onSelectFileRef = useRef(onSelectFile);
+  const gitStatus: ReadonlyArray<GitStatusEntry> = entries.map((entry) => ({
+    path: presented.modelPath(entry.path),
+    status: entry.status,
+  }));
   const syncingSelectionRef = useRef(false);
-  const handledRevealRef = useRef<{ path: string; revealRequestId: number } | null>(null);
-  const mountedPathsRef = useRef<ReadonlyArray<string> | null>(null);
+  const handledRevealRef = useRef<{
+    path: string;
+    revealRequestId: number;
+  } | null>(null);
+  const mountedPresentationRef = useRef<ReturnType<typeof diffFileTreeModel> | null>(null);
 
-  useEffect(() => {
-    filePathsRef.current = new Set(paths);
-    onSelectFileRef.current = onSelectFile;
-  }, [onSelectFile, paths]);
+  // The tree model keeps the first selection handler it was given.
+  const handleSelectionChange = useStableCallback((selectedPaths: ReadonlyArray<string>) => {
+    if (syncingSelectionRef.current) return;
+    const modelPath = selectedPaths.at(-1);
+    if (modelPath && modelPaths.includes(modelPath)) {
+      onSelectFile(presented.selectionPath(modelPath));
+    }
+  });
 
   const { model } = useFileTree({
     density: "compact",
     flattenEmptyDirectories: true,
     initialExpansion: "open",
-    icons: T3_PIERRE_ICONS,
-    onSelectionChange: (selectedPaths) => {
-      if (syncingSelectionRef.current) return;
-      const path = selectedPaths.at(-1)?.replace(/\/$/, "");
-      if (path && filePathsRef.current.has(path)) onSelectFileRef.current(path);
-    },
+    icons,
+    onSelectionChange: handleSelectionChange,
     paths: [],
     search: false,
     sort: ordering.sort,
@@ -90,62 +95,90 @@ export function DiffFileTree({
     areAllDirectoriesExpanded(currentModel, directoryPaths),
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the icon set into the imperative Pierre file tree model
+  useEffect(() => {
+    model.setIcons(icons);
+  }, [icons, model]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies path updates, ordering and git status to the imperative Pierre file tree model
   useEffect(() => {
     ordering.update(positions);
-    const mountedPaths = mountedPathsRef.current;
-    if (mountedPaths === paths) return;
-    mountedPathsRef.current = paths;
-    if (mountedPaths === null) {
-      model.resetPaths(paths);
-    } else if (mountedPaths.every((path, index) => paths[index] === path)) {
-      const updates = buildDiffFileTreeUpdates(mountedPaths, paths);
+    const mounted = mountedPresentationRef.current;
+    if (mounted?.paths === modelPaths) return;
+    mountedPresentationRef.current = presented;
+    if (mounted === null) {
+      model.resetPaths(modelPaths);
+    } else if (mounted.paths.every((path, index) => modelPaths[index] === path)) {
+      const updates = buildDiffFileTreeUpdates(mounted.paths, modelPaths);
       if (updates.length > 0) model.batch(updates);
     } else {
-      // A refreshed diff can change the rank of existing siblings. Mutations do not reorder
-      // those rows, so rebuild while carrying the reader's folder expansion forward.
+      // A reset can turn a file path into a directory. Carry selection and focus
+      // through real paths so paging keeps the same file without revealing it again.
+      const focusedPath = model.getFocusedPath();
+      const nextFocusedPath =
+        focusedPath === null ? null : presented.modelPath(mounted.selectionPath(focusedPath));
+      const selectedPaths = model
+        .getSelectedPaths()
+        .map((path) => presented.modelPath(mounted.selectionPath(path)))
+        .filter((path) => path.endsWith("/") || modelPaths.includes(path));
       const collapsedDirectories = directoryPaths.filter((path) => {
         const directory = model.getItem(path);
         return directory !== null && "isExpanded" in directory && !directory.isExpanded();
       });
-      model.resetPaths(paths);
+      syncingSelectionRef.current = true;
+      model.resetPaths(modelPaths);
+      for (const path of model.getSelectedPaths()) model.getItem(path)?.deselect();
+      for (const path of selectedPaths) model.getItem(path)?.select();
+      queueMicrotask(() => {
+        syncingSelectionRef.current = false;
+      });
       for (const path of collapsedDirectories) {
         const directory = model.getItem(path);
         if (directory !== null && "collapse" in directory) directory.collapse();
       }
+      if (
+        nextFocusedPath !== null &&
+        (modelPaths.includes(nextFocusedPath) || directoryPaths.includes(nextFocusedPath))
+      ) {
+        model.focusPath(nextFocusedPath);
+      }
     }
     model.setGitStatus(gitStatus);
-  }, [directoryPaths, gitStatus, model, ordering, paths, positions]);
+  }, [directoryPaths, gitStatus, model, modelPaths, ordering, positions, presented]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands ancestors, selects and scrolls to the requested file in the Pierre tree model
   useEffect(() => {
     if (selectedPath === null) {
       handledRevealRef.current = null;
       return;
     }
-    const item = model.getItem(selectedPath);
+    const modelPath = presented.modelPath(selectedPath);
+    const item = model.getItem(modelPath);
     if (item === null || item.isDirectory()) {
       handledRevealRef.current = null;
       return;
     }
     const handled = handledRevealRef.current;
-    if (handled?.path === selectedPath && handled.revealRequestId === revealRequestId) return;
+    if (handled?.path === selectedPath && handled.revealRequestId === revealRequestId) {
+      return;
+    }
     handledRevealRef.current = { path: selectedPath, revealRequestId };
     syncingSelectionRef.current = true;
     for (const path of model.getSelectedPaths()) {
-      if (path !== selectedPath) model.getItem(path)?.deselect();
+      if (path !== modelPath) model.getItem(path)?.deselect();
     }
     let ancestor = "";
-    for (const segment of selectedPath.split("/").slice(0, -1)) {
+    for (const segment of modelPath.split("/").slice(0, -1)) {
       ancestor += `${segment}/`;
       const directory = model.getItem(ancestor);
       if (directory !== null && "expand" in directory) directory.expand();
     }
     item.select();
-    model.scrollToPath(selectedPath, { offset: "nearest" });
+    model.scrollToPath(modelPath, { offset: "nearest" });
     queueMicrotask(() => {
       syncingSelectionRef.current = false;
     });
-    // `paths` is a dependency so a file that arrives after it was asked for is still revealed.
-  }, [model, paths, revealRequestId, selectedPath]);
+  }, [model, presented, revealRequestId, selectedPath]);
 
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col bg-background", className)}>
@@ -198,17 +231,16 @@ export function DiffFileTree({
           ) {
             return;
           }
-          // Pierre does not emit a selection change for its sole selected row.
-          // Read selection before the row handles the click so new selections reveal only once.
+          // Pierre emits no change for its sole selected row; read before the click to avoid double reveals.
           const selected = model.getSelectedPaths();
           const path = selected.length === 1 ? selected[0] : undefined;
-          if (!path || !filePathsRef.current.has(path)) return;
+          if (!path || !modelPaths.includes(path)) return;
           const clickedSelectedRow = event.nativeEvent
             .composedPath()
             .some(
               (node) => node instanceof HTMLElement && node.getAttribute("data-item-path") === path,
             );
-          if (clickedSelectedRow) onSelectFileRef.current(path);
+          if (clickedSelectedRow) onSelectFile(presented.selectionPath(path));
         }}
         className="min-h-0 flex-1 overflow-hidden"
         style={pierreTreeStyle(resolvedTheme)}

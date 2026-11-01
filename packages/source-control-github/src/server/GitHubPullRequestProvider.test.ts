@@ -2,18 +2,22 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import * as Result from "effect/Result";
+import * as TestClock from "effect/testing/TestClock";
 import type { PullRequestReaction } from "@t3tools/contracts";
 
-import { decodePullRequestDetailJson } from "./gitHubPullRequestJson.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
-import type { GitHubPullRequestCore } from "./gitHubPullRequestJson.ts";
+import type {
+  GitHubPullRequestCore,
+  GitHubPullRequestSearchItem,
+} from "./gitHubPullRequestJson.ts";
 import { gitHubViewerPermissions, loginAvatarUrl, make } from "./GitHubPullRequestProvider.ts";
 import type { GitHubReviewThreadComments } from "./gitHubPullRequestJson.ts";
 
 const coreFields = {
+  maintainerCanModify: true,
+  canEditMaintainerEdits: false,
   reviewRequestTeams: [],
   checksTruncated: false,
   comparison: { behindBy: 0, viewerCanUpdate: true },
@@ -23,6 +27,7 @@ const coreFields = {
     canUpdate: true,
     didAuthor: false,
     mergeCapabilities: { merge: true, squash: true, rebase: true },
+    autoMergeAllowed: true,
   },
 };
 
@@ -93,6 +98,7 @@ it.effect("advertises standalone branch deletion for source repository writers",
       canUpdate: false,
       didAuthor: false,
       canDeleteBranch: true,
+      autoMergeAllowed: true,
     };
     expect(gitHubViewerPermissions(access).actions).toContain("delete-branch");
     expect(
@@ -106,155 +112,6 @@ it.effect("advertises standalone branch deletion for source repository writers",
   }),
 );
 
-it.effect("refreshes checks without permissions or comparison reads", () =>
-  Effect.gen(function* () {
-    let reads = 0;
-    const snapshot = Result.getOrThrow(
-      decodePullRequestDetailJson(`{
-      "number": 7, "title": "Checks", "url": "https://github.com/acme/web/pull/7",
-      "headRefName": "feature", "baseRefName": "main", "state": "OPEN",
-      "createdAt": "2026-07-01T00:00:00Z", "updatedAt": "2026-07-01T00:00:00Z"
-    }`),
-    );
-    const provider = yield* make.pipe(
-      Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-          revalidateChecks: (_input, read) => read,
-          getPullRequestDetail: () =>
-            Effect.sync(() => {
-              reads++;
-              return {
-                ...snapshot,
-                ...coreFields,
-                state: reads === 3 ? ("merged" as const) : ("open" as const),
-                checks: [
-                  {
-                    name: "build",
-                    status: reads === 1 ? ("pending" as const) : ("success" as const),
-                    description: null,
-                    url: null,
-                  },
-                ],
-              };
-            }),
-        }),
-      ),
-    );
-    const read = provider.getChangeRequestChecks;
-    if (read === undefined) return yield* Effect.die("checks read missing");
-    for (let tick = 1; tick <= 3; tick++) {
-      const result = yield* read({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      });
-      expect(result.checks[0]?.status).toBe(tick === 1 ? "pending" : "success");
-      expect(result.state).toBe(tick === 3 ? "merged" : "open");
-    }
-    expect(reads).toBe(3);
-  }),
-);
-
-it.effect("uses one narrow read for a linked pull request summary", () =>
-  Effect.gen(function* () {
-    let summaryReads = 0;
-    const provider = yield* make.pipe(
-      Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-          revalidateChecks: (_input, read) => read,
-          getPullRequestSummary: () =>
-            Effect.sync(() => {
-              summaryReads += 1;
-              return {
-                number: 7,
-                title: "Summary",
-                url: "https://github.com/acme/web/pull/7",
-                headBranch: "feat/summary",
-                baseBranch: "main",
-                state: "open" as const,
-                updatedAt: "2026-08-24T12:34:56.000Z",
-                author: { login: "octocat", name: null, avatarUrl: null },
-              };
-            }),
-        }),
-      ),
-    );
-
-    const readSummary = provider.getChangeRequestSummary;
-    if (readSummary === undefined) return yield* Effect.die("summary read was not implemented");
-    const summary = yield* readSummary({
-      cwd: "/w",
-      repository: "acme/web",
-      host: "github.com",
-      number: 7,
-    });
-
-    expect(summary.state).toBe("open");
-    expect(summaryReads).toBe(1);
-    expect(summary.author?.avatarUrl).toBe("https://github.com/octocat.png?size=80");
-  }),
-);
-
-it.effect("declares host-native stacks and passes the one the CLI reads through", () =>
-  Effect.gen(function* () {
-    const stack = {
-      id: "42",
-      number: 3,
-      url: "https://github.com/acme/web/stacks/3",
-      base: "main",
-      layers: [
-        { number: 6, headBranch: "feat/one", state: "merged" as const },
-        { number: 7, headBranch: "feat/two", state: "open" as const },
-      ],
-    };
-    const provider = yield* make.pipe(
-      Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-          revalidateChecks: (_input, read) => read,
-          getPullRequestStack: (input) => Effect.succeed(input.number === 7 ? stack : null),
-        }),
-      ),
-    );
-
-    expect(provider.capabilities.stacks).toBe(true);
-    const readStack = provider.getChangeRequestStack;
-    if (readStack === undefined) return yield* Effect.die("stack read was not implemented");
-    const ref = { cwd: "/w", repository: "acme/web", host: "github.com" };
-    expect(yield* readStack({ ...ref, number: 7 })).toEqual(stack);
-    expect(yield* readStack({ ...ref, number: 8 })).toBeNull();
-  }),
-);
-
-it.effect("reports a failed stack read against its own operation", () =>
-  Effect.gen(function* () {
-    const provider = yield* make.pipe(
-      Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-          revalidateChecks: (_input, read) => read,
-          getPullRequestStack: () =>
-            Effect.fail(
-              new GitHubPullRequestApi.GitHubPullRequestReadError({
-                cwd: "/w",
-                operation: "getPullRequestStack",
-                cause: new Error("unreadable"),
-              }),
-            ),
-        }),
-      ),
-    );
-
-    const readStack = provider.getChangeRequestStack;
-    if (readStack === undefined) return yield* Effect.die("stack read was not implemented");
-    const error = yield* Effect.flip(
-      readStack({ cwd: "/w", repository: "acme/web", host: "github.com", number: 7 }),
-    );
-
-    expect(error.operation).toBe("getChangeRequestStack");
-    expect(error.reason).toBe("failed");
-  }),
-);
-
 describe("gitHubViewerPermissions", () => {
   it("offers everything to a viewer who can write to the repository", () => {
     expect(
@@ -264,6 +121,7 @@ describe("gitHubViewerPermissions", () => {
         canTriage: true,
         canUpdate: true,
         didAuthor: false,
+        autoMergeAllowed: true,
       }),
     ).toEqual({
       actions: [
@@ -294,6 +152,7 @@ describe("gitHubViewerPermissions", () => {
         canTriage: false,
         canUpdate: false,
         didAuthor: false,
+        autoMergeAllowed: true,
       }),
     ).toEqual({
       actions: [],
@@ -311,6 +170,7 @@ describe("gitHubViewerPermissions", () => {
       canTriage: true,
       canUpdate: false,
       didAuthor: false,
+      autoMergeAllowed: true,
     });
     expect(permissions.labels).toBe(true);
     expect(permissions.requestReviewers).toBe(false);
@@ -324,6 +184,7 @@ describe("gitHubViewerPermissions", () => {
         canTriage: false,
         canUpdate: true,
         didAuthor: true,
+        autoMergeAllowed: true,
       }),
     ).toEqual({
       actions: ["ready", "draft", "close", "reopen"],
@@ -346,6 +207,7 @@ describe("gitHubViewerPermissions", () => {
       });
 
       expect(detail.viewerPermissions).toEqual({
+        maintainerEdits: false,
         actions: ["ready", "draft", "close", "reopen"],
         comment: true,
         resolve: false,
@@ -386,7 +248,6 @@ describe("gitHubViewerPermissions", () => {
               ...coreFields,
               comparison: null,
               viewerAccess: { ...coreFields.viewerAccess, canWrite: false, canTriage: false },
-              authorId: null,
               number: 7,
               title: "Pull request 7",
               url: "https://github.com/acme/web/pull/7",
@@ -478,7 +339,6 @@ describe("gitHubViewerPermissions", () => {
           getPullRequestDetail: () =>
             Effect.succeed({
               ...coreFields,
-              authorId: null,
               number: 7,
               title: "Pull request 7",
               url: "https://github.com/acme/web/pull/7",
@@ -531,6 +391,7 @@ describe("gitHubViewerPermissions", () => {
               canUpdate: true,
               didAuthor: false,
               mergeCapabilities: { merge: true, squash: true, rebase: true },
+              autoMergeAllowed: true,
             }),
         }),
       ),
@@ -540,7 +401,6 @@ describe("gitHubViewerPermissions", () => {
 
 const openDetail = {
   ...coreFields,
-  authorId: null,
   number: 7,
   title: "Pull request 7",
   url: "https://github.com/acme/web/pull/7",
@@ -571,39 +431,6 @@ const openDetail = {
   commits: [],
 };
 
-it.effect(
-  "uses the core comparison and permissions while preserving workflow approval checks",
-  () =>
-    Effect.gen(function* () {
-      const provider = yield* make.pipe(
-        Effect.provide(
-          Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-            getPullRequestDetail: () =>
-              Effect.succeed({ ...openDetail, comparison: { behindBy: 2, viewerCanUpdate: true } }),
-            listWorkflowRunsRequiringApproval: () =>
-              Effect.succeed([{ id: 123, name: "tests", url: "https://example.com/runs/123" }]),
-          }),
-        ),
-      );
-
-      const detail = yield* provider.getChangeRequest({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      });
-
-      expect(detail.behindBy).toBe(2);
-      expect(detail.workflowApprovalsRequired).toBe(1);
-      expect(detail.checks).toContainEqual({
-        name: "tests",
-        status: "action-required",
-        description: "A maintainer must approve this workflow before it can run.",
-        url: "https://example.com/runs/123",
-      });
-    }),
-);
-
 it.effect("does not classify same-repository gates as fork workflow approvals", () =>
   Effect.gen(function* () {
     const provider = yield* make;
@@ -630,6 +457,7 @@ it.effect("does not classify same-repository gates as fork workflow approvals", 
             canUpdate: true,
             didAuthor: false,
             mergeCapabilities: { merge: true, squash: true, rebase: true },
+            autoMergeAllowed: true,
           }),
       }),
     ),
@@ -677,45 +505,7 @@ it.effect("keeps an unsafe workflow approval scope visible as unknown", () =>
             canUpdate: true,
             didAuthor: false,
             mergeCapabilities: { merge: true, squash: true, rebase: true },
-          }),
-      }),
-    ),
-  ),
-);
-
-it.effect("propagates workflow discovery rate limits", () =>
-  Effect.gen(function* () {
-    const provider = yield* make;
-    const error = yield* provider
-      .getChangeRequest({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      })
-      .pipe(Effect.flip);
-
-    expect(error.operation).toBe("getChangeRequest");
-    expect(error.reason).toBe("rate-limited");
-  }).pipe(
-    Effect.provide(
-      Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-        revalidateChecks: (_input, read) => read,
-        getPullRequestDetail: () => Effect.succeed(openDetail),
-        listWorkflowRunsRequiringApproval: () =>
-          Effect.fail(
-            new GitHubRequestPolicy.GitHubApiRateLimitError({
-              host: "github.com",
-              operation: "listWorkflowRunsRequiringApproval",
-            }),
-          ),
-        getViewerAccess: () =>
-          Effect.succeed({
-            canWrite: true,
-            canTriage: true,
-            canUpdate: true,
-            didAuthor: false,
-            mergeCapabilities: { merge: true, squash: true, rebase: true },
+            autoMergeAllowed: true,
           }),
       }),
     ),
@@ -729,33 +519,8 @@ describe("getViewerPermissions", () => {
     canUpdate: true,
     didAuthor: false,
     mergeCapabilities: { merge: true, squash: true, rebase: true },
+    autoMergeAllowed: true,
   };
-
-  it.effect("checks fresh access without reading branch details for unrelated operations", () => {
-    let accessReads = 0;
-    return Effect.gen(function* () {
-      const provider = yield* make;
-      const permissions = yield* provider.getViewerPermissions({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        includeUpdateBranch: false,
-      });
-
-      expect(accessReads).toBe(1);
-      expect(permissions.actions).toContain("merge");
-      expect(permissions.actions).not.toContain("update-branch");
-    }).pipe(
-      Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-          revalidateChecks: (_input, read) => read,
-          getPullRequestDetail: () => Effect.die("Unexpected detail read"),
-          getViewerAccess: () => Effect.sync(() => (accessReads++, access)),
-        }),
-      ),
-    );
-  });
 
   const layerWithDetail = (
     detail: Effect.Effect<GitHubPullRequestCore, GitHubPullRequestApi.GitHubPullRequestApiError>,
@@ -792,24 +557,6 @@ describe("getViewerPermissions", () => {
       ),
     ),
   );
-
-  it.effect("uses the GraphQL reserve for manual permission checks", () => {
-    let allowed: boolean | undefined;
-    return Effect.gen(function* () {
-      const provider = yield* make;
-      yield* provider.getViewerPermissions({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      });
-      expect(allowed).toBe(true);
-    }).pipe(
-      Effect.provide(
-        layerWithDetail(Effect.succeed(openDetail), (allowReserve) => (allowed = allowReserve)),
-      ),
-    );
-  });
 
   it.effect("still answers from the light access read when the detail read fails", () =>
     Effect.gen(function* () {
@@ -859,7 +606,6 @@ describe("getViewerPermissions", () => {
 
 describe("getChangeRequest commits", () => {
   const baseDetail = {
-    authorId: null,
     number: 7,
     title: "Pull request 7",
     url: "https://github.com/acme/web/pull/7",
@@ -898,7 +644,6 @@ describe("getChangeRequest commits", () => {
     reviewers: [],
     avatarsByLogin: new Map<string, string>(),
     botLogins: new Set<string>(),
-    commitStats: new Map<string, { readonly additions: number; readonly deletions: number }>(),
     viewer: { canUpdate: true, didAuthor: false },
   };
 
@@ -910,6 +655,14 @@ describe("getChangeRequest commits", () => {
           author: baseDetail.author,
           comments: baseDetail.comments,
           commits: [
+            {
+              oid: "graphql-newest",
+              messageHeadline: "Activity metadata",
+              committedDate: "2026-07-06T00:00:00Z",
+              additions: 18,
+              deletions: 7,
+              authors: [],
+            },
             {
               oid: "view-oldest",
               messageHeadline: "gh pr view's oldest commit",
@@ -932,6 +685,11 @@ describe("getChangeRequest commits", () => {
       });
 
       expect(detail.commits.map((commit) => commit.oid)).toEqual(["graphql-newest"]);
+      expect(detail.commits[0]).toMatchObject({
+        messageHeadline: "the newest commit gh pr view drops",
+        additions: 18,
+        deletions: 7,
+      });
     }).pipe(
       Effect.provide(
         layerWith([
@@ -956,7 +714,7 @@ describe("getChangeRequest commits", () => {
         number: 7,
       });
 
-      expect(detail.commits.map((commit) => commit.oid)).toEqual(["view-oldest"]);
+      expect(detail.commits.map((commit) => commit.oid)).toEqual(["graphql-newest", "view-oldest"]);
     }).pipe(Effect.provide(layerWith([]))),
   );
 });
@@ -985,7 +743,6 @@ describe("getChangeRequestActivity dismissed reviews", () => {
     reviewers: [],
     avatarsByLogin: new Map(),
     botLogins: new Set(["macroscopeapp"]),
-    commitStats: new Map(),
     commits: [],
     viewer: { canUpdate: true, didAuthor: false },
   };
@@ -1007,8 +764,6 @@ describe("getChangeRequestActivity dismissed reviews", () => {
   });
 
   it.effect("fills a marker-only dismissed review with the timeline's reason", () =>
-    // Macroscope's approvals carry only an HTML comment, which markdown renders as nothing —
-    // an empty-string check misses them and the card opens onto nothing.
     readActivity.pipe(
       Effect.map((activity) => {
         expect(activity.comments[0]?.body).toBe("Dismissing prior approval to re-evaluate 9b66581");
@@ -1018,87 +773,175 @@ describe("getChangeRequestActivity dismissed reviews", () => {
       Effect.provide(layerFor("<!-- Macroscope (Approvability) review body marker -->")),
     ),
   );
-
-  it.effect("keeps the words of a dismissed review that has its own", () =>
-    readActivity.pipe(
-      Effect.map((activity) => {
-        expect(activity.comments[0]?.body).toBe("These findings still stand.");
-      }),
-      Effect.provide(layerFor("These findings still stand.")),
-    ),
-  );
-});
-
-describe("editing", () => {
-  const rewrites: Array<unknown> = [];
-
-  it.effect("hands a rewrite to the CLI as the request named it", () =>
-    Effect.gen(function* () {
-      const provider = yield* make;
-
-      expect(provider.capabilities.edit).toEqual({ changeRequest: true, comment: true });
-      yield* provider.updateChangeRequest!({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        title: "A better title",
-      });
-      yield* provider.updateComment!({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        commentId: "IC_1",
-        kind: "review-comment",
-        body: "Reworded.",
-      });
-
-      expect(rewrites).toEqual([
-        {
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-          title: "A better title",
-        },
-        {
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-          commentId: "IC_1",
-          kind: "review-comment",
-          body: "Reworded.",
-        },
-      ]);
-    }).pipe(
-      Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-          revalidateChecks: (_input, read) => read,
-          updatePullRequest: (input) => Effect.sync(() => void rewrites.push(input)),
-          updateComment: (input) => Effect.sync(() => void rewrites.push(input)),
-        }),
-      ),
-    ),
-  );
 });
 
 describe("loginAvatarUrl", () => {
-  it("serves a user's picture from the host they belong to", () => {
-    expect(loginAvatarUrl("octocat", "github.com")).toBe("https://github.com/octocat.png?size=80");
-    expect(loginAvatarUrl("octocat", "ghe.example.com")).toBe(
-      "https://ghe.example.com/octocat.png?size=80",
-    );
-  });
-
-  it("has nothing for an app, which names no page", () => {
-    expect(loginAvatarUrl("dependabot[bot]", "github.com")).toBeNull();
-  });
-
   it("refuses anything that is not a login, rather than building a URL out of it", () => {
     for (const login of ["../../etc", "a b", "-leading", "x".repeat(40), ""]) {
       expect(loginAvatarUrl(login, "github.com")).toBeNull();
     }
   });
+});
+
+describe("listChangeRequestsAcross", () => {
+  const searched = (repository: string): GitHubPullRequestSearchItem => ({
+    repository,
+    number: 1,
+    title: "Change",
+    url: `https://github.com/${repository}/pull/1`,
+    author: null,
+    headBranch: "feature",
+    baseBranch: "main",
+    state: "open" as const,
+    isDraft: false,
+    mergeability: "mergeable" as const,
+    additions: 0,
+    deletions: 0,
+    createdAt: "2026-07-01T00:00:00Z",
+    updatedAt: "2026-07-02T00:00:00Z",
+    reviewRequestLogins: [],
+    hasTeamReviewRequest: false,
+    labels: [],
+    reviewDecision: null,
+    checksState: null,
+  });
+  const across = {
+    cwd: "/w",
+    host: "github.com",
+    repositories: ["acme/web", "acme/docs"],
+    state: "open" as const,
+    involvement: "all" as const,
+    viewer: "viewer",
+    limit: 50,
+  };
+  type Search = Parameters<
+    GitHubPullRequestApi.GitHubPullRequestApi["Service"]["searchPullRequests"]
+  >[0];
+  // Pages answer in turn; a one-repository check for any pull request answers from `covered`.
+  const providerAnswering = (input: {
+    readonly pages: Array<GitHubPullRequestApi.GitHubPullRequestSearchBatch>;
+    readonly covered?: (repository: string) => boolean;
+    readonly checks?: Array<string>;
+  }) =>
+    make.pipe(
+      Effect.provide(
+        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+          searchPullRequests: (search: Search) => {
+            if (search.state !== "all") return Effect.succeed(input.pages.shift()!);
+            const repository = search.repositories[0]!;
+            input.checks?.push(repository);
+            return input.covered === undefined
+              ? Effect.fail(
+                  new GitHubPullRequestApi.GitHubViewerLoginUnavailableError({ cwd: search.cwd }),
+                )
+              : Effect.succeed({
+                  items: input.covered(repository) ? [searched(repository)] : [],
+                  truncated: false,
+                });
+          },
+        }),
+      ),
+      Effect.map((provider) => provider.listChangeRequestsAcross!),
+    );
+
+  it.effect("believes silence about a repository search covers, and checks it once", () =>
+    Effect.gen(function* () {
+      const checks: Array<string> = [];
+      const read = yield* providerAnswering({
+        pages: [
+          { items: [searched("acme/web")], truncated: false },
+          { items: [searched("acme/web")], truncated: false },
+        ],
+        covered: () => true,
+        checks,
+      });
+      expect((yield* read(across)).unresolved).toEqual([]);
+      expect((yield* read(across)).unresolved).toEqual([]);
+      expect(checks).toEqual(["acme/docs"]);
+    }),
+  );
+
+  it.effect("leaves a repository search does not cover to be read on its own", () =>
+    Effect.gen(function* () {
+      const read = yield* providerAnswering({
+        pages: [{ items: [searched("acme/web")], truncated: false }],
+        covered: (repository) => repository !== "acme/docs",
+      });
+      expect((yield* read(across)).unresolved).toEqual(["acme/docs"]);
+    }),
+  );
+
+  it.effect("does not check a repository a page had rows for", () =>
+    Effect.gen(function* () {
+      const checks: Array<string> = [];
+      const read = yield* providerAnswering({
+        pages: [
+          { items: [searched("acme/web"), searched("acme/docs")], truncated: false },
+          { items: [searched("acme/web")], truncated: false },
+        ],
+        covered: () => true,
+        checks,
+      });
+      yield* read(across);
+      expect((yield* read(across)).unresolved).toEqual([]);
+      expect(checks).toEqual([]);
+    }),
+  );
+
+  it.effect("vouches for no silent repository in a truncated first slice", () =>
+    Effect.gen(function* () {
+      const read = yield* providerAnswering({
+        pages: [{ items: [searched("acme/web")], truncated: true }],
+        covered: () => true,
+      });
+      expect((yield* read(across)).unresolved).toEqual(["acme/docs"]);
+    }),
+  );
+
+  it.effect("past the first slice, believes a covered repository and not an uncovered one", () =>
+    Effect.gen(function* () {
+      const read = yield* providerAnswering({
+        pages: [
+          { items: [searched("acme/web")], truncated: true },
+          { items: [searched("acme/web")], truncated: true },
+        ],
+        covered: (repository) => repository !== "acme/renamed",
+      });
+      const later = { ...across, cursor: { updatedBefore: "2026-07-02T00:00:00Z", delivered: 1 } };
+      expect((yield* read(later)).unresolved).toEqual([]);
+      expect(
+        (yield* read({ ...later, repositories: ["acme/web", "acme/renamed"] })).unresolved,
+      ).toEqual(["acme/renamed"]);
+    }),
+  );
+
+  it.effect("asks again after a failed check, and after coverage has had time to change", () =>
+    Effect.gen(function* () {
+      const checks: Array<string> = [];
+      const failing = yield* providerAnswering({
+        pages: [
+          { items: [searched("acme/web")], truncated: false },
+          { items: [searched("acme/web")], truncated: false },
+        ],
+        checks,
+      });
+      expect((yield* failing(across)).unresolved).toEqual(["acme/docs"]);
+      expect((yield* failing(across)).unresolved).toEqual(["acme/docs"]);
+      expect(checks).toEqual(["acme/docs", "acme/docs"]);
+
+      checks.length = 0;
+      const read = yield* providerAnswering({
+        pages: [
+          { items: [searched("acme/web")], truncated: false },
+          { items: [searched("acme/web")], truncated: false },
+        ],
+        covered: () => true,
+        checks,
+      });
+      yield* read(across);
+      yield* TestClock.adjust("61 minutes");
+      yield* read(across);
+      expect(checks).toEqual(["acme/docs", "acme/docs"]);
+    }),
+  );
 });

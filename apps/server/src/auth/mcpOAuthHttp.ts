@@ -1,16 +1,17 @@
 import {
   AuthMcpApprovalError,
-  type AuthMcpAuthorizationRequest,
+  AuthMcpAuthorizationRequest,
   AuthMcpClientAccess,
   EnvironmentHttpApi,
+  mcpClientScopes,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpEffect from "effect/http/HttpEffect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
-import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as McpOAuth from "./McpOAuth.ts";
 import { renderErrorPage } from "./mcpOAuthHtml.ts";
 
@@ -25,7 +26,7 @@ const PAGE_HEADERS = {
   "x-content-type-options": "nosniff",
 };
 
-/** OAuth responses carry codes, tokens and client ids, none of which may be cached. */
+// OAuth responses contain credentials and must not be cached.
 const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(
     HttpServerResponse.setHeaders(response, { "cache-control": "no-store", pragma: "no-cache" }),
@@ -33,16 +34,18 @@ const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
 );
 
 const requestUrls = Effect.map(HttpServerRequest.HttpServerRequest, McpOAuth.requestUrls);
+const decodeAuthorizationRequest = Schema.decodeEffect(AuthMcpAuthorizationRequest);
 
 /**
  * An unverified client or redirect is reported, never redirected; any other problem goes back to
  * the agent through its (verified) redirect URI.
  */
-const forwardedAuthorization = (
-  oauth: McpOAuth.McpOAuth["Service"],
-  request: AuthMcpAuthorizationRequest,
-) =>
-  Effect.gen(function* () {
+const forwardedAuthorization =
+  /* Request instrumentation already owns the span; keep this helper in that context. */
+  Effect.fnUntraced(function* (
+    oauth: McpOAuth.McpOAuth["Service"],
+    request: AuthMcpAuthorizationRequest,
+  ) {
     const urls = yield* requestUrls;
     return yield* oauth.validateAuthorization({ urls, request }).pipe(
       Effect.catchTags({
@@ -85,8 +88,11 @@ export const layer = HttpApiBuilder.group(
         Effect.gen(function* () {
           const urls = yield* requestUrls;
           const url = new URL(request.url, urls.issuer);
+          const authorizationRequest = yield* decodeAuthorizationRequest(
+            Object.fromEntries(url.searchParams),
+          ).pipe(Effect.orDie);
           const authorization = yield* oauth
-            .validateAuthorization({ urls, request: Object.fromEntries(url.searchParams) })
+            .validateAuthorization({ urls, request: authorizationRequest })
             .pipe(Effect.result);
           const headers = { "cache-control": "no-store", "referrer-policy": "no-referrer" };
           if (Result.isSuccess(authorization)) {
@@ -120,9 +126,7 @@ export const layer = HttpApiBuilder.group(
               : {
                   csrfToken: session.csrfToken,
                   oneClickAccess: AuthMcpClientAccess.literals.filter((access) =>
-                    EnvironmentAuth.mcpClientScopes(access).every((scope) =>
-                      session.scopes.includes(scope),
-                    ),
+                    mcpClientScopes(access).every((scope) => session.scopes.includes(scope)),
                   ),
                 }),
           };

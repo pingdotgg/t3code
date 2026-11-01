@@ -103,8 +103,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         );
       if (inspected.status !== "ready")
         return yield* failure("methods", "Prepare this ACP agent before signing in.");
-      // An unversioned command (a path override) can change in place, so only
-      // registry versions reuse earlier discovery.
+      // Path overrides can change in place; cache discovery only for registry versions.
       if (inspected.version !== null && knownMethods?.version === inspected.version)
         return knownMethods.methods;
       const resolved = yield* resolve;
@@ -143,14 +142,12 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         .runBackgroundProbe(agentKey, discoverMethods)
         .pipe(
           Effect.flatMap((result) =>
-            Option.isSome(result)
-              ? Effect.succeed(result.value)
-              : Effect.fail(
-                  failure(
-                    "methods",
-                    "Sign-in discovery was interrupted by an active provider session. Try again.",
-                  ),
-                ),
+            Effect.fromOption(result, () =>
+              failure(
+                "methods",
+                "Sign-in discovery was interrupted by an active provider session. Try again.",
+              ),
+            ),
           ),
         )
     : discoverMethods;
@@ -227,109 +224,104 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
       return yield* failure("start", "The provider login command did not finish successfully.");
   });
 
-  const authenticate = (methodId: string, context: ProviderAuthFlow.ProviderAuthFlowContext) =>
-    Effect.gen(function* () {
-      if (!options.settings.enabled)
-        return yield* failure("start", "Enable this provider before signing in.");
-      const login = Effect.scoped(
-        Effect.gen(function* () {
-          const resolved = yield* resolve;
-          const runtimeScope = yield* Scope.make();
-          yield* Effect.addFinalizer(() => Scope.close(runtimeScope, Exit.void));
-          const runtime = yield* makeRuntime(resolved.spawn).pipe(
-            Effect.provideService(Scope.Scope, runtimeScope),
+  const authenticate = Effect.fn("AcpRegistryAuth.authenticate")(function* (
+    methodId: string,
+    context: ProviderAuthFlow.ProviderAuthFlowContext,
+  ) {
+    if (!options.settings.enabled)
+      return yield* failure("start", "Enable this provider before signing in.");
+    const login = Effect.scoped(
+      Effect.gen(function* () {
+        const resolved = yield* resolve;
+        const runtimeScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(runtimeScope, Exit.void));
+        const runtime = yield* makeRuntime(resolved.spawn).pipe(
+          Effect.provideService(Scope.Scope, runtimeScope),
+        );
+        yield* runtime.handleElicitation((request) =>
+          Effect.gen(function* () {
+            if (
+              request.mode !== "url" ||
+              !("url" in request) ||
+              !("elicitationId" in request) ||
+              typeof request.url !== "string" ||
+              typeof request.elicitationId !== "string"
+            )
+              return { action: "decline" } as const;
+            const url = normalizeAcpRegistryWebUrl(request.url);
+            const id = request.elicitationId.trim();
+            if (!url || !id || id.length > 128) return { action: "decline" } as const;
+            const consent = yield* Deferred.make<boolean>();
+            yield* context.setInteraction(
+              { type: "browser", id, url, requiresConsent: true },
+              (response) =>
+                response.type === "browser"
+                  ? Deferred.succeed(consent, response.action === "accept").pipe(Effect.asVoid)
+                  : Effect.void,
+            );
+            return (yield* Deferred.await(consent))
+              ? ({ action: "accept" } as const)
+              : ({ action: "decline" } as const);
+          }),
+        );
+        const initialized = yield* runtime
+          .initialize()
+          .pipe(
+            Effect.mapError((cause) =>
+              failure("start", "Could not initialize the selected ACP agent.", cause),
+            ),
           );
-          yield* runtime.handleElicitation((request) =>
-            Effect.gen(function* () {
-              if (
-                request.mode !== "url" ||
-                !("url" in request) ||
-                !("elicitationId" in request) ||
-                typeof request.url !== "string" ||
-                typeof request.elicitationId !== "string"
-              )
-                return { action: "decline" } as const;
-              const url = normalizeAcpRegistryWebUrl(request.url);
-              const id = request.elicitationId.trim();
-              if (!url || !id || id.length > 128) return { action: "decline" } as const;
-              const consent = yield* Deferred.make<boolean>();
-              yield* context.setInteraction(
-                { type: "browser", id, url, requiresConsent: true },
-                (response) =>
-                  response.type === "browser"
-                    ? Deferred.succeed(consent, response.action === "accept").pipe(Effect.asVoid)
-                    : Effect.void,
-              );
-              return (yield* Deferred.await(consent))
-                ? ({ action: "accept" } as const)
-                : ({ action: "decline" } as const);
-            }),
-          );
-          const initialized = yield* runtime
-            .initialize()
+        const method = initialized.authMethods?.find((method) => method.id === methodId);
+        if (!method)
+          return yield* failure("start", "The agent no longer advertises this sign-in method.");
+        if (method.type === "terminal") {
+          yield* Scope.close(runtimeScope, Exit.void);
+          yield* runTerminal(resolved, method, context).pipe(Effect.scoped);
+          // Terminal login is a separate invocation. Reconnect after it exits so
+          // the ACP process reads the credentials its login command persisted.
+          const verifiedRuntime = yield* makeRuntime(resolved.spawn);
+          yield* context.verifying;
+          yield* verifiedRuntime
+            .start()
             .pipe(
               Effect.mapError((cause) =>
-                failure("start", "Could not initialize the selected ACP agent.", cause),
+                failure(
+                  "verify",
+                  "The provider could not create a session after terminal sign-in.",
+                  cause,
+                ),
               ),
             );
-          const method = initialized.authMethods?.find((method) => method.id === methodId);
-          if (!method)
-            return yield* failure("start", "The agent no longer advertises this sign-in method.");
-          if (method.type === "terminal") {
-            yield* Scope.close(runtimeScope, Exit.void);
-            yield* runTerminal(resolved, method, context).pipe(Effect.scoped);
-            // Terminal login is a separate invocation. Reconnect after it exits so
-            // the ACP process reads the credentials its login command persisted.
-            const verifiedRuntime = yield* makeRuntime(resolved.spawn);
-            yield* context.verifying;
-            yield* verifiedRuntime
-              .start()
-              .pipe(
-                Effect.mapError((cause) =>
-                  failure(
-                    "verify",
-                    "The provider could not create a session after terminal sign-in.",
-                    cause,
-                  ),
-                ),
-              );
-          } else {
-            if (method.type === undefined || method.type === "agent") {
-              if (!runtime.authenticate)
-                return yield* failure(
-                  "start",
-                  "This runtime does not support explicit ACP sign-in.",
-                );
-              yield* runtime
-                .authenticate(methodId)
-                .pipe(
-                  Effect.mapError((cause) =>
-                    failure("start", "The ACP agent could not complete sign-in.", cause),
-                  ),
-                );
-            }
-            // Legacy env_var methods use the secret-backed environment fields in
-            // provider settings. Never send their ID to authenticate.
-            yield* context.verifying;
+        } else {
+          if (method.type === undefined || method.type === "agent") {
+            if (!runtime.authenticate)
+              return yield* failure("start", "This runtime does not support explicit ACP sign-in.");
             yield* runtime
-              .start()
+              .authenticate(methodId)
               .pipe(
                 Effect.mapError((cause) =>
-                  failure(
-                    "verify",
-                    "The provider could not create a session after sign-in.",
-                    cause,
-                  ),
+                  failure("start", "The ACP agent could not complete sign-in.", cause),
                 ),
               );
           }
-        }),
-      );
-      yield* Option.isSome(coordinator)
-        ? coordinator.value.withForegroundStartup(agentKey, login)
-        : login;
-      yield* options.onChanged(true);
-    });
+          // Legacy env_var methods use the secret-backed environment fields in
+          // provider settings. Never send their ID to authenticate.
+          yield* context.verifying;
+          yield* runtime
+            .start()
+            .pipe(
+              Effect.mapError((cause) =>
+                failure("verify", "The provider could not create a session after sign-in.", cause),
+              ),
+            );
+        }
+      }),
+    );
+    yield* Option.isSome(coordinator)
+      ? coordinator.value.withForegroundStartup(agentKey, login)
+      : login;
+    yield* options.onChanged(true);
+  });
   const logout = Effect.scoped(
     Effect.gen(function* () {
       const resolved = yield* resolve;
@@ -356,8 +348,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   ).pipe(Effect.andThen(options.onChanged(false)));
   return yield* ProviderAuthFlow.make({
     instanceId: options.instanceId,
-    // ACP doesn't advertise its credential scope. Conservatively treat all
-    // instances of the same agent on this environment as sharing credentials.
+    // ACP omits credential scope; assume an agent's instances share credentials in this environment.
     credentialBinding: { owner: "provider", key: `acp:${agentKey}` },
     methods,
     ...(options.settings.authMethodId ? { defaultMethodId: options.settings.authMethodId } : {}),

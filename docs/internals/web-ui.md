@@ -53,3 +53,24 @@ Calls inside the component keep the plain function, so work that resumes after a
 acts on the render it started in. A function that a child calls during render, or after an
 `await`, comes from a module-level factory memoized on its inputs, so its closure keeps only
 those inputs.
+
+## React Compiler
+
+The compiler memoizes a component or hook only when it can prove the code follows React's rules.
+Anything it can't prove, such as reading a ref during render or calling `setState` from an effect,
+makes it skip the whole function without a build error. Lint reports each skip as a
+`react(...)` warning with the note "React Compiler skipped optimizing this component or hook".
+
+Every file under `apps/web/src` must compile. Lint makes those rules errors there, and
+`t3code/no-manual-memo` rejects `useMemo` and `useCallback`, which the compiler makes redundant;
+no upstream rule bans them outright. It also rejects `"use memo"`. The compiler withholds a cache
+scope when a value reaches plain function calls on both sides of a hook call. A `"use memo"`
+helper forces one, but hides the ordering problem. Fix the order instead: plain uses of a value go
+before the hook, or the helper is inlined. A `use*` helper that calls no hook is compiled as a
+plain function and caches nothing, so a derived-value helper reads its source hook itself instead
+of taking the value as an argument. `t3code/no-hookless-use-function` rejects a `use*` function
+that calls no hook. Lint misses some bailouts, notably `try` with `finally` and
+`throw` inside `try`, so [`reactCompilerCoverage.test.ts`](../../apps/web/src/reactCompilerCoverage.test.ts)
+compiles every file and fails on any skip. Async handlers rarely need `try`: an
+atom command settles into a result, so cleanup can follow the `await`. `useStableCallback` still
+marks handlers that leave a large component, as described above.

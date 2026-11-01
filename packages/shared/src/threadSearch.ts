@@ -1,9 +1,3 @@
-interface ThreadSearchTextPart {
-  readonly text: string;
-  readonly highlighted: boolean;
-  readonly start: number;
-}
-
 function foldThreadSearchCase(text: string): string {
   const lowered = text.toLowerCase().replace(/ς/g, "σ");
   if (lowered.length === text.length) return lowered;
@@ -42,29 +36,4 @@ export function findThreadSearchOccurrences(text: string, query: string): number
   const offsets: number[] = [];
   scanThreadSearchOccurrences(text, query, offsets);
   return offsets;
-}
-
-export function splitThreadSearchText(text: string, query: string): ThreadSearchTextPart[] {
-  const normalizedQuery = query.trim();
-  if (normalizedQuery.length === 0) {
-    return [{ text, highlighted: false, start: 0 }];
-  }
-
-  const parts: ThreadSearchTextPart[] = [];
-  let cursor = 0;
-  for (const offset of findThreadSearchOccurrences(text, normalizedQuery)) {
-    if (offset > cursor) {
-      parts.push({ text: text.slice(cursor, offset), highlighted: false, start: cursor });
-    }
-    parts.push({
-      text: text.slice(offset, offset + normalizedQuery.length),
-      highlighted: true,
-      start: offset,
-    });
-    cursor = offset + normalizedQuery.length;
-  }
-  if (cursor < text.length) {
-    parts.push({ text: text.slice(cursor), highlighted: false, start: cursor });
-  }
-  return parts;
 }

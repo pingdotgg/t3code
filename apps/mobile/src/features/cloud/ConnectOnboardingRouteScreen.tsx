@@ -1,14 +1,16 @@
-import { Toolbar } from "../../components/ui/Toolbar";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { SheetHeader } from "../../components/ui/SheetHeader";
+import { IconButton } from "../../components/ui/IconButton";
+import { Button } from "../../components/ui/Button";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 
 import { useAuth } from "@clerk/expo";
-import { StackActions, useNavigation } from "@react-navigation/native";
-import { useCallback, useEffect, useState } from "react";
-import { Platform, Pressable, RefreshControl, View } from "react-native";
+import { useNavigation } from "@react-navigation/native";
+import { useState } from "react";
+import { Platform, RefreshControl, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { reportAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
-import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
@@ -17,22 +19,9 @@ import { useConnectionController } from "../connection/useConnectionController";
 import { optOutOfConnectOnboarding } from "./connectOnboardingOptOut";
 import { hasCloudPublicConfig } from "./publicConfig";
 
+// Only reachable with cloud config: onboarding is requested after a T3 Connect
+// sign-in, and appLinking drops the deep link otherwise.
 export function ConnectOnboardingRouteScreen() {
-  const navigation = useNavigation();
-
-  // The route is deep-linkable; without cloud config the sheet would present
-  // empty with no chrome to dismiss it, so bail back out instead.
-  useEffect(() => {
-    if (hasCloudPublicConfig()) {
-      return;
-    }
-    if (navigation.canGoBack()) {
-      navigation.goBack();
-    } else {
-      navigation.dispatch(StackActions.replace("Home"));
-    }
-  }, [navigation]);
-
   return hasCloudPublicConfig() ? <ConfiguredConnectOnboardingRouteScreen /> : null;
 }
 
@@ -49,24 +38,17 @@ function ConfiguredConnectOnboardingRouteScreen() {
   });
 
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const handleRefresh = useCallback(() => {
-    void (async () => {
-      setIsRefreshing(true);
-      try {
-        await refreshRelayEnvironments();
-      } finally {
-        setIsRefreshing(false);
-      }
-    })();
-  }, [refreshRelayEnvironments]);
+  const handleRefresh = () => {
+    setIsRefreshing(true);
+    void refreshRelayEnvironments().finally(() => setIsRefreshing(false));
+  };
 
-  const handleClose = useCallback(() => {
+  const handleClose = () => {
     navigation.goBack();
-  }, [navigation]);
+  };
 
-  // Persist before dismissing so a quick sign-out/sign-in cannot race ahead
-  // of the preference write; the write is a local secure-store update.
-  const handleDontShowAgain = useCallback(() => {
+  // Persist before dismissing so quick sign-out/sign-in cannot outrun the write.
+  const handleDontShowAgain = () => {
     void (async () => {
       if (userId) {
         const result = await settlePromise(() => optOutOfConnectOnboarding(userId));
@@ -74,29 +56,35 @@ function ConfiguredConnectOnboardingRouteScreen() {
       }
       navigation.goBack();
     })();
-  }, [navigation, userId]);
+  };
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      {Platform.OS === "android" ? (
-        <AndroidSheetHeader
-          title="Set up T3 Connect"
-          actions={[
-            {
-              accessibilityLabel: "Refresh environments",
-              disabled: isRefreshing,
-              icon: "arrow.clockwise",
-              loading: isRefreshing,
-              onPress: handleRefresh,
-            },
-            { accessibilityLabel: "Close", icon: "xmark", onPress: handleClose },
-          ]}
-        />
-      ) : (
-        <Toolbar placement="right">
-          <Toolbar.Button icon="xmark" onPress={handleClose} separateBackground />
-        </Toolbar>
-      )}
+      <SheetHeader
+        presentation={Platform.OS === "android" ? "inline" : "native"}
+        title="Set up T3 Connect"
+        onClose={handleClose}
+        trailing={
+          Platform.OS === "android" ? (
+            isRefreshing ? (
+              <View
+                className="size-12 items-center justify-center"
+                accessible
+                accessibilityLabel="Refreshing environments"
+                accessibilityState={{ busy: true }}
+              >
+                <AppActivityIndicator />
+              </View>
+            ) : (
+              <IconButton
+                accessibilityLabel="Refresh environments"
+                icon="arrow.clockwise"
+                onPress={handleRefresh}
+              />
+            )
+          ) : undefined
+        }
+      />
       <ScrollView
         nestedScrollEnabled
         alwaysBounceVertical
@@ -131,14 +119,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
         )}
 
         {userId ? (
-          <Pressable
-            accessibilityRole="button"
-            hitSlop={8}
-            onPress={handleDontShowAgain}
-            className="items-center py-1 active:opacity-70"
-          >
-            <Text className="text-xs text-foreground-muted">{"Don't show this again"}</Text>
-          </Pressable>
+          <Button label={"Don't show this again"} tone="text" onPress={handleDontShowAgain} />
         ) : null}
       </ScrollView>
     </View>

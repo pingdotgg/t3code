@@ -22,7 +22,32 @@
       {
         "name": "@effect/language-service",
         "namespaceImportPackages": ["@effect/platform-node", "effect"],
+        "effectFn": ["span", "inferred-span", "suggested-span"],
         "diagnosticSeverity": {
+          "abortControllerInEffect": "error",
+          "runEffectInsideEffect": "error",
+          "flatMapConditionalToFilterOrFail": "error",
+          "catchConditionalRefailToCatchIf": "error",
+          "tryCatchInEffectGen": "error",
+          "schemaStructWithTag": "error",
+          "preferTypedSchemaDecoder": "error",
+          "catchUnfailableEffect": "error",
+          "raceFirstWithSleepToTimeout": "error",
+          "redundantMapError": "error",
+          "optionMatchToFromOption": "error",
+          "catchToIgnore": "error",
+          "unnecessaryEffectGen": "error",
+          "allOfMapToForEach": "error",
+          "catchToOrElseSucceed": "error",
+          "unnecessaryFailYieldableError": "error",
+          "preferSucceedSomeOrNone": "error",
+          "effectSucceedWithVoid": "error",
+          "provideLayerSucceedToProvideService": "error",
+          "flatMapIgnoredParamToAndThen": "error",
+          "mapSomeToAsSome": "error",
+          "unnecessaryPipeChain": "error",
+          "returnEffectInGen": "off",
+          "effectFnOpportunity": "error",
           "anyUnknownInErrorContext": "error",
           "unsafeEffectTypeAssertion": "error",
           "instanceOfSchema": "error",
@@ -59,7 +84,23 @@
         "overrides": [
           {
             "include": ["**/*.test.ts", "**/*.test.tsx"],
-            "options": { "diagnosticSeverity": { "preferSchemaOverJson": "off" } }
+            "options": {
+              "diagnosticSeverity": {
+                "preferSchemaOverJson": "off",
+                "effectFnOpportunity": "off"
+              }
+            }
+          },
+          {
+            "include": [
+              "**/*.spec.ts",
+              "**/*.spec.tsx",
+              "**/*.testkit.ts",
+              "**/*.testkit.tsx",
+              "**/{test,tests,testkit,testing,fixtures,integration}/**",
+              "packages/provider-testing/**"
+            ],
+            "options": { "diagnosticSeverity": { "effectFnOpportunity": "off" } }
           }
         ]
       }

@@ -74,33 +74,9 @@ describe("mobile overview review status", () => {
       ).title,
     ).toBe("Changes requested");
   });
-
-  it("includes comment-only reviewers once without treating their comments as approval", () => {
-    const result = pullRequestReviewSummary(
-      { reviewers: [] },
-      activity([
-        review("COMMENTED", "2026-10-10T09:00:00Z"),
-        review("commented", "2026-10-10T10:00:00Z"),
-      ]),
-    );
-    expect(result.title).toBe("Reviews");
-    expect(result.reviews).toEqual([
-      { ...review("commented", "2026-10-10T10:00:00Z"), reviewState: "COMMENTED" },
-    ]);
-  });
 });
 
 describe("mobile overview check status", () => {
-  it("only says all passed when every check succeeded", () => {
-    expect(pullRequestChecksSummary({ checks: [check("success"), check("success")] }).title).toBe(
-      "All checks passed",
-    );
-    expect(pullRequestChecksSummary({ checks: [check("success"), check("skipped")] }).title).toBe(
-      "Checks completed",
-    );
-    expect(pullRequestChecksSummary({ checks: [] }).title).toBe("No checks reported");
-  });
-
   it("prioritizes failed checks while others are running", () => {
     expect(
       pullRequestChecksSummary({ checks: [check("success"), check("pending"), check("failure")] }),

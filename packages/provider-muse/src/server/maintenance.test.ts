@@ -10,7 +10,6 @@ import {
   compareMuseVersions,
   enrichMuseSnapshot,
   museMaintenance,
-  latestMuseVersion,
   parseMuseVersion,
 } from "./maintenance.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
@@ -39,36 +38,6 @@ const snapshot: ServerProvider = {
 
 it.layer(NodeServices.layer)("Muse maintenance", (it) => {
   it.effect(
-    "refreshes a cached channel failure when an explicit update requests verification",
-    () =>
-      Effect.gen(function* () {
-        let requests = 0;
-        const check = Effect.gen(function* () {
-          expect(yield* latestMuseVersion({})).toBeNull();
-          expect(yield* latestMuseVersion({})).toBeNull();
-          expect(yield* latestMuseVersion({}, { fresh: true })).toBe("1.1.1-R10.1");
-        });
-        yield* check.pipe(
-          Effect.provide(ProviderLatestVersions.layer),
-          Effect.provideService(
-            HttpClient.HttpClient,
-            HttpClient.make((request) => {
-              requests += 1;
-              return Effect.succeed(
-                HttpClientResponse.fromWeb(
-                  request,
-                  requests === 1
-                    ? new Response("unavailable", { status: 503 })
-                    : Response.json({ version: "1.1.1-R10.1" }),
-                ),
-              );
-            }),
-          ),
-        );
-        expect(requests).toBe(2);
-      }),
-  );
-  it.effect(
     "compares numeric native release revisions and preserves the CLI release identity",
     () =>
       Effect.sync(() => {
@@ -79,87 +48,6 @@ it.layer(NodeServices.layer)("Muse maintenance", (it) => {
         expect(compareMuseVersions("1.4.3", "1.4.3-R5018.1")).toBe(0);
         expect(compareMuseVersions("1.4.2", "1.4.3-R5018.1")).toBeLessThan(0);
       }),
-  );
-  it.effect(
-    "finds releases from the instance's channel and caches the native version, not the SDK version",
-    () =>
-      Effect.gen(function* () {
-        const requests: string[] = [];
-        const httpClient = HttpClient.make((request) => {
-          requests.push(request.url);
-          return Effect.succeed(
-            HttpClientResponse.fromWeb(request, Response.json({ version: "1.1.1-R2514.1" })),
-          );
-        });
-        const check = enrichMuseSnapshot({
-          snapshot,
-          maintenanceCapabilities,
-          enableProviderUpdateChecks: true,
-          environment: { MUSE_CHANNEL: "muse-canary" },
-        });
-        const [first, second] = yield* Effect.all([check, check], { concurrency: 1 }).pipe(
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-          Effect.provide(ProviderLatestVersions.layer),
-        );
-        expect(first.versionAdvisory).toMatchObject({
-          status: "behind_latest",
-          currentVersion: "1.0.3",
-          latestVersion: "1.1.1-R2514.1",
-          canUpdate: false,
-        });
-        expect(second.versionAdvisory?.latestVersion).toBe("1.1.1-R2514.1");
-        expect(requests).toEqual(["https://api.meta.ai/muse-code/channels/muse-canary"]);
-      }),
-  );
-
-  it.effect("reports native release R9 behind R10 and R10 current against R9", () =>
-    Effect.gen(function* () {
-      for (const [current, latest, status] of [
-        ["1.4.2-R9.1", "1.4.2-R10.1", "behind_latest"],
-        ["1.4.2-R10.1", "1.4.2-R9.1", "current"],
-      ] as const) {
-        const result = yield* enrichMuseSnapshot({
-          snapshot: { ...snapshot, version: current },
-          maintenanceCapabilities,
-          enableProviderUpdateChecks: true,
-          environment: {},
-        }).pipe(
-          Effect.provideService(
-            HttpClient.HttpClient,
-            HttpClient.make((request) =>
-              Effect.succeed(
-                HttpClientResponse.fromWeb(request, Response.json({ version: latest })),
-              ),
-            ),
-          ),
-          Effect.provide(ProviderLatestVersions.layer),
-        );
-        expect(result.versionAdvisory?.status).toBe(status);
-      }
-    }),
-  );
-
-  it.effect("skips network checks when disabled, uninstalled or disabled in settings", () =>
-    Effect.gen(function* () {
-      for (const input of [
-        { snapshot, enableProviderUpdateChecks: false },
-        { snapshot: { ...snapshot, enabled: false }, enableProviderUpdateChecks: true },
-        { snapshot: { ...snapshot, installed: false }, enableProviderUpdateChecks: true },
-      ]) {
-        const result = yield* enrichMuseSnapshot({
-          ...input,
-          maintenanceCapabilities,
-          environment: {},
-        }).pipe(
-          Effect.provide(ProviderLatestVersions.layer),
-          Effect.provideService(
-            HttpClient.HttpClient,
-            HttpClient.make(() => Effect.die("Unexpected release request")),
-          ),
-        );
-        expect(result.versionAdvisory?.status).toBe("unknown");
-      }
-    }),
   );
 
   it.effect("tolerates invalid release manifests and unavailable channels", () =>

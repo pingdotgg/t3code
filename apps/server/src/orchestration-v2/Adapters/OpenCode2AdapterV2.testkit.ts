@@ -7,6 +7,7 @@ import {
   type ProviderReplayTranscript,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
@@ -17,6 +18,8 @@ import * as UrlParams from "effect/http/UrlParams";
 import * as OpenCode2Client from "@t3tools/provider-opencode/server/v2/OpenCode2Client";
 import * as OpenCode2Server from "@t3tools/provider-opencode/server/v2/OpenCode2Server";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
@@ -127,6 +130,7 @@ const operationOf = (
 const replayHttpClient = (
   controller: OpenCodeReplayController,
   replayGate: ProviderReplayGate | undefined,
+  onPrompt: ((input: unknown) => void) | undefined,
 ) =>
   HttpClient.make((request, url) =>
     Effect.tryPromise({
@@ -145,9 +149,9 @@ const replayHttpClient = (
           query,
           raw === undefined ? undefined : decodeJson(raw),
         );
-        // The event stream and requests are separate connections: a request
-        // is matched only once what was recorded before it was delivered.
+        // HTTP streams and requests use separate connections; deliver prior recorded inbound data before matching requests.
         if (operation.type !== "event.subscribe") await controller.untilInboundDelivered();
+        if (operation.type === "session.prompt") onPrompt?.(operation.input);
         await controller.expectOutbound(operation);
         if (operation.type === "event.subscribe") {
           controller.exited = false;
@@ -187,6 +191,7 @@ export const replayServer = (
   transcript: ProviderReplayTranscript,
   options?: {
     readonly external?: boolean;
+    readonly onPrompt?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
   },
@@ -202,7 +207,7 @@ export const replayServer = (
     const opencode = yield* OpenCode2Client.make.pipe(
       Effect.provideService(
         HttpClient.HttpClient,
-        replayHttpClient(controller, options?.replayGate),
+        replayHttpClient(controller, options?.replayGate, options?.onPrompt),
       ),
     );
     const connection = {
@@ -233,6 +238,7 @@ const makeReplayAdapter = (
   transcript: ProviderReplayTranscript,
   options?: {
     readonly external?: boolean;
+    readonly onPrompt?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
   },
@@ -245,6 +251,24 @@ const makeReplayAdapter = (
   });
 
 const layerReplayHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
+
+const layerReplayHostWithAttachments = (
+  attachmentsDir: string,
+  resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>,
+) =>
+  Layer.effect(
+    ProviderHost.ProviderHost,
+    Effect.gen(function* () {
+      const host = yield* ProviderHost.ProviderHost;
+      return ProviderHost.ProviderHost.of({
+        ...host,
+        paths: { ...host.paths, attachmentsDir },
+        resolveAttachmentPath: (attachment) =>
+          resolveAttachmentPath({ attachmentsDir, attachment }),
+        ...(resolveExtractedTextPath === undefined ? {} : { resolveExtractedTextPath }),
+      });
+    }),
+  ).pipe(Layer.provide(layerReplayHost));
 
 function layerRegistry(
   transcript: OpenCode2ReplayTranscript,
@@ -261,11 +285,16 @@ export const openCode2ReplayRuntime = (
   entries: ReadonlyArray<ProviderReplayEntry>,
   options?: {
     readonly external?: boolean;
+    readonly onPrompt?: (input: unknown) => void;
     readonly borrowers?: { current: number };
     readonly replayGate?: ProviderReplayGate;
+    readonly attachmentsDir?: string;
+    readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
+    readonly fileSystem?: FileSystem.FileSystem;
   },
 ) =>
   Effect.gen(function* () {
+    const fileSystem = options?.fileSystem ?? (yield* FileSystem.FileSystem);
     const adapter = yield* makeReplayAdapter(
       {
         provider: OPENCODE_PROVIDER,
@@ -275,7 +304,7 @@ export const openCode2ReplayRuntime = (
         entries,
       },
       options,
-    );
+    ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
     return yield* adapter.openSession({
       threadId: ThreadId.make("thread:opencode2-adapter"),
       providerSessionId: ProviderSessionId.make("provider-session:opencode2-adapter"),
@@ -289,7 +318,20 @@ export const openCode2ReplayRuntime = (
         cwd: "/work/opencode2",
       },
     });
-  }).pipe(Effect.provide(Layer.mergeAll(layerReplayHost, IdAllocator.layer, NodeServices.layer)));
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        options?.attachmentsDir === undefined
+          ? layerReplayHost
+          : layerReplayHostWithAttachments(
+              options.attachmentsDir,
+              options.resolveExtractedTextPath,
+            ),
+        IdAllocator.layer,
+        NodeServices.layer,
+      ),
+    ),
+  );
 
 export const OpenCode2OrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
   OpenCode2ReplayTranscript,

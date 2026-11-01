@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
@@ -19,11 +20,7 @@ import {
 
 export { normalizeProviderAccentColor, shouldShowInstanceBadge };
 
-/**
- * Local-only placeholder used while a draft has no provider it can safely
- * target. It must never be persisted or dispatched; the composer disables
- * send until a live provider replaces it.
- */
+/** Placeholder for untargetable drafts. Never persist or dispatch it; disable send until replaced. */
 export const NO_PROVIDER_MODEL_SELECTION: ModelSelection = {
   instanceId: ProviderInstanceId.make("t3code_no_provider"),
   model: "",
@@ -46,27 +43,7 @@ export interface ProviderInstanceEntry {
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
 
-export type ProviderCatalogAvailability = "loading" | "ready" | "unavailable" | "unconfigured";
-
-/**
- * Environment config streams are reactive: treating their initial `null` as a
- * final empty list strands otherwise recoverable threads behind a misleading
- * "no providers" state.
- */
-export function resolveProviderCatalogAvailability(input: {
-  readonly catalogLoaded: boolean;
-  readonly entries: ReadonlyArray<ProviderInstanceEntry>;
-  readonly selectedEntry: ProviderInstanceEntry | undefined;
-}): ProviderCatalogAvailability {
-  if (!input.catalogLoaded) return "loading";
-  if (input.selectedEntry !== undefined) return "ready";
-  return input.entries.length === 0 ? "unconfigured" : "unavailable";
-}
-
-/**
- * Disabling an instance updates `enabled` independently, while its previous `ready` probe
- * status can remain in the streamed snapshot until reconciliation.
- */
+/** Disabled instances may retain ready status until reconciliation. */
 export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boolean {
   return entry.enabled && entry.isAvailable && entry.status === "ready";
 }
@@ -103,12 +80,7 @@ export function deriveProviderInstanceEntries(
   });
 }
 
-/**
- * Instance ids are per-environment routing keys, and `defaultInstanceIdForDriver` makes the
- * default id literally the driver slug, so every environment running the same driver reports
- * the same id. Flattening across environments would clobber entries and mis-resolve accent
- * colors; lookups must stay scoped to the thread's own environment.
- */
+/** Instance ids repeat across environments; lookups must stay scoped. */
 export function deriveProviderEntriesByEnvironment(
   providersByEnvironment: Iterable<
     readonly [
@@ -121,9 +93,10 @@ export function deriveProviderEntriesByEnvironment(
   const byEnvironment = new Map<string, ReadonlyMap<string, ProviderInstanceEntry>>();
   for (const [environmentId, providers, settings] of providersByEnvironment) {
     const derived = deriveProviderInstanceEntries(providers);
-    // One map per environment serves every project with a thread there, so
-    // there is no single project to scope `enabled` to; it stays machine-wide.
-    const entries = settings ? applyProviderInstanceSettings(derived, settings, null) : derived;
+    // The snapshot includes instances enabled by any project; machine settings alone do not.
+    const entries = settings
+      ? derived.map((entry) => applyProviderInstanceBranding(entry, settings))
+      : derived;
     byEnvironment.set(
       environmentId,
       new Map(entries.map((entry) => [entry.instanceId as string, entry] as const)),
@@ -132,49 +105,63 @@ export function deriveProviderEntriesByEnvironment(
   return byEnvironment;
 }
 
-/**
- * `projectId` folds in that project's `providerInstances[id].enabled` override (enable or
- * disable in either direction over the machine value); `null` resolves the machine value only.
- * It has no default: a caller that renders for a single project but forgets to pass it would
- * silently show the machine's enablement instead of that project's, so passing `null` for a
- * surface that isn't project-aware must be a deliberate choice, not an omission.
- */
+/** projectId applies project overrides; explicit null uses machine settings. */
 export function applyProviderInstanceSettings(
   entries: ReadonlyArray<ProviderInstanceEntry>,
   settings: Pick<ServerSettings, "providerInstances" | "projectSettingsOverrides">,
   projectId: ProjectId | null,
 ): ReadonlyArray<ProviderInstanceEntry> {
   return entries.map((entry) => {
-    const explicitInstance = Object.hasOwn(settings.providerInstances, entry.instanceId)
-      ? settings.providerInstances[entry.instanceId]
-      : undefined;
     const enabled = resolveProjectProviderInstanceEnabled(settings, projectId, entry.instanceId);
-    if (entry.driverKind !== "acpRegistry" || explicitInstance === undefined) {
-      return enabled === entry.enabled ? entry : { ...entry, enabled };
-    }
-    const config =
-      explicitInstance.config !== null && typeof explicitInstance.config === "object"
-        ? (explicitInstance.config as Readonly<Record<string, unknown>>)
-        : null;
-    if (config?.source === "local") {
-      return { ...entry, enabled, acpRegistryAgentId: undefined, acpRegistryIconUrl: undefined };
-    }
-    const agentId = config?.agentId;
-    const iconUrl = config?.registryIconUrl;
-    return {
-      ...entry,
-      enabled,
-      ...(typeof agentId === "string" && agentId.trim()
-        ? { acpRegistryAgentId: agentId.trim() }
-        : {}),
-      ...(typeof iconUrl === "string" && iconUrl.trim()
-        ? { acpRegistryIconUrl: iconUrl.trim() }
-        : {}),
-    };
+    return applyProviderInstanceBranding(
+      enabled === entry.enabled ? entry : { ...entry, enabled },
+      settings,
+    );
   });
 }
 
-export function sortProviderInstanceEntries(
+function applyProviderInstanceBranding(
+  entry: ProviderInstanceEntry,
+  settings: Pick<ServerSettings, "providerInstances">,
+): ProviderInstanceEntry {
+  const explicitInstance = Object.hasOwn(settings.providerInstances, entry.instanceId)
+    ? settings.providerInstances[entry.instanceId]
+    : undefined;
+  if (entry.driverKind !== "acpRegistry" || explicitInstance === undefined) return entry;
+  const config =
+    explicitInstance.config !== null && typeof explicitInstance.config === "object"
+      ? (explicitInstance.config as Readonly<Record<string, unknown>>)
+      : null;
+  if (config?.source === "local") {
+    return { ...entry, acpRegistryAgentId: undefined, acpRegistryIconUrl: undefined };
+  }
+  const agentId = config?.agentId;
+  const iconUrl = config?.registryIconUrl;
+  return {
+    ...entry,
+    ...(typeof agentId === "string" && agentId.trim()
+      ? { acpRegistryAgentId: agentId.trim() }
+      : {}),
+    ...(typeof iconUrl === "string" && iconUrl.trim()
+      ? { acpRegistryIconUrl: iconUrl.trim() }
+      : {}),
+  };
+}
+
+/** Picker order: each driver's default instance first, then its custom instances. */
+export function providerInstanceEntriesFor(
+  providers: ReadonlyArray<ServerProvider>,
+  settings: Pick<ServerSettings, "providerInstances" | "projectSettingsOverrides">,
+  projectId: ProjectId | null,
+): ReadonlyArray<ProviderInstanceEntry> {
+  return pipe(
+    deriveProviderInstanceEntries(providers),
+    (entries) => applyProviderInstanceSettings(entries, settings, projectId),
+    sortProviderInstanceEntries,
+  );
+}
+
+function sortProviderInstanceEntries(
   entries: ReadonlyArray<ProviderInstanceEntry>,
 ): ReadonlyArray<ProviderInstanceEntry> {
   const byKind = new Map<ProviderDriverKind, ProviderInstanceEntry[]>();
@@ -195,7 +182,7 @@ export function sortProviderInstanceEntries(
   return sorted;
 }
 
-export function getProviderInstanceEntry(
+function getProviderInstanceEntry(
   providers: ReadonlyArray<ServerProvider>,
   instanceId: ProviderInstanceId,
 ): ProviderInstanceEntry | undefined {
@@ -252,4 +239,20 @@ export function resolveDefaultProviderModelSelection(
   if (selection?.instanceId === instanceId) return selection;
   const model = getDefaultProviderInstanceModel(providers, instanceId);
   return model ? { instanceId, model } : null;
+}
+
+export function resolveProjectDefaultProviderModelSelection(
+  providers: ReadonlyArray<ServerProvider>,
+  settings: ServerSettings,
+  projectId: ProjectId | null,
+): ModelSelection | null {
+  const entries = providerInstanceEntriesFor(providers, settings, projectId);
+  // Matches resolveComposerProviderSelection: the first driver group wins before any other.
+  const entry =
+    resolveSelectableProviderInstanceEntry(
+      entries.filter((candidate) => candidate.driverKind === entries[0]?.driverKind),
+      undefined,
+    ) ?? resolveSelectableProviderInstanceEntry(entries, undefined);
+  const model = entry ? getDefaultProviderInstanceModel(providers, entry.instanceId) : undefined;
+  return entry && model ? { instanceId: entry.instanceId, model } : null;
 }

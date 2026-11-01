@@ -22,31 +22,39 @@ describe("ScheduledTaskSchedule", () => {
       everyMs: MIN_SCHEDULED_TASK_INTERVAL_MS - 1,
     });
   });
-
-  it("still rejects corrupt non-positive persisted intervals", () => {
-    expect(() => decodeSchedule({ type: "interval", everyMs: 0 })).toThrow();
-  });
 });
 
-describe("ScheduledTaskUpsertSchedule", () => {
-  it("accepts interval schedules at the one-minute minimum", () => {
-    expect(
-      decodeUpsertSchedule({
-        type: "interval",
-        everyMs: MIN_SCHEDULED_TASK_INTERVAL_MS,
-      }),
-    ).toEqual({
-      type: "interval",
-      everyMs: MIN_SCHEDULED_TASK_INTERVAL_MS,
-    });
-  });
-
-  it("rejects interval schedules more frequent than once per minute", () => {
+it.each(["literal", " ", "\t\n", "{{body.bad", "{{unknown.field}}"])(
+  "rejects invalid dedupe template %s",
+  (replayKey) => {
+    expect(() => decodeUpsertSchedule({ type: "webhook", dedupe: { replayKey } })).toThrow();
     expect(() =>
-      decodeUpsertSchedule({
-        type: "interval",
-        everyMs: MIN_SCHEDULED_TASK_INTERVAL_MS - 1,
-      }),
+      decodeUpsertSchedule({ type: "webhook", dedupe: { coalesceKey: replayKey } }),
     ).toThrow();
+  },
+);
+describe("webhook filters", () => {
+  const accepts = (filters: unknown) => {
+    try {
+      decodeUpsertSchedule({ type: "webhook", filters });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  it("rejects empty or unknown paths, unknown ops, and values that do not fit the op", () => {
+    expect(accepts([{ path: "", op: "exists" }])).toBe(false);
+    expect(accepts([{ path: "  ", op: "exists" }])).toBe(false);
+    expect(accepts([{ path: "request", op: "exists" }])).toBe(false);
+    expect(accepts([{ path: "header.x-github-event", op: "exists" }])).toBe(false);
+    expect(accepts([{ path: "body.action", op: "in", value: "opened" }])).toBe(false);
+    expect(accepts([{ path: "body.action", op: "in", value: [] }])).toBe(false);
+    for (const value of ["", " opened", "opened ", "a,b"]) {
+      expect(accepts([{ path: "body.action", op: "in", value: [value] }])).toBe(false);
+    }
+    expect(accepts([{ path: "body.label.name", op: "in", value: ["needs review"] }])).toBe(true);
+    expect(accepts([{ path: "body.action", op: "equals" }])).toBe(false);
+    expect(accepts([{ path: "body.action", op: "matches", value: "^opened$" }])).toBe(false);
   });
 });

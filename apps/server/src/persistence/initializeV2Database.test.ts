@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -154,20 +155,6 @@ it.effect("includes committed WAL data and does not publish a failed snapshot", 
   );
 });
 
-it.effect("uses statev2.sqlite for default and explicit development paths", () =>
-  Effect.gen(function* () {
-    for (const devUrl of [undefined, new URL("http://localhost:5173")]) {
-      for (const baseDirIsExplicit of [false, true]) {
-        const paths = yield* ServerConfig.deriveServerPaths("/tmp/t3", devUrl, {
-          baseDirIsExplicit,
-        });
-        assert.equal(NodePath.basename(paths.dbPath), "statev2.sqlite");
-        assert.equal(paths.settingsPath, NodePath.join(paths.stateDir, "settings.json"));
-      }
-    }
-  }).pipe(Effect.provide(NodeServices.layer)),
-);
-
 it.effect("starts fresh without V1 and never imports over existing V2 state", () => {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-v2-fresh-"));
   const destinationPath = NodePath.join(directory, "userdata", "statev2.sqlite");
@@ -193,6 +180,31 @@ it.effect("starts fresh without V1 and never imports over existing V2 state", ()
     Effect.provide(
       ServerConfig.layerTest(directory, directory).pipe(Layer.provideMerge(NodeServices.layer)),
     ),
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true }))),
+  );
+});
+
+it.effect("removes copies left by a killed start, but not one that is still running", () => {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-v2-abandoned-"));
+  const killed = NodeChildProcess.spawnSync(process.execPath, ["-e", ""]).pid;
+  const running = `.v2-import-${process.pid}-Kq81Zx`;
+  const unrelated = ".v2-import-not-a-copy";
+  return Effect.gen(function* () {
+    for (const name of [`.v2-import-${killed}-Wm3nPa`, ".v2-import-Q3xZ9a", running]) {
+      NodeFS.mkdirSync(NodePath.join(directory, name));
+      NodeFS.writeFileSync(NodePath.join(directory, name, "snapshot.sqlite"), "partial copy");
+    }
+    NodeFS.mkdirSync(NodePath.join(directory, unrelated));
+    const destinationPath = NodePath.join(directory, "statev2.sqlite");
+    NodeFS.writeFileSync(destinationPath, "existing V2 database");
+    yield* initializeV2Database(destinationPath);
+    assert.deepEqual(
+      NodeFS.readdirSync(directory).sort(),
+      [running, unrelated, "statev2.sqlite"].sort(),
+    );
+    assert.equal(NodeFS.readFileSync(destinationPath, "utf8"), "existing V2 database");
+  }).pipe(
+    Effect.provide(NodeServices.layer),
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true }))),
   );
 });

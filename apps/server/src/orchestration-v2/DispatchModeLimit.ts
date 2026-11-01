@@ -12,11 +12,7 @@ export interface DispatchModeRefusal extends DispatchModes {
   readonly mode: "runtime" | "interaction";
 }
 
-/**
- * A caller checks its target's modes before dispatching, but the target's user can raise them
- * meanwhile; the orchestrator re-checks this limit inside the thread's command lock, where nothing
- * else can change them.
- */
+/** Recheck target modes under the command lock; the user can raise them after preflight. */
 export interface DispatchModeLimitValue extends DispatchModes {
   readonly refused?: Ref.Ref<DispatchModeRefusal | undefined>;
 }
