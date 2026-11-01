@@ -1,4 +1,8 @@
-import { buildFileLinkParentSuffixByPath, fileLinkLabel } from "@t3tools/shared/fileLinks";
+import {
+  buildFileLinkParentSuffixByPath,
+  fileLinkLabel,
+  resolvePathLinkTarget,
+} from "@t3tools/shared/fileLinks";
 import {
   isWindowsDrivePathHref,
   normalizeMarkdownLinkDestination,
@@ -874,7 +878,19 @@ function useChatMarkdownState({
                 ) {
                   throw new Error("This connection cannot open an editor on this environment.");
                 }
-                const path = (await resolveHostPath()).absolutePath;
+                let path = (await resolveHostPath()).absolutePath;
+                const absolutePath = cwd ? resolvePathLinkTarget(path, cwd) : path;
+                if (absolutePath.split("/").includes("..")) {
+                  const metadata = await getFilesystemMetadata({
+                    environmentId,
+                    input: { paths: [absolutePath], resolveRealPath: true },
+                  });
+                  const realPath =
+                    metadata._tag === "Success" ? metadata.value.entries[0]?.realPath : undefined;
+                  if (!realPath)
+                    throw new Error("Could not resolve the file path on the WSL environment.");
+                  path = realPath;
+                }
                 const url = buildWslMarkdownFileUrl({
                   editor: wslEditor,
                   distro: remoteOpen.state.mode === "wsl-links" ? remoteOpen.state.distro : "",

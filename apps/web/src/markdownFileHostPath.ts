@@ -60,7 +60,7 @@ export function buildWslMarkdownFileUrl(input: {
   const segments: string[] = [];
   if (path.startsWith("/") && !path.includes("\\")) {
     for (const segment of path.split("/")) {
-      if (segment === "..") segments.pop();
+      if (segment === "..") return undefined;
       else if (segment !== "" && segment !== ".") segments.push(segment);
     }
   }

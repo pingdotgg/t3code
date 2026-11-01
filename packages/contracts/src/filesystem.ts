@@ -7,6 +7,7 @@ export const FILESYSTEM_METADATA_BATCH_LIMIT = 64;
 
 export const FilesystemGetMetadataInput = Schema.Struct({
   // Absolute host paths, including ~/; clients must anchor relative paths.
+  resolveRealPath: Schema.optionalKey(Schema.Boolean),
   paths: Schema.Array(
     TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
   ).check(Schema.isMinLength(1), Schema.isMaxLength(FILESYSTEM_METADATA_BATCH_LIMIT)),
@@ -15,6 +16,7 @@ export type FilesystemGetMetadataInput = typeof FilesystemGetMetadataInput.Type;
 
 export const FilesystemEntryMetadata = Schema.Struct({
   kind: Schema.Literals(["file", "directory", "other"]),
+  realPath: Schema.optionalKey(TrimmedNonEmptyString),
   byteLength: Schema.optionalKey(NonNegativeInt),
   mimeType: Schema.optionalKey(TrimmedNonEmptyString),
 });
