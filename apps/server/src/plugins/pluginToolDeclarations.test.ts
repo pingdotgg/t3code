@@ -122,6 +122,25 @@ describe("compileInputSchema", () => {
     expect(accepts({ tree: { name: "a", children: [{ name: "b", children: [] }] } })).toBe(true);
     expect(accepts({ tree: { name: "a", children: [{ children: [] }] } })).toBe(false);
     expect(accepts({ tree: { name: "a", children: [{ name: "b", x: 1 }] } })).toBe(false);
+
+    const recursive = compileInputSchema({
+      type: "object",
+      properties: { tree: { $ref: "#/$defs/Node" } },
+      $defs: {
+        Node: {
+          anyOf: [
+            { type: "array", items: { $ref: "#/$defs/Node" } },
+            { type: "array", items: { $ref: "#/$defs/Node" } },
+          ],
+        },
+      },
+    });
+    if ("problem" in recursive) throw new Error(recursive.problem);
+    const invalid = Array.from({ length: 12 }).reduce<unknown>((child) => [child], 0);
+    const result = recursive.validate({ tree: invalid });
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) expect(String(result.cause)).toContain("validation work limit");
+    expect(Exit.isSuccess(recursive.validate({ tree: [] }))).toBe(true);
   });
 
   it("accepts an Effect Schema exported as the module doc shows and enforces it", () => {

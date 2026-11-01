@@ -6,9 +6,12 @@ import {
   type PluginToolListing,
   qualifyPluginToolName,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import type * as SchemaAST from "effect/SchemaAST";
+import * as SchemaIssue from "effect/SchemaIssue";
+import * as SchemaParser from "effect/SchemaParser";
 
 interface PreparedPluginTool {
   readonly listing: PluginToolListing;
@@ -60,6 +63,8 @@ const KEYWORDS_BY_TYPE: Record<string, ReadonlyArray<string>> = {
 const TYPED_KEYWORDS = new Set(Object.values(KEYWORDS_BY_TYPE).flat());
 const DEFINITION_NAME = /^[A-Za-z0-9_.-]{1,64}$/;
 const MAX_UNGUARDED_SCHEMA_REFERENCES = 4096;
+const validationLimitIssue = () =>
+  new SchemaIssue.InvalidValue({ message: "Input exceeds the validation work limit." });
 
 const isObject = (value: unknown): value is JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -153,7 +158,7 @@ const refuseUnguardedCycles = (definitions: JsonObject) => {
  * Compiles one `inputSchema`. Throws `SchemaProblem` with a JSON-pointer-like
  * path; `compileInputSchema` turns it into a result.
  */
-const compile = (root: JsonObject): Compiled => {
+const compile = (root: JsonObject, work: { remaining: number }): Compiled => {
   const definitions = root.$defs === undefined ? {} : root.$defs;
   if (!isObject(definitions)) throw new SchemaProblem("#/$defs: must be an object.");
   for (const name of Object.keys(definitions))
@@ -206,7 +211,17 @@ const compile = (root: JsonObject): Compiled => {
         throw new SchemaProblem(
           `${path}/$ref: only "#/$defs/<name>" references to root definitions are supported.`,
         );
-      return definition(name, depth + 1);
+      const target = Schema.suspend(() => definition(name, depth + 1) as Schema.Codec<unknown>);
+      const decode = SchemaParser.decodeUnknownEffect(target);
+      return Schema.declareConstructor<unknown>()(
+        [],
+        () => (input, _ast, options) =>
+          Effect.suspend(() => {
+            if (--work.remaining < 0)
+              return Effect.fail(validationLimitIssue());
+            return decode(input, options);
+          }),
+      );
     }
 
     if ("anyOf" in schema) {
@@ -381,10 +396,19 @@ export const compileInputSchema = (
   if (jsonBytes(inputSchema) > PLUGIN_TOOL_LIMITS.maxInputSchemaBytes)
     return { problem: `inputSchema exceeds ${PLUGIN_TOOL_LIMITS.maxInputSchemaBytes} bytes.` };
   try {
+    // Decoding is synchronous; each call owns the counter until its Exit is returned.
+    const work = { remaining: 0 };
+    const decode = Schema.decodeUnknownExit(compile(inputSchema, work) as Schema.Codec<unknown>, {
+      onExcessProperty: "error",
+    });
     return {
-      validate: Schema.decodeUnknownExit(compile(inputSchema) as Schema.Codec<unknown>, {
-        onExcessProperty: "error",
-      }),
+      validate: (input) => {
+        work.remaining = MAX_UNGUARDED_SCHEMA_REFERENCES;
+        const result = decode(input);
+        return work.remaining < 0
+          ? Exit.fail(new Schema.SchemaError(validationLimitIssue()))
+          : result;
+      },
     };
   } catch (error) {
     if (error instanceof SchemaProblem) return { problem: `inputSchema ${error.message}` };
