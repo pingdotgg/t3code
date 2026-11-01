@@ -195,6 +195,118 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           VERSION,
         ]);
 
+        // A peer's executable and sidecar stay available after every later rename or removal,
+        // even when it publishes after our missing-marker read.
+        const staleHome = path.join(root, "stale-home");
+        const staleDir = path.join(staleHome, "runtime/versions", VERSION);
+        const peerDir = path.join(root, "peer-runtime");
+        yield* fs.makeDirectory(staleDir, { recursive: true });
+        yield* fs.writeFileString(path.join(staleDir, "t3"), "");
+        yield* fs.makeDirectory(peerDir);
+        yield* fs.writeFileString(path.join(peerDir, "t3"), '#!/bin/sh\necho "peer $*"\nexit 7\n');
+        yield* fs.chmod(path.join(peerDir, "t3"), 0o755);
+        yield* fs.writeFileString(path.join(peerDir, ".install-complete"), `${VERSION}\n`);
+        yield* fs.writeFileString(path.join(peerDir, "sidecar"), "peer sidecar");
+        const peerChecks = path.join(root, "peer-checks.txt");
+        // The peer publishes after the launcher's rename fails and it reads the marker.
+        const peerHook = path.join(root, "peer-publishes.mjs");
+        yield* fs.writeFileString(
+          peerHook,
+          `import fs from "node:fs";
+import { spawnSync } from "node:child_process";
+const dir = ${JSON.stringify(staleDir)};
+const { readFileSync, renameSync, rmSync } = fs;
+let checking = false;
+let published = false;
+const checkPeer = () => {
+  const child = spawnSync(dir + "/t3", ["--version"], { encoding: "utf8" });
+  let sidecar;
+  try {
+    sidecar = readFileSync(dir + "/sidecar", "utf8");
+  } catch (error) {
+    sidecar = error.code;
+  }
+  fs.appendFileSync(${JSON.stringify(peerChecks)},
+    [child.status, child.error?.code ?? child.stdout.trim(), sidecar].join("|") + "\\n");
+};
+fs.renameSync = (from, to) => {
+  try {
+    return renameSync(from, to);
+  } catch (error) {
+    checking ||= to === dir;
+    throw error;
+  } finally {
+    if (published) checkPeer();
+  }
+};
+fs.rmSync = (...args) => {
+  try {
+    return rmSync(...args);
+  } finally {
+    if (published) checkPeer();
+  }
+};
+fs.readFileSync = (file, ...rest) => {
+  try {
+    return readFileSync(file, ...rest);
+  } finally {
+    if (checking && file === dir + "/.install-complete") {
+      checking = false;
+      rmSync(dir, { recursive: true });
+      renameSync(${JSON.stringify(peerDir)}, dir);
+      published = true;
+      checkPeer();
+    }
+  }
+};
+`,
+        );
+        const recovered = yield* run(
+          process.execPath,
+          ["--import", peerHook, launcher, "--version"],
+          { cwd: root, env: { ...env, T3CODE_HOME: staleHome } },
+        );
+        const checks = (yield* fs.readFileString(peerChecks)).trim().split("\n");
+        assert.isAtLeast(checks.length, 2);
+        assert.deepStrictEqual([...new Set(checks)], ["7|peer --version|peer sidecar"]);
+        assert.equal(recovered.stdout.trim(), "peer --version", recovered.stderr);
+        assert.equal(recovered.exitCode, 7);
+        assert.deepStrictEqual(yield* fs.readDirectory(path.join(staleHome, "runtime/versions")), [
+          VERSION,
+        ]);
+
+        // While another launch holds the lock, a stale folder is left alone and the error says
+        // how to clear a lock left by a crash.
+        const staleOnlyHome = path.join(root, "stale-only-home");
+        const staleOnlyDir = path.join(staleOnlyHome, "runtime/versions", VERSION);
+        yield* fs.makeDirectory(staleOnlyDir, { recursive: true });
+        yield* fs.writeFileString(path.join(staleOnlyDir, "t3"), "incomplete");
+        yield* fs.makeDirectory(`${staleOnlyDir}.lock`);
+        const locked = yield* run(process.execPath, [launcher, "--version"], {
+          cwd: root,
+          env: { ...env, T3CODE_HOME: staleOnlyHome },
+        });
+        assert.equal(locked.exitCode, 1);
+        assert.include(locked.stderr, `delete ${staleOnlyDir}.lock`);
+        assert.equal(yield* fs.readFileString(path.join(staleOnlyDir, "t3")), "incomplete");
+
+        // Without a peer, the stale folder is replaced by our own download.
+        yield* fs.remove(`${staleOnlyDir}.lock`, { recursive: true });
+        const replaced = yield* run(process.execPath, [launcher, "--version"], {
+          cwd: root,
+          env: { ...env, T3CODE_HOME: staleOnlyHome },
+        });
+        assert.equal(
+          replaced.stdout.trim(),
+          `stub --version launcher=${launcher}`,
+          replaced.stderr,
+        );
+        assert.equal(replaced.exitCode, 7);
+        assert.deepStrictEqual(
+          yield* fs.readDirectory(path.join(staleOnlyHome, "runtime/versions")),
+          [VERSION],
+        );
+
         release.corruptChecksum();
         const corrupt = yield* run(process.execPath, [launcher, "--version"], {
           cwd: root,
