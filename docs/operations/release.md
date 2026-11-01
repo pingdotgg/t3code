@@ -7,7 +7,13 @@ This document covers the unified release workflow for stable and nightly desktop
 Beta is the product label, not a release channel or version suffix. Release channels
 remain stable and nightly. To ship 0.1.0 Beta, use `channel=stable` and
 `version=0.1.0`. Removing the Beta label later is a branding change independent of
-the version.
+the version. Keep the macOS executable name `T3 Code (Beta)` unchanged so
+Squirrel.Mac can relaunch after label or channel changes. The nightly DMG still
+installs as `T3 Code (Nightly).app`, beside stable, so the `t3-code@nightly`
+Homebrew cask needs no change. One exception, for the first nightly with this name: a
+nightly installed before it, with no stable app beside it, moves to `T3 Code (Beta).app`
+and doesn't relaunch, leaving the cask's app missing. Say so in that nightly's notes:
+`brew reinstall --cask t3-code@nightly`, then delete the moved `T3 Code (Beta).app`.
 
 ## What the workflow does
 

@@ -496,6 +496,45 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("keeps the macOS bundle filename stable across product names", () =>
+    Effect.gen(function* () {
+      const stable = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.1.0",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      const nightly = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.1.1-nightly.20261017.3238",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      // Existing installs live at this path; changing it fails their relaunch.
+      assert.notEqual(stable.productName, nightly.productName);
+      assert.equal((stable.mac as { executableName: string }).executableName, "T3 Code (Beta)");
+      assert.equal((nightly.mac as { executableName: string }).executableName, "T3 Code (Beta)");
+      // A fresh nightly install must not land on, and replace, the stable app.
+      const dmgAppName = (config: typeof stable) =>
+        (config.dmg as { contents: ReadonlyArray<{ name?: string }> }).contents[0]?.name;
+      assert.equal(dmgAppName(stable), "T3 Code (Beta).app");
+      assert.equal(dmgAppName(nightly), "T3 Code (Nightly).app");
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "pingdotgg/t3code" } }),
+        ),
+      ),
+    ),
+  );
+
   it.effect("omits update feeds for pull request preview builds", () =>
     Effect.gen(function* () {
       const preview = yield* createBuildConfig(
