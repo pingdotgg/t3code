@@ -1065,13 +1065,18 @@ const make = Effect.gen(function* () {
 
   const revokeBySubject: SessionStore["Service"]["revokeBySubject"] = Effect.fn(
     "SessionStore.revokeBySubject",
-  )(function* (subject) {
-    const revokedAt = yield* DateTime.now;
-    const revokedSessionIds = yield* authSessions
-      .revokeBySubject({ subject, revokedAt })
-      .pipe(Effect.mapError((cause) => new SubjectSessionsRevocationError({ cause })));
-    return yield* forgetRevokedSessions(revokedSessionIds);
-  });
+  )(
+    function* (subject) {
+      const revokedAt = yield* DateTime.now;
+      const revokedSessionIds = yield* authSessions
+        .revokeBySubject({ subject, revokedAt })
+        .pipe(Effect.mapError((cause) => new SubjectSessionsRevocationError({ cause })));
+      return yield* forgetRevokedSessions(revokedSessionIds);
+    },
+    // Stopped between the write and the notice, a retry finds nothing left to revoke, and
+    // open sockets would wait out their credentials.
+    Effect.uninterruptible,
+  );
 
   const awaitInvalidation = Effect.fn(function* (
     sessionId: AuthSessionId,

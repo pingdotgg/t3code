@@ -133,7 +133,7 @@ describe("makeTailnetConnectionFilter", () => {
     expect(accepts({ localAddress, remoteAddress })).toBe(expected);
   });
 
-  it("picks up Tailscale coming up after the server started", () => {
+  it("follows Tailscale's addresses as it comes up and goes down", () => {
     let now = 0;
     const interfaces: Record<string, Array<NodeOS.NetworkInterfaceInfo>> = {
       en0: [ipv4("192.168.1.20")],
@@ -147,6 +147,11 @@ describe("makeTailnetConnectionFilter", () => {
     expect(acceptsLater(peer)).toBe(false);
     now = 5_000;
     expect(acceptsLater(peer)).toBe(true);
+    // Tailscale goes down, and another VPN takes its address.
+    delete interfaces.tailscale0;
+    interfaces.wg0 = [ipv4("100.101.102.103")];
+    now = 10_000;
+    expect(acceptsLater(peer)).toBe(false);
   });
 });
 

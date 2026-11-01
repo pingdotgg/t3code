@@ -137,8 +137,9 @@ const TAILSCALE_ADDRESS_REFRESH_MS = 5_000;
 
 /**
  * {@link acceptsTailnetConnection} against this machine's Tailscale interface
- * addresses. A refused connection reads them again at most every few seconds,
- * so Tailscale coming up after the server starts is picked up.
+ * addresses, read again before a connection once they are a few seconds old, so
+ * Tailscale coming up is picked up, and an address it gave up (another VPN can
+ * take it) stops matching.
  */
 export const makeTailnetConnectionFilter = (options: {
   readonly now: () => number;
@@ -148,10 +149,10 @@ export const makeTailnetConnectionFilter = (options: {
   let addresses = tailscaleInterfaceIpv4Addresses(readInterfaces());
   let readAt = options.now();
   return (socket: Parameters<typeof acceptsTailnetConnection>[0]): boolean => {
-    if (acceptsTailnetConnection(socket, addresses)) return true;
-    if (options.now() - readAt < TAILSCALE_ADDRESS_REFRESH_MS) return false;
-    addresses = tailscaleInterfaceIpv4Addresses(readInterfaces());
-    readAt = options.now();
+    if (options.now() - readAt >= TAILSCALE_ADDRESS_REFRESH_MS) {
+      addresses = tailscaleInterfaceIpv4Addresses(readInterfaces());
+      readAt = options.now();
+    }
     return acceptsTailnetConnection(socket, addresses);
   };
 };
