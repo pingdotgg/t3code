@@ -25,10 +25,7 @@ import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
 import { ThreadPullRequestsPanel } from "../pullRequest/ThreadPullRequestsPanel";
 
-const PreviewPanel = lazy(() =>
-  import("../preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
-);
-const DiffPanel = lazy(() => import("../DiffPanel"));
+import { RegisteredSidePanel } from "~/panels/bundledPanels";
 const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
@@ -84,16 +81,11 @@ export function RightPanelSurfaceContent(props: {
   switch (surface.kind) {
     case "preview":
       return (
-        <Suspense fallback={null}>
-          <PreviewPanel
-            mode="embedded"
-            threadRef={threadRef}
-            tabId={surface.resourceId}
-            configuredUrls={props.configuredPreviewUrls}
-            visible={visible}
-            onSendAnnotation={props.onSendAnnotation}
-          />
-        </Suspense>
+        <RegisteredSidePanel
+          id="preview"
+          tabId={surface.resourceId}
+          configuredUrls={props.configuredPreviewUrls}
+        />
       );
     case "terminal":
       return (
@@ -105,17 +97,7 @@ export function RightPanelSurfaceContent(props: {
         />
       );
     case "diff":
-      return (
-        <Suspense fallback={null}>
-          <DiffPanel
-            key={scopedThreadKey(threadRef)}
-            mode="embedded"
-            composerDraftTarget={props.composerDraftTarget}
-            workspaceMutationId={props.workspaceMutationId}
-            visible={visible}
-          />
-        </Suspense>
-      );
+      return <RegisteredSidePanel key={scopedThreadKey(threadRef)} id="diff" />;
     case "pull-request": {
       const pullRequest = props.pullRequest;
       if (!pullRequest.capabilityKnown) return <PullRequestDetailGhost />;
