@@ -421,3 +421,23 @@ describe("applyShellStreamEvents", () => {
     );
   });
 });
+
+describe("explicit project grouping metadata synchronization", () => {
+  it("applies clearing immediately and does not restore metadata from an enrichment refresh", () => {
+    const identified = { ...v2Project, groupingIdentity: "39c61a1b-8a64-43a6-9da5-65c15da93d52" };
+    const snapshot = { ...v2ShellSnapshot, projects: [identified] };
+    const cleared = applyShellStreamEvent(snapshot, {
+      kind: "project.updated",
+      sequence: 1,
+      project: { ...identified, groupingIdentity: null },
+    });
+    expect(cleared.projects[0]?.groupingIdentity).toBeNull();
+    const enriched = mergeShellSnapshotProjects(cleared, snapshot, {
+      resolvedRepositoryIdentityRoots: [v2Project.workspaceRoot],
+    });
+    expect(enriched.projects[0]?.groupingIdentity).toBeNull();
+    expect(enriched.threads).toBe(snapshot.threads);
+    const refreshed = mergeShellSnapshotProjects(snapshot, cleared);
+    expect(refreshed.projects[0]?.groupingIdentity).toBeNull();
+  });
+});

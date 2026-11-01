@@ -821,3 +821,62 @@ it.effect("rejects an update that waited on the lock while its project was delet
     );
   }).pipe(Effect.provide(layerProjectServiceDependencies)),
 );
+
+it.layer(
+  layerTestFor(
+    Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: () => Effect.succeed(null),
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        resolvePath: () => Effect.succeed(null),
+        invalidate: () => Effect.void,
+      }),
+    ),
+  ),
+)("non-Git grouping metadata", (it) => {
+  it.effect(
+    "persists, changes, and clears explicit grouping without changing physical identity",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ProjectService.ProjectService;
+        const projectId = ProjectId.make("explicit-grouping");
+        const identity = "39c61a1b-8a64-43a6-9da5-65c15da93d52";
+        const created = yield* service.create({
+          commandId: CommandId.make("group-create"),
+          projectId,
+          title: "sdk",
+          workspaceRoot: "/groups/sdk",
+          groupingIdentity: identity,
+        });
+        assert.equal(created.groupingIdentity, identity);
+        yield* service.update({
+          commandId: CommandId.make("group-rename"),
+          projectId,
+          title: "Renamed",
+        });
+        assert.equal(
+          Option.getOrThrow(yield* service.getById(projectId)).groupingIdentity,
+          identity,
+        );
+        assert.equal((yield* service.listShells())[0]?.groupingIdentity, identity);
+        const changed = yield* service.update({
+          commandId: CommandId.make("group-change"),
+          projectId,
+          groupingIdentity: "e703c118-3547-41b1-88c5-9774cf40ae86",
+        });
+        assert.equal(changed.groupingIdentity, "e703c118-3547-41b1-88c5-9774cf40ae86");
+        const cleared = yield* service.update({
+          commandId: CommandId.make("group-clear"),
+          projectId,
+          groupingIdentity: null,
+        });
+        assert.isNull(cleared.groupingIdentity);
+        assert.equal(cleared.id, created.id);
+        assert.equal(cleared.workspaceRoot, created.workspaceRoot);
+        assert.equal(cleared.createdAt, created.createdAt);
+        assert.isNull((yield* service.snapshot).projects[0]?.groupingIdentity);
+        assert.isNull(Option.getOrThrow(yield* service.getById(projectId)).repositoryIdentity);
+      }),
+  );
+});

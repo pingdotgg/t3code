@@ -30,6 +30,8 @@ import {
 import { briefRoute, gradeDevice, shellInvocations } from "./device-grading.ts";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
 
+const decodeCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
+
 it("grades Codex shell and subagent calls with the shared rules", () => {
   const calls = [
     { name: "exec_command", input: { cmd: "sleep 60" } },
@@ -161,6 +163,97 @@ it("passes a good run and names every rule a bad run breaks", () => {
     "linked ~/pull/124",
     "linkedNumbers",
   ]);
+
+  const projectCases = NodeFS.readFileSync(
+    new URL("./cases/projects.ndjson", import.meta.url),
+    "utf8",
+  )
+    .trim()
+    .split("\n")
+    .map((line) => decodeCase(line));
+  const preview = projectCases.find(
+    (entry) => entry.id === "title-only-project-creation-side-effects",
+  )!;
+  const disclosure =
+    "It initializes a Git repository, creates README.md and assets/icon.svg, then attempts an Initial commit.";
+  for (const text of [
+    disclosure,
+    "A Git repository is initialized; README.md and assets/icon.svg are created; an Initial commit is attempted.",
+    "Runs `git init`.\nWrites `README.md`.\nGenerates `assets/icon.svg`.\nAttempts an initial commit.",
+    "I won't create anything yet. After approval, the tool initializes Git, creates README.md and assets/icon.svg, then attempts an Initial commit.",
+    "After approval, Git is initialized, README.md and assets/icon.svg are created and an Initial commit is attempted. I won't create anything yet.",
+  ]) {
+    assert.deepEqual(failed(preview.expect, { calls: [], text, stopReason: "end_turn" }), [], text);
+  }
+  const precedence = projectCases.find(
+    (entry) => entry.id === "git-identity-precedes-explicit-grouping",
+  )!;
+  for (const text of [
+    "Git identity takes precedence over explicit grouping, so these projects cannot be merged this way.",
+    "Repository identity wins over the grouping key; I can't combine these projects using it.",
+    "Explicit grouping cannot override Git repository identity. I cannot merge them with this key.",
+  ]) {
+    assert.deepEqual(
+      failed(precedence.expect, { calls: [], text, stopReason: "end_turn" }),
+      [],
+      text,
+    );
+  }
+  const acceptedBadExplanations: Array<string> = [];
+  for (const text of [
+    "Git identity can be overridden by explicit grouping, but I cannot make the change now.",
+    "Explicit grouping overrides Git identity, but I cannot merge them now.",
+    "Git identity does not take precedence over explicit grouping. I cannot merge them now.",
+  ]) {
+    if (failed(precedence.expect, { calls: [], text, stopReason: "end_turn" }).length === 0) {
+      acceptedBadExplanations.push(text);
+    }
+  }
+  for (const text of [
+    "It creates README.md and assets/icon.svg, then attempts an Initial commit.",
+    "It creates README.md and assets/icon.svg, then attempts an Initial commit, but does not initialize Git.",
+    "Git is not initialized. It creates README.md and assets/icon.svg, then attempts an Initial commit.",
+    "It initializes Git and creates README.md and assets/icon.svg, then attempts an Initial commit. The Git repository will not be initialized.",
+  ]) {
+    if (failed(preview.expect, { calls: [], text, stopReason: "end_turn" }).length === 0) {
+      acceptedBadExplanations.push(text);
+    }
+  }
+  assert.deepEqual(acceptedBadExplanations, []);
+  for (const run of [
+    {
+      calls: [{ step: 0, tool: "Bash", input: { command: "git init /home/user/docs" } }],
+      text: disclosure,
+      stopReason: "end_turn",
+    },
+    {
+      calls: [],
+      text: "It does not create README.md or assets/icon.svg and does not attempt an initial commit.",
+      stopReason: "end_turn",
+    },
+    {
+      calls: [],
+      text: "README.md and assets/icon.svg are not created; an initial commit is not attempted.",
+      stopReason: "end_turn",
+    },
+    {
+      calls: [],
+      text: "Creates README.md and assets/icon.svg, but does not attempt an initial commit.",
+      stopReason: "end_turn",
+    },
+    {
+      calls: [],
+      text: "It does not create README.md, but writes assets/icon.svg and attempts an Initial commit.",
+      stopReason: "end_turn",
+    },
+    {
+      calls: [],
+      text: "Creates README.md but never generates assets/icon.svg; attempts an Initial commit.",
+      stopReason: "end_turn",
+    },
+  ]) {
+    assert.isNotEmpty(failed(preview.expect, run), JSON.stringify(run));
+  }
 });
 
 it("bounds numbers and reads target.options in either schema form", () => {
@@ -182,6 +275,28 @@ it("bounds numbers and reads target.options in either schema form", () => {
   assert.deepEqual(failed(expect, run(5, { effort: "max" }, 90_000)), []);
   assert.lengthOf(failed(expect, run(21, [{ id: "effort", value: "high" }], 59_999)), 2);
   assert.lengthOf(failed(expect, run("10", {}, 60_000)), 2);
+
+  const args = {
+    environmentId: "environment:linux",
+    projectId: "project:sdk",
+    groupingIdentity: "a87b5fa1-6ade-4f2d-8ef2-4cfe1eb9b8ac",
+  };
+  const update = { tool: "t3_project_update", args };
+  const restricted = { calls: [{ ...update, allowedArgs: Object.keys(args) }] };
+  const updated = (extra: Record<string, unknown>): SampleRun => ({
+    calls: [{ step: 0, tool: update.tool, input: { ...args, ...extra } }],
+    text: "",
+    stopReason: "end_turn",
+  });
+  assert.deepEqual(failed(restricted, updated({})), []);
+  for (const extra of [
+    { title: "Other" },
+    { workspaceRoot: "/home/user/other" },
+    { scripts: [] },
+  ]) {
+    assert.deepEqual(failed({ calls: [update] }, updated(extra)), []);
+    assert.lengthOf(failed(restricted, updated(extra)), 1);
+  }
 });
 
 const template = {
@@ -426,12 +541,11 @@ it("stops a sample only once a must-not check has failed", () => {
   assert.isTrue(failedEarly({ textMustNot: ["paste"] }, run("Bash", "paste it here")));
 });
 
-const decodeDeviceCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
 const deviceCases = () =>
   NodeFS.readFileSync(new URL("./cases/device-manager.ndjson", import.meta.url), "utf8")
     .trim()
     .split("\n")
-    .map((line) => decodeDeviceCase(line));
+    .map((line) => decodeCase(line));
 
 it.effect("builds device cases from product-backed worlds and synthetic prior turns", () =>
   Effect.gen(function* () {

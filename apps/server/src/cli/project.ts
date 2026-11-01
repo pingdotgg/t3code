@@ -3,6 +3,8 @@ import {
   CommandId,
   EnvironmentHttpApi,
   EnvironmentHttpCommonError,
+  Project,
+  ProjectGroupingIdentity,
   type ProjectMutation,
   type ProjectSnapshot,
   ProjectId,
@@ -54,6 +56,26 @@ type ProjectCommandExecutionMode = "live" | "offline";
 type ProjectCliDispatchCommand = ProjectMutation;
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
+
+class ProjectGroupingIdentityInvalidError extends Schema.TaggedError<ProjectGroupingIdentityInvalidError>()(
+  "ProjectGroupingIdentityInvalidError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Grouping identity must be a lowercase UUID v4.";
+  }
+}
+
+class ProjectGroupingFlagsError extends Schema.TaggedError<ProjectGroupingFlagsError>()(
+  "ProjectGroupingFlagsError",
+  {},
+) {
+  override get message(): string {
+    return "Use either --identity or --clear.";
+  }
+}
+
+const decodeGroupingIdentity = Schema.decodeUnknownEffect(ProjectGroupingIdentity);
 
 export class ProjectCommandIdGenerationError extends Schema.TaggedError<ProjectCommandIdGenerationError>()(
   "ProjectCommandIdGenerationError",
@@ -463,45 +485,77 @@ const projectAddCommand = Command.make("add", {
   workspaceRoot: Argument.String("path").pipe(
     Argument.withDescription("Workspace root to add as a project."),
   ),
+  groupingIdentity: Flag.String("grouping-identity").pipe(
+    Flag.withDescription(
+      "Shared lowercase UUID v4 for copies of a non-Git project; updates an existing registration.",
+    ),
+    Flag.optional,
+  ),
   title: Flag.String("title").pipe(Flag.withDescription("Optional project title."), Flag.optional),
 }).pipe(
   Command.withDescription("Add a project."),
   Command.withHandler((flags) =>
-    runProjectMutation(
-      flags,
-      Effect.fn("projectAddMutation")(function* ({
-        snapshot,
-        dispatch,
-      }: {
-        readonly snapshot: ProjectSnapshot;
-        readonly dispatch: (
-          command: ProjectCliDispatchCommand,
-        ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
-      }) {
-        const workspaceRoot = yield* normalizeWorkspaceRootForProjectCommand(flags.workspaceRoot);
-        const existingProject = snapshot.projects.find(
-          (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
-        );
-        if (existingProject) {
-          return yield* new ProjectAlreadyExistsError({
-            operation: "addProject",
-            projectId: existingProject.id,
-            workspaceRoot,
-          });
-        }
+    Effect.gen(function* () {
+      const groupingIdentity = Option.isSome(flags.groupingIdentity)
+        ? yield* decodeGroupingIdentity(flags.groupingIdentity.value).pipe(
+            Effect.mapError((cause) => new ProjectGroupingIdentityInvalidError({ cause })),
+          )
+        : undefined;
+      return yield* runProjectMutation(
+        flags,
+        Effect.fn("projectAddMutation")(function* ({
+          snapshot,
+          dispatch,
+        }: {
+          readonly snapshot: ProjectSnapshot;
+          readonly dispatch: (
+            command: ProjectCliDispatchCommand,
+          ) => Effect.Effect<
+            void,
+            Error,
+            FileSystem.FileSystem | HttpClient.HttpClient | Path.Path
+          >;
+        }) {
+          const workspaceRoot = yield* normalizeWorkspaceRootForProjectCommand(flags.workspaceRoot);
+          const existingProject = snapshot.projects.find(
+            (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
+          );
+          if (existingProject && groupingIdentity !== undefined) {
+            if (existingProject.groupingIdentity === groupingIdentity)
+              return `Project ${existingProject.id} already has this grouping identity.`;
+            yield* dispatch({
+              type: "project.update",
+              commandId: CommandId.make(yield* projectCommandUuid),
+              projectId: existingProject.id,
+              groupingIdentity,
+            });
+            return `Updated grouping identity for project ${existingProject.id}.`;
+          }
+          if (existingProject) {
+            return yield* new ProjectAlreadyExistsError({
+              operation: "addProject",
+              projectId: existingProject.id,
+              workspaceRoot,
+            });
+          }
 
-        const title = yield* resolveProjectTitle(workspaceRoot, Option.getOrUndefined(flags.title));
-        const projectId = ProjectId.make(yield* projectCommandUuid);
-        yield* dispatch({
-          type: "project.create",
-          commandId: CommandId.make(yield* projectCommandUuid),
-          projectId,
-          title,
-          workspaceRoot,
-        });
-        return `Added project ${projectId} (${title}) at ${workspaceRoot}.`;
-      }),
-    ),
+          const title = yield* resolveProjectTitle(
+            workspaceRoot,
+            Option.getOrUndefined(flags.title),
+          );
+          const projectId = ProjectId.make(yield* projectCommandUuid);
+          yield* dispatch({
+            type: "project.create",
+            commandId: CommandId.make(yield* projectCommandUuid),
+            projectId,
+            title,
+            workspaceRoot,
+            ...(groupingIdentity === undefined ? {} : { groupingIdentity }),
+          });
+          return `Added project ${projectId} (${title}) at ${workspaceRoot}.`;
+        }),
+      );
+    }),
   ),
 );
 
@@ -585,7 +639,79 @@ const projectRenameCommand = Command.make("rename", {
   ),
 );
 
+const encodeProjectList = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Project)));
+const encodeGroupingResult = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      projectId: ProjectId,
+      groupingIdentity: Schema.NullOr(ProjectGroupingIdentity),
+    }),
+  ),
+);
+
+const projectListCommand = Command.make("list", { ...projectLocationFlags }).pipe(
+  Command.withDescription("List registered projects as JSON, including groupingIdentity."),
+  Command.withHandler((flags) =>
+    runProjectMutation(flags, ({ snapshot }) => encodeProjectList(snapshot.projects)),
+  ),
+);
+
+const projectGroupingCommand = Command.make("grouping", {
+  ...projectLocationFlags,
+  project: Argument.String("project").pipe(
+    Argument.withDescription("Project id or workspace root."),
+  ),
+  identity: Flag.String("identity").pipe(
+    Flag.withDescription("Shared lowercase UUID v4. Omit to show the current identity."),
+    Flag.optional,
+  ),
+  clear: Flag.Boolean("clear").pipe(Flag.withDefault(false)),
+}).pipe(
+  Command.withDescription("Show, set, or clear a project's explicit grouping identity."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      if (flags.clear && Option.isSome(flags.identity)) {
+        return yield* new ProjectGroupingFlagsError({});
+      }
+      const groupingIdentity = flags.clear
+        ? null
+        : Option.isSome(flags.identity)
+          ? yield* decodeGroupingIdentity(flags.identity.value).pipe(
+              Effect.mapError((cause) => new ProjectGroupingIdentityInvalidError({ cause })),
+            )
+          : undefined;
+      return yield* runProjectMutation(
+        flags,
+        Effect.fn("projectGroupingMutation")(function* ({ snapshot, dispatch }) {
+          const project = yield* findActiveProjectTarget({ snapshot, identifier: flags.project });
+          if (groupingIdentity === undefined) {
+            return yield* encodeGroupingResult({
+              projectId: project.id,
+              groupingIdentity:
+                snapshot.projects.find((entry) => entry.id === project.id)?.groupingIdentity ??
+                null,
+            });
+          }
+          yield* dispatch({
+            type: "project.update",
+            commandId: CommandId.make(yield* projectCommandUuid),
+            projectId: project.id,
+            groupingIdentity,
+          });
+          return yield* encodeGroupingResult({ projectId: project.id, groupingIdentity });
+        }),
+      );
+    }),
+  ),
+);
+
 export const projectCommand = Command.make("project").pipe(
   Command.withDescription("Manage projects."),
-  Command.withSubcommands([projectAddCommand, projectRemoveCommand, projectRenameCommand]),
+  Command.withSubcommands([
+    projectAddCommand,
+    projectRemoveCommand,
+    projectRenameCommand,
+    projectListCommand,
+    projectGroupingCommand,
+  ]),
 );
