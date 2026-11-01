@@ -62,7 +62,7 @@ import {
   OrchestrationV2RuntimeRequestJson as OrchestrationV2RuntimeRequestJsonSchema,
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
-  orchestrationV2RunWorkStartedAt,
+  orchestrationV2RunActivityStartedAt,
   RunId,
   MessageId,
   RuntimeRequestId,
@@ -1533,7 +1533,7 @@ export function threadShellFromProjection(
     blockedOnThreadWait: deriveBlockedOnThreadWait({ activeRun, turnItems: projection.turnItems }),
     activityRunStatus: activityRun?.status ?? null,
     activityRunStartedAt:
-      activityRun === null ? null : orchestrationV2RunWorkStartedAt(activityRun),
+      activityRun === null ? null : orchestrationV2RunActivityStartedAt(activityRun),
     status: latestRun?.status ?? "idle",
     ...threadErrorSummary(
       latestRootProviderFailure(latestRun, projection.turnItems),
@@ -5924,11 +5924,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS activity_run_status,
               (
-                -- Mirrors orchestrationV2RunWorkStartedAt.
+                -- Mirrors orchestrationV2RunActivityStartedAt.
                 SELECT COALESCE(
                   json_extract(r.payload_json, '$.workStartedAt'),
                   json_extract(r.payload_json, '$.startedAt'),
-                  r.requested_at
+                  CASE WHEN r.status = 'preparing' THEN r.requested_at END
                 )
                 FROM orchestration_v2_projection_runs r
                 WHERE r.thread_id = t.thread_id

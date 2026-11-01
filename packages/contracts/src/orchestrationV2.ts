@@ -709,6 +709,15 @@ export function orchestrationV2RunWorkStartedAt(
   return run.workStartedAt ?? run.startedAt ?? run.requestedAt;
 }
 
+/** Only worktree preparation counts from the request; a booting provider has no start yet. */
+export function orchestrationV2RunActivityStartedAt(
+  run: Pick<OrchestrationV2Run, "status" | "workStartedAt" | "startedAt" | "requestedAt">,
+): OrchestrationV2Run["startedAt"] {
+  return (
+    run.workStartedAt ?? run.startedAt ?? (run.status === "preparing" ? run.requestedAt : null)
+  );
+}
+
 /**
  * Work started now would run in the project checkout, not the worktree the thread asked for. A
  * failed or interrupted setup leaves the request standing until a worktree exists.

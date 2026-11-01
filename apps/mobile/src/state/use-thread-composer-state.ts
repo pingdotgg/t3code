@@ -377,7 +377,12 @@ export function useThreadComposerState() {
       resolveThreadWorkingStartedAt({
         latestRun: selectedThreadActivityRun,
         runtime: selectedThreadRuntime,
-      }) ?? runlessWorkStartedAt
+      }) ??
+      // The feed and floating status read a null start as idle, so a booting provider keeps one.
+      (selectedThreadRuntime?.status === "starting"
+        ? (selectedThreadActivityRun?.requestedAt ?? null)
+        : null) ??
+      runlessWorkStartedAt
     );
   })();
   const runlessWorkActive = runlessWorkStartedAt !== null;

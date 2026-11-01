@@ -4233,7 +4233,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             completedAt: status === "cancelled" ? later : null,
           },
         });
-        for (const activityStatus of ["preparing", "running", "waiting", "completed"] as const) {
+        for (const activityStatus of [
+          "preparing",
+          "starting",
+          "running",
+          "waiting",
+          "completed",
+        ] as const) {
           yield* projectionStore.apply({
             id: EventId.make(`event:clock:${status}:${activityStatus}`),
             type: "run.updated",
@@ -4242,7 +4248,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             payload: {
               ...run,
               status: activityStatus,
-              startedAt: activityStatus === "preparing" ? null : now,
+              startedAt:
+                activityStatus === "preparing" || activityStatus === "starting" ? null : now,
               completedAt: activityStatus === "completed" ? later : null,
             },
           });
@@ -4251,7 +4258,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             (row) => row.id === threadId,
           )!;
           const memoryShell = ProjectionStore.threadShellFromProjection(projection);
-          const expected = activityStatus === "completed" ? null : DateTime.toEpochMillis(now);
+          // Only worktree preparation counts from the request; a booting provider has no start yet.
+          const expected =
+            activityStatus === "completed" || activityStatus === "starting"
+              ? null
+              : DateTime.toEpochMillis(now);
           const timestamp = (value: DateTime.Utc | null | undefined) =>
             value == null ? null : DateTime.toEpochMillis(value);
           assert.equal(timestamp(sqlShell.activityRunStartedAt), expected);

@@ -115,6 +115,12 @@ describe("thread execution presentation", () => {
       deriveThreadRuntime({ ...v2Projection, runs: [run("prompt", 1, "running")] })
         ?.activityStartedAt,
     ).toBe("2026-07-28T10:00:00.000Z");
+    const booting = { ...run("prompt", 1, "starting"), startedAt: null };
+    expect(deriveThreadRuntime({ ...v2Projection, runs: [booting] })?.activityStartedAt).toBeNull();
+    const preparing = { ...booting, status: "preparing" as const };
+    expect(deriveThreadRuntime({ ...v2Projection, runs: [preparing] })?.activityStartedAt).toBe(
+      "2026-07-28T10:00:00.000Z",
+    );
   });
 
   it("keeps a subscription limit visible while later messages stay queued", () => {
