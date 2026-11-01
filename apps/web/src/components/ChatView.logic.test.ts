@@ -1128,6 +1128,18 @@ describe("planComposerTurn", () => {
       baseBranchForWorktree: null,
     });
   });
+
+  it("waits for setup but keeps the chosen follow-up so the server can steer once it starts", () => {
+    const setup = { ...base, sendQueuesBehindSetup: true };
+    expect(planComposerTurn({ ...setup, dispatchMode: "steer" })).toMatchObject({
+      turnDispatchMode: "steer",
+      shouldQueueBehindActiveRun: true,
+    });
+    expect(planComposerTurn({ ...setup, dispatchMode: "restart" })).toMatchObject({
+      turnDispatchMode: "queue",
+      shouldQueueBehindActiveRun: true,
+    });
+  });
 });
 
 describe("restorePlanFollowUpComposer", () => {

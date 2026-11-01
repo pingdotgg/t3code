@@ -106,6 +106,7 @@ import {
   isActiveRun,
   isNativeMaintenanceCommand,
   resolveMessageDispatchIntent,
+  runLacksRunningProviderTurn,
 } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import {
@@ -5853,6 +5854,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: { ...held, queueHeld: false },
       });
     }
+    const activeRunMessage = projection.messages.find(
+      (message) => message.id === activeRun?.userMessageId,
+    );
+    const startupDeliveryIntent =
+      activeRun !== undefined &&
+      (command.deliveryIntent === "auto" || command.deliveryIntent === "steer") &&
+      goalCommand === null &&
+      delegatedCompletion === undefined &&
+      command.notification === undefined &&
+      !isNativeMaintenanceCommand(command) &&
+      (activeRunMessage === undefined || !isNativeMaintenanceCommand(activeRunMessage)) &&
+      runLacksRunningProviderTurn(projection, activeRun)
+        ? command.deliveryIntent
+        : undefined;
     if (shouldQueue) {
       if (pendingMergeBackTransfers.length > 0) {
         return yield* new OrchestratorDispatchError({
@@ -5996,6 +6011,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
         ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
+        ...(startupDeliveryIntent === undefined ? {} : { deliveryIntent: startupDeliveryIntent }),
       };
       const attempt: OrchestrationV2RunAttempt = {
         id: attemptId,
@@ -13710,6 +13726,96 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
       Stream.runForEach(handleRunUpdate),
       Effect.forkScoped,
+    );
+
+  const deliverStartupQueuedMessages = Effect.fn("Orchestrator.deliverStartupQueuedMessages")(
+    function* (stored: OrchestrationV2StoredEvent) {
+      if (stored.event.type !== "provider-turn.updated") return;
+      const threadId = stored.event.threadId;
+      // Under the lock so a send still committing its queued run is seen. Each promotion can
+      // restart the target, so the next one decides from fresh records.
+      yield* threadDispatch.withLock(
+        threadId,
+        Effect.gen(function* () {
+          const attempted = new Set<RunId>();
+          while (true) {
+            const projection = yield* projectionStore.getThreadRecords(
+              threadId,
+              ["runs", "messages", "providerTurns", "providerThreads", "providerSessions"],
+              { turnItemTypes: [], messageRoles: ["user"] },
+            );
+            const next = queuedRunsInDeliveryOrder(projection)
+              .filter((queued) => {
+                if (queued.deliveryIntent === undefined || queued.queueHeld === true) return false;
+                if (attempted.has(queued.id)) return false;
+                // The message may have been edited into a command that must run as its own turn.
+                const message = projection.messages.find((m) => m.id === queued.userMessageId);
+                return (
+                  message !== undefined &&
+                  parseGoalCommand(message) === null &&
+                  !isNativeMaintenanceCommand(message)
+                );
+              })
+              .map((queued) => ({
+                queued,
+                mode: resolveMessageDispatchIntent(
+                  projection,
+                  { type: "queue_after_active" },
+                  queued.deliveryIntent,
+                ),
+              }))
+              .find(
+                ({ queued, mode }) =>
+                  mode.type === "steer_active" &&
+                  // A message for another model starts its own turn instead of restarting this one.
+                  projection.runs.some(
+                    (run) =>
+                      run.id === mode.targetRunId &&
+                      modelSelectionsEqual(queued.modelSelection, run.modelSelection),
+                  ),
+              );
+            if (next?.mode.type !== "steer_active") return;
+            attempted.add(next.queued.id);
+            yield* dispatchWithReceiptEffect({
+              type: "queued-message.promote-to-steer",
+              commandId: CommandId.make(`command:system:startup-steer:${next.queued.id}`),
+              threadId,
+              queuedRunId: next.queued.id,
+              targetRunId: next.mode.targetRunId,
+            }).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to steer a message queued before the turn started", {
+                  threadId,
+                  queuedRunId: next.queued.id,
+                  cause,
+                }),
+              ),
+            );
+          }
+        }),
+      );
+    },
+    (effect, stored) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Failed to steer messages queued before the turn started", {
+            threadId: stored.event.threadId,
+            sequence: stored.sequence,
+            cause,
+          }),
+        ),
+      ),
+  );
+  yield* eventSink
+    .stream({ afterSequence: terminalEventsAfterSequence, eventType: "provider-turn.updated" })
+    .pipe(
+      Stream.filter(
+        (stored) =>
+          stored.event.type === "provider-turn.updated" &&
+          stored.event.payload.status === "running",
+      ),
+      Stream.runForEach(deliverStartupQueuedMessages),
+      Effect.forkDetach,
     );
 
   // A child whose run ends while its background tasks or its own subagents still run has no

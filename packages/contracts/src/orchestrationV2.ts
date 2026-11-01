@@ -700,6 +700,8 @@ export const OrchestrationV2Run = Schema.Struct({
   ),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  /** A message queued only because the active turn had not started yet; delivered so once it does. */
+  deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer"])),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
