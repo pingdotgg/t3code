@@ -201,8 +201,12 @@ another way, the setting shows the command to install it. Prepare a commit by ru
 `git worktree-fast prepare [commit]` in the repository from a T3 Code terminal, which finds the
 bundled copy. From another terminal, run the bundled executable directly, for example
 `"/Applications/T3 Code (Beta).app/Contents/Resources/worktree-fast/git-worktree-fast" prepare`, or
-install your own copy. Then turn on
-**Settings → Worktrees → Use git-worktree-fast** under Advanced. The setting is per machine. Commits
+install your own copy. To prepare new commits automatically instead, run
+`git worktree-fast auto enable` in the repository once. It keeps the three newest commits on each
+branch prepared in the background. Its commit hook runs the copy that enabled it, so after moving
+the app or switching to another release channel, run `auto enable` again, and run `auto disable`
+before deleting the app. Then turn on **Settings → Worktrees → Use git-worktree-fast** under
+Advanced. The setting is per machine. Commits
 you have not prepared use Git's normal checkout, and so does a failed fast clone that left nothing
 behind. The worktrees it makes are ordinary Git worktrees.
 

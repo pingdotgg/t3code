@@ -4204,7 +4204,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const resolvedWorktreePath = path.isAbsolute(worktreePath)
         ? worktreePath
         : `${input.cwd}${path.sep}${worktreePath}`;
-      // git-worktree-fast hands a missing parent folder to Git's slow checkout.
+      // A git-worktree-fast before 0.2.0 on the user's PATH hands a missing parent folder to Git's slow checkout.
       yield* fileSystem
         .makeDirectory(path.dirname(resolvedWorktreePath), { recursive: true })
         .pipe(Effect.ignore);
