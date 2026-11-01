@@ -40,8 +40,9 @@ export function startMainAppLocationTracking(router: AnyRouter): () => void {
   };
   // onResolved is skipped when another navigation starts before this one settles,
   // so the thread behind a modal follows every load as it starts instead.
+  // /projects/$projectKey only redirects into Settings, so it never replaces that thread.
   const recordTarget = ({ pathname }: ParsedLocation) => {
-    if (!isReturnPage(pathname)) return;
+    if (!isReturnPage(pathname) || pathname.startsWith("/projects/")) return;
     const target = resolveThreadRouteTarget(router.getMatchedRoutes(pathname).routeParams);
     if (threadRouteTargetKey(target) === threadRouteTargetKey(appModalReturnTarget)) return;
     appModalReturnTarget = target;
