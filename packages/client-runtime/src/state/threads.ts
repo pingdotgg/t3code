@@ -32,7 +32,7 @@ import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
-import { request, subscribeDynamic } from "../rpc/client.ts";
+import { request, subscribeDynamicWithInput } from "../rpc/client.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
@@ -602,10 +602,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   ) {
     if (item.kind === "synchronized") {
       yield* Ref.set(awaitingCompletion, false);
-      yield* SubscriptionRef.update(state, (current) =>
-        Option.isSome(current.data) && current.status !== "deleted" && Option.isNone(current.error)
-          ? { ...current, status: "live" as const, error: Option.none() }
-          : current,
+      yield* SubscriptionRef.updateSome(state, (current) =>
+        Option.isSome(current.data) &&
+        current.status !== "deleted" &&
+        current.status !== "live" &&
+        Option.isNone(current.error)
+          ? Option.some({ ...current, status: "live" as const })
+          : Option.none(),
       );
       return;
     }
@@ -637,11 +640,40 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     yield* applyEventsLocked([item]);
   });
 
-  const applyItems = Effect.fn("EnvironmentThreadState.applyItems")(function* (
-    items: ReadonlyArray<OrchestrationV2ThreadStreamItem>,
+  // Items held until the completion marker apply together, so a replay-only resume renders once.
+  // A new attempt drops the previous attempt's held and late items (unapplied, so its cursor
+  // replays them). Both run under applyLock: each batch lands wholly before or after an attempt.
+  let attempt: unknown;
+  let catchUp: OrchestrationV2ThreadStreamItem[] = [];
+  const startAttempt = applyLock.withPermits(1)(
+    Effect.sync(() => {
+      attempt = undefined;
+      catchUp = [];
+    }),
+  );
+  const receiveItems = Effect.fn("EnvironmentThreadState.receiveItems")(function* (
+    received: ReadonlyArray<readonly [input: unknown, item: OrchestrationV2ThreadStreamItem]>,
   ) {
     yield* applyLock.withPermits(1)(
       Effect.gen(function* () {
+        let completes = false;
+        for (const [input, item] of received) {
+          if (input !== attempt) continue;
+          catchUp.push(item);
+          if (item.kind === "synchronized") completes = true;
+        }
+        if (catchUp.length === 0) return;
+        if (!completes && (yield* Ref.get(awaitingCompletion))) {
+          // A warm resume keeps its "live" status until it learns it is behind.
+          yield* SubscriptionRef.updateSome(state, (current) =>
+            current.status === "live"
+              ? Option.some({ ...current, status: "synchronizing" as const })
+              : Option.none(),
+          );
+          return;
+        }
+        const items = catchUp;
+        catchUp = [];
         let events: SequencedItem[] = [];
         for (const item of items) {
           if (
@@ -651,6 +683,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             events.push(item);
             continue;
           }
+          // Clearing the flag first lets the events before the marker publish
+          // "live", so a catch-up ending in the marker is one state change.
+          if (item.kind === "synchronized") yield* Ref.set(awaitingCompletion, false);
           yield* applyEventsLocked(events);
           events = [];
           yield* applyItemLocked(item);
@@ -934,9 +969,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
   yield* markSynchronizing;
   yield* Effect.forkScoped(
-    subscribeDynamic(
+    subscribeDynamicWithInput(
       ORCHESTRATION_V2_WS_METHODS.subscribeThread,
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
+        yield* startAttempt;
         let current = yield* SubscriptionRef.get(state);
         // A prior definitive miss (or delete event) already cleared this thread.
         // Park the subscription attempt without opening the socket so we do not
@@ -1012,7 +1048,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         const canResume = Option.isSome(current.data);
         const acceptBoundedSnapshot = yield* Ref.get(acceptsBoundedSocketSnapshots);
 
-        return {
+        const input = {
           threadId,
           ...(canResume ? { afterSequence: sequence } : {}),
           requestCompletionMarker: true as const,
@@ -1026,6 +1062,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             : {}),
           acceptDedupedBodies: true as const,
         };
+        attempt = input;
+        return input;
       }),
       {
         onDefect: () => setStreamError("Could not synchronize the thread."),
@@ -1033,7 +1071,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },
-    ).pipe(Stream.runForEachArray(applyItems)),
+    ).pipe(Stream.runForEachArray(receiveItems)),
   );
 
   return state;
