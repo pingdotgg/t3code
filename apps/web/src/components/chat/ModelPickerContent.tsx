@@ -11,6 +11,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 import { useNavigate } from "@tanstack/react-router";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
+import { ChevronRightIcon } from "lucide-react";
 import {
   memo,
   useState,
@@ -24,9 +25,12 @@ import {
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
+import { groupModelsBySubProvider } from "./modelPickerGroups";
 import {
+  isModelPickerSubProviderGroupKey,
   modelPickerLegacySectionKey,
   modelPickerModelKey,
+  modelPickerSubProviderGroupKey,
   parseModelPickerLegacySectionKey,
   parseModelPickerModelKey,
 } from "./modelPickerKeys";
@@ -452,6 +456,23 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           : [],
       ),
   );
+  // Sub-provider groups start collapsed, except the one holding the active model.
+  const activeSubProviderGroupKey = activeModel?.subProvider
+    ? modelPickerSubProviderGroupKey(props.activeInstanceId, activeModel.subProvider)
+    : null;
+  const [previousActiveSubProviderGroupKey, setPreviousActiveSubProviderGroupKey] =
+    useState(activeSubProviderGroupKey);
+  const [expandedSubProviderGroupKeys, setExpandedSubProviderGroupKeys] = useState(
+    () => new Set<string>(activeSubProviderGroupKey ? [activeSubProviderGroupKey] : []),
+  );
+  if (previousActiveSubProviderGroupKey !== activeSubProviderGroupKey) {
+    setPreviousActiveSubProviderGroupKey(activeSubProviderGroupKey);
+    if (activeSubProviderGroupKey) {
+      setExpandedSubProviderGroupKeys((expanded) =>
+        new Set(expanded).add(activeSubProviderGroupKey),
+      );
+    }
+  }
   const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindings = providedKeybindings ?? serverKeybindings;
   const [searchHeight, setSearchHeight] = useState(0);
@@ -475,6 +496,18 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         next.delete(instanceId);
       } else {
         next.add(instanceId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSubProviderGroup = (groupKey: string) => {
+    setExpandedSubProviderGroupKeys((expanded) => {
+      const next = new Set(expanded);
+      if (next.has(groupKey)) {
+        next.delete(groupKey);
+      } else {
+        next.add(groupKey);
       }
       return next;
     });
@@ -698,15 +731,58 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     };
   })();
 
-  const visibleModels = (() => {
-    if (!legacySection) {
-      return filteredModels;
+  // A tab fronting several sub-providers (Pi, OpenCode) groups them into collapsible sections.
+  // Favorites stay on top to keep their jump shortcuts; search and the favorites tab stay flat.
+  const subProviderGroups = (() => {
+    if (isSearching || selectedInstanceId === "favorites") {
+      return null;
     }
-    return [
-      ...legacySection.currentModels,
-      ...(legacySection.isExpanded ? legacySection.legacyModels : []),
-    ];
+    const grouped = groupModelsBySubProvider(
+      legacySection?.currentModels ?? filteredModels,
+      (model) => favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
+    );
+    if (!grouped) {
+      return null;
+    }
+    return {
+      pinned: grouped.pinned,
+      groups: grouped.groups.map((group) => {
+        const key = modelPickerSubProviderGroupKey(selectedInstanceId, group.subProvider);
+        return { ...group, key, isExpanded: expandedSubProviderGroupKeys.has(key) };
+      }),
+    };
   })();
+  const subProviderGroupByKey = new Map(
+    subProviderGroups?.groups.map((group) => [group.key, group] as const),
+  );
+
+  // Rows in display order: section headers interleaved with the models they reveal.
+  const listRows = (() => {
+    const itemKeys: string[] = [];
+    const models: ModelPickerItem[] = [];
+    const pushModels = (sectionModels: ReadonlyArray<ModelPickerItem>) => {
+      for (const model of sectionModels) {
+        itemKeys.push(modelPickerModelKey(model.instanceId, model.slug));
+        models.push(model);
+      }
+    };
+    if (subProviderGroups) {
+      pushModels(subProviderGroups.pinned);
+      for (const group of subProviderGroups.groups) {
+        itemKeys.push(group.key);
+        if (group.isExpanded) pushModels(group.models);
+      }
+    } else {
+      pushModels(legacySection?.currentModels ?? filteredModels);
+    }
+    // The toggle trails the list, so expanding it reveals older models above it.
+    if (legacySection) {
+      if (legacySection.isExpanded) pushModels(legacySection.legacyModels);
+      itemKeys.push(legacySection.key);
+    }
+    return { itemKeys, models };
+  })();
+  const visibleModels = listRows.models;
 
   const selectedEntry =
     selectedInstanceId === "favorites" ? undefined : entryByInstanceId.get(selectedInstanceId);
@@ -744,14 +820,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         .filter((model) => model.isLegacy)
         .map((model) => modelPickerLegacySectionKey(model.instanceId)),
     ),
+    ...new Set(
+      flatModels.flatMap((model) =>
+        model.subProvider
+          ? [modelPickerSubProviderGroupKey(model.instanceId, model.subProvider)]
+          : [],
+      ),
+    ),
   ])();
-  const filteredItemKeys = ((): string[] => {
-    const modelKeys = visibleModels.map((model) =>
-      modelPickerModelKey(model.instanceId, model.slug),
-    );
-    // The toggle trails the list, so expanding it reveals older models above it.
-    return legacySection ? [...modelKeys, legacySection.key] : modelKeys;
-  })();
+  const filteredItemKeys = listRows.itemKeys;
   const filteredModelByKey = ((): ReadonlyMap<string, ModelPickerItem> =>
     new Map(
       visibleModels.map(
@@ -775,6 +852,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     modelJumpLabelByKey,
     activeModelKey,
     selectedModelKeySet,
+    subProviderGroupByKey,
   };
 
   const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -899,6 +977,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             if (typeof modelKey !== "string") {
               return;
             }
+            if (isModelPickerSubProviderGroupKey(modelKey)) {
+              toggleSubProviderGroup(modelKey);
+              return;
+            }
             const legacyInstanceId = parseModelPickerLegacySectionKey(modelKey);
             if (legacyInstanceId) {
               toggleLegacySection(legacyInstanceId);
@@ -989,6 +1071,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   (e as typeof e & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
                   e.preventDefault();
                   e.stopPropagation();
+                  if (isModelPickerSubProviderGroupKey(highlightedModelKeyRef.current)) {
+                    toggleSubProviderGroup(highlightedModelKeyRef.current);
+                    return;
+                  }
                   const legacyInstanceId = parseModelPickerLegacySectionKey(
                     highlightedModelKeyRef.current,
                   );
@@ -1025,6 +1111,31 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       <span className="text-sm leading-snug text-muted-foreground group-hover:text-foreground group-data-highlighted:text-foreground">
                         {legacySection.isExpanded ? "Show less" : "Show more"}
                       </span>
+                    </ComboboxItem>
+                  );
+                }
+                const subProviderGroup = subProviderGroupByKey.get(modelKey);
+                if (subProviderGroup) {
+                  return (
+                    <ComboboxItem
+                      hideIndicator
+                      index={index}
+                      value={modelKey}
+                      aria-expanded={subProviderGroup.isExpanded}
+                      className="group w-full cursor-pointer"
+                    >
+                      <div className="min-w-0 flex-1 truncate text-left text-sm font-normal leading-snug">
+                        {subProviderGroup.subProvider}
+                      </div>
+                      <span className="text-xs font-normal leading-snug text-muted-foreground">
+                        {subProviderGroup.models.length}
+                      </span>
+                      <ChevronRightIcon
+                        className={cn(
+                          "size-4 transition-transform",
+                          subProviderGroup.isExpanded && "rotate-90",
+                        )}
+                      />
                     </ComboboxItem>
                   );
                 }

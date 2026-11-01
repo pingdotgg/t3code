@@ -2,6 +2,7 @@ import type { ProviderInstanceId } from "@t3tools/contracts";
 
 const MODEL_KEY_PREFIX = "model:";
 const LEGACY_SECTION_KEY_PREFIX = "legacy-models:";
+const SUB_PROVIDER_GROUP_KEY_PREFIX = "sub-provider:";
 
 export function modelPickerModelKey(instanceId: ProviderInstanceId, slug: string): string {
   return `${MODEL_KEY_PREFIX}${instanceId.length}:${instanceId}${slug}`;
@@ -34,6 +35,18 @@ export function parseModelPickerModelKey(
     instanceId: value.slice(0, instanceIdLength) as ProviderInstanceId,
     slug: value.slice(instanceIdLength),
   };
+}
+
+/** Key for the collapsible header of one sub-provider's models within an instance. */
+export function modelPickerSubProviderGroupKey(
+  instanceId: ProviderInstanceId,
+  subProvider: string,
+): string {
+  return `${SUB_PROVIDER_GROUP_KEY_PREFIX}${instanceId.length}:${instanceId}${subProvider}`;
+}
+
+export function isModelPickerSubProviderGroupKey(key: string): boolean {
+  return key.startsWith(SUB_PROVIDER_GROUP_KEY_PREFIX);
 }
 
 export function modelPickerLegacySectionKey(instanceId: ProviderInstanceId): string {
