@@ -1,5 +1,8 @@
 import type { ThreadContextRecord, UserInputQuestion } from "@t3tools/contracts";
-import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import {
+  projectComposerContextForProvider,
+  replaceComposerContextReferences,
+} from "@t3tools/shared/composerContextReferences";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
   buildPendingUserInputAnswers,
@@ -9,17 +12,56 @@ import {
   type PendingUserInputDraftAnswer,
 } from "@t3tools/client-runtime/state/pending-user-input";
 
+import type { ComposerThreadDraftState } from "./composerDraftStore";
+import { buildMessageContext } from "./lib/composerContextRecords";
 import { collectInlineContextIds } from "./lib/composerContextReferences";
 
+type PendingAnswerDraft = Pick<
+  ComposerThreadDraftState,
+  | "images"
+  | "files"
+  | "terminalContexts"
+  | "reviewComments"
+  | "previewAnnotations"
+  | "threadContexts"
+  | "environmentContexts"
+>;
+
+// Answers bypass the server's message-context expansion, so chips are expanded here.
+// Question attachments and thread links live separately from the composer's other context.
 export function projectPendingUserInputAnswer(
   answer: unknown,
-  threadContexts: ReadonlyArray<ThreadContextRecord>,
+  questionDraft: PendingAnswerDraft | null,
+  uploaded: ReadonlyArray<{ readonly id: string }>,
+  composerDraft: PendingAnswerDraft | null,
 ) {
-  if (typeof answer !== "string" || threadContexts.length === 0) return answer;
-  const recordsById = new Map(threadContexts.map((record) => [record.contextId, record]));
-  return replaceComposerContextReferences(answer, (reference) => {
-    const record = reference.kind === "thread" ? recordsById.get(reference.contextId) : undefined;
+  if (typeof answer !== "string") return answer;
+  const records =
+    buildMessageContext({
+      terminalContexts: composerDraft?.terminalContexts ?? [],
+      reviewComments: composerDraft?.reviewComments ?? [],
+      previewAnnotations: composerDraft?.previewAnnotations ?? [],
+      environmentContexts: composerDraft?.environmentContexts ?? [],
+      threadContexts: questionDraft?.threadContexts ?? [],
+      attachments: [...(questionDraft?.images ?? []), ...(questionDraft?.files ?? [])].flatMap(
+        (attachment, index) => {
+          const upload = uploaded[index];
+          return upload ? [{ attachment, attachmentId: upload.id }] : [];
+        },
+      ),
+    })?.records ?? [];
+  const threadsById = new Map(
+    records.flatMap((record) =>
+      record.kind === "thread" && "threadId" in record ? [[record.contextId, record] as const] : [],
+    ),
+  );
+  const linked = replaceComposerContextReferences(answer, (reference) => {
+    const record = threadsById.get(reference.contextId);
     return record ? formatThreadLink(record, reference.label) : reference.source;
+  });
+  return projectComposerContextForProvider({
+    text: linked,
+    records: records.filter((record) => record.kind !== "thread"),
   });
 }
 

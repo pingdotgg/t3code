@@ -1,7 +1,10 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "./lib/composerContextReferences";
-import { threadContextReference } from "./lib/composerContextRecords";
+import {
+  reviewCommentContextReference,
+  threadContextReference,
+} from "./lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 
 import {
@@ -19,19 +22,53 @@ describe("projectPendingUserInputAnswer", () => {
     },
     "Reference work",
   );
+  const draft = {
+    images: [],
+    files: [],
+    terminalContexts: [],
+    reviewComments: [],
+    previewAnnotations: [],
+    threadContexts: [record],
+    environmentContexts: [],
+  };
 
   it("sends thread chips as readable links with the actual thread ID", () => {
     const answer = `Compare ${formatInlineContextReference(threadContextReference(record))}`;
-    expect(projectPendingUserInputAnswer(answer, [record])).toBe(
+    expect(projectPendingUserInputAnswer(answer, draft, [], null)).toBe(
       "Compare [Reference work](t3-thread://v2/env-answer/reference-thread)",
     );
+  });
+
+  // regression: #28022 review comment chips in answers reached the agent as bare links
+  it("sends review comment chips with their comment text and diff", () => {
+    const comment = {
+      id: "comment-1",
+      sectionId: "section-1",
+      sectionTitle: "Working tree",
+      filePath: "docs/file.md",
+      startIndex: 16,
+      endIndex: 16,
+      rangeLabel: "+16",
+      text: "Rename this heading",
+      diff: "+## Old heading",
+    };
+    const answer = `Yes, and ${formatInlineContextReference(reviewCommentContextReference(comment))}`;
+    const projected = projectPendingUserInputAnswer(answer, null, [], {
+      ...draft,
+      reviewComments: [comment],
+    });
+    expect(projected).not.toContain("t3-context://");
+    expect(projected).toContain("Rename this heading");
+    expect(projected).toContain("+## Old heading");
   });
 
   // regression: #18789 answers to pending questions lost exact text and option values
   it("preserves option values and exact answer text", () => {
     const options = [" first\t", "second"];
-    expect(projectPendingUserInputAnswer(options, [record])).toBe(options);
-    expect(projectPendingUserInputAnswer("  Edited answer\n", [record])).toBe("  Edited answer\n");
+    expect(projectPendingUserInputAnswer(options, draft, [], null)).toBe(options);
+    expect(projectPendingUserInputAnswer("  Edited answer\n", draft, [], null)).toBe(
+      "  Edited answer\n",
+    );
   });
 });
 
