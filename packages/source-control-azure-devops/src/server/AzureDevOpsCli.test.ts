@@ -9,6 +9,9 @@ import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import { AzureCliInstallLocation, type AzureCliInstall } from "./azureCliLauncher.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 
 const processOutput = (stdout: string): SourceControlHost.SourceControlProcessOutput => ({
@@ -21,9 +24,11 @@ const processOutput = (stdout: string): SourceControlHost.SourceControlProcessOu
 
 const mockRun = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>();
 
+// The CLI layer is exercised on a host that spawns `az` itself, so the launcher upgrade stays out of these assertions.
 const layerSupport = Layer.mergeAll(
   TestSourceControlHost.layer({ process: { run: mockRun } }),
   NodeServices.layer,
+  Layer.succeed(HostProcess.Platform, "linux"),
 );
 const layer = Layer.mergeAll(AzureDevOpsCli.layer.pipe(Layer.provide(layerSupport)), layerSupport);
 
@@ -306,4 +311,120 @@ describe("AzureDevOpsCli.layer", () => {
       assert.strictEqual(error.cause, cause);
     }).pipe(Effect.provide(layer)),
   );
+});
+
+describe("azureCliInvocation", () => {
+  const launcher = "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd";
+  const msi: AzureCliInstall = {
+    interpreter: "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\python.exe",
+    installer: "MSI",
+  };
+  const zip: AzureCliInstall = {
+    interpreter: "D:\\azure-cli\\python.exe",
+    installer: "ZIP",
+  };
+
+  const invocationFor = (install: AzureCliInstall | undefined) =>
+    AzureDevOpsCli.azureCliInvocation().pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(HostProcess.Environment, { PATH: "C:\\tools" }),
+      Effect.provideService(SpawnExecutableResolution, () => launcher),
+      Effect.provideService(AzureCliInstallLocation, () => install),
+    );
+
+  it.effect("runs the install's interpreter in UTF-8 mode", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* invocationFor(msi), {
+        command: msi.interpreter,
+        args: ["-X", "utf8", "-IBm", "azure.cli"],
+        env: { AZ_INSTALLER: "MSI" },
+      });
+      assert.deepStrictEqual(yield* invocationFor(zip), {
+        command: zip.interpreter,
+        args: ["-X", "utf8", "-IBm", "azure.cli"],
+        env: { AZ_INSTALLER: "ZIP" },
+      });
+    }),
+  );
+
+  it.effect("keeps the launcher, and claims ANSI output, when the install is not recognized", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* invocationFor(undefined), {
+        command: "az",
+        args: [],
+        windowsAnsiOutput: true,
+      });
+    }),
+  );
+
+  it.effect("spawns az directly, with no claim about its encoding, off Windows", () =>
+    Effect.gen(function* () {
+      const invocation = yield* AzureDevOpsCli.azureCliInvocation().pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+      );
+
+      assert.deepStrictEqual(invocation, { command: "az", args: [] });
+    }),
+  );
+});
+
+describe("AzureDevOpsCli.execute on Windows", () => {
+  it.effect("prepends the UTF-8 launch to every az command", () => {
+    const install: AzureCliInstall = {
+      interpreter: "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\python.exe",
+      installer: "MSI",
+    };
+    const support = Layer.mergeAll(
+      TestSourceControlHost.layer({ process: { run: mockRun } }),
+      NodeServices.layer,
+      Layer.succeed(HostProcess.Platform, "win32"),
+      Layer.succeed(HostProcess.Environment, { PATH: "C:\\tools" }),
+      Layer.succeed(
+        SpawnExecutableResolution,
+        () => "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin\\az.cmd",
+      ),
+      Layer.succeed(AzureCliInstallLocation, () => install),
+    );
+    const windowsLayer = Layer.mergeAll(AzureDevOpsCli.layer.pipe(Layer.provide(support)), support);
+
+    return Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.listPullRequests({ cwd: "/repo", headSelector: "feature/x", state: "open" });
+
+      const { classifyFailure, ...call } = mockRun.mock.calls.at(-1)?.[0] ?? {};
+      assert.strictEqual(
+        classifyFailure?.("Please run az login to setup account."),
+        "authentication",
+      );
+      assert.deepStrictEqual(call, {
+        operation: "AzureDevOpsCli.execute",
+        command: install.interpreter,
+        args: [
+          "-X",
+          "utf8",
+          "-IBm",
+          "azure.cli",
+          "repos",
+          "pr",
+          "list",
+          "--detect",
+          "true",
+          "--source-branch",
+          "feature/x",
+          "--status",
+          "active",
+          "--top",
+          "20",
+          "--only-show-errors",
+          "--output",
+          "json",
+        ],
+        cwd: "/repo",
+        env: { AZ_INSTALLER: "MSI" },
+        notFoundDetail: "Pull request not found.",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(windowsLayer));
+  });
 });

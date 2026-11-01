@@ -27,6 +27,8 @@ export interface SourceControlProcessInput {
   readonly maxOutputBytes?: number;
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly appendTruncationMarker?: boolean;
+  /** A Python CLI (`az`) that writes piped output in the Windows ANSI code page, not UTF-8. */
+  readonly windowsAnsiOutput?: boolean | undefined;
   /**
    * Reads a failure the generic rules cannot, such as a host CLI's sign-in hint, from its stderr.
    * Null leaves it to them.

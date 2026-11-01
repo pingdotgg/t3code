@@ -9,6 +9,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import { WindowsAnsiEncoding } from "@t3tools/shared/windowsCodePage";
 
 import * as ProcessRunner from "./processRunner.ts";
 
@@ -231,6 +232,60 @@ describe("runProcess", () => {
       expect(result.stderrTruncated).toBe(false);
     }),
   );
+
+  it.effect("decodes Windows CLI output written in the ANSI code page", () => {
+    const spawner = makeSpawner(() =>
+      Effect.succeed(makeHandle({ stdout: Stream.make(new Uint8Array([0x63, 0x61, 0x66, 0xe9])) })),
+    );
+
+    return runWith(spawner)({
+      command: "az",
+      args: ["repos", "pr", "show"],
+      windowsAnsiOutput: true,
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(WindowsAnsiEncoding, Effect.succeed("windows-1252")),
+      Effect.map((result) => {
+        expect(result.stdout).toBe("caf\u00e9");
+        expect(result.stdoutInvalidUtf8).toBe(true);
+      }),
+    );
+  });
+
+  it.effect("keeps invalid UTF-8 for a command that did not opt in", () => {
+    const spawner = makeSpawner(() =>
+      Effect.succeed(makeHandle({ stdout: Stream.make(new Uint8Array([0x63, 0x61, 0x66, 0xe9])) })),
+    );
+
+    return runWith(spawner)({
+      command: "git",
+      args: ["diff"],
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(WindowsAnsiEncoding, Effect.succeed("windows-1252")),
+      Effect.map((result) => {
+        expect(result.stdout).toBe("caf\uFFFD");
+      }),
+    );
+  });
+
+  it.effect("keeps invalid UTF-8 outside Windows", () => {
+    const spawner = makeSpawner(() =>
+      Effect.succeed(makeHandle({ stdout: Stream.make(new Uint8Array([0x63, 0x61, 0x66, 0xe9])) })),
+    );
+
+    return runWith(spawner)({
+      command: "az",
+      args: ["repos", "pr", "show"],
+      windowsAnsiOutput: true,
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(WindowsAnsiEncoding, Effect.succeed("windows-1252")),
+      Effect.map((result) => {
+        expect(result.stdout).toBe("caf\uFFFD");
+      }),
+    );
+  });
 
   it.effect("writes stdin before waiting for exit", () =>
     Effect.gen(function* () {
