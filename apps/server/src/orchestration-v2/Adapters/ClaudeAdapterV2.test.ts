@@ -5426,7 +5426,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
       const providerTurn = lastProviderTurn(harness.events);
       assert.notEqual(providerTurn.nativeTurnRef?.nativeId, subagentUuid);
-      const rollbackTo = (providerThreadTurns: ReadonlyArray<typeof providerTurn>) =>
+      const rollbackTo = (
+        providerThreadTurns: ReadonlyArray<typeof providerTurn>,
+        text = "Background task completed.",
+      ) =>
         harness.runtime.rollbackThread({
           providerThread: harness.providerThread,
           target: {
@@ -5434,6 +5437,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             checkpointId: CheckpointId.make("checkpoint-claude-cursor-subagent-only"),
             appRunOrdinal: 1,
             providerTurn,
+            message: { role: "user", text, attachments: [] },
           },
           providerThreadTurns,
         });
@@ -5451,7 +5455,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.instanceOf(error, ProviderAdapter.ProviderAdapterRollbackThreadError);
       assert.include(String(error.cause), "no SDK assistant message cursor");
       const earlierCursor = "00000000-0000-4000-8000-000000000648";
-      const pastSilentTurn = yield* rollbackTo([
+      const turnsAcrossSilent = [
         {
           ...providerTurn,
           id: ProviderTurnId.make("provider-turn-claude-cursor-earlier"),
@@ -5468,7 +5472,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           id: ProviderTurnId.make("provider-turn-claude-cursor-next"),
           ordinal: providerTurn.ordinal + 1,
         },
-      ]);
+      ] satisfies ReadonlyArray<typeof providerTurn>;
+      const semanticError = yield* rollbackTo(turnsAcrossSilent).pipe(Effect.flip);
+      assert.instanceOf(semanticError, ProviderAdapter.ProviderAdapterRollbackThreadError);
+      const pastSilentTurn = yield* rollbackTo(turnsAcrossSilent, "/compact");
       assert.equal(
         pastSilentTurn.providerThread.nativeConversationHeadRef?.nativeId,
         earlierCursor,

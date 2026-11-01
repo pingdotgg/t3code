@@ -2030,15 +2030,16 @@ const resolveClaudeRollbackResumeSessionAt = Effect.fn(
         return null;
       }
 
-      // Turns with no main-thread assistant message, such as `/compact`, record no cursor.
-      // The latest earlier cursor resumes the same conversation without that turn.
-      const earlierCursor = input.providerThreadTurns
-        .filter((turn) => turn.ordinal < target.providerTurn.ordinal)
-        .toSorted((left, right) => left.ordinal - right.ordinal)
-        .map(claudeTurnCursor)
-        .findLast((candidate) => candidate !== null);
-      if (earlierCursor != null) {
-        return earlierCursor;
+      // Only compaction can be omitted without dropping a retained user prompt.
+      if (target.message !== undefined && isCompactionCommandMessage(target.message)) {
+        const earlierCursor = input.providerThreadTurns
+          .filter((turn) => turn.ordinal < target.providerTurn.ordinal)
+          .toSorted((left, right) => left.ordinal - right.ordinal)
+          .map(claudeTurnCursor)
+          .findLast((candidate) => candidate !== null);
+        if (earlierCursor != null) {
+          return earlierCursor;
+        }
       }
 
       return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
