@@ -2577,6 +2577,39 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("reads range patches from source without running textconv", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["config", "diff.probe.textconv", "touch textconv-ran; echo converted"]);
+        yield* git(cwd, ["checkout", "-b", "feature/range"]);
+        yield* writeTextFile(cwd, ".gitattributes", "*.doc diff=probe\n");
+        yield* writeTextFile(cwd, "notes.doc", "source line\n");
+        yield* writeTextFile(cwd, "plain.txt", "plain line\n");
+        yield* writeTextFile(cwd, "binary.dat", "binary\0data");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "range files"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fileSystem = yield* FileSystem.FileSystem;
+
+        const context = yield* driver.readRangeContext(cwd, initialBranch);
+
+        assert.include(context.diffPatch, "+source line");
+        assert.notInclude(context.diffPatch, "converted");
+        assert.include(context.diffPatch, "+plain line");
+        assert.include(context.diffPatch, "Binary files /dev/null and b/binary.dat differ");
+        assert.include(context.diffSummary, "notes.doc");
+        assert.isFalse(yield* fileSystem.exists(`${cwd}/textconv-ran`));
+
+        yield* writeTextFile(cwd, "notes.doc", "updated source line\n");
+        const staged = yield* driver.prepareCommitContext(cwd, ["notes.doc"]);
+        assert.include(staged?.stagedPatch ?? "", "+updated source line");
+        assert.notInclude(staged?.stagedPatch ?? "", "converted");
+        assert.include(staged?.stagedSummary ?? "", "notes.doc");
+        assert.isFalse(yield* fileSystem.exists(`${cwd}/textconv-ran`));
+      }),
+    );
+
     it.effect("loads new and deleted files without reading their missing side", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
