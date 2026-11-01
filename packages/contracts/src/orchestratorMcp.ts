@@ -95,9 +95,10 @@ export type OrchestratorMcpTargetOptions = typeof OrchestratorMcpTargetOptions.T
 
 export const OrchestratorMcpTarget = Schema.Struct({
   providerInstanceId: Schema.optional(
-    ProviderInstanceId.annotate({
-      description: "Provider instance id from `orchestrator_capabilities`.",
-    }),
+    // JSON Schema shows a transform's encoded side, so `.annotate` would never reach tools/list.
+    ProviderInstanceId.pipe(
+      Schema.annotateEncoded({ description: "From orchestrator_capabilities." }),
+    ),
   ),
   driverKind: Schema.optional(
     ProviderDriverKind.annotate({
