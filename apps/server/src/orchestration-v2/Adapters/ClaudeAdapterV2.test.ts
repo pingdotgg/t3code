@@ -1512,6 +1512,74 @@ describe("ClaudeAdapterV2 resume compaction", () => {
         assert.isFunction(callback);
         const canUseTool = openedOptions?.canUseTool;
         assert.isFunction(canUseTool);
+        const shellSafetyReason =
+          "Dangerous rm operation not ruled out — the shell may read this command differently than it was parsed";
+        for (const [safetyIndex, { askRule, reason }] of [
+          { askRule: false, reason: shellSafetyReason },
+          { askRule: true, reason: shellSafetyReason },
+          {
+            askRule: false,
+            reason:
+              "Dangerous rm operation on possibly-empty variable path: $TARGET\nUse a literal absolute path instead.",
+          },
+          { askRule: false, reason: "This shell -c script runs rm and could not be checked" },
+          { askRule: false, reason: "A permission rule denies a command in this shell -c script" },
+        ].entries()) {
+          const safetyRequest = yield* runtime.events.pipe(
+            Stream.filter((event) => event.type === "runtime_request.updated"),
+            Stream.runHead,
+            Effect.forkScoped,
+          );
+          const safetySignal = yield* Effect.abortSignal;
+          const safetyDecision = yield* Effect.promise(() =>
+            canUseTool!(
+              "Bash",
+              { command: "for pair in a b; do echo $pair; done" },
+              {
+                signal: safetySignal,
+                toolUseID: `tool-shell-safety-${safetyIndex}`,
+                requestId: `request-shell-safety-${safetyIndex}`,
+                decisionReason: `\u001b[33m${reason}\u001b[39m`,
+                suppressAlwaysAllowRule: true,
+                ...(askRule
+                  ? {
+                      matchedAskRule: {
+                        source: "userSettings" as const,
+                        toolName: "Bash",
+                        ruleContent: "*",
+                      },
+                    }
+                  : {}),
+              },
+            ),
+          ).pipe(Effect.forkScoped);
+          const safety = yield* Effect.raceFirst(
+            Fiber.join(safetyDecision).pipe(
+              Effect.map((result) => ({ type: "decision", result }) as const),
+            ),
+            Fiber.join(safetyRequest).pipe(
+              Effect.map((event) => ({ type: "approval", event }) as const),
+            ),
+          );
+          assert.equal(safety.type, askRule ? "approval" : "decision");
+          if (safety.type === "decision") {
+            assert.equal(safety.result?.behavior, "deny");
+            if (safety.result?.behavior === "deny") {
+              assert.include(safety.result.message, reason);
+              assert.notInclude(safety.result.message, "\u001b[");
+            }
+          } else if (
+            Option.isSome(safety.event) &&
+            safety.event.value.type === "runtime_request.updated"
+          ) {
+            yield* runtime.respondToRuntimeRequest({
+              requestId: safety.event.value.runtimeRequest.id,
+              decision: "decline",
+            });
+            assert.equal((yield* Fiber.join(safetyDecision))?.behavior, "deny");
+          }
+          yield* Fiber.interrupt(safetyRequest);
+        }
         const longQuestion = `Choose a deployment target: ${"region ".repeat(80)}`;
         const questionRequestEvent = yield* runtime.events.pipe(
           Stream.filter((event) => event.type === "runtime_request.updated"),
@@ -3877,6 +3945,32 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal((yield* Fiber.join(forwardedDecision))?.behavior, "deny");
           yield* harness.offerAndWait(frame);
         }
+        const fallbackDecision = yield* Effect.promise(() =>
+          harness.getOpenedOptions()!.canUseTool!(
+            "Bash",
+            { command: "echo checked" },
+            {
+              signal: new AbortController().signal,
+              toolUseID: "safety-check-after-downgrade",
+              requestId: "request-safety-check-after-downgrade",
+              decisionReason:
+                "Dangerous rm operation not ruled out — the shell may read this command differently than it was parsed",
+            },
+          ),
+        ).pipe(Effect.forkScoped);
+        const fallbackFirst = yield* Effect.raceFirst(
+          Queue.take(harness.runtimeRequestReceipts).pipe(
+            Effect.map((event) => ({ type: "request", event }) as const),
+          ),
+          Fiber.join(fallbackDecision).pipe(Effect.map(() => ({ type: "decision" }) as const)),
+        );
+        assert.equal(fallbackFirst.type, "request");
+        if (fallbackFirst.type !== "request") return;
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: fallbackFirst.event.runtimeRequest.id,
+          decision: "decline",
+        });
+        assert.equal((yield* Fiber.join(fallbackDecision))?.behavior, "deny");
         yield* finish;
         const unrestrictedOptions = harness.getOpenedOptions();
         yield* start("/unrestricted");
@@ -8720,6 +8814,126 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("lets the native SDK acknowledge Stop before closing its own query", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let closes = 0;
+        let acknowledge = Effect.void;
+        const harness = yield* makeWakeHarnessWithOptions({
+          interrupt: Effect.suspend(() => {
+            assert.equal(closes, 0);
+            return acknowledge;
+          }),
+          close: (messages) =>
+            Effect.sync(() => {
+              closes++;
+            }).pipe(Effect.andThen(Queue.shutdown(messages))),
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("graceful-stop"),
+            text: "Work until stopped",
+            attachments: [],
+          }),
+        );
+        acknowledge = harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000620",
+            result: "",
+            subtype: "error_during_execution",
+            errors: ["Error: Request was aborted."],
+            terminalReason: "aborted_streaming",
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+          ),
+        );
+        const active = harness.events.find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+        );
+        if (active?.type !== "provider_turn.updated")
+          return yield* Effect.die("Missing running native turn");
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: active.providerTurn.id,
+          requestRuntimeRestart: true,
+        });
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+        assert.equal(closes, 1);
+        assert.lengthOf(harness.terminalEvents(), 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("bounds an unacknowledged native Stop and settles its turn once", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let closes = 0;
+        const interruptStarted = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          interrupt: Deferred.succeed(interruptStarted, undefined).pipe(
+            Effect.andThen(Effect.never),
+          ),
+          close: (messages) =>
+            Effect.sync(() => {
+              closes++;
+            }).pipe(Effect.andThen(Queue.shutdown(messages))),
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("unacknowledged-stop"),
+            text: "Work until stopped",
+            attachments: [],
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+          ),
+        );
+        const active = harness.events.find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+        );
+        if (active?.type !== "provider_turn.updated")
+          return yield* Effect.die("Missing running native turn");
+        const stop = yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: active.providerTurn.id,
+            requestRuntimeRestart: true,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(interruptStarted);
+        assert.equal(closes, 0);
+        yield* TestClock.adjust("11 seconds");
+        yield* Fiber.join(stop);
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+        assert.equal(closes, 1);
+        assert.lengthOf(harness.terminalEvents(), 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
   );
 
   it.effect("preserves settled background work until an explicit stop", () =>

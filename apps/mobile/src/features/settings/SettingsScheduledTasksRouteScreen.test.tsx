@@ -250,8 +250,8 @@ describe("scheduled task batched edits", () => {
     if (!editor) throw new Error("Missing editor");
     act(() => startScheduledTaskEditor({ ...editor, draft: { ...editor.draft, task: null } }));
     act(() => {
-      button("Interval").click();
       button("Select Target").click();
+      button("Interval").click();
       button("Select Project").click();
     });
     expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current).toMatchObject({
