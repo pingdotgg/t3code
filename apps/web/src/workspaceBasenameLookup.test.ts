@@ -17,6 +17,33 @@ describe("pickWorkspaceBasenameMatch", () => {
     );
   });
 
+  it("resolves a slashed path to the one indexed file that ends with it", () => {
+    expect(pickWorkspaceBasenameMatch("components/ChatView.tsx", entries)).toBe(
+      "apps/web/src/components/ChatView.tsx",
+    );
+    expect(pickWorkspaceBasenameMatch("./web/src/components/ChatView.tsx", entries)).toBe(
+      "apps/web/src/components/ChatView.tsx",
+    );
+  });
+
+  it("falls back to a unique case-insensitive suffix for a slashed path", () => {
+    expect(pickWorkspaceBasenameMatch("Components/chatview.tsx", entries)).toBe(
+      "apps/web/src/components/ChatView.tsx",
+    );
+  });
+
+  it("does not match a slashed path on a partial segment or when it is ambiguous", () => {
+    expect(pickWorkspaceBasenameMatch("mponents/ChatView.tsx", entries)).toBeNull();
+    expect(pickWorkspaceBasenameMatch("../src/components/ChatView.tsx", entries)).toBeNull();
+    expect(pickWorkspaceBasenameMatch("~/src/components/ChatView.tsx", entries)).toBeNull();
+    expect(
+      pickWorkspaceBasenameMatch("src/foo.ts", [
+        { path: "apps/web/src/foo.ts", kind: "file" },
+        { path: "apps/desktop/src/foo.ts", kind: "file" },
+      ]),
+    ).toBeNull();
+  });
+
   // regression: #6297 a bare filename resolves to a file, never a same-named directory
   it("ignores directories", () => {
     expect(
