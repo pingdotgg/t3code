@@ -35,7 +35,7 @@ export function TailscaleSignInRow({
               ? ""
               : "T3 Code accepts tailnet connections and refuses LAN connections. "
           }T3 Code will restart.`
-        : "Turn off Tailscale sign-in?\nDevices that signed in through Tailscale disconnect within an hour. T3 Code will restart.",
+        : "Turn off Tailscale sign-in?\nDevices that signed in through Tailscale disconnect. T3 Code will restart.",
     );
     if (confirmed !== true) return;
     setIsUpdating(true);

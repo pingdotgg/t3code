@@ -175,7 +175,10 @@ export const planRoutes = (
 };
 
 const CHOICES = {
-  tailscale: { title: "Tailscale", description: "Tailnet devices. No pairing code." },
+  tailscale: {
+    title: "Tailscale",
+    description: "Your untagged devices, or those your policy grants. No pairing code.",
+  },
   connect: { title: "T3 Connect", description: "Creates a tunnel to control your PC." },
   lan: { title: "Local network", description: "LAN and tailnet. Pairing code required." },
 } satisfies Record<Route, { readonly title: string; readonly description: string }>;
@@ -224,10 +227,10 @@ const formatSetup = (setup: Setup) => {
   ];
   const notes = [
     ...(setup.host === undefined && settings.lan
-      ? ["Anyone on your LAN or tailnet can reach the port. A pairing code is the only lock."]
-      : []),
-    ...(setup.lanFromOldDefault
-      ? ["Older installs keep LAN access on. Turn it off: `t3 up --no-lan`."]
+      ? [
+          "Anyone on your LAN or tailnet can reach the port. A pairing code is the only lock.",
+          "Turn it off: `t3 up --no-lan`.",
+        ]
       : []),
     ...(settings.tailscale && setup.requireGrant
       ? ["No device can sign in through Tailscale until your tailnet policy grants it."]
@@ -452,8 +455,12 @@ const tailscaleEntries = Effect.fn("cli.up.tailscale_entries")(function* (
       `Custom port ${configuredPort} from ${serviceEnvPath}. Other devices find machines only on port ${ServerConfig.DEFAULT_PORT}, so add this one by name and port.`,
     );
   }
+  const saved = entries.T3CODE_TAILSCALE_OWNER;
   return {
-    owner,
+    // A saved owner still names the box in the printed grant when grants are required.
+    owner:
+      owner ??
+      (saved === undefined ? null : { userId: saved, login: loginOf(tailscale.status, saved) }),
     port,
     entries: {
       T3CODE_TAILSCALE_SIGN_IN: "true",
@@ -553,7 +560,10 @@ const setUp = Effect.fn("cli.up")(function* (
   );
   const interactive = !flags.yes && interactiveTerminal();
   let routes = plan.routes;
+  // An older install's LAN access stays marked as such until someone chooses it.
+  let lanChosen = Option.isSome(flags.lan) || !before.lanFromOldDefault;
   if (plan.ask.length > 0 && interactive) {
+    lanChosen = true;
     if (before.service.installed) yield* Console.log(`Current setup\n${formatSetup(before)}\n`);
     if (!tailscale.ok) yield* Console.log(`${tailscale.reason}\n`);
     const picked = yield* Prompt.run(
@@ -611,7 +621,7 @@ const setUp = Effect.fn("cli.up")(function* (
       ? yield* tailscaleEntries(tailscale, flags, requireGrant)
       : null;
   const writes: Readonly<Record<string, string | undefined>> = {
-    T3CODE_LAN: String(routes.lan),
+    ...(lanChosen ? { T3CODE_LAN: String(routes.lan) } : {}),
     ...(routes.tailscale ? (signIn?.entries ?? {}) : current.tailscale ? TAILSCALE_OFF : {}),
   };
   const planned = Object.fromEntries(

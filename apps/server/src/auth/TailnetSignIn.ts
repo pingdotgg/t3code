@@ -204,7 +204,7 @@ const refuseNode = (
   return null;
 };
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const host = yield* TailscaleHost.TailscaleHost;
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -646,6 +646,25 @@ const make = Effect.gen(function* () {
     yield* recheckSessions.pipe(
       Effect.repeat(Schedule.spaced(RECHECK_INTERVAL)),
       Effect.forkScoped,
+    );
+  } else {
+    // Turning sign-in off ends Tailscale sessions now, not when they expire.
+    const signedIn = new Map(
+      (yield* sessions.listActive())
+        .filter((session) => session.subject.startsWith(TAILNET_SUBJECT_PREFIX))
+        .map((session) => [
+          session.subject.slice(TAILNET_SUBJECT_PREFIX.length),
+          session.client.label ?? null,
+        ]),
+    );
+    yield* Effect.forEach(signedIn, ([stableNodeId, label]) =>
+      endAccess(stableNodeId, "sign_in_off", { device: label ?? stableNodeId, user: null }),
+    ).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not end Tailscale sessions after sign-in was turned off.", {
+          cause,
+        }),
+      ),
     );
   }
 

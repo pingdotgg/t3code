@@ -15,8 +15,9 @@ For a command-line host, run:
 t3 up
 ```
 
-It asks how your other devices reach the machine: T3 Connect, the local network,
-or both. Choose T3 Connect and follow the sign-in instructions. On Linux and
+It asks how your other devices reach the machine: Tailscale (offered when it runs
+there), T3 Connect, the local network, or more than one. Choose T3 Connect and
+follow the sign-in instructions. On Linux and
 macOS, it then runs T3 Code as a [background service](./background-service.md).
 `t3 connect` is the same as `t3 up --connect`. Run `t3 up` again to change your
 choice, and `t3 status` to see it.

@@ -300,13 +300,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       envAfter: "T3CODE_LAN=false\n",
     },
     {
-      label: "the old default is kept",
+      // Not written as a choice, so status keeps calling it the older install's.
+      label: "the old default is kept, still marked as the old default",
       installed: true,
       env: "",
       args: ["--yes"],
       installs: 0,
       restarts: 0,
-      envAfter: "T3CODE_LAN=true\n",
+      envAfter: "",
     },
   ])("restarts the service only when it must: $label", (input) =>
     Effect.gen(function* () {

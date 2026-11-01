@@ -573,6 +573,24 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       },
     );
 
+    it.effect("turning sign-in off ends Tailscale sessions at the next start", () => {
+      const tailnet = withLaptop();
+      return Effect.gen(function* () {
+        const key = makeDpopKey();
+        const session = yield* exchange((yield* signIn(key)).credential, key);
+        const config = yield* ServerConfig.ServerConfig;
+        yield* TailnetSignIn.make.pipe(
+          Effect.provideService(ServerConfig.ServerConfig, {
+            ...config,
+            tailscaleSignInEnabled: false,
+          }),
+          Effect.provide(layerTailscaleHost(tailnet)),
+          Effect.scoped,
+        );
+        expect(yield* revoked(session.access_token)).toBe(true);
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
     it.effect("a device that loses or narrows its grant, or leaves, is cut off", () => {
       const tailnet = withLaptop();
       return Effect.gen(function* () {
