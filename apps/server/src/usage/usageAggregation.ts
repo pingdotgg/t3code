@@ -107,7 +107,8 @@ const selectorKey = (selector: UsageModelSelector) =>
 
 const canonicalSelectors = (selectors: readonly UsageModelSelector[]) =>
   [...new Map(selectors.map((selector) => [selectorKey(selector), selector]))]
-    .sort(([a], [b]) => a.localeCompare(b))
+    // Code-unit order, so servers in different locales echo the same form.
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([, selector]) => selector);
 
 /** Equal filters get one form, so they share scans and clients can compare echoed filters. */
