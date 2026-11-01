@@ -318,7 +318,7 @@ describe("CLIProxyAPI built-in management API", () => {
         accounts: [{ ...accounts[0]!, provider: "claude" }],
         // The usage endpoint answers 429 to requests without a Claude Code user agent.
         upstream: (request) => ({
-          status: request.header?.["User-Agent"]?.startsWith("claude-code/") ? 200 : 429,
+          status: request.header?.["User-Agent"]?.startsWith("claude-cli/") ? 200 : 429,
           body: {
             five_hour: { utilization: 10, resets_at: null },
             seven_day: { utilization: 50, resets_at: "2099-01-01T00:00:00Z" },
@@ -343,6 +343,112 @@ describe("CLIProxyAPI built-in management API", () => {
         ["seven_day_fable", 80],
       ]);
     }),
+  );
+
+  it.effect("reads Claude hub reset availability without offering hub redemption", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1788710400000);
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: (request) => ({
+          status: 200,
+          body: {
+            five_hour: { utilization: 10, resets_at: null },
+            cedar_ember:
+              !new URL(request.url!).searchParams.has("cedar_ember") ||
+              request.header?.["User-Agent"] !== "claude-cli/2.1.273 (external, cli)"
+                ? { eligible: false, ineligible_reason: "surface" }
+                : {
+                    eligible: true,
+                    next_grant_id: "grant_a",
+                    grants: [
+                      {
+                        id: "grant_a",
+                        resets_left: 1,
+                        usable_now: true,
+                        ends_at: "2099-01-01T00:00:00Z",
+                      },
+                      {
+                        id: "expired",
+                        resets_left: 1,
+                        usable_now: true,
+                        ends_at: "2000-01-01T00:00:00Z",
+                      },
+                      { id: "paused", resets_left: 1, usable_now: true, paused: true },
+                      { id: "spent", resets_left: 0, usable_now: false },
+                    ],
+                  },
+            juniper_tide: { available: true },
+          },
+        }),
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result[0]?.usageLimits).toMatchObject({
+        resetCredits: { availableCount: 1, nextExpiresAt: "2099-01-01T00:00:00.000Z" },
+        atLimitReset: { available: true },
+        windows: [{ id: "five_hour", usedPercent: 10 }],
+      });
+      expect(result[0]?.usageLimits.resetCredits).not.toHaveProperty("nextCreditId");
+      expect(test.requests.filter((request) => request.body?.url)).toMatchObject([
+        {
+          body: {
+            method: "GET",
+            url: "https://api.anthropic.com/api/oauth/usage?cedar_ember=1&at_wall=1",
+          },
+        },
+      ]);
+      expect((yield* api.consume(config, "first.json", "grant_a").pipe(Effect.result))._tag).toBe(
+        "Failure",
+      );
+      expect(test.requests.some((request) => request.body?.method === "POST")).toBe(false);
+    }),
+  );
+
+  it.effect.each([["empty", { eligible: true, grants: [] }]] as const)(
+    "reports confirmed zero Claude hub resets when %s",
+    ([, block]) =>
+      Effect.gen(function* () {
+        const api = yield* fixture({
+          accounts: [{ ...accounts[0]!, provider: "claude" }],
+          upstream: () => ({
+            status: 200,
+            body: { cedar_ember: block, juniper_tide: { available: false } },
+          }),
+        }).api;
+        expect((yield* api.readAccounts(config))[0]?.usageLimits).toMatchObject({
+          resetCredits: { availableCount: 0 },
+          atLimitReset: { available: false },
+        });
+      }),
+  );
+
+  it.effect.each([
+    ["ineligible", { cedar_ember: { eligible: false, ineligible_reason: "surface" } }],
+    ["incomplete inventory", { cedar_ember: { eligible: true } }],
+    ["malformed grant", { cedar_ember: { eligible: true, grants: [{ resets_left: "2" }] } }],
+    ["missing", {}],
+    ["null", { cedar_ember: null, juniper_tide: null }],
+    ["malformed", { cedar_ember: "invalid", juniper_tide: { available: "false" } }],
+  ] as const)(
+    "keeps Claude reset status unknown when %s without dropping usage windows",
+    ([, blocks]) =>
+      Effect.gen(function* () {
+        const api = yield* fixture({
+          accounts: [{ ...accounts[0]!, provider: "claude" }],
+          upstream: () => ({
+            status: 200,
+            body: { five_hour: { utilization: 10, resets_at: null }, ...blocks },
+          }),
+        }).api;
+        const [account] = yield* api.readAccounts(config);
+        expect(account?.usageLimits).toMatchObject({
+          atLimitReset: { available: null },
+          windows: [{ id: "five_hour", usedPercent: 10 }],
+        });
+        expect(account?.usageLimits.resetCredits).toBeUndefined();
+        expect(account?.usageLimits.unavailable).toBeUndefined();
+      }),
   );
 
   it.effect.each([
@@ -488,6 +594,38 @@ describe("CLIProxyAPI built-in management API", () => {
       const result = yield* api.consume(config, "missing.json", "credit").pipe(Effect.result);
       expect(result._tag).toBe("Failure");
       expect(test.requests).toHaveLength(1);
+    }),
+  );
+
+  it.effect("counts banked credits before they can be redeemed", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1788710400000);
+      const api = yield* fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: () => ({
+          status: 200,
+          body: {
+            cedar_ember: {
+              eligible: true,
+              grants: [
+                {
+                  resets_left: 2,
+                  usable_now: false,
+                  use_requires_limit: true,
+                  ends_at: "2099-01-01T00:00:00Z",
+                },
+                { resets_left: 3, starts_at: "2098-01-01T00:00:00Z" },
+                { resets_left: 4, paused: true },
+                { resets_left: 5, ends_at: "2000-01-01T00:00:00Z" },
+              ],
+            },
+          },
+        }),
+      }).api;
+      expect((yield* api.readAccounts(config))[0]?.usageLimits.resetCredits).toEqual({
+        availableCount: 2,
+        nextExpiresAt: "2099-01-01T00:00:00.000Z",
+      });
     }),
   );
 });

@@ -11,6 +11,7 @@ import {
   isProviderAvailable,
   type ServerProvider,
   type ServerProviderUsageLimits,
+  type ServerProviderResetCredits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
@@ -254,6 +255,7 @@ export interface LimitAccount {
 export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
+  const atLimitSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
   const planSources = new Map<string, LimitAccount>();
   const merge = (key: string, next: LimitAccount) => {
@@ -270,9 +272,20 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     if (
       next.limits.resetCredits &&
       (!previousCredit ||
+        (next.limits.atLimitReset &&
+          !previousCredit.limits.atLimitReset &&
+          previousCredit.limits.resetCredits?.availableCount === 0) ||
         Date.parse(next.limits.checkedAt) > Date.parse(previousCredit.limits.checkedAt))
     ) {
       creditSources.set(key, next);
+    }
+    const previousAtLimit = atLimitSources.get(key);
+    if (
+      next.limits.atLimitReset &&
+      (!previousAtLimit ||
+        Date.parse(next.limits.checkedAt) > Date.parse(previousAtLimit.limits.checkedAt))
+    ) {
+      atLimitSources.set(key, next);
     }
     const previousPlan = planSources.get(key);
     if (
@@ -297,6 +310,11 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     ];
     const winner = fresher ? next : previous;
     const creditSource = creditSources.get(key);
+    const atLimitReset = atLimitSources.get(key)?.limits.atLimitReset;
+    const nativeEmpty =
+      atLimitReset &&
+      !creditSource?.limits.atLimitReset &&
+      creditSource?.limits.resetCredits?.availableCount === 0;
     accounts.set(key, {
       ...previous,
       displayName: previous.displayName ?? next.displayName,
@@ -304,14 +322,14 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
-      redeem:
-        hubRedeems.get(key)?.redeem ??
-        (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
+      redeem: nativeEmpty
+        ? null
+        : (hubRedeems.get(key)?.redeem ??
+          (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem))),
       limits: {
         ...winner.limits,
-        ...(creditSource?.limits.resetCredits
-          ? { resetCredits: creditSource.limits.resetCredits }
-          : { resetCredits: undefined }),
+        ...(atLimitReset ? { atLimitReset } : {}),
+        resetCredits: nativeEmpty ? undefined : creditSource?.limits.resetCredits,
       },
     });
   };
@@ -793,46 +811,59 @@ export function collectProviderUsageLimits(
     credits,
   } of native) {
     const key = resolveKey(nativeReport(provider));
-    const hubCredits = sources
+    const hubAccounts = sources
       .flatMap((source) => source.accounts.map((account) => ({ source, account })))
       .filter(
         ({ account }) =>
-          key !== null &&
-          resolveKey(account) === key &&
-          account.usageLimits.resetCredits &&
-          !limitsNotice(account.usageLimits),
+          key !== null && resolveKey(account) === key && !limitsNotice(account.usageLimits),
       )
       .sort(
         (a, b) =>
           Date.parse(b.account.usageLimits.checkedAt) - Date.parse(a.account.usageLimits.checkedAt),
-      )[0];
+      );
+    const hubCredits = hubAccounts.find(({ account }) => account.usageLimits.resetCredits);
+    const atLimitReset = hubAccounts.find(({ account }) => account.usageLimits.atLimitReset)
+      ?.account.usageLimits.atLimitReset;
     const hubCreditId = hubCredits?.account.usageLimits.resetCredits?.nextCreditId;
     const showHubCredits =
       hubCredits &&
       (!credits ||
+        (hubCredits.account.usageLimits.atLimitReset &&
+          credits.limits.resetCredits?.availableCount === 0) ||
         Date.parse(hubCredits.account.usageLimits.checkedAt) >
           Date.parse(credits.limits.checkedAt));
     const shownCredits = showHubCredits
       ? hubCredits.account.usageLimits.resetCredits
-      : credits?.limits.resetCredits;
+      : atLimitReset && !hubCredits && credits?.limits.resetCredits?.availableCount === 0
+        ? undefined
+        : credits?.limits.resetCredits;
     accounts.push({
       id: provider.instanceId,
       driver: provider.driver,
       label: `${provider.displayName?.trim() || String(provider.driver)} [${provider.instanceId}]`,
       ...(provider.auth.label ? { plan: provider.auth.label } : {}),
       instanceId: provider.instanceId,
-      resetCreditInput:
-        hubCreditId && hubCredits
-          ? {
+      ...(hubCreditId && hubCredits
+        ? {
+            resetCreditInput: {
               sourceId: hubCredits.source.id,
               accountId: hubCredits.account.id,
               creditId: hubCreditId,
-            }
-          : { instanceId: credits?.provider.instanceId ?? provider.instanceId },
+            },
+          }
+        : showHubCredits || (atLimitReset && !shownCredits)
+          ? {}
+          : {
+              resetCreditInput: { instanceId: credits?.provider.instanceId ?? provider.instanceId },
+            }),
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
       ...(provider.auth.email ? { email: provider.auth.email } : {}),
-      limits: shownCredits ? { ...limits, resetCredits: shownCredits } : limits,
+      limits: {
+        ...limits,
+        resetCredits: shownCredits,
+        ...(atLimitReset ? { atLimitReset } : {}),
+      },
     });
   }
   for (const source of sources) {
@@ -864,4 +895,29 @@ export function collectProviderUsageLimits(
     }
   }
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
+}
+
+export interface ResetAvailability {
+  readonly weekly: boolean;
+  readonly banked: ServerProviderResetCredits | null;
+  /** Set only when no reset is known to be available. */
+  readonly unavailable: "No reset available" | "Reset status unknown" | null;
+}
+
+/**
+ * Null for sources that do not report the weekly at-limit reset, which keep their existing display.
+ * "None" needs both halves confirmed, so a missing half never reads as no.
+ */
+export function resetAvailability(limits: ServerProviderUsageLimits): ResetAvailability | null {
+  if (!limits.atLimitReset) return null;
+  const weekly = limits.atLimitReset.available === true;
+  const credits = limits.resetCredits;
+  const banked = credits && credits.availableCount > 0 ? credits : null;
+  const unavailable =
+    weekly || banked
+      ? null
+      : limits.atLimitReset.available === false && credits
+        ? "No reset available"
+        : "Reset status unknown";
+  return { weekly, banked, unavailable };
 }

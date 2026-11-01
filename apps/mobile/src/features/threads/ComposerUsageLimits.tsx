@@ -1,9 +1,11 @@
+import { resetAvailability } from "@t3tools/shared/usageLimits";
 import type { EnvironmentId, UsageLimitsReport } from "@t3tools/contracts";
+import { limitsNotice } from "@t3tools/shared/usageLimits";
 import { Pressable, ScrollView, View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
-import { AccountLimits, ResetCredits } from "../usage/UsageLimitsSection";
+import { AccountLimits, ResetCredits, ResetStatus } from "../usage/UsageLimitsSection";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
 
@@ -34,10 +36,25 @@ export function ComposerUsageLimits({
     <View className="overflow-hidden rounded-[20px] border-continuous bg-card">
       <ScrollView bounces={false} showsVerticalScrollIndicator={false} style={{ maxHeight }}>
         {report.accounts.map((account, index) => {
+          // The hub's count is read-only, so a row with its reset redeems only by explicit input.
           const resetCreditInput =
             account.resetCreditInput ??
-            (account.instanceId ? { instanceId: account.instanceId } : undefined);
+            (account.instanceId && !account.limits.atLimitReset
+              ? { instanceId: account.instanceId }
+              : undefined);
           const driverLabel = DRIVER_LABEL[account.driver] ?? String(account.driver);
+          // A failed read says nothing about resets, so it cannot show a stale yes.
+          const resets = limitsNotice(account.limits) ? null : resetAvailability(account.limits);
+          const redeemCredits =
+            resetCreditInput && account.limits.resetCredits ? (
+              <ResetCredits
+                dense
+                environmentId={environmentId}
+                input={resetCreditInput}
+                credits={account.limits.resetCredits}
+                now={now}
+              />
+            ) : null;
           return (
             <AccountLimits
               key={account.id}
@@ -59,15 +76,11 @@ export function ComposerUsageLimits({
               now={now}
               trailing={index === 0 ? close : undefined}
               footer={
-                resetCreditInput && account.limits.resetCredits ? (
-                  <ResetCredits
-                    dense
-                    environmentId={environmentId}
-                    input={resetCreditInput}
-                    credits={account.limits.resetCredits}
-                    now={now}
-                  />
-                ) : undefined
+                resets ? (
+                  <ResetStatus dense resets={resets} now={now} redeem={redeemCredits} />
+                ) : (
+                  redeemCredits
+                )
               }
             />
           );

@@ -9,6 +9,7 @@ import {
   UsageProviderKind,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import type { ResetAvailability } from "@t3tools/shared/usageLimits";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   formatDuration,
@@ -316,6 +317,30 @@ export function resetCreditsSummary(
   return `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
     expiresIn ? ` · next expires in ${expiresIn}` : ""
   }`;
+}
+
+/** `redeem` replaces the read-only banked line where the credit can be spent. */
+export function ResetStatus({
+  resets,
+  now,
+  compact = false,
+  redeem,
+}: {
+  readonly resets: ResetAvailability;
+  readonly now: number;
+  readonly compact?: boolean;
+  readonly redeem?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+      {resets.weekly ? <span className="text-foreground">Weekly reset available</span> : null}
+      {redeem ??
+        (resets.banked ? (
+          <span className="tabular-nums">{resetCreditsSummary(resets.banked, now, compact)}</span>
+        ) : null)}
+      {resets.unavailable ? <span>{resets.unavailable}</span> : null}
+    </div>
+  );
 }
 
 export function ResetCredits({

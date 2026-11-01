@@ -1,3 +1,4 @@
+import { resetAvailability } from "@t3tools/shared/usageLimits";
 import type { EnvironmentId, UsageLimitsReport } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { limitsNotice } from "@t3tools/shared/usageLimits";
@@ -8,7 +9,7 @@ import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { providerClients } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
-import { LimitWindows, ResetCredits } from "../usage/UsageLimits";
+import { LimitWindows, ResetCredits, ResetStatus } from "../usage/UsageLimits";
 import { ComposerBanner } from "./ComposerBanner";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
@@ -114,10 +115,24 @@ function UsageLimitsBannerBody({
     <ComposerBanner.Scroll>
       <ComposerBanner.Body className="flex flex-col gap-2 pt-1 pb-1.5 pe-2">
         {report.accounts.map((account) => {
+          // The hub's count is read-only, so a row with its reset redeems only by explicit input.
           const resetCreditInput =
             account.resetCreditInput ??
-            (account.instanceId ? { instanceId: account.instanceId } : undefined);
+            (account.instanceId && !account.limits.atLimitReset
+              ? { instanceId: account.instanceId }
+              : undefined);
           const notice = limitsNotice(account.limits);
+          // A failed read says nothing about resets, so it cannot show a stale yes.
+          const resets = notice ? null : resetAvailability(account.limits);
+          const redeemCredits =
+            resetCreditInput && account.limits.resetCredits ? (
+              <ResetCredits
+                environmentId={environmentId}
+                input={resetCreditInput}
+                credits={account.limits.resetCredits}
+                now={now}
+              />
+            ) : null;
           const externalUsage = account.limits.externalUsage;
           return (
             <div key={account.id} className="flex min-w-0 flex-col gap-1">
@@ -147,14 +162,11 @@ function UsageLimitsBannerBody({
                   Manage usage
                 </Button>
               ) : null}
-              {resetCreditInput && account.limits.resetCredits ? (
-                <ResetCredits
-                  environmentId={environmentId}
-                  input={resetCreditInput}
-                  credits={account.limits.resetCredits}
-                  now={now}
-                />
-              ) : null}
+              {resets ? (
+                <ResetStatus resets={resets} now={now} redeem={redeemCredits} />
+              ) : (
+                redeemCredits
+              )}
             </div>
           );
         })}

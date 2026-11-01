@@ -1,5 +1,6 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomMount, useAtomValue } from "@effect/atom-react";
+import type { ResetAvailability } from "@t3tools/shared/usageLimits";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   AuthProvidersManageScope,
@@ -227,6 +228,43 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
   alreadyRedeemed: "That credit was already redeemed.",
 };
 
+function resetCreditsSummary(credits: ServerProviderResetCredits, now: number): string {
+  if (credits.availableCount === 0) return "No reset credits banked";
+  const expiresIn = credits.nextExpiresAt
+    ? formatDuration(Date.parse(credits.nextExpiresAt) - now)
+    : null;
+  return `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
+    expiresIn ? ` · next expires in ${expiresIn}` : ""
+  }`;
+}
+
+/** `redeem` replaces the read-only banked line where the credit can be spent. */
+export function ResetStatus(props: {
+  readonly resets: ResetAvailability;
+  readonly now: number;
+  readonly dense?: boolean;
+  readonly redeem?: ReactNode;
+}) {
+  const { resets, now, dense = false } = props;
+  const size = dense ? "text-xs" : "text-sm";
+  return (
+    <View className="gap-1">
+      {resets.weekly ? (
+        <Text className={`${size} text-foreground`}>Weekly reset available</Text>
+      ) : null}
+      {props.redeem ??
+        (resets.banked ? (
+          <Text className={`${size} tabular-nums text-foreground-muted`}>
+            {resetCreditsSummary(resets.banked, now)}
+          </Text>
+        ) : null)}
+      {resets.unavailable ? (
+        <Text className={`${size} text-foreground-muted`}>{resets.unavailable}</Text>
+      ) : null}
+    </View>
+  );
+}
+
 export function ResetCredits(props: {
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
@@ -243,15 +281,7 @@ export function ResetCredits(props: {
   const [status, setStatus] = useState<string | null>(null);
   if (dense && credits.availableCount === 0 && status === null) return null;
 
-  const expiresIn = credits.nextExpiresAt
-    ? formatDuration(Date.parse(credits.nextExpiresAt) - now)
-    : null;
-  const summary =
-    credits.availableCount === 0
-      ? "No reset credits banked"
-      : `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
-          expiresIn ? ` · next expires in ${expiresIn}` : ""
-        }`;
+  const summary = resetCreditsSummary(credits, now);
 
   const redeem = async () => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;

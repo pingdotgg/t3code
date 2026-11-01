@@ -4,12 +4,14 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderUsageLimits,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   type LimitAccount,
+  resetAvailability,
   collectProviderUsageLimits,
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -235,6 +237,73 @@ describe("pools", () => {
     });
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
   });
+
+  it.each([undefined, 0, 2])(
+    "keeps hub reset inventory distinct from native usable credits (%s)",
+    (banked) => {
+      const native = provider({
+        driver: claude,
+        auth: { status: "authenticated", email: "same@example.com" },
+        usageLimits: {
+          checkedAt: "2026-09-03T11:30:00.000Z",
+          windows: [window],
+          resetCredits: { availableCount: 0 },
+        },
+      });
+      const input = new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [native],
+              usageLimitSources: [
+                {
+                  ...source,
+                  accounts: [
+                    {
+                      id: "claude.json",
+                      driver: claude,
+                      email: "same@example.com",
+                      usageLimits: {
+                        checkedAt,
+                        windows: [window],
+                        ...(banked === undefined ? {} : { resetCredits: { availableCount: 1 } }),
+                        atLimitReset: { available: true },
+                      },
+                    },
+                    {
+                      id: "claude-newer.json",
+                      driver: claude,
+                      email: "same@example.com",
+                      usageLimits: {
+                        checkedAt: "2026-09-03T11:15:00.000Z",
+                        windows: [window],
+                        ...(banked === undefined
+                          ? {}
+                          : { resetCredits: { availableCount: banked } }),
+                        atLimitReset: { available: false },
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      ]);
+      const [account] = collectLimitAccounts(input);
+      expect(account?.limits).toMatchObject({
+        checkedAt: native.usageLimits?.checkedAt,
+        resetCredits: banked === undefined ? undefined : { availableCount: banked },
+        atLimitReset: { available: false },
+      });
+      expect(account?.redeem).toBeNull();
+      expect(resetAvailability(account!.limits)?.unavailable).toBe(
+        banked === undefined ? "Reset status unknown" : banked === 0 ? "No reset available" : null,
+      );
+    },
+  );
 
   it("uses the freshest reported plan even when the newest quota has no plan", () => {
     const snapshot = (label: string | undefined, checkedAt: string, usedPercent: number) =>
@@ -1101,6 +1170,61 @@ describe("/usage-limits", () => {
     ]);
   });
 
+  it.each([
+    { nativeCredits: undefined, banked: 1 },
+    { nativeCredits: 0, banked: 1 },
+    { nativeCredits: 3, banked: 1 },
+    { nativeCredits: 0, banked: undefined },
+  ])(
+    "keeps merged Claude hub status read-only unless native credits are usable (%s)",
+    ({ nativeCredits, banked }) => {
+      const claude = ProviderDriverKind.make("claudeAgent");
+      const local = provider({
+        driver: claude,
+        auth: { status: "authenticated", email: "same@example.com" },
+        usageLimits: {
+          ...limits,
+          checkedAt: "2026-09-03T11:30:00.000Z",
+          ...(nativeCredits !== undefined
+            ? { resetCredits: { availableCount: nativeCredits } }
+            : {}),
+        },
+      });
+      const hubs = [
+        {
+          ...sources[0]!,
+          accounts: [
+            {
+              id: "duplicate",
+              driver: claude,
+              email: "same@example.com",
+              usageLimits: {
+                ...limits,
+                ...(banked === undefined ? {} : { resetCredits: { availableCount: banked } }),
+                atLimitReset: { available: false },
+              },
+            },
+          ],
+        },
+      ];
+      const [account] = collectProviderUsageLimits(local.instanceId, [local], hubs, now)!.accounts;
+      expect(account?.limits).toMatchObject({
+        resetCredits: nativeCredits
+          ? { availableCount: 3 }
+          : banked === undefined
+            ? undefined
+            : { availableCount: banked },
+        atLimitReset: { available: false },
+      });
+      expect(resetAvailability(account!.limits)?.unavailable).toBe(
+        banked === undefined ? "Reset status unknown" : null,
+      );
+      expect(account?.resetCreditInput).toEqual(
+        nativeCredits ? { instanceId: local.instanceId } : undefined,
+      );
+    },
+  );
+
   it("redeems a native duplicate through the hub even when the native snapshot is fresher", () => {
     const fresher = provider({
       usageLimits: {
@@ -1431,5 +1555,68 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
+  });
+});
+
+const resetLimits = (extra: Partial<ServerProviderUsageLimits>): ServerProviderUsageLimits => ({
+  checkedAt: "2026-10-24T22:38:00.000Z",
+  windows: [],
+  ...extra,
+});
+
+describe("resetAvailability", () => {
+  it("stays silent for sources that do not report the weekly reset", () => {
+    expect(resetAvailability(resetLimits({}))).toBeNull();
+    expect(resetAvailability(resetLimits({ resetCredits: { availableCount: 0 } }))).toBeNull();
+    expect(resetAvailability(resetLimits({ resetCredits: { availableCount: 2 } }))).toBeNull();
+  });
+
+  it("shows a known yes even when the other half is unknown", () => {
+    expect(resetAvailability(resetLimits({ atLimitReset: { available: true } }))).toEqual({
+      weekly: true,
+      banked: null,
+      unavailable: null,
+    });
+    const banked = { availableCount: 2, nextExpiresAt: "2026-10-28T22:38:00.000Z" };
+    expect(
+      resetAvailability(resetLimits({ atLimitReset: { available: null }, resetCredits: banked })),
+    ).toEqual({ weekly: false, banked, unavailable: null });
+  });
+
+  it("does not call a weekly reset unavailable when banked credits are zero", () => {
+    expect(
+      resetAvailability(
+        resetLimits({ atLimitReset: { available: true }, resetCredits: { availableCount: 0 } }),
+      ),
+    ).toEqual({ weekly: true, banked: null, unavailable: null });
+  });
+
+  it("shows both when both are available", () => {
+    const banked = { availableCount: 1 };
+    expect(
+      resetAvailability(resetLimits({ atLimitReset: { available: true }, resetCredits: banked })),
+    ).toEqual({ weekly: true, banked, unavailable: null });
+  });
+
+  it("says none only when both halves are confirmed empty", () => {
+    expect(
+      resetAvailability(
+        resetLimits({ atLimitReset: { available: false }, resetCredits: { availableCount: 0 } }),
+      ),
+    ).toEqual({ weekly: false, banked: null, unavailable: "No reset available" });
+  });
+
+  it("never reads a missing half as none", () => {
+    for (const reported of [
+      resetLimits({ atLimitReset: { available: false } }),
+      resetLimits({ atLimitReset: { available: null }, resetCredits: { availableCount: 0 } }),
+      resetLimits({ atLimitReset: { available: null } }),
+    ]) {
+      expect(resetAvailability(reported)).toEqual({
+        weekly: false,
+        banked: null,
+        unavailable: "Reset status unknown",
+      });
+    }
   });
 });
