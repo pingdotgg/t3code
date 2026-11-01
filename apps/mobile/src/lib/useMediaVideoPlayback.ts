@@ -1,7 +1,7 @@
 import { useIsFocused } from "@react-navigation/native";
 import { useEvent } from "expo";
 import type { VideoPlayer } from "expo-video";
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { AppState } from "react-native";
 
 import { useFullscreenVideoOpen, useMediaAudioSessionHold } from "./videoAudioSession";
@@ -35,7 +35,7 @@ export function useMediaVideoPlayback(
     return () => subscription.remove();
   }, [focused, playback, paused]);
 
-  const createPlayRequest = useCallback(() => {
+  const createPlayRequest = () => {
     const requestedAt = interruption.current;
     const requestedWhileActive = active.current;
     // Returning to the content must not revive playback interrupted during loading.
@@ -43,15 +43,15 @@ export function useMediaVideoPlayback(
       if (requestedWhileActive && active.current && requestedAt === interruption.current)
         return playback.play();
     };
-  }, [playback]);
+  };
 
-  const onFullscreenEnter = useCallback(() => {
+  const onFullscreenEnter = () => {
     fullscreen.current = true;
-  }, []);
-  const onFullscreenExit = useCallback(() => {
+  };
+  const onFullscreenExit = () => {
     fullscreen.current = false;
     if (!active.current) playback.pause();
-  }, [playback]);
+  };
 
   return { active, fullscreen, createPlayRequest, onFullscreenEnter, onFullscreenExit };
 }

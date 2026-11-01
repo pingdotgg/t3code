@@ -8,7 +8,7 @@ import {
   type EnvironmentThreadSearchMatch,
   type ShownOrder,
 } from "@t3tools/client-runtime/state/thread-search";
-import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
+import { isListedThreadLineage, THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import {
   foldSearchQuery,
   PALETTE_MESSAGE_LIMIT,
@@ -17,7 +17,7 @@ import {
   pickedQuery,
   threadRecentUse,
 } from "@t3tools/shared/paletteSearch";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -227,7 +227,7 @@ export function CommandPalette(props: {
   const runCommand = props.onCommand;
   const projects = useProjects();
   const threads = useThreadShells();
-  const activeThreadRef = useMemo(() => parseActiveThreadPath(props.pathname), [props.pathname]);
+  const activeThreadRef = parseActiveThreadPath(props.pathname);
   const activeThread = useThreadShell(activeThreadRef);
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const environments = useWorkspaceEnvironments();
@@ -283,14 +283,10 @@ export function CommandPalette(props: {
     useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
     triageEnvironmentId !== null &&
     serverConfigs.get(triageEnvironmentId)?.environment.capabilities.triage === true;
-  const contentMatchByKey = useMemo(
-    () =>
-      new Map(
-        search.matches
-          .filter((match) => match.source === "user" || match.source === "assistant")
-          .map((match) => [scopedThreadKey(match.environmentId, match.threadId), match]),
-      ),
-    [search.matches],
+  const contentMatchByKey = new Map(
+    search.matches
+      .filter((match) => match.source === "user" || match.source === "assistant")
+      .map((match) => [scopedThreadKey(match.environmentId, match.threadId), match]),
   );
   const items = useMemo(() => {
     const actions: CommandPaletteItem[] = [
@@ -393,7 +389,7 @@ export function CommandPalette(props: {
         ["files", "Go to file", ["open", "files", "browse", "search"]],
         ["terminal", "Open terminal", ["shell", "console"]],
         ["review", "Review changes", ["diff", "git", "pull request"]],
-        ["copyThreadReference", "Copy PR link or thread ID", ["reference", "clipboard"]],
+        ["copyThreadReference", "Copy PR link or thread", ["reference", "clipboard"]],
       ] as const;
       actions.push(
         ...threadActions.map(([command, title, searchTerms]) => ({
@@ -405,7 +401,11 @@ export function CommandPalette(props: {
         })),
       );
     }
-    const projectItems: CommandPaletteItem[] = projects.map((project) => ({
+    const openProjects = projects.filter((project) => project.archivedAt == null);
+    const projectItems: CommandPaletteItem[] = [
+      ...openProjects.filter((project) => project.pinnedAt != null),
+      ...openProjects.filter((project) => project.pinnedAt == null),
+    ].map((project) => ({
       key: `project:${scopedProjectKey(project.environmentId, project.id)}`,
       kind: "project",
       project,
@@ -426,10 +426,7 @@ export function CommandPalette(props: {
         }),
     }));
     const threadItems: CommandPaletteItem[] = threads
-      .filter(
-        (thread) =>
-          thread.archivedAt === null && thread.lineage.relationshipToParent !== "subagent",
-      )
+      .filter((thread) => thread.archivedAt === null && isListedThreadLineage(thread.lineage))
       .map((thread) => {
         const project = projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId));
         const environment =
@@ -560,7 +557,7 @@ export function CommandPalette(props: {
 
   const dismissed = useRef(false);
   const dismissFallback = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleDismissed = useCallback(() => {
+  const handleDismissed = () => {
     if (dismissFallback.current !== null) clearTimeout(dismissFallback.current);
     dismissFallback.current = null;
     if (dismissed.current) return;
@@ -568,7 +565,7 @@ export function CommandPalette(props: {
     // Present navigation sheets only after UIKit has dismissed this modal.
     props.onClose();
     pendingAction.current?.();
-  }, [props]);
+  };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the dismiss fallback timer on unmount
   useEffect(
     () => () => {

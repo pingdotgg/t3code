@@ -1,3 +1,4 @@
+import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -22,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import { McpSchema, McpServer } from "effect/ai";
 
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
@@ -96,9 +98,7 @@ const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTran
   followupResult: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const text = yield* fs.readFileString(
-    decodeURIComponent(delegatedTaskStatusTranscriptFile.pathname),
-  );
+  const text = yield* fs.readFileString(NodeURL.fileURLToPath(delegatedTaskStatusTranscriptFile));
   const transcript = yield* decodeProviderReplayNdjson(
     text.replaceAll(queuedFollowupResult, followupResult),
   );
@@ -182,6 +182,7 @@ const layerUnusedScheduledTaskStub = Layer.succeed(
     setEnabled: () => Effect.die("ScheduledTaskService.setEnabled is unused in this test"),
     delete: () => Effect.die("ScheduledTaskService.delete is unused in this test"),
     deleteForThread: () => Effect.die("unused in this test"),
+    moveThreadTasks: () => Effect.die("unused in this test"),
     runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
     rotateWebhookToken: () => Effect.die("unused in this test"),
     listWebhookDeliveries: () => Effect.die("unused in this test"),
@@ -314,11 +315,11 @@ describe("orchestrator MCP toolkit", () => {
             capabilities: new Set(["orchestration"]),
             issuedAt: 1,
           };
-          const invoke = (name: string, args: Record<string, unknown>) =>
+          const invoke = (name: string, args: Record<string, unknown>, scope = invocation) =>
             server
               .callTool({ name, arguments: args })
               .pipe(
-                Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+                Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
                 Effect.provideService(McpSchema.McpServerClient, client),
               );
 
@@ -595,11 +596,88 @@ describe("orchestrator MCP toolkit", () => {
           expect(finalStatus.latestTerminalResultContextTransferId).not.toBe(
             delegated.resultContextTransferId,
           );
+          const transferReads: Array<string> = [];
+          const messageReads: Array<string> = [];
+          const tracer = Tracer.make({
+            span(options) {
+              const span = new Tracer.NativeSpan(options);
+              const end = span.end.bind(span);
+              span.end = (endTime, exit) => {
+                end(endTime, exit);
+                const query = span.attributes.get("db.query.text");
+                if (
+                  typeof query === "string" &&
+                  /SELECT[\s\S]*FROM orchestration_v2_projection_context_transfers/i.test(query)
+                ) {
+                  transferReads.push(query);
+                }
+                if (
+                  typeof query === "string" &&
+                  /SELECT\s+payload_json\s+FROM orchestration_v2_projection_messages/i.test(query)
+                ) {
+                  messageReads.push(query);
+                }
+              };
+              return span;
+            },
+          });
+          const wait = yield* invoke(
+            "t3_thread_wait",
+            { threadId: delegated.childThreadId, runId: queuedFollowup.runId },
+            { ...invocation, thread: undefined },
+          ).pipe(Effect.withTracer(tracer));
+          expect(wait.isError).not.toBe(true);
+          const expectedWait = {
+            threadId: delegated.childThreadId,
+            runId: queuedFollowup.runId,
+            status: "completed",
+            timedOut: false,
+          };
+          expect(wait.structuredContent).toEqual(expectedWait);
+          expect(messageReads).toEqual([]);
+          expect(transferReads).toHaveLength(0);
+          const settledWait = yield* invoke(
+            "t3_thread_wait",
+            {
+              threadId: delegated.childThreadId,
+              runId: queuedFollowup.runId,
+              untilDelegatedWorkSettled: true,
+            },
+            { ...invocation, thread: undefined },
+          ).pipe(Effect.withTracer(tracer));
+          expect(settledWait.isError).not.toBe(true);
+          expect(settledWait.structuredContent).toMatchObject({
+            ...expectedWait,
+            resultRun: { runId: queuedFollowup.runId, status: "completed" },
+          });
+          expect(messageReads.length).toBeGreaterThan(0);
+          expect(
+            messageReads.filter((query) => query.includes("$.notification.source.kind")),
+          ).toHaveLength(1);
+          // The orchestrator's restart-continuation guard still reads its own records.
+          expect(
+            messageReads.filter((query) => !query.includes("$.notification.source.kind")),
+          ).toHaveLength(1);
+          const parentlessRead = yield* invoke(
+            "t3_thread_read",
+            { threadId: delegated.childThreadId, limit: 100 },
+            { ...invocation, thread: undefined },
+          ).pipe(Effect.withTracer(tracer));
+          expect(parentlessRead.isError).not.toBe(true);
+          expect(transferReads).toHaveLength(0);
+          const afterParentlessRead = yield* orchestrator.getThreadProjection(parentThreadId);
+          expect(
+            afterParentlessRead.subagents.find((task) => task.id === queuedFollowup.taskId)
+              ?.completionDelivery?.state,
+          ).toBe("claimed");
+
           const read = yield* invoke("t3_thread_read", {
             threadId: delegated.childThreadId,
             limit: 100,
-          });
+          }).pipe(Effect.withTracer(tracer));
           expect(read.isError).not.toBe(true);
+          expect(transferReads.length).toBeGreaterThan(0);
+          expect(read.structuredContent).toEqual(parentlessRead.structuredContent);
           const afterRead = yield* orchestrator.getThreadProjection(parentThreadId);
           expect(
             afterRead.subagents.find((task) => task.id === queuedFollowup.taskId)
