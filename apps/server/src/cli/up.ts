@@ -485,7 +485,9 @@ const formatTailscale = (
     ...(process.stdout.isTTY ? [renderTerminalQrCode(directUrl)] : []),
     // Other devices look for machines only on the default port.
     ...(port === ServerConfig.DEFAULT_PORT
-      ? ["Tailnet devices find this machine automatically."]
+      ? [
+          "Your own tailnet devices find this machine automatically; others add it by the address above.",
+        ]
       : []),
     "",
     ...(requireGrant

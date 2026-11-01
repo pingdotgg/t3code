@@ -223,7 +223,7 @@ describe("presentConnectionDiagnosis", () => {
     expect(refused("blocked")).toMatchObject({
       headline: "Mac mini blocked this device",
       steps: [
-        "On another device connected to Mac mini, open Settings > Environments and unblock this device.",
+        "On another device that can manage access on Mac mini (one of yours, or one granted admin), open Settings > Environments and unblock this device.",
         "Or run `t3 pair` on Mac mini, pair this device with the code, then unblock it.",
       ],
       moreInfoUrl: expect.stringMatching(/#tailscale-troubleshooting$/),
