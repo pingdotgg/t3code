@@ -181,6 +181,8 @@ it.effect("runs a one-time schedule once and rejects past times", () =>
   ),
 );
 
+const ONCE = { type: "once", runAt: "2026-11-01T08:00:00Z" } as const;
+
 const onceInput = {
   ...input,
   commandId: "once-race",
@@ -188,11 +190,24 @@ const onceInput = {
 };
 
 it.effect.each([
-  { change: "a run completes", pause: false, expected: null },
-  { change: "another client pauses the task", pause: true, expected: "2026-11-01T08:00:00.000Z" },
+  { change: "a run completes", saved: ONCE, edited: ONCE, pause: false, expected: null },
+  {
+    change: "a run completes during a padded-time edit",
+    saved: { type: "fixed_time", timeOfDay: "9:00" },
+    edited: { type: "fixed_time", timeOfDay: "09:00" },
+    pause: false,
+    expected: null,
+  },
+  {
+    change: "another client pauses the task",
+    saved: ONCE,
+    edited: ONCE,
+    pause: true,
+    expected: "2026-11-01T08:00:00.000Z",
+  },
 ] as const)(
   "a title save keeps the stored next run only while nothing else changed: $change",
-  ({ pause, expected }) =>
+  ({ saved, edited, pause, expected }) =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse("2026-11-01T07:00:00.000Z"));
       // The project check runs between the save's read and write, so it stands in for
@@ -217,10 +232,19 @@ it.effect.each([
         const service = yield* ScheduledTaskService.ScheduledTaskService;
         const worktree = { type: "worktree", baseRef: "main" };
         yield* service.upsert(
-          yield* decodeInput({ ...onceInput, workspaceStrategy: { type: "root" } }),
+          yield* decodeInput({
+            ...onceInput,
+            schedule: saved,
+            workspaceStrategy: { type: "root" },
+          }),
         );
         const renamed = yield* service.upsert(
-          yield* decodeInput({ ...onceInput, workspaceStrategy: worktree, title: "Renamed" }),
+          yield* decodeInput({
+            ...onceInput,
+            schedule: edited,
+            workspaceStrategy: worktree,
+            title: "Renamed",
+          }),
         );
         expect(renamed.task.enabled).toBe(true);
         expect(renamed.task.nextRunAt).toBe(expected);

@@ -571,7 +571,8 @@ export const layer = Layer.effect(
     const saveTask = (
       task: ScheduledTask,
       requireExisting: boolean,
-      keepNextRun: boolean,
+      /** The schedule this save read, when it left the schedule unchanged. */
+      keptSchedule: ScheduledTask["schedule"] | null,
       webhook: {
         readonly token: string | null;
         readonly secret: string | null;
@@ -645,8 +646,11 @@ export const layer = Layer.effect(
           -- Keep a next_run_at that a finishing run moved during this save, unless
           -- another edit changed the schedule or enabled state meanwhile.
           next_run_at = CASE
-            WHEN ${keepNextRun ? 1 : 0} = 1
-              AND scheduled_tasks.schedule_json = excluded.schedule_json
+            WHEN ${keptSchedule === null ? 0 : 1} = 1
+              AND scheduled_tasks.schedule_json IN (
+                excluded.schedule_json,
+                ${keptSchedule === null ? null : JSON.stringify(keptSchedule)}
+              )
               AND scheduled_tasks.enabled = excluded.enabled
             THEN scheduled_tasks.next_run_at
             ELSE excluded.next_run_at
@@ -777,6 +781,9 @@ export const layer = Layer.effect(
         readonly dispatched: Ref.Ref<boolean>;
       },
     ) {
+      // Read before reserving: nothing between the reservation and its release may fail.
+      const startedAt = yield* localNow;
+      const startedAtIso = iso(startedAt);
       const reserved = yield* Ref.modify(activeRuns, (active) => {
         if (active.has(task.id)) return [false, active] as const;
         const next = new Set(active);
@@ -790,8 +797,6 @@ export const layer = Layer.effect(
         return { task, threadId: null };
       }
 
-      const startedAt = yield* localNow;
-      const startedAtIso = iso(startedAt);
       return yield* Effect.gen(function* () {
         // Re-read stale poll snapshots so deleted, paused or postponed tasks cannot fire.
         const active = yield* findTask(task.id);
@@ -1272,7 +1277,12 @@ export const layer = Layer.effect(
         lastRunError: existingTask?.lastRunError ?? null,
         runCount: existingTask?.runCount ?? 0,
       };
-      yield* saveTask(task, input.requireExisting === true, scheduleUnchanged, webhook);
+      yield* saveTask(
+        task,
+        input.requireExisting === true,
+        scheduleUnchanged ? existingTask.schedule : null,
+        webhook,
+      );
       yield* notifyChanged;
       return { task: (yield* findTask(id)) ?? task };
     });
