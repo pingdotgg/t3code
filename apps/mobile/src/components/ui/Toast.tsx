@@ -1,6 +1,13 @@
-import { MOBILE_MOTION, MOBILE_SHAPE } from "../../lib/designTokens";
+import { MOBILE_MOTION } from "../../lib/designTokens";
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
-import { AccessibilityInfo, Platform, StyleSheet, View, useWindowDimensions } from "react-native";
+import {
+  AccessibilityInfo,
+  Platform,
+  Pressable,
+  StyleSheet,
+  View,
+  useWindowDimensions,
+} from "react-native";
 import { GestureDetector, usePanGesture } from "react-native-gesture-handler";
 import Animated, {
   cancelAnimation,
@@ -21,6 +28,8 @@ import { useControlTheme } from "./useControlTheme";
 import { IconButton } from "./IconButton";
 import { AppActivityIndicator } from "./AppActivityIndicator";
 import { SymbolView } from "./AppSymbol";
+import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 
 export type ToastProps = {
   readonly message: string;
@@ -45,15 +54,58 @@ export function Toast(props: ToastProps) {
 function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
   const { fontScale } = useWindowDimensions();
   const { colorScheme } = useControlTheme();
-  const borderRadius = Platform.OS === "ios" ? 31 : MOBILE_SHAPE.toast;
+  const typography = useScaledTextRole("footnote");
+  const scale =
+    Platform.OS === "android"
+      ? (typography.fontSize / MOBILE_TYPOGRAPHY.footnote.fontSize) * fontScale
+      : 1;
+  const layoutScale = Math.min(scale, 1);
+  const controlSize = Math.max(
+    32,
+    40 * layoutScale,
+    typography.lineHeight * fontScale + 16 * layoutScale,
+  );
+  // Keep the full touch target in the layout; hitSlop cannot extend past a parent.
+  const controlInset = Math.max(0, (48 - controlSize) / 2);
+  const borderRadius = Platform.OS === "ios" ? 31 : controlSize / 2 + 8;
   // Explicit single-line notices reserve the action's width and truncate the text.
-  const inlineAction = props.singleLine || (!props.description && fontScale < 1.5);
+  const inlineAction =
+    props.singleLine ||
+    (!props.description && (Platform.OS === "android" ? scale : fontScale) < 1.5);
   const message =
     props.singleLine && props.description
       ? `${props.message}: ${props.description}`
       : props.message;
   const action = props.action ? (
-    <Button label={props.action.label} onPress={props.action.onPress} />
+    Platform.OS === "android" ? (
+      <Pressable
+        accessibilityRole="button"
+        onPress={props.action.onPress}
+        className="items-center justify-center active:opacity-70"
+        style={{ minHeight: 48, minWidth: 48, paddingVertical: controlInset }}
+      >
+        <View
+          className="items-center justify-center bg-secondary"
+          style={{
+            borderRadius: controlSize / 2,
+            minHeight: controlSize,
+            minWidth: 48,
+            paddingHorizontal: 16 * layoutScale,
+            paddingVertical: 8 * layoutScale,
+          }}
+        >
+          <AppText
+            textRole="footnote"
+            className="text-center text-secondary-foreground"
+            style={{ fontFamily: "sans-serif-medium" }}
+          >
+            {props.action.label}
+          </AppText>
+        </View>
+      </Pressable>
+    ) : (
+      <Button label={props.action.label} onPress={props.action.onPress} />
+    )
   ) : null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- announces the toast message to VoiceOver through AccessibilityInfo
   useEffect(() => {
@@ -64,22 +116,45 @@ function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
       key={props.glassReady === false ? "entering" : "settled"}
       chrome={Platform.OS === "ios" && colorScheme === "dark" ? "none" : undefined}
       tintColor={Platform.OS === "ios" ? null : undefined}
-      className={Platform.OS === "ios" ? "bg-transparent p-3" : "p-3"}
-      style={{ borderRadius }}
+      className={Platform.OS === "ios" ? "bg-transparent p-3" : undefined}
+      style={{
+        borderRadius,
+        ...(Platform.OS === "android"
+          ? {
+              minHeight: 48,
+              justifyContent: "center",
+              paddingLeft: Math.max(16, 18 * layoutScale),
+              paddingRight: 8,
+              paddingTop: action && !inlineAction ? 14 : 8 - controlInset,
+              paddingBottom: 8 - controlInset,
+            }
+          : {}),
+      }}
     >
-      <View className="flex-row items-center gap-3">
+      <View
+        className="flex-row items-center gap-3"
+        style={Platform.OS === "android" ? { gap: 12 * layoutScale } : undefined}
+      >
         {props.busy ? (
-          <AppActivityIndicator />
+          <AppActivityIndicator size={Platform.OS === "android" ? 20 * scale : "small"} />
         ) : (
           <SymbolView
             name={props.tone === "danger" ? "exclamationmark.triangle" : "checkmark.circle"}
-            size={20}
+            size={20 * scale}
             tintColorClassName={
               props.tone === "danger" ? "accent-danger-foreground" : "accent-icon"
             }
           />
         )}
-        <View className="min-w-0 flex-1" accessibilityLiveRegion="polite">
+        <View
+          className="min-w-0 flex-1"
+          accessibilityLiveRegion="polite"
+          style={
+            Platform.OS === "android"
+              ? { paddingVertical: action && !inlineAction ? 0 : controlInset }
+              : undefined
+          }
+        >
           <AppText
             textRole="footnote"
             className="font-t3-semibold"
@@ -96,10 +171,33 @@ function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
         </View>
         {inlineAction && action ? <View className="self-center">{action}</View> : null}
         {props.onDismiss && props.dismissMode !== "swipe" ? (
-          <IconButton accessibilityLabel="Dismiss message" icon="xmark" onPress={props.onDismiss} />
+          Platform.OS === "android" ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss message"
+              onPress={props.onDismiss}
+              className="items-center justify-center active:opacity-70"
+              style={{ width: Math.max(48, 24 * scale), height: Math.max(48, 24 * scale) }}
+            >
+              <SymbolView name="xmark" size={24 * scale} tintColorClassName="accent-foreground" />
+            </Pressable>
+          ) : (
+            <IconButton
+              accessibilityLabel="Dismiss message"
+              icon="xmark"
+              onPress={props.onDismiss}
+            />
+          )
         ) : null}
       </View>
-      {action && !inlineAction ? <View className="mt-2 self-end">{action}</View> : null}
+      {action && !inlineAction ? (
+        <View
+          className="mt-2 self-end"
+          style={Platform.OS === "android" ? { marginTop: 8 - controlInset } : undefined}
+        >
+          {action}
+        </View>
+      ) : null}
     </GlassSurface>
   );
   return Platform.OS === "ios" ? (
