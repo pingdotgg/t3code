@@ -54,6 +54,15 @@ describe("parseMarkdownFileLink", () => {
     expect(parseMarkdownFileLink("docs/My%20Folder/")?.path).toBe("docs/My Folder/");
   });
 
+  // regression: #16096 relative links with non-ASCII names open as files
+  it("recognizes relative paths with non-ASCII names", () => {
+    expect(parseMarkdownFileLink("pastexam/線性代數/exam_易志偉.pdf")?.path).toBe(
+      "pastexam/線性代數/exam_易志偉.pdf",
+    );
+    expect(parseMarkdownFileLink("Résumé%20final.pdf")?.path).toBe("Résumé final.pdf");
+    expect(parseMarkdownFileLink("資料.備份")?.path).toBe("資料.備份");
+  });
+
   it("accepts conventional extensionless names with or without a position", () => {
     expect(parseMarkdownFileLink("Makefile")).toEqual({ path: "Makefile" });
     expect(parseMarkdownFileLink("Dockerfile:8")).toEqual({ path: "Dockerfile", line: 8 });
@@ -126,10 +135,15 @@ describe("resolveMarkdownFileLinkTarget", () => {
     );
   });
 
-  it("resolves file uri authorities as windows UNC paths", () => {
-    expect(resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg")).toBe(
+  it("links a network path only inside the project's share", () => {
+    const cwd = "\\\\server\\share";
+    expect(resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg", cwd)).toBe(
       "\\\\server\\share\\workspace-image.svg",
     );
+    // Opening these sent the Windows user's NTLM credentials to attacker.test.
+    for (const href of ["file://attacker.test/s/x.ts", "\\\\attacker.test\\s\\x.ts"]) {
+      expect(resolveMarkdownFileLinkTarget(href, cwd)).toBeNull();
+    }
   });
 
   it("keeps an encoded final space in the absolute target", () => {

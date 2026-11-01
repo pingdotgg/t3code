@@ -5,7 +5,7 @@ import {
   PullRequestMediaContext,
 } from "./PullRequestMedia";
 import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
-import { useContext, useMemo, useState } from "react";
+import { useContext, useMemo, useState, type ReactNode } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { pullRequestImageSource } from "./pullRequestMediaSource";
@@ -25,6 +25,7 @@ export function PullRequestDescription(props: {
   readonly onCollapse: () => void;
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
+  readonly footer?: ReactNode;
 }) {
   const { expanded, onExpandedChange } = props;
   const [bodyHeight, setBodyHeight] = useState(0);
@@ -39,18 +40,14 @@ export function PullRequestDescription(props: {
       attachments: content.attachments.filter((attachment) => !isBotBadgeImage(attachment.uri)),
     };
   }, [props.markdown]);
-  const gallery = useMemo<FilePreviewItem[]>(
-    () =>
-      content.attachments
-        .filter((attachment) => attachment.kind === "image")
-        .map((attachment) => {
-          return {
-            ...pullRequestImageSource(attachment.uri, mediaContext),
-            name: new URL(attachment.uri).pathname.split("/").pop() || "Image",
-          };
-        }),
-    [content, mediaContext],
-  );
+  const gallery: FilePreviewItem[] = content.attachments
+    .filter((attachment) => attachment.kind === "image")
+    .map((attachment) => {
+      return {
+        ...pullRequestImageSource(attachment.uri, mediaContext),
+        name: new URL(attachment.uri).pathname.split("/").pop() || "Image",
+      };
+    });
   const canCollapse = bodyHeight > COLLAPSED_HEIGHT;
   const collapsed = canCollapse && !expanded;
   return (
@@ -65,7 +62,6 @@ export function PullRequestDescription(props: {
                 overflow: "hidden",
               }}
             >
-              {/* Measure the full body independently of the clipped viewport. */}
               <View
                 style={{ position: "absolute", top: 0, left: 0, right: 0 }}
                 onLayout={(event) => setBodyHeight(event.nativeEvent.layout.height)}
@@ -138,6 +134,7 @@ export function PullRequestDescription(props: {
         ) : (
           <Text className="text-sm text-foreground-muted">No description provided.</Text>
         )}
+        {props.footer}
       </View>
       {content.attachments.length ? (
         <View className="gap-3">

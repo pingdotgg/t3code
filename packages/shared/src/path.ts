@@ -6,6 +6,15 @@ export function isUncPath(value: string): boolean {
   return value.startsWith("\\\\");
 }
 
+/**
+ * Windows treats `/` and `\` alike, so any two leading separators name a UNC
+ * or device path. Touching one makes Windows sign in to that host with the
+ * user's NTLM credentials, so agent-authored paths must not reach one.
+ */
+export function isNetworkPath(value: string): boolean {
+  return /^[\\/]{2}/.test(value);
+}
+
 export function isWindowsAbsolutePath(value: string): boolean {
   return isUncPath(value) || isWindowsDrivePath(value);
 }
@@ -22,10 +31,7 @@ export function isExplicitRelativePath(value: string): boolean {
 }
 
 function isRootPath(value: string): boolean {
-  // The drive separator is required: a bare `C:` is not the drive root (it
-  // means "current directory on C:"), and treating it as already-canonical
-  // would leave it as `C:` while `C:\` and `C:/` normalize to the drive root,
-  // so the same location would fail project identity/dedup comparisons.
+  // Bare C: means the current directory on C, not its root; require the drive separator.
   return value === "/" || value === "\\" || /^[a-zA-Z]:[/\\]$/.test(value);
 }
 

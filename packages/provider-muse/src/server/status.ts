@@ -24,9 +24,7 @@ const MUSE_PRESENTATION = {
   displayName: "Muse Code",
   showInteractionModeToggle: false,
   reportsContextWindow: true,
-  // Muse has no native "accept edits" mode, so T3 offers only the three it maps
-  // directly: :ask-me and :auto-review with promptUnmatched, and :unrestricted
-  // with allowAll.
+  // Muse has no accept-edits mode; map only :ask-me, :auto-review, and :unrestricted.
   supportedRuntimeModes: ["approval-required", "auto", "full-access"],
 } as const;
 
@@ -134,8 +132,7 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
     });
   }
   const models = catalog.success.value;
-  // MSP has no auth signal, and model/list answers from Muse's cache even when logged out.
-  // Auth failures surface on the first turn instead.
+  // MSP has no auth signal and serves cached models while logged out; failures surface on first turn.
   return snapshot(
     {
       installed: true,
