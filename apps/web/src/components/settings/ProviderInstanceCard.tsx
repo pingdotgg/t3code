@@ -933,24 +933,31 @@ export function ProviderInstanceCard({
         ? "Unsupported"
         : "Limited support"
     : summary.detail;
+  const statusDetailNode = inlineStatusDetail ? (
+    <span className="min-w-0 [overflow-wrap:anywhere]">{inlineStatusDetail}</span>
+  ) : null;
   const editorStatusNode =
     isAuthenticated && authEmail ? (
       <>
-        {needsAttention ? statusDotNode : null}
-        <span>Authenticated as</span>
-        <ProviderAuthEmail email={authEmail} />
-        {authLabel ? <span>· {authLabel}</span> : null}
-        {inlineStatusDetail ? (
-          <span className="min-w-0 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
+        <span className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
+          <span>Authenticated as</span>
+          <ProviderAuthEmail email={authEmail} />
+        </span>
+        {authLabel ? <span>{authLabel}</span> : null}
+        {statusDetailNode ? (
+          <span className="flex min-w-0 items-baseline gap-x-1.5">
+            {statusDotNode}
+            {statusDetailNode}
+          </span>
         ) : null}
       </>
     ) : (
       <>
-        {statusDotNode}
-        <span>{summary.headline}</span>
-        {inlineStatusDetail ? (
-          <span className="min-w-0 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
-        ) : null}
+        <span className="flex min-w-0 items-baseline gap-x-1.5">
+          {statusDotNode}
+          <span>{summary.headline}</span>
+        </span>
+        {statusDetailNode}
       </>
     );
   const versionAdvisoryNode = versionAdvisory ? (
@@ -1186,10 +1193,7 @@ export function ProviderInstanceCard({
   const statusContent = (
     <>
       <ProviderStatusDiagnostic detail={statusDiagnostic}>
-        <div
-          tabIndex={statusDiagnostic ? 0 : undefined}
-          className="flex min-w-0 flex-wrap items-baseline gap-x-1.5"
-        >
+        <div tabIndex={statusDiagnostic ? 0 : undefined} className="grid min-w-0">
           {editorStatusNode}
         </div>
       </ProviderStatusDiagnostic>
