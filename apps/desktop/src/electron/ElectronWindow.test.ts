@@ -132,6 +132,34 @@ describe("ElectronWindow", () => {
     }).pipe(Effect.provide(layerTestFor("win32"))),
   );
 
+  it.effect("reports which windows were created with a title bar overlay", () =>
+    Effect.gen(function* () {
+      const framed = { isDestroyed: () => false };
+      const overlay = { isDestroyed: () => false };
+      browserWindowMock
+        .mockImplementationOnce(function FramedWindowMock() {
+          return framed;
+        })
+        .mockImplementationOnce(function OverlayWindowMock() {
+          return overlay;
+        });
+      const electronWindow = yield* ElectronWindow.ElectronWindow;
+      yield* electronWindow.create({});
+      yield* electronWindow.create({
+        titleBarStyle: "hidden",
+        titleBarOverlay: { color: "#01000000", height: 40 },
+      });
+      getAllWindowsMock.mockReturnValue([framed, overlay, { isDestroyed: () => false }]);
+
+      const seen: Array<boolean> = [];
+      yield* electronWindow.syncAllAppearance((_window, { titleBarOverlay }) =>
+        Effect.sync(() => seen.push(titleBarOverlay)),
+      );
+
+      assert.deepEqual(seen, [false, true, false]);
+    }).pipe(Effect.provide(layerTestFor("win32"))),
+  );
+
   it.effect("preserves destroy failures and continues with later windows", () =>
     Effect.gen(function* () {
       const cause = new Error("window destroy failed");
