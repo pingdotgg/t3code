@@ -56,7 +56,9 @@ export const deregisterManagedRelayEnvironmentCommand = createRuntimeCommand(
     execute: (input, registry) =>
       deregisterManagedRelayEnvironment(registry, input).pipe(
         Effect.tap(() =>
-          Effect.sync(() => void relayEnvironmentDiscovery.refreshAfterMutation.run(registry, undefined)),
+          Effect.sync(
+            () => void relayEnvironmentDiscovery.refreshAfterMutation.run(registry, undefined),
+          ),
         ),
       ),
   },
