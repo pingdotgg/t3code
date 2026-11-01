@@ -467,7 +467,9 @@ describe("serverSettings helpers", () => {
             driver: ProviderDriverKind.make("codex"),
             displayName: "Codex Work",
             enabled: true,
-            config: { homePath: "~/.codex" },
+            config: JSON.parse(
+              '{"homePath":"~/.codex","nested":{"__proto__":{"polluted":true},"kept":1},"list":[{"__proto__":{"polluted":true},"kept":2}]}',
+            ),
           },
         },
       }).providerInstances[codexId],
@@ -475,7 +477,7 @@ describe("serverSettings helpers", () => {
       driver: ProviderDriverKind.make("codex"),
       displayName: "Codex Work",
       enabled: true,
-      config: { homePath: "~/.codex" },
+      config: { homePath: "~/.codex", nested: { kept: 1 }, list: [{ kept: 2 }] },
     });
   });
 
