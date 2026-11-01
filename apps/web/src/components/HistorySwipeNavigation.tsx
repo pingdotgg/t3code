@@ -17,6 +17,8 @@ type SwipeGesture =
       direction: HistoryDirection;
       distance: number;
       deltas: number[];
+      travelX: number;
+      travelY: number;
       y: number;
       bounds: SwipeBounds;
     }
@@ -68,6 +70,8 @@ function lockSwipeAxis(
     direction,
     distance: Math.abs(sumX),
     deltas: [],
+    travelX: Math.abs(sumX),
+    travelY: Math.abs(sumY),
     y: pending.y,
     bounds: readMainContentBounds(),
   };
@@ -96,10 +100,14 @@ export function HistorySwipeNavigation() {
   useEffect(() => {
     let gesture: SwipeGesture | null = null;
     const hideIndicator = () =>
-      setSwipe((current) => (current === null ? null : { ...current, tracking: false }));
+      setSwipe((current) => (current?.tracking ? { ...current, tracking: false } : current));
     // The fingers lifted: navigate if the swipe went far enough, then ignore its momentum.
     const release = () => {
-      if (gesture?.kind === "tracking" && gesture.distance >= SWIPE_TRIGGER_DISTANCE) {
+      if (
+        gesture?.kind === "tracking" &&
+        gesture.travelX >= gesture.travelY &&
+        gesture.distance >= SWIPE_TRIGGER_DISTANCE
+      ) {
         navigateHistory(gesture.direction);
       }
       gesture = { kind: "ignored" };
@@ -130,9 +138,13 @@ export function HistorySwipeNavigation() {
       } else {
         const delta = gesture.direction === "back" ? -event.deltaX : event.deltaX;
         if (event.deltaX === 0 && event.deltaY === 0) return release();
+        gesture.travelX += Math.abs(event.deltaX);
+        gesture.travelY += Math.abs(event.deltaY);
         gesture.deltas = [...gesture.deltas.slice(1 - MOMENTUM_SAMPLE_SIZE), delta];
         if (isMomentumTail(gesture.deltas)) return release();
         gesture.distance = Math.max(0, gesture.distance + delta);
+        // A scroll that locked on a diagonal start can turn out to be vertical.
+        if (gesture.travelY > gesture.travelX) return hideIndicator();
       }
       setSwipe({
         direction: gesture.direction,
