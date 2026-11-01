@@ -160,7 +160,7 @@ function stringField(value: unknown, key: "message" | "code"): string | undefine
 }
 
 function redactUrl(match: string): string {
-  const trailing = /[),.;!?']+$/u.exec(match)?.[0] ?? "";
+  const trailing = /[),.;!?'"]+$/u.exec(match)?.[0] ?? "";
   const candidate = trailing.length === 0 ? match : match.slice(0, -trailing.length);
   try {
     const url = new URL(candidate);
@@ -204,7 +204,7 @@ export function redactSecretAssignments(value: string): string {
 }
 
 function redactSchemeUrl(match: string): string {
-  const trailing = /[),.;!?']+$/u.exec(match)?.[0] ?? "";
+  const trailing = /[),.;!?'"]+$/u.exec(match)?.[0] ?? "";
   const url = trailing.length === 0 ? match : match.slice(0, -trailing.length);
   const authorityStart = url.indexOf("://") + 3;
   const queryStart = url.slice(authorityStart).search(/[?#]/u);
@@ -225,9 +225,10 @@ function redactSchemeUrl(match: string): string {
 export function redactUrls(value: string): string {
   return (
     value
-      .replace(/\bhttps?:\/\/[^\s<>"]+/giu, redactUrl)
+      // A query or fragment runs to whitespace so quoted parameter values go with it.
+      .replace(/\bhttps?:\/\/[^\s<>"?#]+(?:[?#][^\s<>]*)?/giu, redactUrl)
       // The scheme length cap keeps long dotted runs without "://" linear.
-      .replace(/\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s<>"]+/giu, redactSchemeUrl)
+      .replace(/\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s<>"?#]+(?:[?#][^\s<>]*)?/giu, redactSchemeUrl)
   );
 }
 

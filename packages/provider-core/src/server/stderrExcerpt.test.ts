@@ -163,6 +163,12 @@ describe("stderrExcerpt", () => {
       "connect mongodb+srv://db.example/?authMechanismProperties=AWS_SESSION_TOKEN%3As3cr3t failed",
       "connect mongodb+srv://db.example/ failed",
     ],
+    [
+      'connect mongodb+srv://db.example/?password="s3cr3t" failed',
+      'connect mongodb+srv://db.example/" failed',
+    ],
+    ['fetch https://example.test/?token="s3cr3t" failed', 'fetch https://example.test/" failed'],
+    ['see "https://example.test/path?a=1" here', 'see "https://example.test/path" here'],
     ['{"password":"topsecret\nError: boom', '{"password":"[REDACTED]"'],
     ['PASSWORD="first\nsecond-secret"\nError: boom', "PASSWORD=[REDACTED]"],
     ['{"password":"first\nsecond-secret"}', '{"password":"[REDACTED]"'],
