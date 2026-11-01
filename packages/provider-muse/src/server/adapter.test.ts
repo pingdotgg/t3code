@@ -1635,6 +1635,40 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("does not acknowledge Stop on an ended turn while a background subagent runs", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const turn = yield* startConversation(harness, fake);
+      yield* fake.emit("item/started", {
+        turnId: turn.nativeId,
+        item: {
+          itemId: "background-child",
+          kind: "subagent",
+          revision: 1,
+          status: "inProgress",
+          turnId: turn.nativeId,
+          subagentId: "subagent-1",
+          controlStatus: "running",
+          childSessionId: "child-session-1",
+          objective: "Finish in the background",
+        },
+      });
+      yield* harness.takeEvent("app_thread.created");
+      yield* fake.emit("turn/completed", { turnId: turn.nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
+      const stopped = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: turn.providerTurn.id,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.exit);
+      assert.strictEqual(stopped._tag, "Failure");
+      assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("projects native todos with stable identity and removes cancelled steps", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
