@@ -1528,6 +1528,170 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.at(-1)).toMatchObject({ kind: "thinking" });
   });
 
+  it("stamps the thinking row with the latest activity in the turn", () => {
+    const userEntry = {
+      id: "user-entry",
+      kind: "message",
+      createdAt: "2026-01-01T00:00:00Z",
+      message: {
+        id: "user" as never,
+        role: "user",
+        text: "go",
+        runId: null,
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+        streaming: false,
+      },
+    } as const;
+    const deriveThinkingRow = (timelineEntries: ReadonlyArray<TimelineEntry>) =>
+      deriveMessagesTimelineRows({
+        timelineEntries,
+        latestRun: {
+          runId: "turn-1" as never,
+          status: "running",
+          startedAt: "2026-01-01T00:00:00Z",
+          completedAt: null,
+        },
+        isWorking: true,
+        activeTurnStartedAt: "2026-01-01T00:00:00Z",
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      }).at(-1);
+
+    expect(deriveThinkingRow([userEntry])).toMatchObject({
+      kind: "thinking",
+      createdAt: "2026-01-01T00:00:00Z",
+    });
+    const assistantEntry = {
+      id: "assistant-entry",
+      kind: "message",
+      createdAt: "2026-01-01T00:00:10Z",
+      message: {
+        id: "assistant" as never,
+        role: "assistant",
+        text: "Checking the tests next.",
+        runId: "turn-1" as never,
+        createdAt: "2026-01-01T00:00:10Z",
+        updatedAt: "2026-01-01T00:00:12Z",
+        streaming: false,
+      },
+    } as const;
+    expect(deriveThinkingRow([userEntry, assistantEntry])).toMatchObject({
+      kind: "thinking",
+      createdAt: "2026-01-01T00:00:10Z",
+    });
+    // An entry ordered later can carry an older start (a proposed plan keeps its
+    // turn's start), so the stamp follows the newest start, not the last entry.
+    expect(
+      deriveThinkingRow([
+        userEntry,
+        assistantEntry,
+        {
+          ...assistantEntry,
+          id: "older-active-entry",
+          createdAt: "2026-01-01T00:00:05Z",
+          message: {
+            ...assistantEntry.message,
+            id: "older-active" as never,
+            createdAt: "2026-01-01T00:00:05Z",
+            updatedAt: "2026-01-01T00:00:05Z",
+          },
+        },
+      ]),
+    ).toMatchObject({ kind: "thinking", createdAt: "2026-01-01T00:00:10Z" });
+    // An optimistic steer is appended after the run's entries. It is the
+    // user's input, not the agent's activity, so it does not move the stamp.
+    expect(
+      deriveThinkingRow([
+        userEntry,
+        assistantEntry,
+        {
+          id: "steer-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:20Z",
+          message: {
+            id: "steer" as never,
+            role: "user",
+            text: "Also check the docs.",
+            runId: null,
+            inputIntent: "steer",
+            createdAt: "2026-01-01T00:00:20Z",
+            updatedAt: "2026-01-01T00:00:20Z",
+            streaming: false,
+          },
+        },
+      ]),
+    ).toMatchObject({ kind: "thinking", createdAt: "2026-01-01T00:00:10Z" });
+    // Event cards carry their run on the projected item, so a card the run
+    // added still counts as its latest activity.
+    expect(
+      deriveThinkingRow([
+        userEntry,
+        assistantEntry,
+        {
+          id: "subagent-card-entry",
+          kind: "event",
+          createdAt: "2026-01-01T00:00:15Z",
+          projectedItem: { item: { type: "subagent", runId: "turn-1" } } as never,
+        },
+      ]),
+    ).toMatchObject({ kind: "thinking", createdAt: "2026-01-01T00:00:15Z" });
+  });
+
+  it.each([false, true])(
+    "ignores user steers in the runless thinking timestamp (assistant activity: %s)",
+    (hasAssistantActivity) => {
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries: [
+          ...(hasAssistantActivity
+            ? [
+                {
+                  id: "runless-assistant-entry",
+                  kind: "message" as const,
+                  createdAt: "2026-01-01T00:00:10Z",
+                  message: {
+                    id: "runless-assistant" as never,
+                    role: "assistant" as const,
+                    text: "Checking the tests next.",
+                    runId: null,
+                    createdAt: "2026-01-01T00:00:10Z",
+                    updatedAt: "2026-01-01T00:00:12Z",
+                    streaming: false,
+                  },
+                },
+              ]
+            : []),
+          {
+            id: "runless-steer-entry",
+            kind: "message",
+            createdAt: "2026-01-01T00:00:20Z",
+            message: {
+              id: "runless-steer" as never,
+              role: "user",
+              text: "Also check the docs.",
+              runId: null,
+              inputIntent: "steer",
+              createdAt: "2026-01-01T00:00:20Z",
+              updatedAt: "2026-01-01T00:00:20Z",
+              streaming: false,
+            },
+          },
+        ],
+        latestRun: null,
+        runlessWorkActive: true,
+        isWorking: true,
+        activeTurnStartedAt: "2026-01-01T00:00:00Z",
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+
+      expect(rows.at(-1)).toMatchObject({
+        kind: "thinking",
+        createdAt: hasAssistantActivity ? "2026-01-01T00:00:10Z" : "2026-01-01T00:00:00Z",
+      });
+    },
+  );
+
   it("does not show Thinking once the open run's provider turn has ended", () => {
     const input = {
       timelineEntries: [
@@ -2412,7 +2576,12 @@ describe("deriveMessagesTimelineRows", () => {
     expect(runningActivityRow).toMatchObject({ kind: "work-live", active: true });
     expect(completedActivityRow).toMatchObject({ kind: "work-live", active: true });
     expect(failedRows.some((row) => row.kind === "work-live")).toBe(false);
-    expect(failedRows.at(-1)).toMatchObject({ kind: "thinking", id: "live-activity-row" });
+    // A failed tool hands the row back to thinking, stamped with that tool's start.
+    expect(failedRows.at(-1)).toMatchObject({
+      kind: "thinking",
+      id: "live-activity-row",
+      createdAt: "2026-01-01T00:00:05Z",
+    });
     const failedThinkingRow = failedRows.at(-1);
     const failedGroupId =
       failedThinkingRow?.kind === "thinking" ? failedThinkingRow.groupId : undefined;
