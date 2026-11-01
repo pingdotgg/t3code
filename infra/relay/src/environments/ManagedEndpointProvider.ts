@@ -216,6 +216,7 @@ const ManagedEndpointTunnelClientOperation = Schema.Literals([
   "list",
   "create",
   "put-configuration",
+  "get-configuration",
   "get-token",
   "delete",
 ]);
@@ -265,6 +266,15 @@ export class ManagedEndpointTunnelClient extends Context.Service<
         }>;
       },
     ) => Effect.Effect<unknown, ManagedEndpointTunnelClientError>;
+    readonly getConfiguration: (tunnelId: string) => Effect.Effect<
+      {
+        readonly ingress: ReadonlyArray<{
+          readonly hostname?: string | null;
+          readonly service: string;
+        }>;
+      },
+      ManagedEndpointTunnelClientError
+    >;
     readonly getToken: (
       tunnelId: string,
     ) => Effect.Effect<string, ManagedEndpointTunnelClientError>;
@@ -756,32 +766,46 @@ const make = Effect.gen(function* () {
           hostname: allocation.hostname,
         });
       }
+      const verifyTunnel = <A>(read: Effect.Effect<A, ManagedEndpointTunnelClientError>) =>
+        read.pipe(
+          Effect.asSome,
+          Effect.catchTags({
+            ManagedEndpointTunnelClientError: (cause) =>
+              isManagedEndpointNotFound(cause.cause)
+                ? Effect.succeedNone
+                : Effect.fail(
+                    new ManagedEndpointProvisioningFailed({
+                      userId: input.userId,
+                      environmentId: input.environmentId,
+                      stage: "verify-tunnel",
+                      tunnelId: input.tunnelId,
+                      cause,
+                    }),
+                  ),
+          }),
+        );
       // Released records retain tunnel ids; verify Cloudflare still has the tunnel before reconnecting.
-      const recorded = yield* tunnels.get(input.tunnelId).pipe(
-        Effect.asSome,
-        Effect.catchTags({
-          ManagedEndpointTunnelClientError: (cause) =>
-            isManagedEndpointNotFound(cause.cause)
-              ? Effect.succeedNone
-              : Effect.fail(
-                  new ManagedEndpointProvisioningFailed({
-                    userId: input.userId,
-                    environmentId: input.environmentId,
-                    stage: "verify-tunnel",
-                    tunnelId: input.tunnelId,
-                    cause,
-                  }),
-                ),
-        }),
-      );
+      const recorded = yield* verifyTunnel(tunnels.get(input.tunnelId));
       if (Option.isNone(recorded) || recorded.value.deletedAt) {
         return "recovery_required";
       }
+      const originService = formatOriginService(input.origin);
       if (
         allocation.origin?.localHttpHost === input.origin.localHttpHost &&
         allocation.origin.localHttpPort === input.origin.localHttpPort
       ) {
-        return "ready";
+        // Live ingress can drift from the recorded origin; only a matching rule skips the rewrite.
+        const configuration = yield* verifyTunnel(tunnels.getConfiguration(input.tunnelId));
+        if (Option.isNone(configuration)) {
+          return "recovery_required";
+        }
+        const hostname = normalizeHostname(allocation.hostname);
+        const rule = configuration.value.ingress.find(
+          (entry) => entry.hostname != null && normalizeHostname(entry.hostname) === hostname,
+        );
+        if (rule?.service === originService) {
+          return "ready";
+        }
       }
 
       const updated = yield* allocations
@@ -795,10 +819,7 @@ const make = Effect.gen(function* () {
           tunnels
             .putConfiguration(input.tunnelId, {
               ingress: [
-                {
-                  hostname: allocation.hostname,
-                  service: formatOriginService(input.origin),
-                },
+                { hostname: allocation.hostname, service: originService },
                 { service: "http_status:404" },
               ],
             })
@@ -1601,6 +1622,22 @@ export const layerCloudflareBindings = (
                     (cause) =>
                       new ManagedEndpointTunnelClientError({
                         operation: "put-configuration",
+                        tunnelId,
+                        cause,
+                      }),
+                  ),
+                ),
+              getConfiguration: (tunnelId) =>
+                gate(tunnelClient.getConfiguration(tunnelId)).pipe(
+                  Effect.map(({ config }) => ({ ingress: config?.ingress ?? [] })),
+                  // Cloudflare reports a tunnel without remote configuration as code 1055, not 404.
+                  Effect.catchTags({
+                    TunnelConfigurationNotFound: () => Effect.succeed({ ingress: [] }),
+                  }),
+                  Effect.mapError(
+                    (cause) =>
+                      new ManagedEndpointTunnelClientError({
+                        operation: "get-configuration",
                         tunnelId,
                         cause,
                       }),
