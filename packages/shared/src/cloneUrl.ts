@@ -1,3 +1,5 @@
+import { isWindowsDrivePath } from "./path.ts";
+
 export type CloneProtocol = "ssh" | "https";
 
 const SCP_LIKE_URL = /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)(.+)$/;
@@ -8,6 +10,7 @@ function parseCloneUrl(
   url: string,
 ): { protocol: CloneProtocol; host: string; path: string; customPort: boolean } | null {
   const trimmed = url.trim();
+  if (isWindowsDrivePath(trimmed)) return null;
   const ssh = SSH_URL.exec(trimmed);
   if (ssh) return { protocol: "ssh", host: ssh[1]!, path: ssh[3]!, customPort: !!ssh[2] };
   const https = HTTPS_URL.exec(trimmed);
