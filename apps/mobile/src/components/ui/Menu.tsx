@@ -51,6 +51,7 @@ export function Menu(props: MenuProps) {
   let children = menuProps.children;
   if (props.shouldOpenOnLongPress && isValidElement(children)) {
     const child = children as ReactElement<Pick<PressableProps, "onTouchStart" | "onPress">>;
+    /* oxlint-disable react/refs -- Cloning the trigger installs event callbacks; the refs are accessed when those callbacks run. */
     children = cloneElement(child, {
       onTouchStart: (event) => {
         // onPressIn can repeat within one gesture when a finger leaves and re-enters the row.
@@ -74,6 +75,7 @@ export function Menu(props: MenuProps) {
         child.props.onPress?.(event);
       },
     });
+    /* oxlint-enable react/refs */
     menuProps.onMenuInteractionStart = () => {
       menuPress.current.isPreparing = true;
       props.onMenuInteractionStart?.();

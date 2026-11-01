@@ -19,7 +19,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
@@ -298,6 +297,9 @@ export const make = Effect.gen(function* () {
   const pullRequests = yield* PullRequestService.PullRequestService;
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
+  // A shell merge or close sends no event, and the branch lookup caches an open pull request for
+  // a minute, so these threads' next lookup reads the host fresh.
+  const shellClosedThreads = new Set<ThreadId>();
   const terminals = yield* TerminalManager.TerminalManager;
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   // Repeated thread.settled retains settledAt; run the action only once per settlement.
@@ -319,8 +321,10 @@ export const make = Effect.gen(function* () {
     // Merge events resweep all candidates because unlinked threads settle through branch lookup.
     const candidates = threads.filter((thread) => isAutoSettlementCandidate(thread, nowMs));
 
-    const settleThread = Effect.fn("ThreadSettlementServiceV2.settleThread")(
+    // Runs per candidate thread, thousands per sweep on busy servers; the sweep owns the span.
+    const settleThread = Effect.fnUntraced(
       function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
+        // thread.auto-settle does not recheck settings, so read them per decision; reads are cached.
         const currentSettings = resolveProjectSettings(
           yield* settingsService.getSettings,
           thread.projectId,
@@ -347,24 +351,42 @@ export const make = Effect.gen(function* () {
       },
       (effect, thread) =>
         effect.pipe(
-          Effect.catchCause((cause) =>
-            Cause.hasInterruptsOnly(cause)
-              ? Effect.failCause(cause)
-              : Effect.logWarning("automatic thread settlement skipped", {
-                  threadId: thread.id,
-                  cause: Cause.pretty(cause),
-                }).pipe(Effect.as(null)),
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logWarning("automatic thread settlement skipped", {
+                threadId: thread.id,
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.as(null)),
           ),
         ),
     );
 
     const lookupCandidates = (yield* Effect.forEach(
       candidates,
-      (thread) => settleThread(thread, null),
+      (thread) => {
+        const projectSettings = resolveProjectSettings(settings, thread.projectId).settings;
+        // Skip no-op decisions; actual settlement still reads fresh settings before dispatch.
+        const settledAt = resolveAutoSettlementAt({
+          thread,
+          pullRequest: null,
+          nowMs,
+          autoSettleAfterDays: projectSettings.sidebarAutoSettleAfterDays,
+          autoSettleOnMerge: projectSettings.sidebarAutoSettleOnMerge,
+          autoSettleKeepPullRequests: projectSettings.sidebarAutoSettleKeepPullRequests,
+        });
+        return settledAt === null ? Effect.succeed(thread) : settleThread(thread, null);
+      },
       { concurrency: 8 },
     ))
       .filter((thread) => thread !== null)
-      .filter((thread) => visibleThreadPullRequests(thread.pullRequests ?? []).length === 0);
+      .filter((thread) => visibleThreadPullRequests(thread.pullRequests ?? []).length === 0)
+      .filter(
+        (thread) =>
+          thread.branch !== null ||
+          thread.linkedPullRequest != null ||
+          thread.branchPullRequest != null,
+      );
     const lookupCwdByThreadId = new Map<string, string>();
     yield* Effect.forEach(
       lookupCandidates,
@@ -412,7 +434,8 @@ export const make = Effect.gen(function* () {
     };
     const groups = Map.groupBy(lookupCandidates, lookupKey);
 
-    const wouldSettle = Effect.fn("ThreadSettlementServiceV2.wouldSettle")(function* (
+    // wouldSettle and pullRequestFor run per lookup group; the git and pull request reads they make carry the spans.
+    const wouldSettle = Effect.fnUntraced(function* (
       group: ReadonlyArray<(typeof lookupCandidates)[number]>,
       pullRequest: SettlementPullRequest,
     ) {
@@ -433,7 +456,7 @@ export const make = Effect.gen(function* () {
       });
     });
 
-    const pullRequestFor = Effect.fn("ThreadSettlementServiceV2.pullRequestFor")(function* (
+    const pullRequestFor = Effect.fnUntraced(function* (
       group: ReadonlyArray<(typeof lookupCandidates)[number]>,
     ) {
       const thread = group[0]!;
@@ -490,7 +513,8 @@ export const make = Effect.gen(function* () {
       if (cwd === undefined) {
         return yield* Effect.die(new Error("thread project not found"));
       }
-      return yield* git.branchPullRequest({ cwd, branch: thread.branch });
+      const refresh = group.filter((member) => shellClosedThreads.delete(member.id)).length > 0;
+      return yield* git.branchPullRequest({ cwd, branch: thread.branch }, { refresh });
     });
 
     yield* Effect.forEach(
@@ -503,13 +527,13 @@ export const make = Effect.gen(function* () {
             discard: true,
           });
         }).pipe(
-          Effect.catchCause((cause) =>
-            Cause.hasInterruptsOnly(cause)
-              ? Effect.failCause(cause)
-              : Effect.logWarning("automatic thread settlement skipped", {
-                  threadIds: group.map((thread) => thread.id),
-                  cause: Cause.pretty(cause),
-                }),
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logWarning("automatic thread settlement skipped", {
+                threadIds: group.map((thread) => thread.id),
+                cause: Cause.pretty(cause),
+              }),
           ),
         ),
       { concurrency: 8, discard: true },
@@ -521,12 +545,12 @@ export const make = Effect.gen(function* () {
     threadId?: ThreadId,
   ) =>
     sweep(mergedPullRequest, threadId).pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.failCause(cause)
-          : Effect.logWarning("automatic thread settlement sweep failed", {
-              cause: Cause.pretty(cause),
-            }),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.logWarning("automatic thread settlement sweep failed", {
+            cause: Cause.pretty(cause),
+          }),
       ),
     );
   // A thread that just stopped must not wait behind a full sweep or another thread's host
@@ -586,13 +610,13 @@ export const make = Effect.gen(function* () {
     },
     (effect, threadId) =>
       effect.pipe(
-        Effect.catchCause((cause) =>
-          Cause.hasInterruptsOnly(cause)
-            ? Effect.failCause(cause)
-            : Effect.logWarning("cleaning up a settled thread failed", {
-                threadId,
-                cause: Cause.pretty(cause),
-              }),
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("cleaning up a settled thread failed", {
+              threadId,
+              cause: Cause.pretty(cause),
+            }),
         ),
       ),
   );
@@ -615,10 +639,21 @@ export const make = Effect.gen(function* () {
         return backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? [])
           ? Effect.void
           : enqueueThread(event.threadId);
-      case "turn-item.updated":
-        return turnItemUpdateCanEndBackgroundWork(event.payload)
+      case "turn-item.updated": {
+        const item = event.payload;
+        if (
+          item.type === "command_execution" &&
+          !isOrchestrationV2WorkActive(item.status) &&
+          sourceControlDefinitions.definitions.some(
+            (definition) => definition.changeRequestCloseCommand?.test(item.input) === true,
+          )
+        ) {
+          shellClosedThreads.add(event.threadId);
+        }
+        return turnItemUpdateCanEndBackgroundWork(item)
           ? enqueueThread(event.threadId)
           : Effect.void;
+      }
       case "provider-session.updated":
         return event.payload.status !== "starting" && event.payload.status !== "running"
           ? enqueueThread(event.threadId)
@@ -673,5 +708,3 @@ export const make = Effect.gen(function* () {
     drain: Effect.andThen(fullSweeps.drain, FiberSet.awaitEmpty(threadSweeps)),
   } satisfies ThreadSettlementServiceV2["Service"];
 });
-
-export const layer = Layer.effect(ThreadSettlementServiceV2, make);

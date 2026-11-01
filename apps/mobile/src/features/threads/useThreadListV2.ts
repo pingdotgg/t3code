@@ -1,7 +1,9 @@
+import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useMemo, useSyncExternalStore } from "react";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
+import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   buildThreadListV2Items,
@@ -24,6 +26,17 @@ function useKeySet(newlineSeparatedKeys: string): ReadonlySet<string> {
 }
 
 type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
+
+/**
+ * The React Compiler memoizes on the values a callback reads and drops unread entries from a
+ * dependency list, so the version that marks an expired grace must be read to rebuild the list.
+ */
+function observeInbox(
+  threads: Parameters<typeof threadListInboxReturns.observe>[0],
+  _expiredGraceVersion: number,
+) {
+  return threadListInboxReturns.observe(threads);
+}
 
 /**
  * Home's and the thread sidebar's thread list. Its result is one value a screen only reads:
@@ -60,8 +73,7 @@ export function useThreadListV2(input: {
     threadListInboxReturns.getSnapshot,
   );
   const inbox = useMemo(
-    () => threadListInboxReturns.observe(workingShelfEnabled ? threads : null),
-    // oxlint-disable-next-line react/memo-dependencies -- the version signals an expired grace
+    () => observeInbox(workingShelfEnabled ? threads : null, inboxVersion),
     [threads, workingShelfEnabled, inboxVersion],
   );
   // Up/down menu availability for every card, computed once per section per
@@ -88,6 +100,14 @@ export function useThreadListV2(input: {
     ...sectionAvailability("pinned"),
     ...(workingShelfEnabled ? [] : sectionAvailability("active")),
   ]);
+  // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
+  const scopes = olderSettledScopes(input);
+  const olderSettledShelf = useOlderSettledShelf({
+    scopes,
+    expanded: input.settledShelfExpanded,
+    // A search lists only matches, so the shelf would page forever; loaded pages stay.
+    visibleCount: input.searchQuery.trim().length === 0 ? input.settledLimit : 0,
+  });
   const layout = buildThreadListV2Items({
     pendingOrder: input.pendingOrder,
     threads: threads.filter((thread) => thread.archivedAt === null),
@@ -107,7 +127,20 @@ export function useThreadListV2(input: {
     snoozedShelfExpanded: input.snoozedShelfExpanded,
     settledShelfExpanded: input.settledShelfExpanded,
     selectedThreadKey: input.selectedThreadKey,
+    isListedSettled: olderSettledShelf.isListed,
+    unloadedSettledCount: olderSettledShelf.unloadedCount(
+      threads.filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          scopes.some(
+            (scope) =>
+              scope.environmentId === thread.environmentId &&
+              (scope.projectIds === null || scope.projectIds.includes(thread.projectId)),
+          ),
+      ),
+    ),
   });
+  useOlderSettledShelfGrowth(olderSettledShelf, layout.listedSettledThreads);
   const contentOnlyThreadKeys = useKeySet([...layout.contentOnlyThreadKeys].sort().join("\n"));
   const scopedProjectKeys =
     input.projectRefs == null
@@ -141,5 +174,22 @@ export function useThreadListV2(input: {
     moveAvailability,
     shelfPreferencesLoading: !input.shelfPreferencesLoaded,
   });
-  return { layout, items, contentOnlyThreadKeys };
+  return { layout, items, contentOnlyThreadKeys, olderSettledShelf };
+}
+
+/** The list's scope per environment: its projects there, or every project. */
+function olderSettledScopes(input: {
+  readonly environmentId: EnvironmentId | null;
+  readonly projectRefs: LayoutInput["projectRefs"];
+  readonly settlementEnvironmentIds: ReadonlySet<EnvironmentId>;
+}): ReadonlyArray<OlderSettledScope> {
+  const environmentIds =
+    input.environmentId === null ? [...input.settlementEnvironmentIds] : [input.environmentId];
+  return environmentIds.flatMap((environmentId): ReadonlyArray<OlderSettledScope> => {
+    if (input.projectRefs == null) return [{ environmentId, projectIds: null }];
+    const projectIds = input.projectRefs.flatMap((ref) =>
+      ref.environmentId === environmentId ? [ref.projectId] : [],
+    );
+    return projectIds.length === 0 ? [] : [{ environmentId, projectIds }];
+  });
 }

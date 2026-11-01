@@ -26,6 +26,8 @@ const SECRET_REQUEST_FAILURE_MESSAGES = {
     "That secretRef was already used or does not exist. Ask the user again with request_secret.",
   ref_expired: "That secretRef expired. Ask the user again with request_secret.",
   consume_failed: "Could not use that secretRef. Try again.",
+  not_a_file_request:
+    'The user did not save this secret for shell use. Ask again with request_secret and delivery: "file".',
 } as const;
 
 export const SecretRequestFailureReason = Schema.Literals(

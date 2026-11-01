@@ -211,6 +211,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   ) {
     const initial = yield* SubscriptionRef.get(state);
     let waiting = yield* Ref.get(awaitingCompletion);
+    /* oxlint-disable oxc/no-accumulating-spread -- This copies a fixed-shape state record, not a growing collection. */
     let next = initial;
     let receivedSnapshot = false;
     for (const item of items) {
@@ -260,6 +261,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
             : new Map(next.removedAt).set(removal.threadId, removal.sequence),
       };
     }
+    /* oxlint-enable oxc/no-accumulating-spread */
     yield* Ref.set(awaitingCompletion, waiting);
     if (next === initial) return;
     if (pendingLinkIds !== undefined && Option.isSome(next.snapshot)) {
@@ -361,17 +363,15 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       ORCHESTRATION_V2_WS_METHODS.subscribeShell,
       Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
         yield* Ref.set(activeSubscriptionSession, session);
-        const { supportsCompletionMarker, omitIdleSubagents } = yield* session.initialConfig.pipe(
+        const { omitIdleSubagents, omitOlderSettled } = yield* session.initialConfig.pipe(
           Effect.map((config) => ({
-            supportsCompletionMarker: config.shellResumeCompletionMarker === true,
             omitIdleSubagents: config.shellThreadFamilies === true,
+            omitOlderSettled:
+              config.shellOlderSettled === true && config.shellThreadFamilies === true,
           })),
-          Effect.orElseSucceed(() => ({
-            supportsCompletionMarker: false,
-            omitIdleSubagents: false,
-          })),
+          Effect.orElseSucceed(() => ({ omitIdleSubagents: false, omitOlderSettled: false })),
         );
-        yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
+        yield* Ref.set(awaitingCompletion, true);
         yield* setSynchronizing;
 
         // Foreground resubscriptions on the same live session can resume from
@@ -396,7 +396,10 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
             ),
           );
           // HTTP and the socket must agree, or omitted children would return through the socket.
-          const httpSnapshot = yield* snapshotLoader.load(prepared, { omitIdleSubagents });
+          const httpSnapshot = yield* snapshotLoader.load(prepared, {
+            omitIdleSubagents,
+            omitOlderSettled,
+          });
           if (Option.isSome(httpSnapshot)) {
             yield* cancelActiveFill;
             const previous = yield* SubscriptionRef.get(state);
@@ -418,24 +421,17 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           }
         }
 
-        const omission = omitIdleSubagents ? { omitIdleSubagents: true as const } : {};
+        const omission = {
+          ...(omitIdleSubagents ? { omitIdleSubagents: true as const } : {}),
+          ...(omitOlderSettled ? { omitOlderSettled: true as const } : {}),
+        };
         if (!canResume || Option.isNone(current.snapshot)) {
-          return {
-            ...omission,
-            ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
-          };
-        }
-        if (!supportsCompletionMarker) {
-          yield* SubscriptionRef.update(state, (value) => ({
-            ...value,
-            status: "live" as const,
-            error: Option.none(),
-          }));
+          return { ...omission, requestCompletionMarker: true as const };
         }
         return {
           afterSequence: current.snapshot.value.snapshotSequence,
           ...omission,
-          ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
+          requestCompletionMarker: true as const,
         };
       }),
       {
@@ -472,16 +468,12 @@ function shellStateChanges(environmentId: EnvironmentId) {
 export interface EnvironmentShellSummary {
   readonly hasSnapshot: boolean;
   readonly hasSynchronizingShell: boolean;
-  readonly hasCachedShell: boolean;
-  readonly hasLiveShell: boolean;
   readonly firstError: string | null;
 }
 
 const EMPTY_ENVIRONMENT_SHELL_SUMMARY: EnvironmentShellSummary = Object.freeze({
   hasSnapshot: false,
   hasSynchronizingShell: false,
-  hasCachedShell: false,
-  hasLiveShell: false,
   firstError: null,
 });
 
@@ -494,8 +486,6 @@ function shellSummariesEqual(
   return (
     left.hasSnapshot === right.hasSnapshot &&
     left.hasSynchronizingShell === right.hasSynchronizingShell &&
-    left.hasCachedShell === right.hasCachedShell &&
-    left.hasLiveShell === right.hasLiveShell &&
     left.firstError === right.firstError
   );
 }
@@ -520,15 +510,11 @@ export function createEnvironmentShellSummaryAtom(input: {
   return Atom.make((get) => {
     let hasSnapshot = false;
     let hasSynchronizingShell = false;
-    let hasCachedShell = false;
-    let hasLiveShell = false;
     let firstError: string | null = null;
 
     for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
       const state = get(input.shellStateValueAtom(environmentId));
       hasSynchronizingShell ||= state.status === "synchronizing";
-      hasCachedShell ||= state.status === "cached";
-      hasLiveShell ||= state.status === "live";
       if (firstError === null) {
         firstError = Option.getOrNull(state.error);
       }
@@ -541,8 +527,6 @@ export function createEnvironmentShellSummaryAtom(input: {
     const next: EnvironmentShellSummary = {
       hasSnapshot,
       hasSynchronizingShell,
-      hasCachedShell,
-      hasLiveShell,
       firstError,
     };
     if (shellSummariesEqual(previousSummary, next)) {
@@ -612,7 +596,7 @@ export function createEnvironmentShellAtoms<R, E>(
 
   const stateValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) =>
-      Option.getOrElse(AsyncResult.value(get(stateAtom(environmentId))), () => EMPTY_SHELL_STATE),
+      AsyncResult.getOrElse(get(stateAtom(environmentId)), () => EMPTY_SHELL_STATE),
     ).pipe(Atom.withLabel(`environment-shell-state-value:${environmentId}`)),
   );
 

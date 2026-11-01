@@ -143,6 +143,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
       ...buildThreadTitlePrompt({
         message: input.message,
         previousTitle: input.previousTitle,
+        forkSource: input.forkSource,
         linkedContext: input.linkedContext,
         attachments: input.attachments,
         instructions: input.instructions,
