@@ -103,6 +103,28 @@ const failed = (expect: Parameters<typeof gradeSample>[0], run: SampleRun) =>
     .filter((check) => !check.pass)
     .map((check) => check.check);
 
+it("passes the webhook template case only for a prompt that carries the pushed ref", () => {
+  const webhookCase = NodeFS.readFileSync(
+    new URL("./cases/pull-requests.ndjson", import.meta.url),
+    "utf8",
+  )
+    .trim()
+    .split("\n")
+    .map((line) => decodeDeviceCase(line))
+    .find((c) => c.id === "webhook-prompt-uses-body-template");
+  assert(webhookCase !== undefined);
+  const run = (prompt: string): SampleRun => ({
+    calls: [{ step: 0, tool: "schedule_task", input: { prompt, schedule: { type: "webhook" } } }],
+    text: "",
+    stopReason: "end_turn",
+  });
+  const calls = (prompt: string) =>
+    failed(webhookCase.expect, run(prompt)).filter((check) => check.startsWith("calls "));
+  expect(calls("Review {{body.repository.name}}.")).toHaveLength(1);
+  expect(calls("Review {{body.re")).toHaveLength(1);
+  expect(calls("Review the pushed branch {{body.ref}}.")).toEqual([]);
+});
+
 it("passes a good run and names every rule a bad run breaks", () => {
   const expect = {
     calls: [{ tool: "delegate_task", args: { task: "~FINDING", "target.options": "~max" } }],
