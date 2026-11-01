@@ -125,7 +125,7 @@ function compactEffortLabel(label: string): string {
     .toLowerCase()
     .replace(/\s+effort$/, "")
     .trim();
-  return COMPACT_EFFORT_LABELS[key] ?? label;
+  return Object.hasOwn(COMPACT_EFFORT_LABELS, key) ? COMPACT_EFFORT_LABELS[key]! : label;
 }
 
 export function buildTraitsTriggerDisplay(input: {

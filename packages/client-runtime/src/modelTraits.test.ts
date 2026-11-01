@@ -14,6 +14,7 @@ function effort(currentValue: string): ProviderOptionDescriptor {
       { id: "high", label: "High" },
       { id: "xhigh", label: "Extra High" },
       { id: "custom", label: "Deep Think" },
+      { id: "prototype", label: "__proto__" },
     ],
   };
 }
@@ -40,6 +41,7 @@ describe("buildTraitsTriggerDisplay", () => {
 
   it("keeps an unknown effort label whole rather than inventing an abbreviation", () => {
     expect(display([effort("custom")]).compactEffortLabel).toBe("Deep Think");
+    expect(display([effort("prototype")]).compactEffortLabel).toBe("__proto__");
   });
 
   it("reports Fast only while it is enabled and keeps the effort when it is off", () => {

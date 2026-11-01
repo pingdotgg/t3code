@@ -816,7 +816,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         prompt={draftMessage}
         surfaceColor={composerPanel}
         iconOnly={Platform.OS !== "android" && !compactEditor.isExpanded}
-        compact={Platform.OS === "android" && !compactEditor.isExpanded}
+        compact={Platform.OS === "android" && !isExpanded}
         fitWidth={fitsModelToolbar && modelToolbarWidth > 0 ? modelToolbarWidth : undefined}
         onPress={openSettings}
       />
