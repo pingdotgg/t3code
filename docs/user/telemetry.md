@@ -18,8 +18,21 @@ environment before starting it. Relay tracing also stops when `T3CODE_OTEL_SDK_D
 `OTEL_SDK_DISABLED` turns OpenTelemetry export off. The web app in a browser, including one the
 `t3` CLI opens, does not read these variables.
 
+An administrator can turn product events and relay tracing off for every user on a machine with
+a [managed policy](./managed-policy.md#other-capabilities).
+
 The desktop app reads `T3CODE_TELEMETRY_ENABLED` from your shell profile (for example `~/.zshrc`) on macOS and
 Linux, so export it there and restart the app. On Windows, set it as a user environment variable.
+
+## Mobile app crash reports
+
+When the iOS or Android app crashes or hits an error, it sends a report to T3 Code: the error
+message, the stack trace, the app version, and the device model and OS version. Each launch also
+sends startup timings, and every report carries a random ID for the install. Reports go through
+the T3 Connect relay to Axiom. They do not include your threads, prompts, or connection details,
+but an error message can quote a value the app was handling.
+
+To stop sending them, turn off **Send crash reports** in **Settings > About T3 Code > Diagnostics**.
 
 ## Export diagnostics to your own receiver
 

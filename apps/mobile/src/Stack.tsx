@@ -89,6 +89,7 @@ import {
   NewTaskThreadSettingsRouteScreen,
 } from "./features/threads/ThreadSettingsSheet";
 import { NewTaskFlowProvider } from "./features/threads/new-task-flow-provider";
+import { newTaskFlowKey } from "./features/threads/new-task-flow-state";
 import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
 import { SettingsNavigationRouteScreen } from "./features/settings/SettingsNavigationRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
@@ -136,7 +137,7 @@ import {
   isWorkspaceOverlayRoute,
   registerPresentedRoutes,
 } from "./features/layout/workspace-overlay-routes";
-import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
+import { ShowcaseReadyMarker } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
   SettingsLegalDocumentCloseHeaderButton,
   SettingsLegalDocumentExternalHeaderButton,
@@ -491,19 +492,28 @@ export function workspaceLocationFromState(state: NavigationState) {
   };
 }
 
+export function rootPathnameFromState(state: NavigationState): string {
+  const path = getPathFromState(state, navigationPathConfig);
+  return path.startsWith("/") ? path : `/${path}`;
+}
+
 function RootStackLayout(props: {
   readonly children: React.ReactNode;
   readonly state: NavigationState;
 }) {
-  const path = getPathFromState(props.state, navigationPathConfig);
-  const pathname = path.startsWith("/") ? path : `/${path}`;
+  const pathname = rootPathnameFromState(props.state);
   const workspaceLocation = workspaceLocationFromState(props.state);
   const settingsOpen = settingsOpenIn(
     props.state.routes
       .slice(0, props.state.index + 1)
       .filter((route) => !isWorkspaceOverlayRoute(route.name)),
   );
-  const draftRoute = props.state.routes.findLast((route) => route.name === "Thread");
+  // The flow follows the draft route even while a pushed Thread covers it, so
+  // its state lives exactly as long as the route.
+  const draftRoute = props.state.routes.findLast(isDraftThreadRoute);
+  const draftRouteOnTop =
+    draftRoute !== undefined &&
+    props.state.routes.findLast((route) => route.name === "Thread") === draftRoute;
   const draftParams = (
     draftRoute?.params as { draft?: { draftId?: string | string[] } } | undefined
   )?.draft;
@@ -512,9 +522,13 @@ function RootStackLayout(props: {
     : draftParams?.draftId;
 
   return (
-    <NewTaskFlowProvider active={isDraftThreadRoute(draftRoute)} routeDraftId={routeDraftId}>
+    <NewTaskFlowProvider
+      active={draftRouteOnTop}
+      flowKey={draftRoute === undefined ? undefined : newTaskFlowKey(draftRoute)}
+      routeDraftId={routeDraftId}
+    >
       <HardwareKeyboardCommandProvider pathname={pathname}>
-        <ShowcaseCaptureCoordinator pathname={pathname} />
+        <ShowcaseReadyMarker />
         <SettingsEnvironmentFilterProvider open={settingsOpen}>
           <WorkspaceConnectionStatusProvider>
             <AndroidWorkspaceTabsProvider state={props.state}>
@@ -992,6 +1006,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
         ...HORIZONTAL_FORM_SHEET_OPTIONS,
         sheetAllowedDetents: [0.55, 0.7],
         sheetGrabberVisible: true,
+        sheetCornerRadius: Platform.OS === "android" ? 28 : undefined,
       },
     }),
     NotFound: createNativeStackScreen({

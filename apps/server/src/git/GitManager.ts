@@ -672,19 +672,25 @@ export const make = Effect.gen(function* () {
   const projectSettingsFor = Effect.fnUntraced(function* (input: {
     readonly cwd: string;
     readonly threadId?: ThreadId | undefined;
+    readonly projectId?: ProjectId | undefined;
   }) {
     const settings = yield* serverSettingsService.getSettings;
     if (!hasProjectSettingsOverrides(settings))
       return { settings, projectId: null as ProjectId | null };
-    const projectId: ProjectId | null = yield* input.threadId !== undefined
-      ? threads.getThreadShell(input.threadId).pipe(
-          Effect.map((thread) => thread?.projectId ?? null),
-          Effect.orElseSucceed(() => null),
-        )
-      : projects.findActiveByWorkspaceRoot(input.cwd).pipe(
-          Effect.map((project) => Option.getOrNull(project)?.projectId ?? null),
-          Effect.orElseSucceed(() => null),
-        );
+    const threadProjectId =
+      input.threadId === undefined
+        ? null
+        : yield* threads.getThreadShell(input.threadId).pipe(
+            Effect.map((thread) => thread?.projectId ?? null),
+            Effect.orElseSucceed(() => null),
+          );
+    const projectId =
+      threadProjectId ??
+      input.projectId ??
+      (yield* projects.findActiveByWorkspaceRoot(input.cwd).pipe(
+        Effect.map((project) => Option.getOrNull(project)?.projectId ?? null),
+        Effect.orElseSucceed(() => null),
+      ));
     return { settings: resolveProjectSettings(settings, projectId).settings, projectId };
   });
   const readThreadContext = Effect.fnUntraced(
@@ -887,6 +893,11 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const pullRequestHostOptions = (url: string) => {
+    const host = URL.parse(url)?.host;
+    return host ? { host } : {};
+  };
+
   const configurePullRequestHeadUpstreamBase = Effect.fn("configurePullRequestHeadUpstream")(
     function* (
       cwd: string,
@@ -917,6 +928,7 @@ export const make = Effect.gen(function* () {
       const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
         cwd,
         repository: repositoryNameWithOwner,
+        ...pullRequestHostOptions(pullRequest.url),
       });
       const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
       const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
@@ -1030,6 +1042,7 @@ export const make = Effect.gen(function* () {
       const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
         cwd,
         repository: repositoryNameWithOwner,
+        ...pullRequestHostOptions(pullRequest.url),
       });
       const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
       const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
@@ -2326,7 +2339,15 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.ignore)));
 
-    const created = yield* findOpenPr(cwd, headContext);
+    // The PR already exists at this point, so a failed lookup only loses its metadata.
+    const created = yield* findOpenPr(cwd, headContext).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("GitManager.runPrStep lookup after create failed", {
+          provider: provider.kind,
+          errorTag: error._tag,
+        }).pipe(Effect.as(null)),
+      ),
+    );
     if (!created) {
       return {
         status: "created" as const,

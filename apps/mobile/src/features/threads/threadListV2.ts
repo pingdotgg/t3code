@@ -2,6 +2,7 @@ import {
   canSnooze,
   effectiveSnoozed,
   hasQueuedTurnStart,
+  pickSnoozePreset,
   QUEUED_TURN_START_GRACE_MS,
   resolveSnoozePresets,
   snoozeWakeLabel,
@@ -27,7 +28,8 @@ import {
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { isListedThreadLineage, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
+import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
 import type { ThreadMoveAvailability } from "./threadOrder";
@@ -40,8 +42,6 @@ import {
   reconcilePendingThreadOrder,
   type PendingThreadOrder,
 } from "./threadOrder";
-
-export { snoozeWakeLabel };
 
 export const threadListInboxReturns = createInboxReturnTracker();
 
@@ -72,28 +72,42 @@ export type ThreadListV2Status =
   | "ready";
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
 
+/**
+ * Presets for a row's snooze menu, read at the list's minute instead of the
+ * clock: the compiler keys a row's memo on its inputs, so a clock read inside
+ * it would keep the times from the row's first render.
+ */
+export function resolveThreadListV2SnoozePresets(input: {
+  readonly secondary: "snooze" | null;
+  readonly now: string;
+  readonly presets: ReadonlyArray<SnoozePresetSetting> | undefined;
+}): ReadonlyArray<SnoozePreset> {
+  return input.secondary === "snooze"
+    ? resolveSnoozePresets(new Date(input.now), presetOptions(input.presets))
+    : [];
+}
+
+function presetOptions(presets: ReadonlyArray<SnoozePresetSetting> | undefined) {
+  return presets ? { presets } : {};
+}
+
 export function resolveThreadListV2SnoozeMenuSelection(input: {
   readonly event: string;
   readonly displayedPresets: ReadonlyArray<SnoozePreset>;
   readonly now: Date;
+  readonly presets: ReadonlyArray<SnoozePresetSetting> | undefined;
 }):
   | { readonly _tag: "selected"; readonly preset: SnoozePreset }
   | { readonly _tag: "expired" }
   | { readonly _tag: "not-snooze" } {
   if (!input.event.startsWith("snooze:")) return { _tag: "not-snooze" };
-
-  const currentPreset = resolveSnoozePresets(input.now).find(
-    (candidate) => input.event === `snooze:${candidate.id}`,
-  );
-  if (currentPreset) return { _tag: "selected", preset: currentPreset };
-
-  const displayedPreset = input.displayedPresets.find(
-    (candidate) => input.event === `snooze:${candidate.id}`,
-  );
-  if (displayedPreset && Date.parse(displayedPreset.snoozedUntil) > input.now.getTime()) {
-    return { _tag: "selected", preset: displayedPreset };
-  }
-  return { _tag: "expired" };
+  const preset = pickSnoozePreset({
+    shown: input.displayedPresets,
+    id: input.event.slice("snooze:".length),
+    now: input.now,
+    ...presetOptions(input.presets),
+  });
+  return preset ? { _tag: "selected", preset } : { _tag: "expired" };
 }
 
 export function resolveThreadListV2SwipeActions(input: {
@@ -152,6 +166,27 @@ export function nextSnoozeWakeAfter(
     if (wakeAtMs > nowMs && (next === null || wakeAtMs < next)) next = wakeAtMs;
   }
   return next;
+}
+
+// Outside search, the clock only changes list membership/order at snooze deadlines.
+export function threadListV2LayoutTime(input: {
+  readonly threads: ReadonlyArray<{ readonly snoozedUntil?: string | null }>;
+  readonly now: string;
+  readonly searchQuery: string;
+}) {
+  if (input.searchQuery !== "") return input.now;
+  const nowMs = Date.parse(input.now);
+  if (!Number.isFinite(nowMs)) return input.now;
+  let previousWakeAt: number | undefined;
+  let nextWakeAt: number | undefined;
+  for (const thread of input.threads) {
+    if (thread.snoozedUntil == null) continue;
+    const wakeAt = Date.parse(thread.snoozedUntil);
+    if (!Number.isFinite(wakeAt)) continue;
+    if (wakeAt <= nowMs) previousWakeAt = Math.max(previousWakeAt ?? wakeAt, wakeAt);
+    else nextWakeAt = Math.min(nextWakeAt ?? wakeAt, wakeAt);
+  }
+  return new Date(previousWakeAt ?? (nextWakeAt === undefined ? 0 : nextWakeAt - 1)).toISOString();
 }
 
 export const THREAD_LIST_V2_SETTLED_INITIAL_COUNT = 10;
@@ -251,8 +286,7 @@ export function getThreadListV2OrderedSection(input: {
 }): EnvironmentThreadShell[] {
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   const threads = input.threads.filter((thread) => {
-    if (thread.archivedAt !== null || thread.lineage.relationshipToParent === "subagent")
-      return false;
+    if (thread.archivedAt !== null || !isListedThreadLineage(thread.lineage)) return false;
     if (
       (input.settlementEnvironmentIds?.has(thread.environmentId) ?? true) &&
       thread.settledOverride === "settled" &&
@@ -633,7 +667,7 @@ export function buildThreadListV2Items(input: {
   const listedThreads = input.threads.filter(
     (thread) =>
       thread.archivedAt === null &&
-      thread.lineage.relationshipToParent !== "subagent" &&
+      isListedThreadLineage(thread.lineage) &&
       (input.environmentId === null || thread.environmentId === input.environmentId) &&
       (projectKeys === null || projectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
   );

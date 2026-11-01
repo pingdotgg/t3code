@@ -75,6 +75,16 @@ describe("HTML in native Markdown", () => {
     expect(result).toContain('`<img src="inline.png">`');
   });
 
+  it("treats an unclosed fence in an HTML block as code through the end", () => {
+    // Sized so the quadratic rescan cannot finish within the test timeout.
+    const fences = Array.from({ length: 40_000 }, () => "```x y").join("\n");
+    const markdown = `<details>\n<img src="before.png">\n${fences}\n<img src="after.png">\n</details>`;
+    const result = markdownHtmlContent(markdown);
+    expect(result).toContain("![](<before.png>)");
+    expect(result).not.toContain("<details>");
+    expect(result).toContain('<img src="after.png">\n</details>');
+  });
+
   it("links HTML anchors in a table cell without breaking the row at <br>", () => {
     const document = parseMarkdownDocument(
       "| Status | Preview URL |\n| - | - |\n| Done | <a href='https://commit.example.com'>Commit</a><br><a href='https://branch.example.com'>Branch</a> |",
@@ -329,4 +339,12 @@ describe("Windows paths in native Markdown", () => {
     expect(urls).toEqual([image, paren, link, image, amp, htmlAmp, image]);
     expect(markdownImageSources(markdown)).toEqual([image, paren, amp, htmlAmp]);
   });
+});
+
+it("keeps backslashes in drive paths in mobile Markdown prose", () => {
+  const path = String.raw`Saved to C:\Users\me\.t3\_build\shot.png and C:/work\.config.`;
+
+  expect(parseMarkdownDocument(String.raw`${path} Then \*this\*.`).children).toMatchObject([
+    { type: "paragraph", children: [{ type: "text", value: `${path} Then *this*.` }] },
+  ]);
 });

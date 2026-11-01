@@ -28,7 +28,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const { selectedThread } = useThreadSelection();
-  const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const { selectedThreadCwd } = useSelectedThreadWorktree();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const { canChangeThreadBranch } = gitActions;
@@ -43,15 +43,16 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
   );
 
   const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
-  const currentWorktreePath = selectedThreadWorktreePath;
+  const currentWorktreePath = selectedThreadCwd;
   const availableBranches = gitState.selectedThreadBranches;
   const branchesLoading = gitState.selectedThreadBranchesLoading;
   const busy = gitState.gitOperationLabel !== null;
 
   const [newBranchName, setNewBranchName] = useState("");
-  const [worktreeBaseBranch, setWorktreeBaseBranch] = useState(
-    currentBranchLabel === "Detached HEAD" ? "main" : currentBranchLabel,
-  );
+  const [worktreeBaseBranchOverride, setWorktreeBaseBranchOverride] = useState<string | null>(null);
+  const worktreeBaseBranch =
+    worktreeBaseBranchOverride ??
+    (currentBranchLabel === "Detached HEAD" ? "main" : currentBranchLabel);
   const [worktreeBranchName, setWorktreeBranchName] = useState("");
 
   const disabledExistingBranchNames: Array<string> = [];
@@ -141,7 +142,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
             ) : null}
             <TextInput
               value={worktreeBaseBranch}
-              onChangeText={setWorktreeBaseBranch}
+              onChangeText={setWorktreeBaseBranchOverride}
               placeholder="main"
               accessibilityLabel="Worktree base branch"
               className="android:rounded-xl android:bg-sheet-solid ios:rounded-[18px]"

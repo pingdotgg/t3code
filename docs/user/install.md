@@ -29,6 +29,7 @@ line to add. Set `T3CODE_CHANNEL=nightly` to install the nightly train, or
 | ------------------------------------------------ | ----------------------------------------------------------------------- |
 | Start the server and open the web app            | `t3`                                                                    |
 | Start the server without a browser               | `t3 serve`                                                              |
+| Use it from your other devices                   | `t3 up` ([details](./remote-access.md))                                 |
 | Keep it running in the background (macOS, Linux) | `t3 service install` ([details](./background-service.md))               |
 | Move to the newest release                       | `t3 update`                                                             |
 | Reclaim database space                           | `t3 doctor` ([details](./background-service.md#reclaim-database-space)) |
@@ -65,17 +66,40 @@ update it with `git pull` and a rebuild.
 Download a release from [GitHub Releases](https://github.com/pingdotgg/t3code/releases),
 or use a package manager:
 
-| Platform           | Install                            |
-| ------------------ | ---------------------------------- |
-| Windows            | `winget install T3Tools.T3Code`    |
-| macOS              | `brew install --cask t3-code`      |
-| Debian, Ubuntu     | `sudo apt install ./T3-Code-*.deb` |
-| Arch Linux         | `yay -S t3code-bin`                |
-| Arch Linux nightly | `yay -S t3code-nightly-bin`        |
+| Platform           | Install                                                      |
+| ------------------ | ------------------------------------------------------------ |
+| Windows            | `winget install T3Tools.T3Code`                              |
+| macOS              | `brew install --cask t3-code`                                |
+| Debian, Ubuntu     | `sudo apt install ./T3-Code-*.deb`                           |
+| Arch Linux         | `yay -S t3code-bin`                                          |
+| Arch Linux nightly | `yay -S t3code-nightly-bin`                                  |
+| Nix                | `nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code` |
 
 The `.deb` updates itself like the other desktop builds. It asks for your
 password to install each update. If your desktop has no password prompt, the
 update fails. Download the new `.deb` and install it the same way.
+
+### Nix (nixpkgs)
+
+T3 Code is maintained in [nixpkgs](https://github.com/NixOS/nixpkgs/tree/nixos-unstable/pkgs/by-name/t3/t3code).
+The command above installs from `nixos-unstable` and requires Nix 2.30 or later with
+`nix-command` and `flakes` enabled. Launch the desktop app with `t3code-desktop`;
+the package also includes the `t3` command.
+
+On NixOS, you can instead add the package to your system configuration, using
+a nixpkgs revision that includes `t3code`:
+
+```nix
+environment.systemPackages = [ pkgs.t3code ];
+```
+
+Apply the change with `sudo nixos-rebuild switch`. For Home Manager, add
+`pkgs.t3code` to `home.packages` and run `home-manager switch`.
+
+Update a profile installation with `nix profile upgrade t3code`. For NixOS or
+Home Manager, update your configuration's nixpkgs input or channel and rebuild.
+Nix manages both the desktop app and the bundled
+`t3` command; use Nix to update them instead of the in-app updater or `t3 update`.
 
 ### The `t3` command
 
@@ -162,9 +186,10 @@ When a provider CLI is behind its latest release, its provider card shows the
 available version. **Update now** runs the installer that owns the CLI
 (Homebrew, or a global npm, pnpm, Yarn, Bun, Volta, or Vite+ install), or the
 CLI's own update command when T3 Code cannot tell. Update a CLI installed with
-mise through mise. Cursor and Antigravity update with T3 Code. Homebrew installs
-compare against the version Homebrew offers, which can trail the npm release by
-a few hours.
+mise through mise. Cursor and Antigravity update with T3 Code. Homebrew and
+Chocolatey installs compare against the version their package manager offers,
+which can trail the npm release; update Claude installed with Chocolatey
+through Chocolatey.
 
 Add another provider instance for a separate account or configuration. Each
 instance can have its own environment variables, such as API keys or a custom
@@ -183,3 +208,4 @@ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 - [Remote access](./remote-access.md): connect from another device.
 - [Running in the background](./background-service.md): keep a Linux or macOS host available.
 - [Updating T3 Code](./updating.md): update the app and connected servers.
+- [Managed policy](./managed-policy.md): configure T3 Code for everyone on a machine.

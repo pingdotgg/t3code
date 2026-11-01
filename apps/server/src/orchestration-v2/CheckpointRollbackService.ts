@@ -33,7 +33,7 @@ import { GIT_INDEX_LOCKED_DETAIL } from "../vcs/VcsProcess.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
-import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
+import { RuntimePolicyAboveCeilingError, RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
 export const ROLLBACK_FAILED_MESSAGE =
@@ -74,6 +74,7 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
 const isCheckpointRollbackExecutionError = Schema.is(CheckpointRollbackExecutionError);
 const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 const isCheckpointRestoreError = Schema.is(CheckpointRestoreError);
+const isRuntimePolicyAboveCeilingError = Schema.is(RuntimePolicyAboveCeilingError);
 
 /**
  * The message clients see when a rollback fails. Only a held Git index lock
@@ -81,6 +82,7 @@ const isCheckpointRestoreError = Schema.is(CheckpointRestoreError);
  * output, so they fall back to the generic message.
  */
 export function rollbackFailureClientMessage(error: CheckpointRollbackExecutionError): string {
+  if (isRuntimePolicyAboveCeilingError(error.cause)) return error.cause.message;
   const restoreCause = isCheckpointRestoreError(error.cause) ? error.cause.cause : undefined;
   return isVcsProcessExitError(restoreCause) && restoreCause.detail === GIT_INDEX_LOCKED_DETAIL
     ? GIT_INDEX_LOCKED_DETAIL
@@ -183,7 +185,11 @@ export const layer: Layer.Layer<
               const targetTurn =
                 latestProviderTurnForAttempt(context.providerTurns, targetAttempt?.id) ??
                 context.providerTurns.find((turn) => turn.id === targetAttempt?.providerTurnId);
-              if (targetTurn === undefined || targetTurn.providerThreadId !== providerThread.id) {
+              if (
+                targetAttempt === undefined ||
+                targetTurn === undefined ||
+                targetTurn.providerThreadId !== providerThread.id
+              ) {
                 return yield* new CheckpointRollbackExecutionError({
                   reason: "provider-turn-unavailable",
                   threadId: input.threadId,
@@ -191,11 +197,21 @@ export const layer: Layer.Layer<
                   checkpointId: input.checkpointId,
                 });
               }
+              const { attempt } = yield* projections.getProviderControlContext(input.threadId, {
+                providerThreadId: providerThread.id,
+                providerTurnId: targetTurn.id,
+                attemptId: targetAttempt.id,
+              });
+              const message =
+                attempt === undefined
+                  ? undefined
+                  : yield* projections.getRunMessage(input.threadId, attempt.runId);
               return {
                 type: "provider_turn" as const,
                 checkpointId: checkpoint.id,
                 appRunOrdinal: targetOrdinal,
                 providerTurn: targetTurn,
+                ...(message === undefined ? {} : { message }),
               };
             });
 

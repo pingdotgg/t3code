@@ -21,7 +21,7 @@ export function sessionHasScope(
   result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
   scope: AuthEnvironmentScope,
 ): boolean {
-  const session = Option.getOrNull(AsyncResult.value(result));
+  const session = AsyncResult.getOrElse(result, () => null);
   return result._tag !== "Failure" && session !== null && sessionGrantsScope(session, scope);
 }
 
@@ -29,12 +29,13 @@ export function useEnvironmentScope(
   environmentId: EnvironmentId | null,
   scope: AuthEnvironmentScope,
 ): boolean {
-  const result = useAtomValue(
+  // Select the grant: every revalidation emits a new result, and most consumers are list rows.
+  return useAtomValue(
     environmentId === null
       ? EMPTY_SESSION_STATE_ATOM
       : environmentSession.sessionStateAtom(environmentId),
+    (result) => sessionHasScope(result, scope),
   );
-  return sessionHasScope(result, scope);
 }
 
 export function useEnvironmentsWithScope(

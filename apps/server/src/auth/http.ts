@@ -1,12 +1,12 @@
 import {
   authScopeRequiredResponse,
-  AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthStandardClientScopes,
   AuthGrantScope,
   EnvironmentAuthInvalidError,
   type EnvironmentAuthInvalidReason,
   EnvironmentHttpApi,
+  EnvironmentHttpForbiddenError,
   EnvironmentInternalError,
   type EnvironmentInternalErrorReason,
   EnvironmentOperationForbiddenError,
@@ -462,19 +462,10 @@ export const layer = HttpApiBuilder.group(
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("pairing_credential_issuance_failed", error),
           ),
-        ),
-      )
-      .handle(
-        "pairingLinks",
-        Effect.fn("environment.auth.pairingLinks")(
-          function* (args) {
-            yield* annotateEnvironmentRequest(args.endpoint.name);
-            yield* requireEnvironmentScope(AuthAccessReadScope);
-            return yield* serverAuth.listPairingLinks();
-          },
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("pairing_links_load_failed", error),
-          ),
+          Effect.catchTags({
+            ManagedPolicyRefusedError: (error) =>
+              Effect.fail(new EnvironmentHttpForbiddenError({ message: error.message })),
+          }),
         ),
       )
       .handle(
@@ -488,19 +479,6 @@ export const layer = HttpApiBuilder.group(
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("pairing_link_revoke_failed", error),
-          ),
-        ),
-      )
-      .handle(
-        "clients",
-        Effect.fn("environment.auth.clients")(
-          function* (args) {
-            yield* annotateEnvironmentRequest(args.endpoint.name);
-            const session = yield* requireEnvironmentScope(AuthAccessReadScope);
-            return yield* serverAuth.listClientSessions(session.sessionId);
-          },
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-            failEnvironmentInternal("client_sessions_load_failed", error),
           ),
         ),
       )
