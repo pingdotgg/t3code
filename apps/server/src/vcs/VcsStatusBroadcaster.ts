@@ -548,13 +548,12 @@ export const make = Effect.gen(function* () {
   });
 
   const refreshRemoteAfterCheckout = Effect.fn("VcsStatusBroadcaster.refreshRemoteAfterCheckout")(
-    function* (cwd: string, policyCwd: string) {
+    function* (cwd: string, policyCwd: string, fetchesBefore: number) {
       yield* withRemoteWriteLock(
         cwd,
         Effect.gen(function* () {
           const refreshUpstream = !Duration.isZero(yield* automaticFetchInterval);
           yield* workflow.invalidateStatus(cwd, { keepPullRequestLookups: true });
-          const fetchesBefore = yield* workflow.statusUpstreamFetchCount(cwd);
           const remoteRead = yield* readRemoteStatus(cwd, { refreshUpstream });
           // Only a fetch can move the base used for local Changes totals.
           if ((yield* workflow.statusUpstreamFetchCount(cwd)) !== fetchesBefore) {
@@ -578,11 +577,13 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.refreshAfterCheckout",
   )(function* (rawCwd) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+    // Taken before the local read, so a fetch that finishes after it still triggers a re-read.
+    const fetchesBefore = yield* workflow.statusUpstreamFetchCount(cwd);
     const localDone = yield* Deferred.make<void>();
     // Owned by the broadcaster so a client disconnecting mid-switch still leaves status correct.
     yield* refreshLocalStatusCore(cwd).pipe(
       Effect.ensuring(Deferred.succeed(localDone, undefined)),
-      Effect.andThen(refreshRemoteAfterCheckout(cwd, rawCwd)),
+      Effect.andThen(refreshRemoteAfterCheckout(cwd, rawCwd, fetchesBefore)),
       Effect.ignoreCause({ log: true }),
       Effect.forkIn(broadcasterScope),
     );

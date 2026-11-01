@@ -762,12 +762,14 @@ describe("VcsStatusBroadcaster", () => {
       const subscribed = yield* Deferred.make<void>();
       const firstRemote = yield* Deferred.make<void>();
       const secondRemote = yield* Deferred.make<void>();
+      const thirdRemote = yield* Deferred.make<void>();
       yield* broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }).pipe(
         Stream.runForEach((event) => {
           if (event._tag === "snapshot") return Deferred.succeed(subscribed, undefined);
           if (event._tag !== "remoteUpdated" || event.remote === null) return Effect.void;
-          return event.remote.pr === null
-            ? Deferred.succeed(firstRemote, undefined)
+          if (event.remote.pr === null) return Deferred.succeed(firstRemote, undefined);
+          return event.remote.pr.number === 2979
+            ? Deferred.succeed(thirdRemote, undefined)
             : Deferred.succeed(secondRemote, undefined);
         }),
         Effect.forkScoped,
@@ -795,6 +797,29 @@ describe("VcsStatusBroadcaster", () => {
       assert.deepStrictEqual(
         (yield* broadcaster.getStatus({ cwd: "/repo" })).branchChanges,
         fetchedLocal.branchChanges,
+      );
+
+      // A fetch finishing after the first local read took its values still needs a re-read.
+      const lateFetchLocal: VcsStatusLocalResult = {
+        ...baseLocalStatus,
+        branchChanges: { baseRef: "origin/main", insertions: 7, deletions: 0 },
+      };
+      state.beforeRemoteStatus = Effect.void;
+      state.currentRemoteStatus = {
+        ...remoteStatusWithPr,
+        pr: remoteStatusWithPr.pr && { ...remoteStatusWithPr.pr, number: 2979 },
+      };
+      state.beforeLocalStatus = Effect.sync(() => {
+        state.beforeLocalStatus = Effect.void;
+        state.upstreamFetchCount = (state.upstreamFetchCount ?? 0) + 1;
+        state.currentLocalStatus = lateFetchLocal;
+      });
+      yield* broadcaster.refreshAfterCheckout("/repo");
+      yield* Deferred.await(thirdRemote);
+
+      assert.deepStrictEqual(
+        (yield* broadcaster.getStatus({ cwd: "/repo" })).branchChanges,
+        lateFetchLocal.branchChanges,
       );
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
