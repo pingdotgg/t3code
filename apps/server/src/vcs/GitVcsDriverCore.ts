@@ -64,6 +64,7 @@ const branchBaseConfigKey = (branch: string) => `branch.${branch}.t3-merge-base`
  */
 const legacyBranchBaseConfigKey = (branch: string) => `branch.${branch}.gh-merge-base`;
 const gitProcesses = Semaphore.makeUnsafe(8);
+const WORKTREE_INDEX_REFRESH_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
@@ -4072,8 +4073,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   // A checkout stamps most files in the second it writes the index, and Git re-reads every file
   // stamped in the index's own second or later ("racily clean") on each status, diff and add.
-  // T3's own git calls never rewrite a worktree's index, so refresh it once. The refresh runs
-  // under the usual git timeout; Git removes index.lock when that stops it.
+  // T3's own git calls never rewrite a worktree's index, so refresh it once.
   const refreshNewWorktreeIndex = Effect.fn("refreshNewWorktreeIndex")(function* (
     worktreePath: string,
   ) {
@@ -4090,13 +4090,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.orElseSucceed(() => Option.none<number>()),
     );
     // Older Git (2.30 here) skips the write when racy entries merely check out clean.
-    // A refresh re-reads every checked-out file, so it gets the checkout's own
-    // timeout, which also keeps it out of the shared git process permits.
+    // A refresh re-reads every checked-out file, so allow five minutes outside shared permits.
     const refresh = runGit(
       "GitVcsDriver.createWorktree.refreshIndex",
       worktreePath,
       ["update-index", "-q", "--refresh", "--force-write-index"],
-      { timeoutMs: WORKTREE_ADD_TIMEOUT_MS },
+      { timeoutMs: WORKTREE_INDEX_REFRESH_TIMEOUT_MS },
     );
     const checkoutSecond = yield* indexSecond;
     yield* refresh;
