@@ -56,6 +56,13 @@ export function AppBar(props: AppBarProps) {
       optionsVersion={props.optionsVersion}
     />
   );
+  const trailing =
+    menuView?.length || props.trailing ? (
+      <>
+        {menuView}
+        {props.trailing}
+      </>
+    ) : undefined;
   const header = (
     <AndroidScreenHeader
       title={props.title}
@@ -85,14 +92,7 @@ export function AppBar(props: AppBarProps) {
             ]
           : props.actions
       }
-      trailing={
-        menuView?.length || props.trailing ? (
-          <>
-            {menuView}
-            {props.trailing}
-          </>
-        ) : undefined
-      }
+      trailing={trailing}
     />
   );
   return (
@@ -128,6 +128,8 @@ export function AppBar(props: AppBarProps) {
                   value={search.value}
                   onChangeText={search.onChangeText}
                 />
+                {/* Menus stay trailing while searching, like the workspace tab headers. */}
+                {trailing}
               </View>
             </View>
           ) : null}
