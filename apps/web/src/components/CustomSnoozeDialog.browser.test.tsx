@@ -14,7 +14,7 @@ vi.mock("../hooks/useSettings", () => ({
 
 function setup(timestampFormat: TimestampFormat = "24-hour") {
   settings.timestampFormat = timestampFormat;
-  const timers = fakeTimers({ toFake: ["Date"] });
+  const timers = fakeTimers();
   vi.setSystemTime(new Date(2030, 0, 2, 14, 30));
   return timers;
 }
