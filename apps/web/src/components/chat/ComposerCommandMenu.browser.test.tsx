@@ -84,7 +84,10 @@ it("brings a highlighted row far down a long list into the visible window", asyn
   await expect.element(page.getByRole("option", { name: /Demo Skill 000/ })).toBeVisible();
   await screen.rerender(<Menu activeItemId={skillItems[250]!.id} />);
 
-  await expect.element(page.getByRole("option", { name: /Demo Skill 250/ })).toBeInViewport();
+  const option = page.getByRole("option", { name: /Demo Skill 250/ });
+  await expect.element(option).toBeInViewport();
+  await expect.element(option).toHaveAttribute("aria-posinset", "251");
+  await expect.element(option).toHaveAttribute("aria-setsize", "300");
 });
 
 async function scrollListToEnd() {

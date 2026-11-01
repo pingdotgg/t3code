@@ -149,6 +149,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
               renderItem={({ item, index }) => (
                 <ComposerCommandMenuItem
                   index={index}
+                  setSize={props.items.length}
                   optionId={composerSuggestionOptionId(props.listId, item.id)}
                   item={item}
                   triggerKind={props.triggerKind}
@@ -196,6 +197,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
 
 const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   index: number;
+  setSize: number;
   optionId: string;
   item: ComposerCommandItem;
   triggerKind: ComposerTriggerKind | null;
@@ -222,6 +224,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
     <CommandItem
       render={<div id={props.optionId} ref={rowRef} />}
       index={props.index}
+      // Only a window of options is mounted, so the browser cannot count the set itself.
+      aria-posinset={props.index + 1}
+      aria-setsize={props.setSize}
       aria-selected={props.isActive}
       value={props.item.id}
       data-composer-item-id={props.item.id}
