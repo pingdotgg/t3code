@@ -186,12 +186,17 @@ export function mergeCodexRateLimits(
   };
 }
 
-/** All exhausted windows must reset before a continuation can run. */
-export function codexUsageLimitResetAt(
-  snapshot: CodexRateLimitSnapshot | undefined,
+// Codex can refuse a turn at 99% because it reports whole percentages.
+// Prefer fully exhausted windows and discard observations whose reset has passed.
+function usageLimitStopResetAt(
+  allWindows: ReadonlyArray<ServerProviderUsageWindow>,
+  atMs: number,
 ): string | null {
-  if (!snapshot) return null;
-  const windows = codexRateLimitsToWindows(snapshot).filter((window) => window.usedPercent >= 100);
+  const current = allWindows.filter(
+    (window) => window.resetsAt === undefined || Date.parse(window.resetsAt) > atMs,
+  );
+  const full = current.filter((window) => window.usedPercent >= 100);
+  const windows = full.length > 0 ? full : current.filter((window) => window.usedPercent >= 99);
   if (windows.length === 0 || windows.some((window) => !window.resetsAt)) return null;
   return windows.reduce<string | null>(
     (latest, window) =>
@@ -200,4 +205,19 @@ export function codexUsageLimitResetAt(
         : latest,
     null,
   );
+}
+
+export function codexUsageLimitResetAt(
+  snapshot: CodexRateLimitSnapshot | undefined,
+  atMs: number,
+): string | null {
+  return snapshot ? usageLimitStopResetAt(codexRateLimitsToWindows(snapshot), atMs) : null;
+}
+
+// A refused first request may never receive a session rate-limit notification.
+export function codexPublishedUsageLimitResetAt(
+  limits: ServerProviderUsageLimits | undefined,
+  atMs: number,
+): string | null {
+  return limits ? usageLimitStopResetAt(limits.windows, atMs) : null;
 }
