@@ -138,6 +138,37 @@ describe("large usage records", () => {
     expect(parseProjected).not.toHaveBeenCalled();
   });
 
+  it("replays an oversized usage line whose marker spans a read boundary", async () => {
+    const path = NodePath.join(dir, "split-marker.jsonl");
+    const head = codex
+      .slice(0, 2)
+      .map((line) => JSON.stringify(line) + "\n")
+      .join("");
+    const usageLine = (pad: number) =>
+      JSON.stringify({ pad: "x".repeat(pad), ...codex[2], tail: "y".repeat(16 * 1024) }) + "\n";
+    const markerOffset = Buffer.from(usageLine(0)).indexOf('"token_count"');
+    const readBoundary = 256 * 1024;
+    const pad = readBoundary - 6 - Buffer.byteLength(head) - markerOffset;
+    await NodeFSP.writeFile(path, head + usageLine(pad));
+    const parseProjected = vi.fn(TEST_FORMATS.codex.parseProjected);
+    const result = await readWithDefaultThreshold(
+      path,
+      { ...TEST_FORMATS.codex, parseProjected },
+      undefined,
+      { streamingThresholdBytes: readBoundary },
+    );
+    expect(result?.records.map((record) => record.totals)).toEqual([
+      {
+        uncachedInputTokens: 75,
+        cachedInputTokens: 20,
+        cacheCreationTokens: 5,
+        outputTokens: 99,
+        reasoningTokens: 10,
+      },
+    ]);
+    expect(parseProjected).toHaveBeenCalledTimes(1);
+  });
+
   it("projects oversized usage lines in compressed transcripts", async () => {
     const path = NodePath.join(dir, "archived.jsonl.zst");
     await NodeFSP.writeFile(path, NodeZlib.zstdCompressSync(JSON.stringify(claude()) + "\n"));
