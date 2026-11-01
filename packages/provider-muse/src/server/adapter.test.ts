@@ -360,6 +360,25 @@ const startConversation = Effect.fnUntraced(function* (
   return { nativeId: call.commandId!, providerTurn: event.providerTurn };
 });
 
+// Returns once the adapter holds a live background Muse run, "wake-1".
+const makeHeldWakeHarness = Effect.fnUntraced(function* (
+  fake: Effect.Success<ReturnType<typeof makeFakeMuse>>,
+) {
+  const offered = yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+  const harness = yield* makeHarness(
+    fake,
+    INSTANCE_ID,
+    undefined,
+    undefined,
+    undefined,
+    runtimePolicy,
+    { continuationRequests: { offer: (request) => Deferred.succeed(offered, request) } },
+  );
+  yield* fake.emit("turn/started", { turnId: "wake-1" });
+  yield* Deferred.await(offered);
+  return harness;
+});
+
 const SUBSCRIPTION_USAGE = {
   window: { usedPercent: 0, windowDurationMins: 300, resetsAtMs: 1791465557000 },
   weekly: { usedPercent: 5, resetsAtMs: 1791763200000 },
@@ -1592,16 +1611,149 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect("reports a no-op compaction as a visible failure and permits another turn", () =>
+  it.effect("reports unsuccessful compaction as a visible failure and permits another turn", () =>
+    Effect.gen(function* () {
+      const rejected = (reason: string) =>
+        new MspError({
+          code: -32030,
+          message: `session/compact command rejected: ${reason}`,
+          data: { kind: "commandRejected", reason, retryable: false },
+        });
+      for (const [response, detail] of [
+        [{ status: "noop", reason: "no_compactable_history" }, "no_compactable_history"],
+        [rejected("invalid_target"), "invalid_target"],
+        // No live run was observed, so there is nothing to wait for.
+        [rejected("run_active"), "run_active"],
+      ] as const) {
+        const fake = yield* makeFakeMuse();
+        const harness = yield* makeHarness(fake);
+        fake.queueResponse("session/compact", response);
+        yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread));
+        const terminal = yield* harness.takeEvent("turn.terminal");
+        assert.strictEqual(terminal.status, "failed");
+        assert.include(terminal.failure?.message, detail);
+        assert.strictEqual(terminal.threadDisposition, "reusable");
+        assert.lengthOf(
+          fake.calls.filter((call) => call.method === "session/compact"),
+          1,
+        );
+        yield* startConversation(harness, fake, 2);
+        assert.lengthOf(
+          harness.allEvents.filter((event) => event.type === "turn.terminal"),
+          1,
+        );
+      }
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect.each([
+    { when: "while the run is still going", endBeforeRejection: false },
+    { when: "after the run already ended", endBeforeRejection: true },
+  ] as const)(
+    "compacts once a held Muse run ends when the rejection arrives $when",
+    ({ endBeforeRejection }) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeMuse();
+        const harness = yield* makeHeldWakeHarness(fake);
+        const rejection = pendingPromise<Record<string, unknown>>();
+        fake.queueResponse("session/compact", rejection.promise);
+        const compacting = yield* harness.runtime.compactThread!(
+          yield* turnInput(harness.providerThread),
+        ).pipe(Effect.forkScoped);
+        const first = yield* fake.takeCall("session/compact");
+        if (endBeforeRejection)
+          yield* fake.emit("turn/completed", { turnId: "wake-1", terminal: "completed" });
+        rejection.reject(
+          new MspError({
+            code: -32030,
+            message: "session/compact command rejected: run_active",
+            data: { kind: "commandRejected", reason: "run_active", retryable: false },
+          }),
+        );
+        yield* Fiber.join(compacting);
+        if (!endBeforeRejection)
+          yield* fake.emit("turn/completed", { turnId: "wake-1", terminal: "completed" });
+        const retry = yield* fake.takeCall("session/compact");
+        assert.notStrictEqual(retry.commandId, first.commandId);
+        // The compaction runs under its own target run, not the command ID.
+        yield* fake.emit("item/completed", {
+          item: {
+            itemId: "compaction-1",
+            turnId: "compaction-target-run",
+            kind: "compaction",
+            status: "completed",
+            outcome: "compacted",
+            revision: 1,
+          },
+        });
+        const terminal = yield* harness.takeEvent("turn.terminal");
+        assert.strictEqual(terminal.status, "completed");
+        assert.strictEqual(terminal.threadDisposition, "reusable");
+        yield* startConversation(harness, fake, 2);
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("stops a compaction waiting on a Muse run without closing the host", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
-      fake.queueResponse("session/compact", { status: "noop", reason: "no_compactable_history" });
+      const harness = yield* makeHeldWakeHarness(fake);
+      fake.queueResponse(
+        "session/compact",
+        new MspError({
+          code: -32030,
+          message: "session/compact command rejected: run_active",
+          data: { kind: "commandRejected", reason: "run_active", retryable: false },
+        }),
+      );
       yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread));
+      const running = yield* harness.takeEvent(
+        "provider_turn.updated",
+        (event) => event.providerTurn.status === "running",
+      );
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: running.providerTurn.id,
+      });
       const terminal = yield* harness.takeEvent("turn.terminal");
-      assert.strictEqual(terminal.status, "failed");
+      assert.strictEqual(terminal.status, "interrupted");
       assert.strictEqual(terminal.threadDisposition, "reusable");
+      assert.strictEqual(fake.closeCount(), 0);
+      yield* fake.emit("turn/completed", { turnId: "wake-1", terminal: "completed" });
       yield* startConversation(harness, fake, 2);
+      assert.lengthOf(
+        fake.calls.filter((call) => call.method === "session/compact"),
+        1,
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("lets Muse admit compaction when a resumed session reports a stale active turn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      // muse-code-sdk#121: resume after compaction reports a finished turn as running.
+      fake.queueResponse("session/resume", {
+        session: {
+          sessionId: "saved-session",
+          modelId: MODEL,
+          activeTurnId: "finished-turn",
+          status: "running",
+        },
+        history: { items: [] },
+      });
+      const harness = yield* makeHarness(fake, INSTANCE_ID, "saved-session");
+      yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread));
+      yield* fake.takeCall("session/compact");
+      yield* fake.emit("item/completed", {
+        item: {
+          itemId: "compaction-1",
+          turnId: "compaction-target-run",
+          kind: "compaction",
+          status: "completed",
+          outcome: "compacted",
+          revision: 1,
+        },
+      });
+      assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "completed");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

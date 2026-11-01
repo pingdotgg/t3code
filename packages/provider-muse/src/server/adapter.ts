@@ -219,6 +219,7 @@ interface ActiveTurn {
   flushScheduled: boolean;
   interruptRequested: boolean;
   compact: boolean;
+  compactAdmitted: boolean;
 }
 
 interface PendingRequest {
@@ -343,6 +344,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const finishedBackground: Array<BackgroundWorkReport> = [];
       let wake:
         | { readonly nativeId: string; readonly events: Array<[string, unknown]> }
+        | undefined;
+      // Runs seen starting live; resume can report a finished turn as active (muse-code-sdk#121).
+      const hostRuns = new Set<string>();
+      let hostRunsEnded = 0;
+      let compactWait:
+        | { readonly turn: ActiveTurn; readonly ready: Deferred.Deferred<void> }
         | undefined;
       const emit = (event: ProviderAdapter.ProviderAdapterV2Event) =>
         Queue.offer(events, event).pipe(Effect.asVoid);
@@ -940,7 +947,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         disposition: "reusable" | "broken" = "reusable",
         quota?: { readonly resetsAtMs: number },
       ) {
-        if (active !== turn || seenTerminals.has(turn.nativeId)) return;
+        if (active !== turn || seenTerminals.has(turn.nativeId)) return false;
         seenTerminals.add(turn.nativeId);
         const completedAt = yield* DateTime.now;
         for (const item of turn.items.values()) {
@@ -973,6 +980,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         });
         yield* updateSession(disposition === "broken" ? "error" : "ready", detail ?? null);
         active = undefined;
+        if (compactWait?.turn === turn) {
+          yield* Deferred.succeed(compactWait.ready, undefined);
+          compactWait = undefined;
+        }
         if (status === "failed") {
           const usageLimited =
             disposition === "reusable" && (quota !== undefined || isMuseUsageLimitFailure(detail));
@@ -1031,6 +1042,26 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           });
         }
         yield* Deferred.succeed(turn.done, undefined);
+        return true;
+      });
+      const trackHostRun = Effect.fnUntraced(function* (method: string, params: unknown) {
+        if (
+          (method !== "turn/started" && method !== "turn/completed") ||
+          !Schema.is(recordSchema)(params) ||
+          params.sessionId !== nativeSessionId ||
+          typeof params.turnId !== "string"
+        )
+          return;
+        if (method === "turn/started") {
+          hostRuns.add(params.turnId);
+          return;
+        }
+        hostRuns.delete(params.turnId);
+        hostRunsEnded++;
+        if (hostRuns.size === 0 && compactWait) {
+          yield* Deferred.succeed(compactWait.ready, undefined);
+          compactWait = undefined;
+        }
       });
       const failHost = Effect.fnUntraced(function* (cause: unknown) {
         if (closed || broken) return;
@@ -1641,6 +1672,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             } else if (entry.epoch === hostEpoch) {
               if (entry.type === "failure") yield* failHost(entry.cause);
               else {
+                yield* trackHostRun(entry.method, entry.params);
                 if (options.nativeEventLogger && entry.method !== "item/delta")
                   yield* options.nativeEventLogger.write(
                     { provider: "muse", method: entry.method, params: entry.params },
@@ -1661,6 +1693,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       );
       const launchHost = Effect.fnUntraced(function* () {
         const epoch = ++hostEpoch;
+        hostRuns.clear();
         const mcpSession = yield* mcpSessions.read(input.threadId);
         const environment = McpProviderSession.withAgentDeviceEnvironment(
           options.environment,
@@ -1952,6 +1985,88 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           selected,
         );
       });
+      // Once the turn's own terminal is emitted, return so its events persist exactly once.
+      const settleStartFailure =
+        (turn: ActiveTurn) =>
+        <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          effect.pipe(
+            Effect.catchCause((cause) =>
+              Effect.gen(function* () {
+                // Interrupted start settles its own turn; a closing session settles the rest.
+                if (Cause.hasInterrupts(cause)) return yield* Effect.failCause(cause);
+                const error = Cause.squash(cause);
+                const detail = isProtocolError(error)
+                  ? error.detail
+                  : error instanceof Error
+                    ? error.message
+                    : "Muse could not start the turn.";
+                const owned = yield* eventPermit.withPermits(1)(finish(turn, "failed", detail));
+                if (!owned) return yield* Effect.failCause(cause);
+              }),
+            ),
+          );
+      const isRunActive = (error: unknown) =>
+        isProtocolError(error) &&
+        error.payload instanceof MspError &&
+        error.payload.kind === "commandRejected" &&
+        error.payload.data.reason === "run_active";
+      // Muse refuses compaction during a run and has no ifBusy queue for it, so wait for
+      // the runs seen live. A rejection with none seen is reported, never waited on.
+      const compactWhenIdle = Effect.fnUntraced(function* (
+        turn: ActiveTurn,
+        firstCommandId: string,
+      ): Effect.fn.Return<void, ProviderAdapter.ProviderAdapterProtocolError> {
+        let commandId = firstCommandId;
+        while (true) {
+          const ended = hostRunsEnded;
+          const admission = yield* request("session/compact", {}, true, commandId).pipe(
+            Effect.flatMap((value) => decode(MuseCompactResult, value)),
+            Effect.catchIf(isRunActive, (busy) => Effect.succeed({ busy })),
+          );
+          if (!("busy" in admission)) {
+            if (admission.status === "noop") {
+              yield* eventPermit.withPermits(1)(
+                finish(turn, "failed", admission.reason ?? "Muse has no context to compact."),
+              );
+              return;
+            }
+            if (admission.status !== "accepted")
+              return yield* protocolError(
+                `Muse returned an unsupported compaction status: ${admission.status}`,
+              );
+            turn.compactAdmitted = true;
+            return;
+          }
+          const next = yield* eventPermit.withPermits(1)(
+            Effect.gen(function* () {
+              if (active === turn && hostRunsEnded !== ended) return "retry" as const;
+              if (active !== turn || hostRuns.size === 0) return undefined;
+              const ready = yield* Deferred.make<void>();
+              compactWait = { turn, ready };
+              return ready;
+            }),
+          );
+          if (!next) return yield* admission.busy;
+          // Command IDs are idempotency keys, so each attempt needs a new one.
+          if (next === "retry") {
+            commandId = host.connection.mintCommandId();
+            continue;
+          }
+          yield* Deferred.await(next).pipe(
+            Effect.andThen(
+              Effect.suspend(() =>
+                active === turn
+                  ? compactWhenIdle(turn, host.connection.mintCommandId())
+                  : Effect.void,
+              ).pipe(commands.withPermits(1)),
+            ),
+            settleStartFailure(turn),
+            Effect.ignore,
+            Effect.forkIn(scope),
+          );
+          return;
+        }
+      });
       const start = Effect.fnUntraced(function* (
         turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
         compact = false,
@@ -2016,6 +2131,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           flushScheduled: false,
           interruptRequested: false,
           compact,
+          compactAdmitted: false,
         };
         yield* Effect.gen(function* () {
           thread = turnInput.providerThread;
@@ -2041,19 +2157,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }).pipe(eventPermit.withPermits(1));
         if (continuation) return;
         yield* Effect.gen(function* () {
-          if (compact) {
-            const result = yield* request("session/compact", {}, true, nativeId).pipe(
-              Effect.flatMap((value) => decode(MuseCompactResult, value)),
-            );
-            if (result.status === "noop")
-              yield* eventPermit.withPermits(1)(
-                finish(turn, "failed", result.reason ?? "Muse has no context to compact."),
-              );
-            else if (result.status !== "accepted")
-              return yield* protocolError(
-                `Muse returned an unsupported compaction status: ${result.status}`,
-              );
-          } else {
+          if (compact) yield* compactWhenIdle(turn, nativeId);
+          else {
             const result = yield* request(
               "turn/start",
               {
@@ -2085,15 +2190,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             }
           }
         }).pipe(
-          Effect.onError((cause) => {
-            const error = Cause.squash(cause);
-            const detail = isProtocolError(error)
-              ? error.detail
-              : error instanceof Error
-                ? error.message
-                : "Muse could not start the turn.";
-            return eventPermit.withPermits(1)(finish(turn, "failed", detail));
-          }),
+          Effect.onInterrupt(() =>
+            eventPermit.withPermits(1)(finish(turn, "failed", "Muse could not start the turn.")),
+          ),
+          settleStartFailure(turn),
         );
       });
       const snapshot = Effect.fnUntraced(function* (
@@ -2243,6 +2343,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               yield* eventPermit.withPermits(1)(
                 Effect.gen(function* () {
                   if (active !== turn) return;
+                  // Nothing runs on the host before admission, so the host can stay.
+                  if (!turn.compactAdmitted) return yield* finish(turn, "interrupted");
                   hostEpoch++;
                   yield* Effect.tryPromise(() => host.close()).pipe(
                     Effect.mapError((cause) => protocolError("Cannot stop Muse compaction", cause)),
