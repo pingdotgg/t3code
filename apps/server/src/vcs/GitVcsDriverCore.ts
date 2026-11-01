@@ -4152,20 +4152,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           attempt === 1 ? directoryName : `${directoryName}-${attempt}`,
         );
         // Git checks out into the empty claimed folder; give it back if the worktree is not created.
-        // Uninterruptible so a mkdir that completes is always paired with its release.
-        worktreePath = yield* fileSystem.makeDirectory(candidate).pipe(
-          Effect.andThen(
-            Effect.addFinalizer((exit) =>
-              Exit.isFailure(exit) ? Effect.ignore(removeEmptyDirectory(candidate)) : Effect.void,
-            ),
-          ),
+        worktreePath = yield* Effect.acquireRelease(
+          fileSystem.makeDirectory(candidate),
+          (_, exit) =>
+            Exit.isFailure(exit) ? Effect.ignore(removeEmptyDirectory(candidate)) : Effect.void,
+        ).pipe(
           Effect.as(candidate),
           Effect.catchIf(
             (error) => error.reason._tag === "AlreadyExists",
             () => Effect.succeed(null),
           ),
           Effect.mapError(toCommandError),
-          Effect.uninterruptible,
         );
       }
     }
