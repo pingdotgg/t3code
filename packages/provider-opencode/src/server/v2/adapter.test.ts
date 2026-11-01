@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
@@ -58,10 +59,13 @@ const recordingClient = (calls: Array<RecordedCall>) =>
     message: { list: () => Effect.succeed({ data: [] }) },
   }) as unknown as OpenCode2Server.OpenCode2Connection["client"];
 
-const makeLayers = (calls: Array<RecordedCall>) => {
+const makeLayers = (
+  calls: Array<RecordedCall>,
+  events: OpenCode2Server.OpenCode2Connection["events"] = Effect.succeed(Stream.never),
+) => {
   const connection = {
     client: recordingClient(calls),
-    events: Effect.succeed(Stream.never),
+    events,
     url: "http://127.0.0.1:4096",
     version: "2.1.2",
     external: false,
@@ -122,6 +126,57 @@ const openFor = (
             cwd,
           }),
   });
+
+it.effect.each(["unload", "create"] as const)(
+  "keeps pre-registration cleanup after reconnect before %s",
+  (action) =>
+    Effect.gen(function* () {
+      const disconnect = yield* Deferred.make<void>();
+      const reconnected = yield* Deferred.make<void>();
+      const calls: Array<RecordedCall> = [];
+      let subscriptions = 0;
+      const events = Effect.sync(() =>
+        ++subscriptions === 1
+          ? Stream.fromEffect(Deferred.await(disconnect)).pipe(Stream.drain)
+          : Stream.fromEffect(Deferred.succeed(reconnected, undefined)).pipe(
+              Stream.flatMap(() => Stream.never),
+            ),
+      );
+      yield* Effect.gen(function* () {
+        const threadId = ThreadId.make("thread-reconnect");
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* sessions.set(mcpConfig(threadId));
+        const adapter = yield* make(ProviderInstanceId.make("opencode-test"));
+        const runtime = yield* openFor(adapter, threadId);
+        const input = {
+          threadId,
+          runtimePolicy: runtimePolicy(),
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("opencode-test"),
+            model: "anthropic/claude-sonnet",
+            options: [],
+          },
+        };
+        const providerThread = yield* runtime.ensureThread(input);
+        calls.length = 0;
+        yield* Deferred.succeed(disconnect, undefined);
+        yield* Deferred.await(reconnected);
+        if (action === "unload") {
+          yield* runtime.unloadThread!({ providerThread });
+          assert.deepStrictEqual(
+            calls.map((call) => call.op),
+            ["mcp.remove"],
+          );
+        } else {
+          yield* runtime.ensureThread(input);
+          assert.deepStrictEqual(
+            calls.map((call) => call.op),
+            ["mcp.remove", "mcp.add", "session.create"],
+          );
+        }
+      }).pipe(Effect.provide(makeLayers(calls, events)));
+    }),
+);
 
 it.effect(
   "registers the thread's T3 MCP server when the session opens, before any OpenCode session exists",

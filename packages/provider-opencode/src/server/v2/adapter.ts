@@ -708,8 +708,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const threads = new Map<string, ThreadState>();
     const registeredMcp = new Map<
       ThreadId,
-      { readonly name: string; readonly directory: string; readonly credential: string }
+      {
+        readonly name: string;
+        readonly directory: string;
+        readonly credential: string;
+        readonly generation: number;
+      }
     >();
+    let mcpGeneration = 0;
     const childOwners = new Map<string, ThreadState>();
     const announced = new Map<string, EventOf<"session.created">["data"]>();
     const strays = new Map<string, ThreadState>();
@@ -2645,7 +2651,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* Scope.close(previous, Exit.void);
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
       for (const state of threads.values()) state.mcp = undefined;
-      registeredMcp.clear();
+      // A stream reconnect can reuse the process; retain ownership until refresh or unload.
+      mcpGeneration++;
       yield* lock.withPermit(reconcile).pipe(Effect.timeout(RECONCILE_TIMEOUT));
       return stream;
     }).pipe(
@@ -3020,7 +3027,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const mcpSession = yield* mcpSessions.read(threadId);
       if (mcpSession === undefined) return;
       const known = registeredMcp.get(threadId);
-      if (known?.directory === directory && known.credential === mcpSession.authorizationHeader)
+      if (
+        known?.directory === directory &&
+        known.credential === mcpSession.authorizationHeader &&
+        known.generation === mcpGeneration
+      )
         return;
       if (known !== undefined) {
         yield* removeMcp(known);
@@ -3052,6 +3063,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           name,
           directory,
           credential: mcpSession.authorizationHeader,
+          generation: mcpGeneration,
         });
       }
     });
