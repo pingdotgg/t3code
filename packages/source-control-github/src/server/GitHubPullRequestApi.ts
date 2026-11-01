@@ -1433,6 +1433,7 @@ export const make = Effect.gen(function* () {
         headRef: `refs/pull/${input.number}/head`,
         required: asksRequired(input.host),
         requestedReviewers,
+        mergeQueue: input.host.toLowerCase() === "github.com",
       });
     return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((allowReserve) =>
@@ -1699,7 +1700,10 @@ export const make = Effect.gen(function* () {
     (input) => {
       const lookup = pullRequestLookup(input);
       if (lookup === null) return Effect.succeed(null);
-      return GraphQLResolver.request(lookup, watchFingerprintResolver).pipe(
+      return GraphQLResolver.request(
+        { ...lookup, mergeQueue: input.host.toLowerCase() === "github.com" },
+        watchFingerprintResolver,
+      ).pipe(
         Effect.map((result) => {
           const pullRequest = result.repository?.pullRequest;
           return pullRequest == null ? null : toPullRequestWatchFingerprint(pullRequest);

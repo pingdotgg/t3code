@@ -3932,6 +3932,103 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("persists each merge queue removal wake across reactor restarts", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const threadId = ThreadId.make("queue-removal-watch");
+      const projectId = ProjectId.make("queue-removal-project");
+      yield* seedProject({
+        projectId,
+        title: "Queue removal",
+        workspaceRoot: "/workspace/watch",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("queue-removal-create"),
+        threadId,
+        projectId,
+        title: "Queue removal",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("queue-removal-start"),
+        threadId,
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 7,
+        watching: true,
+        link: { url: "https://github.com/pingdotgg/t3code/pull/7", source: "agent" },
+      });
+      let removal: PullRequestDetail["mergeQueueRemoval"];
+      const host = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          watchFingerprint: () =>
+            Effect.succeed({ status: removal?.id ?? "green", remarks: "none" }),
+          invalidate: () => Effect.void,
+          detail: () =>
+            Effect.succeed({
+              ...watchedPullRequestDetail({ projectId, number: 7, at: "2026-10-02T12:00:00.000Z" }),
+              checks: [{ name: "lint", status: "success", description: null, url: null }],
+              ...(removal === undefined ? {} : { mergeQueueRemoval: removal }),
+            }),
+          activity: () =>
+            Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            }),
+        }),
+      );
+      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      yield* reactor.sweep;
+      yield* worker.drain();
+      removal = {
+        id: "first",
+        removedAt: "2000-01-01T00:00:00Z",
+        reason: "Required checks failed",
+      };
+      yield* reactor.sweep;
+      yield* worker.drain();
+      const persisted = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+      assert.equal(persisted?.mergeQueueRemovalId, "first");
+      const restarted = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      yield* restarted.sweep;
+      yield* worker.drain();
+      removal = { ...removal, id: "second" };
+      yield* restarted.sweep;
+      yield* worker.drain();
+      yield* restarted.sweep;
+      yield* worker.drain();
+      const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+      const removals = messages.filter(
+        (message) => message.notification?.summary === "#7: removed from merge queue",
+      );
+      assert.lengthOf(removals, 2);
+      for (const message of removals) {
+        assert.equal(message.notification?.outcome, "failed");
+        assert.include(message.text, "Required checks failed");
+      }
+      assert.equal(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch
+          ?.mergeQueueRemovalId,
+        "second",
+      );
+    }),
+  );
+
   it.effect.each([
     "single page",
     "paginated",

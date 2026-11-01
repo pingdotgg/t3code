@@ -2986,6 +2986,27 @@ it.effect(
     }),
 );
 
+it.effect("preserves merge queue removal details from the provider", () =>
+  Effect.gen(function* () {
+    const removal = { id: "RMQE_1", removedAt: "2026-07-02T00:00:00Z", reason: "CI failed" };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: () =>
+            Effect.succeed({ ...hostedChangeRequest("body"), mergeQueueRemoval: removal }),
+        }),
+      ],
+    });
+    const detail = yield* service.detail({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+    });
+    assert.deepStrictEqual(detail.mergeQueueRemoval, removal);
+  }),
+);
+
 it.effect("notifies linked threads when detail changes draft status in either direction", () =>
   Effect.gen(function* () {
     let isDraft = true;

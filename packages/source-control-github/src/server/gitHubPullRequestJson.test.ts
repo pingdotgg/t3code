@@ -518,6 +518,22 @@ describe("pull request detail decoding", () => {
     expect(detailOf([], { autoMergeRequest: null }).autoMergeEnabled).toBe(false);
   });
 
+  it("reads the newest merge queue removal, and none where the queue was not asked about", () => {
+    const removal = {
+      __typename: "RemovedFromMergeQueueEvent",
+      id: "RMQE_1",
+      createdAt: "2026-07-05T00:00:00Z",
+      reason: "Required status checks failed",
+    };
+    expect(detailOf([], { mergeQueueRemovals: { nodes: [removal] } }).mergeQueueRemoval).toEqual({
+      id: "RMQE_1",
+      removedAt: "2026-07-05T00:00:00Z",
+      reason: "Required status checks failed",
+    });
+    expect(detailOf([], { mergeQueueRemovals: { nodes: [] } }).mergeQueueRemoval).toBeUndefined();
+    expect(detailOf([]).mergeQueueRemoval).toBeUndefined();
+  });
+
   it("shows a re-running check once, as the run that is happening now", () => {
     const detail = detailOf([
       inWorkflow({
@@ -1639,12 +1655,13 @@ describe("pull request lookups", () => {
 });
 
 describe("pull request watch fingerprints", () => {
-  it("moves status with checks and remarks with comments, each without the other", () => {
+  it("moves status with checks and queue removals, and remarks with comments, not across", () => {
     const pullRequest = (input: {
       readonly running: number;
       readonly failed: number;
       readonly commentEditedAt: string | null;
       readonly reviews: number;
+      readonly removals: number;
     }) => ({
       state: "OPEN",
       mergeable: "MERGEABLE",
@@ -1652,6 +1669,7 @@ describe("pull request watch fingerprints", () => {
       comments: { totalCount: 1, nodes: [{ lastEditedAt: input.commentEditedAt }] },
       reviews: { totalCount: input.reviews, nodes: [] },
       reviewThreads: { totalCount: 0 },
+      mergeQueueRemovals: { totalCount: input.removals },
       commits: {
         nodes: [
           {
@@ -1673,7 +1691,7 @@ describe("pull request watch fingerprints", () => {
     });
     const fingerprint = (input: Parameters<typeof pullRequest>[0]) =>
       toPullRequestWatchFingerprint(decodeWatched(pullRequest(input)));
-    const base = { running: 2, failed: 0, commentEditedAt: null, reviews: 1 };
+    const base = { running: 2, failed: 0, commentEditedAt: null, reviews: 1, removals: 0 };
     const before = fingerprint(base);
     const checkFinished = fingerprint({ ...base, running: 1, failed: 1 });
     const summaryEdited = fingerprint({ ...base, commentEditedAt: "2026-10-05T23:47:43Z" });
@@ -1684,5 +1702,9 @@ describe("pull request watch fingerprints", () => {
     expect(summaryEdited.remarks).not.toBe(before.remarks);
     expect(summaryEdited.status).toBe(before.status);
     expect(replied.remarks).not.toBe(before.remarks);
+    // Queued and dropped between two passes leaves the head and its checks as they were.
+    const dropped = fingerprint({ ...base, removals: 1 });
+    expect(dropped.status).not.toBe(before.status);
+    expect(dropped.remarks).toBe(before.remarks);
   });
 });
