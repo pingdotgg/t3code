@@ -27,21 +27,24 @@ const isVersionedBundle = (entry: string, name: string) => {
 
 /**
  * The program a Toolbox script line runs: its first word, or the operand of `exec`, `open -na` or
- * `start ""`. Other paths on the line, such as `> /dev/null` or `JAVA_HOME="/opt/jdk"`, say nothing
+ * `start`. Other paths on the line, such as `> /dev/null` or `JAVA_HOME="/opt/jdk"`, say nothing
  * about whether the IDE is still installed. */
 const launchedProgram = (line: string) => {
-  const words = [...line.replace(/^\s*\(/, "").matchAll(/"([^"]*)"|(\S+)/g)].map((match) => ({
-    text: match[1] ?? match[2] ?? "",
-    quoted: match[1] !== undefined,
-  }));
+  const words = [...line.replace(/^\s*\(/, "").matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map(
+    (match) => ({
+      text: match[1] ?? match[2] ?? match[3] ?? "",
+      quoted: match[3] === undefined,
+    }),
+  );
   const launcher = words.shift();
   if (!launcher) return undefined;
   const name = launcher.text.toLowerCase();
   if (name !== "exec" && name !== "open" && name !== "start") return launcher.text;
-  // `start` reads its first quoted word as the window title.
-  if (name === "start" && words[0]?.quoted) words.shift();
+  // `start` reads its first quoted word as the window title, even after `/min`-style switches.
+  const title = name === "start" ? words.findIndex((word) => word.quoted) : -1;
   const option = name === "start" ? /^\// : /^-/;
-  return words.find((word) => word.quoted || !option.test(word.text))?.text;
+  return words.find((word, index) => index !== title && (word.quoted || !option.test(word.text)))
+    ?.text;
 };
 
 export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(function* (
@@ -66,10 +69,9 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const names = installNames[editor.id] ?? [editor.label];
   const command = editor.commands[0];
   const jetbrains = editor.launchStyle === "line-column";
-  // A Toolbox script launches its IDE by absolute path or a HOME-based path. Keep a numbered script
-  // only while that path exists, so a script left behind by a removed IDE is skipped. The script is
-  // read, never run.
-  const hasLaunchTarget = Effect.fn("editor.hasLaunchTarget")(function* (script: string) {
+  // A Toolbox script launches its IDE by absolute path or a HOME-based path, so a script left
+  // behind by a removed IDE names only missing paths. The script is read, never run.
+  const launchTarget = Effect.fn("editor.launchTarget")(function* (script: string) {
     const text = yield* fs.readFileString(script).pipe(Effect.orElseSucceed(() => ""));
     const targets = text
       .split(/\r?\n/)
@@ -77,18 +79,20 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       .map((target) => (home ? target.replace(/^\$(?:HOME|\{HOME\})(?=\/)/, () => home) : target))
       .filter((target) => path.isAbsolute(target));
     for (const target of targets) {
-      if (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false))) return true;
+      if (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false))) return "found";
     }
-    return false;
+    return targets.length > 0 ? "missing" : "unknown";
   });
-  // Toolbox names a launch script `idea1`, `idea2`, ... when another installed
-  // version already has `idea`.
-  const numberedScripts = Effect.fn("editor.numberedScripts")(function* (
+  // Toolbox names a launch script `idea1`, `idea2`, ... when another installed version already
+  // has `idea`. The canonical script stays unless its IDE is positively gone; a numbered one needs
+  // a target that still exists.
+  const toolboxScripts = Effect.fn("editor.toolboxScripts")(function* (
     dir: string,
     suffix: string,
   ) {
+    const canonical = path.join(dir, `${command}${suffix}`);
     const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => []));
-    const scripts = entries
+    const numbered = entries
       .filter(
         (entry) =>
           entry.startsWith(command) &&
@@ -97,7 +101,12 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       )
       .sort((a, b) => a.length - b.length || a.localeCompare(b))
       .map((entry) => path.join(dir, entry));
-    return yield* Effect.filter(scripts, hasLaunchTarget);
+    return [
+      ...((yield* launchTarget(canonical)) === "missing" ? [] : [canonical]),
+      ...(yield* Effect.filter(numbered, (script) =>
+        launchTarget(script).pipe(Effect.map((target) => target === "found")),
+      )),
+    ];
   });
   const candidates: string[] = [];
 
@@ -126,7 +135,7 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
     }
     if (home && jetbrains) {
       const scripts = path.join(home, "Library/Application Support/JetBrains/Toolbox/scripts");
-      candidates.push(path.join(scripts, command), ...(yield* numberedScripts(scripts, "")));
+      candidates.push(...(yield* toolboxScripts(scripts, "")));
     }
   } else if (platform === "win32") {
     const roots = [
@@ -138,10 +147,7 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
     if (jetbrains) {
       if (env.LOCALAPPDATA) {
         const scripts = path.join(env.LOCALAPPDATA, "JetBrains/Toolbox/scripts");
-        candidates.push(
-          path.join(scripts, `${command}.cmd`),
-          ...(yield* numberedScripts(scripts, ".cmd")),
-        );
+        candidates.push(...(yield* toolboxScripts(scripts, ".cmd")));
       }
       for (const directory of roots.flatMap((root) => [root, path.join(root, "JetBrains")])) {
         const entries = yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
@@ -183,7 +189,6 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
     ];
     const dataHome = env.XDG_DATA_HOME || (home ? path.join(home, ".local/share") : undefined);
     const scripts = jetbrains && dataHome ? path.join(dataHome, "JetBrains/Toolbox/scripts") : null;
-    if (scripts) dirs.push(scripts);
     if (preferZeditor) {
       // Linux packages use zeditor because OpenZFS owns the zed command.
       for (const name of ["zeditor", "zed"]) {
@@ -194,7 +199,7 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
         for (const name of editor.commands) candidates.push(path.join(dir, name));
       }
     }
-    if (scripts) candidates.push(...(yield* numberedScripts(scripts, "")));
+    if (scripts) candidates.push(...(yield* toolboxScripts(scripts, "")));
   }
 
   if (preferBundle) candidates.push(...editor.commands);

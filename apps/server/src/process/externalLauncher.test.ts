@@ -630,104 +630,91 @@ it.effect("keeps the macOS VS Code Insiders bundle out of stable VS Code", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("discovers a numbered JetBrains Toolbox script on win32", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-toolbox-" });
-    const target = path.join(home, "apps/idea/bin/idea");
-    yield* fs.makeDirectory(path.dirname(target), { recursive: true });
-    yield* fs.writeFileString(target, "");
-    const executable = path.join(home, "JetBrains/Toolbox/scripts/idea1.cmd");
-    yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
-    yield* fs.writeFileString(executable, `@echo off\r\nstart "" "${target}" %*\r\n`);
+interface ToolboxPaths {
+  readonly home: string;
+  readonly ide: string;
+  readonly removed: string;
+}
 
-    let spawned: ChildProcess.StandardCommand | undefined;
-    const editors = yield* Effect.gen(function* () {
-      const launcher = yield* ExternalLauncher.ExternalLauncher;
-      const available = yield* launcher.resolveAvailableEditors();
-      yield* launcher.launchEditor({ editor: "idea", cwd: "/workspace/file.ts" });
-      return available;
-    }).pipe(
-      Effect.provide(
-        layerTest({
-          platform: "win32",
-          env: {
-            HOME: home,
-            LOCALAPPDATA: home,
-            PATH: path.join(home, "empty"),
-            PATHEXT: ".COM;.EXE;.BAT;.CMD",
-          },
-          onSpawn: (command) => {
-            spawned = command;
-          },
-        }),
-      ),
-    );
+const toolboxScriptsPath = {
+  darwin: "Library/Application Support/JetBrains/Toolbox/scripts",
+  linux: ".local/share/JetBrains/Toolbox/scripts",
+  win32: "JetBrains/Toolbox/scripts",
+} as const;
 
-    assert.include(editors, "idea");
-    assert.include(spawned?.command, "idea1");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-for (const { platform, scriptsPath, variable } of [
-  { platform: "linux", scriptsPath: ".local/share/JetBrains/Toolbox/scripts", variable: "$HOME" },
+it.effect.each([
+  {
+    platform: "win32",
+    expected: "idea1.cmd",
+    scripts: ({ ide, removed }: ToolboxPaths) => ({
+      "idea.cmd": `@echo off\r\nstart "" "${removed}" %*\r\n`,
+      "idea1.cmd": `@echo off\r\nstart /min "" "${ide}" %*\r\n`,
+    }),
+  },
+  {
+    platform: "linux",
+    expected: "idea2",
+    scripts: ({ home }: ToolboxPaths) => ({
+      idea: `#!/bin/sh\nexec "$HOME/apps/removed/bin/idea" "$@"\n`,
+      idea1: `#!/bin/sh\nJAVA_HOME="${home}"\ncd "${home}"\nexec "$HOME/apps/removed/bin/idea" "$@"\n`,
+      idea10: `#!/bin/sh\nexec "$HOME/apps/IDE with spaces/bin/idea" "$@"\n`,
+      idea2: `#!/bin/sh\nexec "$HOME/apps/IDE with spaces/bin/idea" "$@"\n`,
+    }),
+  },
   {
     platform: "darwin",
-    scriptsPath: "Library/Application Support/JetBrains/Toolbox/scripts",
-    variable: "${HOME}",
+    expected: "idea2",
+    scripts: () => ({
+      idea: `#!/bin/sh\nopen -na "\${HOME}/apps/removed/bin/idea" --args "$@"\n`,
+      idea1: `#!/bin/sh\nopen -na "\${HOME}/apps/removed/bin/idea" --args "$@"\n`,
+      idea2: `#!/bin/sh\nopen -na "\${HOME}/apps/IDE with spaces/bin/idea" --args "$@"\n`,
+    }),
   },
-] as const) {
-  it.effect.skipIf(windowsHost)(
-    `picks the lowest-numbered Toolbox script whose ${variable} target exists on ${platform}`,
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-toolbox-home with spaces-" });
-        const scripts = path.join(home, scriptsPath);
-        // Keep the target outside the ordinary Applications and install-directory fallbacks.
-        const target = path.join(home, "apps/IDE with spaces/bin/idea");
-        yield* fs.makeDirectory(scripts, { recursive: true });
-        yield* fs.makeDirectory(path.dirname(target), { recursive: true });
-        yield* fs.writeFileString(target, "");
-        const launch = platform === "darwin" ? "open -na" : "exec";
-        const working = `${launch} "${variable}/apps/IDE with spaces/bin/idea"`;
-        for (const [name, script] of [
-          // Existing paths outside the launch command do not keep the script.
-          [
-            "idea1",
-            `JAVA_HOME="${home}"\ncd "${home}"\n${launch} "${variable}/apps/removed/bin/idea"`,
-          ],
-          ["idea10", working],
-          ["idea2", working],
-        ] as const) {
-          const executable = path.join(scripts, name);
-          yield* fs.writeFileString(executable, `#!/bin/sh\n${script} "$@"\n`);
-          yield* fs.chmod(executable, 0o755);
-        }
+  {
+    platform: "linux",
+    expected: "idea",
+    scripts: ({ ide }: ToolboxPaths) => ({
+      idea: `#!/bin/sh\nIDE_HOME="${ide}"\nexec "$IDE_HOME" "$@"\n`,
+      idea1: `#!/bin/sh\nexec "${ide}" "$@"\n`,
+    }),
+  },
+  {
+    platform: "darwin",
+    expected: "idea",
+    scripts: ({ ide, removed }: ToolboxPaths) => ({
+      idea: `#!/bin/sh\n${removed} --version\nopen -na '${ide}' --args "$@"\n`,
+      idea1: `#!/bin/sh\nopen -na "${ide}" --args "$@"\n`,
+    }),
+  },
+] as const)(
+  "resolves the $expected Toolbox script on $platform",
+  ({ platform, expected, scripts }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-toolbox-home with spaces-" });
+      const dir = path.join(home, toolboxScriptsPath[platform]);
+      const ide = path.join(home, "apps/IDE with spaces/bin/idea");
+      yield* fs.makeDirectory(dir, { recursive: true });
+      yield* fs.makeDirectory(path.dirname(ide), { recursive: true });
+      yield* fs.writeFileString(ide, "");
+      const removed = path.join(home, "apps/removed/bin/idea");
+      for (const [name, script] of Object.entries(scripts({ home, ide, removed }))) {
+        yield* fs.writeFileString(path.join(dir, name), script);
+        yield* fs.chmod(path.join(dir, name), 0o755);
+      }
 
-        let spawned: ChildProcess.StandardCommand | undefined;
-        yield* Effect.gen(function* () {
-          const launcher = yield* ExternalLauncher.ExternalLauncher;
-          assert.include(yield* launcher.resolveAvailableEditors(), "idea");
-          yield* launcher.launchEditor({ editor: "idea", cwd: "/workspace/file.ts" });
-        }).pipe(
-          Effect.provide(
-            layerTest({
-              platform,
-              env: { HOME: home, PATH: path.join(home, "empty") },
-              onSpawn: (command) => {
-                spawned = command;
-              },
-            }),
-          ),
-        );
+      const editor = EDITORS.find((editor) => editor.id === "idea")!;
+      const resolved = yield* resolveEditorCommand(editor, {
+        HOME: home,
+        LOCALAPPDATA: home,
+        PATH: path.join(home, "empty"),
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      }).pipe(Effect.provideService(HostProcess.Platform, platform));
 
-        assert.equal(spawned?.command, path.join(scripts, "idea2"));
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-}
+      assert.deepEqual(resolved, Option.some({ command: path.join(dir, expected), baseArgs: [] }));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 for (const { platform, installPath, onPath } of [
   { platform: "darwin", installPath: ".local/bin/agy", onPath: true },
