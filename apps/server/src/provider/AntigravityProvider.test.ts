@@ -129,6 +129,7 @@ type ProbeError = EffectAcpErrors.AcpError | ProviderSetupError;
 
 const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
   options: {
+    readonly auth?: { readonly type: string; readonly label: string };
     readonly enabled?: boolean;
     readonly safe?: boolean;
     readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
@@ -145,6 +146,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     decodeSettings({ enabled: options.enabled ?? true, customModels: ["do-not-seed-me"] }),
     {
       stampIdentity: (snapshot) => Effect.succeed({ ...snapshot, instanceId, driver }),
+      ...(options.auth ? { auth: options.auth } : {}),
       ...(options.probeUsage ? { probeUsage: options.probeUsage } : {}),
       probe: Ref.update(probeCalls, (count) => count + 1).pipe(
         Effect.andThen(Ref.get(probe)),
@@ -305,23 +307,35 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
   it.effect("treats initialize as installation proof, not account or model discovery", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const harness = yield* makeHarness();
-        expect(yield* harness.provider.snapshot.getSnapshot).toMatchObject({
-          installed: false,
-          status: "warning",
-          auth: { status: "unknown" },
-          models: [],
-        });
-        yield* harness.initialize;
-        const snapshot = yield* harness.provider.snapshot.getSnapshot;
-        expect(snapshot).toMatchObject({
-          installed: true,
-          status: "warning",
-          version: "agy_acp_server_20260818_01_RC01",
-          auth: { status: "unknown" },
-          models: [],
-        });
-        expect(yield* Ref.get(harness.probeCalls)).toBe(1);
+        for (const auth of [
+          undefined,
+          { type: "oauth-personal", label: "Google account" },
+          { type: "oauth-business", label: "Gemini Enterprise" },
+          { type: "gemini-api-key", label: "Gemini API key" },
+          { type: "agent-platform", label: "Agent Platform" },
+        ]) {
+          const harness = yield* makeHarness(auth ? { auth } : {});
+          expect(yield* harness.provider.snapshot.getSnapshot).toMatchObject({
+            installed: false,
+            status: "warning",
+            auth: { status: "unknown" },
+            models: [],
+          });
+          yield* harness.initialize;
+          const snapshot = yield* harness.provider.snapshot.getSnapshot;
+          expect(snapshot).toMatchObject({
+            installed: true,
+            status: "warning",
+            version: "agy_acp_server_20260818_01_RC01",
+            auth: { status: "unknown", ...(auth ? { type: auth.type } : {}) },
+            message:
+              auth?.type === "gemini-api-key" || auth?.type === "agent-platform"
+                ? `Antigravity is installed. Connect with ${auth.label} to load models.`
+                : "Antigravity is installed. Google account access is not checked yet.",
+            models: [],
+          });
+          expect(yield* Ref.get(harness.probeCalls)).toBe(1);
+        }
       }),
     ),
   );
@@ -360,7 +374,8 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
   it.effect("clears all account metadata on sign-out and authentication failure", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const harness = yield* makeHarness();
+        const auth = { type: "gemini-api-key", label: "Gemini API key" };
+        const harness = yield* makeHarness({ auth });
         yield* harness.initialize;
         for (const clear of [harness.provider.onSignedOut, harness.provider.onAuthRequired]) {
           yield* harness.provider.onSessionStarted(started, "/workspace");
@@ -369,7 +384,8 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           expect(yield* harness.provider.snapshot.getSnapshot).toMatchObject({
             installed: true,
             status: "warning",
-            auth: { status: "unauthenticated" },
+            auth: { status: "unauthenticated", type: auth.type, label: auth.label },
+            message: "Connect with Gemini API key to use Antigravity and load models.",
             models: [],
             slashCommands: [],
             skills: [],
@@ -382,7 +398,14 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual([]);
         }
         const refreshed = yield* harness.provider.snapshot.refresh;
-        expect(refreshed.auth.status).toBe("unauthenticated");
+        expect(refreshed.auth).toEqual({
+          status: "unauthenticated",
+          type: auth.type,
+          label: auth.label,
+        });
+        expect(refreshed.message).toBe(
+          "Connect with Gemini API key to use Antigravity and load models.",
+        );
         expect(refreshed.supportsTextGeneration).toBe(false);
       }),
     ),
