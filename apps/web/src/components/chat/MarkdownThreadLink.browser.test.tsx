@@ -174,6 +174,19 @@ describe("thread link family lookups", () => {
         .element(screen.getByRole("link", { name: "Thread, Older settled thread" }))
         .toBeInTheDocument();
       expect(appAtomRegistry.get(mocks.shells).has(key(target))).toBe(true);
+      const listed = ref("already-listed");
+      await fixture.setShell(listed, row(listed.threadId, "Listed thread"));
+      await screen.rerender(view(listed, kind));
+      await expect
+        .element(screen.getByRole("link", { name: "Thread, Listed thread" }))
+        .toBeInTheDocument();
+      expect(fixture.requested.has(key(listed))).toBe(false);
+      expect(appAtomRegistry.get(mocks.shells).has(key(target))).toBe(false);
+      await fixture.setShell(listed, null);
+      await fixture.resolve(listed, [row(listed.threadId, "Listed thread reloaded")]);
+      await expect
+        .element(screen.getByRole("link", { name: "Thread, Listed thread reloaded" }))
+        .toBeInTheDocument();
       await screen.unmount();
       expect(appAtomRegistry.get(mocks.shells).size).toBe(0);
     },

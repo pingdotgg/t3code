@@ -48,18 +48,6 @@ export const environmentThreadShells = createEnvironmentThreadShellAtoms({
   snapshotAtom: threadEnvironment.snapshotAtom,
 });
 
-/** Keeps the subagent tree under `rootThreadId` in the thread list while the caller shows it. */
-export function useThreadFamily(
-  environmentId: EnvironmentId | null,
-  rootThreadId: ThreadId | null,
-): void {
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts the subagent tree into the thread family registry while the caller shows it
-  useEffect(() => {
-    if (environmentId === null || rootThreadId === null) return;
-    return threadFamilies.mount(appAtomRegistry, environmentId, rootThreadId);
-  }, [environmentId, rootThreadId]);
-}
-
 const EMPTY_FAMILY_ATOM = Atom.make(AsyncResult.initial<OrchestrationV2ThreadFamily, never>());
 
 export function useThreadFamilyIfMissing(ref: ScopedThreadRef | null, missing: boolean) {
@@ -68,7 +56,13 @@ export function useThreadFamilyIfMissing(ref: ScopedThreadRef | null, missing: b
     ref !== null && lookup?.environmentId === ref.environmentId && lookup.threadId === ref.threadId;
   // Family rows make their own shell visible, so retain the lookup until its target changes.
   if (ref !== null && missing && !active) setLookup(ref);
-  useThreadFamily(active ? ref.environmentId : null, active ? ref.threadId : null);
+  const environmentId = active ? ref.environmentId : null;
+  const threadId = active ? ref.threadId : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retains fetched family rows in the registry while the link targets this thread
+  useEffect(() => {
+    if (environmentId === null || threadId === null) return;
+    return threadFamilies.mount(appAtomRegistry, environmentId, threadId);
+  }, [environmentId, threadId]);
   return useAtomValue(
     active ? threadFamilies.familyAtom(ref.environmentId, ref.threadId) : EMPTY_FAMILY_ATOM,
   );
