@@ -12860,6 +12860,120 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("parents each nested subagent's thread to the subagent that launched it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const LEVEL_1_TOOL_USE_ID = "toolu-lineage-level-1";
+        const LEVEL_2_TOOL_USE_ID = "toolu-lineage-level-2";
+        const LEVEL_3_TOOL_USE_ID = "toolu-lineage-level-3";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-subagent-nested-lineage"),
+            text: "Spawn a subagent that spawns a subagent that spawns a subagent.",
+            attachments: [],
+          }),
+        );
+        const launch = (parentToolUseId: string | null, id: string, uuid: string) =>
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: parentToolUseId,
+            message: {
+              model: CLAUDE_TEST_MODEL_SELECTION.model,
+              id: `msg_${id}`,
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id,
+                  name: "Agent",
+                  input: {
+                    description: id,
+                    subagent_type: "general-purpose",
+                    prompt: "Spawn the next level.",
+                  },
+                },
+              ],
+            },
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        const taskStarted = (id: string, uuid: string) =>
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: `task-${id}`,
+            tool_use_id: id,
+            description: id,
+            task_type: "local_agent",
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        for (const frame of [
+          launch(null, LEVEL_1_TOOL_USE_ID, "00000000-0000-4000-8000-000000000231"),
+          taskStarted(LEVEL_1_TOOL_USE_ID, "00000000-0000-4000-8000-000000000232"),
+          launch(LEVEL_1_TOOL_USE_ID, LEVEL_2_TOOL_USE_ID, "00000000-0000-4000-8000-000000000233"),
+          taskStarted(LEVEL_2_TOOL_USE_ID, "00000000-0000-4000-8000-000000000234"),
+          launch(LEVEL_2_TOOL_USE_ID, LEVEL_3_TOOL_USE_ID, "00000000-0000-4000-8000-000000000235"),
+          taskStarted(LEVEL_3_TOOL_USE_ID, "00000000-0000-4000-8000-000000000236"),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000237",
+            result: "Spawned the subagents.",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+
+        const childThreadIdByTask = new Map(
+          harness.events.flatMap((event) =>
+            event.type === "subagent.updated"
+              ? [[event.subagent.nativeTaskRef?.nativeId, event.subagent.childThreadId] as const]
+              : [],
+          ),
+        );
+        const childThread = (toolUseId: string) => childThreadIdByTask.get(`task-${toolUseId}`);
+        const lineages = harness.events.flatMap((event) =>
+          event.type === "app_thread.created" && event.appThread.id !== harness.threadId
+            ? [
+                {
+                  threadId: event.appThread.id,
+                  parentThreadId: event.appThread.lineage.parentThreadId,
+                  rootThreadId: event.appThread.lineage.rootThreadId,
+                },
+              ]
+            : [],
+        );
+        assert.deepEqual(lineages, [
+          {
+            threadId: childThread(LEVEL_1_TOOL_USE_ID),
+            parentThreadId: harness.threadId,
+            rootThreadId: harness.threadId,
+          },
+          {
+            threadId: childThread(LEVEL_2_TOOL_USE_ID),
+            parentThreadId: childThread(LEVEL_1_TOOL_USE_ID),
+            rootThreadId: harness.threadId,
+          },
+          {
+            threadId: childThread(LEVEL_3_TOOL_USE_ID),
+            parentThreadId: childThread(LEVEL_2_TOOL_USE_ID),
+            rootThreadId: harness.threadId,
+          },
+        ]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("extracts text from direct content-block subagent results", () =>
     Effect.scoped(
       Effect.gen(function* () {
