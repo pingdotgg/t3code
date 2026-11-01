@@ -155,6 +155,7 @@ export interface AgentSessionThread {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly messages: ReadonlyArray<AgentSessionThreadMessage>;
+  readonly omittedMessageCount: number;
 }
 
 export type AgentSessionRecentThread =
@@ -449,6 +450,7 @@ function parseAgentSessionRecords(
     finishCodexTurn();
   }
 
+  let conversationMessageCount = 0;
   const retainMessage = (
     message: AgentSessionThreadMessage & { readonly codexResponseUser: boolean },
   ) => {
@@ -458,6 +460,7 @@ function parseAgentSessionRecords(
     if (derivedTitle === undefined && message.role === "user") {
       derivedTitle = deriveTitle(input.source, message.text);
     }
+    conversationMessageCount += 1;
     messages.push(message);
     if (messages.length > MAX_IMPORTED_MESSAGES) messages.shift();
   };
@@ -529,6 +532,7 @@ function parseAgentSessionRecords(
         if (message?.codexResponseUser === true && message.text.trim() === text.trim()) {
           if (firstUserMessage === message) firstUserMessage = undefined;
           messages.splice(index, 1);
+          conversationMessageCount -= 1;
           break;
         }
       }
@@ -583,6 +587,7 @@ function parseAgentSessionRecords(
     createdAt: retainedMessages[0]?.createdAt ?? fallbackTimestamp,
     updatedAt: fallbackTimestamp,
     messages: retainedMessages,
+    omittedMessageCount: conversationMessageCount - retainedMessages.length,
   };
 }
 
