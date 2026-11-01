@@ -261,6 +261,28 @@ it.effect("stops a session its thread detached, which kept its live status", () 
   }).pipe(Effect.provide(layerRecoveryTest)),
 );
 
+it.effect("lists only threads whose latest run completed since the cutoff", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const recent = yield* createThread("completed-recent");
+    yield* createRun(recent, "completed");
+    const recentRun = yield* createRun(recent, "completed", { ordinal: 2 });
+    const old = yield* createThread("completed-old");
+    yield* createRun(old, "completed", { completedAt: DateTime.subtract(now, { hours: 2 }) });
+    const followedUp = yield* createThread("completed-then-queued");
+    yield* createRun(followedUp, "completed");
+    yield* createRun(followedUp, "queued", { ordinal: 2 });
+    const failed = yield* createThread("failed");
+    yield* createRun(failed, "failed", { completedAt: now });
+
+    assert.deepEqual(
+      yield* projections.getLatestRunsCompletedSince(DateTime.subtract(now, { hours: 1 })),
+      [{ threadId: recent, runId: recentRun }],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("selects unfinished recovery work without reading settled thread histories", () =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;

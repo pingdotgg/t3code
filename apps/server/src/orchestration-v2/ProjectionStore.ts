@@ -633,6 +633,13 @@ export interface ProjectionStoreV2Shape {
   readonly getRecoveryThreadIds: (
     kind: ProjectionRecoveryKind,
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
+  /** Threads whose latest run completed at or after `since`, with that run. */
+  readonly getLatestRunsCompletedSince: (
+    since: DateTime.Utc,
+  ) => Effect.Effect<
+    ReadonlyArray<{ readonly threadId: ThreadId; readonly runId: RunId }>,
+    ProjectionStoreV2Error
+  >;
   readonly getUnreadableThreadIds: () => Effect.Effect<
     ReadonlyArray<ThreadId>,
     ProjectionStoreV2Error
@@ -4088,6 +4095,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
     );
 
+    const getLatestRunsCompletedSince = Effect.fn("ProjectionStore.getLatestRunsCompletedSince")(
+      function* (since: DateTime.Utc) {
+        const rows = yield* sql<{ readonly thread_id: string; readonly run_id: string }>`
+          SELECT latest.thread_id, latest.run_id
+          FROM orchestration_v2_projection_runs AS latest
+          WHERE latest.status = 'completed'
+            AND latest.completed_at >= ${DateTime.formatIso(since)}
+            AND NOT EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_runs AS newer
+              WHERE newer.thread_id = latest.thread_id AND newer.ordinal > latest.ordinal
+            )
+        `;
+        return rows.map((row) => ({
+          threadId: ThreadId.make(row.thread_id),
+          runId: RunId.make(row.run_id),
+        }));
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
     const getUnreadableThreadIds = Effect.fn("ProjectionStore.getUnreadableThreadIds")(
       function* () {
         const actualThreadIds = new Set<ThreadId>();
@@ -7026,6 +7053,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getRunMessage: readOnReader(getRunMessage),
       canStartQueuedRun: readOnReader(canStartQueuedRun),
       getHeldQueuedRuns: readOnReader(getHeldQueuedRuns),
+      getLatestRunsCompletedSince: readOnReader(getLatestRunsCompletedSince),
       getPendingNativeUserInputs: readOnReader(getPendingNativeUserInputs),
       hasUnpairedRunInterruptRequest: readOnReader(hasUnpairedRunInterruptRequest),
       isNodeStored: readOnReader(isNodeStored),

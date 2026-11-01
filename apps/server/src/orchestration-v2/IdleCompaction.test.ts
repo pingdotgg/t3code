@@ -189,8 +189,9 @@ describe("IdleCompactionService", () => {
     { mode: "beforeCacheExpires", driver: "codex", instance: "custom-codex", reads: 0 },
     { mode: "beforeCacheExpires", driver: "claudeAgent", instance: "custom-claude", reads: 1 },
     { mode: "beforeCacheExpires", unconfigured: true, reads: 1 },
+    { mode: "beforeCacheExpires", afterRestart: true, reads: 1 },
   ] as const)(
-    "loads history only for eligible idle compaction: $mode/$override/$enabled/$projectDisabled/$instance/$unconfigured",
+    "loads history only for eligible idle compaction: $mode/$override/$enabled/$projectDisabled/$instance/$unconfigured/$afterRestart",
     (scenario) => {
       const test = {
         override: "default",
@@ -251,14 +252,17 @@ describe("IdleCompactionService", () => {
           });
           const dependencies = Layer.mergeAll(
             Layer.mock(Orchestrator.OrchestratorV2)({
-              streamDomainEvents: Stream.make({
-                id: EventId.make("idle-completed"),
-                type: "run.updated",
-                threadId,
-                runId,
-                occurredAt: at(),
-                payload: data.runs[0]!,
-              }),
+              streamDomainEvents:
+                "afterRestart" in test
+                  ? Stream.empty
+                  : Stream.make({
+                      id: EventId.make("idle-completed"),
+                      type: "run.updated",
+                      threadId,
+                      runId,
+                      occurredAt: at(),
+                      payload: data.runs[0]!,
+                    }),
               dispatch: () =>
                 Effect.sync(() => {
                   dispatches++;
@@ -267,6 +271,8 @@ describe("IdleCompactionService", () => {
             }),
             Layer.mock(ProjectionStore.ProjectionStoreV2)({
               getThread: () => Effect.succeed(data.thread),
+              getLatestRunsCompletedSince: () =>
+                Effect.succeed("afterRestart" in test ? [{ threadId, runId }] : []),
               getThreadRecords: () =>
                 Effect.sync(() => {
                   historyReads++;
