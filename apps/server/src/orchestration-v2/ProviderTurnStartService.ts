@@ -1578,11 +1578,18 @@ export const layer: Layer.Layer<
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
+          const messageHeading =
+            turnInput.message.createdBy === "agent" &&
+            turnInput.message.senderThreadId !== undefined
+              ? "Agent message:"
+              : "User message:";
           yield* start({
             ...(noteContinuation ? promptedInput : turnInput),
             message: {
               ...turnInput.message,
-              text: goalCommand ? userText : withInlineContext(context, userText),
+              text: goalCommand
+                ? turnInput.message.text
+                : withInlineContext(context, turnInput.message.text, messageHeading),
             },
           }).pipe(
             // Clear pending handoff markers for refused prompts so the next turn retains the native session.
