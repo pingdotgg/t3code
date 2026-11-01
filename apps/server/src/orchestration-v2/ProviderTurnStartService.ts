@@ -1146,6 +1146,7 @@ export const layer: Layer.Layer<
           const createdAt = yield* DateTime.now;
           const handoff = yield* contextHandoffService.prepareProviderHandoff({
             threadId: projection.thread.id,
+            sourceThreadId: sourceProjection.thread.id,
             targetRunId: run.id,
             transferId: nativeForkTransfer.id,
             fromProviderThreadIds: [sourceProviderThread.id],

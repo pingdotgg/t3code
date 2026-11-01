@@ -877,7 +877,7 @@ function makeLocalCommandHarness(input: {
                   createdByProviderInstanceId: handoff.toProviderInstanceId,
                   status: "ready",
                   summaryMessageId: null,
-                  summaryText: "PARENT_HISTORY",
+                  summaryText: `PARENT_HISTORY from ${handoff.sourceThreadId ?? handoff.threadId}`,
                   updatedAt: handoff.createdAt,
                 }),
         }),
@@ -1267,9 +1267,11 @@ effectIt.effect.each([
       expect(harness.projection().contextTransfers).toMatchObject([
         { id: "side-chat-fork", status: transferStatus },
       ]);
-      expect(harness.startTurn.mock.calls[0]?.[0].message.text.includes("PARENT_HISTORY")).toBe(
-        !forks,
-      );
+      expect(
+        harness.startTurn.mock.calls[0]?.[0].message.text.includes(
+          "PARENT_HISTORY from side-chat-parent",
+        ),
+      ).toBe(!forks);
       expect(harness.projection().providerThreads[0]?.handoffIds).toEqual(handoffIds);
     }),
 );
