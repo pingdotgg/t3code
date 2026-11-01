@@ -6,14 +6,16 @@ import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as NodeEvents from "node:events";
 import { vi } from "vite-plus/test";
 
-const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
+const { focusedWebContents, ownerWindow, webContentsFromId } = vi.hoisted(() => ({
   focusedWebContents: vi.fn(),
   ownerWindow: vi.fn(),
+  webContentsFromId: vi.fn(),
 }));
 vi.mock("electron", () => ({
-  webContents: { getFocusedWebContents: focusedWebContents },
+  webContents: { getFocusedWebContents: focusedWebContents, fromId: webContentsFromId },
   BrowserWindow: { fromWebContents: ownerWindow },
 }));
 
@@ -24,6 +26,7 @@ import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import {
+  downloadUrl,
   getLocalEnvironmentBootstraps,
   getRelayTelemetryEnabled,
   pickProjectFavicon,
@@ -298,3 +301,86 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.include(editors, "webstorm");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+const setupDownload = () => {
+  const session = new NodeEvents.EventEmitter();
+  const contents = Object.assign(new NodeEvents.EventEmitter(), {
+    session,
+    downloadURL: vi.fn(),
+  });
+  webContentsFromId.mockReturnValue(contents);
+  const request = (fileName = "image.png") =>
+    downloadUrl.handler({ url: "https://example.com/image", fileName }, { sender: { id: 1 } });
+  const item = () => ({
+    getURLChain: () => ["https://example.com/image"],
+    setSaveDialogOptions: vi.fn(),
+  });
+  return { session, contents, request, item };
+};
+
+describe("downloadUrl", () => {
+  it.effect("only names downloads belonging to the requesting window", () =>
+    Effect.gen(function* () {
+      const { session, contents, request, item } = setupDownload();
+      yield* request("../../image.png");
+      const other = item();
+      session.emit("will-download", {}, other, new NodeEvents.EventEmitter());
+      assert.strictEqual(other.setSaveDialogOptions.mock.calls.length, 0);
+      const own = item();
+      session.emit("will-download", {}, own, contents);
+      assert.deepEqual(own.setSaveDialogOptions.mock.calls, [[{ defaultPath: "image.png" }]]);
+      assert.strictEqual(session.listenerCount("will-download"), 0);
+      assert.strictEqual(contents.listenerCount("destroyed"), 0);
+    }),
+  );
+
+  it.effect("assigns each matching download a single requested name", () =>
+    Effect.gen(function* () {
+      const { session, contents, request, item } = setupDownload();
+      yield* request("first.png");
+      yield* request("second.png");
+      const first = item();
+      const second = item();
+      session.emit("will-download", {}, first, contents);
+      session.emit("will-download", {}, second, contents);
+      assert.deepEqual(first.setSaveDialogOptions.mock.calls, [[{ defaultPath: "first.png" }]]);
+      assert.deepEqual(second.setSaveDialogOptions.mock.calls, [[{ defaultPath: "second.png" }]]);
+      assert.strictEqual(session.listenerCount("will-download"), 0);
+    }),
+  );
+
+  it.effect("cleans up when download initiation throws or the window closes", () =>
+    Effect.gen(function* () {
+      const { session, contents, request } = setupDownload();
+      contents.downloadURL.mockImplementationOnce(() => {
+        throw new Error("download failed");
+      });
+      yield* Effect.exit(request());
+      assert.strictEqual(session.listenerCount("will-download"), 0);
+      assert.strictEqual(contents.listenerCount("destroyed"), 0);
+      yield* request();
+      Object.defineProperty(contents, "session", {
+        get: () => {
+          throw new Error("Object has been destroyed");
+        },
+      });
+      contents.emit("destroyed");
+      assert.strictEqual(session.listenerCount("will-download"), 0);
+    }),
+  );
+
+  it.effect("expires a naming listener when the network never creates a download", () =>
+    Effect.gen(function* () {
+      vi.useFakeTimers();
+      try {
+        const { session, contents, request } = setupDownload();
+        yield* request();
+        vi.runAllTimers();
+        assert.strictEqual(session.listenerCount("will-download"), 0);
+        assert.strictEqual(contents.listenerCount("destroyed"), 0);
+      } finally {
+        vi.useRealTimers();
+      }
+    }),
+  );
+});

@@ -60,6 +60,9 @@ async function readMediaBlob(src: string): Promise<Blob> {
 }
 
 export async function downloadMedia(src: string, name: string): Promise<void> {
+  // The renderer's fetch is bound by CORS and CSP; desktop downloads from the main process.
+  const downloadUrl = typeof window === "undefined" ? undefined : window.desktopBridge?.downloadUrl;
+  if (downloadUrl && /^(https?|data):/i.test(src)) return downloadUrl(src, name);
   const url = URL.createObjectURL(await readMediaBlob(src));
   try {
     const anchor = document.createElement("a");

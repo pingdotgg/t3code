@@ -295,6 +295,56 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   }),
 });
 
+const namedDownloads = new WeakSet<Electron.DownloadItem>();
+
+export const downloadUrl = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.DOWNLOAD_URL_CHANNEL,
+  payload: Schema.Struct({ url: Schema.String, fileName: Schema.String }),
+  result: Schema.Void,
+  handler: ({ url, fileName }, event) =>
+    Effect.sync(() => {
+      const contents = event && Electron.webContents.fromId(event.sender.id);
+      if (!contents || !/^(https?|data):/i.test(url) || !URL.canParse(url)) return;
+      const href = new URL(url).href;
+      // downloadURL cannot suggest a name, and asset URLs end in an opaque id.
+      // The name can come from chat alt text, so keep only its last segment.
+      const name = fileName.split(/[\\/]/).at(-1) ?? "";
+      if (!/\.\w+$/.test(name)) {
+        contents.downloadURL(href);
+        return;
+      }
+      const session = contents.session;
+      const cleanup = () => {
+        clearTimeout(timeout);
+        session.off("will-download", suggestName);
+        contents.off("destroyed", cleanup);
+      };
+      const suggestName = (
+        _event: Electron.Event,
+        item: Electron.DownloadItem,
+        source: Electron.WebContents,
+      ) => {
+        if (source !== contents || item.getURLChain()[0] !== href || namedDownloads.has(item))
+          return;
+        namedDownloads.add(item);
+        cleanup();
+        item.setSaveDialogOptions({ defaultPath: name });
+      };
+      // Failed requests may never emit will-download.
+      // @effect-diagnostics-next-line globalTimersInEffect:off -- The Electron listener outlives the IPC effect.
+      const timeout = setTimeout(cleanup, 30_000);
+      timeout.unref();
+      session.on("will-download", suggestName);
+      contents.once("destroyed", cleanup);
+      try {
+        contents.downloadURL(href);
+      } catch (cause) {
+        cleanup();
+        throw cause;
+      }
+    }),
+});
+
 export const openSystemSettings = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL,
   payload: SystemSettingsPaneSchema,
