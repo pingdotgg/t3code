@@ -1823,6 +1823,48 @@ describe("parseAgentSessionTranscript", () => {
     },
   );
 
+  it.each([199, 200, 201, 205])(
+    "counts only omitted conversation messages for a %s-message Claude transcript",
+    (count) => {
+      const thread = AgentSessionScanner.parseAgentSessionTranscript({
+        contents: [
+          ...Array.from({ length: count }, (_, index) =>
+            encodeTranscriptRecord({
+              type: index === 0 ? "user" : "assistant",
+              sessionId: "claude-session",
+              message: { content: `Message ${index}` },
+            }),
+          ),
+          encodeTranscriptRecord({ type: "user", isMeta: true, message: { content: "Setup" } }),
+          encodeTranscriptRecord({
+            type: "user",
+            isCompactSummary: true,
+            message: { content: "Summary" },
+          }),
+          encodeTranscriptRecord({
+            type: "assistant",
+            isSidechain: true,
+            message: { content: "Sidechain" },
+          }),
+          encodeTranscriptRecord({
+            type: "assistant",
+            message: { content: [{ type: "tool_use" }] },
+          }),
+          "malformed",
+        ].join("\n"),
+        source: "claudeAgent",
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        fallbackSessionId: "fallback",
+        lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+      });
+
+      expect(thread?.omittedMessageCount).toBe(Math.max(0, count - 200));
+      expect(thread?.messages).toHaveLength(Math.min(200, count));
+      expect(thread?.messages[0]?.text).toBe("Message 0");
+      expect(thread?.messages.at(-1)?.text).toBe(`Message ${count - 1}`);
+    },
+  );
+
   it("keeps Claude text and titles while dropping malformed and tool records", () => {
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
       contents: [
@@ -1974,10 +2016,10 @@ describe("parseAgentSessionTranscript", () => {
     ]);
   });
 
-  it("keeps the canonical first prompt after long Codex transcripts are capped", () => {
+  it.each([199, 200])("keeps the canonical first prompt with %s later Codex messages", (count) => {
     const canonicalPrompt = "\n  Keep the canonical prompt  \n";
     const canonicalTimestamp = "2026-08-24T10:01:00.000Z";
-    const laterAssistantMessages = Array.from({ length: 200 }, (_, index) =>
+    const laterAssistantMessages = Array.from({ length: count }, (_, index) =>
       encodeTranscriptRecord({
         type: "response_item",
         timestamp: `2026-08-24T11:${String(index % 60).padStart(2, "0")}:00.000Z`,
@@ -2013,6 +2055,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
     });
 
+    expect(thread?.omittedMessageCount).toBe(count - 199);
     expect(thread?.messages).toHaveLength(200);
     expect(thread?.messages[0]).toMatchObject({
       role: "user",
@@ -2075,6 +2118,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
     });
 
+    expect(thread?.omittedMessageCount).toBe(1);
     expect(thread?.messages).toHaveLength(200);
     expect(thread?.messages[0]).toMatchObject({
       role: "user",
