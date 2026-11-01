@@ -37,10 +37,10 @@ import * as ServerSettings from "../serverSettings.ts";
 /** The redirect registered for a link. Nothing ever listens there: the code comes back in the response. */
 const LINK_REDIRECT_URI = "http://127.0.0.1/t3code-peer-link";
 /**
- * How long a peer's descriptor may take before a route counts as unreachable.
- * A tailnet or relayed route to a machine that is waking up takes longer.
+ * How long a peer's descriptor or MCP handshake may take before a route counts
+ * as unreachable. A tailnet or relayed route to a machine that is waking up takes longer.
  */
-const probeTimeout = (origin: string) =>
+export const probeTimeout = (origin: string) =>
   isLocalLoopbackHost(new URL(origin).hostname) ? Duration.seconds(3) : Duration.seconds(10);
 
 /** A usable link: where to reach the peer and the token to send there. */
