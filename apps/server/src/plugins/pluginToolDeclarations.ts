@@ -135,6 +135,18 @@ const refuseUnguardedCycles = (definitions: JsonObject) => {
     state.set(name, "done");
   };
   for (const name of edges.keys()) if (!state.has(name)) visit(name);
+  return (schema: unknown, path: string) => {
+    const references: Array<{ name: string; path: string }> = [];
+    collect(schema, path, references);
+    let expanded = 1;
+    for (const reference of references) {
+      expanded += expandedReferences.get(reference.name)!;
+      if (expanded > MAX_UNGUARDED_SCHEMA_REFERENCES)
+        throw new SchemaProblem(
+          `${reference.path}: references expand beyond ${MAX_UNGUARDED_SCHEMA_REFERENCES} unguarded schema visits.`,
+        );
+    }
+  };
 };
 
 /**
@@ -149,7 +161,7 @@ const compile = (root: JsonObject): Compiled => {
       throw new SchemaProblem(
         `#/$defs/${name}: definition names are 1 to 64 letters, digits, "_", "." or "-".`,
       );
-  refuseUnguardedCycles(definitions);
+  const checkExpansion = refuseUnguardedCycles(definitions);
   const done = new Map<string, Compiled>();
   const inProgress = new Set<string>();
 
@@ -171,6 +183,7 @@ const compile = (root: JsonObject): Compiled => {
         `${path}: schemas nest deeper than ${PLUGIN_TOOL_LIMITS.maxInputSchemaDepth}.`,
       );
     if (!isObject(schema)) throw new SchemaProblem(`${path}: a schema must be an object.`);
+    checkExpansion(schema, path);
     for (const [key, valid] of ANNOTATIONS)
       if (Object.hasOwn(schema, key) && !valid(schema[key]))
         throw new SchemaProblem(`${path}/${key}: not a valid ${key} annotation.`);

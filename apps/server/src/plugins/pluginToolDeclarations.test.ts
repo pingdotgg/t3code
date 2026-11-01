@@ -283,6 +283,18 @@ describe("compileInputSchema", () => {
         { ...property({ $ref: "#/$defs/Level12" }), $defs: repeatedReferences },
         "references expand beyond",
       ],
+      [
+        "repeated references at an input boundary",
+        {
+          ...property({ anyOf: Array.from({ length: 3 }, () => ({ $ref: "#/$defs/Level10" })) }),
+          $defs: Object.fromEntries(
+            Object.entries(repeatedReferences).filter(
+              ([name]) => name !== "Level11" && name !== "Level12",
+            ),
+          ),
+        },
+        "references expand beyond",
+      ],
       ["a bad definition name", { type: "object", $defs: { "a b": {} } }, "#/$defs/a b"],
       ["nested $defs", property({ $defs: {} }), "only supported at the root"],
       ["a draft-7 ref", property({ $ref: "#/definitions/X" }), "#/properties/x/$ref"],
