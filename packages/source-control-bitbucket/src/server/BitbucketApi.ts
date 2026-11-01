@@ -41,6 +41,7 @@ import * as SourceControlRateLimit from "@t3tools/source-control-core/server/Sou
 const DEFAULT_API_BASE_URL = "https://api.bitbucket.org/2.0";
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
+const BKT_CLI_FAILURE_HEADER = "x-t3-bitbucket-cli-failure";
 const BITBUCKET_API_REQUEST_TIMEOUT = "30 seconds";
 /** A sweep over many branches would otherwise reach Bitbucket as one burst of lookups. */
 const CONCURRENCY = 4;
@@ -122,11 +123,12 @@ export class BitbucketResponseError extends Schema.TaggedError<BitbucketResponse
     operation: BitbucketApiOperation,
     status: Schema.Int,
     responseBodyLength: NonNegativeInt,
+    source: Schema.optional(Schema.Literal("cli")),
     retryAt: Schema.optional(Schema.Number),
   },
 ) {
   get detail(): string {
-    return this.status === 503
+    return this.status === 503 && this.source === "cli"
       ? "The bkt CLI could not run. Install bkt on the T3 server and check `bkt auth status`."
       : `Bitbucket returned HTTP ${this.status}.`;
   }
@@ -647,6 +649,7 @@ const responseError = Effect.fn("BitbucketApi.responseError")(function* (
     operation,
     status: response.status,
     responseBodyLength: collected.text.length,
+    ...(response.headers[BKT_CLI_FAILURE_HEADER] === "true" ? { source: "cli" as const } : {}),
     retryAt,
   });
 });
@@ -709,30 +712,42 @@ export const make = Effect.gen(function* () {
           ),
         );
 
-  const executeRequest = Effect.fn("BitbucketApi.executeRequest")((
+  const executeRequest = Effect.fn("BitbucketApi.executeRequest")(function* (
     request: HttpClientRequest.HttpClientRequest,
-  ) => {
-    if (config.apiMode !== "bkt") return httpClient.execute(request);
-    const url = new URL(request.url);
+  ) {
+    if (config.apiMode !== "bkt") return yield* httpClient.execute(request);
     const apiBase = new URL(config.baseUrl);
+    const requestUrl = Option.getOrNull(HttpClientRequest.toUrl(request));
+    if (requestUrl === null) {
+      return yield* new BitbucketRequestError({
+        operation: "request",
+        cause: new Error("Invalid Bitbucket request URL"),
+      });
+    }
+    if (requestUrl.origin !== apiBase.origin) {
+      return yield* new BitbucketRequestError({
+        operation: "request",
+        cause: new Error("Bitbucket request host does not match the configured API host"),
+      });
+    }
     const basePath = apiBase.pathname.replace(/\/+$/u, "");
-    const path =
-      apiBase.hostname === "api.bitbucket.org" && url.pathname.startsWith(basePath)
-        ? url.pathname.slice(basePath.length) || "/"
-        : url.pathname;
-    const endpoint = `${path}${url.search}`;
+    const path = requestUrl.pathname.startsWith(basePath)
+      ? requestUrl.pathname.slice(basePath.length) || "/"
+      : requestUrl.pathname;
+    const endpoint = `${path}${requestUrl.search}`;
     const args = ["api", endpoint, "--method", request.method];
     const acceptsJson = request.headers.accept?.includes("json") ?? false;
     if (acceptsJson) args.push("--json");
     if (request.body._tag === "Uint8Array") {
       args.push("--input", new TextDecoder().decode(request.body.body));
     }
-    return host.process
+    return yield* host.process
       .run({
         operation: "BitbucketApi.bkt",
         command: config.cliPath,
         args,
         cwd: workingDirectory,
+        env: { BKT_HOST: apiBase.origin },
         allowNonZeroExit: true,
         timeoutMs: 30_000,
         maxOutputBytes: DEFAULT_MAX_RESPONSE_BYTES,
@@ -763,7 +778,7 @@ export const make = Effect.gen(function* () {
                 error:
                   "Install bkt on the T3 server and check `bkt auth status`; set T3CODE_BITBUCKET_CLI_PATH if needed.",
               },
-              { status: 503 },
+              { status: 503, headers: { [BKT_CLI_FAILURE_HEADER]: "true" } },
             ),
           ),
         ),
