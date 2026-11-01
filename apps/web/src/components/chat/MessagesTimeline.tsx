@@ -24,6 +24,7 @@ import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/s
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import { observeResize } from "~/lib/observeResize";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { Debouncer } from "@tanstack/react-pacer";
 
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const EMPTY_PENDING_APPROVALS: ReadonlyArray<PendingApproval> = [];
@@ -841,6 +842,25 @@ const ConversationTimeline = memo(function ConversationTimeline({
         onSizeChanged: handleAnchorSizeChanged,
       }
     : undefined;
+  const maintainScrollAtEnd =
+    citationPositioning ||
+    (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
+    anchoredEndSpace ||
+    !liveFollowEnabled ||
+    fullscreenAppRowId !== null ||
+    disclosureToggleSettling
+      ? false
+      : isWorking && !prefersReducedMotion && settlingListIdentity === null
+        ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
+        : TIMELINE_MAINTAIN_SCROLL_AT_END;
+  // An instant scroll (a row resizing as the turn ends) cancels LegendList's animated
+  // maintain scroll, and LegendList only re-pins within the threshold of the end.
+  const pinEndAtRest = useStableCallback(() => {
+    if (maintainScrollAtEnd && resolveTimelineIsAtEnd(listRef.current?.getState()) === false) {
+      void listRef.current?.scrollToEnd({ animated: false });
+    }
+  });
+  const [endRestDebouncer] = useState(() => new Debouncer(pinEndAtRest, { wait: 200 }));
   const maintainVisibleContentPosition = {
     data: true,
     size: true,
@@ -951,6 +971,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (isAtEnd !== undefined && !citationPositioning) {
       onIsAtEndChange(isAtEnd);
     }
+    if (isAtEnd === false && maintainScrollAtEnd) endRestDebouncer.maybeExecute();
+    else endRestDebouncer.cancel();
     scheduleMinimapRefresh();
   };
 
@@ -1169,6 +1191,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       detachViewport?.();
       viewport?.dispose();
       if (viewportRef.current === viewport) viewportRef.current = null;
+      endRestDebouncer.cancel();
       // Refresh frames only read the list; disclosure frames still run so the
       // settle flag clears.
       if (minimapRefreshFrameRef.current !== null) {
@@ -1334,18 +1357,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               onLoad={handleListLoad}
               {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
               contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
-              maintainScrollAtEnd={
-                citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
-                anchoredEndSpace ||
-                !liveFollowEnabled ||
-                fullscreenAppRowId !== null ||
-                disclosureToggleSettling
-                  ? false
-                  : isWorking && !prefersReducedMotion && settlingListIdentity === null
-                    ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
-                    : TIMELINE_MAINTAIN_SCROLL_AT_END
-              }
+              maintainScrollAtEnd={maintainScrollAtEnd}
               maintainVisibleContentPosition={
                 findActive ||
                 citationPositioning ||

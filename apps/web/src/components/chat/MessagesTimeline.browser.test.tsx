@@ -376,7 +376,6 @@ describe("MessagesTimeline live follow", () => {
       expect(base.listRef.current!.getScrollableNode()!.scrollTop).toBeGreaterThan(
         historyEnd + 500,
       );
-      expect(distanceFromEnd()).toBeGreaterThan(2000);
     });
 
     // When the turn ends a row above shrinks, and LegendList keeps the visible content in place
