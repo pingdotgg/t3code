@@ -1,3 +1,5 @@
+import * as NodeVM from "node:vm";
+
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { sendPageCommand, toKeyboardInputEvents } from "./GuestInput.ts";
@@ -41,6 +43,86 @@ describe("preview guest input", () => {
     expect(guest.webContents.insertText).toHaveBeenCalledWith("pairing-code");
     expect(guest.sendCommand).not.toHaveBeenCalledWith("Input.insertText", expect.anything());
   });
+
+  it.each([
+    {
+      sessionId: undefined,
+      method: "Input.dispatchMouseEvent",
+      type: "mousePressed",
+      outcome: "restore",
+    },
+    {
+      sessionId: "child-frame",
+      method: "Input.dispatchMouseEvent",
+      type: "mousePressed",
+      outcome: "restore",
+    },
+    {
+      sessionId: undefined,
+      method: "Input.dispatchTouchEvent",
+      type: "touchStart",
+      outcome: "restore",
+    },
+    {
+      sessionId: undefined,
+      method: "Input.dispatchMouseEvent",
+      type: "mousePressed",
+      outcome: "other-field",
+    },
+    {
+      sessionId: undefined,
+      method: "Input.dispatchMouseEvent",
+      type: "mousePressed",
+      outcome: "removed",
+    },
+    {
+      sessionId: undefined,
+      method: "Input.dispatchMouseEvent",
+      type: "mousePressed",
+      outcome: "failure",
+    },
+  ])(
+    "preserves host focus for $method in $sessionId with $outcome",
+    async ({ sessionId, method, type, outcome }) => {
+      const document = { activeElement: {} as object };
+      const composer = {
+        isConnected: true,
+        focus: () => {
+          document.activeElement = composer;
+        },
+      };
+      const preview = { tagName: "WEBVIEW", getWebContentsId: () => 7 };
+      const otherField = { tagName: "INPUT" };
+      document.activeElement = composer;
+      const context = NodeVM.createContext({ document });
+      const host = {
+        isDestroyed: () => false,
+        executeJavaScript: async (script: string) => NodeVM.runInContext(script, context),
+      };
+      const guest = { id: 7, focusedFrame: null, hostWebContents: host };
+      const debuggee = {
+        sendCommand: async () => {
+          document.activeElement = outcome === "other-field" ? otherField : preview;
+          if (outcome === "removed") composer.isConnected = false;
+          if (outcome === "failure") throw new Error("Pointer failed");
+          return {};
+        },
+      };
+      const result = sendPageCommand(
+        guest as unknown as Electron.WebContents,
+        debuggee as unknown as Electron.Debugger,
+        method,
+        { type, x: 10, y: 10, button: "left" },
+        sessionId,
+      );
+      if (outcome === "failure") await expect(result).rejects.toThrow("Pointer failed");
+      else await result;
+      expect(document.activeElement).toBe(
+        outcome === "other-field" ? otherField : outcome === "removed" ? preview : composer,
+      );
+      expect(Object.keys(context)).toEqual(["document"]);
+    },
+  );
 
   it("refuses input when a cross-site frame holds the unfocused page's focus", async () => {
     const guest = makeGuest({ focused: false, focusedDocument: false });
