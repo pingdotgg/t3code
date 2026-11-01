@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Random from "effect/Random";
 import { HttpClient } from "effect/http";
 import * as Schema from "effect/Schema";
 
@@ -192,6 +193,7 @@ export function renderBootServicePlist(
  * the service marker, so its CLI acts as if run from a terminal. No KeepAlive: it runs once.
  */
 function renderBootServiceHandoffPlist(
+  label: string,
   command: ReadonlyArray<string>,
   options: { readonly homeDir: string; readonly environmentPath: string; readonly logPath: string },
 ): string {
@@ -201,7 +203,7 @@ function renderBootServiceHandoffPlist(
     `<plist version="1.0">`,
     `<dict>`,
     `  <key>Label</key>`,
-    `  <string>${BOOT_SERVICE_HANDOFF_LABEL}</string>`,
+    `  <string>${escapeXmlText(label)}</string>`,
     `  <key>ProgramArguments</key>`,
     `  <array>`,
     ...command.map((argument) => `    <string>${escapeXmlText(argument)}</string>`),
@@ -225,6 +227,18 @@ function renderBootServiceHandoffPlist(
   ].join("\n");
 }
 
+const quoteShellArgument = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+
+/** Runs steps in order, stopping at the first required failure. */
+function shellScriptOf(steps: ReadonlyArray<BootServiceStep>): string {
+  return steps
+    .map((entry) => {
+      const command = [entry.command, ...entry.args].map(quoteShellArgument).join(" ");
+      return entry.optional === true ? `{ ${command} || true; }` : command;
+    })
+    .join(" && ");
+}
+
 export interface BootServiceStep {
   readonly step: string;
   readonly command: string;
@@ -246,12 +260,16 @@ export interface BootServiceManager {
   readonly restart: ReadonlyArray<BootServiceStep>;
   /**
    * From inside the service, stopping it kills the caller, so the manager runs the work from
-   * outside: `install` runs the given install command, `restart` queues a restart, which may
-   * run the given restart command.
+   * outside: `install` runs the given install command, `restart` queues a restart. `id` is unique
+   * per call, so concurrent handoffs never replace each other.
    */
   readonly handoff: {
-    readonly install: (command: BootServiceCommand, plan: BootServicePlan) => BootServiceHandoff;
-    readonly restart: (command: BootServiceCommand, plan: BootServicePlan) => BootServiceHandoff;
+    readonly install: (
+      command: BootServiceCommand,
+      plan: BootServicePlan,
+      id: string,
+    ) => BootServiceHandoff;
+    readonly restart: (plan: BootServicePlan, id: string) => BootServiceHandoff;
   };
   readonly deactivate: ReadonlyArray<BootServiceStep>;
   readonly finalize: ReadonlyArray<BootServiceStep>;
@@ -260,10 +278,8 @@ export interface BootServiceManager {
 type BootServiceCommand = readonly [executable: string, ...args: ReadonlyArray<string>];
 
 interface BootServiceHandoff {
-  /** Written before the steps run. */
+  /** Written before the steps run and removed after them. */
   readonly file?: { readonly path: string; readonly contents: string };
-  /** Prints an earlier handoff, which reports `state = running` until it finishes. */
-  readonly earlier?: { readonly command: string; readonly args: ReadonlyArray<string> };
   readonly steps: ReadonlyArray<BootServiceStep>;
 }
 
@@ -383,36 +399,52 @@ function launchdManager(input: {
   );
   const domainTarget = `gui/${input.uid}`;
   const serviceTarget = `${domainTarget}/${BOOT_SERVICE_LAUNCHD_LABEL}`;
-  const handoffTarget = `${domainTarget}/${BOOT_SERVICE_HANDOFF_LABEL}`;
-  // `bootout` clears a finished earlier handoff, which stays loaded; bootstrapping a loaded label fails.
-  // Kept out of LaunchAgents so it never runs at login.
-  const handoff = (command: BootServiceCommand, plan: BootServicePlan): BootServiceHandoff => {
-    const handoffPath = input.path.join(
-      plan.baseDir,
-      "runtime",
-      `${BOOT_SERVICE_HANDOFF_LABEL}.plist`,
-    );
+  // bootout --wait is undocumented but waits through ExitTimeOut, preventing bootstrap EIO races.
+  const stop: ReadonlyArray<BootServiceStep> = [
+    {
+      step: "stopping the installed launch agent",
+      command: "launchctl",
+      args: ["bootout", "--wait", serviceTarget],
+      optional: true,
+      timeout: STOP_STEP_TIMEOUT,
+    },
+  ];
+  const activate: ReadonlyArray<BootServiceStep> = [
+    // A persisted `launchctl disable` override refuses bootstrap; clear it.
+    {
+      step: "enabling the launch agent",
+      command: "launchctl",
+      args: ["enable", serviceTarget],
+      optional: true,
+    },
+    {
+      step: "starting the service",
+      command: "launchctl",
+      args: ["bootstrap", domainTarget, unitPath],
+    },
+  ];
+  // launchd reads the plist at bootstrap, so it can go once loaded; outside LaunchAgents it never runs at login.
+  const handoff = (
+    command: BootServiceCommand,
+    plan: BootServicePlan,
+    id: string,
+  ): BootServiceHandoff => {
+    const label = `${BOOT_SERVICE_HANDOFF_LABEL}.${id}`;
+    const jobPath = input.path.join(plan.baseDir, "runtime", `${label}.plist`);
     return {
       file: {
-        path: handoffPath,
-        contents: renderBootServiceHandoffPlist(command, {
+        path: jobPath,
+        contents: renderBootServiceHandoffPlist(label, command, {
           homeDir: input.homeDir,
           environmentPath: input.environmentPath,
           logPath: plan.logPath,
         }),
       },
-      earlier: { command: "launchctl", args: ["print", handoffTarget] },
       steps: [
-        {
-          step: "clearing an earlier handoff job",
-          command: "launchctl",
-          args: ["bootout", handoffTarget],
-          optional: true,
-        },
         {
           step: "handing the work to a launchd job",
           command: "launchctl",
-          args: ["bootstrap", domainTarget, handoffPath],
+          args: ["bootstrap", domainTarget, jobPath],
         },
       ],
     };
@@ -426,30 +458,8 @@ function launchdManager(input: {
         homeDir: input.homeDir,
         environmentPath: input.environmentPath,
       }),
-    // bootout --wait is undocumented but waits through ExitTimeOut, preventing bootstrap EIO races.
-    stop: [
-      {
-        step: "stopping the installed launch agent",
-        command: "launchctl",
-        args: ["bootout", "--wait", serviceTarget],
-        optional: true,
-        timeout: STOP_STEP_TIMEOUT,
-      },
-    ],
-    activate: [
-      // A persisted `launchctl disable` override refuses bootstrap; clear it.
-      {
-        step: "enabling the launch agent",
-        command: "launchctl",
-        args: ["enable", serviceTarget],
-        optional: true,
-      },
-      {
-        step: "starting the service",
-        command: "launchctl",
-        args: ["bootstrap", domainTarget, unitPath],
-      },
-    ],
+    stop,
+    activate,
     restart: [
       {
         step: "restarting the service after a failed update",
@@ -457,8 +467,13 @@ function launchdManager(input: {
         args: ["bootstrap", domainTarget, unitPath],
       },
     ],
-    // `kickstart -k` would neither reload a rewritten plist nor spare the caller.
-    handoff: { install: handoff, restart: handoff },
+    // `kickstart -k` would neither reload a rewritten plist nor spare the caller, and the installed
+    // runtime may predate any CLI, so the job runs this manager's own stop and start.
+    handoff: {
+      install: handoff,
+      restart: (plan, id) =>
+        handoff(["/bin/sh", "-c", shellScriptOf([...stop, ...activate])], plan, id),
+    },
     // Persisted launchctl disable overrides would block reinstall.
     deactivate: [
       {
@@ -787,26 +802,16 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const runHandoff = Effect.fn("cloud.boot_service.run_handoff")(function* (
     handoff: BootServiceHandoff,
   ) {
-    if (handoff.earlier !== undefined) {
-      const earlier = yield* probe(handoff.earlier.command, handoff.earlier.args);
-      // Booting out a running handoff would kill the job that brings the service back.
-      if (
-        succeeded(earlier) &&
-        Option.isSome(earlier) &&
-        earlier.value.stdout.split("\n").some((line) => line.trim() === "state = running")
-      ) {
-        return yield* new BootServiceCommandError({
-          step: "waiting for an earlier service handoff to finish",
-        }).pipe(Effect.tapError(logFailure));
-      }
-    }
-    if (handoff.file !== undefined) {
-      yield* writeDurably(handoff.file.path, handoff.file.contents).pipe(
-        Effect.tapError(logFailure),
-      );
-    }
-    yield* runSteps(handoff.steps);
+    const file = handoff.file;
+    if (file === undefined) return yield* runSteps(handoff.steps);
+    yield* writeDurably(file.path, file.contents).pipe(Effect.tapError(logFailure));
+    yield* runSteps(handoff.steps).pipe(
+      Effect.ensuring(fs.remove(file.path, { force: true }).pipe(Effect.ignore)),
+    );
   });
+  const handoffId = Random.nextIntBetween(0, Number.MAX_SAFE_INTEGER).pipe(
+    Effect.map((value) => value.toString(36)),
+  );
 
   const lingerArgs = [
     "show-user",
@@ -948,6 +953,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
             ...(options?.allowDowngrade === true ? ["--allow-downgrade"] : []),
           ],
           plan,
+          yield* handoffId,
         ),
       );
       return { ...plan, handedOff: true };
@@ -1032,11 +1038,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // Writes no state, and the launcher lets an update transition in flight
     // finish before the queued stop tears it down.
     if (runningInsideService) {
-      // The installed unit's launcher runtime, so an update installed without a restart still applies.
-      const program = bootServiceProgramOf(unit.value) ?? runtimePaths.entryPath;
-      yield* runHandoff(
-        manager.handoff.restart([program, "service", "restart", "--base-dir", input.baseDir], plan),
-      );
+      yield* runHandoff(manager.handoff.restart(plan, yield* handoffId));
       return "queued" as const;
     }
     yield* runSteps(manager.stop);
