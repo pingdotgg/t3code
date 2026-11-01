@@ -365,10 +365,12 @@ function Sidebar({
         <div
           className={cn(
             "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) md:flex",
-            "[[data-panel-animations=true]_&]:transition-[left,right,width] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
+            "[[data-panel-animations=true]_&]:transition-[clip-path,width] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
+            // Collapsing clips the content in place rather than sliding it under the
+            // title bar controls. The open inset leaves room for the rail.
             side === "left"
-              ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
-              : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
+              ? "left-0 [clip-path:inset(0_-1rem_0_0)] group-data-[collapsible=offcanvas]:[clip-path:inset(0_100%_0_0)]"
+              : "right-0 [clip-path:inset(0_0_0_-1rem)] group-data-[collapsible=offcanvas]:[clip-path:inset(0_0_0_100%)]",
             variant === "floating" || variant === "inset"
               ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
               : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
