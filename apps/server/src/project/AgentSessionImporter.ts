@@ -84,6 +84,10 @@ class AgentSessionThreadModifiedError extends Schema.TaggedError<AgentSessionThr
   }
 }
 
+// ACP imports read the history while holding the session-mutation lock, and an agent can
+// leave session/resume or initialize unanswered. Longer than session/load's own deadline.
+const NATIVE_HISTORY_READ_TIMEOUT = "2 minutes";
+
 /**
  * Whether a thread bound to a native session still lacks its native history.
  * Once a turn has run, the native session also holds that turn's messages, so
@@ -499,6 +503,7 @@ const make = Effect.gen(function* () {
       })
       .pipe(
         Effect.flatMap((session) => session.readThreadSnapshot({ providerThread })),
+        Effect.timeout(NATIVE_HISTORY_READ_TIMEOUT),
         Effect.scoped,
       );
     const messages = snapshot.messages.flatMap((message) =>

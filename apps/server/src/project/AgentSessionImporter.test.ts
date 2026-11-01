@@ -25,6 +25,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
@@ -527,6 +528,35 @@ it.effect(
         ["assistant_message", null, "Fixed it"],
       ]);
     }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("gives up on a native session that never answers and closes it", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* seedOwner(candidate(CODEX_MODEL_SELECTION, "native-history-hang"));
+    let closed = false;
+    // An agent that only resumes sessions and never answers session/resume.
+    const adapter = {
+      openSession: () =>
+        Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            closed = true;
+          }),
+        ).pipe(Effect.andThen(Effect.never)),
+    } as unknown as ProviderAdapter.ProviderAdapterV2["Service"];
+    const importer = yield* makeImporter([], Effect.void, () => Effect.succeed(adapter));
+
+    const importing = yield* importer
+      .importNativeHistory({ threadId, workspaceRoot: "/workspace/project" })
+      .pipe(Effect.flip, Effect.forkChild);
+    yield* TestClock.adjust("2 minutes");
+
+    expect((yield* Fiber.join(importing))._tag).toBe("TimeoutError");
+    expect(closed).toBe(true);
+    expect(
+      (yield* projections.getThreadRecords(threadId, [])).thread.historyOrigin,
+    ).toBeUndefined();
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
 /**
