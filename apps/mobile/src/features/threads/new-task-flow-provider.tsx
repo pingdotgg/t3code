@@ -93,7 +93,11 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
-import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import {
+  type AutoBalanceStatus,
+  resolveEnvironmentProjectMatch,
+} from "./new-task-project-selection";
+import { useNewTaskAutoBalance } from "./use-new-task-auto-balance";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 import {
@@ -171,7 +175,13 @@ type NewTaskFlowContextValue = {
   readonly selectedModelOption: ModelOption | null;
   readonly selectedProviderStatus: ServerProvider | null;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
-  readonly setProject: (project: EnvironmentProject) => void;
+  readonly setProject: (
+    project: EnvironmentProject,
+    options?: {
+      /** Keeps the draft on this project's machine instead of auto balancing it. */
+      readonly pinEnvironment?: boolean;
+    },
+  ) => void;
   /** The flow's project, read when a continuation resumes after an await. */
   readonly getSelectedProjectKey: () => string | null;
   /**
@@ -183,6 +193,14 @@ type NewTaskFlowContextValue = {
   readonly selectEnvironment: (environmentId: EnvironmentId) => void;
   readonly switchEnvironment: (environmentId: EnvironmentId) => Promise<boolean>;
   readonly switchingToEnvironmentId: EnvironmentId | null;
+  /** True when auto balance is on and the draft's project spans several machines. */
+  readonly canAutoBalance: boolean;
+  /** Null while the draft's machine is the user's own choice. */
+  readonly autoBalanceStatus: AutoBalanceStatus | null;
+  /** Keeps the draft on its current machine, ahead of work that commits to it. */
+  readonly pinEnvironment: () => void;
+  /** Hands the draft back to auto balance. Returns false when it must stay put. */
+  readonly selectAutoBalance: () => boolean;
   readonly setSelectedModelKey: (
     key: string | null,
     options?: ReadonlyArray<ProviderOptionSelection>,
@@ -288,6 +306,8 @@ export function NewTaskFlowProvider(
     draftKey: activeDraftKey,
     submitting,
     expandedProvider,
+    environmentPinned,
+    loadBalancedEnvironmentId,
   } = flowState;
   // Continuations read the flow at use time, with the route's draft applied.
   const readFlow = (): NewTaskFlowState => {
@@ -571,13 +591,22 @@ export function NewTaskFlowProvider(
     return createNewTaskDraft(target);
   };
 
-  const setProject = (project: EnvironmentProject) => {
+  const setProject = (
+    project: EnvironmentProject,
+    options?: { readonly pinEnvironment?: boolean },
+  ) => {
     updateFlow({
       draftKey: carryDraftContentTo(project),
       environmentId: project.environmentId,
       projectKey: scopedProjectKey(project.environmentId, project.id),
+      // A newly chosen project is routed afresh.
+      loadBalancedEnvironmentId: null,
+      ...(options?.pinEnvironment ? { environmentPinned: true } : {}),
     });
   };
+
+  const pinEnvironment = () =>
+    updateFlow({ environmentPinned: true, loadBalancedEnvironmentId: null });
 
   const selectEnvironment = (environmentId: EnvironmentId) => {
     const match = resolveEnvironmentProjectMatch(
@@ -597,6 +626,7 @@ export function NewTaskFlowProvider(
   );
   const latestSwitchRef = useRef<object | null>(null);
   const switchEnvironment = async (environmentId: EnvironmentId): Promise<boolean> => {
+    pinEnvironment();
     if (environmentId === selectedEnvironmentId) {
       latestSwitchRef.current = null;
       setSwitchingToEnvironmentId(null);
@@ -629,6 +659,31 @@ export function NewTaskFlowProvider(
     return false;
   };
 
+  const { canAutoBalance, autoBalanceStatus, selectAutoBalance } = useNewTaskAutoBalance({
+    active: props.active !== false,
+    projectScopes,
+    selectedProject,
+    selectedProjectKey,
+    draftKey: selectedProjectDraftKey,
+    isScratchDraft,
+    environmentPinned,
+    loadBalancedEnvironmentId,
+    attachmentCount: attachments.length,
+    prompt,
+    contextRecords: selectedProjectDraft.context?.records,
+    linkedEnvironments,
+    selectedModel,
+    storedModelSelection: selectedProjectDraft.modelSelection,
+    // The option knows the driver even when this machine reports no status for it.
+    selectedProviderDriver:
+      selectedProviderStatus?.driver ?? selectedModelOption?.providerDriver ?? null,
+    workspaceMode,
+    defaultWorkspaceModeSettled: projectDefaults.defaultWorkspaceModeSettled,
+    readFlow,
+    updateFlow,
+    carryDraftContentTo,
+  });
+
   const setWorkspaceMode = (mode: WorkspaceMode) => {
     if (!selectedProjectDraftKey) {
       return;
@@ -636,6 +691,8 @@ export function NewTaskFlowProvider(
     if (!selectedProject) {
       return;
     }
+    // A checkout or worktree choice is made for this machine.
+    pinEnvironment();
     const localSelection = resolveNewTaskLocalWorkspaceSelection({
       branches: availableBranches,
       projectCwd: selectedProject.workspaceRoot,
@@ -884,6 +941,10 @@ export function NewTaskFlowProvider(
     selectEnvironment,
     switchEnvironment,
     switchingToEnvironmentId,
+    canAutoBalance,
+    autoBalanceStatus,
+    selectAutoBalance,
+    pinEnvironment,
     setSelectedModelKey,
     setWorkspaceMode,
     selectBranch,

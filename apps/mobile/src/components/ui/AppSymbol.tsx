@@ -106,6 +106,7 @@ import IconPlus from "@tabler/icons-react-native/IconPlus";
 import IconQrcode from "@tabler/icons-react-native/IconQrcode";
 import IconRefresh from "@tabler/icons-react-native/IconRefresh";
 import IconSearch from "@tabler/icons-react-native/IconSearch";
+import IconScale from "@tabler/icons-react-native/IconScale";
 import IconShare from "@tabler/icons-react-native/IconShare";
 import IconServer from "@tabler/icons-react-native/IconServer";
 import IconSettings from "@tabler/icons-react-native/IconSettings";
@@ -249,6 +250,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "point.3.connected.trianglepath.dotted": IconNetwork,
   "point.topleft.down.curvedto.point.bottomright.up": IconGitMerge,
   safari: IconExternalLink,
+  scalemass: IconScale,
   "server.rack": IconServer,
   stethoscope: IconStethoscope,
   "sidebar.left": IconLayoutSidebar,

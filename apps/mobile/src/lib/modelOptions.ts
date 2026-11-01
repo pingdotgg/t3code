@@ -162,6 +162,23 @@ export function isModelSelectionUnavailable(
   );
 }
 
+/** Whether this machine cannot start a new task with the selection, whether or not it is hidden. */
+export function isNewTaskModelSelectionBlocked(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection | null,
+  projectId: ProjectId | null,
+): boolean {
+  if (!selection) return false;
+  const provider = config?.providers.find(
+    (candidate) => candidate.instanceId === selection.instanceId,
+  );
+  return (
+    isModelSelectionUnavailable(config, selection, projectId) ||
+    (provider?.updateRequiredModels?.some((gated) => gated.slug === selection.model) === true &&
+      !provider.models.some((model) => model.slug === selection.model))
+  );
+}
+
 export function describeUnavailableModelSelection(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection,
