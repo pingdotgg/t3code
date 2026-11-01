@@ -226,7 +226,7 @@ import {
   CommandPaletteVirtualizedResults,
   scrollCommandPaletteRowIntoView,
 } from "./CommandPaletteResults";
-import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { EnvironmentBadgeIcon } from "./EnvironmentBadgeIcon";
 import { Checkbox } from "./ui/checkbox";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
@@ -1114,7 +1114,13 @@ function OpenCommandPaletteDialog(props: {
         : option.environmentId
       : option.status,
     disabled: !option.isConnected,
-    icon: <EnvironmentMachineIcon kind={option.machine} className={ITEM_ICON_CLASS} />,
+    icon: (
+      <EnvironmentBadgeIcon
+        environmentId={option.environmentId}
+        kind={option.machine}
+        className={ITEM_ICON_CLASS}
+      />
+    ),
     keepOpen: true,
     run: async () => {
       run(option.environmentId);

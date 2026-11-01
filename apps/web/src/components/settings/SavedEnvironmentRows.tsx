@@ -27,6 +27,7 @@ import { cn } from "../../lib/utils";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
+import { EnvironmentGlyphInput } from "./EnvironmentGlyphInput";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
 import {
   ConnectionDiagnosisPanel,
@@ -240,6 +241,7 @@ export function SavedBackendListRow({
 
   return (
     <EnvironmentRow
+      environmentId={environmentId}
       kind={machineKind}
       label={environment.label}
       dimmed={!enabled}
@@ -357,6 +359,11 @@ export function SavedBackendListRow({
         </>
       }
     >
+      <EnvironmentGlyphInput
+        key={environmentId}
+        environmentId={environmentId}
+        label={environment.label}
+      />
       {unsupported &&
       environment.entry.serverUpdateRequired === true &&
       serverUpdateState.status !== "running" ? (
