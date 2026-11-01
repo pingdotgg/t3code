@@ -721,6 +721,7 @@ export function PullRequestSummaryTab({
               {detail.capabilities.reviewers.request &&
               detail.capabilities.reviewers.listCandidates ? (
                 <PullRequestReviewerPicker
+                  provider={detail.provider}
                   environmentId={environmentId}
                   reference={reference}
                   allowed={detail.viewerPermissions.requestReviewers}

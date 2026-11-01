@@ -6,6 +6,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { mergeReviewerCandidates } from "@t3tools/client-runtime/pull-request-reviewers";
 import type { PullRequestReviewerCandidate } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import {
@@ -26,6 +27,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
+import { useDebouncedValue } from "../../state/queries";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   createNativeMailSearchToolbarItem,
@@ -76,16 +78,31 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
-  const candidates = (() => {
-    const needle = query.trim().toLowerCase();
-    return [...(result.data?.candidates ?? [])]
-      .filter((candidate) =>
-        `${candidate.login} ${candidate.name ?? ""}`.toLowerCase().includes(needle),
-      )
-      .sort(
-        (a, b) => Number(b.isRequested) - Number(a.isRequested) || a.login.localeCompare(b.login),
-      );
-  })();
+  const searchQuery = useDebouncedValue(query.trim(), 250);
+  const supportsSearch = pr?.provider === "github" || pr?.provider === "gitlab";
+  const searchesHost = supportsSearch && result.data?.truncated === true && searchQuery.length > 0;
+  const searched = searchesHost && searchQuery === query.trim();
+  const searchResult = useEnvironmentQuery(
+    searchesHost
+      ? composerPullRequests.reviewerSearch({
+          ...target,
+          input: { ...target.input, query: searchQuery },
+        })
+      : null,
+  );
+  const candidates = [
+    ...mergeReviewerCandidates(
+      result.data?.candidates ?? [],
+      searched ? (searchResult.data?.candidates ?? []) : [],
+      query,
+    ),
+  ].sort((a, b) => Number(b.isRequested) - Number(a.isRequested) || a.login.localeCompare(b.login));
+  const searchPending =
+    supportsSearch &&
+    result.data?.truncated === true &&
+    query.trim().length > 0 &&
+    (searchQuery !== query.trim() || searchResult.isPending);
+  const queryError = result.error ?? (searched ? searchResult.error : null);
   // A new search shows its best matches from the top.
   const search = (next: string) => {
     setQuery(next);
@@ -118,6 +135,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
       );
       return;
     }
+    if (searchesHost) searchResult.refresh();
     if (!pr?.capabilities.reviewers.listCandidates) {
       search("");
       detail.refresh();
@@ -235,30 +253,43 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
             );
           }}
           ListEmptyComponent={
-            result.isPending && !result.data ? (
+            (result.isPending && !result.data) || searchPending ? (
               <AppActivityIndicator className="my-8" />
             ) : (
               <View className="px-4 py-6">
                 <EmptyState
                   title={
-                    result.error
+                    queryError
                       ? "Couldn't load reviewers"
                       : query.trim()
                         ? "No matching reviewers"
                         : "No reviewers available"
                   }
-                  detail={result.error ?? "Search people and teams with access to this repository."}
+                  detail={queryError ?? "Search people and teams with access to this repository."}
                   variant="plain"
                 />
-                {result.error ? <Button label="Retry" onPress={result.refresh} /> : null}
+                {queryError ? (
+                  <Button
+                    label="Retry"
+                    onPress={result.error ? result.refresh : searchResult.refresh}
+                  />
+                ) : null}
               </View>
             )
           }
           ListFooterComponent={
-            result.data?.truncated ? (
+            result.data?.truncated &&
+            (!supportsSearch ||
+              query.trim().length === 0 ||
+              (searched && (searchResult.error !== null || searchResult.data?.truncated))) ? (
               <Text className="px-4 py-4 text-xs text-foreground-muted">
-                The provider has more reviewers than it returned. Find additional reviewers on the
-                provider.
+                {!supportsSearch
+                  ? "The provider has more reviewers than are listed here. Find additional reviewers on the provider."
+                  : searched && searchResult.error
+                    ? `Only listed reviewers are matched: the provider search failed. ${searchResult.error}`
+                    : searched
+                      ? "More reviewers match than the provider returned. Keep typing to narrow it down."
+                      : "The provider has more reviewers than are listed here. Search to find them."}
               </Text>
             ) : undefined
           }

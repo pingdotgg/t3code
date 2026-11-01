@@ -1194,17 +1194,19 @@ export const ReviewerCandidates = GraphQL.query("ReviewerCandidates", {
     variables: [
       { name: "owner", body: "String!" },
       { name: "name", body: "String!" },
-      { name: "number", body: "Int!" }
+      { name: "number", body: "Int!" },
+      { name: "query", body: "String" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){assignableUsers(first:100){pageInfo{hasNextPage}nodes{login name avatarUrl}}pullRequest(number:$", "number", "){author{__typename login}reviewRequests(first:100){nodes{requestedReviewer{__typename...on User{login name avatarUrl}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}...on Bot{login avatarUrl}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){assignableUsers(first:100 query:$", "query", "){pageInfo{hasNextPage}nodes{login name avatarUrl}}pullRequest(number:$", "number", "){author{__typename login}reviewRequests(first:100){nodes{requestedReviewer{__typename...on User{login name avatarUrl}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}...on Bot{login avatarUrl}}}}}}"] }
     ],
     fragments: []
   },
   variables: {
     owner: Schema.String,
     name: Schema.String,
-    number: Shared.Int
+    number: Shared.Int,
+    query: Schema.optional(Schema.NullOr(Schema.String))
   },
   result: Schema.Struct({
     /** Lookup a given repository by the owner and repository name. */

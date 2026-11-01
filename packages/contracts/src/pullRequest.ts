@@ -403,6 +403,13 @@ export const PullRequestRef = Schema.Struct({
 });
 export type PullRequestRef = typeof PullRequestRef.Type;
 
+/** `query` asks the host for matches past the first page of candidates. */
+export const PullRequestReviewerCandidatesInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+});
+export type PullRequestReviewerCandidatesInput = typeof PullRequestReviewerCandidatesInput.Type;
+
 export const PullRequestRoutingIdentityInput = Schema.Struct({
   host: TrimmedNonEmptyString,
 });

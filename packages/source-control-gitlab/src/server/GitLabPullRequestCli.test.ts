@@ -1103,6 +1103,82 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect(
+    "lists the requested reviewers first, even when the users page does not reach them",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute
+          .mockReturnValueOnce(
+            Effect.succeed(output(mergeRequestJson({ reviewers: [{ id: 42, username: "late" }] }))),
+          )
+          .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))));
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+        const list = yield* cli.listReviewerCandidates({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+        });
+
+        expect(
+          list.candidates.map((candidate) => [
+            candidate.login,
+            candidate.id,
+            candidate.isRequested,
+          ]),
+        ).toEqual([
+          ["late", "42", true],
+          [reviewer.username, "5", false],
+        ]);
+      }),
+  );
+
+  it.effect("marks a reviewer GitLab sent without a username as requested on the users page", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(output(mergeRequestJson({ reviewers: [{ id: 5, username: "" }] }))),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const list = yield* cli.listReviewerCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(list.candidates.map((candidate) => [candidate.id, candidate.isRequested])).toEqual([
+        ["5", true],
+      ]);
+    }),
+  );
+
+  it.effect("asks GitLab to search the project's users when the menu has a query", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(mergeRequestJson({ reviewers: [reviewer, { id: 42, username: "unrelated" }] })),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([reviewer]))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const list = yield* cli.listReviewerCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        query: "octo cat",
+      });
+
+      expect(list.candidates.map((candidate) => [candidate.login, candidate.isRequested])).toEqual([
+        [reviewer.username, true],
+      ]);
+      expect(argsOfCall(1)[1]).toBe("projects/acme%2Fweb/users?per_page=100&search=octo%20cat");
+    }),
+  );
+
   it.effect("writes the reviewer set back with the one being asked added to it", () =>
     Effect.gen(function* () {
       mockedExecute
@@ -1120,6 +1196,27 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
       expect(argsOfCall(1)).toContain("PUT");
       expect(JSON.parse(callAt(1).stdin ?? "")).toEqual({ reviewer_ids: [5, 9] });
+    }),
+  );
+
+  it.effect("keeps a reviewer it cannot show when writing the set back", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(output(mergeRequestJson({ reviewers: [{ id: 3, username: "" }] }))),
+        )
+        .mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.setReviewerRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        reviewers: [{ id: "9" }],
+        requested: true,
+      });
+
+      expect(JSON.parse(callAt(1).stdin ?? "")).toEqual({ reviewer_ids: [3, 9] });
     }),
   );
 
