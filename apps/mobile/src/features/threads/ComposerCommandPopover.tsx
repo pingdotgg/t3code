@@ -78,19 +78,26 @@ interface ComposerCommandPopoverProps {
   readonly triggerKind: ComposerTriggerKind | null;
   readonly isLoading: boolean;
   readonly error?: string | null;
+  /** Clear glass reads over the feed; over the composer's own text it needs the frosted style. */
+  readonly overlapsComposer?: boolean;
   readonly onSelect: (item: ComposerCommandItem) => void;
 }
 
-function PopoverSurface(props: { readonly children: React.ReactNode; readonly style?: ViewStyle }) {
+function PopoverSurface(props: {
+  readonly children: React.ReactNode;
+  readonly frosted: boolean;
+  readonly style?: ViewStyle;
+}) {
   const baseStyle: ViewStyle = {
     borderRadius: 16,
     overflow: "hidden",
+    flexShrink: 1,
     ...props.style,
   };
 
   return (
     <GlassSurface
-      glassEffectStyle="clear"
+      glassEffectStyle={props.frosted ? "regular" : "clear"}
       tintColorClassName="accent-glass-surface"
       style={baseStyle}
     >
@@ -213,7 +220,7 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
   const label = groupLabel(props.triggerKind);
 
   return (
-    <PopoverSurface>
+    <PopoverSurface frosted={props.overlapsComposer === true}>
       {label ? (
         <View className="px-3.5 pt-2.5 pb-1">
           <Text className="text-3xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
@@ -223,7 +230,7 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
       ) : null}
       {props.items.length > 0 ? (
         <ScrollView
-          className="max-h-[180px]"
+          className="max-h-[180px] shrink"
           keyboardShouldPersistTaps="always"
           showsVerticalScrollIndicator={false}
         >

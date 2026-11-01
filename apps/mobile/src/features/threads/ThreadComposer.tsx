@@ -833,13 +833,16 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         composerMenu.trigger &&
         (composerMenu.items.length > 0 || composerMenu.trigger.kind === "pull-request") ? (
           <ComposerPopoverAnchor>
-            <ComposerCommandPopover
-              items={composerMenu.items}
-              triggerKind={composerMenu.trigger.kind}
-              isLoading={composerMenu.isLoading}
-              error={composerMenu.error}
-              onSelect={composerMenu.onSelect}
-            />
+            {(overlapsComposer) => (
+              <ComposerCommandPopover
+                items={composerMenu.items}
+                triggerKind={composerMenu.trigger?.kind ?? null}
+                isLoading={composerMenu.isLoading}
+                error={composerMenu.error}
+                overlapsComposer={overlapsComposer}
+                onSelect={composerMenu.onSelect}
+              />
+            )}
           </ComposerPopoverAnchor>
         ) : null}
 
