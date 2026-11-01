@@ -336,9 +336,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     aria-pressed={isSelected}
                     data-pending-user-input-option=""
                     onKeyDown={(event) => {
-                      if (event.repeat || optionDisabled) return;
                       if (event.key !== "Enter" && event.key !== " ") return;
                       event.preventDefault();
+                      if (event.repeat || optionDisabled) return;
                       handleOptionSelection(activeQuestion.id, optionValue);
                     }}
                     onClick={(event) => {

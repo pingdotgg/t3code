@@ -102,6 +102,15 @@ it("still chooses an option from the keyboard and keeps a selected collapsed que
   await using screen = await renderPanel();
   const { container } = screen;
   const option = container.querySelector("[data-pending-user-input-option]") as HTMLElement;
+  const repeatedSpace = new KeyboardEvent("keydown", {
+    key: " ",
+    repeat: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  await act(async () => option.dispatchEvent(repeatedSpace));
+  expect(repeatedSpace.defaultPrevented).toBe(true);
+  expect(onToggleOption).not.toHaveBeenCalled();
   await act(async () => {
     option.focus();
     option.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
@@ -126,7 +135,7 @@ it("still chooses an option from the keyboard and keeps a selected collapsed que
   await act(async () => (collapsedQuestion as HTMLElement).click());
   expect(toggle().dataset.pendingUserInputToggle).toBe("collapsed");
 
-  const header = container.querySelector("span.shrink-0")!;
+  const header = textElement(row, "span", "Approach")!;
   const range = document.createRange();
   range.setStart(header.firstChild!, 0);
   range.setEnd(collapsedQuestion!.firstChild!, collapsedQuestion!.textContent!.length);
