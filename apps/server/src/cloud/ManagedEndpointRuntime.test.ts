@@ -1,4 +1,6 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -19,7 +21,9 @@ import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay
 import * as RelayClient from "@t3tools/shared/relayClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const layerRelayClientAvailable = Layer.succeed(
   RelayClient.RelayClient,
@@ -38,29 +42,35 @@ const layerRelayClientAvailable = Layer.succeed(
 
 const unusedHttpClient = HttpClient.make(() => Effect.die("unused"));
 
+const emptySecretStoreLayer = Layer.mock(ServerSecretStore.ServerSecretStore)({
+  get: () => Effect.succeedNone,
+  set: () => Effect.void,
+});
+
 const runtimeDependencies = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
   relayClientLayer = layerRelayClientAvailable,
   httpClient = unusedHttpClient,
+  secretStoreLayer = emptySecretStoreLayer,
 ) =>
   Layer.mergeAll(
+    ManagedPolicy.layerTest(),
     Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Layer.succeed(HttpClient.HttpClient, httpClient),
     relayClientLayer,
-    Layer.mock(ServerSecretStore.ServerSecretStore)({
-      get: () => Effect.succeedNone,
-    }),
+    secretStoreLayer,
   );
 
 const buildCloudManagedEndpointRuntime = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
   relayClientLayer = layerRelayClientAvailable,
   httpClient = unusedHttpClient,
+  secretStoreLayer = emptySecretStoreLayer,
 ) =>
   Effect.gen(function* () {
     const context = yield* Layer.build(
       ManagedEndpointRuntime.layer.pipe(
-        Layer.provide(runtimeDependencies(spawner, relayClientLayer, httpClient)),
+        Layer.provide(runtimeDependencies(spawner, relayClientLayer, httpClient, secretStoreLayer)),
       ),
     );
     return yield* Effect.service(ManagedEndpointRuntime.CloudManagedEndpointRuntime).pipe(
@@ -401,6 +411,117 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(fixture.spawned[0]!.args).not.toContain("--protocol");
       expect(fixture.spawned[0]!.options.env?.TUNNEL_TRANSPORT_PROTOCOL).toBe("quic");
     }),
+  );
+
+  it.effect(
+    "retains automatic HTTP/2 fallback across restarts until expiry and respects overrides",
+    () =>
+      Effect.gen(function* () {
+        const context = yield* Layer.build(
+          ServerSecretStore.layer.pipe(
+            Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-transport-test-" })),
+            Layer.provide(NodeServices.layer),
+          ),
+        );
+        const secretStoreLayer = Layer.succeed(
+          ServerSecretStore.ServerSecretStore,
+          context.pipe(Context.get(ServerSecretStore.ServerSecretStore)),
+        );
+        const fixture = yield* makeTransportSpawner();
+        const start = (spawner = fixture.spawner) =>
+          buildCloudManagedEndpointRuntime(
+            spawner,
+            layerRelayClientAvailable,
+            unusedHttpClient,
+            secretStoreLayer,
+          );
+        yield* Effect.gen(function* () {
+          const runtime = yield* start();
+          yield* runtime.applyConfig(tunnelConfig);
+          expect(yield* Queue.take(fixture.started)).toBe(0);
+          expect(fixture.spawned[0]!.args).not.toContain("--protocol");
+          yield* fixture.emit(0, quicDialWarning.repeat(30));
+          expect(yield* Queue.take(fixture.started)).toBe(1);
+          yield* fixture.observe(runtime, 1);
+          expect(fixture.spawned[1]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
+        }).pipe(Effect.scoped);
+
+        yield* TestClock.adjust(Duration.hours(1));
+        for (const transport of [undefined, "quic", "http2", "auto", undefined]) {
+          yield* Effect.gen(function* () {
+            const next = yield* makeTransportSpawner(transport ? { transport } : {});
+            const restarted = yield* start(next.spawner);
+            yield* restarted.applyConfig(tunnelConfig);
+            if (transport === undefined) {
+              expect(next.spawned[0]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
+            } else {
+              expect(next.spawned[0]!.args).not.toContain("--protocol");
+              expect(next.spawned[0]!.options.env?.TUNNEL_TRANSPORT_PROTOCOL).toBe(transport);
+              yield* next.observe(restarted, 0, quicDialWarning.repeat(30));
+              expect(next.spawned).toHaveLength(1);
+            }
+          }).pipe(Effect.scoped);
+        }
+
+        // Reusing the hint one hour later must not extend its original lifetime.
+        yield* TestClock.adjust(Duration.hours(23));
+        yield* Effect.gen(function* () {
+          const next = yield* makeTransportSpawner();
+          const restarted = yield* start(next.spawner);
+          yield* restarted.applyConfig(tunnelConfig);
+          expect(next.spawned[0]!.args).not.toContain("--protocol");
+          expect(yield* Queue.take(next.started)).toBe(0);
+          yield* next.emit(0, quicDatagramWarning.repeat(30));
+          expect(yield* Queue.take(next.started)).toBe(1);
+          expect(next.spawned[1]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
+        }).pipe(Effect.scoped);
+      }),
+  );
+
+  it.effect(
+    "ignores invalid or unreadable fallback state and still falls back if persistence fails",
+    () =>
+      Effect.gen(function* () {
+        for (const cached of [
+          "not json",
+          '{"fellBackAt":"invalid"}',
+          '{"fellBackAt":9007199254740991}',
+          null,
+        ]) {
+          yield* Effect.gen(function* () {
+            const fixture = yield* makeTransportSpawner();
+            const runtime = yield* buildCloudManagedEndpointRuntime(
+              fixture.spawner,
+              layerRelayClientAvailable,
+              unusedHttpClient,
+              Layer.mock(ServerSecretStore.ServerSecretStore)({
+                get: () =>
+                  cached === null
+                    ? Effect.fail(
+                        new ServerSecretStore.SecretStoreReadError({
+                          resource: "test",
+                          cause: "unreadable",
+                        }),
+                      )
+                    : Effect.succeedSome(new TextEncoder().encode(cached)),
+                set: () =>
+                  Effect.fail(
+                    new ServerSecretStore.SecretStorePersistError({
+                      resource: "test",
+                      cause: "read-only",
+                    }),
+                  ),
+              }),
+            );
+            yield* runtime.applyConfig(tunnelConfig);
+            expect(yield* Queue.take(fixture.started)).toBe(0);
+            expect(fixture.spawned[0]!.args).not.toContain("--protocol");
+            yield* fixture.emit(0, quicDialWarning.repeat(30));
+            expect(yield* Queue.take(fixture.started)).toBe(1);
+            expect(fixture.spawned[1]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
+          }).pipe(Effect.scoped);
+        }
+      }),
   );
 
   it.effect("requests recovery after a failed HTTP/2 spawn and retries with HTTP/2", () =>
