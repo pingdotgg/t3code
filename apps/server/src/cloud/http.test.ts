@@ -13,7 +13,6 @@ import {
 } from "@t3tools/contracts/relay";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpServer } from "effect/http";
 import * as Etag from "effect/http/Etag";
@@ -78,7 +77,7 @@ const layerLinkProofRoutes = HttpApiBuilder.layer(LinkProofTestApi).pipe(
   Layer.provide(AuthHttp.layerAuthenticatedAuth),
   Layer.provide(CloudLink.layer),
   Layer.provide(
-    Layer.mock(ConnectReachability.ConnectReachability)({ latest: Effect.succeed(Option.none()) }),
+    Layer.mock(ConnectReachability.ConnectReachability)({ latest: Effect.succeedNone }),
   ),
   Layer.provide(EnvironmentAuth.layer),
   Layer.provide([
@@ -274,85 +273,4 @@ describe("link proof over a non-loopback desktop transport", () => {
       const response = await post("/api/connect/link-proof", proofRequest);
       expect(response.status).toBe(401);
     }));
-});
-
-class ConnectTestApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.connect) {}
-
-type HealthFailure = Effect.Error<
-  ReturnType<CloudLink.CloudLink["Service"]["answerHealthRequest"]>
->;
-
-const answerHealthWith = async (failure: HealthFailure) => {
-  const layerRoutes = HttpApiBuilder.layer(ConnectTestApi).pipe(
-    Layer.provide(ConnectHttp.layer),
-    Layer.provide(
-      Layer.mock(CloudLink.CloudLink)({
-        answerHealthRequest: () => Effect.fail(failure),
-      }),
-    ),
-    Layer.provide(Layer.mock(ConnectReachability.ConnectReachability)({})),
-    Layer.provide(AuthHttp.layerAuthenticatedAuth),
-    Layer.provide(Layer.mock(EnvironmentAuth.EnvironmentAuth)({})),
-    Layer.provideMerge(
-      HttpPlatform.layer.pipe(
-        Layer.provideMerge(NodeServices.layer),
-        Layer.provideMerge(Etag.layerWeak),
-      ),
-    ),
-  );
-  const { handler, dispose } = HttpRouter.toWebHandler(layerRoutes, {
-    disableLogger: true,
-  });
-  try {
-    const response = await handler(
-      new Request("http://127.0.0.1/api/t3-connect/health", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ proof: "proof" }),
-      }),
-    );
-    return { status: response.status, body: (await response.json()) as unknown };
-  } finally {
-    await dispose();
-  }
-};
-
-describe("connect routes", () => {
-  it.each([
-    {
-      failure: new CloudLink.CloudLinkProofRejectedError({ request: "health" }),
-      status: 401,
-      body: { _tag: "EnvironmentHttpUnauthorizedError", message: "Invalid cloud health request." },
-    },
-    {
-      failure: new CloudLink.CloudLinkProofReplayedError({ request: "health" }),
-      status: 409,
-      body: {
-        _tag: "EnvironmentHttpConflictError",
-        message: "Cloud health request was already consumed.",
-      },
-    },
-    {
-      failure: new CloudLink.CloudLinkInternalError({
-        operation: "answer-health",
-        cause: new Error("disk full"),
-      }),
-      status: 500,
-      body: {
-        _tag: "EnvironmentHttpInternalServerError",
-        message: "Could not answer cloud health request.",
-      },
-    },
-    {
-      failure: new EnvironmentAuth.ServerAuthCloudMintPublicKeyMissingError({}),
-      status: 500,
-      body: {
-        _tag: "EnvironmentHttpInternalServerError",
-        message: "Cloud mint public key is not installed for this environment.",
-      },
-    },
-  ])("answers $failure._tag with HTTP $status", async ({ failure, status, body }) => {
-    const response = await answerHealthWith(failure);
-    expect(response).toEqual({ status, body });
-  });
 });

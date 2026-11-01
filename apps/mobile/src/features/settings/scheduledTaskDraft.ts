@@ -1,3 +1,4 @@
+import { isWebhookDedupeTemplate } from "@t3tools/contracts";
 import type {
   ModelSelection,
   ServerConfig,
@@ -9,7 +10,13 @@ import type {
 } from "@t3tools/contracts";
 
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
-import { parseMaxDeliveryAge } from "@t3tools/client-runtime/scheduled-task-webhook";
+import {
+  parseMaxDeliveryAge,
+  parseWebhookFilterDrafts,
+  webhookFilterDrafts,
+  webhookFilterDraftsChanged,
+  type WebhookFilterDraft,
+} from "@t3tools/client-runtime/scheduled-task-webhook";
 import {
   resolveProjectSettings,
   type LegacyProjectSettingsFields,
@@ -50,6 +57,12 @@ export type ScheduleDraft = {
   readonly intervalMinutes: string;
   readonly signature: ScheduledTaskWebhookSignature | null;
   readonly maxDeliveryAgeMinutes: string;
+  readonly replayKey: string;
+  readonly coalesceKey: string;
+  readonly coalesceWindowSeconds: string;
+  readonly filters: ReadonlyArray<WebhookFilterDraft>;
+  /** The filter rows the form opened with. */
+  readonly savedFilters: ReadonlyArray<WebhookFilterDraft>;
 };
 
 export const DEFAULT_SCHEDULE: ScheduleDraft = {
@@ -59,6 +72,11 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   intervalMinutes: "15",
   signature: null,
   maxDeliveryAgeMinutes: "",
+  replayKey: "",
+  coalesceKey: "",
+  coalesceWindowSeconds: "",
+  filters: [],
+  savedFilters: [],
 };
 
 export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
@@ -82,18 +100,45 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
         ...DEFAULT_SCHEDULE,
         mode: "webhook",
         signature: task.schedule.signature,
+        replayKey: task.schedule.dedupe?.replayKey ?? "",
+        coalesceKey: task.schedule.dedupe?.coalesceKey ?? "",
+        coalesceWindowSeconds:
+          task.schedule.dedupe?.coalesceWindowSeconds === undefined
+            ? ""
+            : String(task.schedule.dedupe.coalesceWindowSeconds),
         maxDeliveryAgeMinutes:
           task.schedule.maxDeliveryAgeMinutes == null
             ? ""
             : String(task.schedule.maxDeliveryAgeMinutes),
+        filters: webhookFilterDrafts(task.schedule.filters),
+        savedFilters: webhookFilterDrafts(task.schedule.filters),
       };
   }
+}
+
+export function parseIntervalMinutes(value: string): number {
+  return Number(value.trim().replace(",", "."));
 }
 
 export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSchedule | null {
   if (draft.mode === "webhook") {
     const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);
     if (maxDeliveryAgeMinutes === undefined) return null;
+    const replayKey = draft.replayKey.trim();
+    const coalesceKey = draft.coalesceKey.trim();
+    if ([replayKey, coalesceKey].some((key) => key && !isWebhookDedupeTemplate(key))) return null;
+    const coalesceWindowSeconds = draft.coalesceWindowSeconds?.trim()
+      ? Number(draft.coalesceWindowSeconds)
+      : undefined;
+    if (
+      coalesceWindowSeconds !== undefined &&
+      (!Number.isInteger(coalesceWindowSeconds) ||
+        coalesceWindowSeconds < 10 ||
+        coalesceWindowSeconds > 3600)
+    )
+      return null;
+    const parsedFilters = parseWebhookFilterDrafts(draft.filters);
+    if (!("filters" in parsedFilters)) return null;
     // No secret is sent, so the server keeps the stored one.
     return {
       type: "webhook",
@@ -106,10 +151,23 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
               prefix: draft.signature.prefix,
             },
       maxDeliveryAgeMinutes,
+      ...(replayKey || coalesceKey || coalesceWindowSeconds !== undefined
+        ? {
+            dedupe: {
+              ...(replayKey ? { replayKey } : {}),
+              ...(coalesceKey ? { coalesceKey } : {}),
+              ...(coalesceWindowSeconds === undefined ? {} : { coalesceWindowSeconds }),
+            },
+          }
+        : { dedupe: {} }),
+      // Only edited filters are sent; the server keeps the stored ones otherwise.
+      ...(webhookFilterDraftsChanged(draft.savedFilters, draft.filters)
+        ? { filters: parsedFilters.filters }
+        : {}),
     };
   }
   if (draft.mode === "interval") {
-    const minutes = Number(draft.intervalMinutes);
+    const minutes = parseIntervalMinutes(draft.intervalMinutes);
     const everyMs = Math.round(minutes * 60_000);
     return minutes >= 1 && Number.isSafeInteger(everyMs) ? { type: "interval", everyMs } : null;
   }
@@ -160,6 +218,10 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     [...draft.schedule.weekdays].sort((a, b) => a - b),
     draft.schedule.intervalMinutes,
     draft.schedule.maxDeliveryAgeMinutes,
+    draft.schedule.replayKey,
+    draft.schedule.coalesceKey,
+    draft.schedule.coalesceWindowSeconds,
+    draft.schedule.filters.map(({ path, op, value }) => [path, op, value]),
     draft.workspace,
     draft.baseRef,
     draft.checkoutPath,

@@ -1,5 +1,5 @@
-export const COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX = 620;
-export const COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX = 780;
+const COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX = 620;
+const COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX = 780;
 const RESTING_COMPOSER_IMAGE_THUMBNAIL_LIMIT = 3;
 
 export function getRestingComposerImagePreviewCounts(imageCount: number): {
@@ -21,65 +21,6 @@ export function shouldUseCompactComposerFooter(
     ? COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX
     : COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX;
   return width !== null && width < breakpoint;
-}
-
-export function shouldUseRestingComposerLayout(input: {
-  isExistingThread: boolean;
-  isMobileViewport: boolean;
-  isScrollCollapsed: boolean;
-  hasExpandedChrome: boolean;
-  hasMultilinePrompt: boolean;
-  timelineOverflows: boolean;
-}): boolean {
-  return (
-    input.isExistingThread &&
-    !input.isMobileViewport &&
-    input.timelineOverflows &&
-    input.isScrollCollapsed &&
-    !input.hasMultilinePrompt &&
-    !input.hasExpandedChrome
-  );
-}
-
-/**
- * How much taller the empty expanded composer is than its resting row on
- * desktop widths, from the layout classes in ChatComposer: the body loses
- * 8px of top padding, the prompt clamps from min-h-17.5 (70px) to 32px, and
- * the 48px footer leaves flow.
- */
-export const COMPOSER_RESTING_EXPANSION_MIN_PX = 94;
-
-/**
- * Reserving only the resting height lets a scroll to the end land flush against the short
- * composer, and the expansion that follows then covers the last rows because the timeline never
- * moves for footer growth.
- */
-export function resolveComposerTimelineInset(input: {
-  currentInset: number;
-  overlayHeight: number;
-  isResting: boolean;
-  restingOnlyHeight?: number;
-  expandedNoticesHeight?: number;
-}): number {
-  // Expanded notices temporarily cover the timeline. Remove their growth before
-  // rounding so fractional measurements reserve exactly the collapsed height.
-  const overlayHeight = Math.ceil(input.overlayHeight - (input.expandedNoticesHeight ?? 0));
-  return input.isResting
-    ? Math.max(
-        input.currentInset,
-        overlayHeight +
-          (input.currentInset === 0
-            ? COMPOSER_RESTING_EXPANSION_MIN_PX - (input.restingOnlyHeight ?? 0)
-            : 0),
-      )
-    : overlayHeight;
-}
-
-export function overlayComposerIsResting(input: {
-  composerMounted: boolean;
-  composerReportedResting: boolean;
-}): boolean {
-  return input.composerMounted && input.composerReportedResting;
 }
 
 export function shouldAnimateComposerRestingTransition(input: {
@@ -134,12 +75,8 @@ function restingComposerControlsWidth(
   );
 }
 
-/**
- * The context strip reserves this much for the composer before deciding whether its own labels
- * may expand. Judging against the currently visible controls instead lets the strip expand into
- * space the composer just gave up, which shrinks the host, hides the controls again, and
- * repeats.
- */
+/** Reserve natural composer width to prevent strip labels from repeatedly expanding into space vacated by
+ * hidden controls. */
 export function resolveRestingComposerControlsNaturalWidth(
   input: RestingComposerControlsMeasurement,
 ): number {
@@ -169,9 +106,8 @@ export function resolveRestingComposerControlsLayout(
       fixedWidth,
       Math.min(candidate, iconSteps),
     );
-  // Promotions need a pixel of slack: recovering a flexible picker's natural
-  // width can jitter by a fraction of a pixel across renders. Demotions are
-  // immediate so a threshold cannot clip or flip React between layouts.
+  // Use 1px slack for natural-width jitter on promotion; demote immediately to avoid clipping or layout
+  // flapping.
   while (
     step < iconSteps + blockWidths.length &&
     widthAtStep(step) > hostWidth - (step < previousStep ? RESTING_CONTROLS_SLACK_PX : 0)

@@ -3,6 +3,22 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./assembly-highlighting": {
+      "types": "./src/assemblyHighlighting.ts",
+      "default": "./src/assemblyHighlighting.ts"
+    },
+    "./zip/bounded-zip": {
+      "types": "./src/zip/boundedZip.ts",
+      "default": "./src/zip/boundedZip.ts"
+    },
+    "./zip/directory": {
+      "types": "./src/zip/zipDirectory.ts",
+      "default": "./src/zip/zipDirectory.ts"
+    },
+    "./workspace-basename-lookup": {
+      "types": "./src/workspaceBasenameLookup.ts",
+      "default": "./src/workspaceBasenameLookup.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"
@@ -50,6 +66,10 @@
     "./secret-request": {
       "types": "./src/secretRequest.ts",
       "default": "./src/secretRequest.ts"
+    },
+    "./link-request": {
+      "types": "./src/linkRequest.ts",
+      "default": "./src/linkRequest.ts"
     },
     "./scheduled-task-webhook": {
       "types": "./src/scheduledTaskWebhook.ts",
@@ -143,6 +163,14 @@
       "types": "./src/webhookAddress.ts",
       "default": "./src/webhookAddress.ts"
     },
+    "./queued-run-edit": {
+      "types": "./src/queuedRunEdit.ts",
+      "default": "./src/queuedRunEdit.ts"
+    },
+    "./clock": {
+      "types": "./src/clock.ts",
+      "default": "./src/clock.ts"
+    },
     "./delayed-status": {
       "types": "./src/delayedStatus.ts",
       "default": "./src/delayedStatus.ts"
@@ -179,6 +207,10 @@
       "types": "./src/state/orchestration.ts",
       "default": "./src/state/orchestration.ts"
     },
+    "./state/thread-history-merge": {
+      "types": "./src/state/threadHistoryMerge.ts",
+      "default": "./src/state/threadHistoryMerge.ts"
+    },
     "./state/orchestration-v2-projection": {
       "types": "./src/state/orchestrationV2Projection.ts",
       "default": "./src/state/orchestrationV2Projection.ts"
@@ -194,6 +226,14 @@
     "./state/deviceHubAccess": {
       "types": "./src/state/deviceHubAccess.ts",
       "default": "./src/state/deviceHubAccess.ts"
+    },
+    "./state/peerLinks": {
+      "types": "./src/state/peerLinks.ts",
+      "default": "./src/state/peerLinks.ts"
+    },
+    "./state/peerPairingCode": {
+      "types": "./src/state/peerPairingCode.ts",
+      "default": "./src/state/peerPairingCode.ts"
     },
     "./state/preview": {
       "types": "./src/state/preview.ts",
@@ -299,6 +339,10 @@
       "types": "./src/state/threadExecution.ts",
       "default": "./src/state/threadExecution.ts"
     },
+    "./state/pending-user-input": {
+      "types": "./src/state/pendingUserInput.ts",
+      "default": "./src/state/pendingUserInput.ts"
+    },
     "./state/thread-requests": {
       "types": "./src/state/threadRequests.ts",
       "default": "./src/state/threadRequests.ts"
@@ -315,6 +359,10 @@
       "types": "./src/state/threadSubagents.ts",
       "default": "./src/state/threadSubagents.ts"
     },
+    "./state/thread-undo": {
+      "types": "./src/state/threadUndo.ts",
+      "default": "./src/state/threadUndo.ts"
+    },
     "./state/thread-settled": {
       "types": "./src/state/threadSettled.ts",
       "default": "./src/state/threadSettled.ts"
@@ -322,6 +370,10 @@
     "./state/thread-search": {
       "types": "./src/state/threadSearch.ts",
       "default": "./src/state/threadSearch.ts"
+    },
+    "./state/thread-visits": {
+      "types": "./src/state/threadVisits.ts",
+      "default": "./src/state/threadVisits.ts"
     },
     "./state/turn-item-presentation": {
       "types": "./src/state/turnItemPresentation.ts",
@@ -358,6 +410,22 @@
     "./pull-request-link-input": {
       "types": "./src/pullRequestLinkInput.ts",
       "default": "./src/pullRequestLinkInput.ts"
+    },
+    "./change-request-links": {
+      "types": "./src/changeRequestLinks.ts",
+      "default": "./src/changeRequestLinks.ts"
+    },
+    "./thread-pull-requests": {
+      "types": "./src/threadPullRequests.ts",
+      "default": "./src/threadPullRequests.ts"
+    },
+    "./thread-reference": {
+      "types": "./src/threadReference.ts",
+      "default": "./src/threadReference.ts"
+    },
+    "./pull-request-project-filter": {
+      "types": "./src/pullRequestProjectFilter.ts",
+      "default": "./src/pullRequestProjectFilter.ts"
     },
     "./thread-pull-request-compatibility": {
       "types": "./src/threadPullRequestCompatibility.ts",
@@ -427,27 +495,51 @@
       "types": "./src/pullRequestMarkdown.ts",
       "default": "./src/pullRequestMarkdown.ts"
     },
+    "./pull-request-checks": {
+      "types": "./src/pullRequestChecks.ts",
+      "default": "./src/pullRequestChecks.ts"
+    },
+    "./pull-request-editing": {
+      "types": "./src/pullRequestEditing.ts",
+      "default": "./src/pullRequestEditing.ts"
+    },
+    "./pull-request-reactions": {
+      "types": "./src/pullRequestReactions.ts",
+      "default": "./src/pullRequestReactions.ts"
+    },
     "./pull-request-query": {
       "types": "./src/pullRequestQuery.ts",
       "default": "./src/pullRequestQuery.ts"
+    },
+    "./model-traits": {
+      "types": "./src/modelTraits.ts",
+      "default": "./src/modelTraits.ts"
+    },
+    "./provider-clients": {
+      "types": "./src/providerClients.ts",
+      "default": "./src/providerClients.ts"
     }
   },
   "scripts": {
-    "typecheck": "tsc-rs --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vp test run"
   },
   "dependencies": {
     "@pierre/diffs": "catalog:",
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/provider-acp-registry": "workspace:*",
+    "@t3tools/provider-core": "workspace:*",
+    "@t3tools/provider-cursor": "workspace:*",
+    "@t3tools/provider-fx": "workspace:*",
+    "@t3tools/provider-grok": "workspace:*",
+    "@t3tools/provider-muse": "workspace:*",
+    "@t3tools/provider-opencode": "workspace:*",
+    "@t3tools/provider-pi": "workspace:*",
     "@t3tools/shared": "workspace:*",
-    "@t3tools/source-control-azure-devops": "workspace:*",
-    "@t3tools/source-control-bitbucket": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",
-    "@t3tools/source-control-forgejo": "workspace:*",
-    "@t3tools/source-control-gitcafe": "workspace:*",
-    "@t3tools/source-control-github": "workspace:*",
-    "@t3tools/source-control-gitlab": "workspace:*",
+    "@t3tools/source-control-definitions": "workspace:*",
     "effect": "catalog:",
+    "jszip": "3.10.1",
     "three": "0.180.0"
   },
   "devDependencies": {

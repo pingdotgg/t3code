@@ -68,7 +68,7 @@ function expandHomePath(input: string, homeDir: string): string {
   return input.replace(/^~(?=$|\/|\\)/u, homeDir);
 }
 
-export const resolveSshConfigIncludePattern = Effect.fnUntraced(function* (
+const resolveSshConfigIncludePattern = Effect.fnUntraced(function* (
   includePattern: string,
   _directory: string,
   homeDir: string,
@@ -177,6 +177,7 @@ const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
     return;
   }
   if (!(yield* fs.exists(resolvedPath))) return;
+  if ((yield* fs.stat(resolvedPath)).type === "Directory") return;
   visited.add(resolvedPath);
 
   const directory = path.dirname(resolvedPath);
