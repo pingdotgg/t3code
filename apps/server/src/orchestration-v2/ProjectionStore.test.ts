@@ -4258,7 +4258,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             (row) => row.id === threadId,
           )!;
           const memoryShell = ProjectionStore.threadShellFromProjection(projection);
-          // Only worktree preparation counts from the request; a booting provider has no start yet.
           const expected =
             activityStatus === "completed" || activityStatus === "starting"
               ? null
