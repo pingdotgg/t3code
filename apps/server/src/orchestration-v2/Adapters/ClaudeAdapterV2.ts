@@ -3421,6 +3421,8 @@ export function permissionResultFromDecision(input: {
   readonly toolUseID: string;
   readonly suggestions?: Parameters<CanUseTool>[2]["suggestions"];
   readonly feedback?: string;
+  /** Under an administrator's ceiling, T3 Code's mode is the only one; Claude cannot switch it. */
+  readonly managedCeiling?: boolean;
 }): PermissionResult {
   if (input.decision === "accept" || input.decision === "acceptForSession") {
     return {
@@ -3431,7 +3433,12 @@ export function permissionResultFromDecision(input: {
         input.decision === "acceptForSession" ? "user_permanent" : "user_temporary",
       ...(input.decision === "acceptForSession"
         ? {
-            updatedPermissions: toSessionPermissionUpdates(input.toolName, input.suggestions),
+            updatedPermissions: toSessionPermissionUpdates(
+              input.toolName,
+              input.managedCeiling === true
+                ? input.suggestions?.filter((suggestion) => suggestion.type !== "setMode")
+                : input.suggestions,
+            ),
           }
         : {}),
     };
@@ -9763,6 +9770,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             } satisfies PermissionResult;
           }
 
+          const activePermissionMode =
+            (yield* Ref.get(queryContext))?.permissionMode ?? context.queryPolicy.permissionMode;
+          const safetyReason = NodeUtil.stripVTControlCharacters(
+            callbackOptions.decisionReason ?? "",
+          ).trim();
+          // The SDK omits the CLI's dangerousRemoval discriminator, so match its removal warnings.
+          if (
+            toolName === "Bash" &&
+            activePermissionMode === "bypassPermissions" &&
+            callbackOptions.matchedAskRule === undefined &&
+            (/^Dangerous rm(?:dir)?\b/i.test(safetyReason) ||
+              safetyReason === "This shell -c script runs rm and could not be checked" ||
+              safetyReason === "A permission rule denies a command in this shell -c script")
+          ) {
+            return {
+              behavior: "deny",
+              message: `Claude Code's removal safety check denied this command; the user did not reject it. The command did not run. Do not bypass the check by splitting the removal, putting it in a script, or using another tool or shell. If the warning below supplies a safe rewrite, use it and let the same check evaluate it. Otherwise continue the rest of the task without the removal and tell the user what you needed to delete and why. Warning: ${safetyReason}`,
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
+          }
+
           const requestKind = providerRequestKindFromClaudeTool(toolName);
           // The user approves the command itself; Claude's title and description only summarize it.
           const command = inputRecordValue(nativeToolInput, "command");
@@ -9833,6 +9861,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...resolvedDecision,
             toolInput,
             toolUseID: callbackOptions.toolUseID,
+            managedCeiling: context.input.runtimePolicy.maxRuntimeMode !== undefined,
             ...(callbackOptions.suggestions === undefined
               ? {}
               : { suggestions: callbackOptions.suggestions }),
@@ -10738,7 +10767,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
-            yield* existing.query.interrupt;
+            yield* existing.query.interrupt.pipe(Effect.timeoutOption("10 seconds"));
             yield* existing.query.close.pipe(Effect.ignore);
             const closed = yield* Deferred.await(existing.closed).pipe(
               Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
