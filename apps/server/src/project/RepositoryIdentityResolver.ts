@@ -12,7 +12,7 @@ import * as Path from "effect/Path";
 
 import * as ProcessRunner from "../processRunner.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
-import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
+import { gitProcessEnv } from "../vcs/VcsProcess.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
@@ -142,7 +142,7 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
     const processRunner = yield* ProcessRunner.ProcessRunner;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const env = explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform);
+    const env = gitProcessEnv(yield* HostProcess.Platform);
 
     // `git -C` cannot enter a missing folder or a file, so every probe below would fail.
     const isFolder = yield* fileSystem.stat(cwd).pipe(
@@ -231,7 +231,7 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     .run({
       command: "git",
       args: ["-C", cacheKey.rootPath, ...(cacheKey.isBare ? ["--git-dir=."] : []), "remote", "-v"],
-      env: explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform),
+      env: gitProcessEnv(yield* HostProcess.Platform),
       timeoutBehavior: "timedOutResult",
     })
     .pipe(Effect.option);

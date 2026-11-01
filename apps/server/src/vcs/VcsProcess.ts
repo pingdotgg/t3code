@@ -125,12 +125,33 @@ export const gitConfigEnv = (
   };
 };
 
+const REPOSITORY_SELECTORS = new Set([
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+]);
+
 /**
- * A project can contain a fake bare repository whose config runs commands such as `core.fsmonitor`.
- * Require `--git-dir` or `GIT_DIR` to open bare repositories; Git before 2.38 ignores this setting.
+ * Env for a Git child that extends `process.env`. Repository selectors the server inherited, such
+ * as a Git hook's `GIT_DIR`, are unset so Git finds the repository from cwd; `env` may still set them.
  */
-export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) =>
-  gitConfigEnv(env, "safe.bareRepository", "explicit", platform);
+export const gitProcessEnv = (
+  platform: NodeJS.Platform,
+  env?: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv => ({
+  ...Object.fromEntries(
+    Object.keys(process.env)
+      .filter((name) => REPOSITORY_SELECTORS.has(platform === "win32" ? name.toUpperCase() : name))
+      .map((name) => [name, undefined]),
+  ),
+  ...env,
+  // A project can contain a fake bare repository whose config runs commands such as `core.fsmonitor`.
+  // Require `--git-dir` or `GIT_DIR` to open bare repositories; Git before 2.38 ignores this setting.
+  ...gitConfigEnv({ ...process.env, ...env }, "safe.bareRepository", "explicit", platform),
+});
 
 const classifyNonZeroExit = (
   stderr: string,
@@ -206,10 +227,7 @@ export const make = Effect.gen(function* () {
         ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
-        env: {
-          ...input.env,
-          ...explicitBareRepositoryEnv({ ...process.env, ...input.env }, hostPlatform),
-        },
+        env: gitProcessEnv(hostPlatform, input.env),
         timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
         outputMode: input.outputMode ?? "truncate",
