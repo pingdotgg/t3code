@@ -6,7 +6,7 @@ import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 type Scroller = "shadow" | "light" | "none" | "shadow-dialog";
 type Step = readonly [
   event: number | "begin" | "end" | "zoom",
-  after?: number | "remount" | "remove",
+  after?: number | "remount" | "remove" | "close-dialog",
 ];
 
 function mountPanel(container: HTMLElement, scroller: Scroller, scrollLeft: number) {
@@ -67,6 +67,13 @@ describe("HistorySwipeNavigation", () => {
       "forward",
     ],
     ["swiping inside a dialog in a shadow root", "shadow-dialog", 0, [[-130]], null],
+    [
+      "a gesture that starts in a dialog before it closes",
+      "shadow-dialog",
+      0,
+      [[-1, "close-dialog"], [-130]],
+      null,
+    ],
     ["swiping left over content without overflow", "none", 0, [[-130]], "back"],
     ["swiping right over content without overflow", "none", 0, [[130]], "forward"],
   ])("%s", async (_name, scroller, scrollLeft, steps, navigates) => {
@@ -111,6 +118,9 @@ describe("HistorySwipeNavigation", () => {
       } else if (after === "remove") {
         viewport.remove();
         ({ viewport, content } = mountPanel(screen.container, "none", 0));
+      } else if (after === "close-dialog") {
+        viewport.parentElement!.remove();
+        screen.container.appendChild(viewport);
       } else if (after !== undefined) {
         viewport.scrollLeft = after;
       }
