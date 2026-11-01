@@ -271,6 +271,11 @@ export function acpPerTurnPromptUsage(
   };
 }
 
+interface AcpPromptOutcomeFailure {
+  readonly failure: OrchestrationV2ProviderFailure;
+  readonly threadDisposition: "reusable" | "broken";
+}
+
 export interface AcpAdapterV2Flavor {
   readonly buildPrompt?: (input: {
     readonly text: string;
@@ -285,14 +290,13 @@ export interface AcpAdapterV2Flavor {
   /**
    * Runs before `session/prompt`. The returned check sees a prompt the agent ended
    * without an error or cancel, and reports a failure its stop reason hid. A reported
-   * failure restarts the runtime before the next turn.
+   * failure restarts the runtime before the next turn. A `broken` thread's native
+   * history is unusable, so it is never resumed and the next turn starts fresh.
    */
   readonly watchPromptOutcome?: (
     sessionId: string,
   ) => Effect.Effect<
-    (
-      result: EffectAcpSchema.PromptResponse,
-    ) => Effect.Effect<OrchestrationV2ProviderFailure | undefined>
+    (result: EffectAcpSchema.PromptResponse) => Effect.Effect<AcpPromptOutcomeFailure | undefined>
   >;
   readonly requiresSignIn?: (cause: unknown) => boolean;
   /**
@@ -7470,10 +7474,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           context: ActiveAcpTurn,
           status: "completed" | "interrupted" | "failed" | "cancelled",
           failure?: OrchestrationV2ProviderFailure,
-          options?: { readonly childTurnsContinue?: boolean },
+          options?: {
+            readonly childTurnsContinue?: boolean;
+            readonly threadDisposition?: "reusable" | "broken";
+          },
         ): Effect.fn.Return<void> {
           if (context.finalized) return;
           const settledStatus = context.interrupted ? "interrupted" : status;
+          const threadDisposition =
+            settledStatus === "failed" ? (options?.threadDisposition ?? "reusable") : "reusable";
           context.finalizedStatus = settledStatus;
           context.finalized = true;
           const directStopQuarantine = yield* Ref.get(stoppedRunQuarantine);
@@ -7552,7 +7561,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const updatedProviderThread: OrchestrationV2ProviderThread = {
             ...context.input.providerThread,
             providerSessionId: input.providerSessionId,
-            status: "active",
+            status: threadDisposition === "broken" ? "error" : "active",
             lastRunOrdinal: context.input.runOrdinal,
             firstRunOrdinal:
               context.input.providerThread.firstRunOrdinal ?? context.input.runOrdinal,
@@ -7596,7 +7605,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         retry: context.providerRetry.retry,
                         retryStartedAt: context.providerRetry.startedAt,
                       }),
-                  threadDisposition: "reusable",
+                  threadDisposition,
                 }
               : {
                   type: "turn.terminal",
@@ -8190,7 +8199,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       yield* Ref.set(runtimeRestartRequired, true);
                     }
                     const failure =
-                      hiddenFailure ?? (idleError ? idleErrorFailure(result.error) : undefined);
+                      hiddenFailure?.failure ??
+                      (idleError ? idleErrorFailure(result.error) : undefined);
                     const status =
                       failure !== undefined
                         ? "failed"
@@ -8213,6 +8223,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       // background tools and subagents keep reporting to this run.
                       yield* finalizeTurn(context, "failed", failure, {
                         childTurnsContinue: hasSurvivingBackgroundWork(context),
+                        ...(hiddenFailure === undefined
+                          ? {}
+                          : { threadDisposition: hiddenFailure.threadDisposition }),
                       });
                       return;
                     }
@@ -8477,6 +8490,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               readonly modelSelection?: ModelSelection;
               readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
             }) {
+              if (threadInput.providerThread.status === "error") {
+                // A broken turn left this native history unusable; the caller recovers in a fresh session.
+                return yield* Effect.fail("The native session history is unusable.");
+              }
               return yield* runtimeTransitionPermit.withPermit(
                 Effect.gen(function* () {
                   yield* awaitRuntimeTeardown();
