@@ -191,6 +191,14 @@ it.layer(layerTest)("CursorDriver", (it) => {
           Effect.provideService(HttpClient.HttpClient, usageClient),
         );
         expect((yield* recreated.snapshot.refresh).auth.status).toBe("authenticated");
+        const customEndpoint = yield* CursorDriver.create({
+          ...input,
+          config: { ...input.config, apiEndpoint: "https://cursor.example" },
+        });
+        expect((yield* customEndpoint.snapshot.refresh).usageLimits).toMatchObject({
+          windows: [],
+          unavailable: { reason: "unsupported" },
+        });
         yield* instance.auth!.logout(Effect.void);
         expect(closed).toBe(1);
         expect((yield* instance.snapshot.getSnapshot).auth.status).toBe("unauthenticated");

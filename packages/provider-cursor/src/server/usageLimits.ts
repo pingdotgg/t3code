@@ -19,7 +19,17 @@ import {
 import * as CursorKeychain from "./CursorKeychain.ts";
 
 const CursorCredentials = Schema.Struct({ accessToken: Schema.optional(Schema.String) });
-const DEFAULT_CURSOR_API_ENDPOINT = "https://api2.cursor.sh";
+export const DEFAULT_CURSOR_API_ENDPOINT = "https://api2.cursor.sh";
+
+export const cursorUsageEndpoint = (
+  settings: Pick<CursorSettings, "apiEndpoint">,
+  environment: NodeJS.ProcessEnv,
+) =>
+  (
+    settings.apiEndpoint?.trim() ||
+    environment.CURSOR_API_ENDPOINT?.trim() ||
+    DEFAULT_CURSOR_API_ENDPOINT
+  ).replace(/\/$/, "");
 const decodeCredentials = Schema.decodeEffect(Schema.fromJsonString(CursorCredentials));
 const CursorUsageResponse = Schema.Struct({
   billingCycleEnd: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
@@ -71,11 +81,7 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const platform = yield* HostProcess.Platform;
-    const endpoint = (
-      settings.apiEndpoint?.trim() ||
-      environment.CURSOR_API_ENDPOINT?.trim() ||
-      DEFAULT_CURSOR_API_ENDPOINT
-    ).replace(/\/$/, "");
+    const endpoint = cursorUsageEndpoint(settings, environment);
     let token = environment.CURSOR_AUTH_TOKEN?.trim();
     // An explicit API key can name a different account from the stored login.
     if (!token && environment.CURSOR_API_KEY?.trim()) {
