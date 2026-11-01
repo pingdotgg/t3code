@@ -1,15 +1,11 @@
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { imageMimeType } from "@t3tools/shared/image";
+import { isDarkThemeColor, themeAccentWithContrast } from "@t3tools/shared/themeContrast";
 import { videoMimeType } from "@t3tools/shared/video";
 
 import type { CONTEXT_CHIP_ICON_SOURCES } from "./contextChipIcons.generated";
 import { resolveMarkdownFileIcon, type MarkdownFileIcon } from "./markdownLinks";
-import {
-  flattenThemeColor,
-  isDarkThemeColor,
-  themeAccentWithContrast,
-  type MobileThemeVariables,
-} from "./mobileTheme";
+import { flattenThemeColor, type MobileThemeVariables } from "./mobileTheme";
 
 export type ContextChipIcon = keyof typeof CONTEXT_CHIP_ICON_SOURCES;
 

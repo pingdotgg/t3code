@@ -14,6 +14,11 @@ import {
   STANDARD_THEME_PREVIEW_COLORS,
   type ThemePreviewColors,
 } from "@t3tools/shared/themePreview";
+import {
+  parseOklchThemeColor,
+  themeColorChannels,
+  themeColorWithContrast,
+} from "@t3tools/shared/themeContrast";
 
 export const DEFAULT_MOBILE_THEME_ID = MOBILE_DEFAULT_THEME_ID;
 export const MOBILE_THEME_IDS = [...SHARED_MOBILE_THEME_IDS, "material-you"] as const;
@@ -87,42 +92,13 @@ export function createMobileThemePairPatch(value: MobileThemeId) {
   };
 }
 
-const OKLCH_PATTERN = /^oklch\(\s*([\d.]+)\s+([\d.]+)\s+(-?[\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)$/;
-
-function linearToSrgb(value: number): number {
-  const converted = value <= 0.0031308 ? 12.92 * value : 1.055 * value ** (1 / 2.4) - 0.055;
-  return Math.round(Math.min(1, Math.max(0, converted)) * 255);
-}
-
-function oklabToLinearSrgb(lightness: number, a: number, b: number) {
-  const l = (lightness + 0.3963377774 * a + 0.2158037573 * b) ** 3;
-  const m = (lightness - 0.1055613458 * a - 0.0638541728 * b) ** 3;
-  const s = (lightness - 0.0894841775 * a - 1.291485548 * b) ** 3;
-  return [
-    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
-    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
-    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
-  ] as const;
-}
-
-function oklabToSrgb(lightness: number, a: number, b: number) {
-  const [red, green, blue] = oklabToLinearSrgb(lightness, a, b);
-  return [linearToSrgb(red), linearToSrgb(green), linearToSrgb(blue)] as const;
-}
-
 /** React Native does not accept OKLCH ColorValues, so palettes cross the app boundary as sRGB. */
 export function themeColorToNativeColor(value: string): string {
-  const match = OKLCH_PATTERN.exec(value);
-  if (!match) return value;
-
-  const lightness = Number(match[1]);
-  const chroma = Number(match[2]);
-  const hue = (Number(match[3]) * Math.PI) / 180;
-  const alpha = match[4] === undefined ? 1 : Number(match[4]);
-  const [red, green, blue] = oklabToSrgb(lightness, chroma * Math.cos(hue), chroma * Math.sin(hue));
-
-  return alpha < 1
-    ? `rgba(${red}, ${green}, ${blue}, ${Number(alpha.toFixed(4))})`
+  const parsed = parseOklchThemeColor(value);
+  if (!parsed) return value;
+  const [red, green, blue] = parsed.channels;
+  return parsed.alpha < 1
+    ? `rgba(${red}, ${green}, ${blue}, ${Number(parsed.alpha.toFixed(4))})`
     : `#${[red, green, blue].map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
@@ -141,18 +117,11 @@ function withAlpha(color: string, alpha: number): string {
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
-function rgbChannels(color: string): readonly [number, number, number] | null {
-  const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})(?:[\da-f]{2})?$/i.exec(color);
-  if (!match) return null;
-  const [, red = "0", green = "0", blue = "0"] = match;
-  return [Number.parseInt(red, 16), Number.parseInt(green, 16), Number.parseInt(blue, 16)];
-}
-
 /** Native chips require opaque hex; flatten translucent roles. */
 export function flattenThemeColor(color: string, surface: string): string {
   const alphaHex = /^#([\da-f]{6})([\da-f]{2})$/i.exec(color);
   if (alphaHex) {
-    const channels = rgbChannels(color)!;
+    const channels = themeColorChannels(color)!;
     return flattenThemeColor(
       `rgba(${channels[0]}, ${channels[1]}, ${channels[2]}, ${Number.parseInt(alphaHex[2]!, 16) / 255})`,
       surface,
@@ -163,159 +132,15 @@ export function flattenThemeColor(color: string, surface: string): string {
   );
   if (!match) return color;
   const alpha = match[4] === undefined ? 1 : Number(match[4]);
-  const behind = rgbChannels(surface) ?? [0, 0, 0];
+  const behind = themeColorChannels(surface) ?? [0, 0, 0];
   const channels = [match[1], match[2], match[3]].map((channel, index) =>
     Math.max(0, Math.min(255, Math.round(Number(channel) * alpha + behind[index]! * (1 - alpha)))),
   );
   return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function srgbToLinear(channel: number): number {
-  const value = channel / 255;
-  return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-}
-
-function srgbToOklab(channels: readonly [number, number, number]) {
-  const [red = 0, green = 0, blue = 0] = channels.map(srgbToLinear);
-  const l = Math.cbrt(0.4122214708 * red + 0.5363325363 * green + 0.0514459929 * blue);
-  const m = Math.cbrt(0.2119034982 * red + 0.6806995451 * green + 0.1073969566 * blue);
-  const s = Math.cbrt(0.0883024619 * red + 0.2817188376 * green + 0.6299787005 * blue);
-  return [
-    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
-    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
-    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
-  ] as const;
-}
-
-function relativeLuminance(channels: readonly [number, number, number]): number {
-  const [red, green, blue] = channels.map(srgbToLinear);
-  return 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!;
-}
-
-export function isDarkThemeColor(color: string): boolean {
-  const channels = rgbChannels(color);
-  return channels !== null && relativeLuminance(channels) < 0.18;
-}
-
-function contrastRatio(
-  first: readonly [number, number, number],
-  second: readonly [number, number, number],
-): number {
-  const firstLuminance = relativeLuminance(first);
-  const secondLuminance = relativeLuminance(second);
-  return (
-    (Math.max(firstLuminance, secondLuminance) + 0.05) /
-    (Math.min(firstLuminance, secondLuminance) + 0.05)
-  );
-}
-
-export function themeColorContrastRatio(first: string, second: string): number {
-  const firstChannels = rgbChannels(first);
-  const secondChannels = rgbChannels(second);
-  return firstChannels && secondChannels ? contrastRatio(firstChannels, secondChannels) : 1;
-}
-
-export function themeColorWithContrast(
-  accent: string,
-  surface: string | ReadonlyArray<string>,
-  minimum = 4.5,
-): string {
-  const accentChannels = rgbChannels(accent);
-  const surfaceChannels = (typeof surface === "string" ? [surface] : surface)
-    .map(rgbChannels)
-    .filter((channels) => channels !== null);
-  const minimumContrast = (channels: readonly [number, number, number]) =>
-    Math.min(...surfaceChannels.map((surface) => contrastRatio(channels, surface)));
-  if (
-    !accentChannels ||
-    surfaceChannels.length === 0 ||
-    minimumContrast(accentChannels) >= minimum
-  ) {
-    return accent;
-  }
-
-  const black = [0, 0, 0] as const;
-  const white = [255, 255, 255] as const;
-  const target = minimumContrast(black) >= minimumContrast(white) ? black : white;
-  let readable: readonly [number, number, number] = target;
-  let lowerAmount = 0;
-  let upperAmount = 1;
-  for (let index = 0; index < 12; index += 1) {
-    const amount = (lowerAmount + upperAmount) / 2;
-    const candidate: readonly [number, number, number] = [
-      Math.round(accentChannels[0] + (target[0] - accentChannels[0]) * amount),
-      Math.round(accentChannels[1] + (target[1] - accentChannels[1]) * amount),
-      Math.round(accentChannels[2] + (target[2] - accentChannels[2]) * amount),
-    ];
-    if (minimumContrast(candidate) >= minimum) {
-      readable = candidate;
-      upperAmount = amount;
-    } else {
-      lowerAmount = amount;
-    }
-  }
-  return `#${readable.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
-}
-
-/**
- * Unlike `themeColorWithContrast`, which blends toward black or white and greys the color out,
- * this moves only OKLCH lightness and takes the most chroma sRGB allows at each step, so a vivid
- * accent stays vivid at the contrast it needs.
- */
-export function themeAccentWithContrast(
-  accent: string,
-  surfaces: ReadonlyArray<string>,
-  minimum = 4.5,
-): string {
-  const accentChannels = rgbChannels(accent);
-  const surfaceChannels = surfaces.map(rgbChannels).filter((channels) => channels !== null);
-  const minimumContrast = (channels: readonly [number, number, number]) =>
-    Math.min(...surfaceChannels.map((surface) => contrastRatio(channels, surface)));
-  if (
-    !accentChannels ||
-    surfaceChannels.length === 0 ||
-    minimumContrast(accentChannels) >= minimum
-  ) {
-    return accent;
-  }
-
-  const [lightness, a, b] = srgbToOklab(accentChannels);
-  const hue = Math.atan2(b, a);
-  const inGamut = (channels: ReadonlyArray<number>) =>
-    channels.every((channel) => channel >= -1e-4 && channel <= 1 + 1e-4);
-  const mostVivid = (stepLightness: number) => {
-    let chroma = 0;
-    let lower = 0;
-    let upper = Math.max(Math.hypot(a, b), 0.2);
-    for (let index = 0; index < 20; index += 1) {
-      const candidate = (lower + upper) / 2;
-      if (
-        inGamut(
-          oklabToLinearSrgb(stepLightness, candidate * Math.cos(hue), candidate * Math.sin(hue)),
-        )
-      ) {
-        chroma = candidate;
-        lower = candidate;
-      } else {
-        upper = candidate;
-      }
-    }
-    return oklabToSrgb(stepLightness, chroma * Math.cos(hue), chroma * Math.sin(hue));
-  };
-
-  const lighten = minimumContrast([255, 255, 255]) >= minimumContrast([0, 0, 0]);
-  const step = lighten ? 0.002 : -0.002;
-  for (let next = lightness; lighten ? next <= 1 : next >= 0; next += step) {
-    const candidate = mostVivid(next);
-    if (minimumContrast(candidate) >= minimum) {
-      return `#${candidate.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
-    }
-  }
-  return lighten ? "#ffffff" : "#000000";
-}
-
 export function themeColorWithAlpha(color: string, alpha: number): string {
-  const channels = rgbChannels(color);
+  const channels = themeColorChannels(color);
   if (channels) {
     return `rgba(${channels[0]}, ${channels[1]}, ${channels[2]}, ${alpha})`;
   }

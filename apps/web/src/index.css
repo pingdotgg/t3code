@@ -251,6 +251,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-guest-foreground: var(--guest-foreground);
   --color-guest-surface: var(--guest-surface);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-fill-foreground: var(--app-theme-destructive-fill-foreground, white);
+  --color-destructive-fill-hover-foreground: var(
+    --app-theme-destructive-fill-hover-foreground,
+    white
+  );
+  --color-destructive-hover: var(
+    --app-theme-destructive-hover,
+    color-mix(in oklab, var(--destructive) 90%, transparent)
+  );
   --color-ring: var(--ring);
   --color-input: var(--contrast-input);
   --color-border: var(--contrast-border);

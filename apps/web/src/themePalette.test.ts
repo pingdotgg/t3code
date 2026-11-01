@@ -22,6 +22,7 @@ import {
   serializeThemeFile,
   T3_CHAT_THEME,
   GROVE_THEME,
+  OCEAN_THEME,
   updateCustomTheme,
   updateThemeColorFamily,
   CUSTOM_THEMES_STORAGE_KEY,
@@ -30,6 +31,7 @@ import {
   themeColorToHex,
   toCanonicalThemeColor,
   THEME_FILE_VERSION,
+  withReadableThemeText,
 } from "./themePalette";
 
 function asHex(value: string): string {
@@ -99,6 +101,19 @@ describe("theme files", () => {
         expect(distance(colors.searchMatchActiveBackground, background)).toBeGreaterThan(0.08);
       }
     }
+  });
+
+  it("paints every built-in theme's destructive text at 4.5:1 and keeps passing reds as-is", () => {
+    for (const theme of BUILT_IN_THEMES) {
+      for (const colors of [theme.colors, ...Object.values(theme.variants ?? {})]) {
+        const { error } = withReadableThemeText(colors);
+        for (const surface of [colors.canvas, colors.surface]) {
+          expect(contrastRatio(error, surface)).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    }
+    const oceanDark = OCEAN_THEME.variants!.dark!;
+    expect(withReadableThemeText(oceanDark).error).toBe(oceanDark.error);
   });
 
   it("round-trips custom search colours and fills them in for older theme files", () => {

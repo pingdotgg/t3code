@@ -24,6 +24,11 @@ import {
   type ThemeVariants,
 } from "@t3tools/shared/themePalettes";
 import {
+  themeAccentWithContrast,
+  themeColorChannels,
+  themeColorContrastRatio,
+} from "@t3tools/shared/themeContrast";
+import {
   CONTEXT_CHIP_ACCENTS,
   contextChipColorVariable,
   type ContextChipAccentKind,
@@ -1600,6 +1605,45 @@ export function getThemeColorVariable(role: ThemeColorRole): string {
 
 export const THEME_PREVIEW_ID = "__preview";
 
+/** `error` doubles as destructive text, so it must read on the surfaces that text sits on. */
+export function withReadableThemeText(colors: ThemeColors): ThemeColors {
+  const surfaces = [colors.canvas, colors.surface];
+  const readable = themeAccentWithContrast(colors.error, surfaces);
+  const minimumContrast = (color: string) =>
+    Math.min(...surfaces.map((surface) => themeColorContrastRatio(color, surface)));
+  return {
+    ...colors,
+    error: minimumContrast(readable) >= minimumContrast(colors.error) ? readable : colors.error,
+  };
+}
+
+function applyDestructiveFillColors(root: HTMLElement, colors: ThemeColors): void {
+  const error = themeColorChannels(colors.error);
+  const canvas = themeColorChannels(colors.canvas);
+  const hover =
+    error && canvas
+      ? `#${error
+          .map((channel, index) =>
+            Math.round(channel * 0.9 + canvas[index]! * 0.1)
+              .toString(16)
+              .padStart(2, "0"),
+          )
+          .join("")}`
+      : colors.error;
+  root.style.setProperty("--app-theme-destructive-hover", hover);
+  for (const [state, fill] of [
+    ["", colors.error],
+    ["-hover", hover],
+  ] as const) {
+    root.style.setProperty(
+      `--app-theme-destructive-fill${state}-foreground`,
+      themeColorContrastRatio("#ffffff", fill) >= themeColorContrastRatio("#000000", fill)
+        ? "#ffffff"
+        : "#000000",
+    );
+  }
+}
+
 /** Callers must restore the stored theme with refreshTheme when the draft closes. */
 export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeAppearance): void {
   if (typeof document === "undefined") return;
@@ -1608,7 +1652,9 @@ export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeApp
 
   root.dataset.themeId = THEME_PREVIEW_ID;
   root.classList.toggle("dark", appearance === "dark");
-  for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
+  const readable = withReadableThemeText(colors);
+  applyDestructiveFillColors(root, readable);
+  for (const [role, value] of Object.entries(readable) as Array<[ThemeColorRole, string]>) {
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
   applyContextChipVariables(root, colors);
@@ -1628,7 +1674,9 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
     root.dataset.themeId = palette.id;
     const mode = appearance ?? legacyThemeMode(theme) ?? palette.appearance;
     const colors = getThemeColorsForMode(palette, mode) ?? palette.colors;
-    for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
+    const readable = withReadableThemeText(colors);
+    applyDestructiveFillColors(root, readable);
+    for (const [role, value] of Object.entries(readable) as Array<[ThemeColorRole, string]>) {
       root.style.setProperty(APP_THEME_VARIABLES[role], value);
     }
     applyContextChipVariables(root, colors);
@@ -1636,6 +1684,9 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   }
 
   delete root.dataset.themeId;
+  root.style.removeProperty("--app-theme-destructive-fill-foreground");
+  root.style.removeProperty("--app-theme-destructive-fill-hover-foreground");
+  root.style.removeProperty("--app-theme-destructive-hover");
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }
