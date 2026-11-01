@@ -796,7 +796,7 @@ export const layer = Layer.effect(
         if (trigger !== "scheduled") {
           return yield* taskError("Schedule task is already running.", { taskId: task.id });
         }
-        return { task, threadId: null };
+        return { task, threadId: null, dispatchFailed: false };
       }
 
       return yield* Effect.gen(function* () {
@@ -811,7 +811,7 @@ export const layer = Layer.effect(
           if (trigger !== "scheduled") {
             return yield* taskError("Schedule task not found.", { taskId: task.id });
           }
-          return { task, threadId: null };
+          return { task, threadId: null, dispatchFailed: false };
         }
         if (
           webhook !== undefined &&
@@ -819,7 +819,11 @@ export const layer = Layer.effect(
             NodeSqliteClient.readOnly,
           )).length > 0
         )
-          return { task: { ...active, lastRunStatus: "succeeded" as const }, threadId: null };
+          return {
+            task: { ...active, lastRunStatus: "succeeded" as const },
+            threadId: null,
+            dispatchFailed: false,
+          };
         const parsedNextRunAt =
           active.nextRunAt === null ? Option.none() : DateTime.make(active.nextRunAt);
         if (
@@ -828,7 +832,7 @@ export const layer = Layer.effect(
             Option.isNone(parsedNextRunAt) ||
             DateTime.toEpochMillis(parsedNextRunAt.value) > DateTime.toEpochMillis(startedAt))
         ) {
-          return { task: active, threadId: null };
+          return { task: active, threadId: null, dispatchFailed: false };
         }
         // Reject queued deliveries after pause, same-id recreation or trigger changes.
         if (webhook !== undefined) {
@@ -1008,7 +1012,8 @@ export const layer = Layer.effect(
             ),
           );
         if (written) yield* notifyChanged;
-        return { task: recorded, threadId };
+        // The stored row can belong to a replacement, so report this dispatch separately.
+        return { task: recorded, threadId, dispatchFailed: !runSucceeded };
       }).pipe(
         Effect.onError((cause) =>
           releaseStuckRun(task, startedAtIso, errorMessage(cause), webhook?.deliveryId),
@@ -1751,8 +1756,8 @@ export const layer = Layer.effect(
         ]);
       const dispatched = yield* Ref.make(false);
       return yield* runTask(task, "webhook", { deliveryId, prompt, dispatched }).pipe(
-        Effect.flatMap(({ task: completed }) =>
-          completed.lastRunStatus === "failed"
+        Effect.flatMap(({ dispatchFailed }) =>
+          dispatchFailed
             ? runOutcome("failed").pipe(
                 Effect.andThen(markDeliveryFailed(deliveryId, "The run failed to start.")),
                 Effect.andThen(releaseFailedDelivery(deliveryId)),
