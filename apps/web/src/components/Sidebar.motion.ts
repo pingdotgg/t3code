@@ -154,9 +154,14 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
   const stopObservingResize = observeResize(parent, () => {
     if (positions !== null) positions = measure();
   });
-  const gapLimit = (rows: Map<HTMLElement, RowPosition>) =>
-    (scroller?.clientHeight ?? 0) -
-    ([...rows.values()].findLast((position) => position.height > 0)?.height ?? 0);
+  const gapLimit = (rows: Map<HTMLElement, RowPosition>) => {
+    const lastThread = [...rows].findLast(
+      ([node, position]) => node.hasAttribute("data-thread-item") && position.height > 0,
+    )?.[1];
+    return lastThread && scroller
+      ? Math.max(0, scroller.clientHeight - (scroller.scrollHeight - gap - lastThread.top))
+      : 0;
+  };
   const stopObservingViewport = scroller
     ? observeResize(scroller, () => {
         if (gap > 0) setGap(Math.max(0, Math.min(gap, gapLimit(measure()))));
