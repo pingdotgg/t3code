@@ -39,6 +39,9 @@ credentials and skills remain managed by the installed agent or its wrapper. Mod
 options come from ACP, including model IDs that contain JSON. T3 Code launches the executable directly
 without expanding shell expressions.
 
+DeepSeek Harness sessions also contribute to the [Usage page](./usage.md) when their `~/.dsh` (or
+`DSH_HOME`) logs are readable on the server.
+
 ## Where agents run
 
 Registry agents always run on the machine that hosts your T3 Code server. That stays true when you

@@ -82,9 +82,11 @@ describe("compressed transcripts", () => {
     await NodeFSP.mkdir(nested);
     const plain = NodePath.join(dir, "active.jsonl");
     const compressed = NodePath.join(nested, "archived.jsonl.zst");
+    const zstd = NodePath.join(nested, "archived.jsonl.zstd");
     const old = NodePath.join(nested, "old.jsonl.zst");
     await NodeFSP.writeFile(plain, claudeLine(1, 5));
     await NodeFSP.writeFile(compressed, NodeZlib.zstdCompressSync(claudeLine(2, 7)));
+    await NodeFSP.writeFile(zstd, NodeZlib.zstdCompressSync(claudeLine(4, 9)));
     await NodeFSP.writeFile(old, NodeZlib.zstdCompressSync(claudeLine(3, 11)));
     await NodeFSP.writeFile(NodePath.join(nested, "unrelated.zst"), "ignored");
     await NodeFSP.writeFile(NodePath.join(nested, "partial.jsonl.zst.tmp"), "ignored");
@@ -93,7 +95,7 @@ describe("compressed transcripts", () => {
     const listed = await listTranscriptFiles(dir, Date.parse("2026-01-01T00:00:00Z"));
     assert.deepStrictEqual(
       listed.files.map((file) => file.path).sort(),
-      [plain, compressed].sort(),
+      [plain, compressed, zstd].sort(),
     );
     assert.strictEqual(listed.failedPaths, 0);
     assert.isAbove(listed.files.find((file) => file.path === compressed)?.size ?? 0, 0);
@@ -143,6 +145,21 @@ describe("compressed transcripts", () => {
       assert.strictEqual(actual.position.resumeOffset, 0);
     },
   );
+
+  it("reads .jsonl.zstd snapshots like their plain JSONL source", async () => {
+    const plain = NodePath.join(dir, "session.jsonl");
+    const content = codexMetaLine() + codexModelLine("gpt-6-astra") + codexUsageLine(9, 5);
+    await NodeFSP.writeFile(plain, content);
+    await NodeFSP.writeFile(plain + ".zstd", NodeZlib.zstdCompressSync(content));
+
+    const expected = await readTranscriptRecords(plain, TEST_FORMATS.codex);
+    const actual = await readTranscriptRecords(plain + ".zstd", TEST_FORMATS.codex);
+    assert.isNotNull(expected);
+    assert.isNotNull(actual);
+    assert.deepStrictEqual(actual.records, expected.records);
+    assert.isFalse(actual.resumed);
+    assert.strictEqual(actual.position.resumeOffset, 0);
+  });
 
   it("ignores a prior resume position and rereads compressed rollouts from their start", async () => {
     const plain = NodePath.join(dir, "rollout.jsonl");

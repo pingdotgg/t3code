@@ -8,7 +8,7 @@ On mobile, choose **Usage** in the workspace navigation.
 
 ## Understand your usage
 
-**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, Pi, Muse Code, and Cursor history
+**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, Pi, Muse Code, Cursor, and DeepSeek Harness history
 from your connected environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
 cost, split by token type and by speed. These estimates are not your subscription bill.
 **Premium** is what Fast and Ultrafast requests cost above standard rates. Cost that cannot be
@@ -42,6 +42,10 @@ known prices still contribute tokens and appear as unpriced; set custom prices t
 Use absolute paths or `~/` paths in the account's environment settings; relative environment paths
 depend on each project's working directory and cannot be reliably discovered by Usage. Accounts
 sharing a history directory count once.
+
+DeepSeek Harness reads `~/.dsh/sessions`, or the `sessions` directory under `DSH_HOME`. Its session
+logs record input, cache-read, and output tokens but no cost, so they appear as unpriced unless you
+set a model price.
 
 The server saves its first hostname in `<T3 home>/usage-host-id`, so a recreated container keeps
 its usage identity when T3 home is persisted. Set `T3CODE_HOST_ID` to choose the identity

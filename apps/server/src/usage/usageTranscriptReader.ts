@@ -89,7 +89,9 @@ export async function listTranscriptFiles(
       else if (
         fileName !== undefined
           ? entry.name === fileName
-          : entry.name.endsWith(".jsonl") || entry.name.endsWith(".jsonl.zst")
+          : entry.name.endsWith(".jsonl") ||
+            entry.name.endsWith(".jsonl.zst") ||
+            entry.name.endsWith(".jsonl.zstd")
       ) {
         candidates.push(child);
       }
@@ -167,7 +169,7 @@ export async function readTranscriptRecords<State>(
   options?: { readonly streamingThresholdBytes?: number },
 ): Promise<TranscriptParseResult | null> {
   const streamingThresholdBytes = options?.streamingThresholdBytes ?? STREAMING_THRESHOLD_BYTES;
-  const compressed = filePath.endsWith(".jsonl.zst");
+  const compressed = filePath.endsWith(".jsonl.zst") || filePath.endsWith(".jsonl.zstd");
   let handle: NodeFSP.FileHandle;
   try {
     handle = await NodeFSP.open(filePath, "r");
