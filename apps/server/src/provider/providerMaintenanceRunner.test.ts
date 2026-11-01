@@ -971,6 +971,63 @@ describe("providerMaintenanceRunner", () => {
       ),
     );
   });
+
+  // Node throws `spawn UNKNOWN` synchronously when Smart App Control blocks the
+  // executable, and Effect's spawner surfaces that throw as a defect.
+  it.effect("explains a Windows-blocked updater launch on win32", () =>
+    Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseOpenCodeProvider);
+      const runner = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed(
+            makeProviderMaintenanceCapabilities({
+              provider: OPENCODE_DRIVER,
+              packageName: "opencode-ai",
+              updateExecutable: "vp",
+              updateArgs: ["i", "-g", "opencode-ai"],
+              updateLockKey: "vite-plus-global",
+            }),
+          ),
+      });
+
+      const result = yield* runner.updateProvider(OPENCODE_DRIVER);
+      const updateState = result.providers[0]?.updateState;
+
+      assert.strictEqual(updateState?.status, "failed");
+      const message = updateState?.message ?? "";
+      assert.notStrictEqual(message, "spawn UNKNOWN");
+      assert.include(message, "vp");
+      assert.include(message, "Windows could not start it");
+      assert.include(message, "Smart App Control");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(HostProcess.Platform, "win32"),
+          Layer.succeed(HostProcess.Environment, {
+            PATH: "C:\\Users\\me\\.vite-plus\\bin",
+            PATHEXT: ".COM;.EXE;.BAT;.CMD",
+          }),
+          Layer.succeed(SpawnExecutableResolution, (command) =>
+            command === "vp" ? "C:\\Users\\me\\.vite-plus\\bin\\vp.exe" : undefined,
+          ),
+          layerLatestVersionHttpClient("2.2.6"),
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.die(
+                Object.assign(new Error("spawn UNKNOWN"), {
+                  code: "UNKNOWN",
+                  errno: -4094,
+                  syscall: "spawn",
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 });
 
 it.effect.each([

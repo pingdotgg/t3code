@@ -7,6 +7,7 @@ import {
   type ServerProviderUpdatedPayload,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -16,6 +17,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -119,6 +121,27 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
                   message: `Failed to run update command ${input.command}: ${cause.message}`,
                   cause,
                 }),
+            ),
+            // Node throws some spawn errors synchronously, such as `spawn UNKNOWN`
+            // when policy blocks the executable; `mapError` cannot catch those.
+            Effect.catchDefect((cause) =>
+              Effect.gen(function* () {
+                const platform = yield* HostProcess.Platform;
+                const code =
+                  Predicate.hasProperty(cause, "code") && typeof cause.code === "string"
+                    ? cause.code
+                    : null;
+                const reason =
+                  platform === "win32" && code === "UNKNOWN"
+                    ? "Windows could not start it (spawn UNKNOWN). Smart App Control or an application control policy may be blocking this executable."
+                    : code
+                      ? `spawn ${code}`
+                      : "the process could not be started";
+                return yield* new ProviderMaintenanceCommandError({
+                  message: `Failed to run update command ${input.command}: ${reason}`,
+                  cause,
+                });
+              }),
             ),
           );
         yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
