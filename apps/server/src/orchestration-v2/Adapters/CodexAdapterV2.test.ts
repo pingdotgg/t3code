@@ -42,6 +42,7 @@ import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
+import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import { resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -485,6 +486,11 @@ const CODEX_TEST_RUNTIME_POLICY = ProviderAdapter.ProviderAdapterV2RuntimePolicy
   interactionMode: "default",
   cwd: "/workspace",
 });
+const T3_THREAD_ENV_KEY = "shell_environment_policy.set.T3CODE_THREAD_ID";
+const threadEnvOf = (params: unknown) =>
+  Predicate.hasProperty(params, "config") && Predicate.hasProperty(params.config, T3_THREAD_ENV_KEY)
+    ? params.config[T3_THREAD_ENV_KEY]
+    : undefined;
 
 function makeCodexTestAppThread(input: {
   readonly threadId: ThreadId;
@@ -1179,6 +1185,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                         onRequest(method, params).pipe(
                           Effect.andThen(client.request(method, params)),
                         ),
+                      raw: {
+                        ...client.raw,
+                        request: (method, params) =>
+                          onRequest(method, params).pipe(
+                            Effect.andThen(client.raw.request(method, params)),
+                          ),
+                      },
                     }) satisfies CodexClient.CodexAppServerClient["Service"],
                 ),
                 Effect.provide(context),
@@ -1512,6 +1525,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           config: {
             "tools.update_plan.enabled": true,
             mcp_optional_startup_grace_ms: 10_000,
+            "shell_environment_policy.set.T3CODE_THREAD_ID": `thread-${scenario}`,
             "mcp_servers.t3-code": {
               url: "http://127.0.0.1:43123/mcp",
               tool_timeout_sec: 3_900,
@@ -2365,6 +2379,116 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect.each([
+    { hook: "stopped", status: "interrupted", expected: true },
+    { hook: "completed", status: "interrupted", expected: false },
+    { hook: "warning", status: "interrupted", expected: false },
+    { hook: "empty", status: "interrupted", expected: false },
+    { hook: "wrong-turn", status: "interrupted", expected: false },
+    { hook: "wrong-thread", status: "interrupted", expected: false },
+    { hook: "unscoped", status: "interrupted", expected: false },
+    { hook: "stopped", status: "completed", expected: false },
+    { hook: "stopped", status: "failed", expected: false },
+  ] as const)(
+    "correlates $hook hook output with a $status turn only",
+    ({ hook, status, expected }) =>
+      Effect.gen(function* () {
+        const nativeThreadId = "hook-thread";
+        const stopReason = "Save a current task checkpoint before compaction.";
+        const hookCompleted = (turnId: string | null) => ({
+          type: "emit_inbound" as const,
+          label: "hook/completed",
+          frame: {
+            method: "hook/completed",
+            params: {
+              threadId: hook === "wrong-thread" ? "other-thread" : nativeThreadId,
+              turnId: hook === "unscoped" ? null : hook === "wrong-turn" ? "other-turn" : turnId,
+              run: {
+                id: "checkpoint-hook",
+                eventName: "preCompact",
+                source: "project",
+                sourcePath: "/workspace/.codex/hooks.json",
+                scope: "turn",
+                executionMode: "sync",
+                handlerType: "command",
+                displayOrder: 1,
+                startedAt: 1782622440,
+                status: hook === "completed" ? "completed" : "stopped",
+                entries: [
+                  { kind: "warning", text: "Unrelated hook diagnostic" },
+                  {
+                    kind: hook === "warning" ? "warning" : "stop",
+                    text: hook === "empty" ? "  " : stopReason,
+                  },
+                ],
+              },
+            },
+          },
+        });
+        const transcript = makeCodexReplayTranscript({
+          scenario: `hook-stop-${hook}-${status}`,
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId: "hook-turn", prompt: "work" }),
+            hookCompleted("hook-turn"),
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: "hook-turn", status }),
+                },
+              },
+            },
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId: "next-turn", prompt: "work" })
+              .slice(-3)
+              .map((entry, index) => (index < 2 ? withReplayRequestId(entry, 4) : entry)),
+            hookCompleted("hook-turn"),
+            {
+              type: "emit_inbound",
+              label: "turn/completed/next",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: "next-turn", status: "interrupted" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        for (const turn of ["hook-turn", "next-turn"]) {
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(turn),
+              text: "work",
+            }),
+          );
+          yield* harness.awaitTerminal(turn === "hook-turn" ? 1 : 2);
+        }
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => ({
+            status: event.status,
+            reason: event.status === "failed" ? undefined : event.reason,
+          })),
+          [
+            { status, reason: expected ? `preCompact hook (project): ${stopReason}` : undefined },
+            { status: "interrupted", reason: undefined },
+          ],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
   it.effect("resumes a provider thread without requesting or decoding its history", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -2397,10 +2521,66 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               label: "thread/resume",
               frame: { id: 3, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
             },
+            {
+              type: "expect_outbound",
+              label: "thread/resume without an app thread",
+              frame: {
+                id: 4,
+                method: "thread/resume",
+                params: {
+                  threadId: nativeThreadId,
+                  excludeTurns: true,
+                  config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "thread/resume without an app thread",
+              frame: { id: 4, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+            },
+            {
+              type: "expect_outbound",
+              label: "thread/resume with an explicit app thread",
+              frame: {
+                id: 5,
+                method: "thread/resume",
+                params: {
+                  threadId: nativeThreadId,
+                  excludeTurns: true,
+                  config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "thread/resume with an explicit app thread",
+              frame: { id: 5, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+            },
           ],
         });
-        const harness = yield* makeCodexReplayHarness(transcript);
+        const resumeThreadEnvs: Array<unknown> = [];
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method, params) =>
+            Effect.sync(() => {
+              if (method === "thread/resume") resumeThreadEnvs.push(threadEnvOf(params));
+            }),
+        );
         const resumed = yield* harness.runtime.resumeThread({
+          providerThread: harness.providerThread,
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
+        yield* harness.runtime.resumeThread({
+          providerThread: { ...harness.providerThread, appThreadId: null },
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
+        const explicitThreadId = ThreadId.make(`thread-${scenario}-explicit`);
+        yield* harness.runtime.resumeThread({
+          threadId: explicitThreadId,
           providerThread: harness.providerThread,
           modelSelection: CODEX_TEST_MODEL_SELECTION,
           runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
@@ -2409,6 +2589,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(resumed.nativeThreadRef?.nativeId, nativeThreadId);
         assert.equal(resumed.status, "idle");
         assert.equal(DateTime.toEpochMillis(resumed.updatedAt), 1782622450000);
+        assert.deepEqual(resumeThreadEnvs, [harness.threadId, undefined, explicitThreadId]);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -7378,12 +7559,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ],
         });
         const outbound: Array<string> = [];
+        const forkThreadEnvs: Array<unknown> = [];
         const harness = yield* makeCodexReplayHarness(
           transcript,
           () => Effect.void,
-          (method) =>
+          (method, params) =>
             Effect.sync(() => {
               outbound.push(method);
+              if (method === "thread/fork") forkThreadEnvs.push(threadEnvOf(params));
             }),
         );
         const now = yield* DateTime.now;
@@ -7413,6 +7596,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.notEqual(forkedProviderThread.id, harness.providerThread.id);
         assert.equal(forkedProviderThread.forkedFrom?.providerTurnId, firstTurn.id);
         assert.deepEqual(outbound.slice(-2), ["thread/turns/list", "thread/revert"]);
+        assert.deepEqual(forkThreadEnvs, ["thread-fork-paginated-fallback-target"]);
       }).pipe(
         Effect.scoped,
         Effect.provide(
@@ -8373,5 +8557,93 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ),
       ),
     );
+
+    it.effect("classifies permission requests that only list sandbox entries", () =>
+      Effect.gen(function* () {
+        const permissionRequest = (
+          id: number,
+          itemId: string,
+          entries: CodexSchema.PermissionsRequestApprovalParams__AdditionalFileSystemPermissions["entries"],
+        ): Array<CodexReplay.CodexAppServerReplayEntry> => [
+          {
+            type: "emit_inbound",
+            label: `permissions ${itemId}`,
+            frame: {
+              id,
+              method: "item/permissions/requestApproval",
+              params: {
+                threadId: nativeThreadId,
+                turnId: nativeTurnId,
+                itemId,
+                cwd: "/w",
+                startedAtMs: 2,
+                permissions: { fileSystem: { entries } },
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: `permissions ${itemId}`,
+            frame: { id, result: { permissions: { fileSystem: { entries } }, scope: "turn" } },
+          },
+        ];
+        const { harness, answerNext } = yield* startApprovalTurn("permission-entries", [
+          ...permissionRequest(0, "write-glob", [
+            { access: "read", path: { type: "path", path: "/w/src" } },
+            { access: "write", path: { type: "glob_pattern", pattern: "/w/out/**" } },
+          ]),
+          ...permissionRequest(1, "read-glob", [
+            { access: "read", path: { type: "glob_pattern", pattern: "/w/docs/**" } },
+          ]),
+          turnCompleted(nativeTurnId),
+        ]);
+        const write = yield* answerNext;
+        const read = yield* answerNext;
+        yield* harness.firstTerminal;
+
+        assert.deepEqual(
+          [write, read].map((request) => [
+            request.kind,
+            approvalItem(harness.events, request)?.requestKind,
+          ]),
+          [
+            ["file-change", "file-change"],
+            ["file-read", "file-read"],
+          ],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+  });
+});
+
+describe("codexDynamicToolOutput", () => {
+  it("translates inputImage data URLs into image blocks the work log can serve", () => {
+    const output = CodexAdapterV2.codexDynamicToolOutput({
+      type: "dynamicToolCall",
+      id: "exec-image",
+      tool: "exec",
+      status: "completed",
+      arguments: {},
+      contentItems: [
+        { type: "inputText", text: "Script completed" },
+        { type: "inputImage", imageUrl: "data:image/png;base64,iVBORw0KGgo=" },
+        { type: "inputImage", imageUrl: "https://example.test/remote.png" },
+        { type: "inputImage", imageUrl: "data:image/png;base64," },
+        { type: "inputAudio", audioUrl: "data:audio/wav;base64,AAAA" },
+      ],
+    });
+    assert.deepEqual(toolOutputImages(output), [{ mimeType: "image/png", data: "iVBORw0KGgo=" }]);
+    assert.deepEqual(output, [
+      { type: "inputText", text: "Script completed" },
+      { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
+      { type: "inputImage", imageUrl: "https://example.test/remote.png" },
+      { type: "inputImage", imageUrl: "data:image/png;base64," },
+      { type: "inputAudio", audioUrl: "data:audio/wav;base64,AAAA" },
+    ]);
   });
 });

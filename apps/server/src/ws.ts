@@ -9,6 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Base64 from "effect/encoding/Base64";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -178,6 +179,7 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
+import * as NpmRelease from "./cloud/npmRelease.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -312,10 +314,11 @@ const resolveEditorConfig = Effect.fn("ws.resolveEditorConfig")(function* <E, R>
   };
 });
 
-export const withLateEditorConfig = <E, R>(
+export const withLateConfigDiscovery = <E, R>(
   config: ClientServerConfig,
   liveUpdates: Stream.Stream<ServerConfigStreamEvent, E, R>,
   launcher: EditorDiscovery,
+  remoteOpenTargets: RemoteOpenTargets.RemoteOpenTargets["Service"],
 ) => {
   const lateEditorConfig = Stream.fromEffect(launcher.resolveAvailableEditors()).pipe(
     Stream.filter(
@@ -323,7 +326,8 @@ export const withLateEditorConfig = <E, R>(
         editors.join() !== config.availableEditors.join() ||
         (editors.includes("file-manager") && config.shellRevealInFileManagerKind === undefined),
     ),
-    // Leave the unshared reveal probe unbounded so timeouts cannot cancel every attempt on slow hosts.
+    // Unbounded, unlike the snapshot: this exists to deliver a probe that
+    // outlasts the snapshot's timeout.
     Stream.mapEffect((editors) =>
       resolveEditorConfig(editors, launcher.resolveFileManagerRevealKind()),
     ),
@@ -335,7 +339,14 @@ export const withLateEditorConfig = <E, R>(
     Stream.map((editorConfig) => ({ type: "editorsResolved" as const, editorConfig })),
   );
 
-  return Stream.merge(liveUpdates, lateEditorConfig).pipe(
+  const lateRemoteOpenTargets = Stream.fromEffect(remoteOpenTargets.resolveTargets()).pipe(
+    Stream.filter(
+      (targets) => JSON.stringify(targets) !== JSON.stringify(config.remoteOpenTargets ?? []),
+    ),
+    Stream.map((targets) => ({ type: "remoteOpenTargetsResolved" as const, targets })),
+  );
+
+  return Stream.merge(liveUpdates, Stream.merge(lateEditorConfig, lateRemoteOpenTargets)).pipe(
     Stream.mapAccum(
       (): ClientServerConfig => config,
       (current, event): readonly [ClientServerConfig, ReadonlyArray<ServerConfigStreamEvent>] => {
@@ -348,6 +359,10 @@ export const withLateEditorConfig = <E, R>(
               ...rest
             } = current;
             const next = { ...rest, ...event.editorConfig };
+            return [next, [{ version: 1, type: "snapshot", config: next }]];
+          }
+          case "remoteOpenTargetsResolved": {
+            const next = { ...current, remoteOpenTargets: event.targets };
             return [next, [{ version: 1, type: "snapshot", config: next }]];
           }
           case "keybindingsUpdated":
@@ -365,6 +380,31 @@ export const withLateEditorConfig = <E, R>(
   );
 };
 
+// Discoveries run side by side so the slowest one, not their sum, bounds the
+// server config snapshot. Each degrades on timeout rather than failing it.
+export const resolveOpenDiscoveryForConfig = <T, D, E1, R1, E2, R2, E3, R3, E4, R4>(discovery: {
+  readonly editors: Effect.Effect<ReadonlyArray<EditorId>, E1, R1>;
+  readonly fileManagerRevealKind: Effect.Effect<FileManagerRevealKind | undefined, E2, R2>;
+  readonly remoteOpenTargets: Effect.Effect<ReadonlyArray<T>, E3, R3>;
+  readonly directEndpoints: Effect.Effect<ReadonlyArray<D>, E4, R4>;
+}) =>
+  Effect.all(
+    {
+      editorConfig: resolveAvailableEditorsForConfig(discovery.editors).pipe(
+        Effect.flatMap((availableEditors) =>
+          resolveEditorConfig(
+            availableEditors,
+            resolveFileManagerRevealKindForConfig(discovery.fileManagerRevealKind),
+          ),
+        ),
+      ),
+      // Same discovery-with-timeout treatment as editors: a slow probe must
+      // not stall server.getConfig, so it degrades to an empty list.
+      remoteOpenTargets: resolveAvailableEditorsForConfig(discovery.remoteOpenTargets),
+      directEndpoints: resolveAvailableEditorsForConfig(discovery.directEndpoints),
+    },
+    { concurrency: "unbounded" },
+  ).pipe(Effect.map(({ editorConfig, ...endpoints }) => ({ ...editorConfig, ...endpoints })));
 function withoutWorkspaceSnapshots(providers: ReadonlyArray<ServerProvider>): ServerProvider[] {
   return providers.map(({ workspaceSnapshots: _workspaceSnapshots, ...provider }) => provider);
 }
@@ -812,7 +852,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
           Stream.map((stored) => ({
             kind: "event" as const,
             sequence: stored.sequence,
-            event: projectDomainEventForWire(stored.event),
+            event: stored.event,
           })),
           coalesceThreadLiveStream,
           Stream.mapError(
@@ -1333,6 +1373,7 @@ export const layerWsRpc = (
       const providerAuth = yield* ProviderAuthService.ProviderAuthService;
       const providerInstallation = yield* makeProviderInstallation();
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+      const npmRelease = yield* NpmRelease.NpmRelease;
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const storageCleanup = yield* StorageCleanup.StorageCleanup;
@@ -1726,6 +1767,7 @@ export const layerWsRpc = (
       const loadServerConfig = Effect.fn("ws.loadServerConfig")(function* (options: {
         readonly usageLimitsCommand: boolean;
         readonly workspaceSnapshotsOnDemand: boolean;
+        readonly deferRemoteOpenTargets: boolean;
       }) {
         const keybindingsConfig = yield* keybindings.loadConfigState;
         const currentProviders = yield* providerRegistry.getProviders;
@@ -1742,10 +1784,14 @@ export const layerWsRpc = (
         const auth = yield* serverAuth.getDescriptor();
         const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
         const lastEventLoopStall = yield* eventLoopMonitor.latestNoticeableStall;
-        const editorConfig = yield* resolveEditorConfig(
-          yield* resolveAvailableEditorsForConfig(externalLauncher.resolveAvailableEditors()),
-          resolveFileManagerRevealKindForConfig(externalLauncher.resolveFileManagerRevealKind()),
-        );
+        const discovery = yield* resolveOpenDiscoveryForConfig({
+          editors: externalLauncher.resolveAvailableEditors(),
+          fileManagerRevealKind: externalLauncher.resolveFileManagerRevealKind(),
+          remoteOpenTargets: options.deferRemoteOpenTargets
+            ? Effect.succeed([])
+            : remoteOpenTargets.resolveTargets(),
+          directEndpoints: directEndpoints.resolve(),
+        });
 
         return {
           environment,
@@ -1755,11 +1801,7 @@ export const layerWsRpc = (
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
           providers,
-          ...editorConfig,
-          remoteOpenTargets: yield* resolveAvailableEditorsForConfig(
-            remoteOpenTargets.resolveTargets(),
-          ),
-          directEndpoints: yield* resolveAvailableEditorsForConfig(directEndpoints.resolve()),
+          ...discovery,
           observability: {
             logsDirectoryPath: config.logsDir,
             localTracingEnabled: true,
@@ -1789,6 +1831,9 @@ export const layerWsRpc = (
             otlpLogsEnabled: config.otlpLogsUrl !== undefined,
           },
           settings,
+          ...(serverSettings.managedPolicy === undefined
+            ? {}
+            : { managedPolicy: serverSettings.managedPolicy }),
           shellResumeCompletionMarker: true,
           shellThreadFamilies: true,
           shellOlderSettled: true,
@@ -2177,7 +2222,11 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),
         [WS_METHODS.serverGetConfig]: (_input) =>
-          loadServerConfig({ usageLimitsCommand: false, workspaceSnapshotsOnDemand: false }),
+          loadServerConfig({
+            usageLimitsCommand: false,
+            workspaceSnapshotsOnDemand: false,
+            deferRemoteOpenTargets: false,
+          }),
         [WS_METHODS.serverSearchAcpRegistry]: (input) =>
           acpRegistryCatalog
             .search(input)
@@ -2481,6 +2530,7 @@ export const layerWsRpc = (
         [WS_METHODS.providerInstallSubscribe]: (input) => providerInstallation.subscribe(input),
         [WS_METHODS.providerInstallRemove]: (input) => providerInstallation.remove(input),
         [WS_METHODS.serverUpdateServer]: (input) => serverSelfUpdate.update(input),
+        [WS_METHODS.serverGetNpmRelease]: (input) => npmRelease.get(input),
         [WS_METHODS.serverUpdateServerWithProgress]: (input) =>
           ServerSelfUpdate.updateProgressStream(serverSelfUpdate, input),
         [WS_METHODS.serverCommitDesktopUpdate]: (input) =>
@@ -2488,14 +2538,12 @@ export const layerWsRpc = (
         [WS_METHODS.serverUpsertKeybinding]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (rule) {
-            const keybindingsConfig = yield* keybindings.upsertKeybindingRule(rule);
-            return { keybindings: keybindingsConfig, issues: [] };
+            return yield* keybindings.upsertKeybindingRule(rule);
           }),
         [WS_METHODS.serverRemoveKeybinding]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (rule) {
-            const keybindingsConfig = yield* keybindings.removeKeybindingRule(rule);
-            return { keybindings: keybindingsConfig, issues: [] };
+            return yield* keybindings.removeKeybindingRule(rule);
           }),
         [WS_METHODS.serverRunStorageCleanup]: () => storageCleanup.runNow,
         [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
@@ -2678,6 +2726,7 @@ export const layerWsRpc = (
         [WS_METHODS.sourceControlSignInWait]: (input) => sourceControlSignIn.wait(input),
         [WS_METHODS.sourceControlSignInCancel]: (input) => sourceControlSignIn.cancel(input),
         [WS_METHODS.sourceControlAppAccess]: (input) => sourceControlSignIn.access(input),
+        [WS_METHODS.sourceControlStarred]: (input) => sourceControlSignIn.starred(input),
         [WS_METHODS.projectCloneStart]: (input) =>
           projectCloneTracker.start(input, {
             createProject: (project) =>
@@ -3098,9 +3147,13 @@ export const layerWsRpc = (
               // Buffer changes through discovery and the initial snapshot's RPC ACK wait.
               const keybindingsChanges = yield* keybindings.subscribeChanges;
               const settingsChanges = yield* serverSettings.subscribeChanges;
+              const remoteTargets = yield* Effect.forkScoped(remoteOpenTargets.resolveTargets(), {
+                startImmediately: true,
+              });
               const config = yield* loadServerConfig({
                 usageLimitsCommand,
                 workspaceSnapshotsOnDemand,
+                deferRemoteOpenTargets: true,
               });
               const keybindingsUpdates = keybindingsChanges.pipe(
                 Stream.map((event) => ({
@@ -3187,9 +3240,18 @@ export const layerWsRpc = (
                 ),
               );
 
+              const remoteResult = yield* Effect.sync(() => remoteTargets.pollUnsafe());
+              const initialConfig =
+                remoteResult?._tag === "Success"
+                  ? { ...config, remoteOpenTargets: remoteResult.value }
+                  : config;
               return Stream.concat(
-                rpcInitialItems([{ version: 1 as const, type: "snapshot" as const, config }]),
-                withLateEditorConfig(config, liveUpdates, externalLauncher),
+                rpcInitialItems([
+                  { version: 1 as const, type: "snapshot" as const, config: initialConfig },
+                ]),
+                withLateConfigDiscovery(initialConfig, liveUpdates, externalLauncher, {
+                  resolveTargets: () => Fiber.join(remoteTargets),
+                }),
               );
             }),
           ),
@@ -3272,6 +3334,7 @@ export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+    const npmRelease = yield* NpmRelease.NpmRelease;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const peerLinks = yield* PeerLinks.PeerLinks;
@@ -3346,6 +3409,7 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
               Layer.provide(AgentSessionScanner.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
+              Layer.provide(Layer.succeed(NpmRelease.NpmRelease, npmRelease)),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // Share server-lifetime PR caches so WS mutations invalidate every client's HTTP diffs.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
@@ -3379,7 +3443,7 @@ export const layer = Layer.unwrap(
           () =>
             Effect.raceFirst(
               rpcWebSocketHttpEffect,
-              sessions.awaitInvalidation(session.sessionId).pipe(
+              sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint).pipe(
                 Effect.as(HttpServerResponse.empty()),
                 Effect.catchTags({
                   SessionCredentialVerificationError: (error) =>
@@ -3397,4 +3461,4 @@ export const layer = Layer.unwrap(
       ),
     );
   }),
-);
+).pipe(Layer.provide(NpmRelease.layer));

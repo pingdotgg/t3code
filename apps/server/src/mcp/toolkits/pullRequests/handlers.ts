@@ -392,12 +392,65 @@ const make = Effect.gen(function* () {
         return { ...target, alreadyLinked, ...next };
       }),
     ),
+    link_pull_requests: writesThread((input) =>
+      Effect.gen(function* () {
+        const thread = yield* requireThread(PullRequestLinkFailedError, input.threadId);
+        const targets: Array<ResolvedTarget> = [];
+        const invalidUrls: Array<string> = [];
+        for (const url of input.urls) {
+          const target = yield* resolveTarget({ url }, undefined).pipe(Effect.option);
+          if (Option.isNone(target)) invalidUrls.push(url);
+          else if (!targets.some((seen) => threadPullRequestKeysEqual(seen, target.value)))
+            targets.push(target.value);
+        }
+        const links = threadPullRequestsOf(thread);
+        const isLinked = (target: ResolvedTarget) =>
+          links.some(
+            (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, target),
+          );
+        const fresh = targets.filter((target) => !isLinked(target));
+        const alreadyLinked = targets.filter(isLinked);
+        yield* Effect.forEach(fresh, (target) =>
+          Effect.gen(function* () {
+            yield* engine.dispatch({
+              type: "thread.pull-request.link",
+              commandId: yield* commandId("mcp-pr-link", thread.id),
+              threadId: thread.id,
+              host: target.host,
+              repository: target.repository,
+              number: target.number,
+              url: target.url,
+              source: "agent",
+            });
+          }).pipe(Effect.catchCause(dispatchFailure(PullRequestLinkFailedError))),
+        );
+        const byRepository = (prs: ReadonlyArray<ResolvedTarget>) =>
+          [...Map.groupBy(prs, (pr) => `${pr.host}/${pr.repository}`).values()].map((group) => ({
+            host: group[0]!.host,
+            repository: group[0]!.repository,
+            numbers: group.map((pr) => pr.number),
+          }));
+        return {
+          linked: byRepository(fresh),
+          alreadyLinked: byRepository(alreadyLinked),
+          linkedCount: targets.length,
+          ...(invalidUrls.length > 0 ? { invalidUrls } : {}),
+          ...(thread.lineage.relationshipToParent === "subagent"
+            ? { next: CHILD_PULL_REQUEST_REPORT_NEXT }
+            : {}),
+        };
+      }),
+    ),
     unlink_pull_request: writesThread((input) =>
       Effect.gen(function* () {
         const thread = yield* requireThread(PullRequestUnlinkFailedError, input.threadId);
         const project = yield* projectOf(thread, PullRequestUnlinkFailedError);
         const target = yield* resolveTarget(input, project);
-        if (!threadPullRequestsOf(thread).some((link) => threadPullRequestKeysEqual(link, target)))
+        if (
+          !threadPullRequestsOf(thread).some(
+            (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, target),
+          )
+        )
           return {
             host: target.host,
             repository: target.repository,
@@ -423,6 +476,42 @@ const make = Effect.gen(function* () {
           repository: target.repository,
           number: target.number,
           wasLinked,
+        };
+      }),
+    ),
+    unlink_pull_requests: writesThread((input) =>
+      Effect.gen(function* () {
+        const thread = yield* requireThread(PullRequestUnlinkFailedError, input.threadId);
+        const visible = visibleThreadPullRequests(threadPullRequestsOf(thread));
+        const matching = visible.flatMap((link) => {
+          const state = link.snapshot?.state;
+          return state !== undefined && input.states.includes(state)
+            ? [{ ...normalizeThreadPullRequestKey(link), state }]
+            : [];
+        });
+        yield* Effect.forEach(matching, ({ host, repository, number }) =>
+          Effect.gen(function* () {
+            yield* engine.dispatch({
+              type: "thread.pull-request.unlink",
+              commandId: yield* commandId("mcp-pr-unlink", thread.id),
+              threadId: thread.id,
+              host,
+              repository,
+              number,
+            });
+          }).pipe(Effect.catchCause(dispatchFailure(PullRequestUnlinkFailedError))),
+        );
+        // Numbers grouped by repository and state keep a large batch's result small.
+        const groups = Map.groupBy(matching, (pr) => `${pr.host}/${pr.repository}/${pr.state}`);
+        return {
+          unlinked: [...groups.values()].map((prs) => ({
+            host: prs[0]!.host,
+            repository: prs[0]!.repository,
+            state: prs[0]!.state,
+            numbers: prs.map((pr) => pr.number),
+          })),
+          unlinkedCount: matching.length,
+          remaining: visible.length - matching.length,
         };
       }),
     ),

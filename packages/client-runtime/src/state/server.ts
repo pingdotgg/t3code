@@ -1250,7 +1250,7 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.providerInstallStart,
       concurrency: {
         mode: "singleFlight",
-        key: ({ environmentId }) => environmentId,
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input]),
       },
     }),
     cancelProviderInstall: createEnvironmentRpcCommand(runtime, {
@@ -1264,6 +1264,12 @@ export function createServerEnvironmentAtoms<R, E>(
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,
+    }),
+    npmRelease: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:npm-release",
+      tag: WS_METHODS.serverGetNpmRelease,
+      staleTimeMs: 60_000,
+      refreshIntervalMs: 5 * 60_000,
     }),
     processDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-diagnostics",

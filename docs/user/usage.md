@@ -17,6 +17,8 @@ Select a model under **Breakdown** to see its trend, cache hit rate, and cost pe
 
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
+Text generation (thread titles, commit messages, PR text, branch names and review guides) is not in
+the totals for Codex or Claude Code 2.0.63 and newer, because those runs save no session history.
 
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
 databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
@@ -120,11 +122,12 @@ current model's limits without leaving the conversation. The result opens above 
 closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh
 anything. The command is offered only for providers that appear under **Usage → Limits**.
 
-To keep them in view on web and desktop, turn on **Usage** in **Settings → Appearance → Thread details**, or right-click the thread details card.
+To keep them in view on web and desktop, turn on **Usage limits** in **Settings → Appearance → Thread details**, or right-click the thread details card.
 The bottom of the thread details card then shows how much is left in each limit window of the
-current provider account and in the thread's context window. Some windows, such as a weekly Opus
-limit, count only one model. Hover a row to see when it resets, your pace, or
-the token count.
+current provider account. Some windows, such as a weekly Opus limit, count only one model. Hover a
+row to see when it resets and your pace. Turn on **Context window** to also show the thread's
+context use against the model's limit. A tick on the bar marks where the provider compacts
+automatically, when it reports that point.
 
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
 the environment. T3 cannot report limits for external OpenCode servers because their credentials

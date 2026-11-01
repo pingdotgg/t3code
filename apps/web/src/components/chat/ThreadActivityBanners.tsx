@@ -1,4 +1,5 @@
 import type {
+  EnvironmentId,
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderGoal,
   ThreadId,
@@ -30,12 +31,13 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 import type { ThreadNowItem } from "./ThreadNow";
 
-/** Subagents waiting on the user, unless the parent is itself waiting on them. */
+/** Subagents and side chats waiting on the user, unless the parent is itself waiting on them. */
 export function childInputNowItem(input: {
   readonly childThreadInputs: ReadonlyArray<EnvironmentThreadShell>;
   readonly parentAwaitingUser: boolean;
-  readonly onOpenThread: (threadId: ThreadId) => void;
-}): ThreadNowItem | null {
+  // A task delegated to a linked environment lives there, not where the parent runs.
+  readonly onOpenThread: (threadId: ThreadId, environmentId: EnvironmentId) => void;
+}): (ThreadNowItem & { readonly waitingLabel: string }) | null {
   const { childThreadInputs, onOpenThread } = input;
   const first = childThreadInputs[0];
   if (!first || input.parentAwaitingUser) return null;
@@ -48,11 +50,14 @@ export function childInputNowItem(input: {
       <MessageCircleIcon className="text-info-foreground" />
     ),
     title: childThreadInputsTitle(childThreadInputs),
+    waitingLabel: childThreadInputs.every((child) => child.lineage.sideChat === true)
+      ? "Side chat waiting"
+      : "Subagent waiting",
     description: childThreadInputs.map((child, index) => (
       <Fragment key={child.id}>
         {index > 0 ? " " : null}
         <span className="whitespace-nowrap">
-          <InlineButton tone="muted" onClick={() => onOpenThread(child.id)}>
+          <InlineButton tone="muted" onClick={() => onOpenThread(child.id, child.environmentId)}>
             {child.title}
           </InlineButton>
           {index < childThreadInputs.length - 1 ? "," : null}
@@ -60,7 +65,7 @@ export function childInputNowItem(input: {
       </Fragment>
     )),
     actions: (
-      <InlineButton onClick={() => onOpenThread(first.id)}>
+      <InlineButton onClick={() => onOpenThread(first.id, first.environmentId)}>
         {first.hasPendingApprovals ? "Open approval" : "Open question"}
       </InlineButton>
     ),
@@ -188,7 +193,14 @@ export function backgroundWorkNowItem(input: {
     icon: rows.every(isCommand) ? <TerminalIcon /> : <CircleDashedIcon />,
     title: only ? (
       <>
-        {verb} <span className={cn(isCommand(only) && "font-mono")}>{only.task.label}</span>
+        {verb}{" "}
+        <span
+          className={cn(
+            isCommand(only) && "font-mono in-data-[slot=popover-popup]:whitespace-pre-wrap",
+          )}
+        >
+          {only.task.label}
+        </span>
       </>
     ) : (
       presentation.title

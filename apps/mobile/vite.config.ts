@@ -5,6 +5,8 @@ import "vite-plus/test/config";
 
 const reactTests = [
   "src/features/threads/ThreadMediaVisibility.test.tsx",
+  "src/features/threads/git/GitBranchesSheet.test.tsx",
+  "src/features/threads/new-task-flow-provider.test.tsx",
   "src/features/workspace/workspace-tabs-state.test.ts",
   "src/state/use-thread-pr.demand.test.tsx",
   "src/features/threads/git/GitBranchesSheet.occupancy.test.tsx",
@@ -28,6 +30,7 @@ const reactTests = [
   "src/features/threads/UsageLimitRecoveryCard.test.tsx",
   "src/features/threads/NewTaskDraftRouteScreen.test.tsx",
   "src/native/NativeHeaderToolbar.test.tsx",
+  "src/native/V5StackHeader.ios.test.tsx",
   "src/native/useRestingTopOffset.test.tsx",
   "src/native/useRetryingImageSource.test.tsx",
   "src/state/queries.debounce.test.tsx",
@@ -35,7 +38,9 @@ const reactTests = [
   "src/state/use-selected-thread-git-state.test.tsx",
   "src/features/terminal/useTerminalExitNavigation.test.tsx",
   "src/features/threads/use-thread-list-now.test.tsx",
+  "src/features/threads/useThreadListV2.test.tsx",
   "src/features/home/home-list-options.test.tsx",
+  "src/features/workspace/useSearchScrollRestoration.test.tsx",
   "src/features/connection/ConnectionsNewRouteScreen.test.tsx",
 ];
 

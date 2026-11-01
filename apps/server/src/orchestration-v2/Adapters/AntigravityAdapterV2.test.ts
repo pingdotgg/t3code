@@ -1037,3 +1037,70 @@ describe("AntigravityAdapterV2 subagent reads", () => {
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
+
+describe("AntigravityAdapterV2 runtime mode ceiling", () => {
+  const modesSetFor = (pickedMode: string) =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const crypto = yield* Crypto.Crypto;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      const modesSet: Array<string> = [];
+      const instanceId = ProviderInstanceId.make("antigravity-ceiling-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: { T3_ACP_ANTIGRAVITY: "1" },
+            },
+          }).pipe(
+            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.map((runtime): RuntimeService => ({
+              ...runtime,
+              setMode: (modeId) =>
+                Effect.sync(() => {
+                  modesSet.push(modeId);
+                }).pipe(Effect.andThen(runtime.setMode(modeId))),
+            })),
+          ),
+        withProcess: (_stop, task) => task,
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
+        defaultModel: Effect.succeed(undefined),
+      });
+      const threadId = ThreadId.make("thread-antigravity-ceiling");
+      yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-ceiling"),
+        modelSelection: {
+          instanceId,
+          model: "gemini-test-low",
+          options: [{ id: "_t3/session-mode", value: pickedMode }],
+        },
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: process.cwd(),
+          maxRuntimeMode: "auto-accept-edits",
+        }),
+      });
+      return modesSet;
+    }).pipe(Effect.provide(layerSession), Effect.scoped);
+
+  it.effect("does not apply a picked session mode above the policy ceiling", () =>
+    Effect.gen(function* () {
+      assert.deepEqual(yield* modesSetFor("yolo"), ["default"]);
+      // A mode under the ceiling is still the user's to pick.
+      assert.deepEqual(yield* modesSetFor("auto_edit"), ["default", "auto_edit"]);
+    }),
+  );
+});
