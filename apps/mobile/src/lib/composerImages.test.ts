@@ -4,10 +4,13 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 
-const files = new Map<string, { base64: string; deleted: boolean; text?: string }>();
+const files = new Map<
+  string,
+  { base64: string; deleted: boolean; text?: string; mimeType?: string }
+>();
 
 const manipulator = vi.hoisted(() => {
-  const state = { sourceSize: { width: 0, height: 0 } };
+  const state = { sourceSize: { width: 0, height: 0 }, renderedBase64: "cmVuZGVyZWQ=" };
   const manipulate = vi.fn((source: string | { width: number; height: number }) => {
     let size = typeof source === "string" ? state.sourceSize : source;
     const context = {
@@ -18,10 +21,11 @@ const manipulator = vi.hoisted(() => {
       renderAsync: vi.fn(async () => ({
         ...size,
         release: vi.fn(),
-        saveAsync: vi.fn(async (options: { format: string }) => ({
-          uri: `file:///cache/rendered.${options.format}`,
-          base64: `cmVuZGVyZWQ=`,
-        })),
+        saveAsync: vi.fn(async (options: { format: string }) => {
+          const uri = `file:///cache/rendered.${options.format}`;
+          files.set(uri, { base64: state.renderedBase64, deleted: false });
+          return { uri, base64: state.renderedBase64 };
+        }),
       })),
     };
     return context;
@@ -49,6 +53,10 @@ vi.mock("expo-file-system", () => ({
 
     get exists(): boolean {
       return files.has(this.uri) && files.get(this.uri)?.deleted === false;
+    }
+
+    get type(): string {
+      return files.get(this.uri)?.mimeType ?? "";
     }
 
     async base64(): Promise<string> {
@@ -102,6 +110,58 @@ import { convertPastedImagesToAttachments } from "./composerImages";
 describe("native pasted image cleanup", () => {
   beforeEach(() => {
     files.clear();
+    manipulator.state.renderedBase64 = "cmVuZGVyZWQ=";
+  });
+
+  it("preserves the reported image type of extensionless Android content URIs", async () => {
+    const uri = "content://media/external/images/media/42";
+    files.set(uri, { base64: "aGVsbG8=", deleted: false, mimeType: "image/jpeg" });
+
+    const attachments = await convertPastedImagesToAttachments({ uris: [uri], existingCount: 0 });
+
+    expect(attachments).toEqual([
+      expect.objectContaining({
+        name: "pasted-image.jpeg",
+        mimeType: "image/jpeg",
+        dataUrl: "data:image/jpeg;base64,aGVsbG8=",
+        previewUri: "data:image/jpeg;base64,aGVsbG8=",
+      }),
+    ]);
+    expect(files.get(uri)?.deleted).toBe(false);
+  });
+
+  it("renders unsupported images to JPEG and removes the cache file after attaching", async () => {
+    const uri = "content://media/external/images/media/43";
+    files.set(uri, { base64: "b3JpZ2luYWw=", deleted: false, mimeType: "image/heic" });
+    manipulator.state.sourceSize = { width: 100, height: 100 };
+
+    const attachments = await convertPastedImagesToAttachments({ uris: [uri], existingCount: 0 });
+
+    expect(attachments).toEqual([
+      expect.objectContaining({
+        name: "pasted-image.jpeg",
+        mimeType: "image/jpeg",
+        dataUrl: "data:image/jpeg;base64,cmVuZGVyZWQ=",
+        previewUri: "data:image/jpeg;base64,cmVuZGVyZWQ=",
+      }),
+    ]);
+    expect(files.get("file:///cache/rendered.jpeg")?.deleted).toBe(true);
+    expect(files.get(uri)?.deleted).toBe(false);
+  });
+
+  it("removes the rendered JPEG when its bytes exceed the image limit", async () => {
+    const uri = "content://media/external/images/media/43";
+    files.set(uri, { base64: "b3JpZ2luYWw=", deleted: false, mimeType: "image/heic" });
+    manipulator.state.sourceSize = { width: 100, height: 100 };
+    manipulator.state.renderedBase64 = "A".repeat(
+      Math.ceil((PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1) / 3) * 4,
+    );
+
+    const attachments = await convertPastedImagesToAttachments({ uris: [uri], existingCount: 0 });
+
+    expect(attachments).toEqual([]);
+    expect(files.get("file:///cache/rendered.jpeg")?.deleted).toBe(true);
+    expect(files.get(uri)?.deleted).toBe(false);
   });
 
   it("converts owned files to data-backed previews and deletes the source", async () => {
