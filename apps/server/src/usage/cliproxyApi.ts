@@ -83,6 +83,9 @@ const ClaudeUsage = Schema.Struct({
     ),
   ),
 });
+const ClaudeProfile = Schema.Struct({
+  organization: Schema.optional(Schema.NullOr(Schema.Struct({ uuid: Schema.String }))),
+});
 const CreditList = Schema.Struct({
   credits: Schema.Array(
     Schema.Struct({
@@ -100,6 +103,7 @@ const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
 const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
+const decodeClaudeProfile = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeProfile));
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
 
 // Extra CAs can fix untrusted chains; expiry/hostname failures report codes only.
@@ -146,6 +150,7 @@ const decodeConsumeResponse = Schema.decodeUnknownEffect(
 
 const CODEX_BASE = "https://chatgpt.com/backend-api/wham";
 const CREDIT_URL = `${CODEX_BASE}/rate-limit-reset-credits`;
+const CLAUDE_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
 
 const CREDIT_REDEEM_NAMESPACE = new Uint8Array([
   0x6f, 0x1c, 0x2a, 0x9e, 0x2d, 0x4b, 0x4c, 0x1e, 0x9a, 0x7f, 0x3b, 0x8d, 0x5e, 0x0c, 0x1a, 0x42,
@@ -262,18 +267,35 @@ export const makeCliproxyApi = Effect.gen(function* () {
       .toSorted((a, b) => Date.parse(a.expires_at) - Date.parse(b.expires_at));
   });
 
+  // One Claude login can belong to several organizations, each with its own quota.
+  const claudeOrganizations = new Map<string, string>();
+  const claudeOrganizationId = Effect.fn("CliproxyApi.claudeOrganizationId")(function* (
+    config: UsageLimitSourceConfig,
+    account: typeof AuthFile.Type,
+  ) {
+    const cached = claudeOrganizations.get(account.id);
+    if (cached) return cached;
+    const profile = yield* decodeClaudeProfile(yield* apiCall(config, account, CLAUDE_PROFILE_URL));
+    const organizationId = profile.organization?.uuid.trim();
+    if (!organizationId) return undefined;
+    claudeOrganizations.set(account.id, organizationId);
+    return organizationId;
+  });
+
   const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
     config: UsageLimitSourceConfig,
     account: typeof AuthFile.Type,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    const workspaceId =
+      account.provider === "claude"
+        ? yield* claudeOrganizationId(config, account).pipe(Effect.orElseSucceed(() => undefined))
+        : account.id_token?.chatgpt_account_id?.trim();
     const base = {
       id: account.id,
       driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
       ...(account.email ? { email: account.email } : {}),
-      ...(account.id_token?.chatgpt_account_id?.trim()
-        ? { workspaceId: account.id_token.chatgpt_account_id.trim() }
-        : {}),
+      ...(workspaceId ? { workspaceId } : {}),
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
