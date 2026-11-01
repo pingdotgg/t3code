@@ -1,0 +1,13 @@
+{
+  "projectId": "connection-proof",
+  "threadId": "connection-retry-proof",
+  "projectTitle": "Connection proof",
+  "threadTitle": "Reconnect a stopped thread",
+  "workspaceRoot": "/tmp/issue-22024-workspace",
+  "remoteLabel": "Synthetic remote connection proof server",
+  "environmentIds": {
+    "before": "1eebfd89-969b-4301-8e93-2dc67c47d7bf",
+    "after": "09122c6a-0c89-468c-9388-fa744ea0eeb4",
+    "remote": "15a80b12-317b-4ff3-a2ac-b0888091bf55"
+  }
+}
