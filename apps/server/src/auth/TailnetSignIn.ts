@@ -615,14 +615,16 @@ export const make = Effect.gen(function* () {
       devices.set(stableNodeId, device);
       return device;
     };
+    // Codes first: one exchanged before the sessions are listed has its session there, and
+    // one exchanged after is caught by the reread below.
+    for (const link of yield* pairingLinks.listActive({ now })) {
+      if (link.subject.startsWith(TAILNET_SUBJECT_PREFIX))
+        deviceOf(link.subject, link.label).links.push(link.scopes);
+    }
     for (const session of yield* sessions.listActive()) {
       if (session.subject.startsWith(TAILNET_SUBJECT_PREFIX)) {
         deviceOf(session.subject, session.client.label ?? null).sessions.push(session);
       }
-    }
-    for (const link of yield* pairingLinks.listActive({ now })) {
-      if (link.subject.startsWith(TAILNET_SUBJECT_PREFIX))
-        deviceOf(link.subject, link.label).links.push(link.scopes);
     }
     const nameOf = (stableNodeId: string, node?: TailscaleWhois): DeviceName => ({
       device: node?.computedName ?? devices.get(stableNodeId)?.label ?? stableNodeId,

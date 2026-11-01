@@ -18,6 +18,7 @@ import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as TailscaleHost from "../tailscale/TailscaleHost.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
@@ -84,6 +85,11 @@ interface Tailnet {
   loginName?: string;
   /** Other devices whois answers for, by address. */
   devices?: Record<string, { readonly node: JsonObject | null; readonly capMap?: JsonObject }>;
+  /** Holds the next read of the sign-in codes the recheck lists until `release`. */
+  holdCodeList?: {
+    readonly started: Deferred.Deferred<void>;
+    readonly release: Deferred.Deferred<void>;
+  };
   /**
    * Holds the next whois for `address` until `release`. It answers from the tailnet as it
    * was when the whois began, or with `late`, as it is once released.
@@ -185,11 +191,33 @@ const layerTailscaleHost = (tailnet: Tailnet) =>
     }),
   );
 
+const layerCodeList = (tailnet: Tailnet) =>
+  Layer.effect(
+    AuthPairingLinks.AuthPairingLinkRepository,
+    Effect.gen(function* () {
+      const links = yield* AuthPairingLinks.AuthPairingLinkRepository;
+      return AuthPairingLinks.AuthPairingLinkRepository.of({
+        ...links,
+        listActive: (input) =>
+          Effect.gen(function* () {
+            const hold = tailnet.holdCodeList;
+            if (hold !== undefined) {
+              delete tailnet.holdCodeList;
+              yield* Deferred.succeed(hold.started, undefined);
+              yield* Deferred.await(hold.release);
+            }
+            return yield* links.listActive(input);
+          }),
+      });
+    }),
+  );
+
 const layerTest = (
   tailnet: Tailnet,
   overrides: Partial<ServerConfig.ServerConfig["Service"]> = {},
 ) =>
   TailnetSignIn.layer.pipe(
+    Layer.provide(layerCodeList(tailnet)),
     Layer.provideMerge(EnvironmentAuth.layer),
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerSecretStore.layer),
@@ -796,35 +824,39 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 
-    it.effect("a sign-in code exchanged while the recheck narrows its grant ends too", () => {
-      const tailnet = withLaptop(granted({ scopes: ["admin"] }));
-      return Effect.gen(function* () {
-        const service = yield* TailnetSignIn.TailnetSignIn;
-        const key = makeDpopKey();
-        // The recheck the first grant starts is let through, then waited out.
-        const firstStarted = yield* Deferred.make<void>();
-        const firstGoes = yield* Deferred.make<void>();
-        yield* signInLaptop(key);
-        tailnet.hold = { address: LAPTOP_ADDRESS, started: firstStarted, release: firstGoes };
-        yield* Deferred.await(firstStarted);
-        yield* Deferred.succeed(firstGoes, undefined);
-        yield* service.recheckSessions;
-        const pending = yield* signIn(key, { remoteAddress: LAPTOP_ADDRESS });
-        // The grant narrows, and the code is exchanged after the recheck lists it.
-        tailnet.devices = {
-          [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
-        };
-        const started = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        tailnet.holdFreshRead = { at: (tailnet.freshReads ?? 0) + 1, started, release };
-        const recheck = yield* service.recheckSessions.pipe(Effect.forkChild);
-        yield* Deferred.await(started);
-        const exchanged = yield* exchange(pending.credential, key);
-        yield* Deferred.succeed(release, undefined);
-        yield* Fiber.join(recheck);
-        expect(yield* revoked(exchanged.access_token)).toBe(true);
-      }).pipe(Effect.provide(layerTest(tailnet)));
-    });
+    it.effect.each([{ when: "before it lists codes" }, { when: "after it lists codes" }])(
+      "a sign-in code exchanged while the recheck narrows its grant ends too ($when)",
+      ({ when }) => {
+        const tailnet = withLaptop(granted({ scopes: ["admin"] }));
+        return Effect.gen(function* () {
+          const service = yield* TailnetSignIn.TailnetSignIn;
+          const key = makeDpopKey();
+          // The recheck the first grant starts is let through, then waited out.
+          const firstStarted = yield* Deferred.make<void>();
+          const firstGoes = yield* Deferred.make<void>();
+          yield* signInLaptop(key);
+          tailnet.hold = { address: LAPTOP_ADDRESS, started: firstStarted, release: firstGoes };
+          yield* Deferred.await(firstStarted);
+          yield* Deferred.succeed(firstGoes, undefined);
+          yield* service.recheckSessions;
+          const pending = yield* signIn(key, { remoteAddress: LAPTOP_ADDRESS });
+          tailnet.devices = {
+            [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
+          };
+          const started = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          // After the codes, the recheck lists sessions, then reads Tailscale.
+          if (when === "before it lists codes") tailnet.holdCodeList = { started, release };
+          else tailnet.holdFreshRead = { at: (tailnet.freshReads ?? 0) + 1, started, release };
+          const recheck = yield* service.recheckSessions.pipe(Effect.forkChild);
+          yield* Deferred.await(started);
+          const exchanged = yield* exchange(pending.credential, key);
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(recheck);
+          expect(yield* revoked(exchanged.access_token)).toBe(true);
+        }).pipe(Effect.provide(layerTest(tailnet)));
+      },
+    );
 
     it.effect("removing every grant lets the owner's devices back in after the next scan", () => {
       const tailnet = withLaptop();
