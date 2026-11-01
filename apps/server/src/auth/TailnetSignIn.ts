@@ -238,6 +238,9 @@ export const make = Effect.gen(function* () {
       const { granted, unreadable } = yield* policyGrantedPeers(status, (address) =>
         host.whois(address, { fromServer: true }),
       );
+      // Lookups that ran after a switch read another tailnet, so the scan says nothing.
+      const after = yield* host.freshStatus;
+      if (after.selfNodeId !== account) return yield* Effect.fail(["this host"]);
       const now = yield* Clock.currentTimeMillis;
       // "No grants" is rechecked sooner, so a new grant is noticed within a minute.
       const ttlOf = (found: boolean) => (found ? POLICY_SCAN_TTL : NO_GRANT_SCAN_TTL);
@@ -338,33 +341,35 @@ export const make = Effect.gen(function* () {
       // A hard 403: production CORS allows any origin and the `dpop` header.
       if (!isTrustedOrigin(request.headers.origin)) return yield* refuse("browser_request");
 
-      const status = yield* host.freshStatus.pipe(
-        Effect.catch((cause) => refuse("tailscale_unavailable", cause)),
-      );
-      if (status.backendState !== "Running" || status.userspaceNetworking === true) {
-        return yield* refuse("tailscale_unavailable");
-      }
-      if (!TailscaleHost.isSupportedTailscaleVersion(status.version)) {
-        return yield* refuse("tailscale_outdated");
-      }
-
       const socket = requestSocket(request);
-      if (
-        socket.localPort === undefined ||
-        !isOwnHost(request.headers.host, status, socket.localPort)
-      ) {
-        return yield* refuse("browser_request");
-      }
       const remoteAddress = plainIpv4(socket.remoteAddress);
       const localAddress = plainIpv4(socket.localAddress);
+      const localPort = socket.localPort;
+      if (localPort === undefined) return yield* refuse("browser_request");
       if (
         remoteAddress === undefined ||
         localAddress === undefined ||
-        !isTailscaleIpv4Address(remoteAddress) ||
-        !status.tailnetIpv4Addresses.includes(localAddress)
+        !isTailscaleIpv4Address(remoteAddress)
       ) {
         return yield* refuse("not_direct_tailnet");
       }
+      const hostRefusal = (status: TailscaleStatus): TailnetSignInRefusedReason | null =>
+        status.backendState !== "Running" || status.userspaceNetworking === true
+          ? "tailscale_unavailable"
+          : !TailscaleHost.isSupportedTailscaleVersion(status.version)
+            ? "tailscale_outdated"
+            : !isOwnHost(request.headers.host, status, localPort)
+              ? "browser_request"
+              : !status.tailnetIpv4Addresses.includes(localAddress)
+                ? "not_direct_tailnet"
+                : null;
+      // The kept status gates the request, so only one with a valid proof that passes the
+      // per-address whois limit makes T3 Code read `tailscale status` again.
+      const kept = yield* host.status.pipe(
+        Effect.catch((cause) => refuse("tailscale_unavailable", cause)),
+      );
+      const keptRefusal = hostRefusal(kept);
+      if (keptRefusal !== null) return yield* refuse(keptRefusal);
 
       const proofKeyThumbprint = yield* verifyRequestDpopProof({ request }).pipe(
         Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
@@ -384,6 +389,13 @@ export const make = Effect.gen(function* () {
             ),
           ),
         );
+      // Decided on a status read now, as one kept from before an account switch names the
+      // old tailnet's policy and owner.
+      const status = yield* host.freshStatus.pipe(
+        Effect.catch((cause) => refuse("tailscale_unavailable", cause)),
+      );
+      const refusal = hostRefusal(status);
+      if (refusal !== null) return yield* refuse(refusal);
       const decision = yield* decide(node, status);
       if (decision._tag === "Refused") {
         return yield* refuse(
@@ -396,7 +408,7 @@ export const make = Effect.gen(function* () {
                   (node.sharerUserId === null ? node.loginName : null) ??
                   remoteAddress,
                 status.selfTags[0] ?? localAddress,
-                socket.localPort,
+                localPort,
               )
             : undefined,
         );

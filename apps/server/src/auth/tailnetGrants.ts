@@ -43,21 +43,30 @@ export const policyGrantedPeers = Effect.fn("tailnetGrants.policyGrantedPeers")(
   const peers = [
     ...status.peers.map((peer) => {
       const address = peer.tailnetIpv4Addresses[0] ?? peer.tailnetIpv6Addresses[0];
-      return { address, name: peer.hostName ?? address ?? peer.stableNodeId };
+      return {
+        address,
+        name: peer.hostName ?? address ?? peer.stableNodeId,
+        stableNodeId: peer.stableNodeId as string | null,
+      };
     }),
     ...status.unidentifiedPeerAddresses.map((address) => ({
       address: address ?? undefined,
       name: address ?? "a peer with no ID",
+      stableNodeId: null,
     })),
   ];
   const results = yield* Effect.forEach(
     peers,
-    ({ address, name }) => {
+    ({ address, name, stableNodeId }) => {
       if (address === undefined) return Effect.succeed({ name, granted: null });
       return whois(address).pipe(
         Effect.map((node) => ({
           name,
-          granted: Object.hasOwn(node.capabilities, TAILNET_APP_CAPABILITY) as boolean | null,
+          // An address that now names another node, as after an account switch, is unread.
+          granted:
+            stableNodeId !== null && node.stableNodeId !== stableNodeId
+              ? null
+              : (Object.hasOwn(node.capabilities, TAILNET_APP_CAPABILITY) as boolean | null),
         })),
         Effect.orElseSucceed(() => ({ name, granted: null })),
       );

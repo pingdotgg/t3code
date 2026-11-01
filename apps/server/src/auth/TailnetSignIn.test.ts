@@ -63,6 +63,8 @@ interface Tailnet {
   status: JsonObject;
   /** What the host's kept status read still says, as for a few seconds after a change. */
   staleStatus?: JsonObject;
+  /** How many times sign-in read `tailscale status` now rather than the kept read. */
+  freshReads?: number;
   node: JsonObject | null;
   /** The whois `CapMap`: the app capabilities grants give the device. */
   capMap?: JsonObject;
@@ -91,7 +93,10 @@ const layerTailscaleHost = (tailnet: Tailnet) =>
       status: Effect.suspend(() =>
         parseTailscaleStatus(tailscaleJson(tailnet.staleStatus ?? tailnet.status)),
       ),
-      freshStatus: Effect.suspend(() => parseTailscaleStatus(tailscaleJson(tailnet.status))),
+      freshStatus: Effect.suspend(() => {
+        tailnet.freshReads = (tailnet.freshReads ?? 0) + 1;
+        return parseTailscaleStatus(tailscaleJson(tailnet.status));
+      }),
       whois: (address) =>
         Effect.gen(function* () {
           const device = tailnet.devices?.[address] ?? {
@@ -461,6 +466,16 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       ),
   );
 
+  it.effect("a request without a valid proof never makes T3 Code read Tailscale again", () => {
+    const tailnet: Tailnet = { status: hostStatus(), node: phoneNode() };
+    return Effect.gen(function* () {
+      expect(yield* refusalOf(signIn(makeDpopKey(), { dpop: false }))).toBe(
+        "ServerAuthInvalidCredentialError",
+      );
+      expect(tailnet.freshReads ?? 0).toBe(0);
+    }).pipe(Effect.provide(layerTest(tailnet)));
+  });
+
   it.effect("a Tailscale session gets exactly its grant's scopes, never a narrower request", () =>
     Effect.gen(function* () {
       const key = makeDpopKey();
@@ -705,6 +720,24 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
           [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["standard"] }) },
         };
         expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("no_grant");
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
+    it.effect("a policy scan that ran across an account switch decides nothing", () => {
+      const tailnet = withLaptop();
+      return Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        // The scan reads this account, then the laptop's whois answers after a switch.
+        tailnet.hold = { address: LAPTOP_ADDRESS, started, release };
+        const phone = yield* refusalOf(signIn(makeDpopKey())).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        tailnet.status = hostStatus({
+          Peer: peers,
+          Self: { ...hostStatus().Self, ID: "nBoxAtWork" },
+        });
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(phone)).toBe("policy_unknown");
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 

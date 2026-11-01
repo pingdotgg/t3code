@@ -587,6 +587,41 @@ describe("TailscaleServe", () => {
     }),
   );
 
+  it.effect("a record from another profile on the same tailnet and user is not this one's", () =>
+    Effect.gen(function* () {
+      // Two Windows users signed in to one Tailscale account each have their own profile.
+      const fake = makeFakeTailscale({
+        heldBy: LOCAL_TARGET,
+        profileId: "profB",
+        profile: { tailnet: "example.com", userId: "7" },
+        platform: "win32",
+      });
+      const recorded = JSON.stringify({
+        profA: {
+          localPort: 18638,
+          localHost: "127.0.0.1",
+          servePort: SERVE_PORT,
+          label: "me@example.com on example.com",
+          profileId: "profA",
+          keys: ["profA", "example.com/7", "nA"],
+        },
+      });
+      const files = new Map([[CLAIM_PATH, recorded]]);
+      const scope = yield* Scope.make();
+      yield* Layer.buildWithScope(
+        TailscaleServe.layerReleaseLeftover({ stateDir: STATE_DIR }).pipe(
+          Layer.provide(fakeLayers(fake, files)),
+        ),
+        scope,
+      );
+      yield* TestClock.adjust("1 second");
+
+      assert.equal(fake.state.releases, 0);
+      assert.equal(files.get(CLAIM_PATH), recorded);
+      yield* Scope.close(scope, Exit.void);
+    }),
+  );
+
   it.effect("signed out of the last profile, drops its record", () =>
     Effect.gen(function* () {
       const fake = makeFakeTailscale({ account: null, profileList: [] });
