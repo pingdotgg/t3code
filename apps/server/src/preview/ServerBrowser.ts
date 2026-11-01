@@ -126,6 +126,8 @@ const EDITABLE_AT_POINT_SCRIPT = `(x, y) => {
 }`;
 const UNATTACHED_FILL_VIEWPORT = { width: 1280, height: 800 } as const;
 const NAVIGATION_TIMEOUT_MS = 15_000;
+// page.title() runs in the renderer; a busy page must not hold a status past the broker's grace.
+const TITLE_READ_MS = 250;
 const VIEWER_NAVIGATION_OPTIONS = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
 const ACTION_TIMELINE_LIMIT = 50;
 
@@ -1610,7 +1612,14 @@ const make = Effect.gen(function* () {
       })),
     };
     if (status.url === null || tab.dialog) return status;
-    return { ...status, title: (await tab.page.title().catch(() => "")) || null };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<string>((resolve) => {
+      timer = setTimeout(() => resolve(""), TITLE_READ_MS);
+    });
+    const title = await Promise.race([tab.page.title().catch(() => ""), late]).finally(() =>
+      clearTimeout(timer),
+    );
+    return { ...status, title: title || null };
   };
 
   const resolveNavigationUrl = (input: PreviewAutomationNavigateInput) => {
@@ -1628,20 +1637,22 @@ const make = Effect.gen(function* () {
     readiness: "load" | "domContentLoaded" | "none",
     timeout: number,
   ) => {
-    const navigation = tab.page.goto(url, {
-      timeout,
-      waitUntil:
-        readiness === "domContentLoaded"
-          ? "domcontentloaded"
-          : readiness === "none"
-            ? "commit"
-            : "load",
-    });
+    const startedAt = performance.now();
+    const navigation = tab.page.goto(url, { timeout, waitUntil: "commit" });
     if (readiness === "none") {
       tab.control.track(navigation);
       return;
     }
-    await navigation.catch((cause: unknown) => {
+    // Once the target commits, a stalled subresource only delays readiness; report the loading tab.
+    const ready = () =>
+      tab.page
+        .waitForLoadState(readiness === "domContentLoaded" ? "domcontentloaded" : "load", {
+          timeout: Math.max(1, timeout - (performance.now() - startedAt)),
+        })
+        .catch((cause: unknown) => {
+          if (!(cause instanceof Error && cause.name === "TimeoutError")) throw cause;
+        });
+    await navigation.then(ready).catch((cause: unknown) => {
       const message = cause instanceof Error ? cause.message : String(cause);
       if (message.includes("Download is starting")) {
         throw new ServerBrowserPage.ServerBrowserOperationError(
