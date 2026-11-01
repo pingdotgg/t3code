@@ -2270,6 +2270,37 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live.each([
+    ["any-local-files", "untracked", "Local changes exceed the inspection limit"],
+    ["uncommitted-changes", "untracked", "Local changes exceed the inspection limit"],
+    ["any-local-files", "ignored", "Ignored files exceed the inspection limit"],
+  ] as const)(
+    "keeps a worktree under %s when its %s file listing exceeds the inspection limit",
+    ([policy, kind, reason]) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, worktree, setPolicy } = yield* cleanupFixture();
+          setPolicy(policy);
+          const files = Array.from({ length: 3000 }, (_, i) =>
+            kind === "untracked"
+              ? `${worktree}/many/untracked-file-with-a-long-name-${i}.txt`
+              : `${worktree}/many/ignored-directory-with-a-long-name-${i}/.env`,
+          );
+          yield* fs.makeDirectory(`${worktree}/many`);
+          yield* Effect.forEach(
+            files,
+            (file) =>
+              Effect.gen(function* () {
+                if (kind === "ignored") yield* fs.makeDirectory(file.slice(0, -"/.env".length));
+                yield* fs.writeFileString(file, "local\n");
+              }),
+            { concurrency: 64, discard: true },
+          );
+          expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept", reason });
+          expect(yield* fs.exists(files[0]!)).toBe(true);
+        }),
+      ),
+  );
   it.live("serializes concurrent requests and returns each run's report", () =>
     runCleanupTest(
       Effect.gen(function* () {
