@@ -13,6 +13,11 @@ describe("textDirection", () => {
       "rtl",
     ],
     ["English quoting one Arabic word", "translate the label مرحبا for the login screen", "ltr"],
+    [
+      "tied sentences use the whole-text word majority",
+      "Done. تم إصلاح المشكلة في الملف الرئيسي",
+      "rtl",
+    ],
     ["a tie, by its first word", "React مكتبة", "ltr"],
     ["a tie that opens in Arabic", "مكتبة React", "rtl"],
     ["Arabic around numbers and punctuation", "عدّل السطر 42، ثم شغّل الاختبارات (3)", "rtl"],

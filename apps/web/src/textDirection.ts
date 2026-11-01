@@ -6,7 +6,10 @@ const RTL_LETTER = /[֐-ࣿיִ-﷿ﹰ-﻿\u{10800}-\u{10FFF}\u{1E800}-\u{1EFFF}]
 const LETTER = /\p{L}/u;
 const SENTENCE_END = /(?<=[.!?؟])(?<!\b(?:e\.g|i\.e)\.)\s+|\n+/i;
 
-function majority(units: Iterable<TextDirection | undefined>): TextDirection | undefined {
+function majority(
+  units: Iterable<TextDirection | undefined>,
+  tieDirection?: () => TextDirection | undefined,
+): TextDirection | undefined {
   let rtl = 0;
   let ltr = 0;
   let first: TextDirection | undefined;
@@ -16,7 +19,7 @@ function majority(units: Iterable<TextDirection | undefined>): TextDirection | u
     if (direction === "rtl") rtl += 1;
     else ltr += 1;
   }
-  if (rtl === ltr) return first;
+  if (rtl === ltr) return tieDirection ? tieDirection() : first;
   return rtl > ltr ? "rtl" : "ltr";
 }
 
@@ -30,11 +33,12 @@ function wordDirection(word: string): TextDirection | undefined {
  * `dir="auto"` misreads Arabic prose that opens with an English term.
  * Each sentence follows its main language by word count, and the text follows most of its
  * sentences, so one long English sentence cannot outvote the Arabic ones around it.
- * Ties go to whichever comes first.
+ * Sentence ties use the whole-text word majority, then the first word.
  */
 export function textDirection(text: string): TextDirection | undefined {
   if (!RTL_LETTER.test(text)) return LETTER.test(text) ? "ltr" : undefined;
   return majority(
     text.split(SENTENCE_END).map((sentence) => majority(sentence.split(/\s+/).map(wordDirection))),
+    () => majority(text.split(/\s+/).map(wordDirection)),
   );
 }
