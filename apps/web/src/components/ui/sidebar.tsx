@@ -651,7 +651,9 @@ function SidebarContent({
   return (
     <>
       {fixedHeader ? (
-        <div className="w-full shrink-0 [&>[data-sidebar=group]]:pt-0">{fixedHeader}</div>
+        <div className="w-full shrink-0 [&>[data-sidebar=group]]:pt-0 [&>[data-sidebar=group]]:pb-1">
+          {fixedHeader}
+        </div>
       ) : null}
       <ScrollArea
         hideScrollbars
