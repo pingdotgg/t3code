@@ -2032,11 +2032,11 @@ const resolveClaudeRollbackResumeSessionAt = Effect.fn(
 
       // Only compaction can be omitted without dropping a retained user prompt.
       if (target.message !== undefined && isCompactionCommandMessage(target.message)) {
-        const earlierCursor = input.providerThreadTurns
+        const earlierTurn = input.providerThreadTurns
           .filter((turn) => turn.ordinal < target.providerTurn.ordinal)
           .toSorted((left, right) => left.ordinal - right.ordinal)
-          .map(claudeTurnCursor)
-          .findLast((candidate) => candidate !== null);
+          .at(-1);
+        const earlierCursor = earlierTurn === undefined ? null : claudeTurnCursor(earlierTurn);
         if (earlierCursor != null) {
           return earlierCursor;
         }

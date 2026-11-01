@@ -5429,6 +5429,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const rollbackTo = (
         providerThreadTurns: ReadonlyArray<typeof providerTurn>,
         text = "Background task completed.",
+        targetTurn = providerTurn,
       ) =>
         harness.runtime.rollbackThread({
           providerThread: harness.providerThread,
@@ -5436,7 +5437,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             type: "provider_turn",
             checkpointId: CheckpointId.make("checkpoint-claude-cursor-subagent-only"),
             appRunOrdinal: 1,
-            providerTurn,
+            providerTurn: targetTurn,
             message: { role: "user", text, attachments: [] },
           },
           providerThreadTurns,
@@ -5479,6 +5480,38 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(
         pastSilentTurn.providerThread.nativeConversationHeadRef?.nativeId,
         earlierCursor,
+      );
+      const interruptedBeforeCompact = yield* rollbackTo(
+        [
+          {
+            ...providerTurn,
+            id: ProviderTurnId.make("provider-turn-claude-cursor-earlier"),
+            ordinal: 1,
+            nativeTurnRef: {
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeId: earlierCursor,
+              strength: "weak",
+            },
+          },
+          {
+            ...providerTurn,
+            id: ProviderTurnId.make("provider-turn-claude-interrupted-before-compact"),
+            ordinal: 2,
+            status: "interrupted",
+          },
+          { ...providerTurn, ordinal: 3 },
+          {
+            ...providerTurn,
+            id: ProviderTurnId.make("provider-turn-claude-cursor-next"),
+            ordinal: 4,
+          },
+        ],
+        "/compact",
+        { ...providerTurn, ordinal: 3 },
+      ).pipe(Effect.flip);
+      assert.instanceOf(
+        interruptedBeforeCompact,
+        ProviderAdapter.ProviderAdapterRollbackThreadError,
       );
 
       yield* harness.runtime.startTurn(
