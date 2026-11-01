@@ -19,6 +19,7 @@ import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { webViewDecelerationRate } from "../../lib/webViewDecelerationRate";
 
 const ROW_BOTTOM_MARGIN = 8;
 const FULL_SCREEN_GUTTER = 16;
@@ -130,6 +131,7 @@ export function HtmlRenderWebView(props: {
         showsVerticalScrollIndicator={!props.nested}
         showsHorizontalScrollIndicator={!props.nested}
         scrollEnabled={scrollable}
+        decelerationRate={webViewDecelerationRate}
         // Patched Android WebView hands vertical drags to the feed at its edges; horizontal-only overflow leaves them to the feed.
         nestedScrollEnabled={props.nested && overflow.y}
         overScrollMode={props.nested ? "never" : "always"}
