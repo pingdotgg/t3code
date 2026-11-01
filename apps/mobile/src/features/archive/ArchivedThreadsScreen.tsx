@@ -60,7 +60,7 @@ function ArchivedThreadsHeader(props: {
         onChangeText: props.onSearchQueryChange,
         placeholder: "Search archived threads",
         compactPlaceholder: "Search",
-        mode: "inline",
+        mode: Platform.OS === "ios" ? "inline" : undefined,
         compactToolbar: width < 700,
       }}
       menus={[
