@@ -40,11 +40,13 @@ const launchedProgram = (line: string) => {
   if (!launcher) return undefined;
   const name = launcher.text.toLowerCase();
   if (name !== "exec" && name !== "open" && name !== "start") return launcher.text;
-  // `start` reads its first quoted word as the window title, even after `/min`-style switches.
-  const title = name === "start" ? words.findIndex((word) => word.quoted) : -1;
+  if (name === "start") {
+    // `start` reads its first quoted word as the window title, even after `/min`-style switches.
+    const title = words.findIndex((word) => word.quoted);
+    if (title >= 0) words.splice(title, 1);
+  }
   const option = name === "start" ? /^\// : /^-/;
-  return words.find((word, index) => index !== title && (word.quoted || !option.test(word.text)))
-    ?.text;
+  return words.find((word) => word.quoted || !option.test(word.text))?.text;
 };
 
 export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(function* (
@@ -187,8 +189,6 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       "/usr/bin",
       "/snap/bin",
     ];
-    const dataHome = env.XDG_DATA_HOME || (home ? path.join(home, ".local/share") : undefined);
-    const scripts = jetbrains && dataHome ? path.join(dataHome, "JetBrains/Toolbox/scripts") : null;
     if (preferZeditor) {
       // Linux packages use zeditor because OpenZFS owns the zed command.
       for (const name of ["zeditor", "zed"]) {
@@ -199,7 +199,12 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
         for (const name of editor.commands) candidates.push(path.join(dir, name));
       }
     }
-    if (scripts) candidates.push(...(yield* toolboxScripts(scripts, "")));
+    const dataHome = env.XDG_DATA_HOME || (home ? path.join(home, ".local/share") : undefined);
+    if (jetbrains && dataHome) {
+      candidates.push(
+        ...(yield* toolboxScripts(path.join(dataHome, "JetBrains/Toolbox/scripts"), "")),
+      );
+    }
   }
 
   if (preferBundle) candidates.push(...editor.commands);

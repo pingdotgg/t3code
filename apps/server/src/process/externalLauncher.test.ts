@@ -642,11 +642,15 @@ const toolboxScriptsPath = {
   win32: "JetBrains/Toolbox/scripts",
 } as const;
 
-it.effect.each([
+it.effect.each<{
+  readonly platform: keyof typeof toolboxScriptsPath;
+  readonly expected: string;
+  readonly scripts: (paths: ToolboxPaths) => Record<string, string>;
+}>([
   {
     platform: "win32",
     expected: "idea1.cmd",
-    scripts: ({ ide, removed }: ToolboxPaths) => ({
+    scripts: ({ ide, removed }) => ({
       "idea.cmd": `@echo off\r\nstart "" "${removed}" %*\r\n`,
       "idea1.cmd": `@echo off\r\nstart /min "" "${ide}" %*\r\n`,
     }),
@@ -654,7 +658,7 @@ it.effect.each([
   {
     platform: "linux",
     expected: "idea2",
-    scripts: ({ home }: ToolboxPaths) => ({
+    scripts: ({ home }) => ({
       idea: `#!/bin/sh\nexec "$HOME/apps/removed/bin/idea" "$@"\n`,
       idea1: `#!/bin/sh\nJAVA_HOME="${home}"\ncd "${home}"\nexec "$HOME/apps/removed/bin/idea" "$@"\n`,
       idea10: `#!/bin/sh\nexec "$HOME/apps/IDE with spaces/bin/idea" "$@"\n`,
@@ -673,7 +677,7 @@ it.effect.each([
   {
     platform: "linux",
     expected: "idea",
-    scripts: ({ ide }: ToolboxPaths) => ({
+    scripts: ({ ide }) => ({
       idea: `#!/bin/sh\nIDE_HOME="${ide}"\nexec "$IDE_HOME" "$@"\n`,
       idea1: `#!/bin/sh\nexec "${ide}" "$@"\n`,
     }),
@@ -681,39 +685,38 @@ it.effect.each([
   {
     platform: "darwin",
     expected: "idea",
-    scripts: ({ ide, removed }: ToolboxPaths) => ({
+    scripts: ({ ide, removed }) => ({
       idea: `#!/bin/sh\n${removed} --version\nopen -na '${ide}' --args "$@"\n`,
       idea1: `#!/bin/sh\nopen -na "${ide}" --args "$@"\n`,
     }),
   },
-] as const)(
-  "resolves the $expected Toolbox script on $platform",
-  ({ platform, expected, scripts }) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-toolbox-home with spaces-" });
-      const dir = path.join(home, toolboxScriptsPath[platform]);
-      const ide = path.join(home, "apps/IDE with spaces/bin/idea");
-      yield* fs.makeDirectory(dir, { recursive: true });
-      yield* fs.makeDirectory(path.dirname(ide), { recursive: true });
-      yield* fs.writeFileString(ide, "");
-      const removed = path.join(home, "apps/removed/bin/idea");
-      for (const [name, script] of Object.entries(scripts({ home, ide, removed }))) {
-        yield* fs.writeFileString(path.join(dir, name), script);
-        yield* fs.chmod(path.join(dir, name), 0o755);
-      }
+])("resolves the $expected Toolbox script on $platform", ({ platform, expected, scripts }) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-toolbox-home with spaces-" });
+    const dir = path.join(home, toolboxScriptsPath[platform]);
+    const ide = path.join(home, "apps/IDE with spaces/bin/idea");
+    yield* fs.makeDirectory(dir, { recursive: true });
+    yield* fs.makeDirectory(path.dirname(ide), { recursive: true });
+    yield* fs.writeFileString(ide, "");
+    const removed = path.join(home, "apps/removed/bin/idea");
+    for (const [name, script] of Object.entries(scripts({ home, ide, removed }))) {
+      const file = path.join(dir, name);
+      yield* fs.writeFileString(file, script);
+      yield* fs.chmod(file, 0o755);
+    }
 
-      const editor = EDITORS.find((editor) => editor.id === "idea")!;
-      const resolved = yield* resolveEditorCommand(editor, {
-        HOME: home,
-        LOCALAPPDATA: home,
-        PATH: path.join(home, "empty"),
-        PATHEXT: ".COM;.EXE;.BAT;.CMD",
-      }).pipe(Effect.provideService(HostProcess.Platform, platform));
+    const editor = EDITORS.find((editor) => editor.id === "idea")!;
+    const resolved = yield* resolveEditorCommand(editor, {
+      HOME: home,
+      LOCALAPPDATA: home,
+      PATH: path.join(home, "empty"),
+      PATHEXT: ".COM;.EXE;.BAT;.CMD",
+    }).pipe(Effect.provideService(HostProcess.Platform, platform));
 
-      assert.deepEqual(resolved, Option.some({ command: path.join(dir, expected), baseArgs: [] }));
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    assert.deepEqual(resolved, Option.some({ command: path.join(dir, expected), baseArgs: [] }));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 for (const { platform, installPath, onPath } of [
