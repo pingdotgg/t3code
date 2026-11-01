@@ -10,7 +10,7 @@ that summary.
 ## Turning it on
 
 1. Turn on **Activity Privacy** > **Display current activity as a status message** in Discord.
-2. In T3 Code, open **Settings** > **Integrations** > **Discord** and enable **Discord Rich Presence**.
+2. In T3 Code, open **Settings** > **Browser** > **Discord** and enable **Discord Rich Presence**.
 3. Tick the details you want to show: **Project name**, **Model**, **Agent activity**, and
    **Elapsed time**. Anything left unticked is never sent.
 

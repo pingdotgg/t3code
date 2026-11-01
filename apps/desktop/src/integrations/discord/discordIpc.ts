@@ -1,17 +1,3 @@
-/**
- * Minimal client for Discord's local Rich Presence IPC transport.
- *
- * Discord's desktop client listens on a local socket (`discord-ipc-0` …
- * `discord-ipc-9`): a named pipe on Windows, a Unix domain socket elsewhere.
- * Messages are framed as an 8-byte little-endian header (`opcode`, payload
- * length) followed by a JSON body. We only need the handshake and
- * `SET_ACTIVITY`, so this omits the websocket transport, party/join secrets,
- * and the rest of the RPC surface the published clients carry.
- *
- * The socket shape is a narrow interface rather than `net.Socket` so the
- * framing, handshake, and reconnect behavior are testable without a real
- * Discord client.
- */
 // @effect-diagnostics nodeBuiltinImport:off -- The Discord IPC transport is a Node socket boundary owned by the desktop main process.
 // @effect-diagnostics globalTimers:off -- Connect and handshake deadlines run at the socket callback boundary outside any Effect fiber.
 // @effect-diagnostics preferSchemaOverJson:off -- Frame bodies are opaque Discord wire JSON; validating them against a schema would reject fields we do not model.

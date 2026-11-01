@@ -1,9 +1,3 @@
-/**
- * Maps the renderer's coarse activity summary to a Discord Rich Presence
- * activity. Kept pure and separate from the transport so the wording, the
- * channel-specific artwork, and the privacy boundary (project name plus counts,
- * nothing prompt-shaped) are easy to read and to test.
- */
 import type {
   DesktopAppBranding,
   DesktopAppStageLabel,
@@ -36,6 +30,7 @@ const ASSET_KEY_BY_STAGE: Readonly<Record<DesktopAppStageLabel, string>> = {
   Dev: "blueprint",
   Nightly: "nightly",
   Alpha: "black",
+  Beta: "black",
 };
 
 /** Stage label maps to the asset key uploaded to the Discord application. */

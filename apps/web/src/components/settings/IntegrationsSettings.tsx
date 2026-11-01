@@ -103,7 +103,7 @@ import {
   persistClientSettingsUpdate,
   useClientSettings,
   useClientSettingsHydrated,
-  useUpdateClientSettings,
+  updateClientSettings,
   useUpdatePrimarySettings,
 } from "~/hooks/useSettings";
 
@@ -1593,7 +1593,10 @@ function resolveDiscordStatusPresentation(
         className: "text-warning-foreground",
       };
     case "unconfigured":
-      return { message: "This build isn't set up for Discord.", className: "text-muted-foreground" };
+      return {
+        message: "This build isn't set up for Discord.",
+        className: "text-muted-foreground",
+      };
     default:
       return null;
   }
@@ -1602,10 +1605,15 @@ function resolveDiscordStatusPresentation(
 function DiscordPresenceSetting({ disabled }: { readonly disabled: boolean }) {
   const enabled = useClientSettings((settings) => settings.discordRichPresenceEnabled);
   const fields = useClientSettings((settings) => settings.discordPresenceFields);
-  const updateSettings = useUpdateClientSettings();
+  const updateSettings = (patch: Parameters<typeof updateClientSettings>[0]) => {
+    void updateClientSettings(patch).catch(() => {
+      toastManager.add({ type: "error", title: "Could not save Discord settings" });
+    });
+  };
   const [status, setStatus] = useState<DesktopDiscordPresenceStatus | null>(null);
   const statusPresentation = resolveDiscordStatusPresentation(status);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribes to Discord connection status from the desktop bridge.
   useEffect(() => {
     if (!enabled || disabled) return;
     const bridge = window.desktopBridge;

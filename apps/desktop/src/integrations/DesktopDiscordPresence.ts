@@ -1,16 +1,3 @@
-/**
- * Desktop Discord Rich Presence.
- *
- * Owns a single best-effort connection to the local Discord client and mirrors
- * the renderer's activity summary into it. The renderer is the source of truth
- * for what the user is doing, so this service only applies what it is handed
- * over `setDiscordPresence`; it never reads app state itself.
- *
- * Everything here degrades silently on the wire: Discord may not be installed or
- * running, so a failed connect leaves no presence and the next update tries
- * again. The failure is still reported through `getStatus` / status pushes so
- * the settings UI can tell the user why nothing is showing.
- */
 import {
   DEFAULT_DISCORD_PRESENCE_FIELDS,
   type DesktopDiscordPresence as DiscordPresenceState,
@@ -94,6 +81,8 @@ export class DesktopDiscordPresence extends Context.Service<
 export const make = Effect.fn("DesktopDiscordPresence.make")(function* (
   options: DesktopDiscordPresenceOptions = {},
 ) {
+  const context = yield* Effect.context<never>();
+  const runSync = Effect.runSyncWith(context);
   const platform = yield* HostProcess.Platform;
   const environment = yield* HostProcess.Environment;
   const clock = yield* Clock.Clock;
@@ -112,7 +101,7 @@ export const make = Effect.fn("DesktopDiscordPresence.make")(function* (
         }),
       ),
       // Do not publish default fields when the user's saved selection cannot be read.
-      Effect.catch(() => Effect.succeed([])),
+      Effect.orElseSucceed(() => []),
     ));
 
   const desired = yield* Ref.make<DiscordPresenceState | null>(null);
@@ -151,11 +140,7 @@ export const make = Effect.fn("DesktopDiscordPresence.make")(function* (
     if (client === null) return;
     // Clear before closing so Discord drops the status immediately rather than
     // waiting for the socket to be noticed as gone.
-    try {
-      client.setActivity(null);
-    } catch {
-      // Best effort; the closing socket clears it anyway.
-    }
+    yield* Effect.try(() => client.setActivity(null)).pipe(Effect.ignore);
     client.close();
     yield* setStatus("disconnected");
   });
@@ -175,8 +160,8 @@ export const make = Effect.fn("DesktopDiscordPresence.make")(function* (
         // apply reconnects.
         onClose: () => {
           if (connectionToken !== token) return;
-          Effect.runSync(Ref.set(connection, null));
-          Effect.runSync(setStatus("disconnected"));
+          runSync(Ref.set(connection, null));
+          runSync(setStatus("disconnected"));
         },
       }),
     ).pipe(Effect.option);
@@ -242,22 +227,22 @@ export const make = Effect.fn("DesktopDiscordPresence.make")(function* (
   return DesktopDiscordPresence.of({
     set,
     configure,
-    getStatus: () => Ref.get(status),
+    getStatus: Effect.fn("DesktopDiscordPresence.getStatus")(() => Ref.get(status)),
   });
 });
 
 export const layer = Layer.effect(
   DesktopDiscordPresence,
   Effect.gen(function* () {
+    const context = yield* Effect.context<never>();
+    const runSync = Effect.runSyncWith(context);
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     return yield* make({
       branding: resolveDiscordPresenceBranding(environment),
       onStatusChange: (status) => {
         try {
-          Effect.runSync(
-            electronWindow.sendAll(IpcChannels.DISCORD_PRESENCE_STATUS_CHANNEL, status),
-          );
+          runSync(electronWindow.sendAll(IpcChannels.DISCORD_PRESENCE_STATUS_CHANNEL, status));
         } catch {
           // Status is advisory; a failed push must not break publishing.
         }

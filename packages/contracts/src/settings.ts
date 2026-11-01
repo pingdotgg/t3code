@@ -438,7 +438,9 @@ export const ClientSettingsSchema = Schema.Struct({
   // Presence. Off by default: presence is visible to the user's Discord
   // friends, and `discordPresenceFields` is the user's privacy dial for what
   // appears.
-  discordRichPresenceEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  discordRichPresenceEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   discordPresenceFields: Schema.Array(DiscordPresenceField).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_DISCORD_PRESENCE_FIELDS)),
   ),

@@ -28,21 +28,46 @@ const activityWith = (fields: ReadonlyArray<DiscordPresenceField>) =>
   discordActivityForPresence(presence, 1_700_000_000_000, fields, branding);
 
 it("prefers running agents, then threads needing you, then idle", () => {
-  expect(discordPresenceStateLine({ projectName: null, modelLabel: null, workingThreads: 1, attentionThreads: 0 })).toBe(
-    "Running an agent",
-  );
-  expect(discordPresenceStateLine({ projectName: null, modelLabel: null, workingThreads: 3, attentionThreads: 2 })).toBe(
-    "Running 3 agents",
-  );
-  expect(discordPresenceStateLine({ projectName: null, modelLabel: null, workingThreads: 0, attentionThreads: 1 })).toBe(
-    "Waiting for you",
-  );
-  expect(discordPresenceStateLine({ projectName: null, modelLabel: null, workingThreads: 0, attentionThreads: 4 })).toBe(
-    "4 threads need you",
-  );
-  expect(discordPresenceStateLine({ projectName: null, modelLabel: null, workingThreads: 0, attentionThreads: 0 })).toBe(
-    "Idle",
-  );
+  expect(
+    discordPresenceStateLine({
+      projectName: null,
+      modelLabel: null,
+      workingThreads: 1,
+      attentionThreads: 0,
+    }),
+  ).toBe("Running an agent");
+  expect(
+    discordPresenceStateLine({
+      projectName: null,
+      modelLabel: null,
+      workingThreads: 3,
+      attentionThreads: 2,
+    }),
+  ).toBe("Running 3 agents");
+  expect(
+    discordPresenceStateLine({
+      projectName: null,
+      modelLabel: null,
+      workingThreads: 0,
+      attentionThreads: 1,
+    }),
+  ).toBe("Waiting for you");
+  expect(
+    discordPresenceStateLine({
+      projectName: null,
+      modelLabel: null,
+      workingThreads: 0,
+      attentionThreads: 4,
+    }),
+  ).toBe("4 threads need you");
+  expect(
+    discordPresenceStateLine({
+      projectName: null,
+      modelLabel: null,
+      workingThreads: 0,
+      attentionThreads: 0,
+    }),
+  ).toBe("Idle");
 });
 
 it("presents project and activity by default", () => {
@@ -95,7 +120,12 @@ it("omits the model token when only activity is selected or the label is unknown
 
 it("clamps long lines to Discord's limit", () => {
   const activity = discordActivityForPresence(
-    { projectName: "x".repeat(64), modelLabel: "y".repeat(64), workingThreads: 0, attentionThreads: 0 },
+    {
+      projectName: "x".repeat(64),
+      modelLabel: "y".repeat(64),
+      workingThreads: 0,
+      attentionThreads: 0,
+    },
     0,
     ["project", "model"],
     branding,

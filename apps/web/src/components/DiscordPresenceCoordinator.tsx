@@ -1,16 +1,3 @@
-/**
- * Publishes a coarse "what am I doing" summary to the desktop shell so it can
- * mirror it into Discord Rich Presence.
- *
- * Mirrors ThreadNotificationCoordinator: one child per environment reads that
- * environment's shell and reports up. The parent aggregates and pushes only when
- * the summary actually changes, so a busy thread list does not churn IPC. The
- * payload carries facts only; the desktop main process applies the user's
- * `discordPresenceFields` selection when it renders the activity.
- *
- * No-op unless the desktop bridge exposes `setDiscordPresence` and the user has
- * turned the setting on.
- */
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import { useAtomValue } from "@effect/atom-react";
 import { useParams } from "@tanstack/react-router";
@@ -21,13 +8,13 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { useStableCallback } from "../hooks/useStableCallback";
 import { isElectron } from "../env";
 import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
 import { deriveProviderInstanceEntries } from "../providerInstances";
-import { useServerConfigs } from "../state/entities";
-import { useEnvironmentIds } from "../state/environments";
+import { useConnectedEnvironmentIds, useEnvironmentProviders } from "../state/environments";
 import { environmentShell } from "../state/shell";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveSidebarThreadStatus } from "./Sidebar.logic";
@@ -61,8 +48,8 @@ function resolveModelLabel(
 export function DiscordPresenceCoordinator() {
   const enabled = useClientSettings((settings) => settings.discordRichPresenceEnabled);
   const hydrated = useClientSettingsHydrated();
-  const environmentIds = useEnvironmentIds();
-  const serverConfigs = useServerConfigs();
+  const environmentIds = useConnectedEnvironmentIds();
+  const providersByEnvironment = useEnvironmentProviders();
   const { environmentId: activeEnvironmentId, threadId: activeThreadId } = useParams({
     strict: false,
   });
@@ -79,7 +66,7 @@ export function DiscordPresenceCoordinator() {
     setActiveThread(EMPTY_ACTIVE);
   }
 
-  const reportCounts = useCallback(
+  const reportCounts = useStableCallback(
     (environmentId: EnvironmentId, next: EnvironmentPresenceCounts) => {
       setCounts((current) => {
         const previous = current.get(environmentId);
@@ -91,17 +78,17 @@ export function DiscordPresenceCoordinator() {
         return updated;
       });
     },
-    [],
   );
 
-  const reportActiveThread = useCallback((next: ActiveThreadPresence) => {
+  const reportActiveThread = useStableCallback((next: ActiveThreadPresence) => {
     setActiveThread((current) =>
       current.projectName === next.projectName && current.modelLabel === next.modelLabel
         ? current
         : next,
     );
-  }, []);
+  });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Publishes the summary to the desktop Discord IPC bridge.
   useEffect(() => {
     if (!pushAvailable) return;
     if (!active) {
@@ -146,7 +133,7 @@ export function DiscordPresenceCoordinator() {
         <EnvironmentPresence
           key={environmentId}
           environmentId={environmentId}
-          providers={serverConfigs.get(environmentId)?.providers ?? null}
+          providers={providersByEnvironment.get(environmentId) ?? null}
           activeEnvironmentId={activeEnvironmentId ?? null}
           activeThreadId={activeThreadId ?? null}
           onCounts={reportCounts}
@@ -178,6 +165,7 @@ function EnvironmentPresence({
   const threads = snapshot?.threads ?? null;
   const projects = snapshot?.projects ?? null;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keeps the desktop presence summary in step with the environment shell subscription.
   useEffect(() => {
     if (threads === null) {
       onCounts(environmentId, { working: 0, attention: 0 });
