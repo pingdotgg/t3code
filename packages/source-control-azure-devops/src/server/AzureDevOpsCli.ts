@@ -385,7 +385,7 @@ const AVATAR_CACHE_CAPACITY = 500;
 const AVATAR_TTL = "6 hours";
 // Short enough that signing in to `az` shows pictures without a server restart.
 const AVATAR_FAILURE_TTL = "1 minute";
-const GRAPH_API_VERSION = "7.1-preview";
+const GRAPH_API_VERSION = "7.1";
 
 const GraphValueJson = Schema.fromJsonString(Schema.Struct({ value: Schema.String }));
 const decodeGraphValue = Schema.decodeUnknownOption(GraphValueJson);
