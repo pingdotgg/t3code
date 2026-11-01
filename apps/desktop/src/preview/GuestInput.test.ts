@@ -124,6 +124,47 @@ describe("preview guest input", () => {
     },
   );
 
+  it("preserves host focus when presses in two tabs of one window overlap", async () => {
+    const document = { activeElement: {} as object };
+    const composer = {
+      isConnected: true,
+      focus: () => {
+        document.activeElement = composer;
+      },
+    };
+    document.activeElement = composer;
+    const context = NodeVM.createContext({ document });
+    const host = {
+      isDestroyed: () => false,
+      executeJavaScript: async (script: string) => NodeVM.runInContext(script, context),
+    };
+    const firstPressFocused = Promise.withResolvers<void>();
+    const pressesFinish = Promise.withResolvers<void>();
+    const press = (id: number) => {
+      const preview = { tagName: "WEBVIEW", getWebContentsId: () => id };
+      const debuggee = {
+        sendCommand: async () => {
+          document.activeElement = preview;
+          firstPressFocused.resolve();
+          await pressesFinish.promise;
+          return {};
+        },
+      };
+      return sendPageCommand(
+        { id, focusedFrame: null, hostWebContents: host } as unknown as Electron.WebContents,
+        debuggee as unknown as Electron.Debugger,
+        "Input.dispatchMouseEvent",
+        { type: "mousePressed", x: 10, y: 10, button: "left" },
+      );
+    };
+    const first = press(7);
+    await firstPressFocused.promise;
+    const presses = [first, press(8)];
+    pressesFinish.resolve();
+    await Promise.all(presses);
+    expect(document.activeElement).toBe(composer);
+  });
+
   it.each([
     {
       method: "Input.dispatchMouseEvent",
