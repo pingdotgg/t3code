@@ -5,7 +5,7 @@ diff --git a/android/src/main/java/com/swmansion/enriched/markdown/spans/LinkPil
          if (style == base.style) base else Typeface.create(base, style)
        }
      textSize = fontSize
-+    // The first run can be inline code's narrowed padding space (CodePaddingSpan).
++    // Link labels must not inherit a run's horizontal scaling.
 +    textScaleX = 1f
      color = variant.color
      bgColor = 0
