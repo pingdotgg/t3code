@@ -22,9 +22,9 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useState } from "react";
 
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
-import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentShell } from "./shell";
 
 export const threadFamilies = createThreadFamilyAtoms(

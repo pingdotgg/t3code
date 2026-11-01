@@ -8,8 +8,11 @@ import {
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
   decodeMergeRequestListJson,
+  decodeMergeRequestFileStatsJson,
+  decodeMergeRequestStatsJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
+  decodeTriggerJobChecksJson,
 } from "./gitLabMergeRequestJson.ts";
 
 function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
@@ -206,6 +209,14 @@ describe("decodeMergeRequestDetailJson", () => {
     expect(behind({ diverged_commits_count: 0 })).toBe(0);
     expect(behind({})).toBeUndefined();
     expect(behind({ diverged_commits_count: null })).toBeUndefined();
+  });
+
+  it.each(["scheduled", " SCHEDULED "])("keeps a delayed pipeline pending: %s", (status) => {
+    const detail = expectSuccess(
+      decodeMergeRequestDetailJson(detailJson({ head_pipeline: { status } })),
+    );
+
+    expect(detail.checks[0]?.status).toBe("pending");
   });
 
   it("maps a pipeline waiting on a person to neutral, not failure", () => {
@@ -444,6 +455,26 @@ describe("decodeMergeRequestDiffsJson", () => {
   });
 });
 
+describe("decodeTriggerJobChecksJson", () => {
+  it("reads a downstream failure GitLab was told to allow as neutral, not failure", () => {
+    const result = expectSuccess(
+      decodeTriggerJobChecksJson(
+        JSON.stringify([
+          { name: "e2e", allow_failure: true, downstream_pipeline: { status: "failed" } },
+          { name: "deploy", allow_failure: false, downstream_pipeline: { status: "running" } },
+          { name: 7 },
+        ]),
+      ),
+    );
+
+    expect(result.checks.map((check) => [check.name, check.status])).toEqual([
+      ["e2e", "neutral"],
+      ["deploy", "pending"],
+    ]);
+    expect(result.rawCount).toBe(3);
+  });
+});
+
 describe("merge request viewer fields", () => {
   it("leaves merging permitted where GitLab answered without the field", () => {
     expect(expectSuccess(decodeMergeRequestDetailJson(detailJson({}))).viewerCanMerge).toBe(true);
@@ -618,5 +649,61 @@ describe("decodeRepositoryBlobsJson", () => {
         ),
       ),
     ).toEqual(new Map());
+  });
+});
+
+describe("decodeMergeRequestStatsJson", () => {
+  it("keys the counts by merge request number", () => {
+    const stats = expectSuccess(
+      decodeMergeRequestStatsJson(
+        JSON.stringify({
+          data: {
+            project: {
+              mergeRequests: {
+                nodes: [
+                  { iid: "7", diffStatsSummary: { additions: 12, deletions: 3 } },
+                  { iid: "8", diffStatsSummary: null },
+                ],
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    // A merge request without a summary is left out rather than shown as zero lines changed.
+    expect([...stats]).toEqual([[7, { additions: 12, deletions: 3 }]]);
+  });
+
+  it("answers nothing for a project the token cannot see", () => {
+    const stats = expectSuccess(
+      decodeMergeRequestStatsJson(JSON.stringify({ data: { project: null } })),
+    );
+
+    expect(stats.size).toBe(0);
+  });
+
+  it("reports a file list shorter than the summary as truncated", () => {
+    const read = (fileCount: number) =>
+      expectSuccess(
+        decodeMergeRequestFileStatsJson(
+          JSON.stringify({
+            data: {
+              project: {
+                mergeRequest: {
+                  diffStatsSummary: { fileCount },
+                  diffStats: [{ path: "src/a.ts", additions: 2, deletions: 1 }],
+                },
+              },
+            },
+          }),
+        ),
+      );
+
+    expect(read(1)).toEqual({
+      files: [{ path: "src/a.ts", additions: 2, deletions: 1 }],
+      truncated: false,
+    });
+    expect(read(2).truncated).toBe(true);
   });
 });
