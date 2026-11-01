@@ -10,6 +10,7 @@ import { expect, it } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 import { render } from "../../test/render";
+import { startMainAppLocationTracking } from "../components/sidebar/mainAppLocation";
 import { useShownThreadRouteTarget } from "./useThreadRouteTarget";
 
 function ShownTarget() {
@@ -23,7 +24,7 @@ function ShownTarget() {
   return <output aria-label="Shown thread">{label}</output>;
 }
 
-it("keeps the thread that opened Settings or Usage until another thread opens", async () => {
+async function setup() {
   const root = createRootRoute({
     component: () => (
       <>
@@ -41,9 +42,19 @@ it("keeps the thread that opened Settings or Usage until another thread opens", 
     history: createMemoryHistory({ initialEntries: ["/env-1/thread-1"] }),
   });
   await router.load();
-  // The hook reads thread and modal params, so the routes must exist for real.
-  await using _screen = await render(<RouterProvider router={router} />, { router: false });
-  const shown = page.getByRole("status", { name: "Shown thread" });
+  return { router, [Symbol.dispose]: startMainAppLocationTracking(router) };
+}
+
+// The hook reads thread and modal params, so the routes must exist for real.
+const renderApp = (router: Awaited<ReturnType<typeof setup>>["router"]) =>
+  render(<RouterProvider router={router} />, { router: false });
+
+const shown = page.getByRole("status", { name: "Shown thread" });
+
+it("keeps the thread that opened Settings or Usage until another thread opens", async () => {
+  using app = await setup();
+  const { router } = app;
+  await using _screen = await renderApp(router);
 
   await expect.element(shown).toHaveTextContent("env-1/thread-1");
   await router.navigate({ to: "/settings/general" });
@@ -53,4 +64,25 @@ it("keeps the thread that opened Settings or Usage until another thread opens", 
   await router.navigate({ to: "/draft/$draftId", params: { draftId: "draft-1" } });
   await router.navigate({ to: "/settings/general" });
   await expect.element(shown).toHaveTextContent("draft draft-1");
+
+  await router.navigate({
+    to: "/$environmentId/$threadId",
+    params: { environmentId: "env-1", threadId: "thread-2" },
+  });
+  await router.navigate({ to: "/settings/general" });
+  await expect.element(shown).toHaveTextContent("env-1/thread-2");
+});
+
+it("gives a consumer that mounts under Settings the thread behind it", async () => {
+  using app = await setup();
+  const { router } = app;
+  {
+    await using _screen = await renderApp(router);
+    await expect.element(shown).toHaveTextContent("env-1/thread-1");
+    await router.navigate({ to: "/settings/general" });
+  }
+
+  // Like the sidebar remounting when the viewport crosses the mobile breakpoint.
+  await using _remounted = await renderApp(router);
+  await expect.element(shown).toHaveTextContent("env-1/thread-1");
 });

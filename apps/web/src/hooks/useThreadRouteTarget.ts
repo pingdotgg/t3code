@@ -1,9 +1,12 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useMatches, useParams } from "@tanstack/react-router";
-import { useState } from "react";
+import { useSyncExternalStore } from "react";
 
-import { isAppModalPage } from "../components/sidebar/mainAppLocation";
+import {
+  getAppModalReturnTarget,
+  isAppModalPage,
+  subscribeAppModalReturnTarget,
+} from "../components/sidebar/mainAppLocation";
 import {
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
@@ -22,11 +25,6 @@ export function useThreadRouteTarget(): ThreadRouteTarget | null {
   return resolveThreadRouteTarget({ environmentId, threadId, draftId });
 }
 
-function threadRouteTargetKey(target: ThreadRouteTarget | null) {
-  if (!target) return null;
-  return target.kind === "server" ? scopedThreadKey(target.threadRef) : target.draftId;
-}
-
 /** The thread on screen: while Settings or Usage is open, the one behind it. */
 export function useShownThreadRouteTarget(): {
   target: ThreadRouteTarget | null;
@@ -37,10 +35,11 @@ export function useShownThreadRouteTarget(): {
   const modalOpen = useMatches({
     select: (matches) => matches.some((match) => isAppModalPage(match.pathname)),
   });
-  const [backgroundTarget, setBackgroundTarget] = useState(routeTarget);
-  if (!modalOpen && threadRouteTargetKey(backgroundTarget) !== threadRouteTargetKey(routeTarget)) {
-    setBackgroundTarget(routeTarget);
-  }
+  // Kept at router level so consumers that remount under the modal still agree.
+  // Read only while a modal is open, so thread changes do not re-render consumers twice.
+  const backgroundTarget = useSyncExternalStore(subscribeAppModalReturnTarget, () =>
+    modalOpen ? getAppModalReturnTarget() : null,
+  );
   return { target: modalOpen ? backgroundTarget : routeTarget, modalOpen };
 }
 
