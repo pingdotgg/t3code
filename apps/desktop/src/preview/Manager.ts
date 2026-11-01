@@ -420,6 +420,14 @@ type PointerEventListener = (event: DesktopPreviewPointerEvent) => Effect.Effect
 
 type OpenLinkListener = (event: DesktopPreviewOpenLinkEvent) => Effect.Effect<void>;
 
+// Chromium's net::ERR_ABORTED: a newer main-frame navigation, such as a client redirect, superseded the load.
+const NET_ERR_ABORTED = -3;
+const isSupersededLoad = (cause: unknown) =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "errno" in cause &&
+  cause.errno === NET_ERR_ABORTED;
+
 // about:blank inherits relaxed guest preferences; external editor schemes must reach the OS handler.
 const POPUP_PROTOCOLS = new Set(["http:", "https:"]);
 
@@ -1361,7 +1369,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       validatedUrl: string,
       isMainFrame: boolean,
     ): void => {
-      if (code === -3 || !isMainFrame) return;
+      if (code === NET_ERR_ABORTED || !isMainFrame) return;
       runFork(
         update(tabId, {
           navStatus: {
@@ -1995,6 +2003,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
     yield* attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, () =>
       wc.loadURL(url),
+    ).pipe(
+      Effect.catchIf(
+        (error) => isSupersededLoad(error.cause),
+        () => Effect.void,
+      ),
     );
   });
 

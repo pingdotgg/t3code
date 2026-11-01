@@ -827,6 +827,38 @@ describe("PreviewManager", () => {
       ),
   );
 
+  effectIt.effect("fails navigation when the page cannot be reached", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const refused = Object.assign(
+          new Error("ERR_CONNECTION_REFUSED (-102) loading 'http://localhost:3457/'"),
+          { errno: -102, code: "ERR_CONNECTION_REFUSED", url: "http://localhost:3457/" },
+        );
+        const contents = Object.assign(
+          makeTestPreviewWebContents(async () => {
+            throw new Error("unused");
+          }, 43),
+          { loadURL: vi.fn(() => Promise.reject(refused)) },
+        );
+        fromId.mockReturnValue(contents);
+        yield* manager.createTab("tab_unreachable");
+        yield* manager.registerWebview("tab_unreachable", 43);
+
+        const exit = yield* Effect.exit(
+          manager.navigate("tab_unreachable", "http://localhost:3457/"),
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            operation: "navigate.loadURL",
+            cause: refused,
+          });
+        }
+      }),
+    ),
+  );
+
   effectIt.effect("detaches through the pinned debugger after the webview is destroyed", () =>
     withManager((manager) =>
       Effect.gen(function* () {
