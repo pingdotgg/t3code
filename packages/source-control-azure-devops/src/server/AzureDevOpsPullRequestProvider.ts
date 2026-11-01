@@ -1,7 +1,11 @@
 import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
-import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
+import type {
+  PullRequestCapabilities,
+  PullRequestReviewPosition,
+  PullRequestViewerPermissions,
+} from "@t3tools/contracts";
 
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import {
@@ -45,14 +49,15 @@ export const LOCATION_CACHE_CAPACITY = 128;
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
-  comment: false,
+  comment: true,
   actions: [...definition.changeRequestActions],
   // Azure has no rebase strategy.
   mergeMethods: ["merge", "squash"],
   // `az repos pr list` has no text filter.
   search: false,
   reactions: false,
-  review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
+  // `comment` is the only verdict that casts no vote.
+  review: { inlineComment: true, reply: true, resolve: true, verdicts: ["comment"] },
   // Reviewer candidates require separate identity/graph APIs and permissions.
   reviewers: { request: true, listCandidates: false },
   edit: { changeRequest: true, comment: false },
@@ -87,6 +92,22 @@ function azureDevOpsProviderFailure(
   if (error._tag === "AzureDevOpsCliRateLimitError") return { reason: "rate-limited" };
   if (error._tag === "AzureDevOpsPullRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };
+}
+
+/** An unchanged line is pinned to whichever copy of it the reviewer selected. */
+function azureDevOpsReviewAnchor(
+  position: PullRequestReviewPosition,
+): Omit<AzureDevOpsPullRequestCli.AzureDevOpsThreadAnchor, "path"> {
+  switch (position.kind) {
+    case "added":
+      return { line: position.newLine, side: "right" };
+    case "deleted":
+      return { line: position.oldLine, side: "left" };
+    case "context":
+      return position.side === "left"
+        ? { line: position.oldLine, side: "left" }
+        : { line: position.newLine, side: "right" };
+  }
 }
 
 function toChangeRequest(pullRequest: AzureDevOpsPullRequest): ProviderChangeRequest {
@@ -129,16 +150,6 @@ export const make = Effect.gen(function* () {
         cause: error,
       });
 
-  const unsupported = (operation: string) =>
-    Effect.fail(
-      new PullRequestProviderError({
-        provider: SourceControlProviderKind.make("azure-devops"),
-        operation,
-        reason: "failed",
-        detail: "Azure DevOps reviews cannot be written from here yet.",
-      }),
-    );
-
   const EMPTY_DIFF_SLICE: ProviderDiffSlice = { patch: "", truncated: false, nextCursor: null };
 
   // PR locations are immutable; caching avoids full PR reads for viewed-file checks.
@@ -165,6 +176,30 @@ export const make = Effect.gen(function* () {
       }),
     );
   };
+
+  /** A pull request Azure cannot place has no repository to write to. */
+  const write = (
+    operation: string,
+    input: { readonly cwd: string; readonly number: number },
+    send: (
+      location: AzureDevOpsRepositoryLocation,
+    ) => Effect.Effect<void, AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError>,
+  ) =>
+    locationOf(input).pipe(
+      Effect.mapError(fail(operation)),
+      Effect.flatMap((location) =>
+        location === null
+          ? Effect.fail(
+              new PullRequestProviderError({
+                provider: SourceControlProviderKind.make("azure-devops"),
+                operation,
+                reason: "failed",
+                detail: "Azure DevOps did not say which repository the pull request is in.",
+              }),
+            )
+          : send(location).pipe(Effect.mapError(fail(operation))),
+      ),
+    );
 
   const diffScope = Effect.fn("AzureDevOpsPullRequestProvider.diffScope")(function* (input: {
     readonly cwd: string;
@@ -355,25 +390,39 @@ export const make = Effect.gen(function* () {
     getChangeRequestActivity: (input) =>
       cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.flatMap((pullRequest) =>
-          (pullRequest.location === null
-            ? Effect.succeed({ comments: [], truncated: true })
+        Effect.flatMap(({ location }) =>
+          (location === null
+            ? Effect.succeed({ comments: [], reviewThreads: [], truncated: true })
             : cli
-                .listThreads({
+                .listIterations({
                   cwd: input.cwd,
-                  location: pullRequest.location,
+                  location,
                   number: input.number,
                 })
                 .pipe(
-                  Effect.map((comments) => ({ comments, truncated: false })),
-                  Effect.orElseSucceed(() => ({ comments: [], truncated: true })),
+                  Effect.map((iterations) => iterations.at(-1)?.id),
+                  Effect.orElseSucceed(() => undefined),
+                  Effect.flatMap((iterationId) =>
+                    cli.listThreads({
+                      cwd: input.cwd,
+                      location,
+                      number: input.number,
+                      iterationId,
+                    }),
+                  ),
+                  Effect.map((threads) => ({ ...threads, truncated: false })),
+                  Effect.orElseSucceed(() => ({
+                    comments: [],
+                    reviewThreads: [],
+                    truncated: true,
+                  })),
                 )
           ).pipe(
             Effect.map((conversation): ProviderChangeRequestActivity => ({
               comments: conversation.comments,
               commentCount: conversation.comments.length,
               commentsTruncated: conversation.truncated,
-              reviewThreads: [],
+              reviewThreads: conversation.reviewThreads,
               commits: [],
             })),
           ),
@@ -567,15 +616,70 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("setReviewerRequest"))),
 
-    comment: () => unsupported("comment"),
+    comment: (input) =>
+      write("comment", input, (location) =>
+        cli.createThread({ cwd: input.cwd, location, number: input.number, body: input.body }),
+      ),
 
-    submitReview: () => unsupported("submitReview"),
+    // Azure has no pending review, so drafts post one by one; a failure keeps what was posted.
+    submitReview: (input) =>
+      write("submitReview", input, (location) =>
+        Effect.gen(function* () {
+          yield* Effect.forEach(
+            input.comments,
+            (draft) =>
+              cli.createThread({
+                cwd: input.cwd,
+                location,
+                number: input.number,
+                body: draft.body,
+                anchor: { path: draft.path, ...azureDevOpsReviewAnchor(draft.position) },
+              }),
+            { discard: true },
+          );
+          if (input.body.trim().length > 0) {
+            yield* cli.createThread({
+              cwd: input.cwd,
+              location,
+              number: input.number,
+              body: input.body,
+            });
+          }
+        }),
+      ),
 
-    replyToThread: () => unsupported("replyToThread"),
+    replyToThread: (input) =>
+      write("replyToThread", input, (location) =>
+        cli.replyToThread({
+          cwd: input.cwd,
+          location,
+          number: input.number,
+          threadId: input.threadId,
+          body: input.body,
+        }),
+      ),
 
-    setThreadResolution: () => unsupported("setThreadResolution"),
+    setThreadResolution: (input) =>
+      write("setThreadResolution", input, (location) =>
+        cli.setThreadResolution({
+          cwd: input.cwd,
+          location,
+          number: input.number,
+          threadId: input.threadId,
+          resolved: input.resolved,
+        }),
+      ),
 
-    setReaction: () => unsupported("setReaction"),
+    // Never called: `capabilities.reactions` is false, and the service refuses one without it.
+    setReaction: () =>
+      Effect.fail(
+        new PullRequestProviderError({
+          provider: SourceControlProviderKind.make("azure-devops"),
+          operation: "setReaction",
+          reason: "failed",
+          detail: "Reactions cannot be set on Azure DevOps from here.",
+        }),
+      ),
   };
 
   return provider;

@@ -11,7 +11,9 @@ import type {
   PullRequestComment,
   PullRequestMergeMethod,
   PullRequestMergeability,
+  PullRequestReviewThread,
   PullRequestState,
+  PullRequestThreadComment,
 } from "@t3tools/contracts";
 import { TrimmedNonEmptyString } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
@@ -71,11 +73,35 @@ const RawPullRequestSchema = Schema.Struct({
   ),
 });
 
+const RawFilePositionSchema = Schema.optional(
+  Schema.NullOr(Schema.Struct({ line: Schema.optional(Schema.NullOr(Schema.Int)) })),
+);
+
 const RawThreadSchema = Schema.Struct({
   id: Schema.Int,
   isDeleted: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  status: Schema.optional(Schema.NullOr(Schema.String)),
   threadContext: Schema.optional(
-    Schema.NullOr(Schema.Struct({ filePath: Schema.optional(Schema.NullOr(Schema.String)) })),
+    Schema.NullOr(
+      Schema.Struct({
+        filePath: Schema.optional(Schema.NullOr(Schema.String)),
+        /** `right` is the file after the change and `left` the file before it. */
+        rightFileStart: RawFilePositionSchema,
+        leftFileStart: RawFilePositionSchema,
+      }),
+    ),
+  ),
+  pullRequestThreadContext: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        iterationContext: Schema.optional(
+          Schema.NullOr(
+            Schema.Struct({ secondComparingIteration: Schema.optional(Schema.NullOr(Schema.Int)) }),
+          ),
+        ),
+        trackingCriteria: Schema.optional(Schema.NullOr(Schema.Unknown)),
+      }),
+    ),
   ),
   comments: Schema.optional(
     Schema.NullOr(
@@ -285,20 +311,57 @@ export function decodeViewerJson(raw: string): Result.Result<string | null, Deco
     : Result.fail(decoded.failure);
 }
 
+/** The statuses Azure closes a thread with. `active` and `pending` leave it open. */
+const RESOLVED_THREAD_STATUSES = new Set(["fixed", "wontfix", "closed", "bydesign"]);
+
+export interface AzureDevOpsThreads {
+  readonly comments: ReadonlyArray<PullRequestComment>;
+  readonly reviewThreads: ReadonlyArray<PullRequestReviewThread>;
+}
+
+/** A thread with neither end on a line is pinned to the file as a whole. */
+function toThreadAnchor(
+  context: Schema.Schema.Type<typeof RawThreadSchema>["threadContext"],
+): Pick<PullRequestReviewThread, "line" | "side"> {
+  const right = context?.rightFileStart?.line ?? 0;
+  if (right > 0) return { line: right, side: "right" };
+  const left = context?.leftFileStart?.line ?? 0;
+  if (left > 0) return { line: left, side: "left" };
+  return { line: null, side: "right" };
+}
+
+/**
+ * Azure moves a thread to the push it was asked to track to only when the thread's line moved, and
+ * says so in `trackingCriteria`. An untracked thread from an older push may name a line that has
+ * since changed, so it keeps no line.
+ */
+function isOnPush(
+  context: Schema.Schema.Type<typeof RawThreadSchema>["pullRequestThreadContext"],
+  trackedTo: number | undefined,
+): boolean {
+  if (trackedTo === undefined) return false;
+  if (context?.trackingCriteria != null) return true;
+  return context?.iterationContext?.secondComparingIteration === trackedTo;
+}
+
+/** Every remark in order, and each file thread once more as a whole for the diff. */
 export function decodeThreadsJson(
   raw: string,
-): Result.Result<ReadonlyArray<PullRequestComment>, DecodeFailure> {
+  trackedTo?: number,
+): Result.Result<AzureDevOpsThreads, DecodeFailure> {
   const decoded = decodeThreadPage(raw);
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
   }
   const comments: PullRequestComment[] = [];
+  const reviewThreads: PullRequestReviewThread[] = [];
   for (const entry of decoded.success.value) {
     const decodedThread = decodeThreadEntry(entry);
     if (Exit.isFailure(decodedThread)) continue;
     const thread = decodedThread.value;
     if (thread.isDeleted === true) continue;
     const path = toRepositoryPath(thread.threadContext?.filePath);
+    const threadComments: PullRequestThreadComment[] = [];
     for (const comment of thread.comments ?? []) {
       const publishedDate = trimmed(comment.publishedDate);
       if (
@@ -309,21 +372,38 @@ export function decodeThreadsJson(
       ) {
         continue;
       }
-      comments.push({
+      const remark = {
         id: `${thread.id}:${comment.id ?? 0}`,
-        kind: path === null ? "issue-comment" : "review-comment",
         author: toActor(comment.author),
         body: comment.content ?? "",
         createdAt: publishedDate,
         url: null,
+      };
+      threadComments.push(remark);
+      comments.push({
+        ...remark,
+        kind: path === null ? "issue-comment" : "review-comment",
         path,
         reviewState: null,
       });
     }
+    if (path === null || threadComments.length === 0) continue;
+    reviewThreads.push({
+      id: String(thread.id),
+      path,
+      ...(isOnPush(thread.pullRequestThreadContext, trackedTo)
+        ? toThreadAnchor(thread.threadContext)
+        : { line: null, side: "right" as const }),
+      isResolved: RESOLVED_THREAD_STATUSES.has(thread.status?.trim().toLowerCase() ?? ""),
+      // Azure states no such thing about a thread, so each is shown against the line it names.
+      isOutdated: false,
+      comments: threadComments,
+    });
   }
-  return Result.succeed(
-    comments.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
-  );
+  return Result.succeed({
+    comments: comments.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+    reviewThreads,
+  });
 }
 
 const RawIterationSchema = Schema.Struct({
