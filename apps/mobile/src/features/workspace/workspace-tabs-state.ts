@@ -154,6 +154,10 @@ export const NATIVE_WORKSPACE_TAB_SLOTS = [
   "settings",
 ] as const;
 
+export function nativeWorkspaceTabCount(enabledTabs: readonly WorkspaceTab[]) {
+  return Math.min(enabledTabs.length, NATIVE_WORKSPACE_TAB_SLOTS.length - 1) + 1;
+}
+
 export function workspaceTabForNativeSlot(order: readonly WorkspaceTab[], slot: string) {
   if (slot === "settings") return "settings";
   const index = NATIVE_WORKSPACE_TAB_SLOTS.findIndex((candidate) => candidate === slot);

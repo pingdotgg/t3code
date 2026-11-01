@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { deriveBottomControlInsets, type NativeLayoutMetrics } from "./reserved-regions";
+import {
+  deriveBottomControlInsets,
+  verticalBarGroupsFitAboveTabBar,
+  type NativeLayoutMetrics,
+} from "./reserved-regions";
 import { deriveLayout, deriveWorkspacePaneLayout } from "./layout";
 
 const innerDisplay: NativeLayoutMetrics = {
@@ -62,6 +66,28 @@ describe("bottom controls around reserved regions", () => {
         ],
       }),
     ).toEqual({ left: 68, right: 72, bottom: 0 });
+  });
+});
+
+describe("Duo vertical bar beside the workspace tab bar", () => {
+  const landscape = (cameraHeight: number): NativeLayoutMetrics => ({
+    width: 951,
+    height: 669,
+    hasHinge: true,
+    horizontalSizeClass: "regular",
+    verticalBarEdge: "right",
+    safeArea: { top: 0, bottom: 34, left: 0, right: 84 },
+    reservedRegions: [{ kind: "occlusion", x: 867, y: 0, width: 84, height: cameraHeight }],
+    bottomBarInset: 24,
+  });
+
+  it("keeps compose and the thread actions while the outer camera is at rest", () => {
+    expect(verticalBarGroupsFitAboveTabBar(landscape(124), 4, [3, 1])).toBe(true);
+  });
+
+  it("runs out of room when a Live Activity expands the Dynamic Island", () => {
+    expect(verticalBarGroupsFitAboveTabBar(landscape(224), 4, [3, 1])).toBe(false);
+    expect(verticalBarGroupsFitAboveTabBar(landscape(224), 4, [1, 1])).toBe(true);
   });
 });
 
