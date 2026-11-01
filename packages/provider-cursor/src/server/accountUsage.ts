@@ -49,6 +49,11 @@ class CursorAccountUsageInvalidError extends Schema.TaggedError<CursorAccountUsa
   { reason: Schema.String },
 ) {}
 
+class CursorAccountUsageSignInError extends Schema.TaggedError<CursorAccountUsageSignInError>()(
+  "CursorAccountUsageSignInError",
+  {},
+) {}
+
 const invalid = (reason: string) => Effect.fail(new CursorAccountUsageInvalidError({ reason }));
 
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -61,7 +66,12 @@ const accountHash = Effect.fn("accountHash")(function* (value: string) {
 });
 
 const BILLING_ITEMS_URL = "https://cursor.com/api/dashboard/v2/query-billing-items";
-const PAGE_SIZE = 100;
+const PAGE_SIZE = 1000;
+/** Cursor's previous usage endpoint answered 400 above 1,000 items; this one's cap is unpublished. */
+const FALLBACK_PAGE_SIZE = 100;
+/** A busy account bills tens of thousands of items a month, read as day slices six at a time. */
+const SLICE_MS = 24 * 60 * 60 * 1000;
+const CONCURRENT_SLICES = 6;
 
 /** The session cookie must never follow a redirect off cursor.com. */
 const NO_REDIRECT: RequestInit = { redirect: "error" };
@@ -143,20 +153,23 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
     const userId = subject.split("|").at(-1);
     if (!userId) return yield* invalid("Invalid authentication");
     accountKey = yield* accountHash(subject);
-    const startTime = DateTime.make(sinceMs);
-    const endTime = DateTime.make(endDate);
-    if (Option.isNone(startTime) || Option.isNone(endTime) || sinceMs < 0 || sinceMs > endDate)
+    if (
+      Option.isNone(DateTime.make(sinceMs)) ||
+      Option.isNone(DateTime.make(endDate)) ||
+      sinceMs < 0 ||
+      sinceMs > endDate
+    )
       return yield* invalid("Invalid date window");
     const readPage = Effect.fn("CursorAccountUsage.readPage")(
-      function* (cursor: string | undefined) {
+      function* (startMs: number, endMs: number, pageSize: number, cursor: string | undefined) {
         const response = yield* httpClient
           .execute(
             HttpClientRequest.get(BILLING_ITEMS_URL, {
               urlParams: {
                 scope: "user",
-                startTime: DateTime.formatIso(startTime.value),
-                endTime: DateTime.formatIso(endTime.value),
-                pageSize: PAGE_SIZE,
+                startTime: DateTime.formatIso(DateTime.makeUnsafe(startMs)),
+                endTime: DateTime.formatIso(DateTime.makeUnsafe(endMs)),
+                pageSize,
                 ...(cursor === undefined ? {} : { cursor }),
               },
             }).pipe(
@@ -172,7 +185,10 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
               () => new CursorAccountUsageInvalidError({ reason: "Account usage request failed" }),
             ),
           );
-        if (response.status === 401 || response.status === 403) return null;
+        if (response.status === 401 || response.status === 403)
+          return yield* new CursorAccountUsageSignInError();
+        if (response.status === 400 && cursor === undefined && pageSize !== FALLBACK_PAGE_SIZE)
+          return null;
         if (response.status < 200 || response.status >= 300)
           return yield* invalid("Account usage request failed");
         const parsed: unknown = yield* response.json.pipe(
@@ -203,21 +219,35 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
         orElse: () => invalid("Account usage request timed out"),
       }),
     );
+    const readSlice = Effect.fn("CursorAccountUsage.readSlice")(function* (startMs: number) {
+      const endMs = Math.min(startMs + SLICE_MS, endDate);
+      const items: unknown[] = [];
+      const cursors = new Set<string>();
+      let pageSize = PAGE_SIZE;
+      let cursor: string | undefined;
+      for (;;) {
+        const page = yield* readPage(startMs, endMs, pageSize, cursor);
+        if (page === null) {
+          pageSize = FALLBACK_PAGE_SIZE;
+          continue;
+        }
+        items.push(...page.items);
+        cursor = page.nextCursor;
+        if (cursor === undefined) return items;
+        if (cursors.has(cursor)) return yield* invalid("Account usage pagination loop");
+        cursors.add(cursor);
+      }
+    });
+    const sliceStarts: number[] = [];
+    for (let startMs = sinceMs; sliceStarts.length === 0 || startMs < endDate; startMs += SLICE_MS)
+      sliceStarts.push(startMs);
+    const slices = yield* Effect.forEach(sliceStarts, readSlice, {
+      concurrency: CONCURRENT_SLICES,
+    });
     const records: UsageRecord[] = [];
     const itemIds = new Set<string>();
-    const cursors = new Set<string>();
-    let cursor: string | undefined;
-    do {
-      const page = yield* readPage(cursor);
-      if (page === null) {
-        return {
-          accountKey,
-          records: [],
-          missing: false,
-          error: "Sign in to Cursor again to read account usage.",
-        } satisfies CursorAccountUsageReadResult;
-      }
-      for (const raw of page.items) {
+    for (const items of slices) {
+      for (const raw of items) {
         if (raw === null || typeof raw !== "object" || Array.isArray(raw))
           return yield* invalid("Invalid account usage event");
         const item = object(raw);
@@ -279,12 +309,7 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
           dedupeKey: `cursor-account:${accountKey}:${id}`,
         });
       }
-      cursor = page.nextCursor;
-      if (cursor !== undefined) {
-        if (cursors.has(cursor)) return yield* invalid("Account usage pagination loop");
-        cursors.add(cursor);
-      }
-    } while (cursor !== undefined);
+    }
     return {
       accountKey,
       records,
@@ -296,6 +321,15 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
     Effect.timeoutOrElse({
       duration: Duration.seconds(60),
       orElse: () => invalid("Account usage read timed out"),
+    }),
+    Effect.catchTags({
+      CursorAccountUsageSignInError: () =>
+        Effect.succeed({
+          accountKey,
+          records: [],
+          missing: false,
+          error: "Sign in to Cursor again to read account usage.",
+        } satisfies CursorAccountUsageReadResult),
     }),
     Effect.orElseSucceed(
       () =>

@@ -87,6 +87,9 @@ const billingItemsRequest = (request: DashboardRequest) => {
     : null;
 };
 
+const JAN_1 = Date.parse("2026-01-01T00:00:00Z");
+const JAN_2 = Date.parse("2026-01-02T00:00:00Z");
+
 const demoToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
 
 describe("Cursor account history", () => {
@@ -96,7 +99,7 @@ describe("Cursor account history", () => {
       const requests: DashboardRequest[] = [];
       const result = yield* readAccountUsage(
         authPath,
-        Date.parse("2026-10-01T00:00:00Z"),
+        Date.parse("2026-10-31T00:00:00Z"),
         Date.parse("2026-11-01T00:00:00Z"),
         async (request) => {
           requests.push(request);
@@ -112,15 +115,15 @@ describe("Cursor account history", () => {
         [
           {
             scope: "user",
-            startTime: "2026-10-01T00:00:00.000Z",
+            startTime: "2026-10-31T00:00:00.000Z",
             endTime: "2026-11-01T00:00:00.000Z",
-            pageSize: "100",
+            pageSize: "1000",
           },
           {
             scope: "user",
-            startTime: "2026-10-01T00:00:00.000Z",
+            startTime: "2026-10-31T00:00:00.000Z",
             endTime: "2026-11-01T00:00:00.000Z",
-            pageSize: "100",
+            pageSize: "1000",
             cursor: "page-2",
           },
         ],
@@ -144,7 +147,7 @@ describe("Cursor account history", () => {
         ...billingItem(eventTime, { "prompt-text-tokens": "10" }),
         pricing,
       });
-      const result = yield* readAccountUsage(authPath, 0, 1781000000000, async () =>
+      const result = yield* readAccountUsage(authPath, JAN_1, JAN_2, async () =>
         Response.json({
           data: [
             item("2026-01-01T00:00:00.000Z", { currency: "USD", contracted: "0.0000000000" }),
@@ -167,7 +170,7 @@ describe("Cursor account history", () => {
       const usage = { "completion-text-tokens": "5" };
       const first = { ...billingItem("2026-01-01T00:00:00.000Z", usage), billingItemId: "a" };
       const twin = { ...first, billingItemId: "b" };
-      const result = yield* readAccountUsage(authPath, 0, 1781000000000, async ({ url }) =>
+      const result = yield* readAccountUsage(authPath, JAN_1, JAN_2, async ({ url }) =>
         Response.json(
           new URL(url).searchParams.get("cursor") === null
             ? { data: [first, twin], pagination: { nextCursor: "page-2" } }
@@ -196,7 +199,7 @@ describe("Cursor account history", () => {
           ],
         },
       ]) {
-        const result = yield* readAccountUsage(authPath, 0, 1781000000000, async () =>
+        const result = yield* readAccountUsage(authPath, JAN_1, JAN_2, async () =>
           Response.json(body),
         );
         assert.isNull(result.error, JSON.stringify(body));
@@ -217,7 +220,7 @@ describe("Cursor account history", () => {
         "invalid",
         0,
       ]) {
-        const result = yield* readAccountUsage(authPath, 0, 1781000000000, async () =>
+        const result = yield* readAccountUsage(authPath, JAN_1, JAN_2, async () =>
           Response.json(body),
         );
         assert.isNotNull(result.error, JSON.stringify(body));
@@ -242,7 +245,7 @@ describe("Cursor account history", () => {
         { ...valid, usage: { "completion-text-tokens": "many" } },
         { ...valid, usage: { "cached-prompt-text-tokens": -1 } },
       ]) {
-        const result = yield* readAccountUsage(authPath, 0, 1781000000000, async () =>
+        const result = yield* readAccountUsage(authPath, JAN_1, JAN_2, async () =>
           Response.json({ data: [valid, item] }),
         );
         assert.isNotNull(result.error, JSON.stringify(item));
@@ -255,12 +258,100 @@ describe("Cursor account history", () => {
     Effect.gen(function* () {
       const { authPath } = yield* writeAuth(demoToken);
       let requests = 0;
-      const result = yield* readAccountUsage(authPath, 0, 1781000000000, async () => {
+      const result = yield* readAccountUsage(authPath, JAN_1, JAN_2, async () => {
         requests++;
         return Response.json({ data: [], pagination: { nextCursor: "same" } });
       });
       assert.isNotNull(result.error);
       assert.strictEqual(requests, 2);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reads day slices six at a time and counts an item on a slice boundary once", () =>
+    Effect.gen(function* () {
+      const { authPath } = yield* writeAuth(demoToken);
+      const day = (date: number, hour = 0) =>
+        `2026-11-0${date}T${String(hour).padStart(2, "0")}:00:00.000Z`;
+      const eventTimes = [1, 2, 3, 4, 5, 6, 7, 8].flatMap((date) =>
+        date === 8 ? [day(date)] : [day(date), day(date, 12)],
+      );
+      const firstPages: string[] = [];
+      let open = 0;
+      let mostOpen = 0;
+      const { promise: sixOpen, resolve: release } = Promise.withResolvers<void>();
+      const result = yield* readAccountUsage(
+        authPath,
+        Date.parse(day(1)),
+        Date.parse(day(8)),
+        async ({ url }) => {
+          const params = new URL(url).searchParams;
+          const start = Date.parse(params.get("startTime") ?? "");
+          const end = Date.parse(params.get("endTime") ?? "");
+          // Each slice ends where the next begins, so Cursor returns midnight items twice.
+          const inSlice = eventTimes.filter((time) => {
+            const ms = Date.parse(time);
+            return ms >= start && ms <= end;
+          });
+          if (params.get("cursor") === "page-2")
+            return Response.json({
+              data: inSlice
+                .slice(1)
+                .map((time) => billingItem(time, { "prompt-text-tokens": "1" })),
+            });
+          firstPages.push(`${params.get("startTime")}/${params.get("endTime")}`);
+          mostOpen = Math.max(mostOpen, ++open);
+          if (open === 6) release();
+          await sixOpen;
+          open--;
+          return Response.json({
+            data: inSlice
+              .slice(0, 1)
+              .map((time) => billingItem(time, { "prompt-text-tokens": "1" })),
+            pagination: { nextCursor: "page-2" },
+          });
+        },
+      );
+      assert.isNull(result.error);
+      assert.strictEqual(mostOpen, 6);
+      assert.deepStrictEqual(
+        firstPages.toSorted(),
+        [1, 2, 3, 4, 5, 6, 7].map((date) => `${day(date)}/${day(date + 1)}`),
+      );
+      assert.deepStrictEqual(
+        result.records.map((record) => record.timestampMs),
+        eventTimes.map((time) => Date.parse(time)),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("asks for 100 items a page when Cursor rejects 1,000", () =>
+    Effect.gen(function* () {
+      const { authPath } = yield* writeAuth(demoToken);
+      const pageSizes: (string | null)[] = [];
+      const result = yield* readAccountUsage(authPath, JAN_1, JAN_2, async ({ url }) => {
+        const params = new URL(url).searchParams;
+        pageSizes.push(params.get("pageSize"));
+        if (params.get("pageSize") === "1000") return new Response(null, { status: 400 });
+        return params.get("cursor") === null
+          ? Response.json({
+              data: [billingItem("2026-01-01T00:00:00.000Z", { "prompt-text-tokens": "1" })],
+              pagination: { nextCursor: "page-2" },
+            })
+          : Response.json({
+              data: [billingItem("2026-01-01T00:00:01.000Z", { "prompt-text-tokens": "1" })],
+            });
+      });
+      assert.isNull(result.error);
+      assert.strictEqual(result.records.length, 2);
+      assert.deepStrictEqual(pageSizes, ["1000", "100", "100"]);
+
+      pageSizes.length = 0;
+      const rejected = yield* readAccountUsage(authPath, JAN_1, JAN_2, async ({ url }) => {
+        pageSizes.push(new URL(url).searchParams.get("pageSize"));
+        return new Response(null, { status: 400 });
+      });
+      assert.strictEqual(rejected.error, "Cursor account usage could not be read.");
+      assert.deepStrictEqual(pageSizes, ["1000", "100"]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

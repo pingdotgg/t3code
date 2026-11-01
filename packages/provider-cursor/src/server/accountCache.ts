@@ -40,6 +40,17 @@ export function cursorFetchRange(
     : { sinceMs: cache.untilMs - REFETCH_OVERLAP_MS, untilMs: nowMs };
 }
 
+/** Billing item ids are stable, so a corrected item keeps its key and must be compared by content. */
+const sameSerializedRecord = (a: UsageRecord, b: UsageRecord) =>
+  a.timestampMs === b.timestampMs &&
+  a.model === b.model &&
+  a.sessionId === b.sessionId &&
+  a.totals.uncachedInputTokens === b.totals.uncachedInputTokens &&
+  a.totals.cachedInputTokens === b.totals.cachedInputTokens &&
+  a.totals.cacheCreationTokens === b.totals.cacheCreationTokens &&
+  a.totals.outputTokens === b.totals.outputTokens &&
+  a.reportedCostUsd === b.reportedCostUsd;
+
 export function mergeCursorFetch(
   cache: CursorAccountCache | undefined,
   accountKey: string,
@@ -52,11 +63,14 @@ export function mergeCursorFetch(
     record.timestampMs >= range.sinceMs && record.timestampMs <= range.untilMs;
   const previous = cache?.records ?? [];
   const added = fetched.filter(inRange);
-  const replacedKeys = new Set(previous.filter(inRange).map((record) => record.dedupeKey));
+  const replaced = new Map(previous.filter(inRange).map((record) => [record.dedupeKey, record]));
   const changed =
     cache === undefined ||
-    replacedKeys.size !== added.length ||
-    added.some((record) => !replacedKeys.has(record.dedupeKey));
+    replaced.size !== added.length ||
+    added.some((record) => {
+      const prior = replaced.get(record.dedupeKey);
+      return prior === undefined || !sameSerializedRecord(prior, record);
+    });
   return {
     changed,
     cache: {
