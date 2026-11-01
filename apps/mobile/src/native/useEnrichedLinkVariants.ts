@@ -1,7 +1,12 @@
 import { useMemo } from "react";
 import { Image } from "react-native";
-import type { LinkPillContent, MarkdownStyle } from "react-native-enriched-markdown";
+import type {
+  LinkPillContent,
+  MarkdownLinkOccurrence,
+  MarkdownStyle,
+} from "react-native-enriched-markdown";
 import type { ComposerContextRecord } from "@t3tools/contracts";
+import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 import { contextChipAccent, contextChipPresentation } from "../lib/composerChipPresentation";
 import { CONTEXT_CHIP_ICON_SOURCES } from "../lib/contextChipIcons.generated";
 import { FONT_FAMILIES } from "../lib/fontFamilies";
@@ -60,6 +65,7 @@ export function withChipIcon(
 function presentation(
   url: string,
   props: Pick<SelectableMarkdownTextProps, "linkCustomization" | "skills" | "textStyle">,
+  authoredLabels: ReadonlyArray<string>,
 ): MarkdownLinkCustomization | undefined {
   const custom = props.linkCustomization?.(url);
   if (custom) return custom;
@@ -75,7 +81,10 @@ function presentation(
   const link = resolveMarkdownLinkPresentation(url);
   if (link.kind === "file")
     return {
-      label: link.label,
+      // Without a label the native pill shows the authored text, e.g. [the setup steps](docs/guide.md).
+      label: authoredLabels.every((label) => isMarkdownFileLinkLabel(label, link.href))
+        ? link.label
+        : undefined,
       icon: markdownFileIconSource(link.icon),
       chip: { accent: contextChipPresentation("mention").accent, tintsIcon: false },
     };
@@ -93,10 +102,17 @@ export function useEnrichedLinkVariants(
   urls: ReadonlyArray<string>,
   props: SelectableMarkdownTextProps,
   fileHrefs: ReadonlySet<string>,
+  occurrences: ReadonlyArray<MarkdownLinkOccurrence>,
 ) {
   const { linkCustomization, skills, textStyle, fileEmbedLabel } = props;
   const theme = useUniwindTheme();
   const links = useMemo(() => {
+    const labelsByUrl = new Map<string, string[]>();
+    for (const link of occurrences) {
+      const labels = labelsByUrl.get(link.url);
+      if (labels) labels.push(link.label);
+      else labelsByUrl.set(link.url, [link.label]);
+    }
     const byUrl = new Map<string, MarkdownLinkCustomization>();
     for (const url of urls) {
       if (byUrl.has(url)) continue;
@@ -107,11 +123,11 @@ export function useEnrichedLinkVariants(
             color: textStyle.fileTextColor,
             icon: markdownFileIconSource(resolveMarkdownFileIcon(label)),
           }
-        : presentation(url, { linkCustomization, skills, textStyle });
+        : presentation(url, { linkCustomization, skills, textStyle }, labelsByUrl.get(url) ?? []);
       if (value) byUrl.set(url, value);
     }
     return byUrl;
-  }, [urls, linkCustomization, skills, textStyle, fileHrefs, fileEmbedLabel]);
+  }, [urls, linkCustomization, skills, textStyle, fileHrefs, fileEmbedLabel, occurrences]);
   const chipForegrounds = useMemo(
     () =>
       new Map(
