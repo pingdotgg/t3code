@@ -1245,6 +1245,56 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("titles Codex sessions with their newest saved Codex name", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+
+        yield* writeTranscript({
+          filePath: path.join(codexHomePath, "sessions", "2026", "08", "24", "rollout-named.jsonl"),
+          contents: [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: "named-session", cwd: workspace },
+            }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              payload: {
+                type: "user_message",
+                message:
+                  '<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>\nHey, what\'s up?',
+              },
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+        yield* fileSystem.writeFileString(
+          path.join(codexHomePath, "session_index.jsonl"),
+          [
+            { id: "named-session", thread_name: "First name" },
+            { id: "other-session", thread_name: "Other chat" },
+            { id: "named-session", thread_name: "Renamed chat" },
+            { id: "named-session", thread_name: " " },
+          ]
+            .map((entry) => `${encodeTranscriptRecord({ ...entry, updated_at: "unknown" })}\n`)
+            .join(""),
+        );
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(threads.map((thread) => thread.title)).toEqual(["Renamed chat"]);
+      }),
+    );
+
     it.effect("excludes Codex subagents from discovery and the recent-thread budget", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -1773,6 +1823,48 @@ describe("parseAgentSessionTranscript", () => {
     },
   );
 
+  it.each([199, 200, 201, 205])(
+    "counts only omitted conversation messages for a %s-message Claude transcript",
+    (count) => {
+      const thread = AgentSessionScanner.parseAgentSessionTranscript({
+        contents: [
+          ...Array.from({ length: count }, (_, index) =>
+            encodeTranscriptRecord({
+              type: index === 0 ? "user" : "assistant",
+              sessionId: "claude-session",
+              message: { content: `Message ${index}` },
+            }),
+          ),
+          encodeTranscriptRecord({ type: "user", isMeta: true, message: { content: "Setup" } }),
+          encodeTranscriptRecord({
+            type: "user",
+            isCompactSummary: true,
+            message: { content: "Summary" },
+          }),
+          encodeTranscriptRecord({
+            type: "assistant",
+            isSidechain: true,
+            message: { content: "Sidechain" },
+          }),
+          encodeTranscriptRecord({
+            type: "assistant",
+            message: { content: [{ type: "tool_use" }] },
+          }),
+          "malformed",
+        ].join("\n"),
+        source: "claudeAgent",
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        fallbackSessionId: "fallback",
+        lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+      });
+
+      expect(thread?.omittedMessageCount).toBe(Math.max(0, count - 200));
+      expect(thread?.messages).toHaveLength(Math.min(200, count));
+      expect(thread?.messages[0]?.text).toBe("Message 0");
+      expect(thread?.messages.at(-1)?.text).toBe(`Message ${count - 1}`);
+    },
+  );
+
   it("keeps Claude text and titles while dropping malformed and tool records", () => {
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
       contents: [
@@ -1924,10 +2016,10 @@ describe("parseAgentSessionTranscript", () => {
     ]);
   });
 
-  it("keeps the canonical first prompt after long Codex transcripts are capped", () => {
+  it.each([199, 200])("keeps the canonical first prompt with %s later Codex messages", (count) => {
     const canonicalPrompt = "\n  Keep the canonical prompt  \n";
     const canonicalTimestamp = "2026-08-24T10:01:00.000Z";
-    const laterAssistantMessages = Array.from({ length: 200 }, (_, index) =>
+    const laterAssistantMessages = Array.from({ length: count }, (_, index) =>
       encodeTranscriptRecord({
         type: "response_item",
         timestamp: `2026-08-24T11:${String(index % 60).padStart(2, "0")}:00.000Z`,
@@ -1963,6 +2055,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
     });
 
+    expect(thread?.omittedMessageCount).toBe(count - 199);
     expect(thread?.messages).toHaveLength(200);
     expect(thread?.messages[0]).toMatchObject({
       role: "user",
@@ -2025,6 +2118,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
     });
 
+    expect(thread?.omittedMessageCount).toBe(1);
     expect(thread?.messages).toHaveLength(200);
     expect(thread?.messages[0]).toMatchObject({
       role: "user",
