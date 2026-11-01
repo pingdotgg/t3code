@@ -1307,36 +1307,12 @@ export function createServerEnvironmentAtoms<R, E>(
       refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
       execute: (input, emit) =>
         request(WS_METHODS.serverGetUsageSummary, input).pipe(
-          Effect.catchTags({
-            UsageReadError: (error) => {
-              const window = input;
-              if (
-                error.reason !== "invalidWindow" ||
-                window.resolution !== "hour" ||
-                window.sinceTime === undefined ||
-                window.untilTime === undefined ||
-                Date.parse(window.untilTime) - Date.parse(window.sinceTime) !== 7 * 24 * 60 * 60_000
-              )
-                return Effect.fail(error);
-              return request(WS_METHODS.serverGetUsageSummary, {
-                sinceDay: window.sinceDay,
-                untilDay: window.untilDay,
-                timeZone: window.timeZone,
-                resolution: "day",
-                ...(window.awaitRefresh === undefined ? {} : { awaitRefresh: window.awaitRefresh }),
-              });
-            },
-          }),
           Effect.filterOrElse(
             (summary) => !summary.sources.some((source) => source.refreshing === true),
             (summary) =>
               emit(summary).pipe(
                 Effect.andThen(
-                  request(WS_METHODS.serverGetUsageSummary, {
-                    ...input,
-                    resolution: summary.resolution ?? input.resolution,
-                    awaitRefresh: true,
-                  }),
+                  request(WS_METHODS.serverGetUsageSummary, { ...input, awaitRefresh: true }),
                 ),
                 Effect.catch((error) =>
                   Effect.logWarning("Could not refresh slow usage sources.").pipe(

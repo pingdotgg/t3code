@@ -1110,7 +1110,7 @@ describe("UsageService", () => {
               ...window,
               resolution: "hour",
               sinceTime: "2026-08-01T00:00:00.000Z",
-              untilTime: "2026-08-02T00:00:00.000Z",
+              untilTime: "2026-08-08T00:00:00.000Z",
             }),
           );
           assert.strictEqual(

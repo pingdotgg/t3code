@@ -4,6 +4,7 @@ import type {
   UsageSummary,
   UsageSummaryInput,
 } from "@t3tools/contracts";
+import { UsageDay, UsageReadError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import type { AtomRegistry } from "effect/reactivity";
 
@@ -11,6 +12,32 @@ import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type { createEnvironmentPresentationAtoms } from "./presentation.ts";
 import { executeAtomQuery, runAtomCommand, squashAtomCommandFailure } from "./runtime.ts";
 import type { createServerEnvironmentAtoms } from "./server.ts";
+
+const isUsageReadError = Schema.is(UsageReadError);
+
+export function usageFallbackWindow(
+  input: UsageSummaryInput,
+  error: unknown,
+): UsageSummaryInput | null {
+  if (
+    !isUsageReadError(error) ||
+    error.reason !== "invalidWindow" ||
+    input.resolution !== "hour" ||
+    input.sinceTime === undefined ||
+    input.untilTime === undefined ||
+    Date.parse(input.untilTime) - Date.parse(input.sinceTime) !== 7 * 24 * 60 * 60_000
+  )
+    return null;
+  // @effect-diagnostics-next-line globalDate:off -- Calendar-only UTC bounds preserve seven dates across DST.
+  const start = new Date(input.untilDay + "T00:00:00Z");
+  start.setUTCDate(start.getUTCDate() - 6);
+  return {
+    sinceDay: UsageDay.make(start.toISOString().slice(0, 10)),
+    untilDay: input.untilDay,
+    timeZone: input.timeZone,
+    resolution: "day",
+  };
+}
 
 const isEnvironmentRpcUnavailable = Schema.is(EnvironmentRpcUnavailableError);
 

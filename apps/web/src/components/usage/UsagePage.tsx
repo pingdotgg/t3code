@@ -215,11 +215,9 @@ export function UsagePage() {
   } = useUsage(window, selectedEnvironmentIds, hiddenProviders);
   const merged = shown?.merged ?? answeredUsage;
   const shownWindow = shown?.window ?? window;
-  const shownHourly =
-    shownWindow.resolution === "hour" &&
-    !selectedEnvironments.some((environment) => environment.summary?.resolution === "day");
+  const shownHourly = shownWindow.resolution === "hour";
   const refreshingUsage = isRefreshing && !showingLimits;
-  const showingKept = shown !== null && shown.window !== window;
+  const showingKept = shown !== null && shown.merged !== answeredUsage;
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const presentationsWithProviders = useAtomValue(
     environmentPresentations.presentationsWithProvidersAtom,
