@@ -266,7 +266,7 @@ laptop by name with that port.
 
 To cut off one device on one machine, open **Settings → Environments** on a
 device that can manage access there (its scopes include `access:write`: one
-paired with a full code, one whose grant includes `admin`, or your own devices
+paired with a default `t3 pair` code, one whose grant includes `admin`, or your own devices
 while your policy grants none), and
 **Block** it under **Tailscale devices on <machine>**. Its sessions there end now, and **Unblock** undoes it. A browser
 preview or device screen it already has open keeps working, clicks and typing

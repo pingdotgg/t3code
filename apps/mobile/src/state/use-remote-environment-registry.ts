@@ -84,7 +84,7 @@ export async function pairEnvironment(
 
 /**
  * Signs in through Tailscale at a machine name, 100.x address, or `t3 up` QR
- * URL. Asks for a pairing code when the machine does not offer it.
+ * URL. Asks for a pairing link when the machine does not offer it.
  */
 export async function signInOverTailnet(
   address: string,
