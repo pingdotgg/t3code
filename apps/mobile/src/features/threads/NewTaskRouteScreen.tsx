@@ -72,6 +72,14 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
     };
   }
 
+  if (!catalogState.hasEnabledEnvironment && catalogState.connectionState !== "unsupported") {
+    return {
+      title: "Environments switched off",
+      detail: "Turn an environment on in Settings → Environments before creating a task.",
+      loading: false,
+    };
+  }
+
   if (
     (catalogState.connectionState === "available" ||
       catalogState.connectionState === "offline" ||

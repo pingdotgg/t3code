@@ -163,6 +163,14 @@ function deriveEmptyState(props: {
     };
   }
 
+  if (!catalogState.hasEnabledEnvironment && catalogState.connectionState !== "unsupported") {
+    return {
+      title: "Environments switched off",
+      detail: "Turn an environment on in Settings → Environments to load projects.",
+      loading: false,
+    };
+  }
+
   if (
     (catalogState.connectionState === "available" ||
       catalogState.connectionState === "offline" ||
