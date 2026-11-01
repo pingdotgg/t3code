@@ -1,11 +1,19 @@
-import { AuthSessionId, AuthStandardClientScopes } from "@t3tools/contracts";
+import {
+  AuthAccessWriteScope,
+  AuthSessionId,
+  AuthStandardClientScopes,
+  EnvironmentHttpApi,
+} from "@t3tools/contracts";
 import * as Console from "effect/Console";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
+import { FetchHttpClient } from "effect/http";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 
@@ -16,6 +24,7 @@ import {
   formatSessionList,
 } from "../cliAuthFormat.ts";
 import * as ServerConfig from "../config.ts";
+import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { authScopesFlag } from "./authScopes.ts";
 import {
   authLocationFlags,
@@ -24,9 +33,9 @@ import {
   resolveCliAuthConfig,
 } from "./config.ts";
 
-const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E>(
+const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E, R>(
   flags: CliAuthLocationFlags,
-  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
+  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E, R>,
   options?: {
     readonly quietLogs?: boolean;
   },
@@ -39,8 +48,8 @@ const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function
     return yield* run(environmentAuth);
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(EnvironmentAuth.layerRuntime).pipe(
-        Layer.provide(ServerConfig.layer(config)),
+      Layer.mergeAll(EnvironmentAuth.layerRuntime, FetchHttpClient.layer).pipe(
+        Layer.provideMerge(ServerConfig.layer(config)),
         Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
       ),
     ),
@@ -221,6 +230,55 @@ const sessionListCommand = Command.make("list", {
   ),
 );
 
+const LIVE_SERVER_TIMEOUT = Duration.seconds(10);
+// Bounds how long the helper session outlives a CLI killed before it can revoke it.
+const LIVE_SERVER_SESSION_TTL = Duration.minutes(1);
+
+// Database-only revocation cannot signal the running server's open sockets.
+const revokeSession = Effect.fn("auth.revokeSession")(function* (
+  environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
+  sessionId: AuthSessionId,
+) {
+  const config = yield* ServerConfig.ServerConfig;
+  const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+  if (Option.isSome(runtimeState) && isProcessAlive(runtimeState.value.pid)) {
+    const origin = runtimeState.value.origin;
+    const attempted = yield* Effect.result(
+      Effect.acquireUseRelease(
+        environmentAuth.issueSession({
+          ttl: LIVE_SERVER_SESSION_TTL,
+          scopes: [AuthAccessWriteScope],
+          subject: "auth-cli",
+          label: "t3 auth cli",
+        }),
+        (issued) =>
+          HttpApiClient.make(EnvironmentHttpApi, { baseUrl: origin }).pipe(
+            Effect.flatMap((client) =>
+              client.auth.revokeClient({
+                headers: { authorization: `Bearer ${issued.token}` },
+                payload: { sessionId },
+              }),
+            ),
+            Effect.timeout(LIVE_SERVER_TIMEOUT),
+          ),
+        (issued) =>
+          environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
+      ),
+    );
+    if (attempted._tag === "Success") {
+      return attempted.success.revoked;
+    }
+    yield* Effect.logDebug("Failed to revoke the session through the running server.", {
+      origin,
+      cause: attempted.failure,
+    });
+    yield* Console.error(
+      `Could not reach the T3 Code server at ${origin}. Connections already open with this session stay open until they close.`,
+    );
+  }
+  return yield* environmentAuth.revokeSession(sessionId);
+});
+
 const sessionRevokeCommand = Command.make("revoke", {
   ...authLocationFlags,
   sessionId: Argument.String("session-id").pipe(
@@ -232,7 +290,7 @@ const sessionRevokeCommand = Command.make("revoke", {
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(flags, (environmentAuth) =>
       Effect.gen(function* () {
-        const revoked = yield* environmentAuth.revokeSession(flags.sessionId);
+        const revoked = yield* revokeSession(environmentAuth, flags.sessionId);
         yield* Console.log(
           revoked
             ? `Revoked session ${flags.sessionId}.\n`

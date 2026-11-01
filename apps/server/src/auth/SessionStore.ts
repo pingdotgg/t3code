@@ -994,14 +994,20 @@ const make = Effect.gen(function* () {
           revokedAt,
         })
         .pipe(Effect.mapError((cause) => new SessionRevocationError({ sessionId, cause })));
-      if (revoked) {
-        yield* Ref.update(connectedSessionsRef, (current) => {
-          const next = new Map(current);
-          next.delete(sessionId);
-          return next;
-        });
-        yield* emitRemoved(sessionId);
+      if (!revoked) {
+        // Another process, such as the CLI's database fallback, can revoke the row
+        // without reaching this process's open connections. Signal them anyway.
+        const row = yield* authSessions
+          .getById({ sessionId })
+          .pipe(Effect.mapError((cause) => new SessionRevocationError({ sessionId, cause })));
+        if (Option.isNone(row)) return false;
       }
+      yield* Ref.update(connectedSessionsRef, (current) => {
+        const next = new Map(current);
+        next.delete(sessionId);
+        return next;
+      });
+      yield* emitRemoved(sessionId);
       return revoked;
     },
   );
