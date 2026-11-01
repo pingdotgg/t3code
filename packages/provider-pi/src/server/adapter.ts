@@ -70,7 +70,7 @@ import {
   materializePiT3McpExtension,
   resolvePiLaunchArgs,
 } from "./mcpInjection.ts";
-import { PI_FILE_CHANGE_TOOLS } from "./mcpExtensionSource.ts";
+import { PI_FILE_CHANGE_TOOLS, T3_PI_MCP_CREDENTIAL_PATH_ENV } from "./mcpExtensionSource.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
 const PI_DRIVER_KIND = PI_PROVIDER;
@@ -441,7 +441,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       const scope = yield* Effect.scope;
       const cwd = input.runtimePolicy.cwd ?? host.paths.cwd;
       const mcpSession = yield* mcpSessions.read(input.threadId);
-      const provideCacheFs = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
+      const provideCacheFs = <A, E, R>(effect: Effect.Effect<A, E, R | FileSystem.FileSystem>) =>
         effect.pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.mapError(
@@ -468,6 +468,19 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         extensionPath,
         runtimeMode: input.runtimePolicy.runtimeMode,
       });
+      const credentialPath =
+        mcpSession === undefined
+          ? undefined
+          : `${yield* provideCacheFs(fileSystem.makeTempDirectoryScoped({ prefix: "t3-pi-mcp-" }))}/credential`;
+      let authorizationHeader = mcpSession?.authorizationHeader;
+      if (credentialPath !== undefined && authorizationHeader !== undefined) {
+        yield* provideCacheFs(
+          fileSystem.writeFileString(credentialPath, authorizationHeader, { mode: 0o600 }),
+        );
+        launch.env[T3_PI_MCP_CREDENTIAL_PATH_ENV] = credentialPath;
+      } else {
+        delete launch.env[T3_PI_MCP_CREDENTIAL_PATH_ENV];
+      }
       const scopedLaunch = yield* agentScope.wrap({
         command: options.settings.binaryPath || "pi",
         args: launch.args,
@@ -2461,6 +2474,25 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               turnInput.providerThread.nativeThreadRef?.nativeId
             ) {
               return yield* protocolError("Pi turn requested for a different native session");
+            }
+            if (credentialPath !== undefined) {
+              const current = yield* mcpSessions.read(turnInput.threadId);
+              if (current === undefined || current.providerInstanceId !== options.instanceId) {
+                return yield* protocolError("Pi turn has no current MCP credential");
+              }
+              if (current.authorizationHeader !== authorizationHeader) {
+                yield* fileSystem.writeFileString(credentialPath, current.authorizationHeader).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapter.ProviderAdapterProtocolError({
+                        driver: PI_PROVIDER,
+                        cause,
+                        detail: "Could not refresh Pi MCP credential",
+                      }),
+                  ),
+                );
+                authorizationHeader = current.authorizationHeader;
+              }
             }
             // Fork adoption uses the orchestrator-allocated row; preserve that identity in later updates.
             const continuation =

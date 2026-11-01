@@ -1574,7 +1574,7 @@ describe("PiAdapterV2", () => {
         browserToolsAvailable: true,
       });
       const fake = yield* makeFakePi;
-      yield* openRuntime(fake);
+      const { runtime } = yield* openRuntime(fake);
       const spawn = fake.lastSpawn();
       assert.isTrue(spawn.args.includes("--extension"));
       const extensions = spawn.args.flatMap((arg, index) =>
@@ -1585,6 +1585,21 @@ describe("PiAdapterV2", () => {
       assert.equal(spawn.env.T3_MCP_URL, "http://127.0.0.1:43123/mcp");
       assert.equal(spawn.env.T3_MCP_BEARER_TOKEN, "secret-pi-token");
       assert.equal(spawn.env.T3_PI_RUNTIME_MODE, "full-access");
+      const credentialPath = spawn.env.T3_PI_MCP_CREDENTIAL_PATH;
+      assert.isDefined(credentialPath);
+      const fileSystem = yield* FileSystem.FileSystem;
+      assert.equal(yield* fileSystem.readFileString(credentialPath!), "Bearer secret-pi-token");
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const config = yield* mcpSessions.read(THREAD_ID);
+      yield* mcpSessions.set({ ...config!, authorizationHeader: "Bearer reclaimed-pi-token" });
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      assert.equal(yield* fileSystem.readFileString(credentialPath!), "Bearer reclaimed-pi-token");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
