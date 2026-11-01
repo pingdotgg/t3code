@@ -550,7 +550,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   }
   if (servicePlan?.handedOff === true) {
     yield* Console.log(
-      `  Background service switching to ${targetVersion} from a separate systemd unit, since this session runs inside it and disconnects when it restarts. Result: ${servicePlan.logPath}`,
+      `  Background service switching to ${targetVersion} from outside the service, since this session runs inside it and disconnects when it restarts. Result: ${servicePlan.logPath}`,
     );
   } else if (servicePlan !== undefined && restartService) {
     yield* Console.log(`  Background service restarted on ${targetVersion}`);

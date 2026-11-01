@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Random from "effect/Random";
 import { HttpClient } from "effect/http";
 import * as Schema from "effect/Schema";
 
@@ -40,6 +41,7 @@ export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 // (com.t3tools.t3code), so launchd and TCC records never collide.
 export const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
 export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
+const BOOT_SERVICE_HANDOFF_LABEL = `${BOOT_SERVICE_LAUNCHD_LABEL}.handoff`;
 const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 export const BOOT_SERVICE_LOG_FILE = "boot-service.log";
 
@@ -186,6 +188,57 @@ export function renderBootServicePlist(
   ].join("\n");
 }
 
+/**
+ * A one-shot job outside the service's job, so stopping the service does not kill it. It omits
+ * the service marker, so its CLI acts as if run from a terminal. No KeepAlive: it runs once.
+ */
+function renderBootServiceHandoffPlist(
+  label: string,
+  command: ReadonlyArray<string>,
+  options: { readonly homeDir: string; readonly environmentPath: string; readonly logPath: string },
+): string {
+  return [
+    `<?xml version="1.0" encoding="UTF-8"?>`,
+    `<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">`,
+    `<plist version="1.0">`,
+    `<dict>`,
+    `  <key>Label</key>`,
+    `  <string>${escapeXmlText(label)}</string>`,
+    `  <key>ProgramArguments</key>`,
+    `  <array>`,
+    ...command.map((argument) => `    <string>${escapeXmlText(argument)}</string>`),
+    `  </array>`,
+    `  <key>EnvironmentVariables</key>`,
+    `  <dict>`,
+    `    <key>PATH</key>`,
+    `    <string>${escapeXmlText(options.environmentPath)}</string>`,
+    `    <key>HOME</key>`,
+    `    <string>${escapeXmlText(options.homeDir)}</string>`,
+    `  </dict>`,
+    `  <key>RunAtLoad</key>`,
+    `  <true/>`,
+    `  <key>StandardOutPath</key>`,
+    `  <string>${escapeXmlText(options.logPath)}</string>`,
+    `  <key>StandardErrorPath</key>`,
+    `  <string>${escapeXmlText(options.logPath)}</string>`,
+    `</dict>`,
+    `</plist>`,
+    ``,
+  ].join("\n");
+}
+
+const quoteShellArgument = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+
+/** Runs steps in order, stopping at the first required failure. */
+function shellScriptOf(steps: ReadonlyArray<BootServiceStep>): string {
+  return steps
+    .map((entry) => {
+      const command = [entry.command, ...entry.args].map(quoteShellArgument).join(" ");
+      return entry.optional === true ? `{ ${command} || true; }` : command;
+    })
+    .join(" && ");
+}
+
 export interface BootServiceStep {
   readonly step: string;
   readonly command: string;
@@ -205,10 +258,29 @@ export interface BootServiceManager {
   readonly stop: ReadonlyArray<BootServiceStep>;
   readonly activate: ReadonlyArray<BootServiceStep>;
   readonly restart: ReadonlyArray<BootServiceStep>;
-  /** Queue a restart owned by the manager, since stopping would kill the caller. */
-  readonly handoff?: ReadonlyArray<BootServiceStep>;
+  /**
+   * From inside the service, stopping it kills the caller, so the manager runs the work from
+   * outside: `install` runs the given install command, `restart` queues a restart. `id` is unique
+   * per call, so concurrent handoffs never replace each other.
+   */
+  readonly handoff: {
+    readonly install: (
+      command: BootServiceCommand,
+      plan: BootServicePlan,
+      id: string,
+    ) => BootServiceHandoff;
+    readonly restart: (plan: BootServicePlan, id: string) => BootServiceHandoff;
+  };
   readonly deactivate: ReadonlyArray<BootServiceStep>;
   readonly finalize: ReadonlyArray<BootServiceStep>;
+}
+
+type BootServiceCommand = readonly [executable: string, ...args: ReadonlyArray<string>];
+
+interface BootServiceHandoff {
+  /** Written before the steps run and removed after them. */
+  readonly file?: { readonly path: string; readonly contents: string };
+  readonly steps: ReadonlyArray<BootServiceStep>;
 }
 
 function systemdManager(input: {
@@ -261,14 +333,40 @@ function systemdManager(input: {
         args: ["--user", "restart", BOOT_SERVICE_UNIT_FILE],
       },
     ],
-    handoff: [
-      ...prepareActivation,
-      {
-        step: "restarting the service",
-        command: "systemctl",
-        args: ["--user", "restart", "--no-block", BOOT_SERVICE_UNIT_FILE],
-      },
-    ],
+    handoff: {
+      // A transient unit runs the same install from outside, stop first, so it
+      // still serialises with a remote update the launcher may be starting.
+      install: ([executable, ...args], plan) => ({
+        steps: [
+          {
+            step: "handing the install to a transient unit",
+            command: "systemd-run",
+            args: [
+              "--user",
+              "--collect",
+              "--quiet",
+              // Transient properties reach systemd literally, unlike unit-file specifiers.
+              `--property=StandardOutput=append:${plan.logPath}`,
+              `--property=StandardError=append:${plan.logPath}`,
+              `--setenv=${BOOT_SERVICE_UNIT_ENV}=`,
+              executable,
+              // systemd expands $VAR in arguments (not in the executable path).
+              ...args.map((argument) => argument.replaceAll("$", () => "$$")),
+            ],
+          },
+        ],
+      }),
+      restart: () => ({
+        steps: [
+          ...prepareActivation,
+          {
+            step: "restarting the service",
+            command: "systemctl",
+            args: ["--user", "restart", "--no-block", BOOT_SERVICE_UNIT_FILE],
+          },
+        ],
+      }),
+    },
     deactivate: [
       {
         step: "stopping the service",
@@ -301,6 +399,56 @@ function launchdManager(input: {
   );
   const domainTarget = `gui/${input.uid}`;
   const serviceTarget = `${domainTarget}/${BOOT_SERVICE_LAUNCHD_LABEL}`;
+  // bootout --wait is undocumented but waits through ExitTimeOut, preventing bootstrap EIO races.
+  const stop: ReadonlyArray<BootServiceStep> = [
+    {
+      step: "stopping the installed launch agent",
+      command: "launchctl",
+      args: ["bootout", "--wait", serviceTarget],
+      optional: true,
+      timeout: STOP_STEP_TIMEOUT,
+    },
+  ];
+  const activate: ReadonlyArray<BootServiceStep> = [
+    // A persisted `launchctl disable` override refuses bootstrap; clear it.
+    {
+      step: "enabling the launch agent",
+      command: "launchctl",
+      args: ["enable", serviceTarget],
+      optional: true,
+    },
+    {
+      step: "starting the service",
+      command: "launchctl",
+      args: ["bootstrap", domainTarget, unitPath],
+    },
+  ];
+  // launchd reads the plist at bootstrap, so it can go once loaded; outside LaunchAgents it never runs at login.
+  const handoff = (
+    command: BootServiceCommand,
+    plan: BootServicePlan,
+    id: string,
+  ): BootServiceHandoff => {
+    const label = `${BOOT_SERVICE_HANDOFF_LABEL}.${id}`;
+    const jobPath = input.path.join(plan.baseDir, "runtime", `${label}.plist`);
+    return {
+      file: {
+        path: jobPath,
+        contents: renderBootServiceHandoffPlist(label, command, {
+          homeDir: input.homeDir,
+          environmentPath: input.environmentPath,
+          logPath: plan.logPath,
+        }),
+      },
+      steps: [
+        {
+          step: "handing the work to a launchd job",
+          command: "launchctl",
+          args: ["bootstrap", domainTarget, jobPath],
+        },
+      ],
+    };
+  };
   // Unloaded jobs may reject bootout/enable. Bootstrap starts RunAtLoad/KeepAlive jobs; kickstart would restart them.
   return {
     kind: "launchd",
@@ -310,30 +458,8 @@ function launchdManager(input: {
         homeDir: input.homeDir,
         environmentPath: input.environmentPath,
       }),
-    // bootout --wait is undocumented but waits through ExitTimeOut, preventing bootstrap EIO races.
-    stop: [
-      {
-        step: "stopping the installed launch agent",
-        command: "launchctl",
-        args: ["bootout", "--wait", serviceTarget],
-        optional: true,
-        timeout: STOP_STEP_TIMEOUT,
-      },
-    ],
-    activate: [
-      // A persisted `launchctl disable` override refuses bootstrap; clear it.
-      {
-        step: "enabling the launch agent",
-        command: "launchctl",
-        args: ["enable", serviceTarget],
-        optional: true,
-      },
-      {
-        step: "starting the service",
-        command: "launchctl",
-        args: ["bootstrap", domainTarget, unitPath],
-      },
-    ],
+    stop,
+    activate,
     restart: [
       {
         step: "restarting the service after a failed update",
@@ -341,6 +467,13 @@ function launchdManager(input: {
         args: ["bootstrap", domainTarget, unitPath],
       },
     ],
+    // `kickstart -k` would neither reload a rewritten plist nor spare the caller, and the installed
+    // runtime may predate any CLI, so the job runs this manager's own stop and start.
+    handoff: {
+      install: handoff,
+      restart: (plan, id) =>
+        handoff(["/bin/sh", "-c", shellScriptOf([...stop, ...activate])], plan, id),
+    },
     // Persisted launchctl disable overrides would block reinstall.
     deactivate: [
       {
@@ -537,9 +670,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   );
   const homeDir = yield* Config.String("HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
-  const runningInsideService =
-    (yield* Config.String(BOOT_SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
-    BOOT_SERVICE_UNIT_FILE;
+  const serviceMarker = yield* Config.String(BOOT_SERVICE_UNIT_ENV).pipe(Config.withDefault(""));
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
@@ -581,6 +712,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     environmentPath,
   });
   const unitPath = detectedManager?.unitPath ?? "";
+  // Each manager's unit sets the marker to its own file name.
+  const runningInsideService = unitPath !== "" && serviceMarker === path.basename(unitPath);
   const logPath = path.join(input.logsDir, BOOT_SERVICE_LOG_FILE);
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
@@ -665,6 +798,21 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     runner.run({ command, args, timeout: Duration.seconds(5) }).pipe(Effect.option);
   const succeeded = (result: Option.Option<ProcessRunner.ProcessRunOutput>) =>
     Option.isSome(result) && result.value.code === 0;
+
+  const runHandoff = Effect.fn("cloud.boot_service.run_handoff")(function* (
+    handoff: BootServiceHandoff,
+  ) {
+    const file = handoff.file;
+    if (file === undefined) return yield* runSteps(handoff.steps);
+    yield* writeDurably(file.path, file.contents).pipe(Effect.tapError(logFailure));
+    yield* runSteps(handoff.steps).pipe(
+      Effect.ensuring(fs.remove(file.path, { force: true }).pipe(Effect.ignore)),
+    );
+  });
+  const handoffId = Random.nextIntBetween(0, Number.MAX_SAFE_INTEGER).pipe(
+    Effect.map((value) => value.toString(36)),
+  );
+
   const lingerArgs = [
     "show-user",
     ...(uid === undefined ? [] : [String(uid)]),
@@ -792,26 +940,22 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // With start=false, changing startup-only files is safe except during a remote update,
     // when the launcher also writes its state file.
     const start = options?.start !== false;
-    if (installed && start && runningInsideService && manager.kind === "systemd") {
-      // Stopping the unit from inside it kills this process before the start.
-      // A transient unit runs the same install from outside, stop first, so it
-      // still serialises with a remote update the launcher may be starting.
-      yield* runStep("handing the install to a transient unit", "systemd-run", [
-        "--user",
-        "--collect",
-        "--quiet",
-        // Transient properties reach systemd literally, unlike unit-file specifiers.
-        `--property=StandardOutput=append:${logPath}`,
-        `--property=StandardError=append:${logPath}`,
-        `--setenv=${BOOT_SERVICE_UNIT_ENV}=`,
-        runtimePaths.entryPath,
-        "service",
-        "install",
-        "--base-dir",
-        // systemd expands $VAR in arguments (not in the executable path).
-        input.baseDir.replaceAll("$", () => "$$"),
-        ...(options?.allowDowngrade === true ? ["--allow-downgrade"] : []),
-      ]);
+    if (installed && start && runningInsideService) {
+      // Stopping the service from inside it kills this process before the start.
+      yield* runHandoff(
+        manager.handoff.install(
+          [
+            runtimePaths.entryPath,
+            "service",
+            "install",
+            "--base-dir",
+            input.baseDir,
+            ...(options?.allowDowngrade === true ? ["--allow-downgrade"] : []),
+          ],
+          plan,
+          yield* handoffId,
+        ),
+      );
       return { ...plan, handedOff: true };
     }
     if (installed && start) {
@@ -893,8 +1037,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     }
     // Writes no state, and the launcher lets an update transition in flight
     // finish before the queued stop tears it down.
-    if (runningInsideService && manager.handoff !== undefined) {
-      yield* runSteps(manager.handoff);
+    if (runningInsideService) {
+      yield* runHandoff(manager.handoff.restart(plan, yield* handoffId));
       return "queued" as const;
     }
     yield* runSteps(manager.stop);

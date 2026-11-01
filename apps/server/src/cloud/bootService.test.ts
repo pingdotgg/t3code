@@ -103,6 +103,8 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
 
   const commands: string[] = [];
   const invocations: ProcessRunner.ProcessRunInput[] = [];
+  // launchd reads a plist at bootstrap; the handoff removes its own afterwards.
+  const handoffJobs: string[] = [];
   const timeouts = new Map<string, unknown>();
   const control: {
     failCommand: string | undefined;
@@ -123,6 +125,10 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       const command = `${input.command} ${input.args.join(" ")}`;
       commands.push(command);
       invocations.push(input);
+      const bootstrapped = input.command === "launchctl" ? input.args[2] : undefined;
+      if (input.args[0] === "bootstrap" && bootstrapped?.includes(".handoff.") === true) {
+        handoffJobs.push(yield* fs.readFileString(bootstrapped).pipe(Effect.orDie));
+      }
       timeouts.set(command, input.timeout);
       const failed = command === control.failCommand;
       if (!failed && command === "loginctl enable-linger --no-ask-password 501")
@@ -201,7 +207,14 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                 ...(environmentPath === undefined || environmentPath === ""
                   ? {}
                   : { PATH: environmentPath }),
-                ...(insideService ? { T3_BOOT_SERVICE_UNIT: "t3code.service" } : {}),
+                ...(insideService
+                  ? {
+                      T3_BOOT_SERVICE_UNIT:
+                        platform === "darwin"
+                          ? BootService.BOOT_SERVICE_PLIST_FILE
+                          : BootService.BOOT_SERVICE_UNIT_FILE,
+                    }
+                  : {}),
               },
             }),
           ),
@@ -217,6 +230,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     statePath,
     commands,
     invocations,
+    handoffJobs,
     timeouts,
     control,
     runtime,
@@ -904,6 +918,79 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(commands).toContain(bootstrap);
       expect(yield* fs.exists(markerPath)).toBe(false);
       expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
+  const stopsRunningLaunchAgent = (command: string) =>
+    /^launchctl (bootout|kill|stop|remove|unload)\b.*\bcom\.t3tools\.t3code\.service(\.plist)?$/.test(
+      command,
+    );
+
+  // regression: #28552 booting out the agent from inside it kills the caller before bootstrap
+  it.effect("hands an in-service install to launchd without booting out the running agent", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, commands, handoffJobs, makeService } =
+        yield* makeHarness("darwin");
+      const plan = yield* service.install();
+      const state = yield* fs.readFileString(statePath);
+      const plist = yield* fs.readFileString(plan.unitPath);
+      const inside = yield* makeService(undefined, "1.2.4", undefined, true);
+      commands.length = 0;
+
+      const result = yield* inside.install();
+
+      expect(commands.filter(stopsRunningLaunchAgent)).toEqual([]);
+      expect(result).toMatchObject({ handedOff: true });
+      expect(yield* fs.readFileString(statePath)).toBe(state);
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(plist);
+      // The job runs the target CLI's install as if from a terminal, so it cannot hand off again.
+      expect(handoffJobs).toHaveLength(1);
+      expect(handoffJobs[0]).toContain(
+        [result.program[0], "service", "install", "--base-dir", plan.baseDir]
+          .map((argument) => `    <string>${argument}</string>`)
+          .join("\n"),
+      );
+      expect(handoffJobs[0]).not.toContain("T3_BOOT_SERVICE_UNIT");
+    }),
+  );
+
+  // regression: #28552
+  it.effect("queues an in-service restart on macOS without booting out the running agent", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, commands, handoffJobs, makeService } =
+        yield* makeHarness("darwin");
+      const plan = yield* service.install();
+      const state = yield* fs.readFileString(statePath);
+      const plist = yield* fs.readFileString(plan.unitPath);
+      const inside = yield* makeService(undefined, "1.2.3", undefined, true);
+      commands.length = 0;
+
+      const outcome = yield* inside.restart;
+      yield* inside.restart;
+
+      expect(commands.filter(stopsRunningLaunchAgent)).toEqual([]);
+      expect(outcome).toBe("queued");
+      expect(yield* fs.readFileString(statePath)).toBe(state);
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(plist);
+
+      // Each restart loads its own one-shot job, so a second never unloads the first.
+      expect(commands.filter((command) => command.startsWith("launchctl bootout"))).toEqual([]);
+      const labels = handoffJobs.map((job) => /<key>Label<\/key>\s*<string>([^<]*)/.exec(job)?.[1]);
+      expect(new Set(labels).size).toBe(2);
+      // The job runs launchd's own stop and start, whatever runtime the plist names.
+      const job = handoffJobs[0]!;
+      expect(job).toContain("<string>/bin/sh</string>");
+      expect(job).toContain(
+        `{ 'launchctl' 'bootout' '--wait' 'gui/501/com.t3tools.t3code.service' || true; }`,
+      );
+      expect(job).toContain(`'launchctl' 'bootstrap' 'gui/501' '${plan.unitPath}'`);
+      expect(job).not.toContain("T3_BOOT_SERVICE_UNIT");
+      expect(job).not.toContain("KeepAlive");
+      expect(
+        (yield* fs.readDirectory(`${plan.baseDir}/runtime`)).filter((name) =>
+          name.includes(".handoff."),
+        ),
+      ).toEqual([]);
     }),
   );
 });
