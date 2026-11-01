@@ -1441,6 +1441,51 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  it.live("re-reads full Cursor account history over a cache the empty-usage reader wrote", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* writeCursorLogin(home);
+      yield* TestClock.setTime(CURSOR_NOW);
+      const cursor = makeFakeCursor();
+      cursor.state.events = [{ timestampMs: CURSOR_NOW - 30 * HOUR_MS, outputTokens: 5 }];
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const lastRefreshMs = CURSOR_NOW - 10 * 60 * 1000;
+        // As stored by releases whose reader took Cursor's `{}` answer for an empty history.
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(stateDir, { recursive: true });
+          await NodeFSP.writeFile(
+            NodePath.join(stateDir, "usage-cursor-account-cache-v1.json"),
+            JSON.stringify({
+              version: 1,
+              strings: [],
+              accounts: {
+                [NodePath.join(home, "config", "cursor", "auth.json")]: {
+                  accountKey: cursor.state.accountKey,
+                  sinceMs: lastRefreshMs - 92 * 24 * HOUR_MS,
+                  untilMs: lastRefreshMs,
+                  fetchedAtMs: lastRefreshMs,
+                  records: [],
+                },
+              },
+            }),
+          );
+        });
+        const service = yield* makeWithCursor(cursor.read);
+        const summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.strictEqual(
+          totalOutputTokens(summary),
+          5,
+          `Cursor history older than the stale cache was not re-read: ${JSON.stringify(cursor.state.calls)}`,
+        );
+      }).pipe(
+        Effect.provide(
+          layerService({ prefix: "usage-service-cursor-stale-cache", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.live("does not read the macOS Cursor Keychain before account usage is enabled", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
