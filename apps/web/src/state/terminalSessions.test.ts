@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId, type TerminalSummary } from "@t3tools/contracts";
 import { selectRunningSubprocessTerminalIds } from "@t3tools/client-runtime/state/terminal";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { AsyncResult, AtomRegistry } from "effect/reactivity";
 
 import {
@@ -133,6 +135,10 @@ describe("knownTerminalSessionsAtom", () => {
 
     registry.set(metadataAtom, metadataResult({ ...first, label: "Renamed" }, other));
     expect(notified).toHaveLength(1);
+
+    const previousSuccess = Option.some(metadataResult(first));
+    registry.set(metadataAtom, AsyncResult.failure(Cause.die("unavailable"), { previousSuccess }));
+    expect(registry.get(sessions)).toBeNull();
     unsubscribe();
   });
 });
