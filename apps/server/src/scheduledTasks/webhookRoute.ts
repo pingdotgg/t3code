@@ -20,8 +20,16 @@ export const WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 // The relay records this outcome header.
 const WEBHOOK_OUTCOME_HEADER = "x-t3-hook-outcome";
 
-const json = (status: number, body: Record<string, string>, outcome: string) =>
-  HttpServerResponse.jsonUnsafe(body, { status, headers: { [WEBHOOK_OUTCOME_HEADER]: outcome } });
+const json = (
+  status: number,
+  body: Record<string, string>,
+  outcome: string,
+  headers?: Record<string, string>,
+) =>
+  HttpServerResponse.jsonUnsafe(body, {
+    status,
+    headers: { ...headers, [WEBHOOK_OUTCOME_HEADER]: outcome },
+  });
 
 export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -41,6 +49,12 @@ export const layer = HttpApiBuilder.group(
       readonly params: { readonly hookId: string; readonly token: string };
       readonly request: HttpServerRequest.HttpServerRequest;
     }) {
+      // The router answers HEAD with the GET route; link checkers probe with HEAD.
+      if (request.method === "HEAD") {
+        return json(405, { error: "method_not_allowed" }, "method_not_allowed", {
+          allow: "GET, POST, PUT, PATCH",
+        });
+      }
       const contentLength = Number(request.headers["content-length"] ?? "0");
       if (!Number.isFinite(contentLength) || contentLength > WEBHOOK_MAX_BODY_BYTES) {
         return json(413, { error: "body_too_large" }, "body_too_large");

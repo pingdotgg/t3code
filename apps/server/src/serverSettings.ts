@@ -8,7 +8,6 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceMutation,
   defaultInstanceIdForDriver,
-  isKnownSecretProviderKind,
   isProviderDriverKind,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -55,6 +54,7 @@ import {
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
+import { secretProviderDefinitions } from "./secrets/secretProviderDefinitions.ts";
 import {
   readSecretFieldValues,
   sourceControlHostSecretName,
@@ -146,7 +146,7 @@ function withoutUnknownSecretProviderConfigs(
 ): ServerSettings["secretProviders"] {
   return Object.fromEntries(
     Object.entries(settings.secretProviders).map(([id, entry]) => {
-      if (isKnownSecretProviderKind(entry.kind)) return [id, entry];
+      if (secretProviderConfigGuards.has(entry.kind)) return [id, entry];
       const { config: _config, ...envelope } = entry;
       return [id, envelope];
     }),
@@ -164,6 +164,40 @@ export function applyProviderInstanceMutation(
     delete providerInstances[mutation.instanceId];
   }
   return { ...settings, providerInstances };
+}
+
+const secretProviderConfigGuards = new Map(
+  secretProviderDefinitions.definitions.map((definition) => [
+    definition.kind as string,
+    Schema.is(definition.configSchema),
+  ]),
+);
+
+// Rejects a kind this server has not loaded rather than storing a config it cannot check.
+function ensureSecretProviderWritesAllowed(
+  patch: ServerSettingsPatch,
+  settingsPath: string,
+): Effect.Effect<void, ServerSettingsError> {
+  for (const [id, entry] of Object.entries(patch.secretProviders ?? {})) {
+    if (entry === null) continue;
+    const isConfig = secretProviderConfigGuards.get(entry.kind);
+    const problem =
+      isConfig === undefined
+        ? `Unsupported secret provider kind: ${entry.kind}.`
+        : isConfig(entry.config)
+          ? undefined
+          : `Invalid ${entry.kind} config for secret provider ${id}.`;
+    if (problem !== undefined) {
+      return Effect.fail(
+        new ServerSettingsError({
+          settingsPath,
+          operation: "write-secret-provider",
+          cause: new Error(problem),
+        }),
+      );
+    }
+  }
+  return Effect.void;
 }
 
 function ensureProviderInstanceMutationAllowed(
@@ -1274,11 +1308,14 @@ const make = Effect.gen(function* () {
     getSettings: getMaterializedSettings,
     updateSettings: (patch) =>
       updateAndPersistSettings(patch, (current) =>
-        Effect.succeed(applyServerSettingsPatch(current, patch)),
+        ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(
+          Effect.as(applyServerSettingsPatch(current, patch)),
+        ),
       ),
     updateProviderInstance: (mutation, patch = {}) =>
       updateAndPersistSettings(patch, (current) =>
         Effect.gen(function* () {
+          yield* ensureSecretProviderWritesAllowed(patch, settingsPath);
           yield* ensureProviderInstanceMutationAllowed(current, mutation, settingsPath);
           const patched = applyServerSettingsPatch(current, patch);
           return applyProviderInstanceMutation(patched, mutation);

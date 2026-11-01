@@ -270,6 +270,9 @@ const make = Effect.gen(function* () {
             });
           }
           const driver = ProviderDriverKind.make(thread.source);
+          // Pi resumes by session file path; its session UUID only names the thread.
+          const nativeThreadId =
+            thread.source === "pi" ? source.filePath : thread.providerSessionId;
           const persistRuntime = runtimes.upsert(
             {
               threadId,
@@ -280,9 +283,9 @@ const make = Effect.gen(function* () {
               status: "stopped",
               lastSeenAt: thread.updatedAt,
               resumeCursor:
-                thread.source === "codex"
-                  ? { threadId: thread.providerSessionId }
-                  : { threadId, resume: thread.providerSessionId },
+                thread.source === "claudeAgent"
+                  ? { threadId, resume: thread.providerSessionId }
+                  : { threadId: nativeThreadId },
               runtimePayload: { cwd: project.workspaceRoot },
             },
             { onConflict: "ignore" },
@@ -308,7 +311,7 @@ const make = Effect.gen(function* () {
           const providerThreadId = idAllocator.derive.providerThread({
             driver,
             providerInstanceId: thread.providerInstanceId,
-            nativeThreadId: thread.providerSessionId,
+            nativeThreadId,
           });
           const createdAt = dateTime(thread.createdAt);
           const updatedAt = dateTime(thread.updatedAt);
@@ -357,7 +360,7 @@ const make = Effect.gen(function* () {
             ownerNodeId: null,
             nativeThreadRef: {
               driver,
-              nativeId: thread.providerSessionId,
+              nativeId: nativeThreadId,
               strength: "strong",
             },
             nativeConversationHeadRef: null,
@@ -382,6 +385,34 @@ const make = Effect.gen(function* () {
                 occurredAt: createdAt,
                 payload: appThread,
               },
+              ...(thread.omittedMessageCount > 0
+                ? [
+                    {
+                      id: EventId.make(`${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`),
+                      type: "turn-item.updated" as const,
+                      threadId,
+                      occurredAt: createdAt,
+                      payload: {
+                        id: TurnItemId.make(`${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`),
+                        threadId,
+                        runId: null,
+                        nodeId: null,
+                        providerThreadId: null,
+                        providerTurnId: null,
+                        nativeItemRef: null,
+                        parentItemId: null,
+                        ordinal: 0,
+                        status: "completed" as const,
+                        title: null,
+                        startedAt: createdAt,
+                        completedAt: createdAt,
+                        updatedAt: createdAt,
+                        type: "system_notice" as const,
+                        message: `${thread.omittedMessageCount} earlier ${thread.omittedMessageCount === 1 ? "message was" : "messages were"} not imported. This thread keeps the first user message and the most recent history. The original session transcript is unchanged.`,
+                      },
+                    },
+                  ]
+                : []),
               ...thread.messages.flatMap((message, index) =>
                 messageEvents({ threadId, index, message }),
               ),
