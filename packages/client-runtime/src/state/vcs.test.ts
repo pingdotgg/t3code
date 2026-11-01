@@ -672,7 +672,7 @@ describe("resolveQuickAction", () => {
       kind: "run_action",
       action: "create_pr",
     });
-    expect(resolveQuickAction({ ...pushed, refName: "main" }, false, true)).toMatchObject({
+    expect(resolveQuickAction(pushed, false, true)).toMatchObject({
       kind: "show_hint",
       hint: "Branch is up to date. No action needed.",
     });
