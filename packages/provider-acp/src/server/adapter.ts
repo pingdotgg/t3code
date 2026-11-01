@@ -489,6 +489,8 @@ export interface AcpAdapterV2Flavor {
   readonly normalizeToolCall?: (toolCall: AcpToolCallState) => AcpToolCallState;
   readonly extractProposedPlanMarkdown?: (toolCall: AcpToolCallState) => string | undefined;
   readonly extractBackgroundTaskId?: (toolCall: AcpToolCallState) => string | undefined;
+  /** Tracked tools include ordinary foreground tools, so agent output around them is not ack chatter. */
+  readonly backgroundTasksIncludeForegroundTools?: boolean;
   /** Distinguishes commands from monitors when lifecycle notifications omit their kind. */
   readonly isBackgroundCommandTool?: (toolCall: AcpToolCallState) => boolean;
   readonly extractBackgroundToolMutation?: (text: string) => ReadonlyArray<{
@@ -3716,6 +3718,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const status = toolStatus(tool.status);
             if (status === "pending" || status === "running") return true;
           }
+          if (flavor.subagentsIdleOnTurnCompletion === true) return false;
           for (const subagent of context.subagents.values()) {
             if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) {
               return true;
@@ -3859,6 +3862,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               backgroundStatus === "pending" || backgroundStatus === "running",
             );
             if (
+              flavor.backgroundTasksIncludeForegroundTools !== true &&
               !context.promptSettled &&
               backgroundStatus !== "pending" &&
               backgroundStatus !== "running"
@@ -4728,7 +4732,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
             }
           }
-          const backgroundWorkRunning = (yield* Ref.get(runningBackgroundTaskIds)).size > 0;
+          // A woken agent's own running tool is its work, not a monitor it acknowledges.
+          const backgroundWorkRunning =
+            flavor.backgroundTasksIncludeForegroundTools !== true &&
+            (yield* Ref.get(runningBackgroundTaskIds)).size > 0;
           const handledInTurnCount = (yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).size;
           const isInTurnHandledAgentChatter =
             handledInTurnCount > 0 &&
