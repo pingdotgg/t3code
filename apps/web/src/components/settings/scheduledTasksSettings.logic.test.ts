@@ -390,8 +390,10 @@ describe("schedule timezone labels", () => {
     expect(scheduleTimeZoneLabel("Etc/UTC")).toBe("UTC");
     expect(scheduleTimeZoneLabel("UTC")).toBe("UTC");
     const losAngeles = scheduleTimeZoneLabel("America/Los_Angeles");
-    expect(losAngeles).toMatch(/^(P[DS]T|GMT-([78]|0[78](:00)?))$/);
+    expect(losAngeles).toMatch(/^(PT|Los Angeles Time)$/);
     expect(losAngeles).not.toContain("America/");
+    expect(scheduleTimeZoneLabel("America/Los_Angeles", "2027-01-15T17:00:00Z")).toBe("PST");
+    expect(scheduleTimeZoneLabel("America/Los_Angeles", "2027-07-15T16:00:00Z")).toBe("PDT");
     const kolkata = scheduleTimeZoneLabel("Asia/Kolkata");
     expect(kolkata === "IST" || kolkata?.startsWith("GMT+") === true).toBe(true);
     expect(kolkata).not.toContain("Asia/");

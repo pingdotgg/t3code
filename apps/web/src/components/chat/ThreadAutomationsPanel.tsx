@@ -40,7 +40,7 @@ const STATUS_DOT_CLASS: Record<ScheduledTask["lastRunStatus"], string> = {
 function taskScheduleLine(task: ScheduledTask, timeZone: string | undefined) {
   return (
     <>
-      {scheduleLabel(task.schedule, timeZone)}
+      {scheduleLabel(task.schedule, timeZone, task.nextRunAt)}
       {task.enabled && task.nextRunAt !== null ? (
         <>
           {" · next "}

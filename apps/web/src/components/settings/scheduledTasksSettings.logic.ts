@@ -30,13 +30,20 @@ import type { ResolvedSettingsScope } from "./settingsScope";
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
-export function scheduleTimeZoneLabel(timeZone: string | undefined): string | undefined {
+export function scheduleTimeZoneLabel(
+  timeZone: string | undefined,
+  runAt?: string | null,
+): string | undefined {
   if (timeZone === undefined) return undefined;
   if (timeZone === "Etc/UTC" || timeZone === "UTC" || timeZone === "GMT") return "UTC";
   try {
-    return new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "short" })
-      .formatToParts(new Date())
-      .find((part) => part.type === "timeZoneName")?.value;
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      timeZoneName: runAt ? "short" : "shortGeneric",
+    })
+      .format(runAt ? new Date(runAt) : new Date())
+      .split(", ")
+      .at(-1);
   } catch {
     return undefined;
   }
@@ -47,7 +54,11 @@ const ONCE_FORMATTER = new Intl.DateTimeFormat(undefined, {
   timeStyle: "short",
 });
 
-export function scheduleLabel(schedule: ScheduledTaskSchedule, timeZone?: string): string {
+export function scheduleLabel(
+  schedule: ScheduledTaskSchedule,
+  timeZone?: string,
+  runAt?: string | null,
+): string {
   if (schedule.type === "webhook") return "On webhook";
   if (schedule.type === "once") return `Once, ${ONCE_FORMATTER.format(new Date(schedule.runAt))}`;
   if (schedule.type === "interval") {
@@ -63,7 +74,7 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule, timeZone?: string
       : weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)
         ? "Weekdays"
         : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
-  const zone = scheduleTimeZoneLabel(timeZone);
+  const zone = scheduleTimeZoneLabel(timeZone, runAt);
   return `${days} at ${schedule.timeOfDay}${zone === undefined ? "" : ` ${zone}`}`;
 }
 

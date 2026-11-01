@@ -107,13 +107,20 @@ const DAYS = [
   { index: 0, label: "Sun" },
 ] as const;
 
-function scheduleTimeZoneLabel(timeZone: string | undefined): string | undefined {
+function scheduleTimeZoneLabel(
+  timeZone: string | undefined,
+  runAt?: string | null,
+): string | undefined {
   if (timeZone === undefined) return undefined;
   if (timeZone === "Etc/UTC" || timeZone === "UTC" || timeZone === "GMT") return "UTC";
   try {
-    return new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "short" })
-      .formatToParts(new Date())
-      .find((part) => part.type === "timeZoneName")?.value;
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      timeZoneName: runAt ? "short" : "shortGeneric",
+    })
+      .format(runAt ? new Date(runAt) : new Date())
+      .split(", ")
+      .at(-1);
   } catch {
     return undefined;
   }
@@ -127,7 +134,7 @@ function describeSchedule(task: ScheduledTask, timeZone?: string): string {
   }
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
   const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
-  const zone = scheduleTimeZoneLabel(timeZone);
+  const zone = scheduleTimeZoneLabel(timeZone, task.nextRunAt);
   return `${days} at ${formatTime(task.schedule.timeOfDay)}${zone === undefined ? "" : ` ${zone}`}`;
 }
 
