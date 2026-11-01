@@ -320,12 +320,12 @@ export const make = Effect.gen(function* () {
     (exit) => (exit._tag === "Failure" ? FAILED_SCAN_TTL : exit.value.ttl),
   );
   // A grant was seen, its account not yet known: no "no grants" stands from here, kept or
-  // from a scan running meanwhile.
+  // from a scan running meanwhile. A sign-in dropped partway still does all of it.
   const doubtNoGrants = Effect.gen(function* () {
     yield* Ref.update(grantsInDoubt, (count) => count + 1);
     yield* Ref.update(lastCleanScan, (last) => (last?.granted === false ? null : last));
     yield* rescanPolicy;
-  });
+  }).pipe(Effect.uninterruptible);
   /**
    * Why the owner rule is off, or null while it applies. It is off once the policy grants
    * T3 Code here or the operator says so, and while the policy cannot be read.
