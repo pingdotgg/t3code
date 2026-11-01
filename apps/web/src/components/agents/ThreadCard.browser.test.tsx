@@ -143,7 +143,7 @@ describe("agent card linked chats", () => {
     settled: [child("Settled worker", { settledAt: "2026-09-10T00:00:00Z" })],
   };
 
-  it("collapses children to status counts, then lists them needing input first", async () => {
+  it("collapses children to who is on them and their counts, then lists them", async () => {
     // The open state persists per device; start every run collapsed.
     localStorage.removeItem("t3code:sidebar:expanded-parents");
     await using screen = await renderCard(
@@ -161,12 +161,26 @@ describe("agent card linked chats", () => {
       [...container.querySelectorAll<HTMLButtonElement>(".agent-thread-children-toggle")].find(
         (candidate) => candidate.textContent?.startsWith(label),
       )!;
+    const avatars = () => [...container.querySelectorAll<HTMLAnchorElement>(".agent-child-avatar")];
     expect(summary.getAttribute("aria-expanded")).toBe("false");
     expect(summary.getAttribute("aria-label")).toBe(
-      "23 child chats: 1 need input, 1 running, 21 done",
+      "23 child chats: 1 needs input · 1 running · 21 done",
     );
-    expect(summary.textContent).toBe("1 need input121");
+    expect(summary.textContent).toBe("1 needs input · 1 running · 21 done");
     expect(titles()).toHaveLength(0);
+    // Most urgent first, capped at five, the rest as +N; none of them sit inside the toggle.
+    expect(avatars().map((avatar) => avatar.getAttribute("aria-label"))).toEqual([
+      "Cody · Waiting worker · Needs input",
+      "Cody · Running worker · In progress",
+      ...Array.from({ length: 3 }, (_, index) => `Cody · Finished worker ${index} · Done`),
+    ]);
+    expect(container.querySelector(".agent-child-avatars-more")?.textContent).toBe("+18");
+    expect(avatars().some((avatar) => summary.contains(avatar))).toBe(false);
+    await act(async () => avatars()[0]!.click());
+    expect(decodeURIComponent(screen.router!.state.location.pathname)).toBe(
+      `/agents/${parent.environmentId}/Waiting worker`,
+    );
+    expect(summary.getAttribute("aria-expanded")).toBe("false");
     await act(async () => summary.click());
     expect(summary.getAttribute("aria-expanded")).toBe("true");
     expect(titles().slice(0, 2)).toEqual(["Waiting worker", "Running worker"]);

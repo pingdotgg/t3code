@@ -41,3 +41,31 @@ export function agentChildStatusBucket(status: AgentThreadStatus): ChildStatusBu
       return "done";
   }
 }
+
+// Who-is-on-it order: what waits on the user first, then what broke, then live work.
+const URGENCY: Readonly<Record<ChildStatusBucket, number>> = {
+  needsInput: 0,
+  failed: 1,
+  running: 2,
+  waiting: 3,
+  done: 4,
+};
+
+/**
+ * The children a collapsed parent shows as avatars, most urgent first and
+ * newest first within a state, capped at `limit`. Children needing input or
+ * failed always show, even past the cap; the rest count as `overflow`.
+ */
+export function selectChildAvatars<
+  T extends { readonly bucket: ChildStatusBucket; readonly updatedAt: string },
+>(children: readonly T[], limit = 5): { readonly shown: readonly T[]; readonly overflow: number } {
+  const ordered = [...children].sort(
+    (left, right) =>
+      URGENCY[left.bucket] - URGENCY[right.bucket] || right.updatedAt.localeCompare(left.updatedAt),
+  );
+  const urgent = ordered.filter(
+    (child) => child.bucket === "needsInput" || child.bucket === "failed",
+  ).length;
+  const shown = ordered.slice(0, Math.max(limit, urgent));
+  return { shown, overflow: ordered.length - shown.length };
+}

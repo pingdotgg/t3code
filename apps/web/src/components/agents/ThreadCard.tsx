@@ -1,11 +1,11 @@
 import {
   agentChildStatusBucket,
   countChildStatusBuckets,
+  selectChildAvatars,
 } from "@t3tools/client-runtime/state/child-status-counts";
 import { toggleExpandedParent, useExpandedParentKeys } from "../../hooks/useExpandedParents";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { cn } from "../../lib/utils";
-import { ChildStatusCountIcons, childStatusCountsLabel } from "../ChildStatusCounts";
 import { formatRelativeTime } from "../../timestampFormat";
 import { ProviderPackageIcon } from "../chat/ProviderPackageIcon";
 import { PROVIDER_ICON_BY_PROVIDER } from "../chat/providerIconUtils";
@@ -41,6 +41,12 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { useProject } from "../../state/entities";
 import { resolveEnvironmentMachineKind, type McpGatewayProfile } from "@t3tools/contracts";
 import { AgentIcon } from "./AgentIcon";
+import {
+  AgentChildAvatarStack,
+  AgentChildSummaryText,
+  agentChildSummaryText,
+  type AgentChildAvatarEntry,
+} from "./AgentChildSummary";
 import { useEnvironment, useEnvironmentProviders } from "../../state/environments";
 import { AgentChatPreview } from "./AgentChatPreview";
 import { isInsideComposerFloatingLayer } from "../chat/composerEventScope";
@@ -48,6 +54,7 @@ import {
   agentThreadStatus,
   agentThreadStatusLabel,
   arrangeAgentChildRuns,
+  runAgentName,
   type AgentChildOrder,
   type AgentCardChildren,
   type AgentChildRun,
@@ -61,19 +68,6 @@ import {
 } from "../ThreadStatusIndicators";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import { useOpenPrLink } from "../../lib/openPullRequestLink";
-
-function runAgentName(
-  run: EnvironmentThreadShell,
-  profiles: readonly McpGatewayProfile[] | undefined,
-) {
-  const profile = profiles?.find(
-    (candidate) => candidate.profileId === run.profileSnapshot?.profileId,
-  );
-  return {
-    profile,
-    name: profile?.name ?? run.profileSnapshot?.profileName ?? "Chat",
-  };
-}
 
 interface ChildRunRowProps {
   child: AgentChildRun<EnvironmentThreadShell>;
@@ -168,26 +162,33 @@ function AgentChildRuns(props: {
   childPendingWork: ReadonlyMap<string, AgentRunPendingWork> | undefined;
   onContextMenu: AgentRunContextMenu;
 }) {
-  const { runs, anchorKey, childPendingWork } = props;
+  const { runs, anchorKey, childPendingWork, profiles } = props;
   const open = useExpandedParentKeys().includes(anchorKey);
-  const counts = countChildStatusBuckets([...runs.live, ...runs.settled], ({ thread }) =>
-    agentChildStatusBucket(
-      agentThreadStatus(
-        thread,
-        childPendingWork?.get(`${thread.environmentId}:${thread.id}`) ?? null,
-      ),
-    ),
-  );
-  const label = childStatusCountsLabel(counts);
+  const entries = [...runs.live, ...runs.settled].map(({ thread }): AgentChildAvatarEntry => {
+    const status = agentThreadStatus(
+      thread,
+      childPendingWork?.get(`${thread.environmentId}:${thread.id}`) ?? null,
+    );
+    return { thread, status, bucket: agentChildStatusBucket(status), updatedAt: thread.updatedAt };
+  });
+  const counts = countChildStatusBuckets(entries, (entry) => entry.bucket);
+  const avatars = selectChildAvatars(entries);
+  const label = `${entries.length} child ${entries.length === 1 ? "chat" : "chats"}: ${agentChildSummaryText(counts)}`;
   return (
     <ul className="agent-thread-children" aria-label="Child chats">
-      <li>
+      {/* The toggle covers the line; the avatar links sit above it, so no control nests in another. */}
+      <li className="agent-child-summary">
+        <AgentChildAvatarStack
+          avatars={avatars.shown}
+          overflow={avatars.overflow}
+          profiles={profiles}
+        />
         <Tooltip>
           <TooltipTrigger
             render={
               <button
                 type="button"
-                className="flex h-6 w-full cursor-pointer items-center gap-2 rounded-md px-1.5 text-left text-xs tabular-nums text-muted-foreground hover:bg-accent hover:text-foreground"
+                className="agent-child-summary-toggle"
                 aria-expanded={open}
                 aria-label={label}
                 data-testid="agent-child-runs-toggle"
@@ -195,13 +196,13 @@ function AgentChildRuns(props: {
               />
             }
           >
-            <ChevronDownIcon
+            <AgentChildSummaryText counts={counts} />
+            <ChevronRightIcon
               aria-hidden
-              className={cn("size-3 shrink-0 transition-transform", !open && "-rotate-90")}
+              className={cn("size-3.5 shrink-0", open && "rotate-90")}
             />
-            <ChildStatusCountIcons counts={counts} />
           </TooltipTrigger>
-          <TooltipPopup side="right">{label}</TooltipPopup>
+          <TooltipPopup side="top">{label}</TooltipPopup>
         </Tooltip>
       </li>
       {open && <AgentChildRunList {...props} />}

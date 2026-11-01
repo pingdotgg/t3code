@@ -216,12 +216,13 @@
   overscroll-behavior-y: contain;
 }
 .agent-thread-container {
+  --agent-card-surface: color-mix(in srgb, var(--muted) 45%, var(--background));
   position: relative;
   flex-shrink: 0;
   display: block;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--muted) 45%, var(--background));
+  background: var(--agent-card-surface);
   transition: border-color 0.12s;
 }
 .agent-thread-container:hover {
@@ -1538,6 +1539,101 @@
 }
 .agent-thread-child-pin {
   flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+/* A card's collapsed child chats: who is on them, then their counts. The
+   toggle's hit area covers the line; the avatar links sit above it. */
+.agent-child-summary {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 6px;
+  border-radius: 6px;
+}
+.agent-child-summary:hover {
+  background: var(--accent);
+}
+.agent-child-summary-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+}
+.agent-child-summary-toggle::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.agent-child-summary-toggle:focus-visible::before {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.agent-child-summary-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-child-summary-text [data-bucket="needsInput"] {
+  font-weight: 600;
+}
+.agent-child-avatars {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  padding-inline: 4px;
+}
+/* Static rings: an inner gap in the card colour, then the child's state colour
+   (CHILD_STATUS_COLORS, set inline).
+   The rings sit 3.5px outside the 20px disc, so a 2px step overlaps the ringed discs by 5px. */
+.agent-child-avatar {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--agent-color) 22%, var(--agent-card-surface));
+  box-shadow:
+    0 0 0 2px var(--agent-card-surface),
+    0 0 0 3.5px var(--agent-state-color);
+  color: var(--agent-color);
+  font-size: 10px;
+  font-weight: 600;
+}
+.agent-child-avatar + .agent-child-avatar {
+  margin-inline-start: 2px;
+}
+.agent-child-avatar:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+}
+.agent-child-avatar .agent-custom-icon,
+.agent-child-avatar .agent-orb,
+.agent-child-avatar .agent-custom-icon svg {
+  width: 12px;
+  height: 12px;
+}
+.agent-child-avatars-more {
+  margin-inline-start: 7px;
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
 }
 .agent-thread-children-toggle {
