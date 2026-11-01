@@ -10,6 +10,7 @@ import {
   resolveLocalCheckoutBranchMismatch,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
+  isBranchHoldCurrent,
 } from "./BranchToolbar.logic";
 
 describe("resolveDraftEnvModeAfterBranchChange", () => {
@@ -232,6 +233,24 @@ describe("shouldIncludeBranchPickerItem", () => {
         checkoutPullRequestItemValue: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("isBranchHoldCurrent", () => {
+  const hold = { branch: "feature", replaces: "main", cwd: "/repo" };
+
+  it("keeps showing the checked-out branch while status still reports the old one", () => {
+    expect(isBranchHoldCurrent(hold, { canonicalBranch: "main", cwd: "/repo" })).toBe(true);
+  });
+
+  it("lets go once status moves, even to a different branch than the checkout", () => {
+    expect(isBranchHoldCurrent(hold, { canonicalBranch: "feature", cwd: "/repo" })).toBe(false);
+    expect(isBranchHoldCurrent(hold, { canonicalBranch: "other", cwd: "/repo" })).toBe(false);
+    expect(isBranchHoldCurrent(hold, { canonicalBranch: null, cwd: "/repo" })).toBe(false);
+  });
+
+  it("does not apply to another checkout that happens to be on the old branch", () => {
+    expect(isBranchHoldCurrent(hold, { canonicalBranch: "main", cwd: "/other" })).toBe(false);
   });
 });
 
