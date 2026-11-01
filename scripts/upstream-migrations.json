@@ -70,5 +70,9 @@
   [69, "ThreadMessageSearch"],
   [70, "PeerLinks"],
   [71, "PeerLinkFence"],
-  [72, "WaitingLinkRequestIndex"]
+  [72, "WaitingLinkRequestIndex"],
+  [73, "ActiveTurnItemIndexes"],
+  [74, "ExcludeAttachmentPlaceholdersFromSearch"],
+  [75, "SubagentDeliveryState"],
+  [76, "ProjectionProjectsPinArchive"]
 ]
