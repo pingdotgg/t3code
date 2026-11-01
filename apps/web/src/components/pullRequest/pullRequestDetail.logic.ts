@@ -38,8 +38,6 @@ import {
 } from "@t3tools/client-runtime/thread-pull-requests";
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
-import { reviewCommentContextId } from "~/lib/composerContextRecords";
-import { removeInlineContextReference } from "~/lib/composerContextReferences";
 
 export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
   merge: "Merge",
@@ -825,54 +823,10 @@ interface FixFindingsHandoff {
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
 }
 
-const HANDOFF_COMMENT_ID_PREFIX = "pull-request-";
-
-export function stripPullRequestHandoffReferences(
-  prompt: string,
-  comments: ReadonlyArray<ReviewCommentContext>,
-  retainedIds: ReadonlySet<string> = new Set(),
-): string {
-  let next = prompt;
-  for (const comment of comments) {
-    if (!comment.id.startsWith(HANDOFF_COMMENT_ID_PREFIX) || retainedIds.has(comment.id)) continue;
-    next = removeInlineContextReference(next, reviewCommentContextId(comment.id)).prompt;
-  }
-  return next;
-}
-
-export function handoffPrompt(
-  existing: {
-    readonly prompt: string;
-    /** Store only the handoff contribution so later handoffs preserve user text. */
-    readonly lastHandoffPrompt: string | undefined;
-  },
-  incoming: string,
-): string {
-  if (existing.prompt.trim().length === 0) return incoming;
-  const last = existing.lastHandoffPrompt ?? "";
-  const kept =
-    last.length === 0
-      ? existing.prompt
-      : existing.prompt === last
-        ? ""
-        : existing.prompt.endsWith(`\n\n${last}`)
-          ? existing.prompt.slice(0, -(last.length + 2))
-          : existing.prompt;
-  if (kept.trim().length === 0) return incoming;
-  return incoming.length === 0 ? kept : `${kept}\n\n${incoming}`;
-}
-
-export function handoffReviewComments(
-  existing: ReadonlyArray<ReviewCommentContext>,
-  incoming: ReadonlyArray<ReviewCommentContext>,
-): ReviewCommentContext[] {
-  return [
-    ...existing.filter((comment) => !comment.id.startsWith(HANDOFF_COMMENT_ID_PREFIX)),
-    ...incoming,
-  ];
-}
-
-/** Review bodies and check output are attacker-controlled on public repositories. */
+/**
+ * Everything derived from the pull request is explicitly marked untrusted: review bodies
+ * and check output are attacker-controlled on public repositories.
+ */
 export function buildFixFindingsHandoff(input: {
   readonly number: number;
   readonly title: string;
@@ -1047,8 +1001,8 @@ function pullRequestContextComment(
 ): ReviewCommentContext {
   const term = terminologyForUrl(input.url).singular;
   return {
-    id: `pull-request-context:${input.number}`,
-    sectionId: `pull-request:${input.number}`,
+    id: `pull-request-context:${input.url}`,
+    sectionId: `pull-request:${input.url}`,
     sectionTitle: `PR #${input.number}`,
     filePath: `PR #${input.number}`,
     startIndex: 0,
@@ -1135,7 +1089,10 @@ export function buildAddSelectionToAgentHandoff(input: {
 }): FixFindingsHandoff {
   return {
     prompt: bounded(input.request),
-    reviewComments: [pullRequestContextComment(input, []), { ...input.comment, text: "" }],
+    reviewComments: [
+      { ...pullRequestContextComment(input, []), id: `pull-request-line-context:${input.url}` },
+      { ...input.comment, id: `pull-request-selection:${input.url}:${input.comment.id}`, text: "" },
+    ],
   };
 }
 
@@ -1173,8 +1130,8 @@ export function buildAskAboutGuideStopHandoff(input: {
     reviewComments: [
       pullRequestContextComment(input, ANSWER_INSTRUCTIONS),
       {
-        id: `pull-request-guide-stop:${input.number}:${stop.index}`,
-        sectionId: `pull-request:${input.number}`,
+        id: `pull-request-guide-stop:${input.url}:${stop.index}`,
+        sectionId: `pull-request:${input.url}`,
         sectionTitle: `PR #${input.number} review guide`,
         filePath: `Guide stop ${stop.index + 1}`,
         startIndex: 0,
