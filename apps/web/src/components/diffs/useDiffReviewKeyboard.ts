@@ -300,7 +300,7 @@ export function useDiffReviewKeyboard(input: DiffReviewKeyboardInput) {
         setCursor(
           cursor.mode === "select"
             ? { mode: "line", fileKey: cursor.fileKey, filePath: cursor.filePath, row: cursor.head }
-            : { mode: "file", fileKey: cursor.fileKey, filePath: cursor.filePath },
+            : fileCursor(cursor),
         );
         return true;
       }
@@ -339,8 +339,8 @@ export function useDiffReviewKeyboard(input: DiffReviewKeyboardInput) {
     rootRef,
     reviewRef,
     flushScroll,
-    /** Puts the file cursor on a file the user picked another way, such as the file tree. */
     toggleSingleFile: () => runCommand("diff.toggleSingleFile"),
+    /** Puts the file cursor on a file the user picked another way, such as the file tree. */
     selectFile: (filePath: string) => {
       const file = files.find((candidate) => candidate.filePath === filePath);
       if (file) setCursor(fileCursor(file));
