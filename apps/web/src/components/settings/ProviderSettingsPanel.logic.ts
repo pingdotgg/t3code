@@ -142,5 +142,9 @@ export function defaultInstanceResetBaseline(
   if (instance?.driver !== "codex" || readCodexSetupMode(instance.config) !== "managed") {
     return undefined;
   }
-  return { driver: instance.driver, config: { enabled: true, setupMode: "managed" } };
+  return {
+    driver: instance.driver,
+    enabled: true,
+    config: { enabled: true, setupMode: "managed" },
+  };
 }

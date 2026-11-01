@@ -380,7 +380,7 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(state.mutateProviderInstance.mock.lastCall?.[0]).toEqual({
       operation: "upsert",
       instanceId: codexId,
-      instance: { driver: codex, config: { enabled: true, setupMode: "managed" } },
+      instance: { driver: codex, enabled: true, config: { enabled: true, setupMode: "managed" } },
     });
   });
 
@@ -391,6 +391,7 @@ describe("EnvironmentProviderSettings routing", () => {
       providerInstances: {
         [codexId]: {
           driver: ProviderDriverKind.make("codex"),
+          enabled: true,
           config: { enabled: true, setupMode: "managed" },
         },
       },
