@@ -477,6 +477,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? ["Snooze options"]
       : []),
     ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
+    ...(settings.compactWorkLog !== DEFAULT_UNIFIED_SETTINGS.compactWorkLog
+      ? ["Compact work log"]
+      : []),
+    ...(settings.hideReasoning !== DEFAULT_UNIFIED_SETTINGS.hideReasoning
+      ? ["Hide reasoning"]
+      : []),
     ...(settings.persistComposerContextStrip !==
     DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip
       ? ["Composer context"]
@@ -607,6 +613,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+      compactWorkLog: DEFAULT_UNIFIED_SETTINGS.compactWorkLog,
+      hideReasoning: DEFAULT_UNIFIED_SETTINGS.hideReasoning,
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
