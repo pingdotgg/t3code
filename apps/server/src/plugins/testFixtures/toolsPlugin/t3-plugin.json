@@ -1,0 +1,51 @@
+{
+  "id": "test.tools",
+  "name": "Tools fixture",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "main.mjs",
+  "capabilities": ["tools"],
+  "proposedApi": true,
+  "tools": [
+    {
+      "name": "word_count",
+      "title": "Count words",
+      "description": "Count the words in a text.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "text": { "type": "string", "maxLength": 10000 } },
+        "required": ["text"],
+        "additionalProperties": false
+      },
+      "sideEffect": "read"
+    },
+    {
+      "name": "echo_context",
+      "description": "Return the input and the session context the host passed.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "note": { "type": "string" } },
+        "additionalProperties": false
+      },
+      "sideEffect": "read"
+    },
+    {
+      "name": "wait_for_cancel",
+      "description": "Wait until the call is cancelled.",
+      "inputSchema": { "type": "object" },
+      "sideEffect": "write",
+      "openWorld": true
+    },
+    {
+      "name": "big_result",
+      "description": "Return a string of the given length.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "length": { "type": "integer", "minimum": 0 } },
+        "required": ["length"],
+        "additionalProperties": false
+      },
+      "sideEffect": "read"
+    }
+  ]
+}
