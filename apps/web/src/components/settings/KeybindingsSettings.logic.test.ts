@@ -79,6 +79,28 @@ describe("KeybindingsSettings.logic", () => {
       bindings[0],
     ]);
     expect(rows.filter((row) => !row.isShadowed)).toHaveLength(7);
+    const sendBindings = compileResolvedKeybindingsConfig([
+      { command: "composer.sendAlternate", key: "mod+enter" },
+      { command: "chat.new", key: "mod+enter" },
+    ]);
+    for (const sendShortcut of ["enter", "mod-enter", "mod-enter-multiline"] as const) {
+      expect(
+        buildKeybindingRows(sendBindings, "MacIntel", sendShortcut).find(
+          (row) => row.command === "composer.sendAlternate",
+        )?.isShadowed,
+      ).toBe(sendShortcut === "enter");
+    }
+    const shiftedBindings = compileResolvedKeybindingsConfig([
+      { command: "chat.new", key: "mod+shift+enter" },
+      { command: "composer.sendAlternate", key: "mod+enter" },
+    ]);
+    for (const sendShortcut of ["enter", "mod-enter", "mod-enter-multiline"] as const) {
+      expect(
+        buildKeybindingRows(shiftedBindings, "MacIntel", sendShortcut).find(
+          (row) => row.command === "chat.new",
+        )?.isShadowed,
+      ).toBe(sendShortcut === "mod-enter");
+    }
     expect(
       buildKeybindingRows(bindings, "Win32").find((row) => row.command === "sidebar.toggle")
         ?.isShadowed,

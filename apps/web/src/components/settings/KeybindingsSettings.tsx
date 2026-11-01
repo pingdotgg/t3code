@@ -41,6 +41,7 @@ import { formatShortcutLabel } from "../../keybindings";
 import { cn } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { useClientSettings } from "../../hooks/useSettings";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -1352,11 +1353,12 @@ function keybindingAnchorIds(rows: ReturnType<typeof buildKeybindingRows>) {
 
 // Cache rows in a separate hook so the compiler does not rebuild them per search keystroke.
 function useKeybindingCatalog() {
+  const sendShortcut = useClientSettings((settings) => settings.sendShortcut);
   const serverKeybindings = useSettingsScope().environment?.serverConfig?.keybindings;
   const merged = mergeWithDefaultKeybindings(serverKeybindings ?? []);
   return {
     commandOptions: buildKeybindingCommandOptions(merged),
-    allRows: buildKeybindingRows(merged),
+    allRows: buildKeybindingRows(merged, navigator.platform, sendShortcut),
   };
 }
 
