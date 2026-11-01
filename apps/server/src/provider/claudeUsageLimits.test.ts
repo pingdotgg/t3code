@@ -224,6 +224,65 @@ describe("claudeUsageResponseToLimits", () => {
 });
 
 describe("claudeRateLimitEventToUpdate", () => {
+  it("updates supported unified windows, omitting unnamed and malformed buckets", () => {
+    const info = {
+      status: "allowed" as const,
+      unifiedWindows: {
+        five_hour: { utilization: 0.25, resetsAt: 1_900_000_000 },
+        seven_day: { utilization: 0.5, resetsAt: 1_900_000_001 },
+        seven_day_overage_included: { utilization: 0.2, resetsAt: 1_900_000_002 },
+        unknown: { utilization: 1 },
+        constructor: { utilization: 1 },
+        toString: { utilization: 1 },
+      },
+    };
+    expect(
+      claudeRateLimitEventToUpdate(info, { overageIncluded: "Fable" })?.windows.map(
+        ({ id, usedPercent, resetsAt }) => ({ id, usedPercent, resetsAt }),
+      ),
+    ).toEqual([
+      { id: "five_hour", usedPercent: 25, resetsAt: "2030-03-17T17:46:40.000Z" },
+      { id: "seven_day", usedPercent: 50, resetsAt: "2030-03-17T17:46:41.000Z" },
+      { id: "seven_day_fable", usedPercent: 20, resetsAt: "2030-03-17T17:46:42.000Z" },
+    ]);
+    expect(claudeRateLimitEventToUpdate(info, noNames)?.windows.map(({ id }) => id)).toEqual([
+      "five_hour",
+      "seven_day",
+    ]);
+    const malformed = {
+      status: "allowed" as const,
+      unifiedWindows: {
+        five_hour: { utilization: NaN },
+        seven_day: { utilization: -1 },
+        seven_day_overage_included: null,
+      },
+    };
+    expect(claudeRateLimitEventToUpdate(malformed, { overageIncluded: "Fable" })).toBeUndefined();
+  });
+
+  it("keeps other unified windows when the legacy window takes precedence", () => {
+    const info = {
+      status: "allowed" as const,
+      rateLimitType: "five_hour" as const,
+      utilization: 0.75,
+      resetsAt: 1_900_000_010,
+      unifiedWindows: {
+        five_hour: { utilization: 0.25, resetsAt: 1_900_000_000 },
+        seven_day: { utilization: 0.5, resetsAt: 1_900_000_001 },
+      },
+    };
+    expect(
+      claudeRateLimitEventToUpdate(info, noNames)?.windows.map(({ id, usedPercent, resetsAt }) => ({
+        id,
+        usedPercent,
+        resetsAt,
+      })),
+    ).toEqual([
+      { id: "five_hour", usedPercent: 75, resetsAt: "2030-03-17T17:46:50.000Z" },
+      { id: "seven_day", usedPercent: 50, resetsAt: "2030-03-17T17:46:41.000Z" },
+    ]);
+  });
+
   it("scales the 0–1 utilization and epoch-second reset onto the probe's window id", () => {
     expect(
       claudeRateLimitEventToUpdate(
