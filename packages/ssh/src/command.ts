@@ -112,6 +112,12 @@ export function baseSshArgs(
     `BatchMode=${input?.batchMode ?? "no"}`,
     "-o",
     "ConnectTimeout=10",
+    // T3 always supplies its own remote command or only forwards ports, so a host
+    // alias's RemoteCommand or RequestTTY must not hijack the session.
+    "-o",
+    "RemoteCommand=none",
+    "-o",
+    "RequestTTY=no",
     ...(target.port !== null ? ["-p", String(target.port)] : []),
   ];
 }
