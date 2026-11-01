@@ -50,6 +50,12 @@ also send files to T3 Code through another app's system share sheet.
 On Android, you can also drag images from another app into the message input
 in split screen.
 
+To wrap shared text and links in a prompt you reuse, add a template in
+**Settings → Chat → Share templates** on mobile. Write `{{shared}}` where the
+shared text goes; otherwise it goes after the template. When you have templates,
+a new share asks which one to use before it fills the draft. Shared files still
+attach.
+
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
 ## Send while the agent is working
