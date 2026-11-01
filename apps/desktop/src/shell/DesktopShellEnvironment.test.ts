@@ -87,6 +87,7 @@ function runShellEnvironment(input: {
   readonly exercise?: (
     shell: DesktopShellEnvironment.DesktopShellEnvironment["Service"],
   ) => Effect.Effect<void>;
+  readonly processSpawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
 }) {
   const layerEnvironment = Layer.succeed(
     DesktopEnvironment.DesktopEnvironment,
@@ -97,6 +98,7 @@ function runShellEnvironment(input: {
   const layerSpawner = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
+      if (input.processSpawner) return input.processSpawner.spawn(command);
       if (input.failure !== undefined) return Effect.fail(input.failure);
       const result = input.handler(command);
       return Effect.succeed(
@@ -134,6 +136,41 @@ function runShellEnvironment(input: {
 }
 
 describe("DesktopShellEnvironment", () => {
+  it.effect(
+    "captures the login-shell PATH when startup writes more than a pipe buffer to stderr",
+    () =>
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner.pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        const executable = yield* HostProcess.ExecutablePath;
+        const env: NodeJS.ProcessEnv = { SHELL: "/test-shell", PATH: "/usr/bin" };
+        const commands: string[] = [];
+        const source = [
+          "setTimeout(() => process.exit(99), 3000).unref();",
+          "process.stderr.write(Buffer.alloc(2 * 1024 * 1024, 120), () => {",
+          `process.stdout.write(${JSON.stringify(envOutput({ PATH: "/shell-only/bin:/usr/bin" }))});`,
+          "});",
+        ].join("\n");
+
+        yield* runShellEnvironment({
+          env,
+          platform: "linux",
+          handler: () => "",
+          processSpawner: ChildProcessSpawner.make((command) => {
+            if (command._tag !== "StandardCommand") return Effect.succeed(makeProcess(""));
+            commands.push(command.command);
+            return command.command === "/test-shell"
+              ? spawner.spawn(ChildProcess.make(executable, ["-e", source], command.options))
+              : Effect.succeed(makeProcess(""));
+          }),
+        }).pipe(Effect.provide(Logger.layer([])));
+
+        assert.equal(env.PATH, "/shell-only/bin:/usr/bin");
+        assert.deepEqual(commands, ["/test-shell"]);
+      }),
+  );
+
   it.effect("rejects PATH output from a failed shell and tries the next candidate", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = { SHELL: "/bin/failing", PATH: "/usr/bin" };

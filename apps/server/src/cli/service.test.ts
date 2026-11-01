@@ -6,18 +6,13 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Terminal from "effect/Terminal";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 import { afterEach, vi } from "vite-plus/test";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
-import {
-  offerServiceDuringOnboarding,
-  recoverServiceOnboardingOffer,
-  serviceCommand,
-} from "./service.ts";
+import { serviceCommand } from "./service.ts";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -90,6 +85,47 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
       }),
   );
 
+  it.effect.each([
+    { label: "a new service", installed: false, env: "", expected: "T3CODE_LAN=false\n" },
+    // Services installed before T3CODE_LAN existed keep listening on the local network.
+    { label: "an older service", installed: true, env: "", expected: "" },
+    {
+      label: "a set host",
+      installed: false,
+      env: "T3CODE_HOST=::\n",
+      expected: "T3CODE_HOST=::\n",
+    },
+  ])("install keeps $label off the local network only when it is new", (input) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
+      yield* fs.writeFileString(`${baseDir}/service.env`, input.env);
+      const { service } = makeTestService({
+        ...status,
+        installed: input.installed,
+        current: false,
+      });
+      vi.spyOn(BootService, "layer").mockReturnValue(
+        Layer.succeed(BootService.BootService, service),
+      );
+
+      yield* Command.runWith(serviceCommand, { version: packageJson.version })([
+        "install",
+        "--base-dir",
+        baseDir,
+      ]).pipe(
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            Layer.fresh(TestConsole.layer),
+          ),
+        ),
+      );
+      expect(yield* fs.readFileString(`${baseDir}/service.env`)).toBe(input.expected);
+    }),
+  );
+
   it.effect("protect refuses root before creating any T3 directories", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -159,35 +195,3 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
       }),
   );
 });
-
-it.effect("leaves a newer service unchanged during onboarding without prompting", () =>
-  Effect.gen(function* () {
-    const { service, installOptions } = makeTestService(newerServiceStatus);
-    const terminal = Terminal.make({
-      columns: Effect.succeed(80),
-      rows: Effect.succeed(24),
-      readInput: Effect.die("Onboarding must not prompt to replace a newer service."),
-      readLine: Effect.die("Onboarding must not prompt to replace a newer service."),
-      display: () => Effect.die("Onboarding must not prompt to replace a newer service."),
-    });
-
-    const ready = yield* offerServiceDuringOnboarding.pipe(
-      Effect.provideService(BootService.BootService, service),
-      Effect.provideService(Terminal.Terminal, terminal),
-      Effect.provide(NodeServices.layer),
-    );
-
-    expect(ready).toBe("skipped");
-    expect(installOptions).toEqual([]);
-  }),
-);
-
-// regression: #9602 diagnose incomplete headless server setup
-it.effect("keeps the manual-server fallback when background prerequisites fail", () =>
-  Effect.gen(function* () {
-    const ready = yield* recoverServiceOnboardingOffer(
-      Effect.fail(new BootService.BootServicePrerequisiteError({ problem: "linger-disabled" })),
-    );
-    expect(ready).toBe("skipped");
-  }),
-);
