@@ -1194,6 +1194,52 @@ it.layer(
       }),
   );
 
+  it.effect.each([
+    {
+      kind: "cask",
+      segments: ["Caskroom", "native-package-tool", "2.1.287", "native-package-tool"],
+      command: "brew upgrade --cask native-package-tool",
+    },
+    {
+      kind: "formula",
+      segments: ["Cellar", "native-package-tool", "2.1.287", "bin", "native-package-tool"],
+      command: "brew upgrade native-package-tool",
+    },
+  ])(
+    "upgrades a Homebrew $kind behind a native-looking launcher with brew",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-homebrew-native-launcher");
+        const brewPrefix = NodePath.join(tempDir, "opt", "homebrew");
+        writeExecutable(NodePath.join(brewPrefix, "bin", "brew"));
+        const target = NodePath.join(brewPrefix, ...fixture.segments);
+        writeExecutable(target);
+        const nativeBinDir = NodePath.join(tempDir, "home", ".local", "bin");
+        NodeFS.mkdirSync(nativeBinDir, { recursive: true });
+        NodeFS.symlinkSync(target, NodePath.join(nativeBinDir, "native-package-tool"));
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          nativePackageToolUpdate,
+          {
+            binaryPath: "native-package-tool",
+            env: { PATH: [nativeBinDir, NodePath.join(brewPrefix, "bin")].join(":") },
+          },
+        ).pipe(
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            stdoutSpawner((_, args) => (args[0] === "--prefix" ? `${brewPrefix}\n` : "")),
+          ),
+        );
+
+        expect(capabilities.update).toMatchObject({
+          command: fixture.command,
+          lockKey: "homebrew",
+        });
+      }),
+    { skip: !symlinksSupported || windowsHost },
+  );
+
   it("reads the stable formula version from brew info", () => {
     const info = JSON.stringify({ formulae: [{ versions: { stable: "2.1.5" } }] });
     const formula = { kind: "formula", name: "claude-code", prefix: "/opt/homebrew" } as const;
