@@ -1,3 +1,4 @@
+import { buildWslOpenUrl, type EditorId } from "@t3tools/contracts";
 import { formatFilePathPosition, resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 
 import { workspaceRelativeFilePath } from "@t3tools/shared/path";
@@ -45,4 +46,22 @@ export function markdownFileCopyPaths(
       path: workspaceRelativeFilePath(hostPath.absolutePath, cwd) ?? meta.filePath,
     }),
   };
+}
+
+export function buildWslMarkdownFileUrl(input: {
+  editor: EditorId;
+  distro: string;
+  path: string;
+  cwd: string | undefined;
+  line: number | undefined;
+  column: number | undefined;
+}) {
+  return buildWslOpenUrl({
+    editor: input.editor,
+    distro: input.distro,
+    absolutePath: input.cwd ? resolvePathLinkTarget(input.path, input.cwd) : input.path,
+    isFile: true,
+    ...(input.line !== undefined ? { line: input.line } : {}),
+    ...(input.column !== undefined ? { column: input.column } : {}),
+  });
 }

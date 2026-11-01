@@ -2,6 +2,7 @@ import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import {
   AuthOrchestrationOperateScope,
   buildRemoteOpenUrl,
+  buildWslOpenUrl,
   EditorId,
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
@@ -15,6 +16,7 @@ import { editorLabelForPlatform } from "../../editorLabels";
 import {
   openRemoteEditorUrl,
   useRemoteCapableEditors,
+  wslCapableEditors,
   useRemoteOpenHint,
   useRemoteOpenState,
 } from "../../remoteOpen";
@@ -239,7 +241,12 @@ export const OpenInPicker = memo(function OpenInPicker({
   const [remoteHintSeen, markRemoteHintSeen] = useRemoteOpenHint();
   const environmentLabel = useEnvironment(environmentId)?.label ?? "this machine";
   // Remote editors run on the viewing machine; only desktop can probe that PATH.
-  const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
+  const effectiveEditors =
+    remote.mode === "local-exec"
+      ? availableEditors
+      : remote.mode === "wsl-links"
+        ? wslCapableEditors(remoteCapableEditors)
+        : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
 
   const openInEditor = async (editorId: EditorId | null): Promise<boolean> => {
@@ -247,6 +254,19 @@ export const OpenInPicker = memo(function OpenInPicker({
     const editor = editorId ?? preferredEditor;
     if (!editor) return false;
     if (remote.mode === "remote-unavailable") return false;
+    if (remote.mode === "wsl-links") {
+      const url = buildWslOpenUrl({
+        editor,
+        distro: remote.distro,
+        absolutePath: openInCwd,
+        isFile: openInCwdIsFile,
+      });
+      if (url === undefined) return false;
+      const opened = await openRemoteEditorUrl(url);
+      if (!opened) return false;
+      setPreferredEditor(editor);
+      return true;
+    }
     if (remote.mode === "remote-links") {
       const url = buildRemoteOpenUrl({
         editor,

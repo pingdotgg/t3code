@@ -63,19 +63,23 @@ describe("desktop local topology reads", () => {
       httpBaseUrl: "http://127.0.0.1:4000",
       wsBaseUrl: "ws://127.0.0.1:4000",
     };
+    const primary = {
+      id: PRIMARY_LOCAL_ENVIRONMENT_ID,
+      label: "WSL (Ubuntu)",
+      runningDistro: "Ubuntu",
+      httpBaseUrl: "http://127.0.0.1:3000",
+      wsBaseUrl: "ws://127.0.0.1:3000",
+    };
 
     const reader = createDesktopSecondaryBootstrapsReader(() => ({
-      getLocalEnvironmentBootstraps: () => [
-        {
-          ...secondary,
-          id: PRIMARY_LOCAL_ENVIRONMENT_ID,
-          label: "Windows",
-        },
-        secondary,
-      ],
+      getLocalEnvironmentBootstraps: () => [primary, secondary],
     }));
 
     expect(reader.readResult()).toEqual({ _tag: "Success", bootstraps: [secondary] });
+    expect(reader.readAllResult()).toEqual({
+      _tag: "Success",
+      bootstraps: [primary, secondary],
+    });
   });
 
   it("retains the last successful snapshot only until another read succeeds", () => {
