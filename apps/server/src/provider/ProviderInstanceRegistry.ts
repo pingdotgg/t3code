@@ -271,21 +271,23 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   return {
     kind: "live" as const,
     live: {
-      instance: {
-        ...instance,
-        snapshot: {
-          ...instance.snapshot,
-          getSnapshot: instance.snapshot.getSnapshot.pipe(Effect.map(withIcon)),
-          refresh: instance.snapshot.refresh.pipe(Effect.map(withIcon)),
-          streamChanges: instance.snapshot.streamChanges.pipe(Stream.map(withIcon)),
-        },
-        ...(instance.snapshotForCwd
-          ? {
-              snapshotForCwd: (cwd: string) =>
-                instance.snapshotForCwd!(cwd).pipe(Effect.map(withIcon)),
-            }
-          : {}),
-      },
+      instance: entry.iconUrl
+        ? {
+            ...instance,
+            snapshot: {
+              ...instance.snapshot,
+              getSnapshot: instance.snapshot.getSnapshot.pipe(Effect.map(withIcon)),
+              refresh: instance.snapshot.refresh.pipe(Effect.map(withIcon)),
+              streamChanges: instance.snapshot.streamChanges.pipe(Stream.map(withIcon)),
+            },
+            ...(instance.snapshotForCwd
+              ? {
+                  snapshotForCwd: (cwd: string) =>
+                    instance.snapshotForCwd!(cwd).pipe(Effect.map(withIcon)),
+                }
+              : {}),
+          }
+        : instance,
       scope: childScope,
       entry,
       secrets,
