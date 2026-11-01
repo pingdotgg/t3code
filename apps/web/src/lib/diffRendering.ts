@@ -347,18 +347,35 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
   );
 
   /* Pierre resolves the emphasis overrides on :host, beyond this sheet, so set the word
-     highlight itself: Pierre's alpha (.15 light, .2 dark) times 0.5 to 1.5 with contrast,
-     capped there so syntax colors stay readable. Halving it first keeps the default exact. */
-  --diff-emphasis-alpha: calc(
-    var(--appearance-contrast-base) / 2 + var(--appearance-contrast-boost) / 4
-  );
+     highlight itself: Pierre's alpha (.15 light, .2 dark) scaled 0.5x to 1.5x with contrast,
+     capped there so syntax colors stay readable. */
   --diffs-bg-addition-emphasis: light-dark(
-    rgb(from color-mix(in srgb, var(--diffs-addition-base) var(--diff-emphasis-alpha), transparent) r g b / calc(alpha * 0.3)),
-    rgb(from color-mix(in srgb, var(--diffs-addition-base) var(--diff-emphasis-alpha), transparent) r g b / calc(alpha * 0.4))
+    color-mix(
+      in srgb,
+      var(--diffs-addition-base)
+        calc(var(--appearance-contrast-base) * 0.15 + var(--appearance-contrast-boost) * 0.075),
+      transparent
+    ),
+    color-mix(
+      in srgb,
+      var(--diffs-addition-base)
+        calc(var(--appearance-contrast-base) * 0.2 + var(--appearance-contrast-boost) * 0.1),
+      transparent
+    )
   );
   --diffs-bg-deletion-emphasis: light-dark(
-    rgb(from color-mix(in srgb, var(--diffs-deletion-base) var(--diff-emphasis-alpha), transparent) r g b / calc(alpha * 0.3)),
-    rgb(from color-mix(in srgb, var(--diffs-deletion-base) var(--diff-emphasis-alpha), transparent) r g b / calc(alpha * 0.4))
+    color-mix(
+      in srgb,
+      var(--diffs-deletion-base)
+        calc(var(--appearance-contrast-base) * 0.15 + var(--appearance-contrast-boost) * 0.075),
+      transparent
+    ),
+    color-mix(
+      in srgb,
+      var(--diffs-deletion-base)
+        calc(var(--appearance-contrast-base) * 0.2 + var(--appearance-contrast-boost) * 0.1),
+      transparent
+    )
   );
 
   background-color: var(--diffs-bg) !important;
