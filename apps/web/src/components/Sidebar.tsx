@@ -2484,7 +2484,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           api.dialogs.confirm(
             [
               `Delete ${count} thread${count === 1 ? "" : "s"}?`,
-              "This permanently clears conversation history for these threads.",
+              "You can't restore them. Their conversation history stays in T3 Code's database.",
             ].join("\n"),
             { variant: "destructive" },
           ),
@@ -2848,7 +2848,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 api.dialogs.confirm(
                   [
                     `Delete thread "${thread.title}"?`,
-                    "This permanently clears conversation history for this thread.",
+                    "You can't restore it. Its conversation history stays in T3 Code's database.",
                   ].join("\n"),
                   { variant: "destructive" },
                 ),

@@ -922,7 +922,7 @@ export function useThreadActions() {
         localApi.dialogs.confirm(
           [
             `Delete thread "${title}"?`,
-            "This permanently clears conversation history for this thread.",
+            "You can't restore it. Its conversation history stays in T3 Code's database.",
           ].join("\n"),
           { variant: "destructive" },
         ),
