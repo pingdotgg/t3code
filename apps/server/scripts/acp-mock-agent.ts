@@ -54,6 +54,10 @@ const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
 const failLoadSessionAfterConfigReplay =
   process.env.T3_ACP_FAIL_LOAD_SESSION_AFTER_CONFIG_REPLAY === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
+const delayLoadSessionAfterReplay = process.env.T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY === "1";
+const loadSessionDelayMs = Number(process.env.T3_ACP_LOAD_SESSION_DELAY_MS ?? "5000");
+const holdSetConfigOptionUntilLoadReply =
+  process.env.T3_ACP_HOLD_SET_CONFIG_OPTION_UNTIL_LOAD_REPLY === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failPromptOrdinal = Number(process.env.T3_ACP_FAIL_PROMPT_ORDINAL);
 const compactionPromptOrdinals = new Set(
@@ -470,6 +474,7 @@ const program = Effect.gen(function* () {
   const agent = yield* EffectAcpAgent.AcpAgent;
   const nativeCancelRequested = yield* Deferred.make<void>();
   const nativeCancelRelease = yield* Deferred.make<void>();
+  const delayedLoadReplied = yield* Deferred.make<void>();
   const publishAntigravityCommands = (targetSessionId: string) =>
     agent.client.sessionUpdate({
       sessionId: targetSessionId,
@@ -665,6 +670,25 @@ const program = Effect.gen(function* () {
           "Mock load session failure after config replay",
         );
       }
+      if (delayLoadSessionAfterReplay) {
+        emitLoadReplayNotifications(requestedSessionId);
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "user_message_chunk",
+            messageId: "mock-user-message",
+            content: { type: "text", text: "replay-tail" },
+          },
+        });
+        // Answer with the configuration as of the load, like an agent whose
+        // response was built before later selections landed.
+        const loadedConfigOptions = configOptions();
+        yield* Effect.sleep(loadSessionDelayMs);
+        yield* Deferred.succeed(delayedLoadReplied, undefined);
+        return {
+          configOptions: loadedConfigOptions,
+        };
+      }
       if (emitLoadReplay) {
         emitLoadReplayNotifications(requestedSessionId);
       }
@@ -756,6 +780,12 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionConfigOption((request) =>
     Effect.gen(function* () {
+      if (holdSetConfigOptionUntilLoadReply) {
+        // Like an agent that serves requests in order: the delayed load reply
+        // goes out first, then this one.
+        yield* Deferred.await(delayedLoadReplied);
+        yield* Effect.sleep(100);
+      }
       if (failSetModeConfigOption && request.configId === "mode") {
         return yield* AcpError.AcpRequestError.invalidParams(
           "Mock invalid params for session/set_config_option",
