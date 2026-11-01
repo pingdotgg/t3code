@@ -89,6 +89,7 @@ import {
   projectGroupingModeFromToggle,
   readLastEnabledProjectGroupingMode,
   rememberEnabledProjectGroupingMode,
+  telemetrySettingLocks,
 } from "./SettingsPanels.logic";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
@@ -2047,13 +2048,10 @@ function ScopedProductUsageDataRow() {
   ) {
     return null;
   }
-  const overrides = connectedEnvironments.flatMap((target) => {
-    const value = target.serverConfig?.observability.telemetryEnabledByEnvironment;
-    return value === undefined ? [] : [{ label: target.label, value }];
-  });
-  // The variable wins over the setting, so where it decides the switch shows its value instead.
+  // A policy or the variable decides over the setting; where one does, the switch shows its value.
+  const locks = telemetrySettingLocks(connectedEnvironments);
   const lockedEverywhere =
-    connectedEnvironments.length > 0 && overrides.length === connectedEnvironments.length;
+    connectedEnvironments.length > 0 && locks.length === connectedEnvironments.length;
   return (
     <SettingsRow
       serverScoped
@@ -2061,17 +2059,14 @@ function ScopedProductUsageDataRow() {
       settingKeys={["telemetryEnabled"]}
       description="Send anonymous usage events and T3 Connect connection traces from this environment. They never include prompts, responses, or file contents. Connection traces stop after a restart."
       status={
-        overrides.length > 0
-          ? overrides
-              .map(({ label, value }) => `Set by T3CODE_TELEMETRY_ENABLED=${value} on ${label}.`)
-              .join(" ")
-          : undefined
+        locks.length > 0 ? [...new Set(locks.map(({ reason }) => reason))].join(" ") : undefined
       }
+      managed={lockedEverywhere ? locks.find((lock) => lock.managed)?.reason : undefined}
       control={
         lockedEverywhere ? (
           // Persisted values do not decide here, so they must not make the switch look mixed.
           <Switch
-            checked={overrides.every(({ value }) => value)}
+            checked={locks.every(({ value }) => value)}
             disabled
             aria-label="Product usage data"
           />
