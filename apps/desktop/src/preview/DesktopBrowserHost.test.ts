@@ -38,7 +38,7 @@ const makeDebuggee = (
   } = {},
 ) => {
   const emitter = new NodeEvents.EventEmitter();
-  const pending: Array<() => void> = [];
+  const pending: Array<{ resolve: () => void; reject: () => void }> = [];
   const focusChanges: Array<() => void> = [];
   const sent: Array<unknown> = [];
   const sendWaiters: Array<() => void> = [];
@@ -65,7 +65,10 @@ const makeDebuggee = (
           return;
         }
         sent.push(params?.id);
-        pending.push(() => resolve({ method }));
+        pending.push({
+          resolve: () => resolve({ method }),
+          reject: () => reject(new Error("Refused")),
+        });
         sendWaiters.shift()?.();
       }),
   });
@@ -85,8 +88,11 @@ const makeDebuggee = (
     sent,
     focusEmulation,
     nextSend: () => new Promise<void>((resolve) => sendWaiters.push(resolve)),
-    release: () => pending.splice(0).forEach((resolve) => resolve()),
-    releaseFirst: () => pending.shift()?.(),
+    release: () => pending.splice(0).forEach(({ resolve }) => resolve()),
+    releaseFirst: () => pending.shift()?.resolve(),
+    releaseLast: () => pending.pop()?.resolve(),
+    refuseFirst: () => pending.shift()?.reject(),
+    refuseLast: () => pending.pop()?.reject(),
     settleFocus: () => focusChanges.splice(0).forEach((resolve) => resolve()),
   };
 };
@@ -613,6 +619,108 @@ describe("DesktopBrowserHost", () => {
       expect(painting).toEqual([true, false]);
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("preserves committed painting holds across failed and overlapping starts", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
+      const painting = yield* watchPainting(host);
+
+      yield* command(host, 1, "Page.startScreencast");
+      yield* settle;
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(1);
+      yield* command(host, 2, "Page.startScreencast");
+      yield* settle;
+      debuggee.refuseFirst();
+      expect(yield* Queue.take(replies)).toBe(2);
+      expect(painting).toEqual([true]);
+
+      yield* command(host, 3, "Page.stopScreencast");
+      yield* settle;
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(3);
+      expect(painting).toEqual([true, false]);
+
+      yield* command(host, 4, "Page.startScreencast");
+      yield* command(host, 5, "Page.startScreencast");
+      yield* settle;
+      debuggee.releaseLast();
+      expect(yield* Queue.take(replies)).toBe(5);
+      debuggee.refuseFirst();
+      expect(yield* Queue.take(replies)).toBe(4);
+      expect(painting).toEqual([true, false, true]);
+
+      yield* command(host, 6, "Page.stopScreencast");
+      yield* settle;
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(6);
+      expect(painting).toEqual([true, false, true, false]);
+
+      yield* command(host, 7, "Page.startScreencast");
+      yield* command(host, 8, "Page.startScreencast");
+      yield* settle;
+      debuggee.refuseLast();
+      expect(yield* Queue.take(replies)).toBe(8);
+      debuggee.refuseFirst();
+      expect(yield* Queue.take(replies)).toBe(7);
+      expect(painting).toEqual([true, false, true, false, true, false]);
+
+      yield* command(host, 9, "Page.startScreencast");
+      yield* settle;
+      yield* command(host, 10, "Page.stopScreencast");
+      yield* settle;
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(9);
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(10);
+      expect(painting).toEqual([true, false, true, false, true, false, true, false]);
+      yield* command(host, 11, "Page.startScreencast");
+      yield* command(host, 12, "Page.startScreencast");
+      yield* settle;
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(11);
+      debuggee.refuseLast();
+      expect(yield* Queue.take(replies)).toBe(12);
+      expect(painting.at(-1)).toBe(true);
+
+      yield* command(host, 13, "Page.stopScreencast");
+      yield* settle;
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(13);
+      expect(painting.at(-1)).toBe(false);
+
+      yield* command(host, 14, "Page.startScreencast");
+      yield* command(host, 15, "Page.stopScreencast");
+      yield* command(host, 16, "Page.startScreencast");
+      yield* settle;
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(14);
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(15);
+      debuggee.refuseLast();
+      expect(yield* Queue.take(replies)).toBe(16);
+      expect(painting.at(-1)).toBe(false);
+      yield* command(host, 17, "Page.startScreencast");
+      yield* command(host, 18, "Page.startScreencast");
+      yield* settle;
+      debuggee.refuseLast();
+      expect(yield* Queue.take(replies)).toBe(18);
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(17);
+      expect(painting.at(-1)).toBe(true);
+
+      yield* command(host, 19, "Page.stopScreencast");
+      yield* settle;
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(19);
+      expect(painting.at(-1)).toBe(false);
+      yield* TestClock.adjust("1 minute");
+      expect(debuggee.focusEmulation.at(-1)).toBe(false);
     }).pipe(Effect.scoped),
   );
 

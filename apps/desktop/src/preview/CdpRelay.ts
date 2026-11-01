@@ -100,6 +100,9 @@ export function createCdpRelayConnection(
   let attached = false;
   /** Relay-created page sessions share one real debugger; child frame sessions retain their own ids. */
   const sessions = new Map<string, "browser" | "page">([[PAGE_SESSION_ID, "page"]]);
+  // The manager acknowledges native frames immediately; each relay consumer must bound its own queue.
+  const screencasts = new Map<string, { pendingFrame: number | null; active: boolean }>();
+  const screencastStarts = new Map<string, object>();
   let sessionSequence = 0;
   const newSession = (kind: "browser" | "page") => {
     const sessionId = `t3-preview-${kind}-${++sessionSequence}`;
@@ -161,6 +164,8 @@ export function createCdpRelayConnection(
         const sessionId = command.params?.["sessionId"];
         if (typeof sessionId === "string" && sessionId !== PAGE_SESSION_ID) {
           sessions.delete(sessionId);
+          screencasts.delete(sessionId);
+          screencastStarts.delete(sessionId);
           target.sessionDetached?.(sessionId);
         }
         return {};
@@ -191,6 +196,33 @@ export function createCdpRelayConnection(
     }
     // Playwright asks for this on every page; the host emulates focus only while it is in use.
     if (command.method === "Emulation.setFocusEmulationEnabled") return Promise.resolve({});
+    if (child === undefined) {
+      const sessionId = command.sessionId!;
+      if (command.method === "Page.screencastFrameAck") {
+        const stream = screencasts.get(sessionId);
+        if (stream && stream.pendingFrame === command.params?.["sessionId"]) {
+          stream.pendingFrame = null;
+        }
+        return Promise.resolve({});
+      }
+      if (command.method === "Page.stopScreencast") {
+        const stream = screencasts.get(sessionId);
+        if (stream) stream.active = false;
+        screencastStarts.delete(sessionId);
+      }
+      if (command.method === "Page.startScreencast") {
+        const start = screencastStarts.get(sessionId) ?? {};
+        screencastStarts.set(sessionId, start);
+        return target.send(command.method, command.params ?? {}, child, owner).then((result) => {
+          if (screencastStarts.get(sessionId) === start) {
+            const stream = screencasts.get(sessionId);
+            if (stream) stream.active = true;
+            else screencasts.set(sessionId, { pendingFrame: null, active: true });
+          }
+          return result;
+        });
+      }
+    }
     return target.send(command.method, command.params ?? {}, child, owner);
   };
 
@@ -240,6 +272,16 @@ export function createCdpRelayConnection(
       // Electron reports the page's own events with an empty session id.
       if (sessionId) {
         send({ method, params, sessionId });
+        return;
+      }
+      if (method === "Page.screencastFrame") {
+        const frameId = (params as { sessionId?: unknown } | null)?.sessionId;
+        if (typeof frameId !== "number") return;
+        for (const [id, stream] of screencasts) {
+          if (!stream.active || stream.pendingFrame !== null) continue;
+          stream.pendingFrame = frameId;
+          send({ method, params, sessionId: id });
+        }
         return;
       }
       for (const [id, kind] of sessions)
