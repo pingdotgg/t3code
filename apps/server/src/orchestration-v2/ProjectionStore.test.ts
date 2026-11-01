@@ -215,6 +215,71 @@ const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate
   return threadId;
 });
 
+it.effect("record reads filter notification sources without dropping matching message bodies", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("notification-filter");
+    const now = yield* DateTime.now;
+    for (const [id, role, kind] of [
+      ["ordinary", "user", null],
+      ["monitor", "user", "monitor"],
+      ["system", "user", "system"],
+      ["assistant-monitor", "assistant", "monitor"],
+    ] as const) {
+      yield* store.apply({
+        id: EventId.make(`notification-filter:${id}`),
+        type: "message.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: MessageId.make(id),
+          threadId,
+          runId: null,
+          nodeId: null,
+          createdBy: "agent",
+          creationSource: "server",
+          role,
+          text: `Complete body for ${id}`,
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+          ...(kind === null
+            ? {}
+            : {
+                notification: {
+                  source: { kind },
+                  outcome: "updated",
+                  summary: "Background notification",
+                },
+              }),
+        },
+      });
+    }
+    const matching = yield* store.getThreadRecords(threadId, ["messages"], {
+      messageRoles: ["user"],
+      monitorNotificationsOnly: true,
+    });
+    assert.deepEqual(
+      matching.messages.map((message) => [message.id, message.text]),
+      [["monitor", "Complete body for monitor"]],
+    );
+    assert.lengthOf((yield* store.getThreadRecords(threadId, ["messages"])).messages, 4);
+    assert.lengthOf(
+      (yield* store.getThreadRecords(threadId, ["messages"], {
+        monitorNotificationsOnly: true,
+      })).messages,
+      2,
+    );
+    assert.lengthOf(
+      (yield* store.getThreadRecords(threadId, ["messages"], {
+        monitorNotificationsOnly: false,
+      })).messages,
+      4,
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("SQL queue readiness skips held runs without bypassing active work", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;

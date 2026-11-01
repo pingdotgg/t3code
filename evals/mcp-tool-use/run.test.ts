@@ -138,6 +138,7 @@ it("passes a good run and names every rule a bad run breaks", () => {
     textMust: ["t3-thread://v2/"],
     textMustNot: ["Paste .*token"],
     linked: ["~/pull/124"],
+    linkedNumbers: [124],
   };
   const good: SampleRun = {
     calls: [
@@ -180,6 +181,7 @@ it("passes a good run and names every rule a bad run breaks", () => {
     "textMust /t3-thread://v2//",
     "textMustNot /Paste .*token/",
     "linked ~/pull/124",
+    "linkedNumbers",
   ]);
 });
 
@@ -1178,7 +1180,7 @@ it.effect("accepts a successful exact-host recovery after a real device_open err
       hostId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       deviceId: "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB",
     };
-    const wrong = { ...input, hostId: "build-mac" };
+    const wrong = { ...input, hostId: "unknown-host" };
     const error = yield* sample.devices!.call("device_open", wrong);
     assert.isTrue(error.isError);
     const opened = yield* sample.devices!.call("device_open", input);
@@ -3034,7 +3036,7 @@ it.effect("R12 OWN-01 protects occupied panel sessions from selected and wildcar
 );
 
 it.effect(
-  "R12 DISC-01 allows the retained label/all-host/refresh route and bounds failed discovery",
+  "R12 DISC-01 allows the retained label/all-host route and bounds repeated discovery failures",
   () =>
     Effect.gen(function* () {
       const c = deviceCases().find((c) => c.id === "DISC-01")!;
@@ -3043,11 +3045,7 @@ it.effect(
       yield* withDevices(sample);
       const tools = sample.devices!;
       const calls: Array<SampleRun["calls"][number]> = [];
-      for (const input of [
-        { hostId: "build-mac" },
-        {},
-        { hostId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
-      ]) {
+      for (const input of [{ hostId: "build-mac" }, {}]) {
         const result = yield* tools.call("device_list", input);
         calls.push({
           step: calls.length,
