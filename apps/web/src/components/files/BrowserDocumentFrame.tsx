@@ -33,6 +33,7 @@ import {
 } from "react";
 import { isElectron } from "~/env";
 import { FileSurfaceLoading } from "./fileSurfaceChrome";
+import type { PdfViewState } from "./PdfViewer";
 
 import { useOpenLink } from "~/browser/useOpenLink";
 import { ExpandedImageDialog } from "~/components/chat/ExpandedImageDialog";
@@ -73,7 +74,29 @@ export const isPdfPreviewFile = (path: string): boolean =>
 
 const PdfViewer = lazy(() => import("./PdfViewer"));
 
-function PdfDocument(props: { src: string; title: string; positionKey: string }) {
+// The document stays mounted while each revision gets a fresh PDF.js document.
+function PdfDocument(props: { src: string; title: string; documentKey: string }) {
+  const [view, setView] = useState<PdfViewState>({ page: 0, offset: 0, zoom: null, left: 0 });
+  return (
+    <PdfDocumentRevision
+      key={props.documentKey}
+      src={props.src}
+      title={props.title}
+      positionKey={props.documentKey}
+      initialView={view}
+      onViewChange={setView}
+    />
+  );
+}
+
+// Keep signed URL renewals from reloading the same revision.
+function PdfDocumentRevision(props: {
+  src: string;
+  title: string;
+  positionKey: string;
+  initialView: PdfViewState;
+  onViewChange: (view: PdfViewState) => void;
+}) {
   const [src] = useState(props.src);
   // The Electron shell does not enable PDF plugins. WebKit embeds on iOS
   // expose only the first page, even when pdfViewerEnabled reports support.
@@ -91,7 +114,13 @@ function PdfDocument(props: { src: string; title: string; positionKey: string })
     />
   ) : (
     <Suspense fallback={<FileSurfaceLoading />}>
-      <PdfViewer src={src} title={props.title} positionKey={props.positionKey} />
+      <PdfViewer
+        src={src}
+        title={props.title}
+        positionKey={props.positionKey}
+        initialView={props.initialView}
+        onViewChange={props.onViewChange}
+      />
     </Suspense>
   );
 }
@@ -108,10 +137,17 @@ export function BrowserDocumentFrame(props: {
   readonly threadRef?: ScopedThreadRef | undefined;
   /** Stable resource identity and revision; defaults to src for callers that reload on URL changes. */
   readonly documentKey?: string | undefined;
+  /** Resource identity without its revision, so PDF reloads can retain the reading position. */
+  readonly documentId?: string | undefined;
 }) {
   const key = props.documentKey ?? props.src;
   return props.pdf ? (
-    <PdfDocument key={key} src={props.src} title={props.title} positionKey={key} />
+    <PdfDocument
+      key={props.documentId ?? key}
+      documentKey={key}
+      src={props.src}
+      title={props.title}
+    />
   ) : props.htmlRender ? (
     <HtmlRenderDocument
       key={key}
@@ -287,6 +323,8 @@ export function HtmlRenderDocument(props: {
         title={props.title}
         // Never allow-same-origin: the opaque origin keeps the page out of the app's session.
         sandbox="allow-scripts allow-forms"
+        // Lets a page's video or image viewer take the screen.
+        allow="fullscreen"
         loading="lazy"
         onLoad={() => {
           setLoaded(true);
