@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Mock native realpath to exercise macOS case correction on every platform.
+import * as NodeFSP from "node:fs/promises";
+import { vi } from "vite-plus/test";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { MspError } from "@muse-code/sdk";
@@ -80,7 +83,7 @@ function pendingPromise<A>() {
   return { promise, resolve, reject };
 }
 
-/** SDK-shaped transport fake: registration deliberately returns void, as the SDK does. */
+// Match the SDK: handler registration returns void.
 const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
   const requests = yield* Queue.unbounded<NativeCall>();
   const calls: NativeCall[] = [];
@@ -183,7 +186,6 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
       Effect.sync(() => {
         notify({ jsonrpc: "2.0", method, params: { sessionId, ...params } });
       }),
-    /** A notification about the host or account rather than a session, as `usage/changed` is. */
     emitHostWide: (method: string, params: Record<string, unknown>) =>
       Effect.sync(() => {
         notify({ jsonrpc: "2.0", method, params });
@@ -358,17 +360,14 @@ const startConversation = Effect.fnUntraced(function* (
   return { nativeId: call.commandId!, providerTurn: event.providerTurn };
 });
 
-// `usage/changed` as Muse 1.4.3 sent it after a reply (2026-10-08), with a placeholder tier.
 const SUBSCRIPTION_USAGE = {
   window: { usedPercent: 0, windowDurationMins: 300, resetsAtMs: 1791465557000 },
   weekly: { usedPercent: 5, resetsAtMs: 1791763200000 },
   tier: "tier-1",
   observedAtMs: 1791447762610,
 } satisfies MuseSubscriptionUsage;
-// How Muse ends a turn Meta refuses for quota (from a simulated Meta 429).
 const QUOTA_MESSAGE =
   "API error 429: Subscription quota exhausted. Your usage window resets soon. (rate_limit_error)";
-// How Muse 1.4.6 ended a turn at a real quota stop (2026-10-13), relayed by a credential proxy.
 const RELAYED_QUOTA_MESSAGE =
   "API error 429: All credentials for model muse-wonder-1.0-contributor are cooling down (last error: rate_limit_exceeded: Subscription quota exhausted. Your usage window resets at 2026-10-13T10:45:52Z.) (after 10 provider attempts)";
 
@@ -382,6 +381,8 @@ const approval = (turnId: string) => ({
   ],
   subject: { kind: "shell", command: "touch result.txt" },
 });
+
+vi.mock("node:fs/promises", { spy: true });
 
 describe("MuseAdapterV2", () => {
   it.effect("connects the thread's MCP credential on native start and resume", () =>
@@ -673,7 +674,7 @@ describe("MuseAdapterV2", () => {
       );
       yield* startConversation(harness, fake);
       const turnStart = fake.calls.find((call) => call.method === "turn/start");
-      // Muse 1.4.3 rejects any other form: "expected a canonical path (resolves to \\?\C:\…)".
+      // Muse 1.4.3 accepts only verbatim canonical roots.
       assert.deepStrictEqual(turnStart?.params.workspaceRoots, ["\\\\?\\C:\\work\\repo"]);
       // The muse.cmd launcher runs under cmd.exe, which cannot start in a verbatim directory.
       assert.strictEqual(hostCwd, "C:\\work\\repo");
@@ -684,11 +685,40 @@ describe("MuseAdapterV2", () => {
     ),
   );
 
+  it.effect("pins sessions and turns to native canonical case", () =>
+    Effect.gen(function* () {
+      using _realpath = vi.spyOn(NodeFSP, "realpath").mockResolvedValue("/workspace/eevee");
+      const fake = yield* makeFakeMuse();
+      const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        ...runtimePolicy,
+        cwd: "/workspace/EEVEE",
+      });
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        policy,
+      );
+      yield* startConversation(harness, fake);
+      const sessionStart = fake.calls.find((call) => call.method === "session/start");
+      const turnStart = fake.calls.find((call) => call.method === "turn/start");
+      assert.strictEqual(sessionStart?.params.workspaceRoot, "/workspace/eevee");
+      assert.deepStrictEqual(turnStart?.params.workspaceRoots, [
+        sessionStart?.params.workspaceRoot,
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(testLayer),
+      Effect.provideService(HostProcess.Platform, "darwin"),
+    ),
+  );
+
   it.effect("stops at a Meta usage limit until every exhausted window resets", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHarness(fake);
-      // Meta's report after the last reply that went through: the session window ran out.
       yield* fake.emitHostWide("usage/changed", {
         ...SUBSCRIPTION_USAGE,
         window: { ...SUBSCRIPTION_USAGE.window, usedPercent: 103 },
@@ -704,7 +734,6 @@ describe("MuseAdapterV2", () => {
       assert.strictEqual(terminal.status, "failed");
       assert.strictEqual(terminal.threadDisposition, "reusable");
       assert.strictEqual(terminal.failure?.class, "usage_limit");
-      // The exhausted session window's reset, not the weekly one.
       assert.strictEqual(terminal.failure?.resetAt, "2026-10-08T13:19:17.000Z");
       assert.isTrue(
         harness.allEvents.some(
@@ -730,7 +759,6 @@ describe("MuseAdapterV2", () => {
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHarness(fake);
-      // A fresh host has no report yet; the refusal itself says when the window resets.
       const { nativeId } = yield* startConversation(harness, fake);
       yield* fake.emit("turn/completed", {
         turnId: nativeId,
@@ -749,7 +777,6 @@ describe("MuseAdapterV2", () => {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHarness(fake);
       const { nativeId } = yield* startConversation(harness, fake);
-      // The typed quota decides even when the text names no quota.
       yield* fake.emit("turn/completed", {
         turnId: nativeId,
         terminal: "failed",
@@ -771,7 +798,6 @@ describe("MuseAdapterV2", () => {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHarness(fake);
       yield* fake.emitHostWide("usage/changed", { window: "not usage" });
-      // A reset no Date can hold would throw once formatted, so that report is skipped too.
       yield* fake.emitHostWide("usage/changed", {
         ...SUBSCRIPTION_USAGE,
         window: { ...SUBSCRIPTION_USAGE.window, usedPercent: 103, resetsAtMs: 1e16 },
@@ -1821,6 +1847,59 @@ describe("MuseAdapterV2", () => {
       yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
       const terminal = yield* harness.takeEvent("turn.terminal");
       assert.strictEqual(terminal.status, "completed");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("lists a running subagent under its turn item's native id as Muse reveals it", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const { nativeId } = yield* startConversation(harness, fake);
+      const revisions = [
+        { revision: 1, status: "inProgress" },
+        { revision: 2, status: "inProgress", subagentId: "" },
+        { revision: 3, status: "inProgress", subagentId: "subagent-1" },
+        {
+          revision: 4,
+          status: "inProgress",
+          subagentId: "subagent-1",
+          childSessionId: "child-session-1",
+        },
+        {
+          revision: 5,
+          status: "completed",
+          subagentId: "subagent-1",
+          childSessionId: "child-session-1",
+        },
+      ];
+      const listed: Array<{ nativeId: string | null | undefined; roster: Array<string> }> = [];
+      for (const fields of revisions) {
+        yield* fake.emit(fields.revision === 1 ? "item/started" : "item/updated", {
+          turnId: nativeId,
+          item: { itemId: "sub-1", kind: "subagent", turnId: nativeId, ...fields },
+        });
+        const item = yield* harness.takeEvent(
+          "turn_item.updated",
+          (event) => event.turnItem.type === "subagent",
+        );
+        const roster = harness.allEvents.findLast(
+          (event) => event.type === "provider_thread.updated",
+        );
+        listed.push({
+          nativeId: item.turnItem.nativeItemRef?.nativeId,
+          roster:
+            roster?.type === "provider_thread.updated"
+              ? (roster.providerThread.pendingBackgroundTasks ?? []).map((task) => task.taskId)
+              : [],
+        });
+      }
+      assert.deepStrictEqual(listed, [
+        { nativeId: "sub-1", roster: ["sub-1"] },
+        { nativeId: "sub-1", roster: ["sub-1"] },
+        { nativeId: "subagent-1", roster: ["subagent-1"] },
+        { nativeId: "child-session-1", roster: ["child-session-1"] },
+        { nativeId: "child-session-1", roster: [] },
+      ]);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
