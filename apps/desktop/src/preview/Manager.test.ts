@@ -797,6 +797,39 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("treats a load superseded by a page redirect as a successful navigation", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        // Same shape Electron's loadURL rejects with in lib/browser/api/web-contents.ts.
+        const loadError = (errno: number, code: string, url: string) =>
+          Object.assign(new Error(`${code} (${errno}) loading '${url}'`), { errno, code, url });
+        const preview = makeFaviconWebContents();
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.createTab("tab_redirect");
+        yield* manager.registerWebview("tab_redirect", 42);
+
+        preview.loadURL.mockRejectedValueOnce(
+          loadError(-3, "ERR_ABORTED", "https://example.com/target"),
+        );
+        yield* manager.navigate("tab_redirect", "https://example.com/");
+
+        preview.loadURL.mockRejectedValueOnce(
+          loadError(-105, "ERR_NAME_NOT_RESOLVED", "https://missing.invalid/"),
+        );
+        const failed = yield* Effect.exit(
+          manager.navigate("tab_redirect", "https://missing.invalid/"),
+        );
+        expect(Exit.isFailure(failed)).toBe(true);
+        if (Exit.isSuccess(failed)) return;
+        expect(Option.getOrThrow(Cause.findErrorOption(failed.cause))).toMatchObject({
+          _tag: "PreviewOperationError",
+          operation: "navigate.loadURL",
+          cause: { errno: -105 },
+        });
+      }),
+    ),
+  );
+
   effectIt.effect("detaches through the pinned debugger after the webview is destroyed", () =>
     withManager((manager) =>
       Effect.gen(function* () {
