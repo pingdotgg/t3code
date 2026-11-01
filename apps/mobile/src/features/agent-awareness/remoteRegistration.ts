@@ -980,20 +980,13 @@ const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
       }).pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<LiveActivity<AgentActivityProps>>));
       if (armedMeanwhile.length > 0) {
         activities = [...armedMeanwhile];
-      } else if (snapshot?.aggregate && snapshot.aggregate.activeCount > 0) {
+      } else if (
+        snapshot?.aggregate &&
+        (snapshot.aggregate.pendingCount ?? snapshot.aggregate.activeCount) > 0
+      ) {
         const aggregate = snapshot.aggregate;
         const primed = yield* Effect.try({
-          try: () =>
-            startAgentLiveActivity(
-              {
-                title: aggregate.title,
-                subtitle: aggregate.subtitle,
-                activeCount: aggregate.activeCount,
-                updatedAt: aggregate.updatedAt,
-                activities: aggregate.activities,
-              },
-              liveActivityStaleDate(),
-            ),
+          try: () => startAgentLiveActivity(aggregate, liveActivityStaleDate()),
           catch: (cause) =>
             new AgentAwarenessOperationError({
               operation: "prime-live-activity",

@@ -28,6 +28,8 @@ export function statusForPhase(phase: RelayAgentActivityState["phase"]): string 
       return "Working";
     case "stale":
       return "Waiting";
+    case "woke":
+      return "Woke";
   }
 }
 
@@ -39,20 +41,12 @@ function aggregateRowForState(state: RelayAgentActivityState) {
     threadTitle: state.threadTitle,
     modelTitle: state.modelTitle,
     phase: state.phase,
+    ...(state.unread === undefined ? {} : { unread: state.unread }),
+    ...(state.completedAt === undefined ? {} : { completedAt: state.completedAt }),
     status: statusForPhase(state.phase),
     updatedAt: state.updatedAt,
     deepLink: state.deepLink,
   };
-}
-
-function terminalAggregateState(state: RelayAgentActivityState): RelayAgentActivityAggregateState {
-  return sanitizeAgentActivityAggregateState({
-    title: "T3 Code",
-    subtitle: state.phase === "failed" ? "Agent work failed" : "Agent work completed",
-    activeCount: 0,
-    updatedAt: state.updatedAt,
-    activities: [aggregateRowForState(state)],
-  });
 }
 
 export const TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS = 15 * 60 * 1_000;
@@ -68,7 +62,7 @@ function isRecentTerminalState(state: RelayAgentActivityState, nowMs: number): b
   if (Number.isNaN(updatedAtMs)) {
     return false;
   }
-  return nowMs - updatedAtMs <= TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS;
+  return state.retained === true || nowMs - updatedAtMs <= TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS;
 }
 
 export function makeAggregateState(input: {
@@ -76,53 +70,68 @@ export function makeAggregateState(input: {
   readonly terminalState: RelayAgentActivityState | null;
   readonly nowMs: number;
 }): RelayAgentActivityAggregateState | null {
-  const activeStates = input.activeStates.filter(
-    (state) => !isTerminalPhase(state) && !isExpiredAgentActivityState(state, input.nowMs),
+  const states = input.activeStates.filter((state) =>
+    isTerminalPhase(state)
+      ? isRecentTerminalState(state, input.nowMs)
+      : !isExpiredAgentActivityState(state, input.nowMs),
   );
-  if (activeStates.length === 0) {
-    if (input.terminalState !== null) {
-      return terminalAggregateState(input.terminalState);
-    }
-    // Alerts compare with the delivered aggregate; replays must repaint without buzzing.
-    const recentTerminal = input.activeStates
-      .filter((state) => isRecentTerminalState(state, input.nowMs))
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    const newest = recentTerminal[0];
-    if (!newest) {
-      return null;
-    }
-    return sanitizeAgentActivityAggregateState({
-      title: "T3 Code",
-      subtitle: newest.phase === "failed" ? "Agent work failed" : "Agent work completed",
-      activeCount: 0,
-      updatedAt: newest.updatedAt,
-      activities: recentTerminal.slice(0, MAX_ACTIVITY_ROWS).map(aggregateRowForState),
-    });
-  }
-  const recentTerminalStates = input.activeStates
-    .filter((state) => isRecentTerminalState(state, input.nowMs))
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const displayedStates = [
-    ...activeStates
-      .toSorted((a, b) => activityPhasePriority(a.phase) - activityPhasePriority(b.phase))
-      .slice(0, MAX_ACTIVITY_ROWS),
-    ...recentTerminalStates,
-  ].slice(0, MAX_ACTIVITY_ROWS);
-  const updatedAt = [...activeStates, ...recentTerminalStates].reduce((latest, state) =>
-    state.updatedAt.localeCompare(latest.updatedAt) > 0 ? state : latest,
-  ).updatedAt;
+  if (states.length === 0 && input.terminalState !== null) states.push(input.terminalState);
+  if (states.length === 0) return null;
+  const activeCount = states.filter((state) => !isTerminalPhase(state)).length;
+  const unreadCount = states.filter(
+    (state) => state.phase === "completed" && state.unread !== false,
+  ).length;
+  const pendingCount =
+    activeCount + states.filter((state) => isTerminalPhase(state) && state.unread !== false).length;
+  const displayedStates = states
+    .toSorted(
+      (a, b) =>
+        activityPhasePriority(a.phase, a.unread) - activityPhasePriority(b.phase, b.unread) ||
+        b.updatedAt.localeCompare(a.updatedAt) ||
+        a.environmentId.localeCompare(b.environmentId) ||
+        a.threadId.localeCompare(b.threadId),
+    )
+    .slice(0, MAX_ACTIVITY_ROWS);
+  const newest = states.reduce((latest, state) =>
+    state.updatedAt > latest.updatedAt ? state : latest,
+  );
   return sanitizeAgentActivityAggregateState({
     title: "T3 Code",
-    subtitle: "Agent work in progress",
-    activeCount: activeStates.length,
-    updatedAt,
+    subtitle:
+      activeCount > 0
+        ? "Agent work in progress"
+        : newest.phase === "failed"
+          ? "Agent work failed"
+          : "Agent work completed",
+    activeCount,
+    workingCount: states.filter((state) => state.phase === "running" || state.phase === "starting")
+      .length,
+    attentionCount: states.filter(
+      (state) =>
+        state.phase === "waiting_for_input" ||
+        state.phase === "waiting_for_approval" ||
+        state.phase === "woke",
+    ).length,
+    unreadCount,
+    // Legacy publishers cannot report reads; keep their existing completion lifecycle.
+    ...(states.every((state) => state.unread !== undefined) ||
+    states.some((state) => state.unread === true || state.phase === "woke")
+      ? { pendingCount }
+      : {}),
+    totalCount: states.length,
+    updatedAt: newest.updatedAt,
     activities: displayedStates.map(aggregateRowForState),
   });
 }
 
-export function activityPhasePriority(phase: RelayAgentActivityState["phase"]): number {
-  if (phase === "waiting_for_approval" || phase === "waiting_for_input") return 0;
+export function activityPhasePriority(
+  phase: RelayAgentActivityState["phase"],
+  unread?: boolean,
+): number {
+  if (phase === "waiting_for_approval" || phase === "waiting_for_input" || phase === "woke")
+    return 0;
   if (phase === "failed") return 1;
-  if (phase === "starting" || phase === "running") return 2;
-  return 3;
+  if (phase === "completed" && unread !== false) return 2;
+  if (phase === "starting" || phase === "running") return 3;
+  return 4;
 }

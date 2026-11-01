@@ -36,9 +36,11 @@ export function rowPhasesChanged(
 ): boolean {
   if (previousAggregate.activities.length !== nextAggregate.activities.length) return true;
   const previousPhases = new Map(
-    previousAggregate.activities.map((row) => [rowKey(row), row.phase]),
+    previousAggregate.activities.map((row) => [rowKey(row), `${row.phase}:${row.unread}`]),
   );
-  return nextAggregate.activities.some((row) => previousPhases.get(rowKey(row)) !== row.phase);
+  return nextAggregate.activities.some(
+    (row) => previousPhases.get(rowKey(row)) !== `${row.phase}:${row.unread}`,
+  );
 }
 
 function isAttentionPhase(phase: string): boolean {
@@ -88,7 +90,7 @@ function newlyTerminalRows(
     previousAggregate.activities.map((row) => [rowKey(row), row.phase]),
   );
   return nextAggregate.activities.filter((row) => {
-    if (row.phase !== "completed" && row.phase !== "failed") return false;
+    if (row.unread === false || (row.phase !== "completed" && row.phase !== "failed")) return false;
     const previousPhase = previousPhases.get(rowKey(row));
     return (
       (includeUnobserved || previousPhase !== undefined) &&
@@ -142,11 +144,13 @@ export function alertForTerminalAggregate(input: {
   readonly preferences: RelayAgentAwarenessPreferences | null;
 }): AgentActivityAlert | null {
   const row = input.aggregate?.activities[0];
-  if (!row || (row.phase !== "completed" && row.phase !== "failed")) return null;
+  if (!row || row.unread === false || (row.phase !== "completed" && row.phase !== "failed"))
+    return null;
   return alertAllowedForPhase(input.preferences, row.phase) ? alertForActivityRows([row]) : null;
 }
 
 export function shouldAlertForActivity(input: {
+  readonly unread?: boolean | undefined;
   readonly phase: RelayAgentActivityAggregateRow["phase"];
   readonly updatedAt: string;
   readonly preferences: RelayAgentAwarenessPreferences | null;
@@ -154,6 +158,7 @@ export function shouldAlertForActivity(input: {
 }): boolean {
   return (
     input.preferences?.notificationsEnabled === true &&
+    (!(input.phase === "completed" || input.phase === "failed") || input.unread !== false) &&
     alertAllowedForPhase(input.preferences, input.phase) &&
     ((input.phase !== "completed" && input.phase !== "failed") ||
       isFreshTerminalNotification(input.updatedAt, input.nowMs))

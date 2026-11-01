@@ -31,6 +31,105 @@ const aggregate = (states: RelayAgentActivityState[]) =>
   makeAggregateState({ activeStates: states, terminalState: null, nowMs: 0 })!;
 
 describe("shared agent activity policy", () => {
+  it("prioritizes actionable results, counts capped rows, and preserves read results", () => {
+    const make = (
+      id: string,
+      phase: RelayAgentActivityState["phase"],
+      unread: boolean,
+      updatedAt = state.updatedAt,
+    ) => ({ ...state, threadId: ThreadId.make(id), phase, unread, updatedAt, retained: true });
+    const states = [
+      make("working", "running", false),
+      make("read", "completed", false),
+      make("done-old", "completed", true, "1969-12-31T23:59:00.000Z"),
+      make("done-new", "completed", true),
+      make("failed", "failed", true),
+      make("input", "waiting_for_input", false),
+      make("woke", "woke", false),
+    ];
+    expect(aggregate(states)).toMatchObject({
+      activeCount: 3,
+      workingCount: 1,
+      attentionCount: 2,
+      unreadCount: 2,
+      pendingCount: 6,
+      totalCount: 7,
+      activities: [
+        { threadId: "input" },
+        { threadId: "woke", status: "Woke" },
+        { threadId: "failed" },
+        { threadId: "done-new" },
+        { threadId: "done-old" },
+      ],
+    });
+    expect(
+      aggregate(states.filter((s) => s.threadId !== "done-old" && s.threadId !== "woke")),
+    ).toMatchObject({
+      totalCount: 5,
+      activities: [
+        { threadId: "input" },
+        { threadId: "failed" },
+        { threadId: "done-new" },
+        { threadId: "working" },
+        { threadId: "read", unread: false },
+      ],
+    });
+    expect(aggregate([make("read", "completed", false)])).toMatchObject({
+      totalCount: 1,
+      activeCount: 0,
+      unreadCount: 0,
+      pendingCount: 0,
+    });
+  });
+
+  it.each(["completed", "failed"] as const)(
+    "keeps an unread modern %s pending alongside legacy results",
+    (phase) => {
+      const modern = {
+        ...state,
+        threadId: ThreadId.make("modern"),
+        phase,
+        unread: true,
+        retained: true,
+      };
+      const legacy = { ...state, phase: "completed" as const };
+      const mixed = aggregate([modern, legacy]);
+      expect(mixed.pendingCount).toBe(2);
+      expect(mixed.activeCount).toBe(0);
+      expect(aggregate([legacy]).pendingCount).toBeUndefined();
+    },
+  );
+
+  it("does not notify for already read results or marking a result unread again", () => {
+    expect(shouldAlertForActivity({ ...state, phase: "woke", preferences, nowMs: 0 })).toBe(false);
+    const woke = { ...state, phase: "woke" as const, retained: true };
+    expect(
+      makeAggregateState({
+        activeStates: [woke],
+        terminalState: null,
+        nowMs: 2 * 24 * 60 * 60_000,
+      }),
+    ).toMatchObject({ workingCount: 0, attentionCount: 1, pendingCount: 1 });
+    const done = { ...state, phase: "completed" as const, unread: false };
+    expect(shouldAlertForActivity({ ...done, preferences, nowMs: 0 })).toBe(false);
+    expect(
+      terminalTransitionRows({
+        previousAggregate: aggregate([state]),
+        nextAggregate: aggregate([done]),
+        preferences,
+        nowMs: 0,
+      }),
+    ).toEqual([]);
+    expect(
+      terminalTransitionRows({
+        previousAggregate: aggregate([done]),
+        nextAggregate: aggregate([{ ...done, unread: true }]),
+        preferences,
+        nowMs: 0,
+      }),
+    ).toEqual([]);
+  });
+
   it.each(["waiting_for_approval", "waiting_for_input"] as const)(
     "keeps an older %s ahead of five running rows",
     (phase) => {

@@ -59,6 +59,9 @@ export const ApnsDeliveryJobPayload = Schema.Struct({
   aggregate: Schema.NullOr(RelayAgentActivityAggregateState),
   notification: Schema.NullOr(ApnsNotificationPayload),
   alert: Schema.optional(Schema.NullOr(ApnsLiveActivityAlert)),
+  replayThread: Schema.optional(
+    Schema.Struct({ environmentId: Schema.String, threadId: Schema.String }),
+  ),
   createdAt: Schema.String,
   expiresAt: Schema.String,
 });
@@ -236,6 +239,7 @@ export function makeApnsDeliveryJobPayload(input: {
   readonly aggregate: ApnsDeliveryJobPayload["aggregate"];
   readonly notification?: ApnsNotificationPayload | null;
   readonly alert?: ApnsLiveActivityAlert | null | undefined;
+  readonly replayThread?: ApnsDeliveryJobPayload["replayThread"];
   readonly createdAt: string;
   readonly expiresAt: string;
   readonly jobId: string;
@@ -255,6 +259,7 @@ export function makeApnsDeliveryJobPayload(input: {
     notification: input.notification ?? null,
     // Omit absent fields to preserve signatures from older relay builds.
     ...(input.alert ? { alert: input.alert } : {}),
+    ...(input.replayThread ? { replayThread: input.replayThread } : {}),
     createdAt: input.createdAt,
     expiresAt: input.expiresAt,
   };

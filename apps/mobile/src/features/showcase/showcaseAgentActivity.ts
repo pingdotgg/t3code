@@ -26,6 +26,7 @@ const STATUS_BY_PHASE: Record<AgentActivityPhase, string> = {
   waiting_for_approval: "Approval",
   waiting_for_input: "Input",
   stale: "Waiting",
+  woke: "Woke",
   completed: "Done",
   failed: "Failed",
 };

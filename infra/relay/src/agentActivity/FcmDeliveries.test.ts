@@ -26,6 +26,7 @@ const aggregateFor = (states: ReadonlyArray<RelayAgentActivityState>) =>
   makeAggregateState({ activeStates: states, terminalState: null, nowMs: 0 })!;
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const state: RelayAgentActivityState = {
   environmentId: EnvironmentId.make("env"),
   threadId: ThreadId.make("thread"),
@@ -241,7 +242,7 @@ describe("Android delivery routing", () => {
         expect(alerts).toHaveLength(1);
         expect(alerts[0]?.data).toMatchObject({
           alert_title: title,
-          alert_body: "Fix notifications, Second thread",
+          alert_body: "Second thread, Fix notifications",
           alert_path: "/",
           active,
         });
@@ -249,6 +250,165 @@ describe("Android delivery routing", () => {
       }).pipe(Effect.provide(h.layer));
     },
   );
+
+  it.effect(
+    "a per-thread replay does not consume another thread's pending completion alert",
+    () => {
+      const h = harness();
+      h.current.otherStates = [secondState];
+      return Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries.FcmDeliveries;
+        yield* delivery.process(h.job);
+        h.current.otherStates = [{ ...secondState, phase: "completed", unread: true }];
+        const baseline = h.current.target.last_aggregate_json;
+        yield* delivery.process({ ...h.job, replay: true });
+        expect(decodeJson(h.current.target.last_aggregate_json)).toEqual(decodeJson(baseline));
+        yield* delivery.process({ ...h.job, state: h.current.otherStates[0] });
+        expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
+
+  it.effect(
+    "a replay adds a missing baseline row without acknowledging another pending result",
+    () => {
+      const h = harness();
+      h.current.target.last_aggregate_json = encodeJson(aggregateFor([secondState]));
+      h.current.state = { ...state, phase: "completed", unread: true, retained: true };
+      h.current.otherStates = [
+        { ...secondState, phase: "completed", unread: true, retained: true },
+      ];
+      return Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries.FcmDeliveries;
+        yield* delivery.process({ ...h.job, state: h.current.state, replay: true });
+        yield* delivery.process({ ...h.job, state: h.current.otherStates[0] });
+        const alerts = h.sent.filter((message) => message.alert);
+        expect(alerts).toHaveLength(1);
+        expect(alerts[0]?.data.alert_title).toBe(secondState.threadTitle);
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
+
+  it.effect.each(["completed", "waiting_for_approval"] as const)(
+    "a replayed %s row does not alert on the next ordinary job",
+    (phase) => {
+      const h = harness();
+      h.current.otherStates = [secondState];
+      return Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries.FcmDeliveries;
+        yield* delivery.process(h.job);
+        h.current.state = { ...state, phase, unread: true, retained: true };
+        yield* delivery.process({ ...h.job, state: h.current.state, replay: true });
+        yield* delivery.process({ ...h.job, state: secondState });
+        expect(h.sent.filter((message) => message.alert)).toHaveLength(0);
+        h.current.otherStates = [{ ...secondState, phase: "completed", unread: true }];
+        yield* delivery.process({ ...h.job, state: h.current.otherStates[0] });
+        const alerts = h.sent.filter((message) => message.alert);
+        expect(alerts).toHaveLength(1);
+        expect(alerts[0]?.data.alert_title).toBe(secondState.threadTitle);
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
+
+  it.effect.each(["running", "completed"] as const)(
+    "an off-card %s update cannot consume a visible approval alert",
+    (phase) => {
+      const h = harness();
+      const failures = Array.from({ length: 5 }, (_, i) => ({
+        ...state,
+        threadId: ThreadId.make(`failure-${i}`),
+        phase: "failed" as const,
+        unread: false,
+        retained: true,
+      }));
+      h.current.target.preferences_json = encodeJson({ ...preferences, notifyOnCompletion: false });
+      h.current.otherStates = [...failures, secondState];
+      h.current.target.last_aggregate_json = encodeJson(
+        aggregateFor([state, ...h.current.otherStates]),
+      );
+      h.current.state = { ...state, phase, unread: true, retained: true };
+      const approval = { ...secondState, phase: "waiting_for_approval" as const };
+      h.current.otherStates = [...failures, approval];
+      return Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries.FcmDeliveries;
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        expect(h.sent[0]?.data).toMatchObject({
+          alert_title: secondState.threadTitle,
+          alert_body: "Approval: Project",
+        });
+        yield* delivery.process({ ...h.job, state: approval });
+        expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
+
+  it.effect.each(["completed", "woke"] as const)(
+    "retains a pending %s row without an automatic Android expiry",
+    (phase) => {
+      const h = harness();
+      h.current.state = { ...state, phase, unread: phase === "completed", retained: true };
+      return Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries.FcmDeliveries;
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        expect(h.sent[0]?.data).toMatchObject({
+          active: "true",
+          activity_expires_at: "0",
+          activity_working_count: "0",
+          activity_attention_count: phase === "woke" ? "1" : "0",
+        });
+        expect(h.sent.filter((message) => message.alert)).toHaveLength(phase === "woke" ? 0 : 1);
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
+
+  it.effect("uses running threads outside the five display rows to set Android expiry", () => {
+    const h = harness();
+    h.current.otherStates = Array.from({ length: 5 }, (_, i) => ({
+      ...state,
+      threadId: ThreadId.make(`failure-${i}`),
+      threadTitle: `Old failure ${i}`,
+      phase: "failed" as const,
+      unread: false,
+      retained: true,
+    }));
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process(h.job);
+      expect(h.sent[0]?.data.activity_expires_at).toBe(String(2 * 60 * 60_000));
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("alerts a new result outside the five visible rows and keeps replays silent", () => {
+    const h = harness();
+    h.current.otherStates = Array.from({ length: 5 }, (_, i) => ({
+      ...state,
+      threadId: ThreadId.make(`failure-${i}`),
+      threadTitle: `Old failure ${i}`,
+      phase: "failed" as const,
+      unread: true,
+      retained: true,
+    }));
+    h.current.target.last_aggregate_json = encodeJson(
+      aggregateFor([state, ...h.current.otherStates]),
+    );
+    h.current.state = { ...state, phase: "completed", unread: true, retained: true };
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process({ ...h.job, state: h.current.state });
+      expect(h.sent[0]?.data.alert_title).toBe(state.threadTitle);
+      expect(h.sent[0]?.data.activity_line_4).not.toContain(state.threadTitle);
+      yield* delivery.process({ ...h.job, state: h.current.state, replay: true });
+      expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it("expires an Android card immediately after its last result is read", () => {
+    const read = { ...state, phase: "completed" as const, unread: false, retained: true };
+    expect(androidActivityData(aggregateFor([read]), 60_000)).toMatchObject({
+      active: "false",
+      activity_expires_at: "0",
+    });
+  });
 
   it.effect("filters disabled event types before counting a group", () => {
     const h = harness();

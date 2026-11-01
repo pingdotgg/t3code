@@ -1110,6 +1110,82 @@ describe("live activity alert decisions", () => {
 });
 
 describe("fast completion delivery", () => {
+  it.effect.each([true, false])(
+    "keeps unread Done live and ends it when read: unread=%s",
+    (unread) => {
+      const queuedJobs: SignedApnsDeliveryJob[] = [];
+      const done = {
+        ...aggregate,
+        activeCount: 0,
+        pendingCount: unread ? 1 : 0,
+        unreadCount: unread ? 1 : 0,
+        activities: [{ ...aggregate.activities[0]!, phase: "completed" as const, unread }],
+      };
+      const device = { ...target, last_aggregate_json: JSON.stringify(aggregate) };
+      return Effect.gen(function* () {
+        const d = yield* ApnsDeliveries.ApnsDeliveries;
+        yield* d.sendForTarget({ target: device, aggregate: done, nowMs: 0 });
+        expect(queuedJobs[0]?.payload.kind).toBe(
+          unread ? "live_activity_update" : "live_activity_end",
+        );
+        if (!unread) expect(queuedJobs[0]?.payload.alert ?? null).toBeNull();
+      }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs, currentTargets: [device] })));
+    },
+  );
+
+  it.effect.each([true, false])(
+    "preserves a freshly armed token only for a replayed read snapshot: replay=%s",
+    (replay) => {
+      const queuedJobs: SignedApnsDeliveryJob[] = [];
+      const read = {
+        ...aggregate,
+        activeCount: 0,
+        pendingCount: 0,
+        unreadCount: 0,
+        activities: [{ ...aggregate.activities[0]!, phase: "completed" as const, unread: false }],
+      };
+      return Effect.gen(function* () {
+        const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+        yield* deliveries.sendForTarget({ target, aggregate: read, nowMs: 0, replay });
+        expect(queuedJobs).toHaveLength(replay ? 0 : 1);
+      }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
+    },
+  );
+
+  it.effect("does not deliver a last-read end after another thread starts", () => {
+    const queuedJobs: SignedApnsDeliveryJob[] = [];
+    const requests: HttpClientRequest.HttpClientRequest[] = [];
+    const read = { ...state, phase: "completed" as const, unread: false };
+    const readAggregate = {
+      ...aggregate,
+      activeCount: 0,
+      pendingCount: 0,
+      unreadCount: 0,
+      activities: [{ ...aggregate.activities[0]!, phase: "completed" as const, unread: false }],
+    };
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.sendForTarget({ target, aggregate: readAggregate, nowMs: 20_000 });
+      expect(queuedJobs).toHaveLength(1);
+      yield* deliveries.processSignedJob(queuedJobs[0]!);
+      expect(requests).toHaveLength(0);
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts: [],
+          queuedJobs,
+          config: signingConfig,
+          activityStates: [read, { ...state, threadId: ThreadId.make("new-work") }],
+          execute: (request) =>
+            Effect.sync(() => {
+              requests.push(request);
+              return HttpClientResponse.fromWeb(request, Response.json({}));
+            }),
+        }),
+      ),
+    );
+  });
+
   it.effect("keeps a completion alert when work finishes before running delivery", () => {
     const queuedJobs: SignedApnsDeliveryJob[] = [];
     const old = {
@@ -1138,19 +1214,20 @@ describe("fast completion delivery", () => {
       ).toBe(true);
     }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs, currentTargets: [device] })));
   });
-  it.effect("replays a newly visible completion without alerting", () => {
+  it.effect("replays a newly visible completion without consuming another thread's alert", () => {
     const queuedJobs: SignedApnsDeliveryJob[] = [];
+    const markedDeliveries: Array<
+      Parameters<LiveActivities.LiveActivities["Service"]["markDelivery"]>[0]
+    > = [];
+    const other = { ...aggregate.activities[0]!, threadId: ThreadId.make("other") };
     const done = {
       ...aggregate,
-      activeCount: 0,
-      activities: [{ ...aggregate.activities[0]!, phase: "completed" as const }],
-    };
-    const previous = {
-      ...aggregate,
       activities: [
-        { ...aggregate.activities[0]!, threadId: "other" as RelayAgentActivityState["threadId"] },
+        { ...aggregate.activities[0]!, phase: "completed" as const },
+        { ...other, phase: "completed" as const },
       ],
     };
+    const previous = { ...aggregate, activities: [other] };
     const device = { ...target, last_aggregate_json: JSON.stringify(previous) };
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
@@ -1159,10 +1236,33 @@ describe("fast completion delivery", () => {
         aggregate: done,
         nowMs: 0,
         replay: true,
+        replayThread: { environmentId: state.environmentId, threadId: state.threadId },
       });
       expect(queuedJobs).toHaveLength(1);
       expect(queuedJobs[0]?.payload.alert).toBeUndefined();
-    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
+      const result = yield* deliveries.processSignedJob(queuedJobs[0]!);
+      expect(result.ok).toBe(true);
+      expect(markedDeliveries[0]?.aggregate?.activities).toEqual([other, done.activities[0]]);
+      device.last_aggregate_json = JSON.stringify(markedDeliveries[0]?.aggregate);
+      yield* deliveries.sendForTarget({ target: device, aggregate: done, nowMs: 0 });
+      expect(queuedJobs[1]?.payload.alert).toMatchObject({ title: "Thread" });
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts: [],
+          queuedJobs,
+          markedDeliveries,
+          config: signingConfig,
+          currentTargets: [device],
+          activityStates: [
+            { ...state, phase: "completed" },
+            { ...state, threadId: other.threadId, phase: "completed" },
+          ],
+          execute: (request) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 200 }))),
+        }),
+      ),
+    );
   });
 });
 

@@ -789,3 +789,37 @@ index 77fe3d7412fb0ef423e3d7a870676ebb54f07350..08ab59f63c7b40f4727500a37d95bed4
  export * from './Progress';
  export * from './Slider';
  export * from './Spacer';
+diff --git a/ios/TextView.swift b/ios/TextView.swift
+--- a/ios/TextView.swift
++++ b/ios/TextView.swift
+@@ -7 +7 @@
+-  case timer, relative, offset, date, time
++  case timer, relative, relativeMinutes, offset, date, time
+@@ -12 +12 @@
+-    case .relative: return .relative
++    case .relative, .relativeMinutes: return .relative
+@@ -57,0 +58,12 @@
++    } else if let date = props.date, props.dateStyle == .relativeMinutes {
++      if #available(iOS 18.0, tvOS 18.0, macOS 15.0, watchOS 11.0, *) {
++        text = Text(.currentDate, format: .offset(
++          to: date, allowedFields: [.day, .hour, .minute], maxFieldCount: 3, sign: .never
++        ))
++      } else {
++        let formatter = DateComponentsFormatter()
++        formatter.allowedUnits = [.day, .hour, .minute]
++        formatter.unitsStyle = .full
++        let minutes = max(0, Int(Date().timeIntervalSince(date) / 60))
++        text = Text(formatter.string(from: TimeInterval(minutes * 60)) ?? "0 minutes")
++      }
+diff --git a/src/swift-ui/Text/index.tsx b/src/swift-ui/Text/index.tsx
+--- a/src/swift-ui/Text/index.tsx
++++ b/src/swift-ui/Text/index.tsx
+@@ -10 +10 @@
+-export type TextDateStyle = 'timer' | 'relative' | 'offset' | 'date' | 'time';
++export type TextDateStyle = 'timer' | 'relative' | 'relativeMinutes' | 'offset' | 'date' | 'time';
+diff --git a/build/swift-ui/Text/index.d.ts b/build/swift-ui/Text/index.d.ts
+--- a/build/swift-ui/Text/index.d.ts
++++ b/build/swift-ui/Text/index.d.ts
+@@ -6 +6 @@
+-export type TextDateStyle = 'timer' | 'relative' | 'offset' | 'date' | 'time';
++export type TextDateStyle = 'timer' | 'relative' | 'relativeMinutes' | 'offset' | 'date' | 'time';

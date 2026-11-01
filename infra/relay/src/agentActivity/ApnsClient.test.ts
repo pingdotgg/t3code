@@ -112,6 +112,20 @@ describe("ApnsClient", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("dismisses a fully read Live Activity immediately", () =>
+    Effect.gen(function* () {
+      const apns = yield* ApnsClient.ApnsClient;
+      const request = apns.makeLiveActivityRequest({
+        event: "end",
+        token: "token",
+        state: { ...state, activeCount: 0, pendingCount: 0 },
+        nowEpochSeconds: 123,
+        nowIso: DateTime.formatIso(now),
+      });
+      expect(request.payload).toMatchObject({ aps: { event: "end", "dismissal-date": 123 } });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("puts remote routing metadata only in Expo's body field", () =>
     Effect.gen(function* () {
       const apns = yield* ApnsClient.ApnsClient;

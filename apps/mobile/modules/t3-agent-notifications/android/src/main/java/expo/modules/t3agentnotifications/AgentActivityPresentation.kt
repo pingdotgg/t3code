@@ -34,6 +34,7 @@ internal enum class ActivityPhase(
     "Answer",
     R.color.agent_activity_input
   ),
+  WOKE("Woke", "Snooze ended", "Woke", "Open", R.color.agent_activity_attention),
   STALE(
     "Waiting",
     "Waiting for an update",
@@ -56,7 +57,7 @@ internal enum class ActivityPhase(
     R.color.agent_activity_failed
   );
 
-  val needsUser get() = this == APPROVAL || this == INPUT
+  val needsUser get() = this == APPROVAL || this == INPUT || this == WOKE
   val finished get() = this == COMPLETED || this == FAILED
 
   companion object {
@@ -80,6 +81,7 @@ internal fun activityPhase(data: Map<String, String>, rows: List<ActivityRow>): 
     "running" -> ActivityPhase.RUNNING
     "waiting_for_approval" -> ActivityPhase.APPROVAL
     "waiting_for_input" -> ActivityPhase.INPUT
+    "woke" -> ActivityPhase.WOKE
     "stale" -> ActivityPhase.STALE
     "completed" -> ActivityPhase.COMPLETED
     "failed" -> ActivityPhase.FAILED
@@ -94,9 +96,11 @@ internal class ActivityPresentation(data: Map<String, String>, private val activ
     ?: rows.count { ActivityPhase.forStatus(it.status)?.finished != true }
   private val attentionCount = data["activity_attention_count"]?.toIntOrNull()?.coerceAtLeast(0)
     ?: rows.count { ActivityPhase.forStatus(it.status)?.needsUser == true }
+  private val workingCount = data["activity_working_count"]?.toIntOrNull()?.coerceAtLeast(0)
+    ?: (activeCount - attentionCount).coerceAtLeast(0)
   private val failedCount = rows.count { it.status == ActivityPhase.FAILED.status }
-  val threadCount =
-    activeCount + rows.count { ActivityPhase.forStatus(it.status)?.finished == true }
+  val threadCount = data["activity_total_count"]?.toIntOrNull()?.coerceAtLeast(0)
+    ?: (activeCount + rows.count { ActivityPhase.forStatus(it.status)?.finished == true })
   private val singleProject = rows.map { it.project }.distinct().size == 1
   private val legacyBody = (0..4).mapNotNull { data["activity_line_$it"]?.take(300) }
     .takeIf { it.isNotEmpty() }?.joinToString("\n")
@@ -109,7 +113,7 @@ internal class ActivityPresentation(data: Map<String, String>, private val activ
     attentionCount == 1 -> "1 needs you"
     attentionCount > 1 -> "$attentionCount need you"
     activeCount > 0 && failedCount > 0 -> "$failedCount failed"
-    activeCount > 0 -> "$activeCount working"
+    workingCount > 0 -> "$workingCount working"
     failedCount > 0 -> "Finished, $failedCount failed"
     else -> "All finished"
   }
@@ -137,7 +141,7 @@ internal class ActivityPresentation(data: Map<String, String>, private val activ
       builder.setSubText(
         listOfNotNull(
           hero!!.project.takeIf { singleProject && it.isNotBlank() },
-          if (activeCount > 0) "$activeCount active" else "$threadCount threads"
+          if (workingCount > 0) "$workingCount working" else "$threadCount threads"
         ).joinToString(" · ")
       )
     }
