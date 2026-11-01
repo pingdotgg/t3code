@@ -20,6 +20,11 @@ import {
   normalizeAcpRegistryCommands,
 } from "@t3tools/provider-acp-registry/testing";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
+import { readProviderReplayTranscript } from "@t3tools/provider-testing/replayTranscript";
+import {
+  CLINE_SECONDARY_MODEL_SELECTION,
+  clineConfigOptionsAnsweredAt,
+} from "../orchestration-v2/testkit/fixtures/acp_secondary_model/input.ts";
 
 const instanceId = ProviderInstanceId.make("acpRegistry_codex");
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -135,6 +140,175 @@ describe("ACP Registry probe", () => {
     );
 
     expect(methods[0]).not.toHaveProperty("command");
+  });
+
+  it("omits overlong opaque auth method and environment variable ids", () => {
+    const methods = normalizeAcpRegistryAuthMethods([
+      { id: "x".repeat(129), name: "Invalid" },
+      {
+        id: "api-key",
+        name: "API key",
+        type: "env_var",
+        vars: [
+          { name: "y".repeat(129), label: "Invalid" },
+          { name: "OPENAI_API_KEY", label: "OpenAI API key" },
+        ],
+      },
+    ]);
+
+    expect(methods).toEqual([
+      {
+        id: "api-key",
+        name: "API key",
+        description: null,
+        type: "env_var",
+        envVarNames: ["OPENAI_API_KEY"],
+      },
+    ]);
+  });
+
+  it("falls back to model-category configuration options", () => {
+    const result = acpRegistryProbeResult(instanceId, {
+      sessionId: "probe-session",
+      initializeResult: { protocolVersion: 1 },
+      sessionSetupResult: {
+        sessionId: "probe-session",
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "sonnet",
+            options: [
+              { value: "sonnet", name: "Sonnet", description: "Balanced" },
+              { value: "haiku", name: "Haiku" },
+            ],
+          },
+        ],
+      },
+      modelConfigId: "model",
+    } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
+
+    expect(result.models).toEqual([
+      { id: "sonnet", name: "Sonnet", description: "Balanced" },
+      { id: "haiku", name: "Haiku", description: null },
+    ]);
+    expect(result.currentModelId).toBe("sonnet");
+  });
+
+  // The replay fixture's answers follow Cline 3.0.70's `acpAgent.ts` source, not
+  // a captured run: `provider` and then `model`, both `category: "model"`. Its
+  // integrated run writes the selection checked here and prompts successfully.
+  it.effect("lists Cline providers as models and its later model option as a session option", () =>
+    Effect.gen(function* () {
+      const transcript = yield* readProviderReplayTranscript(
+        new URL(
+          "../orchestration-v2/testkit/fixtures/acp_secondary_model/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+      );
+      const configOptionsAnsweredAt = (label: string) =>
+        clineConfigOptionsAnsweredAt(transcript, label);
+      const discover = (configOptions: ReturnType<typeof configOptionsAnsweredAt>) =>
+        acpRegistryProbeResult(instanceId, {
+          sessionId: "cline-replay-session-1",
+          initializeResult: { protocolVersion: 1 },
+          sessionSetupResult: { sessionId: "cline-replay-session-1", configOptions },
+          modelConfigId: "provider",
+        });
+      const probed = discover(configOptionsAnsweredAt("session.created"));
+
+      expect(probed.models.map((model) => model.id)).toEqual([
+        "cline",
+        "cline-pass",
+        "openai-codex",
+      ]);
+      expect(probed.currentModelId).toBe("cline");
+      expect(probed.configOptions).toEqual([
+        {
+          id: "model",
+          label: "Model",
+          type: "select",
+          selectsModel: true,
+          options: [
+            { id: "cline-free/step-5-preview", label: "Step 5 Preview (free)" },
+            { id: "cline-free/mimo-v2.6-flash", label: "MiMo-V2.6-Flash (free)" },
+            {
+              id: "cline-free/muse-spark-1.3-contributor",
+              label: "Muse Spark 1.3 Contributor (free)",
+            },
+          ],
+          currentValue: "cline-free/step-5-preview",
+        },
+        {
+          id: "mode",
+          label: "Session Mode",
+          description: "Controls whether the agent can modify files",
+          type: "select",
+          options: [
+            {
+              id: "plan",
+              label: "Plan",
+              description: "Explore the codebase and plan changes without modifying files",
+            },
+            { id: "act", label: "Act", description: "Make changes to the codebase" },
+          ],
+          currentValue: "act",
+        },
+        {
+          id: "auto_approve",
+          label: "Auto-approve tools",
+          description: "Automatically approve all tool calls without asking for permission",
+          type: "boolean",
+          currentValue: false,
+        },
+      ]);
+
+      // Picking ClinePass republishes the model option with its catalog.
+      const switched = discover(configOptionsAnsweredAt("provider.applied"));
+      expect(switched.models.map((model) => model.id)).toEqual(
+        probed.models.map((model) => model.id),
+      );
+      expect(switched.currentModelId).toBe(CLINE_SECONDARY_MODEL_SELECTION.model);
+      const [modelPick] = CLINE_SECONDARY_MODEL_SELECTION.options;
+      const modelOption = switched.configOptions.find((option) => option.id === modelPick.id);
+      expect(modelOption?.type === "select" ? modelOption.options : []).toContainEqual({
+        id: modelPick.value,
+        label: "Muse Spark 1.3 Contributor",
+      });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it("lets only the first model select own the model picker", () => {
+    const select = (id: string, values: ReadonlyArray<string>) =>
+      ({
+        id,
+        name: id,
+        category: "model",
+        type: "select",
+        currentValue: values[0] ?? "",
+        options: values.map((value) => ({ value, name: value })),
+      }) as const;
+    const result = acpRegistryProbeResult(instanceId, {
+      sessionId: "probe-session",
+      initializeResult: { protocolVersion: 1 },
+      sessionSetupResult: {
+        sessionId: "probe-session",
+        configOptions: [
+          { id: "fast", name: "Fast", category: "model", type: "boolean", currentValue: false },
+          select("provider", ["gateway", "local"]),
+          select("model", ["opus", "haiku"]),
+          // A repeated ID would write over the picked model.
+          select("provider", ["other"]),
+        ],
+      },
+      modelConfigId: "provider",
+    } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
+
+    expect(result.models.map((model) => model.id)).toEqual(["gateway", "local"]);
+    expect(result.currentModelId).toBe("gateway");
+    expect(result.configOptions.map((option) => option.id)).toEqual(["fast", "model"]);
   });
 
   it("omits overlong opaque model ids instead of publishing mutated ids", () => {

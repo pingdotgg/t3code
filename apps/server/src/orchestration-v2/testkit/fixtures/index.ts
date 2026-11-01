@@ -115,6 +115,7 @@ import {
 } from "./plan_questions/codex_output.ts";
 import { assertOpenCodePlanQuestionsOutput } from "./plan_questions/opencode_output.ts";
 import { planQuestionsInput } from "./plan_questions/input.ts";
+import { CLINE_SECONDARY_MODEL_SELECTION } from "./acp_secondary_model/input.ts";
 import { assertProposedPlanOutput } from "./proposed_plan/codex_output.ts";
 import { assertProposedPlanCursorOutput } from "./proposed_plan/cursor_output.ts";
 import { proposedPlanInput } from "./proposed_plan/input.ts";
@@ -602,6 +603,22 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
       },
     ],
   },
+  {
+    name: "acp_secondary_model",
+    buildInput: simpleInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_secondary_model/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLINE_SECONDARY_MODEL_SELECTION,
+        assertOutput: assertSimpleOutput,
+      },
+    ],
+  },
+
   {
     name: "malformed_session_update",
     buildInput: malformedSessionUpdateInput,

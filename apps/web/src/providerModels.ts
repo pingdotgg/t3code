@@ -64,11 +64,26 @@ export function getProviderModelCapabilities(
   return withoutPlanAgentOption(caps);
 }
 
+/**
+ * The capabilities of the model the provider lists for `model`, or
+ * `undefined` when it lists none. `null` means the provider has not described
+ * the model's options yet, as an ACP Registry agent does for a model no
+ * session has run, so saved options cannot be checked against descriptors.
+ */
+export function getListedModelCapabilities(
+  models: ReadonlyArray<ServerProviderModel>,
+  model: string | null | undefined,
+  provider: ProviderDriverKind,
+): ModelCapabilities | null | undefined {
+  const slug = resolveSelectableModel(provider, model, models);
+  return models.find((candidate) => candidate.slug === slug)?.capabilities;
+}
+
 function withoutPlanAgentOption(caps: ModelCapabilities): ModelCapabilities {
   return {
     ...caps,
     optionDescriptors: (caps.optionDescriptors ?? []).flatMap((descriptor) => {
-      if (descriptor.type !== "select" || descriptor.id !== "agent") {
+      if (descriptor.type !== "select" || descriptor.id !== "agent" || descriptor.selectsModel) {
         return [descriptor];
       }
       const options = descriptor.options.filter((option) => option.id !== "plan");

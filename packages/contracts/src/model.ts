@@ -27,6 +27,13 @@ export const SelectProviderOptionDescriptor = Schema.Struct({
   options: Schema.Array(ProviderOptionChoice),
   currentValue: Schema.optional(TrimmedNonEmptyString),
   promptInjectedValues: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  /**
+   * The choice picks the model a turn runs on, such as Cline's `model` after
+   * its `provider`. Clients send a saved value as is, even one missing from
+   * `options`, so the provider accepts or rejects that exact model instead of
+   * a client substituting another.
+   */
+  selectsModel: Schema.optional(Schema.Boolean),
   /** Marks the reasoning control when its id is an agent's own, such as an ACP `thought_level`. */
   role: Schema.optional(Schema.Literal("reasoning")),
 });

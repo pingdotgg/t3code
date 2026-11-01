@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  type ModelCapabilities,
+  type ProviderOptionDescriptor,
+  type ProviderOptionSelection,
+} from "@t3tools/contracts";
 
 import {
   applyClaudePromptEffortPrefix,
   buildExplicitProviderOptionSelectionsFromDescriptors,
+  buildProviderOptionSelectionsAfterChange,
   buildProviderOptionSelectionsFromDescriptors,
   createModelCapabilities,
   createModelSelection,
@@ -48,6 +54,110 @@ describe("descriptor helpers", () => {
         { id: "fastMode", value: true },
       ]),
     ).toEqual([{ id: "fastMode", value: true }]);
+  });
+
+  it("keeps a model choice the descriptor does not list, unlike other unlisted values", () => {
+    const caps = createModelCapabilities({
+      optionDescriptors: [
+        {
+          id: "model",
+          label: "Model",
+          type: "select",
+          selectsModel: true,
+          options: [{ id: "cline-pass/mimo-v2.6-flash", label: "MiMo" }],
+          currentValue: "cline-pass/mimo-v2.6-flash",
+        },
+        {
+          id: "mode",
+          label: "Mode",
+          type: "select",
+          options: [{ id: "act", label: "Act" }],
+          currentValue: "act",
+        },
+      ],
+    });
+    const selections = [
+      { id: "model", value: "cline-pass/muse-spark-1.3-contributor" },
+      { id: "mode", value: "plan" },
+    ];
+
+    expect(
+      buildExplicitProviderOptionSelectionsFromDescriptors(
+        getProviderOptionDescriptors({ caps, selections }),
+        selections,
+      ),
+    ).toEqual([
+      { id: "model", value: "cline-pass/muse-spark-1.3-contributor" },
+      { id: "mode", value: "act" },
+    ]);
+  });
+
+  it("stores a model choice after an option change only when the user picked it", () => {
+    const model = {
+      id: "model",
+      label: "Model",
+      type: "select",
+      options: [
+        { id: "cline-pass/mimo-v2.6-flash", label: "MiMo" },
+        { id: "cline-pass/kimi-k3", label: "Kimi" },
+      ],
+      currentValue: "cline-pass/mimo-v2.6-flash",
+    } satisfies ProviderOptionDescriptor;
+    const tuning = [
+      {
+        id: "mode",
+        label: "Mode",
+        type: "select",
+        options: [
+          { id: "plan", label: "Plan" },
+          { id: "act", label: "Act" },
+        ],
+        currentValue: "act",
+      },
+      { id: "auto_approve", label: "Auto-approve tools", type: "boolean", currentValue: false },
+    ] satisfies ReadonlyArray<ProviderOptionDescriptor>;
+    const caps = createModelCapabilities({
+      optionDescriptors: [{ ...model, selectsModel: true }, ...tuning],
+    });
+    const changed = (
+      selections: ReadonlyArray<ProviderOptionSelection>,
+      changedId: string,
+      saved: ReadonlyArray<ProviderOptionSelection> | undefined,
+      capabilities = caps,
+    ) =>
+      buildProviderOptionSelectionsAfterChange(
+        getProviderOptionDescriptors({ caps: capabilities, selections }),
+        changedId,
+        saved,
+      );
+    const autoApprove = { id: "auto_approve", value: true };
+
+    // Nothing saved: the agent's current model stays unpicked, while other
+    // options are stored at their current values as before.
+    expect(changed([autoApprove], "auto_approve", undefined)).toEqual([
+      { id: "mode", value: "act" },
+      autoApprove,
+    ]);
+    // A saved model stays as saved, even one the list no longer offers.
+    const saved = [{ id: "model", value: "cline-pass/muse-spark-1.2-contributor" }];
+    expect(changed([...saved, autoApprove], "auto_approve", saved)).toEqual([
+      ...saved,
+      { id: "mode", value: "act" },
+      autoApprove,
+    ]);
+    // Picking a model stores it.
+    expect(changed([{ id: "model", value: "cline-pass/kimi-k3" }], "model", undefined)).toEqual([
+      { id: "model", value: "cline-pass/kimi-k3" },
+      { id: "mode", value: "act" },
+      { id: "auto_approve", value: false },
+    ]);
+    // Without the marker an option is an ordinary tuning option, whatever its id.
+    const unmarked = createModelCapabilities({ optionDescriptors: [model, ...tuning] });
+    expect(changed([autoApprove], "auto_approve", undefined, unmarked)).toEqual([
+      { id: "model", value: "cline-pass/mimo-v2.6-flash" },
+      { id: "mode", value: "act" },
+      autoApprove,
+    ]);
   });
 
   it("compares complete model selections independent of option ordering", () => {

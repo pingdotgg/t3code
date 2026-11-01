@@ -1,7 +1,7 @@
 import type { ProviderOptionChoice, ProviderOptionDescriptor } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import type { AcpSessionModeState } from "./runtimeModel.ts";
+import { type AcpSessionModeState, findModelConfigOption } from "./runtimeModel.ts";
 
 export const ACP_SESSION_MODE_OPTION_ID = "_t3/session-mode";
 
@@ -57,13 +57,17 @@ export function acpProviderOptionDescriptors(input: {
   readonly modeState: AcpSessionModeState | undefined;
 }): ReadonlyArray<ProviderOptionDescriptor> {
   const descriptors: Array<ProviderOptionDescriptor> = [];
-  const seen = new Set<string>();
+  const modelOption = findModelConfigOption(input.configOptions);
+  // Seeding the picker's ID keeps a later option with the same ID from
+  // overwriting the picked model.
+  const seen = new Set<string>(modelOption === undefined ? [] : [modelOption.id]);
   const mirroredModeChoiceSets: Array<ReadonlySet<string>> = [];
   let hasModeCategory = false;
 
   for (const option of input.configOptions ?? []) {
-    // Model and collaboration_mode choices use T3 model and interaction controls.
-    if (option.category === "model" || option.category === "collaboration_mode") {
+    // The model option surfaces as the model list; "collaboration_mode" options
+    // are driven by T3's own plan/build interaction mode in the ACP adapter.
+    if (option === modelOption || option.category === "collaboration_mode") {
       continue;
     }
     const id = boundedOpaqueValue(option.id, MAX_TEXT_LENGTH);
@@ -98,6 +102,7 @@ export function acpProviderOptionDescriptors(input: {
     descriptors.push({
       ...base,
       type: "select",
+      ...(option.category === "model" ? { selectsModel: true } : {}),
       options: choices,
       ...(currentValue && choices.some((choice) => choice.id === currentValue)
         ? { currentValue }

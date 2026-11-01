@@ -541,6 +541,9 @@ function ThreadSettingsSessionProvider(
   };
 
   const applyOptionChange = (id: string, value: string | boolean) => {
+    const savedSelections = pendingModel
+      ? pendingModel.selection.options
+      : props.selectedModel?.options;
     const descriptor = displayedDescriptors.find((entry) => entry.id === id);
     const change =
       descriptor?.type === "select" && typeof value === "string"
@@ -549,6 +552,7 @@ function ThreadSettingsSessionProvider(
             descriptor,
             displayedPrompt,
             value,
+            savedSelections,
           )
         : null;
     if (descriptor?.type === "select") {
@@ -563,7 +567,7 @@ function ThreadSettingsSessionProvider(
     }
     const next = change
       ? (change.modelOptions ?? [])
-      : applyProviderOptionSelection(displayedDescriptors, { id, value });
+      : applyProviderOptionSelection(displayedDescriptors, { id, value }, savedSelections);
     if (!next) {
       return;
     }

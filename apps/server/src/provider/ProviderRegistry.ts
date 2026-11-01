@@ -225,10 +225,19 @@ const mergeProviderModels = (
     return retainablePreviousModels;
   }
 
+  // ACP Registry snapshots already carry the options last observed for each
+  // model. A model with unknown or empty options must stay that way: copying
+  // an older snapshot's options onto it would show another model's choices.
+  const carriesPreviousCapabilities = provider.driver !== ProviderDriverKind.make("acpRegistry");
   const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
   const mergedModels = nextModels.map((model) => {
     const previousModel = previousBySlug.get(model.slug);
-    if (!previousModel || hasModelCapabilities(model) || !hasModelCapabilities(previousModel)) {
+    if (
+      !carriesPreviousCapabilities ||
+      !previousModel ||
+      hasModelCapabilities(model) ||
+      !hasModelCapabilities(previousModel)
+    ) {
       return model;
     }
     return {

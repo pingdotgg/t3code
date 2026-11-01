@@ -91,7 +91,7 @@ import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
 import { createDeferredStorage, createMemoryStorage } from "./lib/storage";
-import { getDefaultServerModel } from "./providerModels";
+import { getDefaultServerModel, getListedModelCapabilities } from "./providerModels";
 import {
   replaceComposerContextReferences,
   toComposerContextId,
@@ -639,6 +639,7 @@ export interface EffectiveComposerModelState {
 interface ComposerDraftModelState {
   activeProvider: ProviderInstanceId | null;
   modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
+  modelSelectionExplicit?: boolean;
 }
 
 function selectionsByInstance(
@@ -1091,7 +1092,10 @@ function legacyToModelSelectionByProvider(
 
 export function deriveEffectiveComposerModelState(input: {
   draft:
-    | Pick<ComposerThreadDraftState, "modelSelectionByProvider" | "activeProvider">
+    | Pick<
+        ComposerThreadDraftState,
+        "modelSelectionByProvider" | "activeProvider" | "modelSelectionExplicit"
+      >
     | null
     | undefined;
   providers: ReadonlyArray<ServerProvider>;
@@ -1101,6 +1105,11 @@ export function deriveEffectiveComposerModelState(input: {
   requestedInstanceId?: ProviderInstanceId | null | undefined;
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
+  /** The selected instance's remembered options per model slug. */
+  rememberedOptionsByModel?:
+    | Partial<Record<string, ReadonlyArray<ProviderOptionSelection>>>
+    | null
+    | undefined;
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
   const baseModelCandidate =
@@ -1167,16 +1176,77 @@ export function deriveEffectiveComposerModelState(input: {
       selectionsByInstance(input.projectModelSelection),
     ].find((selections) => modelSelectionByProviderToOptions(selections) !== null) ?? null;
   const modelOptions = modelSelectionByProviderToOptions(optionSelections);
+  const selectedOptionsKey = input.selectedInstanceId ?? activeSelectionInstanceId;
+  const selectedModels = input.providers.find(
+    (provider) => provider.instanceId === selectedOptionsKey,
+  )?.models;
+  const capabilities =
+    selectedModels &&
+    getListedModelCapabilities(selectedModels, selectedModel, input.selectedProvider);
+  // Options carried over from another model are only hints that descriptors
+  // re-resolve. Values the provider receives as saved must instead come from
+  // this model's own saved options: every option while the model's options
+  // are unknown, otherwise only options that select the model a turn runs on.
+  const modelSelectingIds = new Set(
+    capabilities?.optionDescriptors?.flatMap((descriptor) =>
+      descriptor.type === "select" && descriptor.selectsModel === true ? [descriptor.id] : [],
+    ),
+  );
+  if (capabilities === undefined || (capabilities !== null && modelSelectingIds.size === 0)) {
+    return {
+      selectedModel,
+      modelOptions: withFallbackInstanceOptions({
+        ...input,
+        modelOptions,
+        optionSelections,
+        selectedModel,
+      }),
+    };
+  }
+  const sentAsSaved = (selection: ProviderOptionSelection) =>
+    capabilities === null || modelSelectingIds.has(selection.id);
 
+  const { [selectedOptionsKey]: carried, ...otherModelOptions } = modelOptions ?? {};
+  const nextOptions = [
+    ...(carried ?? []).filter((selection) => !sentAsSaved(selection)),
+    ...(savedModelOptions(input, selectedOptionsKey, selectedModel) ?? []).filter(sentAsSaved),
+  ];
+  const nextModelOptions: ProviderOptionSelectionsByProvider =
+    nextOptions.length > 0
+      ? { ...otherModelOptions, [selectedOptionsKey]: nextOptions }
+      : otherModelOptions;
   return {
     selectedModel,
     modelOptions: withFallbackInstanceOptions({
       ...input,
-      modelOptions,
+      modelOptions: Object.keys(nextModelOptions).length > 0 ? nextModelOptions : null,
       optionSelections,
       selectedModel,
     }),
   };
+}
+
+/** Only an explicit pick for the active instance owns a draft's saved model options. */
+function savedModelOptions(
+  input: Pick<
+    Parameters<typeof deriveEffectiveComposerModelState>[0],
+    "draft" | "threadModelSelection" | "projectModelSelection" | "rememberedOptionsByModel"
+  >,
+  instanceId: ProviderInstanceId,
+  model: string,
+): ReadonlyArray<ProviderOptionSelection> | undefined {
+  const draftSelection = input.draft?.modelSelectionByProvider?.[instanceId];
+  if (
+    input.draft?.modelSelectionExplicit === true &&
+    input.draft.activeProvider === instanceId &&
+    draftSelection?.model === model
+  ) {
+    return draftSelection.options;
+  }
+  const saved = [input.threadModelSelection, input.projectModelSelection].find(
+    (selection) => selection?.instanceId === instanceId && selection.model === model,
+  );
+  return saved ? saved.options : input.rememberedOptionsByModel?.[model];
 }
 
 /**
@@ -4403,6 +4473,7 @@ export function useComposerDraftModelState(
         ? {
             activeProvider: draft.activeProvider,
             modelSelectionByProvider: draft.modelSelectionByProvider,
+            ...(draft.modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
           }
         : EMPTY_COMPOSER_DRAFT_MODEL_STATE;
     }),

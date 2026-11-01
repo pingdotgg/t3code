@@ -12,6 +12,10 @@ export {
 } from "./server/devinAcp.ts";
 export { extractCopilotSubagentUpdate, makeCopilotSubagentRouting } from "./server/copilotAcp.ts";
 export {
+  applyAcpRegistryLiveConfiguration,
+  buildCheckedAcpRegistrySnapshot,
+} from "./server/driver.ts";
+export {
   acpRegistryProbeFailure,
   acpRegistryProbeResult,
   listAcpRegistrySessions,
