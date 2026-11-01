@@ -94,7 +94,7 @@ export function PullRequestChangeBreakdownRows({
   );
 }
 
-function ChangeBreakdownGrid({
+export function ChangeBreakdownGrid({
   breakdown,
   total,
 }: {

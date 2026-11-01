@@ -34,6 +34,7 @@ import {
   type VcsRef,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
+import { summarizeChangedFiles } from "@t3tools/shared/changedFileKind";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
@@ -3176,11 +3177,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
     let insertions = 0;
     let deletions = 0;
-    for (const file of parseReviewNumstat(result.stdout)) {
+    const files = parseReviewNumstat(result.stdout);
+    for (const file of files) {
       insertions += file.additions;
       deletions += file.deletions;
     }
-    return { baseRef, insertions, deletions };
+    return { baseRef, insertions, deletions, breakdown: summarizeChangedFiles(files) };
   }, Effect.scoped);
 
   const reviewCommitError = (cwd: string, detail: string) =>
