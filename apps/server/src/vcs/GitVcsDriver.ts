@@ -12,6 +12,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import {
   GitCommandError,
+  VcsCheckpointStorageError,
   VcsProcessExitError,
   VcsUnsupportedOperationError,
   type VcsSwitchRefInput,
@@ -37,6 +38,7 @@ import {
 } from "@t3tools/contracts";
 import { isMissingExecutable } from "@t3tools/source-control-core/server/discovery";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import {
   makeGitVcsDriverCore,
   PATCH_RENDER_PREFIX_ARGS,
@@ -904,9 +906,54 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const { gitCommonDir, indexPath, headExists } = yield* resolveCaptureRepository(input.cwd);
       const indexId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
       const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
+      const explicitObjects = process.env.GIT_OBJECT_DIRECTORY;
+      const sharedObjects =
+        explicitObjects === undefined
+          ? path.join(gitCommonDir, "objects")
+          : path.isAbsolute(explicitObjects)
+            ? explicitObjects
+            : path.resolve(
+                yield* fileSystem.realPath(input.cwd).pipe(Effect.orElseSucceed(() => input.cwd)),
+                explicitObjects,
+              );
+      const quotedObjects = quoteGitPatchPath(sharedObjects);
+      // Isolate bulk-checkin packs so cleanup cannot remove another Git writer's objects.
+      const privateObjects = yield* Effect.acquireRelease(
+        fileSystem
+          .makeTempDirectory({ directory: sharedObjects, prefix: "tmp_objdir-t3-checkpoint-" })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new VcsCheckpointStorageError({
+                  operation,
+                  cwd: input.cwd,
+                  stage: "isolate",
+                  cause,
+                }),
+            ),
+          ),
+        (directory) =>
+          fileSystem.remove(directory, { recursive: true, force: true }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not remove private checkpoint objects", {
+                reason: cause.reason._tag,
+              }),
+            ),
+          ),
+      );
       const commitEnv: NodeJS.ProcessEnv = {
         ...process.env,
         GIT_INDEX_FILE: tempIndexPath,
+        GIT_OBJECT_DIRECTORY: privateObjects,
+        // A filter must not publish refs that depend on our disposable store.
+        GIT_QUARANTINE_PATH: privateObjects,
+        // Git accepts C-quoted alternate paths, including path-list separators.
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: [
+          quotedObjects.startsWith('"') ? quotedObjects : `"${quotedObjects}"`,
+          ...(process.env.GIT_ALTERNATE_OBJECT_DIRECTORIES
+            ? [process.env.GIT_ALTERNATE_OBJECT_DIRECTORIES]
+            : []),
+        ].join(hostPlatform === "win32" ? ";" : ":"),
         GIT_AUTHOR_NAME: "T3 Code",
         GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
         GIT_COMMITTER_NAME: "T3 Code",
@@ -1159,6 +1206,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                   GIT_INDEX_FILE: undefined,
                   GIT_OBJECT_DIRECTORY: undefined,
                   GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+                  GIT_QUARANTINE_PATH: undefined,
                 };
                 const exclusions: Array<string> = [];
                 for (const entry of candidates) {
@@ -1226,13 +1274,100 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
+        // Git writers have exited; bound publication by fanout directory.
+        yield* fileSystem.readDirectory(privateObjects).pipe(
+          Effect.flatMap((directories) =>
+            Effect.forEach(
+              directories.filter(
+                (directory) => directory === "pack" || /^[0-9a-f]{2}$/.test(directory),
+              ),
+              (directory) =>
+                Effect.gen(function* () {
+                  const source = path.join(privateObjects, directory);
+                  const destination = path.join(sharedObjects, directory);
+                  // Most fanouts already exist; avoid constructing an EEXIST error
+                  // for each of them on every capture. mkdir still handles the race.
+                  if (!(yield* fileSystem.exists(destination)))
+                    yield* fileSystem.makeDirectory(destination).pipe(
+                      Effect.andThen(
+                        Effect.gen(function* () {
+                          // Git has already applied core.sharedRepository to the source.
+                          // chmod bypasses umask, but never changes a pre-existing bucket.
+                          const { mode } = yield* fileSystem.stat(source);
+                          yield* fileSystem.chmod(destination, mode & 0o7777);
+                        }),
+                      ),
+                      Effect.catchIf(
+                        (cause) => cause.reason._tag === "AlreadyExists",
+                        () => Effect.void,
+                      ),
+                      Effect.uninterruptible,
+                    );
+                  const names = yield* fileSystem.readDirectory(source);
+                  // Per-object spans would swamp the capture span for large workspaces.
+                  const linkObject = Effect.fnUntraced(function* (name: string) {
+                    const from = path.join(source, name);
+                    const to = path.join(destination, name);
+                    yield* fileSystem.link(from, to).pipe(
+                      Effect.catchIf(
+                        (cause) =>
+                          cause.reason._tag === "PermissionDenied" ||
+                          cause.reason._tag === "Unknown",
+                        () =>
+                          Effect.gen(function* () {
+                            if (yield* fileSystem.exists(to)) return;
+                            // Git also falls back to rename without hardlinks; identical object names are interchangeable.
+                            yield* fileSystem.rename(from, to);
+                          }),
+                      ),
+                      Effect.catchIf(
+                        (cause) => cause.reason._tag === "AlreadyExists",
+                        () => Effect.void,
+                      ),
+                    );
+                  });
+                  if (directory !== "pack") {
+                    yield* Effect.forEach(
+                      names.filter((name) => /^(?:[0-9a-f]{38}|[0-9a-f]{62})$/.test(name)),
+                      linkObject,
+                      { discard: true },
+                    );
+                    return;
+                  }
+                  const files = new Set(names);
+                  for (const name of names) {
+                    if (!/^pack-(?:[0-9a-f]{40}|[0-9a-f]{64})\.pack$/.test(name)) continue;
+                    const base = name.slice(0, -5);
+                    if (!files.has(`${base}.idx`)) continue;
+                    // Link metadata before the pack so an I/O error cannot strand a
+                    // large unindexed pack. Defer cancellation across this short group
+                    // of links. Never roll back shared links: a concurrent writer may
+                    // already depend on them. Ref publication still happens last.
+                    yield* Effect.forEach(
+                      [".keep", ".promisor", ".rev", ".idx", ".pack"]
+                        .map((extension) => `${base}${extension}`)
+                        .filter((file) => files.has(file)),
+                      linkObject,
+                      { discard: true },
+                    ).pipe(Effect.uninterruptible);
+                  }
+                }),
+              { concurrency: 16, discard: true },
+            ),
+          ),
+          Effect.mapError(
+            (cause) =>
+              new VcsCheckpointStorageError({ operation, cwd: input.cwd, stage: "publish", cause }),
+          ),
+        );
+
         yield* execute({
           operation,
           cwd: input.cwd,
           args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
         });
       }).pipe(Effect.ensuring(cleanupTempIndex));
-    }),
+    }, Effect.scoped),
 
     hasCheckpointRef: (input) =>
       resolveCheckpointCommit(input.cwd, input.checkpointRef).pipe(
