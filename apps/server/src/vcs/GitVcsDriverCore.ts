@@ -2980,7 +2980,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { concurrency: 2 },
     );
     const stagedDeletions = new Set(stagedDeletionsStdout.split("\0").filter(Boolean));
-    const pathsToAdd = untrackedPaths.filter((relativePath) => !stagedDeletions.has(relativePath));
+    // Only a nested repository is listed with a trailing slash. With no commits it cannot be indexed:
+    // Git before 2.53 fails the add, and later versions accept it and then fail every diff.
+    const pathsToAdd = yield* Effect.filter(
+      untrackedPaths.filter((relativePath) => !stagedDeletions.has(relativePath)),
+      (relativePath) =>
+        relativePath.endsWith("/")
+          ? executeGit(
+              "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.nestedRepositoryHead",
+              path.resolve(cwd, relativePath),
+              ["rev-parse", "--verify", "--quiet", "HEAD"],
+              { allowNonZeroExit: true },
+            ).pipe(Effect.map((result) => result.exitCode !== 1))
+          : Effect.succeed(true),
+      { concurrency: 16 },
+    );
     if (pathsToAdd.length === 0) return undefined;
 
     const indexPath = path.isAbsolute(indexValue.trim())
@@ -3015,37 +3029,22 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       [...tempIndexConfig, "update-index", "--no-split-index"],
       { env },
     );
-    const addUntrackedOperation = "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.addUntracked";
-    const addUntrackedArgs = [
-      ...tempIndexConfig,
-      // Avoid redundant tracked-entry pathspec matching in this disposable index.
-      "-c",
-      "core.preloadIndex=false",
-      "--literal-pathspecs",
-      "add",
-      "--intent-to-add",
-      "--ignore-errors",
-      "--pathspec-from-file=-",
-      "--pathspec-file-nul",
-    ];
-    const addedUntracked = yield* executeGit(addUntrackedOperation, cwd, addUntrackedArgs, {
-      env,
-      stdin: `${pathsToAdd.join("\0")}\0`,
-      allowNonZeroExit: true,
-    });
-    // --ignore-errors exits 1 after skipping paths it cannot index, such as a nested repository
-    // with no commits. Anything else is a fatal failure.
-    if (addedUntracked.exitCode !== 0 && addedUntracked.exitCode !== 1) {
-      const reason = classifyGitFailure(addedUntracked.stderr);
-      return yield* new GitCommandError({
-        ...gitCommandContext({ operation: addUntrackedOperation, cwd, args: addUntrackedArgs }),
-        ...(reason === null ? {} : { reason }),
-        detail: gitFailureDetail(reason),
-        exitCode: addedUntracked.exitCode,
-        stdoutLength: addedUntracked.stdout.length,
-        stderrLength: addedUntracked.stderr.length,
-      });
-    }
+    yield* executeGit(
+      "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.addUntracked",
+      cwd,
+      [
+        ...tempIndexConfig,
+        // Avoid redundant tracked-entry pathspec matching in this disposable index.
+        "-c",
+        "core.preloadIndex=false",
+        "--literal-pathspecs",
+        "add",
+        "--intent-to-add",
+        "--pathspec-from-file=-",
+        "--pathspec-file-nul",
+      ],
+      { env, stdin: `${pathsToAdd.join("\0")}\0` },
+    );
     return env;
   });
 
