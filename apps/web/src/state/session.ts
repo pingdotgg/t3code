@@ -1,10 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
-import { createEnvironmentSessionAtoms } from "@t3tools/client-runtime/state/session";
+import {
+  createEnvironmentSessionAtoms,
+  sessionHasScope,
+} from "@t3tools/client-runtime/state/session";
 import {
   type AuthEnvironmentScope,
   type AuthSessionState,
   type EnvironmentId,
-  sessionGrantsScope,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -33,13 +35,7 @@ export function useEnvironmentScope(
   return sessionHasScope(result, scope);
 }
 
-export function sessionHasScope(
-  result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
-  scope: AuthEnvironmentScope,
-): boolean {
-  const session = AsyncResult.getOrElse(result, () => null);
-  return result._tag !== "Failure" && session !== null && sessionGrantsScope(session, scope);
-}
+export { sessionHasScope } from "@t3tools/client-runtime/state/session";
 
 const environmentsWithScopeAtom = Atom.family((key: string) => {
   const [scope, idsKey = ""] = key.split(/\n(.*)/s) as [AuthEnvironmentScope, string?];

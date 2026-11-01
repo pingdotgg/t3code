@@ -1,5 +1,11 @@
 import { pipe } from "effect/Function";
-import type { AuthSessionState, EnvironmentId, ServerConfig } from "@t3tools/contracts";
+import {
+  type AuthEnvironmentScope,
+  type AuthSessionState,
+  type EnvironmentId,
+  type ServerConfig,
+  sessionGrantsScope,
+} from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -236,4 +242,12 @@ export function createEnvironmentSessionAtoms<R, E>(
   const atoms = makeEnvironmentSessionAtoms(runtime);
   sessionAtomsByRuntime.set(runtime, atoms);
   return atoms;
+}
+
+export function sessionHasScope(
+  result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
+  scope: AuthEnvironmentScope,
+): boolean {
+  const session = AsyncResult.getOrElse(result, () => null);
+  return result._tag !== "Failure" && session !== null && sessionGrantsScope(session, scope);
 }
