@@ -1,11 +1,21 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId, type TerminalSummary } from "@t3tools/contracts";
 import { selectRunningSubprocessTerminalIds } from "@t3tools/client-runtime/state/terminal";
-import { AtomRegistry } from "effect/reactivity";
+import { AsyncResult, AtomRegistry } from "effect/reactivity";
 
-import { attachedTerminalSessionAtom, selectKnownTerminalSessions } from "./terminalSessions";
+import {
+  attachedTerminalSessionAtom,
+  knownTerminalSessionsAtom,
+  selectKnownTerminalSessions,
+} from "./terminalSessions";
 
 const attachCalls = vi.hoisted(() => [] as unknown[]);
+const metadataAtom = await vi.hoisted(async () => {
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  return Atom.make<AsyncResult.AsyncResult<ReadonlyArray<TerminalSummary>>>(
+    AsyncResult.initial(true),
+  );
+});
 vi.mock("./terminal", async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   return {
@@ -14,7 +24,7 @@ vi.mock("./terminal", async () => {
         attachCalls.push(request);
         return Atom.make(AsyncResult.initial(true));
       },
-      metadata: () => Atom.make(AsyncResult.initial(true)),
+      metadata: () => metadataAtom,
     },
   };
 });
@@ -97,6 +107,33 @@ describe("selectKnownTerminalSessions", () => {
     ).toBe("Renamed");
     expect(selectKnownTerminalSessions([other], environmentA, threadA)).toEqual([]);
     expect(selectKnownTerminalSessions([other], environmentA, threadB)).toBe(beforeB);
+  });
+});
+
+describe("knownTerminalSessionsAtom", () => {
+  const metadataResult = (...terminals: ReadonlyArray<TerminalSummary>) =>
+    AsyncResult.success<ReadonlyArray<TerminalSummary>>(terminals);
+
+  it("notifies only when the thread's own terminals change", () => {
+    const registry = AtomRegistry.make();
+    const sessions = knownTerminalSessionsAtom(environmentA, threadA);
+    expect(registry.get(sessions)).toBeNull();
+
+    const first = summary(threadA, "terminal-1");
+    const other = summary(threadB, "terminal-1");
+    registry.set(metadataAtom, metadataResult(first));
+    const notified: unknown[] = [];
+    const unsubscribe = registry.subscribe(sessions, (value) => notified.push(value));
+    const before = registry.get(sessions);
+
+    registry.set(metadataAtom, metadataResult(first, other));
+    registry.set(metadataAtom, metadataResult(first, { ...other, label: "Renamed" }));
+    expect(notified).toEqual([]);
+    expect(registry.get(sessions)).toBe(before);
+
+    registry.set(metadataAtom, metadataResult({ ...first, label: "Renamed" }, other));
+    expect(notified).toHaveLength(1);
+    unsubscribe();
   });
 });
 
