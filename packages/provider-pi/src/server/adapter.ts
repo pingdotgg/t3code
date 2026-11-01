@@ -356,7 +356,7 @@ interface ActivePiTurn {
   nativeAborted: boolean;
   sawAgentActivity: boolean;
   adoptedWake: boolean;
-  readonly promptMayBeCommandOnly: boolean;
+  promptMayBeCommandOnly: boolean;
   latestCompactionAfterTokens: number | null;
   lastLiveUsedTokens: number | null;
   settleProbeGeneration: number;
@@ -559,8 +559,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let contextWindow: number | null = null;
       const modelContextWindows = new Map<string, number>();
       let modelsDiscovered = false;
-      // Prompt ACKs lack IDs; retain session send order and ownership so late ACKs cannot affect new turns.
+      let nextPromptId = 0;
       const pendingPromptResponses: Array<{
+        readonly id: string;
         readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
         readonly kind: "turn_start" | "steer";
       }> = [];
@@ -2009,21 +2010,45 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               }
               return;
             }
-            const pendingPrompt = command === "prompt" ? pendingPromptResponses.shift() : undefined;
+            const responseId = recordString(event, "id");
+            const promptIndex =
+              command !== "prompt"
+                ? -1
+                : responseId === undefined
+                  ? 0
+                  : pendingPromptResponses.findIndex((pending) => pending.id === responseId);
+            const pendingPrompt =
+              promptIndex < 0 ? undefined : pendingPromptResponses.splice(promptIndex, 1)[0];
             const responseTurn =
               pendingPrompt?.providerTurnId === turn?.providerTurn.id ? turn : null;
+            if (
+              event["success"] === true &&
+              pendingPrompt?.kind === "turn_start" &&
+              responseTurn !== null &&
+              recordString(event["data"], "disposition") === "handled"
+            ) {
+              responseTurn.promptMayBeCommandOnly = true;
+            }
+            const consumedInputIsIdleCandidate =
+              responseTurn !== null &&
+              (responseTurn.settleWhenIdle ||
+                (responseTurn.promptMayBeCommandOnly && !responseTurn.sawAgentActivity)) &&
+              !pendingPromptResponses.some(
+                (pending) => pending.providerTurnId === responseTurn.providerTurn.id,
+              );
             if (event["success"] === true) {
               // Consumed input may emit no agent_settled; probe idle behind preceding native events.
               if (
-                pendingPrompt?.kind === "turn_start" &&
                 responseTurn !== null &&
-                (((responseTurn.promptMayBeCommandOnly ||
-                  recordString(event["data"], "disposition") === "handled") &&
-                  !responseTurn.sawAgentActivity) ||
-                  (responseTurn.adoptedWake &&
+                (consumedInputIsIdleCandidate ||
+                  (pendingPrompt?.kind === "turn_start" &&
+                    responseTurn.adoptedWake &&
                     (responseTurn.settleWhenIdle || responseTurn.promptMayBeCommandOnly)))
               ) {
-                yield* scheduleSettleProbe(responseTurn, responseTurn.adoptedWake);
+                yield* scheduleSettleProbe(
+                  responseTurn,
+                  responseTurn.adoptedWake || responseTurn.settleWhenIdle,
+                );
               }
               return;
             }
@@ -2033,6 +2058,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               yield* Effect.logWarning("Pi rejected a steer message.", {
                 errorLength: recordString(event, "error")?.length,
               });
+              if (consumedInputIsIdleCandidate && responseTurn !== null)
+                yield* scheduleSettleProbe(responseTurn, responseTurn.settleWhenIdle);
               return;
             }
             const failedTurn =
@@ -2089,6 +2116,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               (!settleAfterAgentActivity && turn.sawAgentActivity) ||
               turn.activeCompaction !== null
             ) {
+              return;
+            }
+            if (
+              pendingPromptResponses.some(
+                (pending) => pending.providerTurnId === turn.providerTurn.id,
+              )
+            ) {
+              turn.settleWhenIdle = true;
               return;
             }
             if (probeFailed) {
@@ -2560,13 +2595,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   kind: "turn_start",
                 });
               } else if (payload !== null) {
+                const id = `t3-prompt-${nextPromptId++}`;
                 yield* connection.send({
+                  id,
                   type: "prompt",
                   message: payload.message,
                   streamingBehavior: "steer",
                   ...(payload.images.length === 0 ? {} : { images: payload.images }),
                 });
                 pendingPromptResponses.push({
+                  id,
                   providerTurnId: providerTurn.id,
                   kind: "turn_start",
                 });
@@ -2608,8 +2646,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             );
             // Pi acks `prompt` only after slash-command expansion completes,
             // and extension commands may block on user dialogs indefinitely.
-            // Rejections therefore return later as id-less response records
-            // handled by the event pump.
+            // Correlated responses therefore return later through the event pump.
           },
           (effect, turnInput) =>
             effect.pipe(
@@ -2654,13 +2691,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     kind: "steer",
                   });
                 } else if (payload !== null) {
+                  const id = `t3-prompt-${nextPromptId++}`;
                   yield* connection.send({
+                    id,
                     type: "prompt",
                     message: payload.message,
                     streamingBehavior: "steer",
                     ...(payload.images.length === 0 ? {} : { images: payload.images }),
                   });
                   pendingPromptResponses.push({
+                    id,
                     providerTurnId: turn.providerTurn.id,
                     kind: "steer",
                   });
