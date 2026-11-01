@@ -129,6 +129,7 @@ import {
   MCP_APP_RESOURCE_SCHEME,
 } from "@t3tools/shared/mcpApp";
 import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
+import * as PortScanner from "../../preview/PortScanner.ts";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriverCreateInput,
@@ -1334,6 +1335,7 @@ export const CODEX_THREAD_CONFIG = {
 const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
 
 function codexThreadRuntimeParams(input: {
+  readonly threadId: ThreadId | null;
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
@@ -1348,6 +1350,10 @@ function codexThreadRuntimeParams(input: {
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
+      // The app-server process is shared by every thread, so its env cannot carry this.
+      ...(input.threadId === null
+        ? {}
+        : { [`shell_environment_policy.set.${PortScanner.AGENT_THREAD_ENV}`]: input.threadId }),
       ...(mcpSession === undefined
         ? {}
         : {
@@ -6957,6 +6963,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 client.request(
                   "thread/start",
                   codexThreadRuntimeParams({
+                    threadId: threadInput.threadId,
                     mcpSession,
                     modelSelection: threadInput.modelSelection,
                     runtimePolicy: threadInput.runtimePolicy,
@@ -6985,13 +6992,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           resumeThread: Effect.fn("CodexAdapterV2.resumeThread")(
             function* (threadInput) {
               const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
+              const appThreadId = threadInput.threadId ?? threadInput.providerThread.appThreadId;
               const resume = client.raw.request("thread/resume", {
                 threadId: nativeThreadId,
                 excludeTurns: true,
                 ...codexThreadRuntimeParams({
-                  mcpSession: yield* readMcpSession(
-                    threadInput.threadId ?? threadInput.providerThread.appThreadId,
-                  ),
+                  threadId: appThreadId,
+                  mcpSession: yield* readMcpSession(appThreadId),
                   ...(threadInput.modelSelection === undefined
                     ? {}
                     : { modelSelection: threadInput.modelSelection }),
@@ -7776,6 +7783,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   threadId,
                   excludeTurns: true,
                   ...codexThreadRuntimeParams({
+                    threadId: threadInput.providerThread.appThreadId,
                     mcpSession: yield* readMcpSession(threadInput.providerThread.appThreadId),
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
@@ -7828,6 +7836,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       ? {}
                       : { lastTurnId: boundary.lastTurnId }),
                     ...codexThreadRuntimeParams({
+                      threadId: threadInput.targetThreadId,
                       mcpSession: yield* mcpSessions.read(threadInput.targetThreadId),
                       ...(threadInput.modelSelection === undefined
                         ? {}
