@@ -9,6 +9,7 @@ import {
   type EnvironmentId,
   type ScopedThreadRef,
   type TaskDocumentId,
+  type TaskDocumentSummary,
 } from "@t3tools/contracts";
 import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -40,6 +41,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { TaskPropertiesDialog } from "./TaskPropertiesDialog";
 import { TaskRelinkDialog } from "./TaskRelinkDialog";
 import { type TaskSession, useTaskCatalogue, useTaskDocument } from "./useTaskDocuments";
+import { remarkTaskWikiLinks } from "./taskWikiLinks";
 
 const splitDocumentPath = (path: string) => {
   const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
@@ -135,6 +137,7 @@ function TaskRenderedDocument(props: {
   readonly environmentId: EnvironmentId;
   readonly directory: string;
   readonly text: string;
+  readonly tasks: ReadonlyArray<TaskDocumentSummary>;
   readonly session: TaskSession;
   readonly onOpenFileLink: (path: string) => void;
 }) {
@@ -156,6 +159,13 @@ function TaskRenderedDocument(props: {
         imageBaseDir={props.directory}
         environmentId={props.environmentId}
         onOpenFileLink={props.onOpenFileLink}
+        onOpenTaskLink={(taskDocumentId) => {
+          const task = props.tasks.find((candidate) => candidate.taskDocumentId === taskDocumentId);
+          if (!task) return false;
+          props.onOpenFileLink(task.canonicalPath);
+          return true;
+        }}
+        extraRemarkPlugins={[remarkTaskWikiLinks(props.tasks, props.environmentId, props.text)]}
         className="mx-auto max-w-4xl px-6 py-5"
       />
     </div>
@@ -531,6 +541,7 @@ export default function TaskDocumentPane(props: {
           environmentId={environmentId}
           directory={directory}
           text={draft}
+          tasks={tasks}
           session={session}
           onOpenFileLink={onOpenFileLink}
         />

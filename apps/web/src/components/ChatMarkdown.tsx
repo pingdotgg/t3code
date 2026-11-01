@@ -66,6 +66,7 @@ import { mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/mediaPreview";
 import { InlineAudioPreview } from "./files/InlineAudioPreview";
 import { HostImageUrlContext } from "./chat/hostImageUrl";
+import { taskWikiLinkIdFromNode } from "./tasks/taskWikiLinks";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -229,6 +230,8 @@ interface ChatMarkdownProps {
   environmentId?: EnvironmentId | undefined;
   /** Replaces opening file links in the thread's panel, whose paths resolve against its workspace. */
   onOpenFileLink?: ((hostPath: string) => void) | undefined;
+  /** Opens a registered task document link from its rendered Markdown. */
+  onOpenTaskLink?: ((taskDocumentId: string) => boolean) | undefined;
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
   isStreaming?: boolean;
   skills?: ReadonlyArray<ServerProviderSkill>;
@@ -442,6 +445,7 @@ function useChatMarkdownState({
   cwd,
   threadRef,
   onOpenFileLink,
+  onOpenTaskLink,
   pullRequestPanelRef,
   environmentId: explicitEnvironmentId,
   onTaskListChange,
@@ -902,6 +906,7 @@ function useChatMarkdownState({
     isStreaming,
     linkTargetPreference,
     markdownFileLinkMetaByHref,
+    onOpenTaskLink,
     onTaskListChange,
     onUseArtifactTemplate,
     onRunShellCommand,
@@ -1063,6 +1068,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       openChangeRequestLink,
       openDeferredMarkdownLink,
       linkTargetPreference,
+      onOpenTaskLink,
       openExternalLinkInPreview,
       projects,
       linkedThreadPullRequestFor,
@@ -1073,6 +1079,37 @@ const CHAT_MARKDOWN_COMPONENTS = {
       renderContextReference,
     } = use(ChatMarkdownRendererContext);
     const text = use(ChatMarkdownTextContext);
+    const taskDocumentId = taskWikiLinkIdFromNode(node, text);
+    if (taskDocumentId !== null && onOpenTaskLink) {
+      return (
+        <a
+          {...props}
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cn(props.className, "text-primary underline underline-offset-2")}
+          onClick={(event) => {
+            props.onClick?.(event);
+            if (
+              event.defaultPrevented ||
+              event.button !== 0 ||
+              event.metaKey ||
+              event.ctrlKey ||
+              event.shiftKey ||
+              event.altKey
+            ) {
+              return;
+            }
+            if (onOpenTaskLink(taskDocumentId)) {
+              event.preventDefault();
+              event.stopPropagation();
+            }
+          }}
+        >
+          {children}
+        </a>
+      );
+    }
     const citation = href ? parseAssistantCitationHref(href) : null;
     if (citation) return <AssistantCitationChip citation={citation} />;
     const threadLink = href ? parseThreadLinkHref(href) : null;
