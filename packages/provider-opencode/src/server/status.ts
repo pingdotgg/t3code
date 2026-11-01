@@ -480,6 +480,9 @@ const catalogFingerprint = (models: ReadonlyArray<OpenCode2Model>) =>
     .toSorted()
     .join("\n");
 
+// The first read also starts a cold server, whose start has its own 30s budget.
+const FIRST_CATALOG_READ_TIMEOUT = "40 seconds";
+
 /** A cold server can list a partial catalog; two agreeing reads reduce that startup race. */
 export const makeOpenCode2ModelLoader = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
@@ -489,17 +492,15 @@ export const makeOpenCode2ModelLoader = <E>(
     return Effect.suspend(() => {
       let previous: string | undefined;
       let latest: ReadonlyArray<OpenCode2Model> = [];
-      return list.pipe(
-        Effect.repeat({
-          until: (models) => {
-            if (models.length > 0) latest = models;
-            const fingerprint = models.length > 0 ? catalogFingerprint(models) : undefined;
-            const settled = fingerprint !== undefined && fingerprint === previous;
-            previous = fingerprint;
-            return settled;
-          },
-          schedule: Schedule.spaced("250 millis"),
-        }),
+      const observe = (models: ReadonlyArray<OpenCode2Model>) => {
+        if (models.length > 0) latest = models;
+        const fingerprint = models.length > 0 ? catalogFingerprint(models) : undefined;
+        const settled = fingerprint !== undefined && fingerprint === previous;
+        previous = fingerprint;
+        return settled;
+      };
+      const settle = list.pipe(
+        Effect.repeat({ until: observe, schedule: Schedule.spaced("250 millis") }),
         Effect.catch((error) => (latest.length > 0 ? Effect.succeed(latest) : Effect.fail(error))),
         Effect.timeoutOption("5 seconds"),
         Effect.map((loaded) => {
@@ -509,6 +510,14 @@ export const makeOpenCode2ModelLoader = <E>(
           return lastLoaded;
         }),
       );
+      return Effect.gen(function* () {
+        // A cold start can take longer than the catalog budget. Read once
+        // outside it, so only the catalog itself gets the five seconds.
+        const first = yield* list.pipe(Effect.timeoutOption(FIRST_CATALOG_READ_TIMEOUT));
+        if (first._tag === "None") return lastLoaded;
+        if (first.value.length > 0) latest = first.value;
+        return yield* settle;
+      });
     });
   });
 
