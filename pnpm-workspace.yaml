@@ -234,6 +234,8 @@ overrides:
   react-native-image-viewing: 0.2.2
   mdast-util-math: 3.0.0
   micromark-extension-llm-math: 3.1.0
+  micromark: 4.0.2
+  mdast-util-to-hast: 13.2.1
   alchemy: "catalog:"
   expo-audio: 58.0.9
   expo-network: 58.0.3
@@ -358,6 +360,8 @@ patchedDependencies:
   mdast-util-math@3.0.0: patches/mdast-util-math@3.0.0.patch
   micromark-extension-llm-math@3.1.0: patches/micromark-extension-llm-math@3.1.0.patch
   micromark-extension-gfm-table@2.1.1: patches/micromark-extension-gfm-table@2.1.1.patch
+  micromark@4.0.2: patches/micromark@4.0.2.patch
+  mdast-util-to-hast@13.2.1: patches/mdast-util-to-hast@13.2.1.patch
   alchemy@2.0.0-beta.84: patches/alchemy@2.0.0-beta.84.patch
   expo-audio@58.0.9: patches/expo-audio@58.0.9.patch
   expo-video@58.0.11: patches/expo-video@58.0.11.patch

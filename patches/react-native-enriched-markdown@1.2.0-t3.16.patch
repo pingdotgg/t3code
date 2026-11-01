@@ -1128,16 +1128,21 @@ diff --git a/ios/segments/TableContainerView.m b/ios/segments/TableContainerView
 index 987eb21..0073f71 100644
 --- a/ios/segments/TableContainerView.m
 +++ b/ios/segments/TableContainerView.m
-@@ -85,15 +85,21 @@ static NSMutableAttributedString *ENRMTableRenderCellNode(MarkdownASTNode *cellN
+@@ -85,15 +85,26 @@ static NSMutableAttributedString *ENRMTableRenderCellNode(MarkdownASTNode *cellN
    context.allowFontScaling = allowFontScaling;
    context.maxFontSizeMultiplier = maxFontSizeMultiplier;
  
 -  NSMutableAttributedString *attributedText = [renderer renderNodes:cellNode.children context:context block:nil];
-+  MarkdownASTNode *paragraph = [[MarkdownASTNode alloc] initWithType:MarkdownNodeTypeParagraph];
-+  paragraph.attributes = [cellNode.attributes mutableCopy];
-+  for (MarkdownASTNode *child in cellNode.children)
-+    [paragraph addChild:child];
-+  NSMutableAttributedString *attributedText = [renderer renderNodes:@[ paragraph ] context:context block:nil];
++  NSMutableAttributedString *attributedText;
++  if (cellNode.attributes[@"_enrmProseDirection"]) {
++    MarkdownASTNode *paragraph = [[MarkdownASTNode alloc] initWithType:MarkdownNodeTypeParagraph];
++    paragraph.attributes = [cellNode.attributes mutableCopy];
++    for (MarkdownASTNode *child in cellNode.children)
++      [paragraph addChild:child];
++    attributedText = [renderer renderNodes:@[ paragraph ] context:context block:nil];
++  } else {
++    attributedText = [renderer renderNodes:cellNode.children context:context block:nil];
++  }
  
    [context applyLinkAttributesToString:attributedText];
    [context applyImageAttributesToString:attributedText];
