@@ -855,12 +855,13 @@ const layerMakeServer = Layer.unwrap(
     );
     const layerTailscaleServe = config.tailscaleServeEnabled
       ? TailscaleServe.layer({
+          stateDir: config.stateDir,
           servePort: config.tailscaleServePort,
           parked: tailscaleParked,
           settled: tailscaleSettled,
           awaitActivation,
         })
-      : Layer.empty;
+      : TailscaleServe.layerReleaseLeftover({ stateDir: config.stateDir });
     const layerCloudDesiredLinkReconcile = Layer.effectDiscard(
       Effect.gen(function* () {
         const cloudLink = yield* CloudLink.CloudLink;

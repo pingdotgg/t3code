@@ -12,6 +12,7 @@ import * as Queue from "effect/Queue";
 import * as Terminal from "effect/Terminal";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
+import * as Tailscale from "@t3tools/tailscale";
 import { afterEach, vi } from "vite-plus/test";
 
 // The tests must not depend on Tailscale running on the machine that runs them.
@@ -24,6 +25,26 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import { upsertServiceEnv } from "./service.ts";
 import { connectEnabled, planRoutes, resolveOwner, upCommand, upPortCheck } from "./up.ts";
+
+const TAGGED_HOST: Tailscale.TailscaleStatus = {
+  version: "1.90.0",
+  magicDnsName: "box.example.ts.net",
+  tailnetIpv4Addresses: ["100.64.0.2"],
+  httpsServeEnabled: null,
+  backendState: "Running",
+  selfNodeId: "n1",
+  selfUserId: null,
+  selfTags: ["tag:t3-box"],
+  keyExpiry: null,
+  keyExpired: false,
+  health: [],
+  magicDnsEnabled: true,
+  certDomains: [],
+  userspaceNetworking: false,
+  peers: [],
+  unidentifiedPeerAddresses: [],
+  users: [{ userId: "123", loginName: "me@example.com" }],
+};
 
 const none = Option.none<boolean>();
 const off = { tailscale: false, connect: false, lan: false };
@@ -173,6 +194,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     readonly status?: Partial<BootService.BootServiceStatus>;
     readonly installFails?: boolean;
     readonly restartFails?: boolean;
+    /** What Tailscale reports here. Without it, Tailscale does not answer. */
+    readonly tailscale?: Tailscale.TailscaleStatus;
     /** `t3 up` exits with an error. */
     readonly fails?: boolean;
     /** Runs as if in a terminal, answering each question with this text. */
@@ -324,6 +347,35 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=true\nT3CODE_TAILSCALE_SERVE=false\n",
     },
     {
+      label: "--no-tailscale pins Serve off when sign-in was already off",
+      installed: true,
+      env: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=false\n",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 1,
+      envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      label: "--no-tailscale writes its offs with no service to run",
+      installed: false,
+      env: "",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      // With no saved owner and no terminal, choosing Tailscale would fail with "Pass --owner".
+      label: "--no-tailscale-serve on a tagged host asks for no owner",
+      installed: true,
+      tailscale: TAGGED_HOST,
+      env: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=true\nT3CODE_TAILSCALE_SERVE=true\n",
+      args: ["--no-tailscale-serve"],
+      installs: 0,
+      restarts: 1,
+      envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=true\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
       // Not written as a choice, so status keeps calling it the older install's.
       label: "the old default is kept, still marked as the old default",
       installed: true,
@@ -338,6 +390,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-up-test-" });
       yield* fs.writeFileString(`${baseDir}/service.env`, input.env);
+      if (input.tailscale !== undefined) {
+        vi.spyOn(Tailscale, "readTailscaleStatus").mockReturnValue(Effect.succeed(input.tailscale));
+      }
       let installs = 0;
       let restarts = 0;
       const status = {
@@ -445,27 +500,8 @@ it.each([
 
 it.effect("a rerun on a tagged host keeps the owner saved before, with no prompt", () =>
   Effect.gen(function* () {
-    const status = {
-      version: "1.90.0",
-      magicDnsName: "box.example.ts.net",
-      tailnetIpv4Addresses: ["100.64.0.2"],
-      httpsServeEnabled: null,
-      backendState: "Running",
-      selfNodeId: "n1",
-      selfUserId: null,
-      selfTags: ["tag:t3-box"],
-      keyExpiry: null,
-      keyExpired: false,
-      health: [],
-      magicDnsEnabled: true,
-      certDomains: [],
-      userspaceNetworking: false,
-      peers: [],
-      unidentifiedPeerAddresses: [],
-      users: [{ userId: "123", loginName: "me@example.com" }],
-    };
     // Not interactive, as with --yes, so asking would fail with "Pass --owner".
-    expect(yield* resolveOwner(status, Option.none(), "123", false)).toEqual({
+    expect(yield* resolveOwner(TAGGED_HOST, Option.none(), "123", false)).toEqual({
       userId: "123",
       login: "me@example.com",
     });

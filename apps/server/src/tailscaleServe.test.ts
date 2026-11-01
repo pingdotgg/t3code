@@ -5,7 +5,9 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -29,12 +31,15 @@ interface FakeOptions {
   readonly ackDelay?: Duration.Input;
   /** The Serve root starts out proxying to this other server. */
   readonly heldBy?: string;
+  /** `serve status` fails this many times, as while the daemon is down. */
+  readonly statusFailures?: number;
 }
 
 // Stands in for the tailscale CLI and keeps the Serve root like the daemon does.
 const makeFakeTailscale = (options: FakeOptions) => {
   const state = {
     serveAttempts: 0,
+    statusCalls: 0,
     releases: 0,
     root: options.heldBy ?? null,
   };
@@ -54,6 +59,10 @@ const makeFakeTailscale = (options: FakeOptions) => {
   ): { code: number; stdout?: string; stderr?: string; ackDelay?: Duration.Input } | undefined => {
     const command = args.join(" ");
     if (command === "serve status --json") {
+      state.statusCalls += 1;
+      if (state.statusCalls <= (options.statusFailures ?? 0)) {
+        return { code: 1, stderr: "failed to connect to local tailscaled" };
+      }
       return { code: 0, stdout: serveStatus() };
     }
     if (args[0] === "serve" && args[1] === "--bg") {
@@ -102,22 +111,48 @@ const makeFakeTailscale = (options: FakeOptions) => {
   return { state, spawner, mappingApplied };
 };
 
+const STATE_DIR = "/state";
+const CLAIM_PATH = "/state/tailscale-serve-claim.json";
+
+// In memory, so writes land within the test clock's steps.
+const memoryFileSystem = (files: Map<string, string>) => {
+  const missing = FileSystem.makeNoop({});
+  return FileSystem.makeNoop({
+    readFileString: (path) => {
+      const contents = files.get(path);
+      return contents === undefined ? missing.readFileString(path) : Effect.succeed(contents);
+    },
+    writeFileString: (path, data) => Effect.sync(() => void files.set(path, data)),
+    makeDirectory: () => Effect.void,
+    remove: (path) => Effect.sync(() => void files.delete(path)),
+  });
+};
+
+const fakeLayers = (fake: ReturnType<typeof makeFakeTailscale>, files: Map<string, string>) =>
+  Layer.mergeAll(
+    Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, fake.spawner),
+    Layer.succeed(HostProcess.Platform, "linux"),
+    Layer.succeed(FileSystem.FileSystem, memoryFileSystem(files)),
+    Path.layer,
+  );
+
 const startTailscaleServe = Effect.fn(function* (options: FakeOptions = {}) {
   const fake = makeFakeTailscale(options);
+  const files = new Map<string, string>();
   const parked = yield* Deferred.make<void>();
   const settled = yield* Deferred.make<void>();
   const scope = yield* Scope.make();
   yield* Layer.buildWithScope(
     TailscaleServe.layer({
+      stateDir: STATE_DIR,
       servePort: SERVE_PORT,
       parked,
       settled,
       awaitActivation: Effect.void,
     }).pipe(
       Layer.provide(
-        Layer.mergeAll(
-          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, fake.spawner),
-          Layer.succeed(HostProcess.Platform, "linux"),
+        Layer.merge(
+          fakeLayers(fake, files),
           Layer.mock(HttpServer.HttpServer)({
             address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 18638),
           }),
@@ -126,7 +161,7 @@ const startTailscaleServe = Effect.fn(function* (options: FakeOptions = {}) {
     ),
     scope,
   );
-  return { state: fake.state, mappingApplied: fake.mappingApplied, scope, settled };
+  return { state: fake.state, mappingApplied: fake.mappingApplied, scope, settled, files };
 });
 
 describe("TailscaleServe", () => {
@@ -171,13 +206,37 @@ describe("TailscaleServe", () => {
 
   it.effect("removes its Serve root on shutdown after a later attempt succeeded", () =>
     Effect.gen(function* () {
-      const { state, scope } = yield* startTailscaleServe({ refusedServeAttempts: 1 });
+      const { state, scope, files } = yield* startTailscaleServe({ refusedServeAttempts: 1 });
       yield* TestClock.adjust("1 hour");
+      assert.isTrue(files.has(CLAIM_PATH));
 
       yield* Scope.close(scope, Exit.void);
 
       assert.equal(state.releases, 1);
       assert.equal(state.root, null);
+      assert.isFalse(files.has(CLAIM_PATH));
+    }),
+  );
+
+  it.effect("with Serve off, removes a mapping a stopped run left, once Tailscale answers", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeTailscale({ heldBy: LOCAL_TARGET, statusFailures: 2 });
+      const files = new Map([
+        [CLAIM_PATH, `{"localPort":18638,"localHost":"127.0.0.1","servePort":${SERVE_PORT}}`],
+      ]);
+      const scope = yield* Scope.make();
+      yield* Layer.buildWithScope(
+        TailscaleServe.layerReleaseLeftover({ stateDir: STATE_DIR }).pipe(
+          Layer.provide(fakeLayers(fake, files)),
+        ),
+        scope,
+      );
+      yield* TestClock.adjust("1 minute");
+
+      assert.equal(fake.state.releases, 1);
+      assert.equal(fake.state.root, null);
+      assert.isFalse(files.has(CLAIM_PATH));
+      yield* Scope.close(scope, Exit.void);
     }),
   );
 

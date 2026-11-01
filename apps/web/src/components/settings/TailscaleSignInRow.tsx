@@ -30,7 +30,7 @@ export function TailscaleSignInRow({
     if (!bridge) return;
     const confirmed = await requestConfirmDialog(
       next
-        ? `Turn on Tailscale sign-in?\nYour own untagged Tailscale devices get full access with no pairing code. Once your tailnet policy grants ${TAILNET_APP_CAPABILITY} here, only the devices it grants get in. ${
+        ? `Turn on Tailscale sign-in?\nYour own untagged Tailscale devices get full access with no pairing code. Once your tailnet policy grants ${TAILNET_APP_CAPABILITY} here, or grants are required, only the devices it grants get in. ${
             state?.mode === "network-accessible"
               ? ""
               : "T3 Code accepts tailnet connections and refuses LAN connections. "
@@ -61,8 +61,8 @@ export function TailscaleSignInRow({
         wslOnly
           ? "Not available while WSL only is on. Turn off WSL only to use it."
           : enabled
-            ? "Devices your tailnet policy grants, else your own untagged devices, connect with no pairing code."
-            : "Let devices your tailnet policy grants, else your own untagged devices, connect with no pairing code."
+            ? "Devices your tailnet policy grants connect with no pairing code. With no grant, so do your own untagged devices, unless grants are required."
+            : "Let devices your tailnet policy grants connect with no pairing code. With no grant, your own untagged devices can too, unless grants are required."
       }
       status={
         movedPort ? (

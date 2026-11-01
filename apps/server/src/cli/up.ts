@@ -580,6 +580,9 @@ const setUp = Effect.fn("cli.up")(function* (
         inverseSelection: "Invert selection",
         choices: plan.ask.map((route) => ({
           ...CHOICES[route],
+          ...(route === "tailscale" && before.requireGrant
+            ? { description: "Devices your policy grants. No pairing code." }
+            : {}),
           value: route,
           selected: plan.routes[route],
         })),
@@ -601,6 +604,10 @@ const setUp = Effect.fn("cli.up")(function* (
       `No terminal. Choose access with ${offered.join(", ")}, or use --yes for the default. See \`t3 up --help\`.`,
     );
   }
+  // An explicit off is written even when the file says nothing, since the service may
+  // inherit the setting, and a restart applies it.
+  const tailscaleOffChosen = Option.getOrUndefined(flags.tailscale) === false;
+  const serveOffChosen = Option.getOrUndefined(flags.tailscaleServe) === false;
   // Nothing to run in the background, but a route left on still gets turned off.
   if (!before.service.installed && !routes.connect && !routes.lan && !routes.tailscale) {
     if (current.connect || before.connectRevoked) {
@@ -608,7 +615,8 @@ const setUp = Effect.fn("cli.up")(function* (
     }
     yield* CliService.writeServiceEnv(config.baseDir, {
       ...(current.lan ? { T3CODE_LAN: "false" } : {}),
-      ...(current.tailscale ? TAILSCALE_OFF : {}),
+      ...(current.tailscale || tailscaleOffChosen ? TAILSCALE_OFF : {}),
+      ...(serveOffChosen ? { T3CODE_TAILSCALE_SERVE: "false" } : {}),
     });
     return yield* Console.log(formatNextSteps(routes, false));
   }
@@ -622,16 +630,18 @@ const setUp = Effect.fn("cli.up")(function* (
   }
 
   const requireGrant = flags.requireGrant || before.requireGrant;
+  // Its settings, owner included, are looked up again only when Tailscale is turned on or
+  // chosen, so a run that changes something else never asks for an owner.
+  const tailscaleChosen =
+    !current.tailscale || Option.isSome(flags.tailscale) || (plan.ask.length > 0 && interactive);
   const signIn =
-    routes.tailscale && tailscale.ok
+    routes.tailscale && tailscale.ok && tailscaleChosen
       ? yield* tailscaleEntries(tailscale, flags, requireGrant)
       : null;
-  // An explicit off is written even when the file says nothing, since the service may
-  // inherit the setting, and a restart applies it.
-  const tailscaleOffChosen = Option.getOrUndefined(flags.tailscale) === false;
-  const serveOffChosen = Option.getOrUndefined(flags.tailscaleServe) === false;
   const pinsOff =
-    (tailscaleOffChosen && before.entries.T3CODE_TAILSCALE_SIGN_IN !== "false") ||
+    (tailscaleOffChosen &&
+      (before.entries.T3CODE_TAILSCALE_SIGN_IN !== "false" ||
+        before.entries.T3CODE_TAILSCALE_SERVE !== "false")) ||
     (serveOffChosen && before.entries.T3CODE_TAILSCALE_SERVE !== "false");
   const writes: Readonly<Record<string, string | undefined>> = {
     ...(lanChosen ? { T3CODE_LAN: String(routes.lan) } : {}),
