@@ -82,9 +82,10 @@ function presentation(
   if (link.kind === "file")
     return {
       // Without a label the native pill shows the authored text, e.g. [the setup steps](docs/guide.md).
-      // preserveWindowsPaths keeps backslash escapes in link text, so test the unescaped text too.
+      // An autolink's text is its URL. preserveWindowsPaths keeps backslash escapes in link text.
       label: authoredLabels.every(
         (label) =>
+          label === url ||
           isMarkdownFileLinkLabel(label, link.href) ||
           isMarkdownFileLinkLabel(label.replace(/\\(.)/g, "$1"), link.href),
       )

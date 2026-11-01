@@ -86,3 +86,10 @@ it("keeps the file name chip for an inline-code Windows path", async () => {
 
   expect(content["C:\\repo\\src\\a.ts"]?.label).toBe("a.ts");
 });
+
+it("keeps the file name chip for a file URL autolink", async () => {
+  const url = "file:///home/me/docs/guide.md";
+  const content = await pillContent([{ url, label: url, title: "" }]);
+
+  expect(content[url]?.label).toBe("guide.md");
+});
