@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 
 import { persistClientSettingsPatch, useMergedSettings } from "../../hooks/useSettings";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
@@ -24,11 +25,27 @@ import {
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
+  pendingScopedWriteApplies,
+  pendingScopedWritesAtom,
   scopedSettingsAreMixed,
   scopedSettingsSource,
+  type PendingScopedWrite,
   type ProjectOverrideEntry,
   type ScopedSettingsPatch,
 } from "./scopedSettings";
+
+const savedSettings = (environmentId: PendingScopedWrite["environmentId"]) =>
+  appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.settings;
+
+function updatePendingScopedWrites(
+  update: (writes: readonly PendingScopedWrite[]) => readonly PendingScopedWrite[],
+) {
+  appAtomRegistry.update(pendingScopedWritesAtom, (current) =>
+    update(current).filter((write) =>
+      pendingScopedWriteApplies(write, savedSettings(write.environmentId)),
+    ),
+  );
+}
 
 export function useScopedSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
@@ -59,6 +76,21 @@ function useRunScopedPlan() {
       onFailed?.();
       return;
     }
+    const pending = plan.serverWrites.map(({ environmentId, patch }): PendingScopedWrite => ({
+      environmentId,
+      patch,
+    }));
+    updatePendingScopedWrites((current) => [...current, ...pending]);
+    const settle = (failed: ReadonlySet<string> | null) =>
+      updatePendingScopedWrites((current) =>
+        current.flatMap((write) => {
+          if (!pending.includes(write)) return [write];
+          const savedOver = savedSettings(write.environmentId);
+          return failed === null || failed.has(write.environmentId) || savedOver === undefined
+            ? []
+            : [{ ...write, savedOver }];
+        }),
+      );
     void persistScopedSettingsPatch(
       plan,
       async (request) => {
@@ -77,23 +109,26 @@ function useRunScopedPlan() {
         return persistServer(request);
       },
       persistClientSettingsPatch,
-    ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
-      if (failedEnvironments.length === 0) return;
-      onFailed?.();
-      toastManager.add({
-        type: "error",
-        title:
-          savedEnvironmentCount > 0 ? "Setting saved on some environments" : "Setting not saved",
-        description: [
-          ...failedEnvironments.map(
-            ({ label, message }) => `Could not save on ${label}: ${message}`,
-          ),
-          ...(savedEnvironmentCount > 0
-            ? [`Saved on ${savedEnvironments.map(({ label }) => label).join(", ")}.`]
-            : []),
-        ].join("\n"),
-      });
-    });
+    )
+      .then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
+        settle(new Set(failedEnvironments.map(({ environmentId }) => environmentId)));
+        if (failedEnvironments.length === 0) return;
+        onFailed?.();
+        toastManager.add({
+          type: "error",
+          title:
+            savedEnvironmentCount > 0 ? "Setting saved on some environments" : "Setting not saved",
+          description: [
+            ...failedEnvironments.map(
+              ({ label, message }) => `Could not save on ${label}: ${message}`,
+            ),
+            ...(savedEnvironmentCount > 0
+              ? [`Saved on ${savedEnvironments.map(({ label }) => label).join(", ")}.`]
+              : []),
+          ].join("\n"),
+        });
+      })
+      .catch(() => settle(null));
   };
 }
 

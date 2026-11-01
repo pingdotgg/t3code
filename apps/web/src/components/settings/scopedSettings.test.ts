@@ -13,6 +13,8 @@ import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
+  applyPendingScopedWrites,
+  type PendingScopedWrite,
   persistScopedSettingsPatch,
   planProjectOverridesClear,
   planScopedSettingsClear,
@@ -553,6 +555,39 @@ describe("scoped settings mixed values", () => {
     const second = environment("Second", { settings: { sourceControlWritingStyle: { ...style } } });
     const targets = resolveScopedSettingsTargets(all, [first, second]);
     expect(scopedSettingsAreMixed(targets, ["sourceControlWritingStyle"])).toBe(false);
+  });
+
+  it("agrees while a save is in flight and follows the environment once it reports back", () => {
+    const patch = { defaultRuntimeMode: "auto" as const };
+    const confirmed = environment("Laptop", { settings: patch });
+    const waiting = environment("Server");
+    const mixedAfter = (writes: readonly PendingScopedWrite[]) =>
+      scopedSettingsAreMixed(
+        resolveScopedSettingsTargets(all, applyPendingScopedWrites([confirmed, waiting], writes)),
+        ["defaultRuntimeMode"],
+      );
+    const inFlight = [confirmed, waiting].map(({ environmentId }) => ({ environmentId, patch }));
+    expect(mixedAfter([])).toBe(true);
+    expect(mixedAfter(inFlight)).toBe(false);
+
+    const saved = inFlight.map((write, index) => ({
+      ...write,
+      savedOver: [confirmed, waiting][index]!.serverConfig!.settings,
+    }));
+    expect(mixedAfter(saved)).toBe(false);
+
+    const changedElsewhere = environment("Server", {
+      settings: { defaultRuntimeMode: "approval-required" },
+    });
+    expect(
+      scopedSettingsAreMixed(
+        resolveScopedSettingsTargets(
+          all,
+          applyPendingScopedWrites([confirmed, changedElsewhere], saved),
+        ),
+        ["defaultRuntimeMode"],
+      ),
+    ).toBe(true);
   });
 });
 
