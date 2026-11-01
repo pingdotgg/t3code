@@ -904,27 +904,29 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("keeps waiting for the probe when a frame arrives during the host check", () =>
-    Effect.gen(function* () {
-      const frames = yield* Ref.make(0);
-      const harness = yield* makeHarness({
-        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
-        initialConfig: () => Effect.succeed(PROBE_CAPABLE_CONFIG),
-        probe: (attempt) => (attempt === 1 ? Effect.sleep("2 seconds") : Effect.void),
-        inboundFrames: Ref.get(frames),
-        checkHost: () => Ref.update(frames, (count) => count + 1).pipe(Effect.as("answered")),
-      });
-      const supervisor = yield* EnvironmentSupervisor.make(LAN_ENTRY, {
-        initiallyDesired: true,
-      }).pipe(Effect.provide(harness.dependencies));
+  it.effect.each(["application-active-probe", "application-active-long"] as const)(
+    "keeps waiting for the probe when a frame arrives during the host check (%s)",
+    (wakeup) =>
+      Effect.gen(function* () {
+        const frames = yield* Ref.make(0);
+        const harness = yield* makeHarness({
+          prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+          initialConfig: () => Effect.succeed(PROBE_CAPABLE_CONFIG),
+          probe: (attempt) => (attempt === 1 ? Effect.sleep("2 seconds") : Effect.void),
+          inboundFrames: Ref.get(frames),
+          checkHost: () => Ref.update(frames, (count) => count + 1).pipe(Effect.as("answered")),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(LAN_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
 
-      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      yield* harness.wake("application-active-probe");
-      yield* TestClock.adjust("5 seconds");
+        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        yield* harness.wake(wakeup);
+        yield* TestClock.adjust("5 seconds");
 
-      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-      expect((yield* SubscriptionRef.get(supervisor.state)).generation).toBe(1);
-    }).pipe(Effect.provide(TestClock.layer())),
+        expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+        expect((yield* SubscriptionRef.get(supervisor.state)).generation).toBe(1);
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("waits out a LAN resume probe when the host does not answer a fresh request", () =>

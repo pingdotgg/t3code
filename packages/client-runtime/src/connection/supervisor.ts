@@ -765,7 +765,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           { discard: true },
         ),
       );
-      let deadline = (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(probeTimeout);
+      const probeStartedAt = yield* Clock.monotonicTimeNanos;
+      let deadline = probeStartedAt + Duration.toNanosUnsafe(probeTimeout);
       for (;;) {
         const remaining = deadline - (yield* Clock.monotonicTimeNanos);
         const probeEvent = yield* Effect.raceAllFirst([
@@ -786,6 +787,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         ]);
         if (probeEvent._tag === "SocketAlive") {
           silentSocket = undefined;
+          // A frame shows the socket still works, so its probe gets the usual resume time.
+          if (longResume) {
+            const aliveDeadline =
+              probeStartedAt + Duration.toNanosUnsafe(QUICK_CONNECTION_PROBE_TIMEOUT);
+            if (aliveDeadline > deadline) deadline = aliveDeadline;
+          }
           if (recheck) yield* startSilentSocketCheck;
           continue;
         }
