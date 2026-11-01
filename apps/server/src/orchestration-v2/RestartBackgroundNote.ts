@@ -280,6 +280,50 @@ export function isRestartNoteContinuation(
   );
 }
 
+/**
+ * Without the provider's confirmation, the native history may lack the request: Codex runs prompt
+ * hooks and pre-turn compaction first. Native continuations inherit the source request's confirmation.
+ */
+export function restartSourceInputUnrecorded(
+  source: OrchestrationV2Run,
+  providerTurns: ReadonlyArray<
+    Pick<OrchestrationV2ProviderTurn, "runAttemptId" | "inputRecordedAt">
+  >,
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): boolean {
+  const visited = new Set<string>();
+  let current: OrchestrationV2Run | undefined = source;
+  while (current !== undefined && !visited.has(current.id)) {
+    visited.add(current.id);
+    const attemptId = current.activeAttemptId;
+    if (
+      attemptId !== null &&
+      providerTurns.some(
+        (turn) => turn.runAttemptId === attemptId && turn.inputRecordedAt !== undefined,
+      )
+    )
+      return false;
+    const previousId: OrchestrationV2Run["restartContinuationOfRunId"] =
+      current.restartContinuationOfRunId;
+    current = runs.find(
+      (run) => run.id === previousId && run.providerThreadId === source.providerThreadId,
+    );
+  }
+  return true;
+}
+
+export function isRestartResendContinuation(
+  run: Pick<OrchestrationV2Run, "restartContinuationOfRunId">,
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  providerTurns: Parameters<typeof restartSourceInputUnrecorded>[1],
+): boolean {
+  const source =
+    run.restartContinuationOfRunId === undefined
+      ? undefined
+      : runs.find((candidate) => candidate.id === run.restartContinuationOfRunId);
+  return source !== undefined && restartSourceInputUnrecorded(source, providerTurns, runs);
+}
+
 /** Derive delivery from later completed turns on the same provider thread, excluding compactions, resumes, and rolled-back runs. */
 export function pendingRestartCancelledBackgroundWork(input: {
   readonly runs: ReadonlyArray<OrchestrationV2Run>;

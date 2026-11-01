@@ -28,6 +28,7 @@ import {
   neverStarted,
   restartCancelledBackgroundWorkNote,
   restartContinuationNote,
+  restartSourceInputUnrecorded,
 } from "./RestartBackgroundNote.ts";
 
 const CONTINUE_PROMPT =
@@ -191,7 +192,15 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     const messageId = MessageId.make(`message:restart-continuation:${input.sourceRunId}`);
     const projection = yield* threads.getThreadRecords(
       input.threadId,
-      ["messages", "runs", "providerTurns", "attempts", "runtimeRequests", "turnItems"],
+      [
+        "messages",
+        "runs",
+        "providerThreads",
+        "providerTurns",
+        "attempts",
+        "runtimeRequests",
+        "turnItems",
+      ],
       { messageIds: [messageId], turnItemTypes: ["secret_request"] },
     );
     if (
@@ -299,12 +308,18 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     );
     const noteText =
       note.work.length === 0 ? undefined : restartCancelledBackgroundWorkNote(note.work);
+    // Codex resumes natively with no input, so a request it never recorded must be sent again.
+    const resent =
+      !note.settled &&
+      sourceMessage !== undefined &&
+      projection.providerThreads.find((thread) => thread.id === source.providerThreadId)?.driver ===
+        "codex" &&
+      restartSourceInputUnrecorded(source, projection.providerTurns, projection.runs)
+        ? sourceMessage
+        : undefined;
+    const prompt = resent?.text ?? CONTINUE_PROMPT;
     const text =
-      noteText === undefined
-        ? CONTINUE_PROMPT
-        : note.settled
-          ? noteText
-          : `${noteText}\n\n${CONTINUE_PROMPT}`;
+      noteText === undefined ? prompt : note.settled ? noteText : `${noteText}\n\n${prompt}`;
     yield* threads
       .dispatch({
         type: "message.dispatch",
@@ -320,7 +335,8 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
             : "T3 Code restarted and resumed this turn",
           detail: text,
         },
-        attachments: [],
+        attachments: resent?.attachments ?? [],
+        ...(resent?.context === undefined ? {} : { context: resent.context }),
         modelSelection: source.modelSelection,
         dispatchMode: { type: "start_immediately" },
         createdBy: "agent",

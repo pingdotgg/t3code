@@ -1092,6 +1092,74 @@ it.effect("does not continue a cut /compact or /logout turn", () =>
   }),
 );
 
+const cutRequest = {
+  id: MessageId.make("message:user"),
+  text: "find the cheapest return flights",
+  attachments: [
+    {
+      type: "image" as const,
+      id: "attachment:dates",
+      name: "dates.png",
+      mimeType: "image/png",
+      sizeBytes: 1,
+    },
+  ],
+  context: { version: 1 as const, records: [] },
+};
+
+it.effect("resends a Codex request the restart cut before Codex recorded it", () =>
+  Effect.gen(function* () {
+    const cut = cutMidTurn();
+    for (const providerTurns of [
+      cut.providerTurns,
+      // Pre-turn compaction reports usage before Codex records the new request.
+      cut.providerTurns.map((turn) => ({ ...turn, tokenUsage: { usedTokens: 1 } })),
+    ]) {
+      const dispatches = yield* continuationDispatches({
+        ...cut,
+        messages: [cutRequest],
+        providerTurns,
+      } as unknown as OrchestrationV2ThreadProjection);
+      assert.deepEqual(
+        dispatches.map((command) => [command.text, command.attachments, command.context]),
+        [[cutRequest.text, cutRequest.attachments, cutRequest.context]],
+      );
+    }
+  }),
+);
+
+it.effect("resumes natively once Codex recorded the request, and for other providers", () =>
+  Effect.gen(function* () {
+    const cut = cutMidTurn();
+    const inputRecordedAt = DateTime.makeUnsafe("2026-10-03T11:59:00.000Z");
+    const recorded = {
+      ...cut,
+      messages: [cutRequest],
+      providerTurns: cut.providerTurns.map((turn) => ({ ...turn, inputRecordedAt })),
+    } as unknown as OrchestrationV2ThreadProjection;
+    assert.deepEqual(yield* continuationTexts(recorded), ["Continue where you left off."]);
+    // A goal's first native turn recorded the request; its cut follow-up turn records none.
+    const goalFollowUp = {
+      ...cut,
+      messages: [
+        { ...cutRequest, text: "/goal find the cheapest return flights", attachments: [] },
+      ],
+      providerTurns: [
+        { ...cut.providerTurns[0]!, ordinal: 1, status: "completed", inputRecordedAt },
+        { ...cut.providerTurns[0]!, id: "turn:goal-follow-up", ordinal: 2 },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+    assert.deepEqual(yield* continuationTexts(goalFollowUp), ["Continue where you left off."]);
+    const claude = ProviderDriverKind.make("claudeAgent");
+    const otherDriver = {
+      ...cut,
+      messages: [cutRequest],
+      providerThreads: cut.providerThreads.map((thread) => ({ ...thread, driver: claude })),
+    } as unknown as OrchestrationV2ThreadProjection;
+    assert.deepEqual(yield* continuationTexts(otherDriver), ["Continue where you left off."]);
+  }),
+);
+
 it.effect(
   "carries the note forward when its continuation was cut before reaching the provider",
   () =>
