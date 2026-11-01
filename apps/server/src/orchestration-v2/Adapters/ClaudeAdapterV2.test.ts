@@ -12903,7 +12903,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             uuid,
             session_id: WAKE_NATIVE_SESSION,
           });
-        const taskStarted = (id: string, uuid: string) =>
+        const taskStarted = (id: string, uuid: string, parentToolUseId?: string, depth = 1) =>
           claudeSdkFrame({
             type: "system",
             subtype: "task_started",
@@ -12911,16 +12911,29 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             tool_use_id: id,
             description: id,
             task_type: "local_agent",
+            ...(parentToolUseId === undefined
+              ? {}
+              : { parent_task_id: `task-${parentToolUseId}`, spawn_depth: depth }),
             uuid,
             session_id: WAKE_NATIVE_SESSION,
           });
+        // Claude Code streams depth-1 frames only: level 3's launch arrives as task_started alone.
         for (const frame of [
           launch(null, LEVEL_1_TOOL_USE_ID, "00000000-0000-4000-8000-000000000231"),
           taskStarted(LEVEL_1_TOOL_USE_ID, "00000000-0000-4000-8000-000000000232"),
           launch(LEVEL_1_TOOL_USE_ID, LEVEL_2_TOOL_USE_ID, "00000000-0000-4000-8000-000000000233"),
-          taskStarted(LEVEL_2_TOOL_USE_ID, "00000000-0000-4000-8000-000000000234"),
-          launch(LEVEL_2_TOOL_USE_ID, LEVEL_3_TOOL_USE_ID, "00000000-0000-4000-8000-000000000235"),
-          taskStarted(LEVEL_3_TOOL_USE_ID, "00000000-0000-4000-8000-000000000236"),
+          taskStarted(
+            LEVEL_2_TOOL_USE_ID,
+            "00000000-0000-4000-8000-000000000234",
+            LEVEL_1_TOOL_USE_ID,
+            2,
+          ),
+          taskStarted(
+            LEVEL_3_TOOL_USE_ID,
+            "00000000-0000-4000-8000-000000000236",
+            LEVEL_2_TOOL_USE_ID,
+            3,
+          ),
           makeResultFrame({
             uuid: "00000000-0000-4000-8000-000000000237",
             result: "Spawned the subagents.",

@@ -8881,10 +8881,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (message.tool_use_id !== undefined) {
                 pendingSubagentLaunchesByToolUseId.delete(message.tool_use_id);
               }
+              // Claude Code streams only depth-1 frames, so deeper launches name their owner by task id.
+              const parentTaskId = Reflect.get(message, "parent_task_id");
               const owner =
-                launch?.ownerToolUseId === undefined
+                (launch?.ownerToolUseId === undefined
                   ? undefined
-                  : yield* resolveSubagentByToolUseId(context, launch.ownerToolUseId);
+                  : yield* resolveSubagentByToolUseId(context, launch.ownerToolUseId)) ??
+                (typeof parentTaskId === "string"
+                  ? (yield* Ref.get(sessionSubagentsByTaskId)).get(parentTaskId)
+                  : undefined);
               // Nested subagents default to their owner's model.
               const model = launch?.model ?? owner?.task.model ?? undefined;
               if (
