@@ -902,7 +902,15 @@ export const make = Effect.gen(function* () {
       input.modelFilter ?? null,
     ]);
 
-  const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
+  const readSummary = Effect.fn("UsageService.readSummary")(function* (
+    requested: UsageSummaryInput,
+  ) {
+    // A filter that keeps every record is no filter, so it shares scans and merges with unfiltered reads.
+    const { modelFilter, ...unfiltered } = requested;
+    const input =
+      modelFilter?.include === undefined && (modelFilter?.exclude?.length ?? 0) === 0
+        ? unfiltered
+        : requested;
     const settings = yield* readSettings;
     const key = scanKey(input, settings);
     const deferred = yield* Effect.uninterruptible(

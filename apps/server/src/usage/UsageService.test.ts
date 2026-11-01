@@ -2125,9 +2125,10 @@ describe("UsageService", () => {
       yield* Effect.gen(function* () {
         const service = yield* UsageService.make;
         // Same service, concurrent reads: the in-flight key must keep these scans apart.
-        const [unfiltered, included, excluded, hourly] = yield* Effect.all(
+        const [unfiltered, noOp, included, excluded, hourly] = yield* Effect.all(
           [
             service.readSummary(WINDOW),
+            service.readSummary({ ...WINDOW, modelFilter: { exclude: [] } }),
             service.readSummary({ ...WINDOW, modelFilter: include }),
             service.readSummary({ ...WINDOW, modelFilter: exclude }),
             service.readSummary({ ...HOURLY, modelFilter: include }),
@@ -2142,6 +2143,7 @@ describe("UsageService", () => {
         ]);
         assert.strictEqual(unfiltered.sources[0]?.distinctSessions, 2);
         assert.strictEqual(unfiltered.modelFilter, undefined);
+        assert.deepStrictEqual(noOp, unfiltered);
 
         const kept = [
           { model: "orbit-1", outputTokens: 3, costUsd: 40, records: 1, sessions: 1 },
