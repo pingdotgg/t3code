@@ -49,8 +49,12 @@ Set **Auto-compact after** in the Claude provider settings to an integer between
 window. Leave it empty for Claude Code's default.
 
 You can also send `/compact` in an existing conversation. Web and desktop offer
-**Compact context** from the context meter. When you return to a large thread
-after Claude's prompt cache expires, a **Compact** chip with the thread's token count shows
+**Compact context** from the context meter. The meter is off by default; see
+[commands and skills](./composer.md#commands-and-skills) to enable it. Claude Code
+compacts automatically whether the meter is on or off.
+
+When you return to a large thread after Claude's prompt cache expires, a
+**Compact** chip with the thread's token count shows
 next to the send button. While it is on, Enter summarizes the history first, then
 sends your message. Click the chip to switch it to **Full** and keep the full
 history for that message. The cache lasts about an hour on a Claude

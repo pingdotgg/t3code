@@ -240,7 +240,12 @@ Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.
 
 Send `/compact` in an existing conversation to reduce context usage when the
-provider supports it. Web and desktop also offer compaction from the context meter.
+provider supports it, even with the context meter turned off.
+
+On web and desktop, turn on **Settings → Labs → Legacy → Context
+window indicator (legacy)** to see context usage. The meter is off by default
+and appears once the provider reports usage. Open it for usage details and
+**Compact context** when the provider supports compaction.
 
 Claude instances can also compact idle threads for you. See
 [compact long conversations](./providers-claude.md#compact-long-conversations).
