@@ -1446,6 +1446,55 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  // The repository the GitHub provider creates PRs in: GH_REPO when it parses, else what
+  // resolveGitHubRepository makes of every remote and its gh-resolved mark. The provider reads
+  // `git remote -v`, which in a checkout without `insteadOf` rewrites prints the configured URLs
+  // read here. Null unless origin is on GitHub, or when nothing resolves.
+  const resolveGitHubTargetRepository = Effect.fn("resolveGitHubTargetRepository")(function* (
+    cwd: string,
+  ) {
+    const config = yield* gitCore
+      .execute({
+        operation: "GitManager.resolveGitHubTargetRepository.config",
+        cwd,
+        args: ["config", "--get-regexp", "^remote\\..*\\.(url|gh-resolved)$"],
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+      })
+      .pipe(
+        Effect.map((result) => result.stdout),
+        Effect.orElseSucceed(() => ""),
+      );
+    const remotes = new Map<string, string>();
+    const resolved: string[] = [];
+    for (const line of config.split("\n")) {
+      // Remote names cannot contain spaces, so the first one ends the key.
+      const separator = line.indexOf(" ");
+      const key = line.slice(0, separator);
+      if (separator === -1 || !key.startsWith("remote.")) continue;
+      if (key.endsWith(".gh-resolved")) resolved.push(line);
+      else if (key.endsWith(".url")) {
+        const name = key.slice("remote.".length, -".url".length);
+        // Like `git remote -v`, a remote with several URLs fetches from its first.
+        if (!remotes.has(name)) remotes.set(name, line.slice(separator + 1));
+      }
+    }
+    const originUrl = remotes.get("origin");
+    const provider =
+      originUrl === undefined ? null : detectSourceControlProviderFromGitRemoteUrl(originUrl);
+    if (provider?.kind !== "github") return null;
+    const host = urlHost(provider.baseUrl);
+    const fromEnvironment = parseGitHubRepositorySelector(environment.GH_REPO ?? "", host ?? "");
+    if (fromEnvironment !== null) return `${fromEnvironment.owner}/${fromEnvironment.name}`;
+    const { locator } = resolveGitHubRepository({
+      remotes: [...remotes].map(([name, url]) => `${name}\t${url} (fetch)`).join("\n"),
+      resolved: resolved.join("\n"),
+      hostHint: host ?? undefined,
+      defaultHost: host ?? "github.com",
+    });
+    return locator === null ? null : `${locator.owner}/${locator.name}`;
+  });
+
   const resolveHostingProvider = Effect.fn("resolveHostingProvider")(function* (
     cwd: string,
     branch: string | null,
@@ -2309,6 +2358,18 @@ export const make = Effect.gen(function* () {
       modelSelection: settings.modelSelection,
     });
 
+    // A fork branch can live on origin while gh creates the PR in upstream (#7382), so the head
+    // is compared against the repository the provider targets rather than origin.
+    const targetRepository =
+      provider.kind === "github" ? yield* resolveGitHubTargetRepository(cwd) : null;
+    const headSelector =
+      targetRepository !== null &&
+      headContext.headRepositoryOwnerLogin !== null &&
+      headContext.headRepositoryNameWithOwner !== null &&
+      headContext.headRepositoryNameWithOwner.toLowerCase() !== targetRepository.toLowerCase()
+        ? `${headContext.headRepositoryOwnerLogin}:${headContext.headBranch}`
+        : headContext.preferredHeadSelector;
+
     const bodyFile = path.join(
       tempDir,
       `t3code-pr-body-${process.pid}-${yield* randomUUIDv4(cwd)}.md`,
@@ -2333,7 +2394,7 @@ export const make = Effect.gen(function* () {
       .createChangeRequest({
         cwd,
         baseRefName: baseBranch,
-        headSelector: headContext.preferredHeadSelector,
+        headSelector,
         title: generated.title,
         bodyFile,
       })
