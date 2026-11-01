@@ -617,7 +617,22 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const runningDistro = preflight._tag === "Ready" ? preflight.runningDistro : null;
   const distroForConfig = runningDistro ?? input.distro;
 
-  const distroIp = yield* wslEnvironment.getDistroIp(distroForConfig);
+  const command =
+    preflight._tag !== "Ready"
+      ? []
+      : preflight.runtime.kind === "executable"
+        ? [preflight.runtime.entryPath]
+        : [preflight.runtime.nodePath, preflight.runtime.linuxEntryPath];
+  // Dev builds must not repoint the installed command at a worktree.
+  const [distroIp] = yield* Effect.all(
+    [
+      wslEnvironment.getDistroIp(distroForConfig),
+      preflight._tag === "Ready" && environment.isPackaged
+        ? wslEnvironment.recordCliTarget(runningDistro, command)
+        : Effect.void,
+    ],
+    { concurrency: "unbounded" },
+  );
   const usesSharedNetworkStack = Option.match(distroIp, {
     onNone: () => false,
     onSome: (ip) => isLocalHostIpv4(ip),
@@ -691,10 +706,6 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     runtime.kind === "executable"
       ? `${WSL_SERVER_SYSTEM_PATH}:${preflight.resolvedPath}`
       : `${nodeBinDirOf(runtime.nodePath)}:${WSL_SERVER_SYSTEM_PATH}:${preflight.resolvedPath}`;
-  const command =
-    runtime.kind === "executable"
-      ? [runtime.entryPath]
-      : [runtime.nodePath, runtime.linuxEntryPath];
 
   return {
     ...baseConfig,
@@ -711,6 +722,16 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     preflightFailure: Option.none(),
     ...(preflight.runtimeId === undefined ? {} : { wslRuntimeId: preflight.runtimeId }),
   } satisfies DesktopBackendManager.DesktopBackendStartConfig;
+});
+
+/** Whether the primary backend runs in WSL, and in which distro (null: the default one). */
+export const describePrimaryBackend = Effect.gen(function* () {
+  const persistedSettings = yield* (yield* DesktopAppSettings.DesktopAppSettings).get;
+  const wslRequested = persistedSettings.wslOnly && persistedSettings.wslBackendEnabled;
+  // When WSL is unavailable its controls are hidden; fall back to Windows to keep recovery possible.
+  const useWsl =
+    wslRequested && (yield* (yield* DesktopWslEnvironment.DesktopWslEnvironment).isAvailable);
+  return { useWsl, wslRequested, distro: persistedSettings.wslDistro };
 });
 
 /** @public */
@@ -795,13 +816,10 @@ export const make = Effect.gen(function* () {
   });
 
   // Resolve on each restart so toggling wsl-only takes effect without recreating the pool.
-  const describePrimary = Effect.gen(function* () {
-    const persistedSettings = yield* settings.get;
-    const wslRequested = persistedSettings.wslOnly && persistedSettings.wslBackendEnabled;
-    // When WSL is unavailable its controls are hidden; fall back to Windows to keep recovery possible.
-    const useWsl = wslRequested && (yield* wslEnvironment.isAvailable);
-    return { useWsl, wslRequested, distro: persistedSettings.wslDistro };
-  });
+  const describePrimary = describePrimaryBackend.pipe(
+    Effect.provideService(DesktopAppSettings.DesktopAppSettings, settings),
+    Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
+  );
 
   const currentBootstrapToken = Effect.gen(function* () {
     const secret = yield* getOrCreateBootstrapSecret;

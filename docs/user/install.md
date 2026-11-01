@@ -108,7 +108,8 @@ terminal, open **Settings → About** and choose **Install** next to
 **t3 command**. On macOS and Linux it adds a `t3` link to a folder on your
 `PATH`; on Windows it adds the app's command folder to your `PATH`. Open a new
 terminal afterwards. **Remove** takes it off again. If you already have `t3`
-from npm, it stays as it is.
+from npm, it stays as it is. With **WSL only** on, it installs `t3` inside the
+WSL distro instead, where it runs the same server and data as the app.
 
 ### Windows Subsystem for Linux
 
