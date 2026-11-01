@@ -37,21 +37,6 @@ const CODEX_NO_PLUGIN_ARGS = [
   "--config",
   "features.apps=false",
 ] as const;
-// Review guides investigate the checkout; other helpers already receive their source context.
-const CODEX_TEXT_GENERATION_CONFIG = [
-  "features.shell_tool=false",
-  "features.multi_agent=false",
-  "features.multi_agent_v2=false",
-  "agents.enabled=false",
-  "features.goals=false",
-  "features.view_image=false",
-  "features.code_mode=false",
-  'web_search="disabled"',
-  "tools.update_plan.enabled=false",
-  "project_doc_max_bytes=0",
-  "skills.include_instructions=false",
-  'developer_instructions=""',
-] as const;
 const CodexMcpServers = Schema.fromJsonString(
   Schema.Array(Schema.Struct({ name: Schema.String, enabled: Schema.Boolean })),
 );
@@ -233,6 +218,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     modelSelection,
     attachments,
     investigate,
+    requiresTools,
   }: TextGenerationOperations.Request<S>): Effect.fn.Return<
     S["Type"],
     TextGenerationError,
@@ -284,19 +270,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           : {}),
       };
       const execLaunchArgs = codexExecLaunchArgs(launchArgs);
-      const instructionsPath = path.join(path.dirname(schemaPath), "instructions.txt");
-      if (!investigate) {
-        yield* fileSystem
-          .writeFileString(
-            instructionsPath,
-            "Follow the user's text-generation instructions. Use only the supplied context and return the requested structured output.",
-          )
-          .pipe(
-            Effect.mapError((cause) =>
-              normalizeCliError("codex", operation, cause, "Failed to write model instructions"),
-            ),
-          );
-      }
       const mcpServersOff = yield* listEnabledMcpServers({
         binary,
         cwd,
@@ -316,13 +289,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           "--skip-git-repo-check",
           "-s",
           "read-only",
-          ...(!investigate
-            ? [
-                ...CODEX_TEXT_GENERATION_CONFIG.flatMap((config) => ["--config", config]),
-                "--config",
-                `model_instructions_file=${yield* encodeJsonForOperation(operation, instructionsPath)}`,
-              ]
-            : []),
+          // Self-contained helpers should not wander through the checkout to compose their reply.
+          ...(!investigate && !requiresTools ? ["--config", "features.shell_tool=false"] : []),
           "--model",
           model,
           "--config",

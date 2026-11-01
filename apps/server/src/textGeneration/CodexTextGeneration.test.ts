@@ -196,19 +196,43 @@ function withFakeCodexEnv<A, E, R>(
 }
 
 it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
-  it.effect("generates titles without shell tools", () =>
+  it.effect("passes the shell-tool override for self-contained titles", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({ title: "Fix autosave" }),
         requireArg: "--config features.shell_tool=false",
       },
       (textGeneration) =>
-        textGeneration.generateThreadTitle({
-          cwd: process.cwd(),
-          message: "Fix autosave",
-          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Fix autosave",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          expect(result).toEqual({ title: "Fix autosave" });
         }),
     ),
+  );
+
+  it.effect.each(["https://example.com/article", "http://example.com/article"])(
+    "omits the shell-tool override for a title referring to %s",
+    (url) =>
+      withFakeCodexEnv(
+        {
+          output: JSON.stringify({ title: "Explain article", needsRefinement: true }),
+          forbidArg: "--config features.shell_tool=false",
+          stdinMustContain: url,
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const result = yield* textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: `Explain ${url}`,
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            });
+            expect(result).toEqual({ title: "Explain article", needsRefinement: true });
+          }),
+      ),
   );
 
   it.effect("keeps checkout tools available for review guides", () =>
