@@ -244,6 +244,7 @@ export type PullRequestReviewCapabilities = typeof PullRequestReviewCapabilities
 export const PullRequestEditCapabilities = Schema.Struct({
   changeRequest: Schema.Boolean,
   comment: Schema.Boolean,
+  maintainerEdits: Schema.optional(Schema.Boolean),
 });
 export type PullRequestEditCapabilities = typeof PullRequestEditCapabilities.Type;
 
@@ -295,6 +296,7 @@ export const PullRequestViewerPermissions = Schema.Struct({
   updateMethods: Schema.optional(ForwardCompatibleArray(PullRequestUpdateMethod)),
   labels: Schema.optional(Schema.Boolean),
   editChangeRequest: Schema.optional(Schema.Boolean),
+  maintainerEdits: Schema.optional(Schema.Boolean),
 });
 export type PullRequestViewerPermissions = typeof PullRequestViewerPermissions.Type;
 
@@ -599,6 +601,7 @@ export const PullRequestDetail = Schema.Struct({
   workflowApprovalsRequired: Schema.optional(NonNegativeInt),
   /** Absent where the host has no merge queue or does not report one. */
   mergeQueueRemoval: Schema.optional(PullRequestMergeQueueRemoval),
+  maintainerCanModify: Schema.optional(Schema.Boolean),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 
@@ -756,6 +759,7 @@ export const PullRequestUpdateInput = Schema.Struct({
   ...PullRequestRef.fields,
   title: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(1024))),
   body: Schema.optional(Schema.String.check(Schema.isMaxLength(65_536))),
+  maintainerCanModify: Schema.optional(Schema.Boolean),
 });
 export type PullRequestUpdateInput = typeof PullRequestUpdateInput.Type;
 

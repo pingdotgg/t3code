@@ -384,7 +384,13 @@ describe("evaluatePullRequestWatch", () => {
     const again = removed("second", "2026-10-02T12:20:00Z");
     assert.equal(evaluatePullRequestWatch(first.next, again, noRemarks).changes.length, 1);
     const before = removed("before", "2026-10-02T11:00:00Z");
-    assert.deepEqual(evaluatePullRequestWatch(watching, before, noRemarks).changes, []);
+    const baseline = evaluatePullRequestWatch(watch({ ...watching, mergeQueueRemovalId: undefined }), before, noRemarks);
+    assert.deepEqual(baseline.changes, []);
+    for (const prior of [watching, baseline.next]) {
+      const skewed = evaluatePullRequestWatch(prior, removed("new", "2026-10-02T11:59:58Z"), noRemarks);
+      assert.deepEqual(skewed.changes, [{ kind: "merge-queue-removed", reason: "Merge conflict" }]);
+      assert.deepEqual(evaluatePullRequestWatch(skewed.next, removed("new", "2026-10-02T11:59:58Z"), noRemarks).changes, []);
+    }
   });
 
   it("reports a merge queue removal stamped in the second the watch started", () => {
