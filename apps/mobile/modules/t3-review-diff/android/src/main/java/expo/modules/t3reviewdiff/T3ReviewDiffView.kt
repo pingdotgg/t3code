@@ -1123,7 +1123,8 @@ private class DiffCanvasView(context: Context) : View(context) {
   }
 
   private fun maxHeaderPathOffset(fileId: String): Int {
-    val row = rows.firstOrNull { it.kind == "file" && it.resolvedFileId == fileId } ?: return 0
+    val rowIndex = fileHeaderIndices.firstOrNull { rows[it].resolvedFileId == fileId } ?: return 0
+    val row = rows[rowIndex]
     val top = 0
     val bottom = rowHeight(row)
     val iconRect = drawing.fileHeaderIconRect(top, bottom, style)
