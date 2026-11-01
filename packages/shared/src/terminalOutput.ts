@@ -229,9 +229,10 @@ function applySgr(attributes: Attributes, params: ReadonlyArray<number>): void {
       attributes.bg = String(code);
     else if (code === 39) attributes.fg = "";
     else if (code === 49) attributes.bg = "";
-    else if (code === 38 || code === 48) {
+    else if (code === 38 || code === 48 || code === 58) {
+      // 58 (underline colour) is consumed but not kept: nothing renders it.
       const [color, next] = extendedColor(code, params, index);
-      if (color !== undefined) attributes[code === 38 ? "fg" : "bg"] = color;
+      if (color !== undefined && code !== 58) attributes[code === 38 ? "fg" : "bg"] = color;
       index = next;
       continue;
     }
@@ -282,8 +283,17 @@ function csiParams(params: string): Array<number> {
       continue;
     }
     const sub = part.split(":").map(Number);
-    if ((sub[0] === 38 || sub[0] === 48) && sub[1] === 2 && sub.length >= 6) sub.splice(2, 1);
-    numbers.push(...sub);
+    const head = sub[0]!;
+    if (head !== 38 && head !== 48 && head !== 58) {
+      // Other sub-parameters pick a style variant (`4:3` curly underline); keep
+      // only the head, except that `4:0` turns underline off.
+      numbers.push(head === 4 && sub[1] === 0 ? 24 : head);
+      continue;
+    }
+    if (sub[1] === 2 && sub.length >= 6) sub.splice(2, 1);
+    // The group is one parameter, so fields past its mode's length must not
+    // leak out as SGR codes of their own. Indexed colour has no colour-space id.
+    numbers.push(...sub.slice(0, sub[1] === 5 ? 3 : sub[1] === 2 ? 5 : 2));
   }
   return numbers;
 }
