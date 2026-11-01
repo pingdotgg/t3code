@@ -154,7 +154,10 @@ export function DesktopWebLinkCoordinator() {
     }
     const project = await openScratchProject(environmentId, "Could not open the link");
     if (!project) return null;
-    const opened = await openThread(scopeProjectRef(project.environmentId, project.id));
+    // The preview is keyed to this machine, so Auto balance must not move the draft.
+    const opened = await openThread(scopeProjectRef(project.environmentId, project.id), {
+      environmentSelection: "manual",
+    });
     if (!opened) {
       reportFailure(url);
       return null;

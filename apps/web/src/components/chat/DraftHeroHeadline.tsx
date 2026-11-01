@@ -201,7 +201,18 @@ export function DraftHeroHeadline({
     pendingScratchRef.current = null;
     const currentDraft = getComposerDraft(draftId);
     if (!composerDraftHasUserContent(currentDraft)) {
-      void openProjectDraft(scopeProjectRef(project.environmentId, project.id));
+      // Carry the draft's explicit provider pick through the open; the handler
+      // validates it against the destination machine's catalog and otherwise
+      // falls back to the ordinary project default.
+      const activeProvider = currentDraft?.activeProvider ?? null;
+      const carriedModelSelection =
+        currentDraft && activeProvider !== null && hasExplicitComposerModelSelection(currentDraft)
+          ? (currentDraft.modelSelectionByProvider[activeProvider] ?? null)
+          : null;
+      void openProjectDraft(
+        scopeProjectRef(project.environmentId, project.id),
+        carriedModelSelection ? { modelSelection: carriedModelSelection } : {},
+      );
       return;
     }
     setLogicalProjectDraftThreadId(

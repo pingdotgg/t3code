@@ -538,6 +538,116 @@ export function resolveComposerProviderSelection(input: {
   };
 }
 
+export type LoadBalancedDraftRetargetPlan =
+  | {
+      readonly kind: "retarget";
+      readonly environmentId: EnvironmentId;
+      readonly projectId: ProjectId;
+    }
+  | { readonly kind: "open-scratch"; readonly environmentId: EnvironmentId };
+
+/**
+ * How an Auto balance pick applies to a draft: retarget in place when the machine has
+ * the project, or open its scratch project first so a send never leaves from the
+ * machine the draft started on.
+ */
+export function planLoadBalancedDraftRetarget(input: {
+  readonly needsLoadBalancing: boolean;
+  readonly loadBalancingPending: boolean;
+  readonly draftId: string | null;
+  readonly target:
+    | { readonly environmentId: EnvironmentId; readonly projectId: ProjectId | null }
+    | null
+    | undefined;
+}): LoadBalancedDraftRetargetPlan | null {
+  if (
+    !input.needsLoadBalancing ||
+    input.loadBalancingPending ||
+    input.draftId === null ||
+    !input.target
+  ) {
+    return null;
+  }
+  if (input.target.projectId !== null) {
+    return {
+      kind: "retarget",
+      environmentId: input.target.environmentId,
+      projectId: input.target.projectId,
+    };
+  }
+  return { kind: "open-scratch", environmentId: input.target.environmentId };
+}
+
+/**
+ * Shared stale-target guard for asynchronous draft environment retargets: the draft
+ * must still be the one the routing started on, unpromoted, with no send in flight.
+ * `requireUnresolvedAuto` additionally aborts when the draft was pinned to a machine
+ * manually or an earlier automatic resolution already landed.
+ */
+export function isDraftEnvironmentRetargetApplicable(input: {
+  readonly snapshot: Pick<DraftThreadState, "environmentId" | "projectId">;
+  readonly current:
+    | Pick<
+        DraftThreadState,
+        | "environmentId"
+        | "projectId"
+        | "promotedTo"
+        | "environmentSelection"
+        | "loadBalancedEnvironmentId"
+      >
+    | null
+    | undefined;
+  readonly sendInFlight: boolean;
+  readonly requireUnresolvedAuto?: boolean;
+}): boolean {
+  const current = input.current;
+  if (
+    input.sendInFlight ||
+    !current ||
+    current.promotedTo != null ||
+    current.environmentId !== input.snapshot.environmentId ||
+    current.projectId !== input.snapshot.projectId
+  ) {
+    return false;
+  }
+  if (
+    input.requireUnresolvedAuto === true &&
+    (current.environmentSelection === "manual" || current.loadBalancedEnvironmentId != null)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Tracks one keyed async request at a time. `sync(key)` cancels the active request
+ * when the desired key changes (including to `null`); a settled callback applies only
+ * while `isCurrent(token)` holds, so a superseded, cancelled or same-key re-armed
+ * request can never land late.
+ */
+export function createKeyedRequestGate() {
+  let generation = 0;
+  let activeKey: string | null = null;
+  const cancel = () => {
+    generation += 1;
+    activeKey = null;
+  };
+  return {
+    /** Returns a token for a new request, or `null` when `key` is already active. */
+    begin(key: string): number | null {
+      if (activeKey === key) return null;
+      cancel();
+      activeKey = key;
+      return generation;
+    },
+    sync(desiredKey: string | null): void {
+      if (activeKey !== null && activeKey !== desiredKey) cancel();
+    },
+    isCurrent: (token: number): boolean => token === generation && activeKey !== null,
+    cancel,
+  };
+}
+
 export function resolveComposerInteractionMode(input: {
   planModeEnabled: boolean;
   provider: Pick<ServerProvider, "showInteractionModeToggle"> | null | undefined;

@@ -1189,7 +1189,9 @@ export default function ChatView(props: ChatViewProps) {
     activeProjectIsScratch && draftId !== null,
   );
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
-  const canAutoBalanceEnvironments = hasMultipleEnvironments && !activeProjectIsScratch;
+  // Scratch drafts auto-balance like project drafts: every candidate machine routes
+  // through its own scratch project (opened on demand by useDraftEnvironmentRouting).
+  const canAutoBalanceEnvironments = hasMultipleEnvironments;
   const activeEnvironmentOption =
     logicalProjectEnvironments.find(
       (environment) => environment.environmentId === activeThread?.environmentId,
