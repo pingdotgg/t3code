@@ -1247,16 +1247,37 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const resolveAvailableBranchName = Effect.fn("resolveAvailableBranchName")(function* (
     cwd: string,
-    desiredBranch: string,
+    requestedBranch: string,
   ) {
-    const isDesiredTaken = yield* branchExists(cwd, desiredBranch);
+    // A branch at a parent path (such as `t3`) blocks every ref nested under it, so no suffix
+    // would help; flatten to a sibling the way temporary worktree branches already do.
+    const segments = requestedBranch.split("/");
+    let blockedByParent = false;
+    for (let index = 1; index < segments.length && !blockedByParent; index += 1) {
+      blockedByParent = yield* branchExists(cwd, segments.slice(0, index).join("/"));
+    }
+    const desiredBranch = blockedByParent ? segments.join("-") : requestedBranch;
+    // A branch nested under the name (`t3-fix/child`) blocks it as surely as one with the name.
+    const isBranchNameTaken = (name: string) =>
+      Effect.zipWith(
+        branchExists(cwd, name),
+        runGitStdout(
+          "GitVcsDriver.branchExists",
+          cwd,
+          ["for-each-ref", "--count=1", "--format=%(refname)", `refs/heads/${name}/`],
+          true,
+        ),
+        (exists, nested) => exists || nested.trim().length > 0,
+      );
+
+    const isDesiredTaken = yield* isBranchNameTaken(desiredBranch);
     if (!isDesiredTaken) {
       return desiredBranch;
     }
 
     for (let suffix = 1; suffix <= 100; suffix += 1) {
       const candidate = `${desiredBranch}-${suffix}`;
-      const isCandidateTaken = yield* branchExists(cwd, candidate);
+      const isCandidateTaken = yield* isBranchNameTaken(candidate);
       if (!isCandidateTaken) {
         return candidate;
       }
@@ -2394,6 +2415,33 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           { env },
         );
       } else {
+        const mergeHeadPath = yield* runGitStdout("GitVcsDriver.commit.mergeHead", cwd, [
+          "rev-parse",
+          "--git-path",
+          "MERGE_HEAD",
+        ]);
+        const isMerging = yield* fileSystem.exists(path.resolve(cwd, mergeHeadPath.trim())).pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitCommandError({
+                operation: "GitVcsDriver.commit.mergeHead",
+                command: "git commit",
+                cwd,
+                detail: "Could not check whether a merge is in progress.",
+                cause,
+              }),
+          ),
+        );
+        // Like git commit --only, reject partial merges before reset can discard their ancestry.
+        if (isMerging) {
+          return yield* new GitCommandError({
+            operation: "GitVcsDriver.commit",
+            command: "git commit",
+            cwd,
+            detail:
+              "Cannot commit selected files during a merge. Commit all files to finish the merge.",
+          });
+        }
         yield* runGit("GitVcsDriver.commit.reset", cwd, ["reset"]).pipe(
           Effect.catchTags({ GitCommandError: () => Effect.void }),
         );
@@ -2475,7 +2523,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           const stagedPatch = yield* runGitStdoutWithOptions(
             "GitVcsDriver.prepareCommitContext.stagedPatch",
             cwd,
-            ["diff", "--no-ext-diff", "--cached", "--patch", "--minimal"],
+            ["diff", "--no-ext-diff", "--no-textconv", "--cached", "--patch", "--minimal"],
             {
               env,
               maxOutputBytes: PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES,
@@ -2886,7 +2934,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         runGitStdoutWithOptions(
           "GitVcsDriver.readRangeContext.diffPatch",
           cwd,
-          ["diff", "--no-ext-diff", "--patch", "--minimal", "--end-of-options", diffRange],
+          [
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--patch",
+            "--minimal",
+            "--end-of-options",
+            diffRange,
+          ],
           {
             maxOutputBytes: RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES,
             appendTruncationMarker: true,

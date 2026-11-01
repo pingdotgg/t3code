@@ -5235,11 +5235,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   it.effect.each(
     (["aborted_tools", "aborted_streaming"] as const).flatMap((terminalReason) =>
-      [true, false].map((steered) => ({ terminalReason, steered })),
+      [
+        { steered: false, queryExits: false },
+        { steered: true, queryExits: false },
+        { steered: true, queryExits: true },
+      ].map((scenario) => ({ terminalReason, ...scenario })),
     ),
-  )("handles $terminalReason with active steering=$steered", ({ terminalReason, steered }) =>
+  )("handles $terminalReason (steered=$steered, exits=$queryExits)", (scenario) =>
     Effect.scoped(
       Effect.gen(function* () {
+        const { terminalReason, steered, queryExits } = scenario;
         const harness = yield* makeWakeHarness;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const attemptId = RunAttemptId.make("attempt-steering-abort");
@@ -5271,8 +5276,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           });
           assert.equal(harness.offeredMessages[1]?.priority, "now");
         }
-        yield* Queue.offer(
-          harness.sdkMessages,
+        yield* harness.offerAndWait(
           makeResultFrame({
             uuid: "00000000-0000-4000-8000-000000000901",
             result: "",
@@ -5285,7 +5289,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             },
           }),
         );
-        if (steered) {
+        if (queryExits) {
+          yield* Queue.shutdown(harness.sdkMessages);
+        } else if (steered) {
           yield* Queue.offer(harness.sdkMessages, wakeAssistant);
           yield* Queue.offer(
             harness.sdkMessages,
@@ -5302,16 +5308,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
         }
         const terminal = yield* Queue.take(harness.terminalReceipts);
-        assert.equal(terminal.status, steered ? "completed" : "interrupted");
+        assert.equal(
+          terminal.status,
+          queryExits ? "failed" : steered ? "completed" : "interrupted",
+        );
         if (steered) {
-          assert.isTrue(
-            harness.events.some(
-              (event) =>
-                event.type === "turn_item.updated" &&
-                event.turnItem.type === "assistant_message" &&
-                event.turnItem.text === WAKE_ASSISTANT_TEXT,
-            ),
-          );
+          if (!queryExits)
+            assert.isTrue(
+              harness.events.some(
+                (event) =>
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.type === "assistant_message" &&
+                  event.turnItem.text === WAKE_ASSISTANT_TEXT,
+              ),
+            );
           const completed = harness.events.findLast(
             (event) => event.type === "provider_turn.updated",
           );
@@ -5321,12 +5331,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               : undefined,
             {
               usageScope: "main_agent",
-              usageStatus: "complete",
+              usageStatus: queryExits ? "partial" : "complete",
               hasSubagents: false,
-              inputTokens: 603 + 2847 + 11455,
-              outputTokens: 46,
-              cachedInputTokens: 11455,
-              cacheCreationTokens: 2847,
+              inputTokens: queryExits ? 3100 : 603 + 2847 + 11455,
+              outputTokens: queryExits ? 40 : 46,
+              cachedInputTokens: queryExits ? 2000 : 11455,
+              cacheCreationTokens: queryExits ? 500 : 2847,
             },
           );
         }
@@ -8710,6 +8720,126 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("lets the native SDK acknowledge Stop before closing its own query", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let closes = 0;
+        let acknowledge = Effect.void;
+        const harness = yield* makeWakeHarnessWithOptions({
+          interrupt: Effect.suspend(() => {
+            assert.equal(closes, 0);
+            return acknowledge;
+          }),
+          close: (messages) =>
+            Effect.sync(() => {
+              closes++;
+            }).pipe(Effect.andThen(Queue.shutdown(messages))),
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("graceful-stop"),
+            text: "Work until stopped",
+            attachments: [],
+          }),
+        );
+        acknowledge = harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000620",
+            result: "",
+            subtype: "error_during_execution",
+            errors: ["Error: Request was aborted."],
+            terminalReason: "aborted_streaming",
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+          ),
+        );
+        const active = harness.events.find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+        );
+        if (active?.type !== "provider_turn.updated")
+          return yield* Effect.die("Missing running native turn");
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: active.providerTurn.id,
+          requestRuntimeRestart: true,
+        });
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+        assert.equal(closes, 1);
+        assert.lengthOf(harness.terminalEvents(), 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("bounds an unacknowledged native Stop and settles its turn once", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let closes = 0;
+        const interruptStarted = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          interrupt: Deferred.succeed(interruptStarted, undefined).pipe(
+            Effect.andThen(Effect.never),
+          ),
+          close: (messages) =>
+            Effect.sync(() => {
+              closes++;
+            }).pipe(Effect.andThen(Queue.shutdown(messages))),
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("unacknowledged-stop"),
+            text: "Work until stopped",
+            attachments: [],
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+          ),
+        );
+        const active = harness.events.find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+        );
+        if (active?.type !== "provider_turn.updated")
+          return yield* Effect.die("Missing running native turn");
+        const stop = yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: active.providerTurn.id,
+            requestRuntimeRestart: true,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(interruptStarted);
+        assert.equal(closes, 0);
+        yield* TestClock.adjust("11 seconds");
+        yield* Fiber.join(stop);
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+        assert.equal(closes, 1);
+        assert.lengthOf(harness.terminalEvents(), 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
   );
 
   it.effect("preserves settled background work until an explicit stop", () =>
