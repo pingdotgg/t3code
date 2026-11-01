@@ -57,6 +57,7 @@ it.each([
           base: "main",
           layers: [{ number: 2, headBranch: "feature", headSha: "abc123", state: "open" }],
         }}
+        stale={false}
         canMerge
         canRebase
         mergeMethod="squash"

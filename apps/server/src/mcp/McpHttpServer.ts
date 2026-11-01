@@ -24,6 +24,7 @@ import {
 } from "@t3tools/contracts";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DeviceService from "../device/DeviceService.ts";
@@ -204,10 +205,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   return Effect.fn("McpHttpServer.authenticateRequest")(function* (httpEffect) {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const authorization = request.headers.authorization;
-    const token =
-      authorization?.startsWith("Bearer ") === true
-        ? authorization.slice("Bearer ".length).trim()
-        : "";
+    const token = parseBearerToken(request) ?? "";
     const invocation =
       (yield* registry.resolve(token)) ??
       (Option.isSome(clients) && token.length > 0
@@ -215,7 +213,14 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         : undefined);
     if (!invocation) {
       yield* Effect.logWarning("rejected MCP request with an unusable credential", {
-        reason: token.length === 0 ? "missing_bearer_token" : "unknown_or_expired_token",
+        reason:
+          authorization === undefined
+            ? "missing_authorization_header"
+            : authorization.split(" ", 1)[0]?.toLowerCase() !== "bearer"
+              ? "unsupported_scheme"
+              : token.length === 0
+                ? "missing_bearer_token"
+                : "unknown_or_expired_token",
       });
       return unauthorized({
         request,
