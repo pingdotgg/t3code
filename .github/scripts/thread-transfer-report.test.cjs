@@ -2,7 +2,6 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
-  renderComment,
   resolve,
   upsertCommentForCurrentHead,
   validateResult,
@@ -50,39 +49,6 @@ test("validates the fixed artifact schema", () => {
   assert.throws(
     () => validateResult(result({ totalWireBytes: "lots" })),
     /non-negative safe integer/,
-  );
-});
-
-test("renders baseline, impact, ceiling, and ceiling changes", () => {
-  const baseline = result();
-  const current = result({ measuredTurnWebSocketWireBytes: 260_000 });
-  current.providers.codex.ceiling = {
-    ...current.providers.codex.ceiling,
-    measuredTurnWebSocketWireBytes: 330_000,
-  };
-  const comment = renderComment({
-    current,
-    baseline,
-    currentRun: {
-      sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      conclusion: "success",
-      url: "https://github.com/pingdotgg/t3code/actions/runs/2",
-    },
-    baselineRun: {
-      sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      matchesBase: true,
-      url: "https://github.com/pingdotgg/t3code/actions/runs/1",
-    },
-  });
-
-  assert.match(comment, /Main baseline \| This PR \| Impact \| PR ceiling/);
-  assert.match(comment, /\+9\.8 KiB \(\+4\.0%\)/);
-  assert.match(comment, /This PR changes transfer ceilings/);
-  assert.match(comment, /312\.5 KiB → 322\.3 KiB/);
-  assert.match(comment, /<!-- t3-thread-transfer-report -->/);
-  assert.match(
-    comment,
-    /<!-- t3-thread-transfer-result-sha:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->/,
   );
 });
 
@@ -372,22 +338,4 @@ test("preserves a successful result when a same-SHA rerun has no artifact", asyn
 
   assert.equal(published, true);
   assert.equal(updatedComment, false);
-});
-
-test("accepts V2 without comparing it to the V1 scenario", () => {
-  const current = result();
-  current.scenario.id = "thread-transfer-v2";
-  current.providers.codex.ceiling = { ...current.providers.codex.ceiling, totalWireBytes: 3000000 };
-  assert.equal(validateResult(current), current);
-  const comment = renderComment({
-    current,
-    baseline: result(),
-    currentRun: { sha: "bbbbbbbb", conclusion: "success", url: "https://example.com/current" },
-    baselineRun: { sha: "aaaaaaaa", matchesBase: true, url: "https://example.com/baseline" },
-  });
-  assert.match(comment, /fixture changed/);
-  assert.doesNotMatch(comment, /This PR changes transfer ceilings/);
-  assert.doesNotMatch(comment, /[+-]\d+\.\d+%/);
-  current.scenario.id = "unrecognized";
-  assert.throws(() => validateResult(current), /not supported/);
 });

@@ -19,11 +19,40 @@ it.effect(
                 models:
                   request.headers.authorization === "Bearer account-a"
                     ? [
-                        { slug: "second", display_name: "Second from OpenAI", visibility: "list" },
-                        { slug: "hidden", display_name: "Hidden", visibility: "hidden" },
-                        { slug: "first", display_name: "First from OpenAI", visibility: "list" },
+                        {
+                          slug: "second",
+                          display_name: "Second from OpenAI",
+                          visibility: "list",
+                          default_reasoning_level: "low",
+                          supported_reasoning_levels: [
+                            { effort: "low", description: "Fast" },
+                            { effort: "high", description: "Deep" },
+                          ],
+                        },
+                        {
+                          slug: "hidden",
+                          display_name: "Hidden",
+                          visibility: "hidden",
+                          default_reasoning_level: null,
+                          supported_reasoning_levels: null,
+                        },
+                        {
+                          slug: "first",
+                          display_name: "First from OpenAI",
+                          visibility: "list",
+                          default_reasoning_level: "high",
+                          supported_reasoning_levels: [{ effort: "high", description: "Deep" }],
+                        },
                       ]
-                    : [{ slug: "account-b-only", display_name: "B", visibility: "list" }],
+                    : [
+                        {
+                          slug: "account-b-only",
+                          display_name: "B",
+                          visibility: "list",
+                          default_reasoning_level: null,
+                          supported_reasoning_levels: null,
+                        },
+                      ],
               }),
             ),
           );
@@ -49,7 +78,18 @@ it.effect(
         ],
       );
       assert.deepEqual(a[1]!.capabilities, native[0]!.capabilities);
-      assert.isNull(a[0]!.capabilities);
+      assert.deepEqual(a[0]!.capabilities?.optionDescriptors, [
+        {
+          id: "reasoningEffort",
+          label: "Reasoning",
+          type: "select",
+          options: [
+            { id: "low", label: "Low", isDefault: true },
+            { id: "high", label: "High" },
+          ],
+          currentValue: "low",
+        },
+      ]);
       const b = yield* chatGptModels("account-b", native).pipe(
         Effect.provideService(HttpClient.HttpClient, http),
       );
@@ -57,6 +97,7 @@ it.effect(
         b.map((model) => model.slug),
         ["account-b-only"],
       );
+      assert.isNull(b[0]!.capabilities);
       assert.deepEqual(requests, ["Bearer account-a", "Bearer account-b"]);
     }),
 );

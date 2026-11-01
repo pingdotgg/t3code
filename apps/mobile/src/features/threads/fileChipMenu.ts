@@ -7,6 +7,7 @@ import { hostPreviewMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 
 import {
   isAbsolutePath,
+  resolveFileLinkPath,
   resolveWorkspaceFilePath,
   resolveWorkspaceRelativeFilePath,
 } from "../files/filePath";
@@ -30,9 +31,11 @@ export function resolveFileChipTarget(
 ): FileChipTarget | null {
   const presentation = resolveMarkdownLinkPresentation(href);
   if (presentation.kind !== "file") return null;
-  const relativePath = resolveWorkspaceRelativeFilePath(workspaceRoot, presentation.path);
-  const fullPath = isAbsolutePath(presentation.path)
-    ? presentation.path
+  const path = resolveFileLinkPath(workspaceRoot, presentation.path);
+  if (path === null) return null;
+  const relativePath = resolveWorkspaceRelativeFilePath(workspaceRoot, path);
+  const fullPath = isAbsolutePath(path)
+    ? path
     : workspaceRoot && relativePath
       ? resolveWorkspaceFilePath(workspaceRoot, relativePath)
       : undefined;

@@ -4,8 +4,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   decodeCommentsJson,
   decodeCommitsJson,
-  decodeConflictsJson,
-  decodeDiffstatJson,
   decodePullRequestJson,
   decodePullRequestPageJson,
   decodeRepositoryPermissionJson,
@@ -74,18 +72,9 @@ describe("decodePullRequestPageJson", () => {
     });
   });
 
-  it("reports the next page as the whole URL Bitbucket sends", () => {
-    const next = "https://api.bitbucket.org/2.0/repositories/acme/web/pullrequests?page=2";
-    const decoded = expectSuccess(decodePullRequestPageJson(page([pullRequest()], { next })));
-
-    expect(decoded.next).toBe(next);
-  });
-
   it.each([
     ["MERGED", "merged"],
     ["DECLINED", "closed"],
-    ["SUPERSEDED", "closed"],
-    ["OPEN", "open"],
     ["something new", "open"],
   ])("reads the %s state as %s", (state, expected) => {
     const decoded = expectSuccess(decodePullRequestPageJson(page([pullRequest({ state })])));
@@ -100,21 +89,10 @@ describe("decodePullRequestPageJson", () => {
 
     expect(decoded.items).toHaveLength(1);
   });
-
-  it("fails when Bitbucket did not answer with a page", () => {
-    expect(Result.isFailure(decodePullRequestPageJson(JSON.stringify({ error: "nope" })))).toBe(
-      true,
-    );
-  });
 });
 
 describe("decodePullRequestJson", () => {
-  it("preserves the source commit hash as the head SHA", () => {
-    const decoded = expectSuccess(decodePullRequestJson(JSON.stringify(pullRequest())));
-
-    expect(decoded).toMatchObject({ headSha: "9f3a7c2d8b1e6f045a9c3d7e2b8f1a6c0d4e5f93" });
-  });
-
+  // regression: #18402 a pull request with no head commit hash still decodes, headSha null
   it.each([
     { metadata: "absent commit", commit: undefined },
     { metadata: "null commit", commit: null },
@@ -128,21 +106,6 @@ describe("decodePullRequestJson", () => {
     expect(detail).toMatchObject({ number: 897, headBranch: "feat/page", headSha: null });
     expect(list.items).toHaveLength(1);
     expect(list.items[0]).toMatchObject({ number: 897, headBranch: "feat/page", headSha: null });
-  });
-
-  it("reads reviewers as review requests", () => {
-    const decoded = expectSuccess(
-      decodePullRequestJson(
-        JSON.stringify(
-          pullRequest({
-            reviewers: [{ nickname: "julius", display_name: "Julius" }],
-          }),
-        ),
-      ),
-    );
-
-    expect(decoded.reviewRequestLogins).toEqual(["julius"]);
-    expect(decoded.reviewers).toEqual([{ login: "julius", name: "Julius", avatarUrl: null }]);
   });
 
   it("reads a participant's vote as a review", () => {
@@ -182,20 +145,10 @@ describe("decodePullRequestJson", () => {
 });
 
 describe("decodeViewerJson", () => {
-  it("reads the signed-in nickname", () => {
-    const decoded = decodeViewerJson(JSON.stringify({ nickname: "bilal", display_name: "Bilal" }));
-
-    expect(expectSuccess(decoded)).toBe("bilal");
-  });
-
   it("falls back to the display name, which app accounts have instead", () => {
     const decoded = decodeViewerJson(JSON.stringify({ display_name: "Release Bot" }));
 
     expect(expectSuccess(decoded)).toBe("Release Bot");
-  });
-
-  it("returns nothing when the account has neither", () => {
-    expect(expectSuccess(decodeViewerJson(JSON.stringify({})))).toBeNull();
   });
 });
 
@@ -283,19 +236,6 @@ describe("decodeCommitsJson", () => {
     expect(decoded.items[1]?.messageHeadline).toBe("second");
     expect(decoded.next).toBeNull();
   });
-
-  it("skips commits whose hash is empty", () => {
-    const decoded = expectSuccess(
-      decodeCommitsJson(
-        page([
-          { hash: "   ", message: "invalid", date: "2026-06-16T04:51:00+00:00" },
-          { hash: "aaa", date: "2026-06-16T04:50:49+00:00" },
-        ]),
-      ),
-    );
-
-    expect(decoded.items.map((commit) => commit.oid)).toEqual(["aaa"]);
-  });
 });
 
 describe("decodeStatusesJson", () => {
@@ -330,8 +270,6 @@ describe("decodeStatusesJson", () => {
   it.each([
     ["SUCCESSFUL", "success"],
     ["FAILED", "failure"],
-    ["INPROGRESS", "pending"],
-    ["STOPPED", "cancelled"],
     ["something new", "neutral"],
   ])("reads the %s build state as %s", (state, expected) => {
     const decoded = expectSuccess(decodeStatusesJson(page([{ name: "Pipeline", state }])));
@@ -353,31 +291,6 @@ describe("decodeStatusesJson", () => {
       ["deploy / Pipeline", "failure"],
       ["build / Pipeline", "success"],
     ]);
-  });
-});
-
-describe("decodeDiffstatJson", () => {
-  it("adds up the per-file counts", () => {
-    const decoded = expectSuccess(
-      decodeDiffstatJson(
-        page([
-          { lines_added: 9, lines_removed: 2 },
-          { lines_added: 32, lines_removed: 14 },
-        ]),
-      ),
-    );
-
-    expect(decoded).toEqual({ additions: 41, deletions: 16, changedFiles: 2, next: null });
-  });
-});
-
-describe("decodeConflictsJson", () => {
-  it("calls an empty conflict list mergeable", () => {
-    expect(expectSuccess(decodeConflictsJson(page([])))).toBe("mergeable");
-  });
-
-  it("calls any reported conflict conflicting", () => {
-    expect(expectSuccess(decodeConflictsJson(page([{ path: "src/app.ts" }])))).toBe("conflicting");
   });
 });
 

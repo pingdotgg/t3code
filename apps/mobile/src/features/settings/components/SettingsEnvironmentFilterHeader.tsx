@@ -1,4 +1,3 @@
-import { useNavigation } from "@react-navigation/native";
 import type { NativeStackHeaderItem } from "@react-navigation/native-stack";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { Platform, Pressable } from "react-native";
@@ -8,16 +7,11 @@ import { SymbolView } from "../../../components/ui/AppSymbol";
 import { ENVIRONMENT_MACHINE_SYMBOLS } from "../../../components/EnvironmentMachineSymbol";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { withNativeGlassHeaderItem } from "../../layout/native-glass-header-items";
-import { useAdaptiveWorkspaceLayout } from "../../layout/AdaptiveWorkspaceLayout";
 import { useSettingsEnvironmentFilter } from "../settings-environment-filter";
 
 export function SettingsEnvironmentFilterHeader(props: {
-  readonly closeSettings?: boolean;
   readonly trailingItems?: readonly NativeStackHeaderItem[];
 }) {
-  const navigation = useNavigation();
-  const { layout } = useAdaptiveWorkspaceLayout();
-  const closeSettings = props.closeSettings === true && !layout.usesSplitView;
   const {
     availableTargets,
     selectedTargets,
@@ -35,7 +29,6 @@ export function SettingsEnvironmentFilterHeader(props: {
       ? "line.3.horizontal.decrease"
       : "line.3.horizontal.decrease.circle.fill";
   const filterVersion = JSON.stringify({
-    closeSettings,
     selection: selectedIds === null ? null : [...selectedIds].sort(),
     targets: availableTargets.map((entry) => [
       entry.environmentId,
@@ -54,7 +47,6 @@ export function SettingsEnvironmentFilterHeader(props: {
       options={{
         unstable_headerRightItems: () => [
           withNativeGlassHeaderItem({
-            axisBehavior: "horizontalOnly",
             accessibilityLabel: "Filter settings environments and projects",
             icon: { name: filterIcon, type: "sfSymbol" },
             label: "",
@@ -108,7 +100,7 @@ export function SettingsEnvironmentFilterHeader(props: {
                     },
                     ...selectableProjectGroups.map((group) => ({
                       type: "action" as const,
-                      label: group.label,
+                      label: projectMenuLabel(group),
                       state: selectedProjectKey === group.key ? ("on" as const) : undefined,
                       onPress: () => selectProject(group.key),
                     })),
@@ -118,19 +110,6 @@ export function SettingsEnvironmentFilterHeader(props: {
             },
           }),
           ...(props.trailingItems ?? []),
-          ...(closeSettings
-            ? [
-                withNativeGlassHeaderItem({
-                  axisBehavior: "horizontalOnly",
-                  accessibilityLabel: "Close settings",
-                  icon: { name: "xmark", type: "sfSymbol" },
-                  identifier: "settings-close",
-                  label: "",
-                  onPress: () => navigation.goBack(),
-                  type: "button",
-                }),
-              ]
-            : []),
         ],
       }}
     />
@@ -181,7 +160,7 @@ export function AndroidSettingsEnvironmentFilter() {
         },
         ...selectableProjectGroups.map((group) => ({
           id: `project:${group.key}`,
-          title: `Project · ${group.label}`,
+          title: `Project · ${projectMenuLabel(group)}`,
           state: selectedProjectKey === group.key ? ("on" as const) : ("off" as const),
         })),
       ]}
@@ -211,3 +190,6 @@ export function AndroidSettingsEnvironmentFilter() {
     </Menu>
   );
 }
+
+const projectMenuLabel = (group: { readonly label: string; readonly archived: boolean }) =>
+  group.archived ? `${group.label} · Archived` : group.label;

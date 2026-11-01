@@ -1,99 +1,74 @@
-import "../../index.css";
-
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
-
 import { page, userEvent } from "vite-plus/test/browser";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { Sidebar, SidebarProvider, SidebarTrigger } from "./sidebar";
-import { resolveSidebarState } from "./sidebarState";
+import { render } from "../../../test/render";
+import { Sidebar, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar } from "./sidebar";
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(async () => {
-  await page.viewport(1280, 900);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-});
-
-async function renderSidebar(open: boolean) {
-  await act(async () => {
-    root.render(
-      <SidebarProvider open={open}>
-        <Sidebar>
-          <SidebarTrigger data-testid="internal-trigger" />
-          <button data-testid="sidebar-control">Thread</button>
-        </Sidebar>
-        <SidebarTrigger data-testid="external-trigger" />
-        <button data-testid="content-control">Content</button>
-      </SidebarProvider>,
-    );
-  });
+function CollapseFromInside() {
+  const { setOpen } = useSidebar();
+  return (
+    <button type="button" onClick={() => setOpen(false)}>
+      Collapse
+    </button>
+  );
 }
 
-function element(selector: string) {
-  const node = container.querySelector<HTMLElement>(selector);
-  if (!node) throw new Error(`Missing element: ${selector}`);
-  return node;
+function Harness(props: { readonly onResize?: (width: number) => void }) {
+  return (
+    <SidebarProvider defaultOpen>
+      <Sidebar
+        collapsible="offcanvas"
+        resizable={{
+          minWidth: 200,
+          maxWidth: 600,
+          ...(props.onResize ? { onResize: props.onResize } : {}),
+        }}
+      >
+        <CollapseFromInside />
+        <SidebarRail />
+      </Sidebar>
+      <SidebarTrigger />
+    </SidebarProvider>
+  );
 }
 
-describe("responsive sidebar state", () => {
-  it("uses mobile sheet visibility for the shared responsive state", () => {
-    expect(resolveSidebarState({ isMobile: true, open: true, openMobile: false })).toBe(
-      "collapsed",
-    );
-    expect(resolveSidebarState({ isMobile: true, open: false, openMobile: true })).toBe("expanded");
-    expect(resolveSidebarState({ isMobile: false, open: true, openMobile: false })).toBe(
-      "expanded",
-    );
-  });
-});
+describe("Sidebar", () => {
+  it("hands focus to the outside trigger when it collapses around the focused control", async () => {
+    await page.viewport(1280, 800);
+    await using screen = await render(<Harness />, { router: false /* no routes involved */ });
 
-describe("desktop sidebar focus", () => {
-  it("moves focus to the external toggle on collapse and restores sidebar access on expansion", async () => {
-    await renderSidebar(true);
-    const control = element('[data-testid="sidebar-control"]');
-    const sidebar = element('[data-slot="sidebar"]');
-    control.focus();
-    expect(document.activeElement).toBe(control);
+    await userEvent.click(screen.getByRole("button", { name: "Collapse" }));
 
-    await renderSidebar(false);
-
-    expect(document.activeElement).toBe(element('[data-testid="external-trigger"]'));
-    expect(sidebar.inert).toBe(true);
-    control.focus();
-    expect(document.activeElement).toBe(element('[data-testid="external-trigger"]'));
-    await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
-    expect(document.activeElement).not.toBe(element('[data-testid="internal-trigger"]'));
-    expect(document.activeElement).not.toBe(control);
-    await userEvent.keyboard("{Tab}");
-    expect(document.activeElement).toBe(element('[data-testid="external-trigger"]'));
-    await userEvent.keyboard("{Tab}");
-    expect(document.activeElement).toBe(element('[data-testid="content-control"]'));
-
-    await renderSidebar(true);
-
-    expect(sidebar.inert).toBe(false);
-    control.focus();
-    expect(document.activeElement).toBe(control);
+    const sidebar = screen.container.querySelector<HTMLElement>('[data-slot="sidebar"]')!;
+    await vi.waitFor(() => expect(sidebar.inert).toBe(true));
+    const trigger = screen.container.querySelector('[data-slot="sidebar-trigger"]');
+    await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
-  it("keeps focus in the content when the sidebar collapses", async () => {
-    await renderSidebar(true);
-    const control = element('[data-testid="content-control"]');
-    control.focus();
-    expect(document.activeElement).toBe(control);
+  it("abandons a rail drag when the sidebar collapses mid-drag", async () => {
+    await page.viewport(1280, 800);
+    const onResize = vi.fn();
+    await using screen = await render(<Harness onResize={onResize} />, {
+      router: false /* no routes involved */,
+    });
+    const rail = screen.container.querySelector<HTMLElement>('[data-sidebar="rail"]')!;
+    const { left, top } = rail.getBoundingClientRect();
+    const pointer = { bubbles: true, cancelable: true, pointerId: 1, button: 0, clientY: top + 10 };
+    const dragTo = (clientX: number) => {
+      rail.dispatchEvent(new PointerEvent("pointerdown", { ...pointer, clientX: left }));
+      rail.dispatchEvent(new PointerEvent("pointermove", { ...pointer, clientX }));
+    };
+    // A completed drag commits, so the abandoned one below is a real drag too.
+    dragTo(left + 40);
+    rail.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX: left + 40 }));
+    expect(onResize).toHaveBeenCalledTimes(1);
 
-    await renderSidebar(false);
+    dragTo(left + 80);
+    await userEvent.click(
+      screen.container.querySelector<HTMLElement>('[data-slot="sidebar-trigger"]')!,
+    );
+    rail.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX: left + 80 }));
 
-    expect(document.activeElement).toBe(control);
+    expect(onResize).toHaveBeenCalledTimes(1);
   });
 });

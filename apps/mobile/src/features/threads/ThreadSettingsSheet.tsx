@@ -1,3 +1,7 @@
+import {
+  getPromptControlledTraits,
+  getTraitSelectChange,
+} from "@t3tools/client-runtime/model-traits";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
@@ -16,6 +20,7 @@ import type {
   ProviderOptionSelection,
   RuntimeMode,
   ServerSettings,
+  ThreadId,
 } from "@t3tools/contracts";
 import type { LegendListRenderItemProps } from "@legendapp/list/react-native";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
@@ -25,7 +30,12 @@ import {
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
-import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
+import {
+  useNavigation,
+  useRoute,
+  type RouteProp,
+  type StaticScreenProps,
+} from "@react-navigation/native";
 import { type NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as Haptics from "expo-haptics";
 import { AsyncResult } from "effect/reactivity";
@@ -39,7 +49,12 @@ import {
   type ReactNode,
 } from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, TextInput, View } from "react-native";
-import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
+import Animated, {
+  FadeIn,
+  FadeOut,
+  LinearTransition,
+  useReducedMotion,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -50,6 +65,7 @@ import { IconButton } from "../../components/ui/IconButton";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
+import { useReduceMotionEnabled } from "../../lib/appState";
 import {
   buildModelOptions,
   groupByProvider,
@@ -68,6 +84,19 @@ import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { ChatGptSharingStatus } from "./ChatGptSharingStatus";
 import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentQuery } from "../../state/query";
+import { scopedThreadKey } from "../../lib/scopedEntities";
+import { useThreadReportedModelSelection } from "../../state/entities";
+import {
+  setComposerDraftText,
+  updateComposerDraftSettings,
+  useComposerDraft,
+  useComposerDraftSettings,
+} from "../../state/use-composer-drafts";
+import { useQuietThreadStructure } from "../../state/use-thread-detail";
+import { activeComposerDraftKey, useQueuedRunEdit } from "../../state/queued-run-edit";
+import { updateThreadDraftModelSelection } from "../../state/use-thread-composer-state";
+import { useThreadSelection } from "../../state/use-thread-selection";
+import { threadAllowsProviderSwitch } from "../../state/thread-provider-switching";
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -81,6 +110,7 @@ import {
   createNativeMailSearchToolbarItem,
   NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET,
 } from "../layout/native-mail-search-toolbar";
+import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { ModelRow, ChoiceRow } from "./ThreadSettingsRows";
 import {
@@ -103,10 +133,7 @@ const PRIMARY_PROVIDER_DRIVERS: ReadonlySet<string> = new Set([
   "codex",
   "antigravity",
 ]);
-/**
- * Keep measured row changes stable, but let catalog mutations use the list's
- * native bounds so a filtered catalog that underflows returns to the top.
- */
+/** Keep measured size changes stable; let catalog mutations return underflowing filtered lists to the top. */
 const THREAD_SETTINGS_MAINTAIN_VISIBLE_CONTENT_POSITION = {
   data: false,
   size: true,
@@ -247,6 +274,8 @@ type ThreadSettingsSessionProps = {
   readonly lockedProviderInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly selectedModel: ModelSelection | null;
+  readonly prompt: string;
+  readonly onPromptChange: (prompt: string) => void;
   readonly reportedModelSelection?: ModelSelection | null;
   readonly onSelectModel: (option: ModelOption) => void;
   readonly restoreSelection?: (selection: ModelSelection) => ModelSelection;
@@ -256,45 +285,12 @@ type ThreadSettingsSessionProps = {
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
 };
 
-export type ExistingThreadSettingsRouteSession = ThreadSettingsSessionProps & {
-  readonly ownerId: string;
+/** The composer draft the sheet edits: the thread's own, or a queued message being edited. */
+export type ExistingThreadSettingsRouteParams = {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly draftKey: string;
 };
-
-type ExistingThreadSettingsRouteContextValue = {
-  readonly session: ExistingThreadSettingsRouteSession | null;
-  readonly present: (session: ExistingThreadSettingsRouteSession) => void;
-  readonly clear: (ownerId: string) => void;
-};
-
-const ExistingThreadSettingsRouteContext =
-  createContext<ExistingThreadSettingsRouteContextValue | null>(null);
-
-export function ExistingThreadSettingsRouteProvider(props: { readonly children: ReactNode }) {
-  const [session, setSession] = useState<ExistingThreadSettingsRouteSession | null>(null);
-  const present = (nextSession: ExistingThreadSettingsRouteSession) => {
-    setSession(nextSession);
-  };
-  const clear = (ownerId: string) => {
-    setSession((current) => (current?.ownerId === ownerId ? null : current));
-  };
-  const value = { session, present, clear };
-
-  return (
-    <ExistingThreadSettingsRouteContext.Provider value={value}>
-      {props.children}
-    </ExistingThreadSettingsRouteContext.Provider>
-  );
-}
-
-export function useExistingThreadSettingsRoutePresentation() {
-  const value = use(ExistingThreadSettingsRouteContext);
-  if (!value) {
-    throw new Error(
-      "useExistingThreadSettingsRoutePresentation must be used inside ExistingThreadSettingsRouteProvider.",
-    );
-  }
-  return value;
-}
 
 type ThreadSettingsSessionValue = {
   readonly environmentId: EnvironmentId | null;
@@ -311,6 +307,7 @@ type ThreadSettingsSessionValue = {
   readonly runtimeModeChoices: ReturnType<typeof runtimeModeChoicesForSupportedModes>;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
+  readonly promptTraits: ReturnType<typeof getPromptControlledTraits>;
   readonly displayedModelSelection: ModelSelection | null;
   readonly reportedModelSelection: ModelSelection | null;
   readonly providerExpansionOverrides: ReadonlySet<string>;
@@ -371,6 +368,7 @@ function ThreadSettingsSessionProvider(
     favorites: legacyFavorites,
   }).favorites;
   const saveSettings = useAtomCommand(serverEnvironment.updateSettings, "model favorites update");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the one-time legacy model favorites migration to server settings once per connection
   useEffect(() => {
     if (
       !props.environmentId ||
@@ -491,6 +489,8 @@ function ThreadSettingsSessionProvider(
     () => new Set(),
   );
   const [pendingModel, setPendingModel] = useState<ModelOption | null>(null);
+  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
+  const displayedPrompt = pendingModel ? (pendingPrompt ?? props.prompt) : props.prompt;
 
   const isApplied = (option: ModelOption) =>
     option.selection.instanceId === props.selectedModel?.instanceId &&
@@ -506,6 +506,7 @@ function ThreadSettingsSessionProvider(
         })
       : []
     : props.optionDescriptors;
+  const promptTraits = getPromptControlledTraits(displayedDescriptors, displayedPrompt);
   const displayedModel =
     pendingModel ??
     props.providerGroups.flatMap((group) => group.models).find((option) => isApplied(option)) ??
@@ -532,12 +533,37 @@ function ThreadSettingsSessionProvider(
       }
       void Haptics.selectionAsync();
       props.onSelectModel(pendingModel);
+      if (pendingPrompt !== null && pendingPrompt !== props.prompt) {
+        props.onPromptChange(pendingPrompt);
+      }
     }
     return true;
   };
 
   const applyOptionChange = (id: string, value: string | boolean) => {
-    const next = applyProviderOptionSelection(displayedDescriptors, { id, value });
+    const descriptor = displayedDescriptors.find((entry) => entry.id === id);
+    const change =
+      descriptor?.type === "select" && typeof value === "string"
+        ? getTraitSelectChange(
+            { ...promptTraits, descriptors: displayedDescriptors },
+            descriptor,
+            displayedPrompt,
+            value,
+          )
+        : null;
+    if (descriptor?.type === "select") {
+      if (!change) return;
+      if (change.prompt !== displayedPrompt) {
+        if (pendingModel) {
+          setPendingPrompt(change.prompt);
+        } else {
+          props.onPromptChange(change.prompt);
+        }
+      }
+    }
+    const next = change
+      ? (change.modelOptions ?? [])
+      : applyProviderOptionSelection(displayedDescriptors, { id, value });
     if (!next) {
       return;
     }
@@ -564,6 +590,9 @@ function ThreadSettingsSessionProvider(
 
   const pressModel = (option: ModelOption) => {
     void Haptics.selectionAsync();
+    if (isApplied(option) || option.key !== pendingModel?.key) {
+      setPendingPrompt(null);
+    }
     setPendingModel((current) =>
       pendingModelAfterPress({
         current,
@@ -586,6 +615,7 @@ function ThreadSettingsSessionProvider(
     runtimeModeChoices,
     onUpdateRuntimeMode: props.onUpdateRuntimeMode,
     displayedDescriptors,
+    promptTraits,
     displayedModelSelection: pendingModel?.selection ?? props.selectedModel,
     reportedModelSelection: pendingModel ? null : (props.reportedModelSelection ?? null),
     favoriteKeys,
@@ -806,10 +836,8 @@ function ThreadSettingsOptionsItem(props: {
         .get(session.environmentId)
         ?.providers.find((provider) => provider.instanceId === session.providerInstanceId) ?? null)
     : null;
-  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
-  const bottomToolbarInset = usesNativeMailSearchToolbar
-    ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET
-    : 0;
+  // Both iOS search layouts float a bottom toolbar over the list's last rows.
+  const bottomToolbarInset = Platform.OS === "ios" ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET : 0;
 
   return (
     <View style={{ paddingBottom: insets.bottom + bottomToolbarInset + 12 }}>
@@ -832,11 +860,16 @@ function ThreadSettingsOptionsItem(props: {
               >
                 <DisclosureRow
                   label={descriptor.label}
-                  value={getProviderOptionCurrentLabel(
-                    descriptor,
-                    session.displayedModelSelection,
-                    session.reportedModelSelection,
-                  )}
+                  value={
+                    session.promptTraits.ultrathinkPromptControlled &&
+                    descriptor.id === session.promptTraits.primarySelectDescriptor?.id
+                      ? "Ultrathink"
+                      : getProviderOptionCurrentLabel(
+                          descriptor,
+                          session.displayedModelSelection,
+                          session.reportedModelSelection,
+                        )
+                  }
                   onPress={() => props.onOpenSubmenu({ kind: "descriptor", id: descriptor.id })}
                 />
               </Animated.View>
@@ -909,7 +942,11 @@ function ThreadSettingsMainContent(props: {
       if (error) Dialog.alert("Could not refresh models", error);
     });
   };
-  const [animationsReady, setAnimationsReady] = useState(false);
+  const [listLoaded, setListLoaded] = useState(false);
+  // Android can drop the first frame of a reduced-motion fade, leaving rows invisible.
+  const reducedMotion = useReducedMotion();
+  const reduceMotionEnabled = useReduceMotionEnabled();
+  const animationsReady = listLoaded && !reducedMotion && !reduceMotionEnabled;
   const catalogItems = buildThreadSettingsCatalogItems(session);
   const hasActiveCatalogFilter =
     session.providerFilter !== null || session.searchQuery.trim().length > 0;
@@ -967,6 +1004,7 @@ function ThreadSettingsMainContent(props: {
   };
 
   return (
+    // oxlint-disable-next-line t3code/require-registered-list-scroll -- Sheet content; sheets sit outside workspace columns and keep their own header handling.
     <AnimatedLegendList
       alwaysBounceVertical
       automaticallyAdjustsScrollIndicatorInsets
@@ -1034,7 +1072,7 @@ function ThreadSettingsMainContent(props: {
           <RefreshControl refreshing={isRefreshingProviders} onRefresh={refreshProviders} />
         ) : undefined
       }
-      onLoad={() => setAnimationsReady(true)}
+      onLoad={() => setListLoaded(true)}
       renderItem={renderCatalogItem}
       showsVerticalScrollIndicator={false}
     />
@@ -1076,16 +1114,29 @@ function ThreadSettingsChoiceContent(props: {
             rows: selectableChoices(activeDescriptor).map((choice) => ({
               id: choice.id,
               label: choice.label,
-              description: undefined,
+              description: choice.description,
               selected:
                 choice.id ===
-                getProviderOptionCurrentValue(
-                  activeDescriptor,
-                  session.displayedModelSelection,
-                  session.reportedModelSelection,
-                ),
+                (session.promptTraits.ultrathinkPromptControlled &&
+                activeDescriptor.id === session.promptTraits.primarySelectDescriptor?.id
+                  ? "ultrathink"
+                  : getProviderOptionCurrentValue(
+                      activeDescriptor,
+                      session.displayedModelSelection,
+                      session.reportedModelSelection,
+                    )),
               onPress: () => {
                 void Haptics.selectionAsync();
+                if (
+                  session.promptTraits.ultrathinkInBodyText &&
+                  activeDescriptor.id === session.promptTraits.primarySelectDescriptor?.id
+                ) {
+                  Dialog.alert(
+                    "Reasoning controlled by prompt",
+                    'Your prompt contains "ultrathink" in the text. Remove it to change this option.',
+                  );
+                  return;
+                }
                 session.applyOptionChange(activeDescriptor.id, choice.id);
                 props.onSelected();
               },
@@ -1152,11 +1203,17 @@ function useThreadSettingsPickerPresentation() {
   return value;
 }
 
+// With a Duo vertical bar, filter and search join cancel and confirm in the rail.
+function useThreadSettingsMailSearchToolbar() {
+  const metrics = useNativeLayoutMetrics();
+  return useNativeMailSearchToolbar() && (metrics?.verticalBarEdge ?? "none") === "none";
+}
+
 function ThreadSettingsModelsScreen() {
   const session = useThreadSettingsSession();
   const presentation = useThreadSettingsPickerPresentation();
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
-  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
+  const usesNativeMailSearchToolbar = useThreadSettingsMailSearchToolbar();
   const hasCustomCatalogFilter = session.providerFilter !== null || session.showLegacy;
   const commitAndClose = useEffectEvent(() => {
     if (!session.commitPendingModel()) return;
@@ -1276,6 +1333,7 @@ function ThreadSettingsModelsScreen() {
           headerSearchBarOptions:
             Platform.OS === "ios" && !usesNativeMailSearchToolbar
               ? {
+                  allowToolbarIntegration: true,
                   autoCapitalize: "none",
                   hideNavigationBar: false,
                   obscureBackground: false,
@@ -1319,7 +1377,6 @@ function ThreadSettingsModelsScreen() {
                 ? "line.3.horizontal.decrease.circle.fill"
                 : "line.3.horizontal.decrease.circle"
             }
-            separateBackground
             title="Model filters"
           >
             <Toolbar.Menu title="Provider">
@@ -1355,6 +1412,7 @@ function ThreadSettingsModelsScreen() {
               </Toolbar.MenuAction>
             ) : null}
           </Toolbar.Menu>
+          <Toolbar.SearchBarSlot />
         </Toolbar>
       ) : null}
     </>
@@ -1441,32 +1499,79 @@ export function ThreadSettingsPickerScreen(
   );
 }
 
-export function ExistingThreadSettingsRouteScreen() {
+export function ExistingThreadSettingsRouteScreen({
+  route,
+}: StaticScreenProps<ExistingThreadSettingsRouteParams>) {
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
-  const presentation = useExistingThreadSettingsRoutePresentation();
-  const session = presentation.session;
+  // Reads the same environmentId/threadId params as the Thread route beneath it.
+  const { selectedThread, selectedThreadDetailRef, selectedEnvironmentRuntime } =
+    useThreadSelection();
+  // Streamed text would otherwise re-render the whole model picker on every delta.
+  const structure = useQuietThreadStructure(selectedThreadDetailRef);
+  const reportedModelSelection = useThreadReportedModelSelection(selectedThreadDetailRef);
+  const threadKey = scopedThreadKey(route.params.environmentId, route.params.threadId);
+  const draftSettings = useComposerDraftSettings(threadKey);
+  const queuedRunEdit = useQueuedRunEdit(threadKey);
+  // A queued edit can end while the sheet is open; the prompt then belongs to the thread's draft.
+  const draftKey = activeComposerDraftKey(threadKey, route.params.draftKey, queuedRunEdit);
+  const prompt = useComposerDraft(draftKey).text;
 
-  useEffect(() => {
-    if (session) {
-      return;
-    }
-
-    navigation.goBack();
-  }, [navigation, session]);
-
-  if (!session) {
+  if (!selectedThread) {
     return <View className="flex-1 bg-sheet" />;
   }
 
-  const { ownerId: _ownerId, ...settings } = session;
+  const serverConfig = selectedEnvironmentRuntime?.serverConfig ?? null;
+  const modelSelection = draftSettings.modelSelection ?? selectedThread.modelSelection;
+  const lockedProviderInstanceId = threadAllowsProviderSwitch({
+    thread: selectedThread,
+    projection: structure?.projection,
+  })
+    ? undefined
+    : modelSelection.instanceId;
+  const modelOptions = buildModelOptions(
+    serverConfig,
+    modelSelection,
+    lockedProviderInstanceId,
+    selectedThread.projectId,
+  );
+  const currentModelOption =
+    modelOptions.find(
+      (option) =>
+        option.selection.instanceId === modelSelection.instanceId &&
+        option.selection.model === modelSelection.model,
+    ) ?? null;
+  const updateModelSelection = (selection: ModelSelection) =>
+    updateThreadDraftModelSelection(threadKey, selection, serverConfig?.providers ?? []);
 
-  return <ThreadSettingsPickerScreen {...settings} onClose={() => navigation.goBack()} />;
+  return (
+    <ThreadSettingsPickerScreen
+      environmentId={selectedThread.environmentId}
+      projectId={selectedThread.projectId}
+      providerInstanceId={modelSelection.instanceId}
+      {...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {})}
+      providerGroups={groupByProvider(modelOptions)}
+      selectedModel={modelSelection}
+      prompt={prompt}
+      onPromptChange={(text) => setComposerDraftText(draftKey, text)}
+      reportedModelSelection={reportedModelSelection}
+      onSelectModel={(option) => updateModelSelection(withRememberedModelOptions(option.selection))}
+      restoreSelection={withRememberedModelOptions}
+      optionDescriptors={resolveProviderOptionDescriptors({
+        capabilities: currentModelOption?.capabilities,
+        selections: modelSelection.options,
+      })}
+      onUpdateOptionSelections={(options) => {
+        rememberModelOptions(modelSelection.instanceId, modelSelection.model, options ?? []);
+        updateModelSelection({ ...modelSelection, options });
+      }}
+      runtimeMode={draftSettings.runtimeMode ?? selectedThread.runtimeMode}
+      onUpdateRuntimeMode={(runtimeMode) => updateComposerDraftSettings(threadKey, { runtimeMode })}
+      onClose={() => navigation.goBack()}
+    />
+  );
 }
 
-/**
- * Keeping the sheet presentation in RNS gives UIKit ownership of nested dismissal, while
- * Reasoning and Runtime remain regular pushes inside this navigator.
- */
+/** RNS owns nested sheet dismissal; Reasoning and Runtime remain ordinary pushes. */
 export function NewTaskThreadSettingsRouteScreen() {
   const flow = useNewTaskFlow();
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
@@ -1482,6 +1587,8 @@ export function NewTaskThreadSettingsRouteScreen() {
       {...(flow.selectedModel ? { providerInstanceId: flow.selectedModel.instanceId } : {})}
       providerGroups={flow.providerGroups}
       selectedModel={flow.selectedModel}
+      prompt={flow.prompt}
+      onPromptChange={flow.setPrompt}
       onSelectModel={(option) => flow.setSelectedModelKey(option.key, option.selection.options)}
       restoreSelection={withRememberedModelOptions}
       optionDescriptors={optionDescriptors}

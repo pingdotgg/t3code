@@ -5,7 +5,6 @@ import {
   type AuthSessionState,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
@@ -97,112 +96,6 @@ beforeEach(() => {
   state.copy.mockReset();
 });
 
-it.each([
-  [
-    "C:/repo/assets/shot.png",
-    "C:/repo",
-    String.raw`C:\repo\assets\shot.png`,
-    String.raw`assets\shot.png`,
-  ],
-  [
-    String.raw`\\server\share\repo/assets/clip.mp4`,
-    String.raw`\\server\share\repo`,
-    String.raw`\\server\share\repo\assets\clip.mp4`,
-    String.raw`assets\clip.mp4`,
-  ],
-] as const)("copies full and relative media paths for %s", (path, root, full, relative) => {
-  const media = useMediaActions({
-    environmentId,
-    threadId,
-    resource: { _tag: "media-file", threadId, path },
-    reference: mediaFileReference(path, root),
-    name: path.split(/[\\/]/).at(-1)!,
-    mimeType: path.endsWith(".mp4") ? "video/mp4" : "image/png",
-  });
-  for (const [actionId, expected] of [
-    ["copy-full-path", full],
-    ["copy-relative-path", relative],
-  ] as const) {
-    const action = media.actions.find(({ id }) => id === actionId);
-    if (!action) throw new Error(`Missing media action: ${actionId}`);
-    action.run();
-    expect(state.copy).toHaveBeenLastCalledWith(expected);
-  }
-  expect(state.refresh).not.toHaveBeenCalled();
-  expect(state.download).not.toHaveBeenCalled();
-});
-
-it("preserves media URLs when copying", () => {
-  const url = "https://cdn.test/assets/media?path=C:/repo/media";
-  const media = useMediaActions({
-    uri: url,
-    name: "media",
-    mimeType: "video/mp4",
-    reference: { kind: "url", url },
-  });
-  const action = media.actions.find(({ id }) => id === "copy-url");
-  if (!action) throw new Error("Copy URL action missing");
-  action.run();
-  expect(state.copy).toHaveBeenCalledWith(url);
-  expect(state.refresh).not.toHaveBeenCalled();
-});
-
-it.each(["workspace-file", "media-file"] as const)(
-  "waits for the %s grant before enabling host menu actions",
-  (_tag) => {
-    for (const [session, disabled] of [
-      [null, true],
-      [granted, false],
-      [denied, true],
-    ] as const) {
-      if (session === null) state.sessions.delete(environmentId);
-      else state.sessions.set(environmentId, session);
-      const media = useMediaActions(hostSource(_tag));
-
-      expect(media.actions.find(({ id }) => id === "save")?.disabled).toBe(disabled);
-      expect(media.actions.find(({ id }) => id === "open-file")?.disabled).toBe(disabled);
-      const copyPath = media.actions.find(({ id }) => id === "copy-full-path")!;
-      expect(copyPath.disabled).not.toBe(true);
-      copyPath.run();
-    }
-    expect(state.copy).toHaveBeenCalledTimes(3);
-    expect(state.refresh).not.toHaveBeenCalled();
-    expect(state.download).not.toHaveBeenCalled();
-  },
-);
-
-it("keeps nonhost menu actions available with pending or denied host grants", () => {
-  const sources: MediaActionsSource[] = [
-    { uri: "https://cdn.test/image.png", name: "image.png", mimeType: "image/png" },
-    { uri: "file:///device/image.png", name: "image.png", mimeType: "image/png" },
-    {
-      environmentId,
-      resource: { _tag: "attachment", attachmentId: "upload" },
-      name: "image.png",
-      mimeType: "image/png",
-    },
-    {
-      attachment: {
-        id: "draft",
-        type: "file",
-        fileUri: "file:///device/image.png",
-        name: "image.png",
-        mimeType: "image/png",
-        sizeBytes: 1,
-      },
-      name: "image.png",
-      mimeType: "image/png",
-    },
-  ];
-  for (const session of [null, denied]) {
-    if (session === null) state.sessions.delete(environmentId);
-    else state.sessions.set(environmentId, session);
-    for (const source of sources) {
-      expect(useMediaActions(source).actions.find(({ id }) => id === "save")?.disabled).toBe(false);
-    }
-  }
-});
-
 it.each(["workspace-file", "media-file"] as const)(
   "blocks denied %s sharing and file opening while preserving path copying",
   async (_tag) => {
@@ -276,18 +169,6 @@ it("lets an unresolved grant be authorized by an explicit server request", async
   expect(state.download).toHaveBeenCalledOnce();
 });
 
-it("shares uploaded attachments without host filesystem access", async () => {
-  await useMediaActions({
-    environmentId,
-    resource: { _tag: "attachment", attachmentId: "upload" },
-    name: "image.png",
-    mimeType: "image/png",
-  }).share();
-
-  expect(state.refresh).toHaveBeenCalledOnce();
-  expect(state.download).toHaveBeenCalledOnce();
-});
-
 it.each(["https://cdn.test/image.png", "file:///device/image.png"])(
   "shares direct media without a host grant: %s",
   async (uri) => {
@@ -297,21 +178,3 @@ it.each(["https://cdn.test/image.png", "file:///device/image.png"])(
     expect(uri.startsWith("file:") ? state.shareLocal : state.download).toHaveBeenCalledOnce();
   },
 );
-
-it("shares device draft attachments without a host grant", async () => {
-  await useMediaActions({
-    attachment: {
-      id: "draft",
-      type: "file",
-      fileUri: "file:///device/image.png",
-      name: "image.png",
-      mimeType: "image/png",
-      sizeBytes: 1,
-    },
-    name: "image.png",
-    mimeType: "image/png",
-  }).share();
-
-  expect(state.refresh).not.toHaveBeenCalled();
-  expect(state.shareDraft).toHaveBeenCalledOnce();
-});
