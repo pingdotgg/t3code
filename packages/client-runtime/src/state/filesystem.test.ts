@@ -97,6 +97,10 @@ describe("filesystem browse model", () => {
     });
     expect(getFilesystemBrowseTabCompletion([entry("😀one"), entry("😁two")], "")).toBeNull();
     expect(getFilesystemBrowseTabCompletion([entry("ΟΣα"), entry("οσβ")], "ο")).toBeNull();
+    expect(getFilesystemBrowseTabCompletion([entry("İfoo"), entry("İfar")], "i\u0307")).toEqual({
+      name: "İf",
+      isComplete: false,
+    });
     expect(getFilesystemBrowseTabCompletion([entry("😀one"), entry("😀other")], "😀")).toEqual({
       name: "😀o",
       isComplete: false,

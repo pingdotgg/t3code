@@ -106,7 +106,7 @@ export function getFilesystemBrowseTabCompletion(
   }
   const name = prefix.join("");
   const lowerName = name.toLowerCase();
-  return name.length > filterQuery.length &&
+  return lowerName.length > filterQuery.toLowerCase().length &&
     visibleEntries.every((entry) => entry.name.toLowerCase().startsWith(lowerName))
     ? { name, isComplete: false }
     : null;
