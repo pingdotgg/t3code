@@ -271,6 +271,7 @@ describe("pull request toolkit handlers", () => {
       const harness = yield* makeHarness();
       const result = yield* harness.call("watch_pull_request", {
         url: "https://github.com/t3tools/t3code/pull/9",
+        events: ["review", "checks_failed"],
       });
       expect(result).toMatchObject({ number: 9, watching: false, wasWatching: false });
       expect(yield* Ref.get(harness.commands)).toMatchObject([
@@ -279,6 +280,7 @@ describe("pull request toolkit handlers", () => {
           number: 9,
           watching: true,
           link: { url: "https://github.com/t3tools/t3code/pull/9", source: "agent" },
+          events: ["review", "checks_failed"],
         },
       ]);
     }),

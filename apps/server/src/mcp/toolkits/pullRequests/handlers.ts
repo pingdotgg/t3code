@@ -47,6 +47,7 @@ import {
   PullRequestsToolkit,
   type ThreadPullRequestEntry,
   CHILD_PULL_REQUEST_REPORT_NEXT,
+  type WatchPullRequestInput,
 } from "./tools.ts";
 
 interface ResolvedTarget {
@@ -261,7 +262,7 @@ const make = Effect.gen(function* () {
         : Effect.fail(new Failure({ cause }));
 
   const setWatching = Effect.fn("PullRequestsToolkit.setWatching")(function* (
-    input: PullRequestTargetInput,
+    input: WatchPullRequestInput,
     watching: boolean,
   ) {
     const thread = yield* requireThread(PullRequestWatchFailedError, input.threadId);
@@ -288,6 +289,7 @@ const make = Effect.gen(function* () {
         number: target.number,
         watching,
         ...(watching ? { link: { url: target.url, source: "agent" as const } } : {}),
+        ...(input.events === undefined ? {} : { events: input.events }),
       })
       .pipe(Effect.catchCause(dispatchFailure(PullRequestWatchFailedError)));
     const after = yield* requireThread(PullRequestWatchFailedError, thread.id);

@@ -297,7 +297,9 @@ review is terminal. An open or unsynced link keeps it active.
 Ask the agent to watch, monitor, or babysit a pull request and it calls `watch_pull_request`. While
 the thread is active, the server checks the pull request every two minutes and wakes the agent when a
 check fails, the required checks pass, someone else comments or reviews, or the branch starts to
-conflict. Threads in a project that watch the same pull request share one check. On GitHub, a check
+conflict. To cut wakes on a busy pull request, ask the agent to watch only some of these, such as
+comments, reviews and failed checks. A closed pull request or a watch T3 Code ends still wakes it.
+Threads in a project that watch the same pull request share one check. On GitHub, a check
 first asks whether anything changed and reads the pull request only when it did, which keeps
 watching inside GitHub's rate limit. Comments from your own account do not wake it. Watching ends
 when the pull request merges or closes, after 10 wakes in a row that bring only comments, after 8

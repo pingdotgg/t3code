@@ -31,6 +31,7 @@ import {
   RunId,
   ScheduledTaskId,
   ThreadId,
+  type ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
@@ -3534,6 +3535,184 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ...key,
         watching: false,
       });
+    }),
+  );
+
+  it.effect.each([
+    { name: "widening", before: ["comment"], after: undefined, news: "failure" },
+    { name: "replacement", before: ["comment"], after: ["review"], news: "review" },
+    { name: "narrowing", before: undefined, after: ["comment"], news: "passed-conflict" },
+    { name: "quiet replacement", before: ["comment"], after: ["review"], news: "quiet" },
+  ] satisfies ReadonlyArray<{
+    name: string;
+    before: ThreadPullRequestWatch["events"];
+    after: ThreadPullRequestWatch["events"];
+    news: string;
+  }>)("uses the current events selection after an in-flight host read: $name", (scenario) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const projectId = ProjectId.make(`pr-watch-events-race-project-${scenario.name}`);
+      const threadId = ThreadId.make(`pr-watch-events-race-thread-${scenario.name}`);
+      yield* seedProject({
+        projectId,
+        title: "Watch events race",
+        workspaceRoot: "/workspace/watch-events-race",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`pr-watch-events-race-create-${scenario.name}`),
+        threadId,
+        projectId,
+        title: "Watch events race",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 15 };
+      const watch = (id: string, events: ThreadPullRequestWatch["events"]) =>
+        orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-events-race-${scenario.name}-${id}`),
+          threadId,
+          ...key,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/15", source: "agent" },
+          ...(events === undefined ? {} : { events }),
+        });
+      const watchOf = Effect.map(
+        orchestrator.getThreadShell(threadId),
+        (thread) => thread?.pullRequests?.[0]?.watch,
+      );
+      const summaries = Effect.map(
+        orchestrator.getThreadRecords(threadId, ["messages"]),
+        ({ messages }) => messages.flatMap((message) => message.notification?.summary ?? []),
+      );
+      yield* watch("start", scenario.before);
+      const started = yield* watchOf;
+      assert.isDefined(started);
+      if (started === undefined) return;
+      const reviewAt = DateTime.formatIso(
+        DateTime.add(DateTime.makeUnsafe(started.startedAt), { seconds: 1 }),
+      );
+      let detail: PullRequestDetail = {
+        ...watchedPullRequestDetail({ projectId, number: 15, at: reviewAt }),
+        checks: [{ name: "old", status: "failure" as const, description: null, url: null }],
+      };
+      const comments: Array<PullRequestComment> = [];
+      const readReady = yield* Deferred.make<void>();
+      const releaseRead = yield* Deferred.make<void>();
+      let blocked = false;
+      let fingerprint = "baseline";
+      let reads = 0;
+      const host = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          watchFingerprint: () => Effect.succeed({ status: fingerprint, remarks: fingerprint }),
+          invalidate: () => Effect.void,
+          detail: (reference) =>
+            Effect.gen(function* () {
+              if (reference.projectId === projectId) reads += 1;
+              if (blocked && reference.projectId === projectId) {
+                yield* Deferred.succeed(readReady, undefined);
+                yield* Deferred.await(releaseRead);
+              }
+              return detail;
+            }),
+          activity: (reference) =>
+            Effect.gen(function* () {
+              if (blocked && reference.projectId === projectId) yield* Deferred.await(releaseRead);
+              return {
+                comments: [...comments],
+                commentCount: comments.length,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              };
+            }),
+        }),
+      );
+      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      const sweep = reactor.sweep.pipe(Effect.andThen(worker.drain()));
+      yield* sweep;
+      const observed = yield* watchOf;
+      assert.deepEqual(observed?.failedChecks, ["old"]);
+      const baselineSummaries = yield* summaries;
+      fingerprint = "race";
+      blocked = true;
+      const pending = yield* sweep.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(readReady);
+      yield* watch("change", scenario.after);
+      if (scenario.news === "failure") {
+        detail = { ...detail, checks: [...detail.checks, { ...detail.checks[0]!, name: "new" }] };
+      } else if (scenario.news === "passed-conflict") {
+        detail = {
+          ...detail,
+          mergeability: "conflicting",
+          checks: [{ ...detail.checks[0]!, status: "success" }],
+        };
+      } else if (scenario.news === "review") {
+        comments.push({
+          id: "new-review",
+          kind: "review",
+          author: { login: "reviewer", name: null, avatarUrl: null },
+          body: "Needs a test.",
+          createdAt: reviewAt,
+          url: "https://github.com/pingdotgg/t3code/pull/15#review",
+          path: null,
+          reviewState: "CHANGES_REQUESTED",
+        });
+      }
+      yield* Deferred.succeed(releaseRead, undefined);
+      yield* Fiber.join(pending);
+      assert.deepEqual(
+        { ...(yield* watchOf), events: undefined },
+        { ...observed, events: undefined },
+      );
+      assert.deepEqual((yield* watchOf)?.events, scenario.after);
+      assert.deepEqual(yield* summaries, baselineSummaries);
+      blocked = false;
+      if (scenario.news === "quiet") {
+        comments.push({
+          id: "late-review",
+          kind: "review-comment",
+          author: { login: "reviewer", name: null, avatarUrl: null },
+          body: "Needs a test here.",
+          createdAt: reviewAt,
+          url: "https://github.com/pingdotgg/t3code/pull/15#discussion",
+          path: "test.ts",
+          reviewState: null,
+        });
+      }
+      yield* sweep;
+      assert.equal(reads, 3);
+      assert.equal((yield* watchOf)?.startedAt, started.startedAt);
+      assert.deepEqual(yield* summaries, [
+        ...baselineSummaries,
+        ...(scenario.news === "passed-conflict"
+          ? []
+          : [scenario.news === "failure" ? "#15: checks failed" : "#15: new comments"]),
+      ]);
+      if (scenario.news === "failure") {
+        const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+        const text = messages.at(-1)?.text ?? "";
+        assert.include(text, "  - new");
+        assert.notInclude(text, "  - old");
+      }
+      const recorded = yield* watchOf;
+      yield* sweep;
+      assert.equal(reads, 3);
+      assert.deepEqual(yield* watchOf, recorded);
+      assert.equal(
+        (yield* summaries).length,
+        baselineSummaries.length + (scenario.news === "passed-conflict" ? 0 : 1),
+      );
     }),
   );
 

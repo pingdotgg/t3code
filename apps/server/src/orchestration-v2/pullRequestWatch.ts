@@ -4,6 +4,8 @@ import type {
   PullRequestComment,
   PullRequestDetail,
   ThreadPullRequestWatch,
+  ThreadPullRequestWatchEvent,
+  ThreadPullRequestWatchEvents,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
@@ -30,6 +32,28 @@ export interface PullRequestWatchReport {
 // action-required is a finished check needing human input.
 const isFailedCheck = (check: PullRequestCheck) =>
   check.status === "failure" || check.status === "cancelled" || check.status === "action-required";
+
+const CHANGE_EVENT: Record<
+  Exclude<PullRequestWatchChange["kind"], "remarks">,
+  ThreadPullRequestWatchEvent
+> = {
+  "checks-failed": "checks_failed",
+  "checks-passed": "checks_passed",
+  "no-checks": "no_checks",
+  conflicting: "conflict",
+};
+
+const remarkEvent = (remark: PullRequestComment): ThreadPullRequestWatchEvent =>
+  remark.kind === "issue-comment" ? "comment" : "review";
+
+function wanted(
+  change: PullRequestWatchChange,
+  events: ThreadPullRequestWatchEvents,
+): Array<PullRequestWatchChange> {
+  if (change.kind !== "remarks") return events.includes(CHANGE_EVENT[change.kind]) ? [change] : [];
+  const remarks = change.remarks.filter((remark) => events.includes(remarkEvent(remark)));
+  return remarks.length === 0 ? [] : [{ kind: "remarks", remarks }];
+}
 
 export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
@@ -133,11 +157,15 @@ export function evaluatePullRequestWatch(
   const conflicting =
     detail.mergeability === "unknown" ? watch.conflicting : detail.mergeability === "conflicting";
 
-  const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
-  const progress = headMoved || (changes.length > 0 && !commentsOnly);
+  // Filtered changes still advance the state above, so widening the filter never replays them.
+  const events = watch.events;
+  const waking =
+    events === undefined ? changes : changes.flatMap((change) => wanted(change, events));
+  const commentsOnly = waking.length > 0 && waking.every((change) => change.kind === "remarks");
+  const progress = headMoved || (waking.length > 0 && !commentsOnly);
   const wakes = (progress ? 0 : watch.wakes) + (commentsOnly ? 1 : 0);
   return {
-    changes,
+    changes: waking,
     next: {
       startedAt: watch.startedAt,
       headSha,
