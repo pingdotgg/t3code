@@ -1654,33 +1654,59 @@ const make = Effect.gen(function* () {
     return response;
   });
 
-  /** `mode=wait` on a task already recorded, as `delegateTask` does for its own. */
+  /**
+   * Blocks for `mode=wait`. A wait that ends without a terminal result, including an
+   * interrupted tools/call, upgrades the wake so a later result still reaches the parent.
+   */
   const awaitTask = Effect.fn("OrchestratorMcpService.awaitTask")(function* (
     scope: McpThreadInvocationScope,
     taskId: NodeId,
+    wakePolicyRequestKey: string,
     requestedTimeoutMs: number | undefined,
   ): Effect.fn.Return<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure> {
     const timeoutMs = Math.min(
       MAX_WAIT_TIMEOUT_MS,
       Math.max(1, requestedTimeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
     );
-    const waited = yield* waitForTask(scope, taskId, timeoutMs);
-    if (Option.isSome(waited)) return waited.value;
-    // As for a local task: once the blocking wait ends, a later result wakes the parent.
-    yield* threadManagement
+    const upgradeWake = threadManagement
       .dispatch({
         type: "delegated_task.wake-policy",
         commandId: stableCommandId({
           scope,
-          requestKey: taskId,
+          requestKey: wakePolicyRequestKey,
           operation: "delegate-task-wake-policy",
         }),
         parentThreadId: scope.thread.threadId,
         taskId,
         completionWake: "always",
       })
-      .pipe(Effect.ignoreCause({ log: true }));
-    return yield* readTask(scope, taskId, true, true);
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("orchestrator-mcp.delegate-task.wake-policy-failed", {
+            taskId,
+            outcome:
+              error._tag === "OrchestratorCommandPreviouslyRejectedError"
+                ? "previously_rejected"
+                : "dispatch_failed",
+            error,
+          }),
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("orchestrator-mcp.delegate-task.wake-policy-failed", {
+            taskId,
+            outcome: "defect",
+            cause,
+          }),
+        ),
+      );
+    const waited = yield* waitForTask(scope, taskId, timeoutMs).pipe(
+      Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : upgradeWake)),
+    );
+    if (Option.isSome(waited) && isTerminalTaskStatus(waited.value.status)) {
+      return waited.value;
+    }
+    yield* upgradeWake;
+    return yield* readTask(scope, taskId, Option.isNone(waited), true);
   });
 
   /**
@@ -2318,7 +2344,7 @@ const make = Effect.gen(function* () {
           target: { ...input.target, environmentId },
         });
         return yield* input.mode === "wait"
-          ? awaitTask(scope, taskId, input.timeoutMs)
+          ? awaitTask(scope, taskId, taskId, input.timeoutMs)
           : readTask(scope, taskId, false, true);
       }
       const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
@@ -2416,8 +2442,8 @@ const make = Effect.gen(function* () {
           interactionMode,
           ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
           // Async delegations wake the parent on every child terminal; wait
-          // delegations deliver through the blocking tool call, so a wake is
-          // only needed if the parent settled first (timeout, disconnect).
+          // delegations deliver through the blocking tool call until `awaitTask`
+          // gives up the wait (timeout, cancelled call) and upgrades the wake.
           completionWake: input.mode === "wait" ? "settled_only" : "always",
         })
         .pipe(
@@ -2457,51 +2483,9 @@ const make = Effect.gen(function* () {
         });
       }
 
-      if (input.mode !== "wait") {
-        return yield* readTask(scope, taskId, false, true);
-      }
-      const timeoutMs = Math.min(
-        MAX_WAIT_TIMEOUT_MS,
-        Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
-      );
-      const waited = yield* waitForTask(scope, taskId, timeoutMs);
-      if (Option.isSome(waited) && isTerminalTaskStatus(waited.value.status)) {
-        return waited.value;
-      }
-      // An incomplete wait gives up delivery: upgrade so a later terminal
-      // wakes the parent even mid-turn.
-      yield* threadManagement
-        .dispatch({
-          type: "delegated_task.wake-policy",
-          commandId: stableCommandId({
-            scope,
-            requestKey: key,
-            operation: "delegate-task-wake-policy",
-          }),
-          parentThreadId: scope.thread.threadId,
-          taskId,
-          completionWake: "always",
-        })
-        .pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("orchestrator-mcp.delegate-task.wake-policy-failed", {
-              taskId,
-              outcome:
-                error._tag === "OrchestratorCommandPreviouslyRejectedError"
-                  ? "previously_rejected"
-                  : "dispatch_failed",
-              error,
-            }),
-          ),
-          Effect.catchCause((cause) =>
-            Effect.logWarning("orchestrator-mcp.delegate-task.wake-policy-failed", {
-              taskId,
-              outcome: "defect",
-              cause,
-            }),
-          ),
-        );
-      return yield* readTask(scope, taskId, Option.isNone(waited), true);
+      return yield* input.mode === "wait"
+        ? awaitTask(scope, taskId, key, input.timeoutMs)
+        : readTask(scope, taskId, false, true);
     }),
     taskStatus: Effect.fn("OrchestratorMcpService.taskStatus")(function* (callerScope, taskId) {
       const scope = yield* requireThreadScope(callerScope, "task_status");
