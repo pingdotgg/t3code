@@ -1730,8 +1730,14 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.lengthOf(commands, 1);
           const command = commands[0];
           assert.equal(command?.type, "delegated_task.request");
-          if (command?.type === "delegated_task.request")
+          if (command?.type === "delegated_task.request") {
             assert.equal(command.approvalPolicy, "never");
+            assert.equal(
+              command.modelSelection.instanceId,
+              policySource === "grok" ? ProviderInstanceId.make("grok") : codexInstanceId,
+            );
+            assert.equal(command.runtimeMode, policySource === "grok" ? "full-access" : "auto");
+          }
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
       }),
   );
