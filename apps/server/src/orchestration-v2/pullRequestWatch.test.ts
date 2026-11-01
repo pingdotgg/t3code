@@ -8,6 +8,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
   evaluatePullRequestWatch as evaluate,
+  pullRequestWatchMessage,
 } from "./pullRequestWatch.ts";
 
 // These cases read the head once or at one moment, so the no-checks notice never comes due.
@@ -223,6 +224,103 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(final.next, lateResult, noRemarks).changes, []);
   });
 
+  // regression: #25497 a reported failure stood while the rest finished, and nothing woke the thread
+  it("wakes once more and ends when the rest finish after a reported failure", () => {
+    const labels = { ...check("labels", "failure"), required: true };
+    const early = detail({ checks: [labels, check("test", "pending"), check("lint", "pending")] });
+    const first = evaluatePullRequestWatch(watch(), early, noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "checks-failed", failed: [labels] }]);
+    assert.isFalse(first.finished);
+    assert.deepEqual(evaluatePullRequestWatch(first.next, early, noRemarks).changes, []);
+
+    const partly = detail({ checks: [labels, check("test", "success"), check("lint", "pending")] });
+    assert.deepEqual(evaluatePullRequestWatch(first.next, partly, noRemarks).changes, []);
+
+    const done = detail({ checks: [labels, check("test", "success"), check("lint", "success")] });
+    const incomplete = evaluatePullRequestWatch(first.next, done, null);
+    assert.deepEqual(incomplete.changes, []);
+    assert.isFalse(incomplete.next.finished);
+    const final = evaluatePullRequestWatch(incomplete.next, done, noRemarks);
+    assert.deepEqual(final.changes, [{ kind: "checks-finished", checks: done.checks }]);
+    assert.isTrue(final.finished);
+    assert.isTrue(final.next.finished);
+    assert.deepEqual(evaluatePullRequestWatch(final.next, done, noRemarks).changes, []);
+
+    // A rerun arms the notice again, and its result is news either way.
+    const rerun = detail({ checks: [{ ...labels, status: "pending" }, ...done.checks.slice(1)] });
+    const waiting = evaluatePullRequestWatch(final.next, rerun, noRemarks);
+    assert.deepEqual(waiting.changes, []);
+    assert.isFalse(waiting.next.finished);
+    const green = detail({ checks: [{ ...labels, status: "success" }, ...done.checks.slice(1)] });
+    assert.deepEqual(evaluatePullRequestWatch(waiting.next, green, noRemarks).changes, [
+      { kind: "checks-passed", count: 1, required: true },
+    ]);
+    const red = evaluatePullRequestWatch(waiting.next, done, noRemarks);
+    assert.deepEqual(red.changes, [{ kind: "checks-failed", failed: [labels] }]);
+    assert.isTrue(evaluatePullRequestWatch(red.next, done, noRemarks).finished);
+  });
+
+  it("tells the agent the checks finished on the pass after a failure that came last", () => {
+    const done = detail({ checks: [check("lint", "success"), check("test", "failure")] });
+    const first = evaluatePullRequestWatch(watch(), done, noRemarks);
+    assert.deepEqual(first.changes, [
+      { kind: "checks-failed", failed: [check("test", "failure")] },
+    ]);
+    assert.isFalse(first.finished);
+    const final = evaluatePullRequestWatch(first.next, done, noRemarks);
+    assert.deepEqual(final.changes, [{ kind: "checks-finished", checks: done.checks }]);
+    const pushed = detail({ headSha: "bbbbbbbbbb", checks: [check("test", "pending")] });
+    assert.isFalse(evaluatePullRequestWatch(final.next, pushed, noRemarks).next.finished);
+  });
+
+  it("leaves a watch alone when only an advisory check fails after the required ones passed", () => {
+    const required = { ...check("test", "success"), required: true };
+    const failed = detail({ checks: [required, check("bot", "failure")] });
+    const first = evaluatePullRequestWatch(watch(), failed, noRemarks);
+    assert.deepEqual(
+      first.changes.map((change) => change.kind),
+      ["checks-failed", "checks-passed"],
+    );
+    const again = evaluatePullRequestWatch(first.next, failed, noRemarks);
+    assert.deepEqual(again.changes, []);
+    assert.isFalse(again.finished);
+  });
+
+  it("does not repeat the finished notice when the agent watches again", () => {
+    const done = detail({ checks: [check("lint", "success"), check("test", "failure")] });
+    const told = watch({ headSha: "aaaaaaaaaa", failedChecks: ["test"], finished: true });
+    assert.deepEqual(evaluatePullRequestWatch(told, done, noRemarks).changes, []);
+
+    // A rerun that passed between two reads was never seen pending, yet it ends the told state.
+    const green = detail({ checks: [check("lint", "success"), check("test", "success")] });
+    const passed = evaluatePullRequestWatch(told, green, noRemarks);
+    assert.deepEqual(passed.changes, [{ kind: "checks-passed", count: 2, required: false }]);
+    assert.isFalse(passed.next.finished);
+    const red = evaluatePullRequestWatch(passed.next, done, noRemarks);
+    assert.deepEqual(red.changes, [{ kind: "checks-failed", failed: [check("test", "failure")] }]);
+    assert.isTrue(evaluatePullRequestWatch(red.next, done, noRemarks).finished);
+  });
+
+  it("ends the message with the stop notice when the checks finished", () => {
+    const done = detail({
+      checks: [check("lint", "success"), check("test", "failure"), check("docs", "skipped")],
+    });
+    const first = evaluatePullRequestWatch(watch(), done, noRemarks);
+    const report = evaluatePullRequestWatch(first.next, done, noRemarks);
+    const { text, notification } = pullRequestWatchMessage({
+      number: 1,
+      url: "https://github.com/o/r/pull/1",
+      baseBranch: "main",
+      headSha: report.next.headSha,
+      report,
+    });
+    assert.include(text, "- All 3 checks finished on aaaaaaa. 1 passed. Still failing:");
+    assert.include(text, "  - test https://ci.example/test");
+    assert.include(text, "T3 Code stopped watching: every check has finished");
+    assert.equal(notification.outcome, "failed");
+    assert.equal(notification.summary, "#1: checks finished, stopped watching");
+  });
+
   // regression: #16208 PR watches burned GitHub's rate limit and gave up
   it("does not report passed again for a new passed check where none is required", () => {
     const first = evaluatePullRequestWatch(
@@ -310,7 +408,15 @@ describe("evaluatePullRequestWatch", () => {
     const reported = evaluatePullRequestWatch(watch(), failed, noRemarks);
     assert.equal(reported.changes.length, 1);
     const unreadable = evaluatePullRequestWatch(reported.next, detail({ checks: [] }), noRemarks);
-    assert.deepEqual(evaluatePullRequestWatch(unreadable.next, failed, noRemarks).changes, []);
+    const direct = evaluatePullRequestWatch(reported.next, failed, noRemarks);
+    assert.notInclude(
+      direct.changes.map((change) => change.kind),
+      "checks-failed",
+    );
+    assert.deepEqual(
+      evaluatePullRequestWatch(unreadable.next, failed, noRemarks).changes,
+      direct.changes,
+    );
   });
 
   it("wakes for the pull request's author when the agent is someone else", () => {
