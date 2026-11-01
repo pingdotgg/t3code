@@ -1004,6 +1004,86 @@ describe("deriveMessagesTimelineRows", () => {
     ).toBeDefined();
   });
 
+  it.each(["commentary", undefined] as const)(
+    "keeps confirmed final answers visible across continuations ending with %s",
+    (trailingPhase) => {
+      const fixture = makeStreamingTimelineFixture();
+      const history = fixture.visibleTurnItems.slice(0, 3);
+      const answer = history[2]!.item;
+      const prompt = history[0]!.item;
+      if (answer.type !== "assistant_message" || prompt.type !== "user_message") {
+        throw new Error("Expected the completed history response");
+      }
+      const reply = (id: string, second: number, phase?: "final_answer" | "commentary") => ({
+        ...answer,
+        id: TurnItemId.make(id),
+        messageId: MessageId.make(id),
+        ...(phase === undefined ? {} : { phase }),
+        updatedAt: DateTime.makeUnsafe(fixture.time(second)),
+      });
+      const firstAnswer = { ...answer, phase: "final_answer" as const };
+      const items: OrchestrationV2TurnItem[] = [
+        prompt,
+        history[1]!.item,
+        firstAnswer,
+        {
+          ...firstAnswer,
+          id: TurnItemId.make("wake"),
+          type: "notification",
+          source: { kind: "system" },
+          outcome: "completed",
+          summary: "Delegated task finished",
+        },
+        reply("progress", 5, "commentary"),
+        {
+          ...prompt,
+          id: TurnItemId.make("steer"),
+          messageId: MessageId.make("steer"),
+          inputIntent: "steer",
+        },
+        reply("second-answer", 7, "final_answer"),
+        reply("trailing", 8, trailingPhase),
+      ];
+      const rows = (turnItems: typeof items, expanded = false) =>
+        deriveMessagesTimelineRows({
+          timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+            visibleTurnItems: turnItems.map((item, position) => ({
+              position,
+              visibility: "local",
+              sourceThreadId: fixture.threadId,
+              sourceItemId: item.id,
+              item,
+            })),
+            optimisticMessages: [],
+          }),
+          expandedRunIds: expanded ? new Set([fixture.historyRunId]) : new Set(),
+          isWorking: false,
+          turnDiffSummaries: [],
+          supportsConversationRollback: false,
+        });
+      const assistantIds = (presented: MessagesTimelineRow[]) =>
+        presented.flatMap((row) =>
+          row.kind === "message" && row.message.role === "assistant" ? [row.message.id] : [],
+        );
+      expect(assistantIds(rows(items.slice(0, 3)))).toEqual([answer.messageId]);
+      expect(assistantIds(rows(items))).toEqual([
+        answer.messageId,
+        "second-answer",
+        ...(trailingPhase === undefined ? ["trailing"] : []),
+      ]);
+      expect(
+        assistantIds(
+          rows(
+            items.map((item) =>
+              item.id === answer.id ? { ...item, status: "interrupted", completedAt: null } : item,
+            ),
+          ),
+        ),
+      ).not.toContain(answer.messageId);
+      expect(assistantIds(rows(items.slice(0, 5), true))).toEqual([answer.messageId, "progress"]);
+    },
+  );
+
   it.each([1, 2, 3])("folds %i completed activities after the terminal response", (count) => {
     const runId = RunId.make("turn-1");
     const timelineEntries = [
@@ -2877,34 +2957,51 @@ describe("v2 run and attempt history", () => {
         .filter((row) => row.kind === "turn-fold")
         .flatMap((row) => row.deferredWorkItemIds ?? []),
     ).not.toContain("old-work-anchor");
+    const deferredTailEntries: TimelineEntry[] = [
+      timelineEntries[0]!,
+      timelineEntries[2]!,
+      timelineEntries[1]!,
+      ...timelineEntries.slice(3),
+    ].map((entry) => ({
+      ...entry,
+      attempt:
+        entry.attempt.id === supersededAttemptId
+          ? { ...entry.attempt, completedAt: DateTime.makeUnsafe("2026-01-01T00:00:08Z") }
+          : entry.attempt,
+      ...(entry.id === "superseded-assistant-entry"
+        ? {
+            projectedItem: {
+              item: {
+                type: "assistant_message",
+                ordinal: 2,
+                status: "completed",
+                completedAt: DateTime.makeUnsafe("2026-01-01T00:00:03Z"),
+              },
+            } as never,
+          }
+        : {}),
+    }));
     const deferredTailRows = deriveMessagesTimelineRows({
       ...common,
-      timelineEntries: [
-        timelineEntries[0]!,
-        timelineEntries[2]!,
-        timelineEntries[1]!,
-        ...timelineEntries.slice(3),
-      ].map((entry) => ({
-        ...entry,
-        attempt:
-          entry.attempt.id === supersededAttemptId
-            ? { ...entry.attempt, completedAt: DateTime.makeUnsafe("2026-01-01T00:00:08Z") }
-            : entry.attempt,
-        ...(entry.id === "superseded-assistant-entry"
-          ? {
-              projectedItem: {
-                item: {
-                  type: "assistant_message",
-                  ordinal: 2,
-                  status: "completed",
-                  completedAt: DateTime.makeUnsafe("2026-01-01T00:00:03Z"),
-                },
-              } as never,
-            }
-          : {}),
-      })),
+      timelineEntries: deferredTailEntries,
     });
     expect(deferredTailRows.some((row) => row.kind === "attempt-fold")).toBe(true);
+    const confirmedRows = deriveMessagesTimelineRows({
+      ...common,
+      timelineEntries: deferredTailEntries.map((entry) =>
+        entry.kind === "message" && entry.projectedItem?.item.type === "assistant_message"
+          ? {
+              ...entry,
+              projectedItem: {
+                ...entry.projectedItem,
+                item: { ...entry.projectedItem.item, phase: "final_answer" },
+              },
+            }
+          : entry,
+      ),
+    });
+    expect(confirmedRows.some((row) => row.id === "superseded-assistant-entry")).toBe(true);
+    expect(confirmedRows.some((row) => row.kind === "attempt-fold")).toBe(true);
   });
 
   describe("a steer that supersedes an attempt", () => {
@@ -2930,6 +3027,7 @@ describe("v2 run and attempt history", () => {
       id: string,
       attempt: typeof supersededAttempt | typeof nextAttempt,
       completedSecond: number,
+      phase?: "final_answer" | "commentary",
     ): TimelineEntry => ({
       id,
       kind: "message",
@@ -2948,6 +3046,8 @@ describe("v2 run and attempt history", () => {
         item: {
           type: "assistant_message",
           status: "completed",
+          ...(phase === undefined ? {} : { phase }),
+          streaming: false,
           completedAt: DateTime.makeUnsafe(at(completedSecond)),
         },
       } as never,
@@ -2955,6 +3055,7 @@ describe("v2 run and attempt history", () => {
     const rowsFor = (
       replyCompletedSecond: number,
       runStatus: "running" | "completed" = "completed",
+      phase?: "final_answer" | "commentary",
     ) =>
       deriveMessagesTimelineRows({
         timelineEntries: [
@@ -2981,7 +3082,7 @@ describe("v2 run and attempt history", () => {
             attempt: supersededAttempt,
             entry: { id: "old-work", createdAt: at(1), runId, label: "Read", tone: "tool" },
           },
-          assistantEntry("old-reply-entry", supersededAttempt, replyCompletedSecond),
+          assistantEntry("old-reply-entry", supersededAttempt, replyCompletedSecond, phase),
           {
             id: "steer-user-entry",
             kind: "message",
@@ -3012,11 +3113,15 @@ describe("v2 run and attempt history", () => {
       });
 
     it.each(["running", "completed"] as const)(
-      "keeps a reply that finished before the steer visible while the run is %s",
+      "preserves final replies and folds commentary before a steer while the run is %s",
       (runStatus) => {
-        const rows = rowsFor(4, runStatus);
-        expect(rows.some((row) => row.kind === "attempt-fold")).toBe(false);
-        expect(rows.map((row) => row.id)).toContain("old-reply-entry");
+        for (const phase of [undefined, "final_answer", "commentary"] as const) {
+          const rows = rowsFor(4, runStatus, phase);
+          expect(rows.some((row) => row.kind === "attempt-fold")).toBe(
+            phase === "commentary" && runStatus === "running",
+          );
+          expect(rows.some((row) => row.id === "old-reply-entry")).toBe(phase !== "commentary");
+        }
       },
     );
 

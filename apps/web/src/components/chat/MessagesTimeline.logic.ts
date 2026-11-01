@@ -682,7 +682,11 @@ export function resolveAssistantMessageCopyState({
 }
 
 function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
-  const lastAssistantMessageIdByResponseKey = new Map<string, string>();
+  const lastAssistantMessageByResponseKey = new Map<
+    string,
+    Extract<TimelineEntry, { kind: "message" }>
+  >();
+  const lastFinalAnswerIdByResponseKey = new Map<string, string>();
   let nullTurnResponseIndex = 0;
 
   for (const timelineEntry of timelineEntries) {
@@ -701,10 +705,33 @@ function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<Timeli
     const responseKey = message.runId
       ? `turn:${message.runId}`
       : `unkeyed:${nullTurnResponseIndex}`;
-    lastAssistantMessageIdByResponseKey.set(responseKey, message.id);
+    lastAssistantMessageByResponseKey.set(responseKey, timelineEntry);
+    if (timelineEntryIsConfirmedFinalAnswer(timelineEntry)) {
+      lastFinalAnswerIdByResponseKey.set(responseKey, message.id);
+    }
   }
 
-  return new Set(lastAssistantMessageIdByResponseKey.values());
+  return new Set(
+    [...lastAssistantMessageByResponseKey].flatMap(([key, entry]) => {
+      const item = entry.projectedItem?.item;
+      const phase = item?.type === "assistant_message" ? item.phase : undefined;
+      const id = phase === undefined ? entry.message.id : lastFinalAnswerIdByResponseKey.get(key);
+      return id === undefined ? [] : [id];
+    }),
+  );
+}
+
+function timelineEntryIsConfirmedFinalAnswer(entry: TimelineEntry): boolean {
+  if (entry.kind !== "message" || entry.message.role !== "assistant" || entry.message.streaming) {
+    return false;
+  }
+  const item = entry.projectedItem?.item;
+  return (
+    item?.type === "assistant_message" &&
+    item.phase === "final_answer" &&
+    item.status === "completed" &&
+    !item.streaming
+  );
 }
 
 interface TurnFold {
@@ -763,6 +790,7 @@ function completeSupersededReplyEntryIds(
       entry.kind === "message" &&
       !entry.message.streaming &&
       item?.type === "assistant_message" &&
+      item.phase !== "commentary" &&
       item.status === "completed" &&
       item.completedAt !== null &&
       supersededAt !== null &&
@@ -795,6 +823,7 @@ function deriveSupersededAttemptFolds(
       (entry.kind === "event" && entry.projectedItem.item.type === "handoff") ||
       entry.kind === "html-render" ||
       entry.kind === "mcp-app" ||
+      timelineEntryIsConfirmedFinalAnswer(entry) ||
       timelineEntryIsPersistentResourceCard(entry) ||
       liveSubagentEntryIds.has(entry.id) ||
       (entry.kind === "work" && entry.entry.itemType === "system_notice")
@@ -1121,14 +1150,15 @@ function deriveTurnFolds(input: {
       ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
       : group.entries.length;
     for (const [index, entry] of group.entries.entries()) {
-      if (entry.id === group.terminalEntry?.id) {
+      if (entry.id === group.terminalEntry?.id || timelineEntryIsConfirmedFinalAnswer(entry)) {
         continue;
       }
       const isCompaction = timelineEntryIsCompaction(entry);
       const isFoldableTrailingActivity =
-        entry.kind === "work" &&
-        entry.entry.toolLifecycleStatus !== "inProgress" &&
-        !workEntryDisplayIndicatesToolFailure(entry.entry);
+        entry.kind === "message" ||
+        (entry.kind === "work" &&
+          entry.entry.toolLifecycleStatus !== "inProgress" &&
+          !workEntryDisplayIndicatesToolFailure(entry.entry));
       if (!isCompaction && index > terminalEntryIndex && !isFoldableTrailingActivity) {
         continue;
       }

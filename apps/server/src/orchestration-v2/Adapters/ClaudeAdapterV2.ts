@@ -1858,6 +1858,14 @@ function assistantTextFromSdkMessage(
   };
 }
 
+function claudeAssistantPhase(stopReason: unknown) {
+  return stopReason === "end_turn"
+    ? ("final_answer" as const)
+    : stopReason === "tool_use"
+      ? ("commentary" as const)
+      : undefined;
+}
+
 function resultTextFromSdkMessage(
   message: SDKMessage,
 ): { readonly nativeItemId: string; readonly text: string } | null {
@@ -3857,10 +3865,11 @@ function buildAssistantArtifacts(input: {
   readonly ordinal: number;
   readonly startedAt: DateTime.Utc;
   readonly completedAt: DateTime.Utc;
+  readonly phase?: "final_answer" | "commentary";
 }): {
   readonly node: OrchestrationV2ExecutionNode;
   readonly message: OrchestrationV2ConversationMessage;
-  readonly turnItem: OrchestrationV2TurnItem;
+  readonly turnItem: Extract<OrchestrationV2TurnItem, { type: "assistant_message" }>;
 } {
   const nodeId = input.idAllocator.derive.nodeFromProviderItem({
     driver: CLAUDE_PROVIDER,
@@ -3931,6 +3940,7 @@ function buildAssistantArtifacts(input: {
       messageId,
       text: input.text,
       streaming: false,
+      ...(input.phase === undefined ? {} : { phase: input.phase }),
     },
   };
 }
@@ -3990,7 +4000,15 @@ interface ActiveClaudeTurnContext {
   readonly assistant: {
     fallbackText: string;
     fallbackNativeItemId: string;
+    fallbackPhase: "final_answer" | "commentary" | undefined;
     emittedNativeItemIds: Set<string>;
+    messages: Map<
+      string,
+      {
+        phase?: "final_answer" | "commentary";
+        items: Map<string, Extract<OrchestrationV2TurnItem, { type: "assistant_message" }>>;
+      }
+    >;
     // The CLI repeats a notice that ends a prompt as the turn's result text.
     noticeTexts: Set<string>;
   };
@@ -7441,6 +7459,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ordinal,
               startedAt: input.context.startedAt,
               completedAt: input.completedAt,
+              ...(input.status === "completed" &&
+              input.context.assistant.fallbackPhase !== undefined
+                ? { phase: input.context.assistant.fallbackPhase }
+                : {}),
             });
             yield* Effect.all(
               [
@@ -7649,15 +7671,47 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
+        // SDK blocks arrive before their message's final stop reason.
+        const updateAssistantMessagePhase = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          nativeMessageId: string,
+          stopReason: unknown,
+        ) {
+          const phase = claudeAssistantPhase(stopReason);
+          if (phase === undefined) return;
+          let message = context.assistant.messages.get(nativeMessageId);
+          if (message === undefined) {
+            message = { items: new Map() };
+            context.assistant.messages.set(nativeMessageId, message);
+          }
+          if (message.phase === phase) return;
+          message.phase = phase;
+          for (const item of message.items.values()) {
+            const turnItem = { ...item, phase };
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem,
+            });
+          }
+          message.items.clear();
+        });
+
         const emitAssistantTextArtifacts = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly nativeItemId: string;
+          readonly nativeMessageId: string;
           readonly text: string;
         }) {
           if (input.context.assistant.emittedNativeItemIds.has(input.nativeItemId)) {
             return;
           }
           input.context.assistant.emittedNativeItemIds.add(input.nativeItemId);
+          let message = input.context.assistant.messages.get(input.nativeMessageId);
+          if (message === undefined) {
+            message = { items: new Map() };
+            input.context.assistant.messages.set(input.nativeMessageId, message);
+          }
           const now = yield* DateTime.now;
           const ordinal = yield* resolveItemOrdinal(input.context, input.nativeItemId);
           const artifacts = buildAssistantArtifacts({
@@ -7669,7 +7723,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ordinal,
             startedAt: now,
             completedAt: now,
+            ...(message.phase === undefined ? {} : { phase: message.phase }),
           });
+          if (message.phase === undefined) {
+            message.items.set(input.nativeItemId, artifacts.turnItem);
+          }
           yield* Effect.all(
             [
               emitProviderEvent({
@@ -8362,6 +8420,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 usage === undefined ? null : { messageId: event.message.id, usage };
               if (usage !== undefined) yield* emitContextUsage(context, usage, true);
             } else if (event.type === "message_delta") {
+              const nativeMessageId = field(message, "api_message_id");
+              const messageId =
+                typeof nativeMessageId === "string" ? nativeMessageId : reasoning.messageId;
+              if (messageId !== null) {
+                yield* updateAssistantMessagePhase(context, messageId, event.delta.stop_reason);
+              }
               const usage: typeof event.usage | undefined = event.usage;
               const stream = context.streamUsage;
               if (stream?.usage && usage !== undefined) {
@@ -8408,6 +8472,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return;
           }
+          if (message.type === "assistant" && !message.parent_tool_use_id) {
+            yield* updateAssistantMessagePhase(
+              context,
+              message.message.id,
+              message.message.stop_reason,
+            );
+          }
           if (
             message.type === "assistant" &&
             !message.parent_tool_use_id &&
@@ -8429,6 +8500,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   yield* emitAssistantTextArtifacts({
                     context,
                     nativeItemId: update.itemId,
+                    nativeMessageId: update.messageId,
                     text: update.text,
                   });
                 }
@@ -9263,10 +9335,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             return;
           }
-          if (assistantText !== null && assistantText.text.length > 0) {
+          if (
+            message.type === "assistant" &&
+            assistantText !== null &&
+            assistantText.text.length > 0
+          ) {
             yield* emitAssistantTextArtifacts({
               context,
               nativeItemId: assistantText.nativeItemId,
+              nativeMessageId: message.message.id,
               text: assistantText.text,
             });
             return;
@@ -9330,6 +9407,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             context.assistant.fallbackText = resultText.text;
             context.assistant.fallbackNativeItemId = resultText.nativeItemId;
+            context.assistant.fallbackPhase =
+              message.type === "result" ? claudeAssistantPhase(message.stop_reason) : undefined;
           }
 
           if (message.type === "result") {
@@ -10481,7 +10560,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               assistant: {
                 fallbackText: "",
                 fallbackNativeItemId: `assistant:${turnInput.runId}`,
+                fallbackPhase: undefined,
                 emittedNativeItemIds: new Set(),
+                messages: new Map(),
                 noticeTexts: new Set(),
               },
               reasoning: {

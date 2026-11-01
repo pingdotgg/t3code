@@ -1606,6 +1606,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("assistant_message"),
     messageId: MessageId,
+    /** Absent for older history and providers that cannot identify answer intent. */
+    phase: Schema.optional(Schema.Literals(["final_answer", "commentary"])),
     text: Schema.String,
     textOmitted: DedupedBodyMarker,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
@@ -2436,6 +2438,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("assistant_message"),
     messageId: MessageId,
+    phase: Schema.optional(Schema.Literals(["final_answer", "commentary"])),
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
     streaming: Schema.Boolean,

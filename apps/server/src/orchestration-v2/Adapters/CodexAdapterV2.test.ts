@@ -3421,12 +3421,192 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             assistantMessages(harness.events).map((event) => event.message.text),
             ["CODEX_RECOVERY_OK", "CODEX_RECOVERY_OK"],
           );
+          assert.deepEqual(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+                ? [event.turnItem.phase]
+                : [],
+            ),
+            ["commentary", "final_answer"],
+          );
         }).pipe(
           Effect.provide(
             Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
           ),
         ),
       ),
+  );
+
+  it.effect.each([false, true])(
+    "retains explicit answer phases without inferring missing phases (streamed: %s)",
+    (streamed) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const transcript = finalAnswerTranscript("codex-answer-phases", [
+            { id: "commentary", text: "Checking.", phase: "commentary", streamed },
+            { id: "answer-first", text: "First answer.", phase: "final_answer", streamed },
+            { id: "unknown-null", text: "Unknown null.", phase: null, streamed },
+            { id: "answer-second", text: "Second answer.", phase: "final_answer", streamed },
+            { id: "unknown-omitted", text: "Unknown omitted.", omitPhase: true, streamed },
+          ]);
+          const harness = yield* makeCodexReplayHarness(transcript);
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-codex-answer-phases"),
+              text: "Reply with the requested recovery marker.",
+            }),
+          );
+          yield* harness.awaitTerminal(1);
+          assert.deepEqual(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "assistant_message" &&
+              event.turnItem.status === "completed"
+                ? [[event.turnItem.text, event.turnItem.phase]]
+                : [],
+            ),
+            [
+              ["Checking.", "commentary"],
+              ["First answer.", "final_answer"],
+              ["Unknown null.", undefined],
+              ["Second answer.", "final_answer"],
+              ["Unknown omitted.", undefined],
+            ],
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each(["completed", "interrupted"] as const)(
+    "does not confirm unfinished final-answer text when the turn is %s",
+    (status) =>
+      Effect.gen(function* () {
+        const scenario = `codex-unfinished-answer-${status}`;
+        const base = finalAnswerTranscript(scenario, [
+          { id: "answer", text: "Unfinished answer", phase: "final_answer", streamed: true },
+        ]);
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...base.entries.slice(0, -2),
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: `native-${scenario}-thread`,
+                    turn: makeCodexReplayTurn({ id: `native-${scenario}-turn`, status }),
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: "Reply with the requested recovery marker.",
+          }),
+        );
+        yield* harness.awaitTerminal(1);
+        const items = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [event.turnItem]
+            : [],
+        );
+        assert.equal(items.at(-1)?.text, "Unfinished answer");
+        assert.equal(items.at(-1)?.phase, "commentary");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+        Effect.scoped,
+      ),
+  );
+
+  it.effect("confirms a retained answer completed after the turn cleanup flush", () =>
+    Effect.gen(function* () {
+      const scenario = "codex-late-answer-completion";
+      const base = finalAnswerTranscript(scenario, [
+        { id: "answer", text: "Done.", phase: "final_answer", streamed: true },
+      ]);
+      const completion = yield* Deferred.make<void>();
+      const drained = yield* Deferred.make<void>();
+      const notification = (type: "imageGeneration" | "contextCompaction", id: string) => ({
+        type: "emit_inbound" as const,
+        frame: {
+          method: type === "imageGeneration" ? "item/started" : "item/completed",
+          params: {
+            threadId: `native-${scenario}-thread`,
+            turnId: `native-${scenario}-turn`,
+            item:
+              type === "imageGeneration"
+                ? { type, id, status: "inProgress", result: "" }
+                : { type, id },
+          },
+        },
+      });
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...base.entries.slice(0, -2),
+            notification("imageGeneration", "background-image"),
+            ...base.entries.slice(-1),
+            ...base.entries.slice(-2, -1),
+            notification("contextCompaction", "drained"),
+          ],
+        }),
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "compaction" &&
+          event.turnItem.nativeItemRef?.nativeId === "drained"
+            ? Deferred.succeed(drained, undefined)
+            : Effect.void,
+        undefined,
+        undefined,
+        (entry) =>
+          entry.label === "item/completed/answer" ? Deferred.await(completion) : Effect.void,
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`attempt-${scenario}`),
+          text: "Reply with the requested recovery marker.",
+        }),
+      );
+      yield* harness.firstTerminal;
+      yield* Deferred.succeed(completion, undefined);
+      yield* Deferred.await(drained);
+      const items = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        items.map((item) => item.phase),
+        ["commentary", "final_answer"],
+      );
+      assert.equal(items[0]?.id, items[1]?.id);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+      Effect.scoped,
+    ),
   );
 
   it.effect.each([
@@ -3500,6 +3680,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.strictEqual(messages.at(-1)?.message.text, expected);
       assert.strictEqual(messages.at(-1)?.message.streaming, false);
       assert.strictEqual(new Set(messages.map(({ message }) => message.id)).size, 1);
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [event.turnItem.phase]
+            : [],
+        ),
+        reply === null ? [undefined] : ["final_answer", "final_answer"],
+      );
       // Image bytes stay with Codex; clients load the saved file.
       assert.notInclude(encodeUnknownJson(harness.events), result);
     }).pipe(
