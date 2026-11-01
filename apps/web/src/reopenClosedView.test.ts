@@ -29,6 +29,8 @@ const snapshot: PreviewSessionSnapshot = {
   canGoForward: false,
   viewport: { _tag: "freeform", width: 1200, height: 800 },
   profileId: "work",
+  zoomFactor: 1.5,
+  colorScheme: "dark",
   updatedAt: "2026-09-22T12:00:00.000Z",
 };
 
@@ -87,7 +89,7 @@ describe("reopenClosedView", () => {
     ).toEqual([]);
   });
 
-  it("recreates a browser tab with saved URL, viewport and profile, then selects its new ID", async () => {
+  it("recreates a browser tab with saved URL, viewport, profile, zoom and appearance, then selects its new ID", async () => {
     const openPreview = vi.fn(async () => AsyncResult.success({ ...snapshot, tabId: "new-tab" }));
     const result = await reopenClosedView(
       { kind: "browser", threadRef, snapshot },
@@ -101,6 +103,8 @@ describe("reopenClosedView", () => {
         url: "https://example.com",
         viewport: snapshot.viewport,
         profileId: "work",
+        zoomFactor: 1.5,
+        colorScheme: "dark",
       },
     });
     expect(readThreadPreviewState(threadRef).snapshot?.tabId).toBe("new-tab");

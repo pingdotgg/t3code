@@ -30,7 +30,7 @@ import {
   useRightPanelStore,
 } from "~/rightPanelStore";
 
-import { resolveBrowserDefaults } from "./browserDefaults";
+import { browserDefaultOpenRendering, resolveBrowserDefaults } from "./browserDefaults";
 
 export const isBrowserPreviewFile = (path: string): boolean =>
   /\.(?:html?|pdf)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
@@ -83,6 +83,7 @@ export async function openUrlInPreview<E>(input: {
       url: input.url,
       viewport: defaults.viewport,
       profileId: input.profileId ?? defaults.profileId,
+      ...browserDefaultOpenRendering(defaults),
       ...(runtime === undefined ? {} : { runtime }),
     },
   });

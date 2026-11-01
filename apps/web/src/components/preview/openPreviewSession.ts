@@ -1,16 +1,18 @@
 import type {
   EnvironmentId,
+  PreviewAppearancePreference,
   PreviewOpenInput,
   PreviewRuntime,
   PreviewSessionSnapshot,
   PreviewViewportSetting,
+  PreviewZoomFactor,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 
-import { resolveBrowserDefaults } from "~/browser/browserDefaults";
+import { browserDefaultOpenRendering, resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { previewRuntimeFor } from "~/browser/previewRuntime";
 import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
@@ -24,6 +26,8 @@ interface OpenPreviewSessionInput<E> {
   url?: string;
   viewport?: PreviewViewportSetting;
   profileId?: string;
+  zoomFactor?: PreviewZoomFactor;
+  colorScheme?: PreviewAppearancePreference;
   runtime?: PreviewRuntime;
 }
 
@@ -45,6 +49,9 @@ export async function openPreviewSession<E>(
       ...(input.url === undefined ? {} : { url: input.url }),
       viewport: input.viewport ?? defaults.viewport,
       profileId: input.profileId ?? defaults.profileId,
+      ...browserDefaultOpenRendering(defaults),
+      ...(input.zoomFactor === undefined ? {} : { zoomFactor: input.zoomFactor }),
+      ...(input.colorScheme === undefined ? {} : { colorScheme: input.colorScheme }),
       ...(runtime === undefined || runtime === "desktop" ? {} : { runtime }),
     },
   });
