@@ -649,6 +649,44 @@ it.effect(
     }),
 );
 
+it.effect.each([
+  [
+    "carries a list on past an empty slice whose host consumed rows",
+    3,
+    "2026-07-02T00:00:00Z|1|7",
+    { "github.com pingdotgg/t3code": "2026-07-02T00:00:00Z|4|7" },
+  ],
+  [
+    "carries a list on from its read time when the first slice kept nothing",
+    3,
+    undefined,
+    { "github.com pingdotgg/t3code": "2026-07-03T00:00:00.000Z|3|" },
+  ],
+  ["ends a list on an empty slice whose host consumed nothing", 0, "2026-07-02T00:00:00Z|1|7", {}],
+] as const)("%s", ([, cursorAdvance, cursor, nextCursors]) =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: () =>
+            Effect.succeed({ items: [], truncated: true, continues: true, cursorAdvance }),
+        }),
+      ],
+    });
+    yield* TestClock.setTime(Date.parse("2026-07-03T00:00:00Z"));
+
+    const result = yield* service.list({
+      state: "open",
+      ...(cursor === undefined ? {} : { cursors: { "github.com pingdotgg/t3code": cursor } }),
+    });
+
+    assert.deepStrictEqual<Record<string, string>>(result.nextCursors, nextCursors);
+  }),
+);
+
 it.effect("keeps a row already sent at the boundary instant from arriving twice", () =>
   Effect.gen(function* () {
     const service = yield* makeService({

@@ -742,6 +742,114 @@ it.effect("says an author search was cut short by a server that pages below its 
   ),
 );
 
+const closedPull = (number: number, merged: boolean) => ({
+  number,
+  title: `Change ${number}`,
+  body: "",
+  html_url: `https://forgejo.test/maria/project/pulls/${number}`,
+  user: { login: "maria" },
+  state: "closed",
+  merged,
+  head: { ref: `change-${number}`, sha: "head", repo: null },
+  base: { ref: "main", sha: "base", repo: null },
+  created_at: "2026-09-01T00:00:00Z",
+  updated_at: `2026-09-01T10:${String(59 - number).padStart(2, "0")}:00Z`,
+  closed_at: "2026-09-02T00:00:00Z",
+  merged_at: merged ? "2026-09-02T00:00:00Z" : null,
+  labels: [],
+});
+
+// Forgejo answers `state=closed` with merged and unmerged pull requests alike. This server caps
+// pages at three rows, and its second page holds only merged pull requests.
+const closedPulls = [true, false, true, true, true, true, false, true, false, false].map(
+  (merged, index) => closedPull(index + 1, merged),
+);
+
+const listClosedPulls = (
+  state: "closed" | "merged",
+  limit: number,
+  delivered?: number,
+  requests: Array<string> = [],
+) =>
+  Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const list = yield* provider.listChangeRequests({
+      cwd: "/repo",
+      repository: "maria/project",
+      host: "forgejo.test",
+      state,
+      involvement: "all",
+      viewer: "maria",
+      limit,
+      ...(delivered === undefined
+        ? {}
+        : { cursor: { updatedBefore: "2026-09-01T00:00:00Z", delivered } }),
+    });
+    return {
+      numbers: list.items.map((item) => item.number),
+      states: new Set(list.items.map((item) => item.state)),
+      truncated: list.truncated,
+      cursorAdvance: list.cursorAdvance,
+    };
+  }).pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          const [path, query] = input.path.split("?");
+          assert.strictEqual(path, "repos/maria/project/pulls");
+          const params = new URLSearchParams(query);
+          requests.push(`${params.get("state")}:${params.get("page")}`);
+          const page = Number(params.get("page"));
+          const rel = page * 3 < closedPulls.length ? "next" : "prev";
+          return encodeJsonEffect(closedPulls.slice((page - 1) * 3, page * 3)).pipe(
+            Effect.orDie,
+            Effect.map((stdout) =>
+              processOutput(stdout, { stderr: `Link: <${input.path}>; rel="${rel}"` }),
+            ),
+          );
+        },
+      }),
+    ),
+  );
+
+it.effect.each([
+  ["closed", [2, 7, 9, 10]],
+  ["merged", [1, 3, 4, 5, 6, 8]],
+] as const)("lists only %s Forgejo pull requests from mixed closed pages", ([state, numbers]) =>
+  Effect.gen(function* () {
+    const requests: Array<string> = [];
+    const list = yield* listClosedPulls(state, 20, undefined, requests);
+    assert.deepStrictEqual<ReadonlyArray<number>>(list.numbers, numbers);
+    assert.deepStrictEqual([...list.states], [state]);
+    assert.strictEqual(list.truncated, false);
+    assert.strictEqual(list.cursorAdvance, closedPulls.length);
+    assert.deepStrictEqual(requests, ["closed:1", "closed:2", "closed:3", "closed:4"]);
+  }),
+);
+
+it.effect.each([
+  ["closed", 3, [[2], [], [7, 9], [10]], [3, 3, 3, 1]],
+  ["merged", 4, [[1, 3, 4], [5, 6, 8], []], [4, 4, 2]],
+] as const)(
+  "continues the %s Forgejo list after the rows already consumed",
+  ([state, limit, slices, advances]) =>
+    Effect.gen(function* () {
+      const seen: Array<ReadonlyArray<number>> = [];
+      const consumed: Array<number | undefined> = [];
+      let delivered: number | undefined;
+      for (;;) {
+        const list = yield* listClosedPulls(state, limit, delivered);
+        seen.push(list.numbers);
+        consumed.push(list.cursorAdvance);
+        if (!list.truncated) break;
+        delivered = (delivered ?? 0) + (list.cursorAdvance ?? 0);
+      }
+      assert.deepStrictEqual<ReadonlyArray<ReadonlyArray<number>>>(seen, slices);
+      // Each slice reads at most `limit` rows however few of them it keeps.
+      assert.deepStrictEqual<ReadonlyArray<number | undefined>>(consumed, advances);
+    }),
+);
+
 it.effect("gives Forgejo identities the browser URL of the login that serves them", () =>
   Effect.gen(function* () {
     const provider = yield* ForgejoSourceControlProvider.make;
