@@ -312,6 +312,9 @@ export class ProviderAdapterSteerRunUnsupportedError extends Schema.TaggedError<
   }
 }
 
+/** The live turn did not take the steer. Send the same message as the next turn. */
+export const steerRevertToFollowUp = "steer_revert_to_follow_up";
+
 export class ProviderAdapterSteerRunError extends Schema.TaggedError<ProviderAdapterSteerRunError>()(
   "ProviderAdapterSteerRunError",
   {

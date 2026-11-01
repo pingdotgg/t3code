@@ -1,8 +1,11 @@
 import { assert, it } from "@effect/vitest";
 import {
+  MessageId,
   type ModelSelection,
   NodeId,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderDriverKind,
@@ -14,6 +17,11 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import {
+  ProviderAdapterSteerRunError,
+  steerRevertToFollowUp,
+} from "@t3tools/provider-core/server/ProviderAdapter";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -339,4 +347,199 @@ it.effect(
       assert.equal(interrupted?.id, providerThreadId);
       assert.equal(interrupted?.nativeThreadRef?.nativeId, "native-thread:restart-session");
     }),
+);
+
+it.effect("sends a declined Cursor steer as the next turn once the run has stopped", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:steer-follow-up");
+    const providerSessionId = ProviderSessionId.make("provider-session:steer-follow-up");
+    const providerThreadId = ProviderThreadId.make("provider-thread:steer-follow-up");
+    const providerTurnId = ProviderTurnId.make("provider-turn:steer-follow-up");
+    const attemptId = RunAttemptId.make("run-attempt:steer-follow-up");
+    const providerThread: OrchestrationV2ProviderThread = {
+      id: providerThreadId,
+      driver,
+      providerInstanceId,
+      providerSessionId,
+      appThreadId: threadId,
+      ownerNodeId: null,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      status: "active",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const projection = yield* Ref.make(
+      makeProjection({ now, threadId, providerThread, providerTurnId, attemptId }),
+    );
+    const message = {
+      id: MessageId.make("message:steer-follow-up"),
+      text: "change direction",
+      attachments: [],
+      createdBy: "user",
+      creationSource: "web",
+    } as OrchestrationV2ConversationMessage;
+    const run = {
+      id: RunId.make("run:steer-follow-up"),
+      status: "running",
+      activeAttemptId: attemptId,
+    } as OrchestrationV2Run;
+    let decline = true;
+    const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
+      instanceId: providerInstanceId,
+      driver,
+      providerSessionId,
+      providerSession: {
+        id: providerSessionId,
+        driver,
+        providerInstanceId,
+        status: "running",
+        cwd: "/workspace",
+        model: modelSelection.model,
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      },
+      events: Stream.empty,
+      ensureThread: () => Effect.die("unused ensureThread"),
+      resumeThread: () => Effect.die("unused resumeThread"),
+      startTurn: () => Effect.die("unused startTurn"),
+      steerTurn: () =>
+        decline
+          ? Ref.update(projection, (current) => ({
+              ...current,
+              providerTurns: current.providerTurns.map((turn) =>
+                turn.id === providerTurnId
+                  ? { ...turn, status: "interrupted" as const, completedAt: now }
+                  : turn,
+              ),
+            })).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ProviderAdapterSteerRunError({
+                    driver,
+                    providerThreadId,
+                    providerTurnId,
+                    cause: steerRevertToFollowUp,
+                  }),
+                ),
+              ),
+            )
+          : Effect.fail(
+              new ProviderAdapterSteerRunError({
+                driver,
+                providerThreadId,
+                providerTurnId,
+                cause: "network",
+              }),
+            ),
+      interruptTurn: () => Effect.die("unused interruptTurn"),
+      respondToRuntimeRequest: () => Effect.die("unused respondToRuntimeRequest"),
+      readThreadSnapshot: () => Effect.die("unused readThreadSnapshot"),
+      rollbackThread: () => Effect.die("unused rollbackThread"),
+      forkThread: () => Effect.die("unused forkThread"),
+    };
+    const layerControl = ProviderTurnControlService.layer.pipe(
+      Layer.provide(
+        Layer.merge(
+          Layer.succeed(
+            ProjectionStore.ProjectionStoreV2,
+            new Proxy(
+              {
+                getThread: () => Ref.get(projection).pipe(Effect.map((state) => state.thread)),
+                getProviderControlContext: () =>
+                  Ref.get(projection).pipe(
+                    Effect.map((current) => ({
+                      providerThread: current.providerThreads[0],
+                      providerTurn: current.providerTurns[0],
+                      attempt: current.attempts[0],
+                      message,
+                      run,
+                    })),
+                  ),
+              },
+              {
+                get(target, property, receiver) {
+                  if (Reflect.has(target, property)) {
+                    return Reflect.get(target, property, receiver);
+                  }
+                  return property === "getOpenRemoteDelegatedTasks"
+                    ? Effect.die("unused")
+                    : () => Effect.die(`unused ${String(property)}`);
+                },
+              },
+            ) as ProjectionStore.ProjectionStoreV2["Service"],
+          ),
+          Layer.succeed(
+            ProviderSessionManager.ProviderSessionManagerV2,
+            ProviderSessionManager.ProviderSessionManagerV2.of({
+              shutdown: Effect.void,
+              open: () => Effect.die("unused open"),
+              get: () => Effect.succeed(Option.some(runtime)),
+              isLive: () => Effect.succeed(true),
+              close: () => Effect.void,
+              closeInstance: () => Effect.void,
+              release: () => Effect.void,
+              detach: () => Effect.void,
+              otherWorkingThreads: () => Effect.succeed([]),
+              releaseUnlessBusy: () => Effect.succeed(true),
+            }),
+          ),
+        ),
+      ),
+    );
+
+    const declined = yield* Effect.gen(function* () {
+      const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
+      return yield* control
+        .steer({
+          threadId,
+          providerSessionId,
+          providerThreadId,
+          providerTurnId,
+          messageId: message.id,
+        })
+        .pipe(Effect.exit);
+    }).pipe(Effect.provide(layerControl));
+    assert.isTrue(Exit.isFailure(declined));
+    const declinedError = Cause.squash(declined.cause);
+    assert.isTrue(declinedError instanceof ProviderTurnControlService.ProviderTurnControlError);
+    if (declinedError instanceof ProviderTurnControlService.ProviderTurnControlError) {
+      assert.equal(declinedError.turnCompleted, true);
+    }
+
+    yield* Ref.update(projection, (current) => ({
+      ...current,
+      providerTurns: current.providerTurns.map((turn) =>
+        turn.id === providerTurnId
+          ? { ...turn, status: "running" as const, completedAt: null }
+          : turn,
+      ),
+    }));
+    decline = false;
+    const failed = yield* Effect.gen(function* () {
+      const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
+      return yield* control
+        .steer({
+          threadId,
+          providerSessionId,
+          providerThreadId,
+          providerTurnId,
+          messageId: message.id,
+        })
+        .pipe(Effect.exit);
+    }).pipe(Effect.provide(layerControl));
+    assert.isTrue(Exit.isFailure(failed));
+    const failedError = Cause.squash(failed.cause);
+    assert.isTrue(failedError instanceof ProviderTurnControlService.ProviderTurnControlError);
+    if (failedError instanceof ProviderTurnControlService.ProviderTurnControlError) {
+      assert.notEqual(failedError.turnCompleted, true);
+    }
+  }),
 );

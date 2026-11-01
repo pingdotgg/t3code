@@ -12,8 +12,12 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -1789,6 +1793,197 @@ describe("CursorAdapterV2", () => {
     assert.isFalse(CursorAgentSdk.isCursorCancellationError(new Error("request failed")));
     assert.isFalse(CursorAgentSdk.isCursorCancellationError(null));
   });
+
+  it.effect("steers the live Cursor run and follows up after a decline", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "cursor-v2-steer-",
+      });
+      const steered: string[] = [];
+      let cancelled = 0;
+      let outcome: "complete_delivered" | "revert_to_followup" = "complete_delivered";
+      const finished = yield* Deferred.make<{
+        readonly id: string;
+        readonly requestId: string;
+        readonly status: "finished" | "cancelled";
+        readonly model: { readonly id: string };
+        readonly durationMs: number;
+      }>();
+      const steerInvoked = yield* Deferred.make<void>();
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-steer-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-steer",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              send: () =>
+                Effect.succeed({
+                  agentId: "native-cursor-steer",
+                  runId: "native-cursor-steer-run",
+                  wait: Deferred.await(finished),
+                  cancel: Effect.sync(() => {
+                    cancelled += 1;
+                  }).pipe(
+                    Effect.andThen(
+                      Deferred.succeed(finished, {
+                        id: "native-cursor-steer-run",
+                        requestId: "native-request",
+                        status: "cancelled" as const,
+                        model: { id: "composer-2.5" },
+                        durationMs: 1,
+                      }),
+                    ),
+                  ),
+                  steer: (text) =>
+                    Effect.sync(() => {
+                      steered.push(text);
+                      return outcome;
+                    }).pipe(
+                      Effect.tap(() =>
+                        outcome === "revert_to_followup"
+                          ? Deferred.succeed(steerInvoked, undefined).pipe(Effect.ignore)
+                          : Effect.void,
+                      ),
+                    ),
+                }),
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-steer-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const turn = {
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+        runId: RunId.make("cursor-steer-run"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("cursor-steer-attempt"),
+        rootNodeId: NodeId.make("cursor-steer-root"),
+        appThread: {
+          id: threadId,
+          projectId: ProjectId.make("cursor-steer-project"),
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          title: "Cursor steer",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        message: {
+          messageId: MessageId.make("cursor-steer-message"),
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          text: "Review the code.",
+          attachments: [],
+        },
+      };
+      yield* runtime.startTurn(turn);
+      const providerTurnId = yield* runtime.events.pipe(
+        Stream.filterMap((event) =>
+          event.type === "provider_turn.updated"
+            ? Option.some(event.providerTurn.id)
+            : Option.none(),
+        ),
+        Stream.take(1),
+        Stream.runHead,
+      );
+      if (Option.isNone(providerTurnId)) {
+        return yield* Effect.die("Cursor steer fixture did not open a turn");
+      }
+      yield* runtime.steerTurn({
+        threadId,
+        runId: turn.runId,
+        providerThread,
+        providerTurnId: providerTurnId.value,
+        message: {
+          messageId: MessageId.make("cursor-steer-follow-up"),
+          createdBy: "user",
+          creationSource: "web",
+          text: "Look at the tests instead.",
+          attachments: [],
+        },
+      });
+      assert.deepEqual(steered, ["Look at the tests instead."]);
+      assert.equal(cancelled, 0);
+
+      outcome = "revert_to_followup";
+      const declinedFiber = yield* runtime
+        .steerTurn({
+          threadId,
+          runId: turn.runId,
+          providerThread,
+          providerTurnId: providerTurnId.value,
+          message: {
+            messageId: MessageId.make("cursor-steer-declined"),
+            createdBy: "user",
+            creationSource: "web",
+            text: "Stop and do this.",
+            attachments: [],
+          },
+        })
+        .pipe(Effect.exit, Effect.fork);
+      yield* Deferred.await(steerInvoked);
+      yield* Deferred.succeed(finished, {
+        id: "native-cursor-steer-run",
+        requestId: "native-request",
+        status: "finished",
+        model: { id: "composer-2.5" },
+        durationMs: 1,
+      });
+      const declined = yield* Fiber.join(declinedFiber);
+      assert.isTrue(Exit.isFailure(declined));
+      assert.deepEqual(steered, ["Look at the tests instead.", "Stop and do this."]);
+      assert.equal(cancelled, 0);
+      const declinedError = Cause.squash(declined.cause);
+      const revertMarked = (cause: unknown, depth = 0): boolean => {
+        if (depth > 8 || cause == null) return false;
+        if (cause === ProviderAdapter.steerRevertToFollowUp) return true;
+        if (typeof cause !== "object") return false;
+        return revertMarked(Reflect.get(cause, "cause"), depth + 1);
+      };
+      assert.isTrue(revertMarked(declinedError));
+    }),
+  );
 
   it("preserves failed nested read calls when Cursor omits their path", () => {
     assert.deepEqual(

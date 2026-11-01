@@ -16,9 +16,25 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+
+function steerRevertedToFollowUp(cause: unknown, depth = 0): boolean {
+  if (depth > 8 || cause == null) return false;
+  if (cause === ProviderAdapter.steerRevertToFollowUp) return true;
+  if (typeof cause !== "object") return false;
+  return steerRevertedToFollowUp(Reflect.get(cause, "cause"), depth + 1);
+}
+
+function steerFollowUpReady(status: string | undefined): boolean {
+  return (
+    status === "completed" ||
+    status === "interrupted" ||
+    status === "cancelled" ||
+    status === "failed"
+  );
+}
 
 const yieldToRuntime = Effect.yieldNow.pipe(
   Effect.andThen(
@@ -392,15 +408,31 @@ export const layer: Layer.Layer<
             .pipe(
               Effect.catch((cause) =>
                 Effect.gen(function* () {
-                  const current = yield* projections.getProviderControlContext(
+                  const reverted = steerRevertedToFollowUp(cause);
+                  let current = yield* projections.getProviderControlContext(
                     input.threadId,
                     input,
                   );
+                  // The run may already be finished. Its terminal event can lag this
+                  // error, so wait until that status is visible before the follow-up.
+                  if (reverted && current.providerTurn?.status === "running") {
+                    for (let remaining = 1_000; remaining > 0; remaining -= 1) {
+                      yield* yieldToRuntime;
+                      current = yield* projections.getProviderControlContext(
+                        input.threadId,
+                        input,
+                      );
+                      if (current.providerTurn?.status !== "running") break;
+                    }
+                  }
+                  const status = current.providerTurn?.status;
                   return yield* new ProviderTurnControlError({
                     threadId: input.threadId,
                     operation: "steer",
                     providerTurnId: input.providerTurnId,
-                    turnCompleted: current.providerTurn?.status === "completed",
+                    turnCompleted: reverted
+                      ? steerFollowUpReady(status)
+                      : status === "completed",
                     cause,
                   });
                 }),
