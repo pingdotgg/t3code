@@ -99,7 +99,7 @@ jobs:
 
       - name: Deploy with fingerprint check
         if: steps.expo-token.outputs.present == 'true'
-        uses: expo/expo-github-action/continuous-deploy-fingerprint@main
+        uses: expo/expo-github-action/continuous-deploy-fingerprint@9da89d3617bb88139671bad31b09c65714c2ee06 # v9
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
           # The Expo action otherwise suppresses the EAS command's failure output.
