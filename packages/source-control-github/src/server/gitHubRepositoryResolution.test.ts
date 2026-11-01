@@ -29,6 +29,26 @@ describe("selectGitHubBaseRepository", () => {
       owner: "me",
       name: "web",
     });
+    const sshFork = fork.replace(
+      "git@github.com:me/web.git",
+      "ssh://git@ssh.github.com:443/me/web.git",
+    );
+    assert.deepStrictEqual(
+      select({ remotes: sshFork, resolved: "remote.origin.gh-resolved base" }),
+      {
+        owner: "me",
+        name: "web",
+      },
+    );
+    assert.deepStrictEqual(
+      resolveGitHubRepository({
+        remotes: sshFork,
+        resolved: "remote.origin.gh-resolved base",
+        hostHint: "ssh.github.com",
+        defaultHost: "github.com",
+      }),
+      { host: "github.com", locator: { host: "github.com", owner: "me", name: "web" } },
+    );
     assert.deepStrictEqual(
       select({ remotes: fork, resolved: "remote.origin.gh-resolved acme/other" }),
       { owner: "acme", name: "other" },
@@ -162,6 +182,7 @@ describe("parseGitHubRepositorySelector", () => {
 describe("gitHubApiHostForRemote", () => {
   it("reads an SSH alias through github.com and a real host as itself", () => {
     assert.strictEqual(gitHubApiHostForRemote("git@github:acme/web.git"), "github.com");
+    assert.strictEqual(gitHubApiHostForRemote("git@ssh.github.com:acme/web.git"), "github.com");
     assert.strictEqual(
       gitHubApiHostForRemote("git@github.example.com:a/b.git"),
       "github.example.com",

@@ -73,6 +73,11 @@ export const definition = defineSourceControl({
           baseUrl: `https://${host}`,
         }
       : null,
+  // `altssh.gitlab.com` is the SSH-only host for networks that block port 22; it serves the web host's repositories.
+  repositoryKeyFromRemote: (key) => {
+    const match = /^altssh\.gitlab\.com\/(.+)$/u.exec(key);
+    return match === null ? null : `gitlab.com/${match[1]}`;
+  },
   isChangeRequestInRepository: (identity, link) =>
     isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
