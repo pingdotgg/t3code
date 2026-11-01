@@ -130,6 +130,12 @@ describe("classifyTailscaleHealth", () => {
       ["health_warning", "https_off", "magic_dns_off", "userspace_networking"],
     ],
     [
+      "too old for sign-in",
+      Result.succeed({ ...running, version: "1.62.0" }),
+      "running",
+      ["outdated"],
+    ],
+    [
       "an older CLI that reports no capabilities or TUN",
       Result.succeed({
         ...running,

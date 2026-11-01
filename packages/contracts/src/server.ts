@@ -622,6 +622,7 @@ export const ServerTailscaleIssueCause = Schema.Literals([
   "https_off",
   "magic_dns_off",
   "userspace_networking",
+  "outdated",
 ]);
 export type ServerTailscaleIssueCause = typeof ServerTailscaleIssueCause.Type;
 
@@ -698,6 +699,8 @@ export function tailscaleIssueHeadline(
       return `MagicDNS is off on the tailnet of ${host}`;
     case "userspace_networking":
       return `Tailscale on ${host} uses userspace networking`;
+    case "outdated":
+      return `Tailscale on ${host} is too old for Tailscale sign-in`;
   }
 }
 

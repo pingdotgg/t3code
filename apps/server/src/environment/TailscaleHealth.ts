@@ -125,6 +125,12 @@ export function classifyTailscaleHealth(
         fix: "Run tailscaled with a TUN device, so T3 Code can see which device connects.",
       });
     }
+    if (!TailscaleHost.isSupportedTailscaleVersion(status.version)) {
+      issues.push({
+        cause: "outdated",
+        fix: `Update Tailscale to ${TailscaleHost.MINIMUM_TAILSCALE_VERSION} or newer.`,
+      });
+    }
   }
   return {
     state,

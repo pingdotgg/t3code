@@ -262,9 +262,8 @@ To cut off one device on one machine, open **Settings → Environments** on any
 device connected to that machine, and **Block** it under **Tailscale devices on
 <machine>**. Its sessions there end now, and **Unblock** undoes it. A browser
 preview or device screen it already has open keeps working, clicks and typing
-included, until it closes. A
-device that rejoins Tailscale gets a new ID, so block it again or remove it from
-your tailnet.
+included, until it closes. A device that rejoins Tailscale gets a new ID, so
+block it again or remove it from your tailnet.
 
 To turn Tailscale sign-in off, run `t3 up --no-tailscale` for the background
 service, or turn it off in **Settings → Sharing & access** in the desktop app.

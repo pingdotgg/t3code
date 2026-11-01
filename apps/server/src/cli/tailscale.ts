@@ -72,7 +72,11 @@ export const signInBlocker = (status: TailscaleStatus): string | null =>
  */
 const readPolicyGrantedPeers = readTailscaleStatus("active").pipe(
   Effect.flatMap((status) =>
-    policyGrantedPeers(status, readTailscaleWhois).pipe(
+    // Where sign-in cannot work, the policy does not matter, so no device is looked up.
+    (signInBlocker(status) === null
+      ? policyGrantedPeers(status, readTailscaleWhois)
+      : Effect.succeed({ granted: [], unreadable: [] })
+    ).pipe(
       Effect.flatMap((scan) =>
         readTailscaleStatus("active").pipe(
           Effect.map((after) =>
@@ -186,7 +190,11 @@ const requireGrantCommand = Command.make("require-grant", {
       yield* Console.log(
         [
           ...lines,
-          "Devices with a grant get the scopes it names: read, standard, admin, or single scopes.",
+          ...(scan?.blocker == null
+            ? [
+                "Devices with a grant get the scopes it names: read, standard, admin, or single scopes.",
+              ]
+            : []),
         ].join("\n"),
       );
     }),
