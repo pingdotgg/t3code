@@ -185,12 +185,19 @@ describe("Claude model catalog", () => {
               aliases: ["claude-synthetic-next"],
               status: "current",
             },
-            ...base.providers!.claudeAgent!.models,
+            ...base.providers!.claudeAgent!.models.map((model) => ({
+              ...model,
+              aliases: [...(model.aliases ?? []), "claude-synthetic-next-20251001"],
+            })),
           ],
         },
       },
     };
     const catalog = catalogFromManifest(input);
+    assert.strictEqual(
+      resolveClaudeModelSlug(catalog, "claude-synthetic-next-20251001"),
+      "claude-synthetic-next-20251001",
+    );
     assert.strictEqual(resolveClaudeModelSlug(catalog, "synthetic"), "claude-synthetic-next");
     assert.strictEqual(
       resolveClaudeModelSlug(catalog, "claude-synthetic-next"),

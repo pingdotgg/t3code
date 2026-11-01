@@ -820,6 +820,13 @@ it.layer(
         ProviderRegistry.mergeProviderSnapshot(pendingProvider, probedProvider).models,
         [...probedProvider.models],
       );
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(pendingProvider, {
+          ...probedProvider,
+          status: "warning",
+        }).models,
+        [...probedProvider.models],
+      );
     });
 
     it("retains ACP Registry models while discovery has not completed", () => {
