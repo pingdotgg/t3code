@@ -3,6 +3,8 @@ import type {
   UsageBucket,
   UsageCategoryCost,
   UsageDay,
+  UsageModelFilter,
+  UsageModelSelector,
   UsageResolution,
   UsageTokenTotals,
 } from "@t3tools/contracts";
@@ -67,6 +69,7 @@ export interface AggregateOptions {
   readonly rates: RateTable;
   readonly priceOverrides?: RateTable;
   readonly modelAliases?: ReadonlyMap<string, string>;
+  readonly modelFilter?: UsageModelFilter;
   readonly resolution?: UsageResolution;
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;
@@ -86,6 +89,17 @@ export function resolveModelAliases(
     if (!Object.hasOwn(aliases, target)) resolved.set(model, target);
   }
   return resolved;
+}
+
+const matchesSelector = (record: UsageRecord) => (selector: UsageModelSelector) =>
+  selector.model === record.model &&
+  (selector.provider === undefined || selector.provider === record.provider);
+
+/** Matches original IDs, so an alias cannot pull excluded usage into a kept model. */
+function keepsUsageRecord(filter: UsageModelFilter | undefined, record: UsageRecord): boolean {
+  if (filter === undefined) return true;
+  const matches = matchesSelector(record);
+  return (filter.include?.some(matches) ?? true) && !(filter.exclude?.some(matches) ?? false);
 }
 
 export interface AggregateResult {
@@ -129,6 +143,7 @@ export class UsageAggregator {
   }
 
   add(input: UsageRecord, sourcePath?: string): boolean {
+    if (!keepsUsageRecord(this.#options.modelFilter, input)) return false;
     const record = this.#mapModel(input);
     if (record.dedupeKey !== null) {
       if (this.#seen.has(record.dedupeKey)) {

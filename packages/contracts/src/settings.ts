@@ -20,6 +20,7 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
+import { UsageModelFilter } from "./usage.ts";
 import { SecretProviderId, SecretProviderSlug } from "./secretReference.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
@@ -1361,6 +1362,9 @@ export const ServerSettings = Schema.Struct({
   usageModelAliases: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+
+  /** Sent by the Usage tab with each summary request to this environment; edit in settings.json. */
+  usageModelFilter: Schema.optionalKey(UsageModelFilter),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 

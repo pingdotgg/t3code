@@ -724,6 +724,7 @@ export const make = Effect.gen(function* () {
       rates,
       priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
       modelAliases: resolveModelAliases(settings.usageModelAliases),
+      ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
     });
 
     const sources: UsageSource[] = [];
@@ -882,6 +883,7 @@ export const make = Effect.gen(function* () {
       sources,
       pricing: pricing(),
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
+      ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
     } satisfies UsageSummary;
   });
 
@@ -897,6 +899,7 @@ export const make = Effect.gen(function* () {
       input.untilTime ?? null,
       settings,
       input.awaitRefresh === true,
+      input.modelFilter ?? null,
     ]);
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {

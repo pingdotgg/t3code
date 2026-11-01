@@ -8,7 +8,11 @@ import {
   type UsageProviderKind,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
-import { needsCursorKeychainAccess, refreshUsage } from "@t3tools/client-runtime/state/usage";
+import {
+  needsCursorKeychainAccess,
+  refreshUsage,
+  usageSummaryInput,
+} from "@t3tools/client-runtime/state/usage";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
@@ -55,7 +59,12 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         });
         continue;
       }
-      const result = get(serverEnvironment.usageSummary({ environmentId, input }));
+      const result = get(
+        serverEnvironment.usageSummary({
+          environmentId,
+          input: usageSummaryInput(input, get(serverEnvironment.settingsValueAtom(environmentId))),
+        }),
+      );
       const summary = AsyncResult.getOrElse(result, () => null);
       statuses.push({
         environmentId,
