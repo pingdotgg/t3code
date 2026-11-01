@@ -23,8 +23,10 @@ export function IntervalSecondsField({
 }) {
   const [draft, setDraft] = useState<number | null>(value);
   const [savedValue, setSavedValue] = useState(value);
+  const [committedValue, setCommittedValue] = useState(value);
   if (savedValue !== value) {
     setSavedValue(value);
+    setCommittedValue(value);
     setDraft(value);
   }
 
@@ -38,12 +40,15 @@ export function IntervalSecondsField({
       onValueChange={setDraft}
       onValueCommitted={(next) => {
         if (next === null) {
-          setDraft(value);
+          setDraft(committedValue);
           return;
         }
         const seconds = normalizeIntervalSeconds(next, min);
         setDraft(seconds);
-        if (seconds !== value) onCommit(seconds);
+        if (seconds !== committedValue) {
+          setCommittedValue(seconds);
+          onCommit(seconds);
+        }
       }}
     >
       <NumberFieldGroup>

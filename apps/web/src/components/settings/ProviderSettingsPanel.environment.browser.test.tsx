@@ -365,6 +365,14 @@ describe("EnvironmentProviderSettings health check interval", () => {
     await using _screen = await render(panel());
     const input = page.getByRole("textbox", { name: "Provider health check interval in seconds" });
 
+    await userEvent.type(input, "{ArrowUp}{ArrowDown}");
+    expect(
+      state.updateSettings.mock.calls.map(([patch]) =>
+        Duration.toSeconds(patch.backgroundActivity.overrides.providerHealthRefreshInterval),
+      ),
+    ).toEqual([330, 300]);
+    state.updateSettings.mockClear();
+
     // Replacing 300 with 120 passes through 30, 3, an empty field, 1 and 12.
     await userEvent.type(input, "{Backspace}{Backspace}{Backspace}120");
     await expect.element(input).toHaveValue("120");
