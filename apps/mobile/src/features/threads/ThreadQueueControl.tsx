@@ -5,6 +5,7 @@ import {
   queuedRunEditBlockedReason,
 } from "@t3tools/client-runtime/queued-run-edit";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { beforeRunIdForQueuedMove } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
@@ -40,6 +41,7 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import {
   REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
   buildCancelQueuedRunCommand,
+  buildReorderQueuedRunCommand,
   resolveThreadQueueRowControls,
 } from "./threadQueueControlPresentation";
 
@@ -51,7 +53,7 @@ const EMPTY_QUEUED_COUNT_ATOM = Atom.make(0).pipe(
 );
 
 type QueueTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
-type QueueAction = "steer" | "edit" | "remove";
+type QueueAction = "steer" | "edit" | "remove" | "move-up" | "move-down";
 
 function useThreadQueueWorkflow(target: QueueTarget) {
   return useAtomValue(environmentThreadDetails.queueWorkflowAtom(target));
@@ -134,6 +136,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   });
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "remove queued message");
+  const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun, "reorder queued message");
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
   const [resuming, setResuming] = useState(false);
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
@@ -179,12 +182,34 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       navigation.goBack();
       return;
     }
-    if (action !== "steer" && action !== "remove") return;
+    if (
+      action !== "steer" &&
+      action !== "remove" &&
+      action !== "move-up" &&
+      action !== "move-down"
+    ) {
+      return;
+    }
     busyRef.current = true;
     setBusyRunId(runId);
     void Haptics.selectionAsync();
     if (action === "remove") {
       await cancel(buildCancelQueuedRunCommand({ ...target, runId }));
+    } else if (action === "move-up" || action === "move-down") {
+      const toIndex = action === "move-up" ? index - 1 : index + 1;
+      if (toIndex >= 0 && toIndex < queuedRuns.length) {
+        await reorder(
+          buildReorderQueuedRunCommand({
+            ...target,
+            runId,
+            beforeRunId: beforeRunIdForQueuedMove({
+              orderedRunIds: queuedRuns.map(({ run }) => run.id),
+              runId,
+              toIndex,
+            }),
+          }),
+        );
+      }
     } else if (workflow?.canSendNow) {
       await resume({ ...target, input: { threadId: target.threadId, runId } });
     } else if (workflow?.activeRun && workflow.canPromoteToSteer) {
@@ -241,8 +266,10 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           canPromoteToSteer: workflow?.canPromoteToSteer ?? false,
           canSendNow: workflow?.canSendNow ?? false,
           editBlocked: editBlockedReason !== null,
+          index,
           isEditing: editing?.runId === run.id,
           isGuestMessage: context?.guest !== undefined,
+          queueLength: queuedRuns.length,
           text,
         });
         const title =
@@ -267,6 +294,22 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                             title: "Send now",
                             attributes: { disabled: !controls.canSend },
                             image: Platform.OS === "ios" ? "arrow.up" : "arrow_upward",
+                          },
+                        ]
+                      : []),
+                    ...(queuedRuns.length > 1
+                      ? [
+                          {
+                            id: "move-up",
+                            title: "Move up",
+                            attributes: { disabled: !controls.canMoveUp },
+                            image: Platform.OS === "ios" ? "arrow.up" : "arrow_upward",
+                          },
+                          {
+                            id: "move-down",
+                            title: "Move down",
+                            attributes: { disabled: !controls.canMoveDown },
+                            image: Platform.OS === "ios" ? "arrow.down" : "arrow_downward",
                           },
                         ]
                       : []),

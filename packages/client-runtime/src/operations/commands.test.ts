@@ -38,6 +38,7 @@ import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFix
 import {
   archiveThread,
   interruptThreadTurn,
+  reorderQueuedRun,
   revertThreadCheckpoint,
   resumeThreadQueue,
   startThreadTurn,
@@ -152,6 +153,43 @@ describe("V2 environment commands", () => {
       expect(commands).toEqual([
         { type: "queued-run.start", commandId: "send-selected", threadId, runId: "selected" },
         { type: "queue.resume", commandId: "resume-queue", threadId },
+      ]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("reorders a queued run before a neighbor or to the end", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      const threadId = ThreadId.make("thread-1");
+      yield* reorderQueuedRun({
+        commandId: CommandId.make("reorder-before"),
+        threadId,
+        runId: RunId.make("later"),
+        beforeRunId: RunId.make("first"),
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      yield* reorderQueuedRun({
+        commandId: CommandId.make("reorder-end"),
+        threadId,
+        runId: RunId.make("first"),
+        beforeRunId: null,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(commands).toEqual([
+        {
+          type: "queued-run.reorder",
+          commandId: "reorder-before",
+          threadId,
+          runId: "later",
+          beforeRunId: "first",
+        },
+        {
+          type: "queued-run.reorder",
+          commandId: "reorder-end",
+          threadId,
+          runId: "first",
+          beforeRunId: null,
+        },
       ]);
     }).pipe(Effect.provide(layerTestCrypto)),
   );

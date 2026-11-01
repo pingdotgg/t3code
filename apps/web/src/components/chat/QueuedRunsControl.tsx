@@ -1,5 +1,8 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  beforeRunIdForQueuedMove,
+  deriveThreadQueueWorkflowState,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import {
   isAttachmentOnlyBootstrapPrompt,
@@ -18,6 +21,7 @@ import {
   ArrowUpIcon,
   CalendarClockIcon,
   ChevronDownIcon,
+  ChevronUpIcon,
   Clock3Icon,
   MessagesSquareIcon,
   PencilIcon,
@@ -99,6 +103,7 @@ export function QueuedRunsControl({
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
+  const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun);
   const [showAll, setShowAll] = useState(false);
   const queueListId = useId();
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
@@ -225,8 +230,23 @@ export function QueuedRunsControl({
     setBusyRunId(null);
   };
 
+  const move = async (runId: RunId, toIndex: number) => {
+    const orderedRunIds = queued.map(({ run }) => run.id);
+    setBusyRunId(runId);
+    await reorder({
+      environmentId: props.environmentId,
+      input: {
+        threadId: props.threadId,
+        runId,
+        beforeRunId: beforeRunIdForQueuedMove({ orderedRunIds, runId, toIndex }),
+      },
+    });
+    setBusyRunId(null);
+  };
+
   const collapsible = items.length > QUEUE_VISIBLE_ROWS;
   const visibleItems = collapsible && !showAll ? items.slice(0, QUEUE_VISIBLE_ROWS - 1) : items;
+  const canReorder = queued.length > 1;
 
   return (
     <section
@@ -310,6 +330,46 @@ export function QueuedRunsControl({
                   </>
                 ) : (
                   <>
+                    {canReorder && item.serverIndex !== null ? (
+                      <>
+                        <Tooltip>
+                          <TooltipTrigger render={<span className="flex shrink-0" />}>
+                            <Button
+                              size="icon-xs"
+                              variant="ghost-muted"
+                              aria-label="Move queued message up"
+                              disabled={item.serverIndex === 0 || busyRunId !== null}
+                              onClick={() => {
+                                if (item.runId !== null && item.serverIndex !== null) {
+                                  void move(item.runId, item.serverIndex - 1);
+                                }
+                              }}
+                            >
+                              <ChevronUpIcon />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipPopup>Move earlier in the queue</TooltipPopup>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger render={<span className="flex shrink-0" />}>
+                            <Button
+                              size="icon-xs"
+                              variant="ghost-muted"
+                              aria-label="Move queued message down"
+                              disabled={item.serverIndex >= queued.length - 1 || busyRunId !== null}
+                              onClick={() => {
+                                if (item.runId !== null && item.serverIndex !== null) {
+                                  void move(item.runId, item.serverIndex + 1);
+                                }
+                              }}
+                            >
+                              <ChevronDownIcon />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipPopup>Move later in the queue</TooltipPopup>
+                        </Tooltip>
+                      </>
+                    ) : null}
                     <Tooltip>
                       {/* The span keeps the tooltip, and its reason, on a disabled button. */}
                       <TooltipTrigger render={<span className="flex shrink-0" />}>
