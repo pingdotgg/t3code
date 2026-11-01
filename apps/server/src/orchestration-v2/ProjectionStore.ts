@@ -171,6 +171,8 @@ export type ProjectionRecoveryKind =
 export type ProjectionLimitRecoveryCandidate = Pick<
   OrchestrationV2ThreadShell,
   | "id"
+  | "projectId"
+  | "modelSelection"
   | "status"
   | "lastErrorClass"
   | "latestRunId"
@@ -507,6 +509,8 @@ export interface ProjectionStoreV2Shape {
     readonly now: DateTime.Utc;
     readonly autoResume: boolean;
     readonly snooze: boolean;
+    /** Also returns limits hit since then whose window has not reset, to move to another account. */
+    readonly switchAccountsSince?: DateTime.Utc;
   }) => Effect.Effect<ReadonlyArray<ProjectionLimitRecoveryCandidate>, ProjectionStoreV2Error>;
   /** Epoch ms of the next armed reset or snooze end after `now`, when a waiting thread becomes a candidate. */
   readonly getLimitRecoveryWakeAt: (
@@ -3879,6 +3883,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt')))
             AND (
               (
+                ${booleanInt(options.switchAccountsSince !== undefined)}
+                AND julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt'))) >= julianday(${DateTime.formatIso(options.switchAccountsSince ?? options.now)})
+                AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)})
+              )
+              OR (
                 json_extract(t.payload_json, '$.limitRecovery.runId') IS r.run_id
                 AND json_extract(t.payload_json, '$.limitRecovery.resetAt') IS json_extract(item.payload_json, '$.failure.resetAt')
                 AND json_extract(t.payload_json, '$.limitRecovery.autoResume') = 1
@@ -3916,6 +3925,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           if (summary.lastErrorClass !== "usage_limit") continue;
           candidates.push({
             id: thread.id,
+            projectId: thread.projectId,
+            modelSelection: thread.modelSelection,
             status: "failed",
             lastErrorClass: summary.lastErrorClass,
             usageLimitResetAt: summary.usageLimitResetAt,

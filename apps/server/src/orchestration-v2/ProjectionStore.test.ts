@@ -4601,6 +4601,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         if (lastErrorClass === "usage_limit") {
           assert.deepEqual(candidate, {
             id: sqlShell.id,
+            projectId: sqlShell.projectId,
+            modelSelection: sqlShell.modelSelection,
             status: sqlShell.status,
             lastErrorClass: sqlShell.lastErrorClass,
             usageLimitResetAt: sqlShell.usageLimitResetAt,
@@ -4769,6 +4771,18 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           (row) => row.id === threadId,
         ),
       );
+      for (const [since, found] of [
+        [DateTime.subtract(now, { minutes: 1 }), true],
+        [DateTime.add(now, { minutes: 1 }), false],
+      ] as const) {
+        assert.strictEqual(
+          (yield* store.getLimitRecoveryCandidates({
+            ...recoveryOptions,
+            switchAccountsSince: since,
+          })).some((row) => row.id === threadId),
+          found,
+        );
+      }
       const reset = DateTime.makeUnsafe(limitItem.failure.resetAt);
       const recovery = {
         runId: original.id,

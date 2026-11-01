@@ -111,6 +111,17 @@ and a partly spent session may only regain its unused portion when the week rese
 stale reset times have no refill estimate; refresh Limits for a new reading. Claude's
 model-specific weekly allowances keep their reported values.
 
+When the default model's account is out of usage, new threads start on the **Fallback model**
+set in **Settings → Threads**.
+
+If you have several accounts of the same provider, turn on **Switch to an account with usage
+left** there. When the account you picked is out of usage, your message goes to the same model
+on another account of that provider with usage left, or to another provider's default model when
+none has any. A thread that hits a 5-hour or weekly limit while working continues the same way
+right away instead of waiting for the reset; the thread shows the account switch. Only accounts
+that report limits under **Usage → Limits** are picked, and an account that just hit a limit is
+skipped until it resets. Pick the account in the model picker to move back.
+
 Opening Limits checks the selected connected environments automatically. Each client waits at
 least five minutes between automatic checks of an environment, including after a failed check.
 If a window still looks stale, refresh Limits to re-check every provider and hub.

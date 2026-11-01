@@ -285,6 +285,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     environmentOnly: true,
   },
   {
+    id: "fallback-available-accounts",
+    title: "Switch to an account with usage left",
+    to: "/settings/threads",
+    scope: "environment-defaults",
+    searchTerms: ["automatic account provider out of usage limit new threads"],
+    environmentOnly: true,
+  },
+  {
     id: "default-permissions",
     title: "Permissions",
     to: "/settings/threads",

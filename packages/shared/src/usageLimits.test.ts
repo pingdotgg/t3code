@@ -110,6 +110,75 @@ describe("new thread model fallback", () => {
       }).selection,
     ).toEqual(selection);
   });
+  describe("without a usable configured fallback", () => {
+    const limits = (usedPercent: number) => ({
+      checkedAt: limited.checkedAt,
+      windows: [{ ...window, usedPercent }],
+    });
+    const model = (slug: string, isDefault = false) => ({
+      slug,
+      name: slug,
+      isCustom: false,
+      isDefault,
+      capabilities: null,
+    });
+    const codexAccount = (id: string, usedPercent: number) =>
+      provider({
+        instanceId: ProviderInstanceId.make(id),
+        models: [model("gpt-6.1-luna", true), model(selection.model)],
+        usageLimits: limits(usedPercent),
+      });
+    const claude = provider({
+      instanceId: fallback.instanceId,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      models: [model("claude-sonnet-5-5"), model("claude-opus-5-5", true)],
+      usageLimits: limits(0),
+    });
+    const resolve = (providers: ServerProvider[], fallbackToAvailableAccounts = true) =>
+      resolveNewThreadModelSelection({
+        defaultSelection: { ...selection, options: [{ id: "reasoningEffort", value: "high" }] },
+        fallbackSelection: null,
+        providers: [limited, ...providers],
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          fallbackToAvailableAccounts,
+          providerInstances: Object.fromEntries(
+            providers.map((entry) => [
+              entry.instanceId,
+              { driver: entry.driver, enabled: true, config: {} },
+            ]),
+          ),
+        },
+        now,
+      }).selection;
+
+    it.each([
+      [
+        "another account of the same provider with the most headroom, keeping model and options",
+        [claude, codexAccount("codex_a", 90), codexAccount("codex_b", 20)],
+        {
+          instanceId: ProviderInstanceId.make("codex_b"),
+          model: selection.model,
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      ],
+      [
+        "another provider's default model when every same-provider account is spent",
+        [codexAccount("codex_a", 100), claude],
+        { instanceId: claude.instanceId, model: "claude-opus-5-5" },
+      ],
+      [
+        "nothing when no other account reports limits",
+        [{ ...claude, usageLimits: undefined }],
+        selection,
+      ],
+    ] as const)("switches to %s", (_name, providers, expected) => {
+      expect(resolve([...providers])).toMatchObject(expected);
+    });
+    it("stays on the default while the setting is off", () => {
+      expect(resolve([codexAccount("codex_a", 0), claude], false)).toMatchObject(selection);
+    });
+  });
   it.each([undefined, "invalid"])("treats an unknown reset as exhausted: %s", (resetsAt) => {
     expect(
       exhaustedUsageWindow(
