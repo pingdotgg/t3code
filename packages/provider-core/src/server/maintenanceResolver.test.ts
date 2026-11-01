@@ -1489,6 +1489,32 @@ it.layer(
       }),
   );
 
+  it.effect("updates Volta installs from the Windows `volta run` script shims", () =>
+    Effect.gen(function* () {
+      const voltaHome = NodePath.join(yield* makeTempDir("t3-volta-windows-capabilities"), "Volta");
+      const shim = NodePath.join(voltaHome, "bin", "package-tool.cmd");
+      NodeFS.mkdirSync(NodePath.dirname(shim), { recursive: true });
+      NodeFS.writeFileSync(shim, "@echo off\nvolta run %~n0 %*");
+      const resolve = resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: shim,
+        env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+      );
+
+      expect((yield* resolve).update).toBeNull();
+      NodeFS.mkdirSync(
+        NodePath.join(voltaHome, "tools", "image", "packages", "@example", "package-tool"),
+        { recursive: true },
+      );
+      expect((yield* resolve).update).toMatchObject({
+        command: "volta install @example/package-tool@latest",
+        lockKey: "volta",
+      });
+    }),
+  );
+
   it.effect.skipIf(windowsHost)("upgrades with the keg's own brew when brew is not on PATH", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-homebrew-keg-brew");

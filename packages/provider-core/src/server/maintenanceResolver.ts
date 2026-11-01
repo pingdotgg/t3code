@@ -37,7 +37,7 @@ import * as ProviderLatestVersions from "./ProviderLatestVersions.ts";
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
 const PROBE_TIMEOUT_MS = 10_000;
 const PROBE_MAX_BYTES = 256 * 1_024;
-const MISE_WRAPPER_MAX_BYTES = 16 * 1_024;
+const WRAPPER_SCRIPT_MAX_BYTES = 16 * 1_024;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
 
 const MAINTENANCE_CAPABILITIES_CACHE_TTL = Duration.hours(1);
@@ -700,7 +700,7 @@ export const resolveHomebrewProviderMaintenance = Effect.fn("resolveHomebrewProv
   },
 );
 
-const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
+const readWrapperScript = Effect.fn("readWrapperScript")(function* (
   context: ProviderMaintenanceResolutionContext,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -708,25 +708,33 @@ const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
     Effect.map((info) => Number(info.size)),
     Effect.orElseSucceed(() => Infinity),
   );
-  if (size > MISE_WRAPPER_MAX_BYTES) {
-    return false;
+  if (size > WRAPPER_SCRIPT_MAX_BYTES) {
+    return "";
   }
-  const script = yield* fileSystem
+  return yield* fileSystem
     .readFileString(context.realCommandPath)
     .pipe(Effect.orElseSucceed(() => ""));
+});
+
+const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
+  context: ProviderMaintenanceResolutionContext,
+) {
+  const script = yield* readWrapperScript(context);
   return script.startsWith("#!") && /\bmise\s+(?:x|exec)\b/.test(script);
 });
 
 // Volta bin links only identify its shim; the package image proves ownership.
+// Volta 2 on Windows writes `volta run` scripts instead of linking the shim.
 const isVoltaPackageInstall = Effect.fn("isVoltaPackageInstall")(function* (
   context: ProviderMaintenanceResolutionContext,
   packageName: string,
 ) {
   const path = yield* Path.Path;
-  if (
-    path.basename(normalizeCommandPath(context.realCommandPath)).replace(/\.exe$/, "") !==
-    "volta-shim"
-  ) {
+  const isShim =
+    path.basename(normalizeCommandPath(context.realCommandPath)).replace(/\.exe$/, "") ===
+      "volta-shim" ||
+    (context.platform === "win32" && /^volta run\b/m.test(yield* readWrapperScript(context)));
+  if (!isShim) {
     return false;
   }
   const voltaHome = path.dirname(path.dirname(context.resolvedCommandPath));
