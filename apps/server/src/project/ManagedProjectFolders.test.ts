@@ -214,7 +214,7 @@ it.effect("gives each Scratch thread its own folder, named from its message", ()
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const { projectId } = yield* scratch.ensureScratchProject;
-      const root = yield* requireRoot;
+      const root = yield* fileSystem.realPath(yield* requireRoot);
       const text = "Convert these PNGs to WebP, please!";
       const first = Option.getOrThrow(
         yield* scratch.folderForThread({
@@ -257,6 +257,32 @@ it.effect("gives each Scratch thread its own folder, named from its message", ()
       assert.isAtMost(path.basename(pasted).length, 80);
     }),
   ),
+);
+
+it.effect(
+  "puts a Scratch thread's folder under the real path when the Scratch folder is a symlink",
+  () =>
+    withScratch(({ baseDir }) =>
+      Effect.gen(function* () {
+        const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const target = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-scratch-target-" });
+        yield* fileSystem.symlink(target, path.join(baseDir, "scratch"));
+        const { projectId } = yield* scratch.ensureScratchProject;
+
+        const folder = Option.getOrThrow(
+          yield* scratch.folderForThread({
+            projectId,
+            threadId: ThreadId.make("thread-symlinked-scratch"),
+            text: "Run a shell command",
+          }),
+        );
+
+        // Provider sandboxes reject writable roots with a symlink component.
+        assert.equal(folder, yield* fileSystem.realPath(folder));
+      }),
+    ),
 );
 
 it.effect("leaves threads in other projects alone", () =>
