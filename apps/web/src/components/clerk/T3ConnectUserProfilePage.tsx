@@ -20,6 +20,7 @@ import { Button, InlineButton } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { toastManager } from "../ui/toast";
+import { stackedThreadToast } from "../ui/toastHelpers";
 import {
   ClerkUserProfilePage,
   ClerkUserProfileRefreshButton,
@@ -220,19 +221,27 @@ export function T3ConnectUserProfilePage() {
       traceId,
       cause,
     });
-    toastManager.add({
-      type: "error",
-      title: "Could not deregister server",
-      description: message,
-      data: traceId
-        ? {
-            secondaryActionProps: {
-              children: "Copy trace ID",
-              onClick: () => void navigator.clipboard?.writeText(traceId),
-            },
-          }
-        : undefined,
-    });
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Could not deregister server",
+        description: "Could not remove this server. Try again.",
+        ...(traceId
+          ? {
+              actionProps: {
+                children: "Copy trace ID",
+                onClick: () => void navigator.clipboard?.writeText(traceId),
+              },
+            }
+          : {}),
+        actionVariant: "outline",
+        data: {
+          copyErrorText: message,
+          expandableContent: message,
+          expandableLabels: { expand: "Show more", collapse: "Show less" },
+        },
+      }),
+    );
   };
 
   const removedEnvironmentLinkedAt =
