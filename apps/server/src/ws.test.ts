@@ -2,6 +2,7 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  AuthOrchestrationReadScope,
   AuthSessionId,
   EnvironmentId,
   ProjectId,
@@ -10,6 +11,7 @@ import {
   ProviderInstanceId,
   WS_METHODS,
   WsServerRefreshProvidersRpc,
+  WsRpcGroup,
   WsSubscribeServerConfigRpc,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadShell,
@@ -21,6 +23,7 @@ import {
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -36,6 +39,7 @@ import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/s
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
+import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
@@ -763,6 +767,70 @@ it.effect(
       ),
       Effect.scoped,
     ),
+);
+
+// The shipped SwiftUI iOS client reads settings through this tag, so the server keeps answering it.
+it.effect("server.getSettings returns the client-redacted server settings", () =>
+  Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const exits = yield* Queue.unbounded<unknown>();
+    const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+      ...WS_RPC_SERVER_OPTIONS,
+      onFromServer: (response) =>
+        response._tag === "Exit" ? Queue.offer(exits, response.exit) : Effect.void,
+    }).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("settings-test"),
+            subject: "settings-test",
+            method: "browser-session-cookie",
+            scopes: [AuthOrchestrationReadScope],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+        ).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              layerUnusedConfigRpcServices,
+              Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+              Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+              Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+              Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+              Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                namedProjectsRoot: process.cwd(),
+              }),
+              Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+              Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+            ),
+          ),
+          Layer.provideMerge(RpcAuthorization.layer([AuthOrchestrationReadScope])),
+        ),
+      ),
+    );
+    const updated = yield* settings.updateSettings({ defaultAutoPull: true });
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("settings"),
+      tag: "server.getSettings",
+      payload: {},
+      headers: Headers.empty,
+    });
+    assert.deepEqual(
+      yield* Queue.take(exits),
+      Exit.succeed(ServerSettings.redactServerSettingsForClient(updated)),
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
 );
 
 it.effect("on-demand clients get provider config without workspace snapshots", () =>
