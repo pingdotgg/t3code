@@ -43,7 +43,23 @@ const ScheduledTaskFixedTimeSchedule = Schema.Struct({
       description: "Default: every day.",
     }),
   ),
+  monthDays: Schema.optional(
+    Schema.Array(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 31 }))).annotate({
+      description: "Days past a month's end run on its last day.",
+    }),
+  ),
+  months: Schema.optional(
+    Schema.Array(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 12 }))),
+  ),
 });
+
+const ScheduledTaskUpsertFixedTimeSchedule = ScheduledTaskFixedTimeSchedule.check(
+  Schema.makeFilter((schedule) =>
+    schedule.weekdays?.length && schedule.monthDays?.length
+      ? "Choose weekdays or days of the month, not both."
+      : true,
+  ),
+);
 
 const ScheduledTaskWebhookSignatureFields = {
   header: TrimmedNonEmptyString.annotate({
@@ -179,7 +195,7 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
       description: "Min 60000.",
     }),
   }),
-  ScheduledTaskFixedTimeSchedule,
+  ScheduledTaskUpsertFixedTimeSchedule,
   ScheduledTaskUpsertWebhookSchedule,
 ]);
 export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;

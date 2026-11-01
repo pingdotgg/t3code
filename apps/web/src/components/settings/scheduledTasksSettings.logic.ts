@@ -11,6 +11,7 @@ import {
   type ProviderInteractionMode,
   type ServerSettings,
 } from "@t3tools/contracts";
+import { MONTHS } from "@t3tools/client-runtime/scheduled-task-schedule";
 import {
   parseMaxDeliveryAge,
   parseWebhookFilterDrafts,
@@ -53,6 +54,7 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
 }
 
 export type ScheduleMode = "fixed" | "interval" | "webhook";
+export type DayMode = "week" | "month";
 export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
 
 export interface DraftState {
@@ -63,7 +65,12 @@ export interface DraftState {
   readonly scheduleMode: ScheduleMode;
   readonly intervalMinutes: string;
   readonly timeOfDay: string;
+  readonly dayMode: DayMode;
   readonly weekdays: ReadonlySet<number>;
+  readonly monthDays: ReadonlySet<number>;
+  /** Off runs in every month; the month choices are kept so switching back restores them. */
+  readonly limitMonths: boolean;
+  readonly months: ReadonlySet<number>;
   readonly projectId: string;
   readonly threadId: string;
   readonly workspaceMode: WorkspaceMode;
@@ -186,21 +193,33 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
     const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
     return { type: "interval", everyMs };
   }
-  const selectedEveryDay = draft.weekdays.size === 0 || draft.weekdays.size === 7;
+  const days =
+    draft.dayMode === "month"
+      ? chosen(draft.monthDays, 31, (monthDays) => ({ monthDays }))
+      : chosen(draft.weekdays, 7, (weekdays) => ({ weekdays }));
   return {
     type: "fixed_time",
     timeOfDay: draft.timeOfDay || "09:00",
-    ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
+    ...days,
+    ...(draft.limitMonths ? chosen(draft.months, 12, (months) => ({ months })) : {}),
   };
+}
+
+/** None and all both mean "no filter", which the schedule leaves out. */
+function chosen<T>(values: ReadonlySet<number>, all: number, field: (values: number[]) => T) {
+  return values.size === 0 || values.size >= all
+    ? {}
+    : field([...values].toSorted((a, b) => a - b));
 }
 
 export function taskToDraft(task: ScheduledTask): DraftState {
   const schedule = task.schedule;
   const filters = webhookFilterDrafts(schedule.type === "webhook" ? schedule.filters : undefined);
-  const weekdays =
-    schedule.type === "fixed_time" && schedule.weekdays && schedule.weekdays.length > 0
-      ? new Set(schedule.weekdays)
-      : new Set([0, 1, 2, 3, 4, 5, 6]);
+  const fixed = schedule.type === "fixed_time" ? schedule : null;
+  const months = new Set(fixed?.months?.length ? fixed.months : MONTHS);
+  const weekdays = fixed?.weekdays?.length
+    ? new Set(fixed.weekdays)
+    : new Set([0, 1, 2, 3, 4, 5, 6]);
   return {
     editingId: task.id,
     title: task.title,
@@ -210,8 +229,12 @@ export function taskToDraft(task: ScheduledTask): DraftState {
       schedule.type === "interval" ? "interval" : schedule.type === "webhook" ? "webhook" : "fixed",
     intervalMinutes:
       schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",
-    timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay : "09:00",
+    timeOfDay: fixed?.timeOfDay ?? "09:00",
+    dayMode: fixed?.monthDays?.length ? "month" : "week",
     weekdays,
+    monthDays: new Set(fixed?.monthDays?.length ? fixed.monthDays : [1]),
+    limitMonths: months.size < 12,
+    months,
     projectId: task.projectId,
     threadId: task.threadId ?? "",
     workspaceMode: task.workspaceStrategy.type,

@@ -24,6 +24,14 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  MONTHS,
+  MONTH_DAYS,
+  MONTH_DAYS_UNSUPPORTED,
+  MONTH_NAMES,
+  describeFixedTimeSchedule,
+  describeMonthEndFallback,
+} from "@t3tools/client-runtime/scheduled-task-schedule";
+import {
   DEFAULT_WEBHOOK_PROMPT,
   emptyWebhookFilterDraft,
   parseMaxDeliveryAge,
@@ -39,6 +47,7 @@ import { AppState, Platform, Pressable, TextInput as RNTextInput, View } from "r
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Button } from "../../components/ui/Button";
+import { cn } from "../../lib/cn";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import {
@@ -110,8 +119,7 @@ const DAYS = [
 function describeSchedule(task: ScheduledTask): string {
   if (task.schedule.type === "webhook") return "On webhook";
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
-  const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
-  return `${days} at ${formatTime(task.schedule.timeOfDay)}`;
+  return describeFixedTimeSchedule(task.schedule, formatTime(task.schedule.timeOfDay));
 }
 
 function formatTime(value: string): string {
@@ -143,6 +151,61 @@ function repeatLabel(weekdays: ReadonlyArray<number>): string {
       .map((day) => day.label)
       .join(", ") || "Choose days"
   );
+}
+
+/** Many small choices at once, such as the days of a month; a check marks each chosen one. */
+function ChoiceGrid(props: {
+  readonly columns: number;
+  readonly options: ReadonlyArray<{ readonly value: number; readonly label: string }>;
+  readonly selected: ReadonlyArray<number>;
+  readonly onToggle: (value: number) => void;
+  readonly disabled?: boolean;
+}) {
+  return (
+    <View className="flex-row flex-wrap border-t border-border-subtle px-3 py-2">
+      {props.options.map((option) => {
+        const selected = props.selected.includes(option.value);
+        return (
+          <View key={option.value} className="p-1" style={{ width: `${100 / props.columns}%` }}>
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityLabel={option.label}
+              accessibilityState={{ checked: selected, disabled: Boolean(props.disabled) }}
+              disabled={props.disabled}
+              onPress={() => props.onToggle(option.value)}
+              className={cn(
+                "h-9 flex-row items-center justify-center gap-0.5 rounded-xl active:opacity-70",
+                selected ? "bg-primary" : "bg-subtle",
+              )}
+            >
+              {selected ? (
+                <SymbolView
+                  name="checkmark"
+                  size={10}
+                  tintColorClassName="accent-primary-foreground"
+                  type="monochrome"
+                />
+              ) : null}
+              <Text
+                className={cn(
+                  "text-sm font-t3-medium",
+                  selected ? "text-primary-foreground" : "text-foreground",
+                )}
+              >
+                {option.label}
+              </Text>
+            </Pressable>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function toggleChoice(values: ReadonlyArray<number>, value: number): ReadonlyArray<number> {
+  if (!values.includes(value)) return [...values, value];
+  // One choice always stays on; clearing the last would leave nothing to run on.
+  return values.length > 1 ? values.filter((item) => item !== value) : values;
 }
 
 function FormField(props: {
@@ -687,6 +750,14 @@ function TaskForm({
   });
   const submissionPending = useRef(false);
   const [timePickerOpen, setTimePickerOpen] = useState(false);
+  const calendarSupported = config?.environment.capabilities.scheduledTaskMonthDays === true;
+  // A draft already using them keeps the controls, so switching to an older server can be undone.
+  const showCalendar =
+    calendarSupported || draft.schedule.dayMode === "month" || draft.schedule.limitMonths;
+  const draftSchedule =
+    draft.schedule.mode === "fixed_time" ? scheduleFromDraft(draft.schedule) : null;
+  const fixedSchedule = draftSchedule?.type === "fixed_time" ? draftSchedule : null;
+  const fixedScheduleFallback = fixedSchedule ? describeMonthEndFallback(fixedSchedule) : null;
   const taskMissing =
     draft.task !== null &&
     tasks.data !== null &&
@@ -708,7 +779,8 @@ function TaskForm({
       saving ||
       dictationPending ||
       taskMissing ||
-      environmentUnavailable
+      environmentUnavailable ||
+      config === null
     )
       return;
     // Preserve signatures edited on other clients by sending the task's current value.
@@ -756,6 +828,14 @@ function TaskForm({
     }
     if (!projects.some((project) => project.id === draft.projectId)) {
       Dialog.alert("Project unavailable", "Choose a project in this environment.");
+      return;
+    }
+    if (
+      !calendarSupported &&
+      schedule.type === "fixed_time" &&
+      (schedule.monthDays !== undefined || schedule.months !== undefined)
+    ) {
+      Dialog.alert("Update this environment", MONTH_DAYS_UNSUPPORTED);
       return;
     }
     const input: ScheduledTaskUpsertInput = {
@@ -1017,46 +1097,119 @@ function TaskForm({
                   }}
                 />
               ) : null}
-              <SelectRow
-                label="Repeat"
-                value={repeatLabel(draft.schedule.weekdays)}
-                borderTop
-                actions={[
-                  {
-                    id: "every_day",
-                    title: "Every day",
-                    state: draft.schedule.weekdays.length === 7 ? "on" : undefined,
-                  },
-                  {
-                    id: "weekdays",
-                    title: "Weekdays",
-                    state: repeatLabel(draft.schedule.weekdays) === "Weekdays" ? "on" : undefined,
-                  },
-                  ...DAYS.map((day) => ({
-                    id: String(day.index),
-                    title: day.label,
-                    attributes: { keepsMenuPresented: true },
-                    state: draft.schedule.weekdays.includes(day.index)
-                      ? ("on" as const)
-                      : undefined,
-                  })),
-                ]}
-                onSelect={(id) => {
-                  const weekdays =
-                    id === "every_day"
-                      ? DAYS.map((day) => day.index)
-                      : id === "weekdays"
-                        ? [1, 2, 3, 4, 5]
-                        : (() => {
-                            const day = DAYS.find((item) => String(item.index) === id);
-                            if (!day) return draft.schedule.weekdays;
-                            return draft.schedule.weekdays.includes(day.index)
-                              ? draft.schedule.weekdays.filter((index) => index !== day.index)
-                              : [...draft.schedule.weekdays, day.index];
-                          })();
-                  setDraft({ ...draft, schedule: { ...draft.schedule, weekdays } });
-                }}
-              />
+              {showCalendar ? (
+                <View className="border-t border-border-subtle px-4 py-3">
+                  <SegmentedControl
+                    size="compact"
+                    options={[
+                      { value: "week", label: "Days of the week" },
+                      { value: "month", label: "Days of the month" },
+                    ]}
+                    selected={draft.schedule.dayMode}
+                    onSelect={(dayMode) =>
+                      setDraft({ ...draft, schedule: { ...draft.schedule, dayMode } })
+                    }
+                  />
+                </View>
+              ) : null}
+              {draft.schedule.dayMode === "week" ? (
+                <SelectRow
+                  label="Repeat"
+                  value={repeatLabel(draft.schedule.weekdays)}
+                  borderTop
+                  actions={[
+                    {
+                      id: "every_day",
+                      title: "Every day",
+                      state: draft.schedule.weekdays.length === 7 ? "on" : undefined,
+                    },
+                    {
+                      id: "weekdays",
+                      title: "Weekdays",
+                      state: repeatLabel(draft.schedule.weekdays) === "Weekdays" ? "on" : undefined,
+                    },
+                    ...DAYS.map((day) => ({
+                      id: String(day.index),
+                      title: day.label,
+                      attributes: { keepsMenuPresented: true },
+                      state: draft.schedule.weekdays.includes(day.index)
+                        ? ("on" as const)
+                        : undefined,
+                    })),
+                  ]}
+                  onSelect={(id) => {
+                    const weekdays =
+                      id === "every_day"
+                        ? DAYS.map((day) => day.index)
+                        : id === "weekdays"
+                          ? [1, 2, 3, 4, 5]
+                          : (() => {
+                              const day = DAYS.find((item) => String(item.index) === id);
+                              if (!day) return draft.schedule.weekdays;
+                              return draft.schedule.weekdays.includes(day.index)
+                                ? draft.schedule.weekdays.filter((index) => index !== day.index)
+                                : [...draft.schedule.weekdays, day.index];
+                            })();
+                    setDraft({ ...draft, schedule: { ...draft.schedule, weekdays } });
+                  }}
+                />
+              ) : (
+                <ChoiceGrid
+                  columns={7}
+                  options={MONTH_DAYS.map((day) => ({ value: day, label: String(day) }))}
+                  selected={draft.schedule.monthDays}
+                  disabled={saving}
+                  onToggle={(day) =>
+                    setDraft({
+                      ...draft,
+                      schedule: {
+                        ...draft.schedule,
+                        monthDays: toggleChoice(draft.schedule.monthDays, day),
+                      },
+                    })
+                  }
+                />
+              )}
+              {showCalendar ? (
+                <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
+                  <Text className="min-w-0 flex-1 text-lg text-foreground">
+                    Only in some months
+                  </Text>
+                  <ThemedSwitch
+                    accessibilityLabel="Only in some months"
+                    value={draft.schedule.limitMonths}
+                    onValueChange={(limitMonths) =>
+                      setDraft({ ...draft, schedule: { ...draft.schedule, limitMonths } })
+                    }
+                  />
+                </View>
+              ) : null}
+              {draft.schedule.limitMonths ? (
+                <ChoiceGrid
+                  columns={6}
+                  options={MONTHS.map((month) => ({
+                    value: month,
+                    label: MONTH_NAMES[month - 1] ?? String(month),
+                  }))}
+                  selected={draft.schedule.months}
+                  disabled={saving}
+                  onToggle={(month) =>
+                    setDraft({
+                      ...draft,
+                      schedule: {
+                        ...draft.schedule,
+                        months: toggleChoice(draft.schedule.months, month),
+                      },
+                    })
+                  }
+                />
+              ) : null}
+              {fixedSchedule ? (
+                <Text className="border-t border-border-subtle px-4 py-3 text-sm text-foreground-muted">
+                  {describeFixedTimeSchedule(fixedSchedule, formatTime(fixedSchedule.timeOfDay))}.
+                  {fixedScheduleFallback ? ` ${fixedScheduleFallback}` : ""}
+                </Text>
+              ) : null}
             </>
           ) : draft.schedule.mode === "webhook" ? (
             <>
@@ -1171,7 +1324,14 @@ function TaskForm({
         tone="primary"
         fullWidth
         loading={saving}
-        disabled={!canOperate || dictationPending || taskMissing || environmentUnavailable}
+        // Wait for the server config: it says whether days of the month can be saved.
+        disabled={
+          config === null ||
+          !canOperate ||
+          dictationPending ||
+          taskMissing ||
+          environmentUnavailable
+        }
         onPress={() => void save()}
         label={saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}
       />

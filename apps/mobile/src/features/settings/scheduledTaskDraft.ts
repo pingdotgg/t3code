@@ -10,6 +10,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { MONTHS } from "@t3tools/client-runtime/scheduled-task-schedule";
 import {
   parseMaxDeliveryAge,
   parseWebhookFilterDrafts,
@@ -53,7 +54,12 @@ export function scheduledTaskDefaultModel(
 export type ScheduleDraft = {
   readonly mode: "fixed_time" | "interval" | "webhook";
   readonly timeOfDay: string;
+  readonly dayMode: "week" | "month";
   readonly weekdays: ReadonlyArray<number>;
+  readonly monthDays: ReadonlyArray<number>;
+  /** Off runs in every month; the month choices are kept so switching back restores them. */
+  readonly limitMonths: boolean;
+  readonly months: ReadonlyArray<number>;
   readonly intervalMinutes: string;
   readonly signature: ScheduledTaskWebhookSignature | null;
   readonly maxDeliveryAgeMinutes: string;
@@ -68,7 +74,11 @@ export type ScheduleDraft = {
 export const DEFAULT_SCHEDULE: ScheduleDraft = {
   mode: "fixed_time",
   timeOfDay: "09:00",
+  dayMode: "week",
   weekdays: [1, 2, 3, 4, 5],
+  monthDays: [1],
+  limitMonths: false,
+  months: MONTHS,
   intervalMinutes: "15",
   signature: null,
   maxDeliveryAgeMinutes: "",
@@ -81,14 +91,20 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
 
 export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
   switch (task.schedule.type) {
-    case "fixed_time":
+    case "fixed_time": {
+      const months = task.schedule.months?.length ? uniqueSorted(task.schedule.months) : MONTHS;
       return {
         ...DEFAULT_SCHEDULE,
         timeOfDay: task.schedule.timeOfDay,
+        dayMode: task.schedule.monthDays?.length ? "month" : "week",
         weekdays: task.schedule.weekdays?.length
-          ? [...new Set(task.schedule.weekdays)].sort((a, b) => a - b)
+          ? uniqueSorted(task.schedule.weekdays)
           : [0, 1, 2, 3, 4, 5, 6],
+        monthDays: task.schedule.monthDays?.length ? uniqueSorted(task.schedule.monthDays) : [1],
+        limitMonths: months.length < 12,
+        months,
       };
+    }
     case "interval":
       return {
         ...DEFAULT_SCHEDULE,
@@ -171,19 +187,36 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
     const everyMs = Math.round(minutes * 60_000);
     return minutes >= 1 && Number.isSafeInteger(everyMs) ? { type: "interval", everyMs } : null;
   }
-  const weekdays = [...new Set(draft.weekdays)].sort((a, b) => a - b);
+  const weekdays = uniqueSorted(draft.weekdays);
+  const monthDays = uniqueSorted(draft.monthDays);
+  const months = draft.limitMonths ? uniqueSorted(draft.months) : MONTHS;
+  const days = draft.dayMode === "month" ? monthDays : weekdays;
+  const [minimum, maximum] = draft.dayMode === "month" ? [1, 31] : [0, 6];
   if (
     !/^([01]?\d|2[0-3]):[0-5]\d$/.test(draft.timeOfDay) ||
-    weekdays.length === 0 ||
-    weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6)
+    days.length === 0 ||
+    days.some((day) => !Number.isInteger(day) || day < minimum || day > maximum) ||
+    months.length === 0 ||
+    months.some((month) => !Number.isInteger(month) || month < 1 || month > 12)
   ) {
     return null;
   }
   return {
     type: "fixed_time",
     timeOfDay: draft.timeOfDay,
-    ...(weekdays.length === 7 ? {} : { weekdays }),
+    ...(draft.dayMode === "month"
+      ? monthDays.length === 31
+        ? {}
+        : { monthDays }
+      : weekdays.length === 7
+        ? {}
+        : { weekdays }),
+    ...(months.length === 12 ? {} : { months }),
   };
+}
+
+function uniqueSorted(values: ReadonlyArray<number>): number[] {
+  return [...new Set(values)].sort((a, b) => a - b);
 }
 
 type Workspace = "worktree" | "root" | "existing_worktree";
@@ -215,7 +248,11 @@ function draftSignature(draft: ScheduledTaskDraft): string {
       .map((option) => [option.id, option.value]),
     draft.schedule.mode,
     draft.schedule.timeOfDay,
-    [...draft.schedule.weekdays].sort((a, b) => a - b),
+    draft.schedule.dayMode,
+    uniqueSorted(draft.schedule.weekdays),
+    uniqueSorted(draft.schedule.monthDays),
+    draft.schedule.limitMonths,
+    uniqueSorted(draft.schedule.months),
     draft.schedule.intervalMinutes,
     draft.schedule.maxDeliveryAgeMinutes,
     draft.schedule.replayKey,

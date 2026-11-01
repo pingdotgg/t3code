@@ -229,3 +229,52 @@ it.effect(
       }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect("stores a day-of-month schedule and schedules its next chosen day", () =>
+  Effect.gen(function* () {
+    const local = (month: number, day: number, year = 2026) =>
+      DateTime.makeZonedUnsafe(
+        { year, month, day, hour: 9, minute: 0, second: 0, millisecond: 0 },
+        { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+      );
+    yield* TestClock.setTime(DateTime.toEpochMillis(local(10, 19)));
+
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Scheduler.layer,
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        isScratchProject: () => Effect.succeed(false),
+      }),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const input = yield* decodeUpsertInput({
+        title: "Quarterly report",
+        prompt: "Prepare the quarterly report.",
+        enabled: true,
+        schedule: { type: "fixed_time", timeOfDay: "09:00", monthDays: [5], months: [1, 4, 7, 10] },
+        projectId: "project-month-days",
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      const created = yield* service.upsert(input);
+      expect(created.task.nextRunAt).toBe(DateTime.formatIso(DateTime.toUtc(local(1, 5, 2027))));
+
+      const [listed] = (yield* service.list()).tasks;
+      expect(listed?.schedule).toEqual(input.schedule);
+
+      const monthly = yield* service.upsert({
+        ...input,
+        id: created.task.id,
+        schedule: { type: "fixed_time", timeOfDay: "09:00", monthDays: [4, 6] },
+      });
+      expect(monthly.task.nextRunAt).toBe(DateTime.formatIso(DateTime.toUtc(local(11, 4))));
+    }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);

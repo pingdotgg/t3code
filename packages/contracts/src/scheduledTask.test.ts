@@ -58,3 +58,26 @@ describe("webhook filters", () => {
     expect(accepts([{ path: "body.action", op: "matches", value: "^opened$" }])).toBe(false);
   });
 });
+
+describe("fixed_time calendar fields", () => {
+  it("accepts days of the month limited to chosen months", () => {
+    const quarterly = {
+      type: "fixed_time",
+      timeOfDay: "09:00",
+      monthDays: [5],
+      months: [1, 4, 7, 10],
+    };
+    expect(decodeUpsertSchedule(quarterly)).toEqual(quarterly);
+  });
+
+  it("rejects weekdays combined with days of the month", () => {
+    expect(() =>
+      decodeUpsertSchedule({
+        type: "fixed_time",
+        timeOfDay: "09:00",
+        weekdays: [1],
+        monthDays: [4],
+      }),
+    ).toThrow("Choose weekdays or days of the month, not both.");
+  });
+});

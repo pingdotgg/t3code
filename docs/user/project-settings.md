@@ -76,6 +76,14 @@ to override its environment defaults. Worktree directories keep their original n
 If generation fails, or a custom name is invalid or already taken, the temporary
 branch name remains.
 
+## Scheduled times
+
+In **Settings → Scheduled tasks**, **At a time** runs a task at a set time, in
+the time zone of the environment that runs it, on chosen days of the week or
+days of the month. Choose months to run only in those, such as the 5th of
+January, April, July and October for a quarterly report. A day a month doesn't
+have, such as the 31st, runs on that month's last day.
+
 ## Scheduled tasks on mobile
 
 Open **Settings → Scheduled tasks** to create recurring tasks or manage existing
