@@ -1,4 +1,5 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
+import { markdownProseDirection, textDirection } from "~/textDirection";
 import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -188,8 +189,20 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     return null;
   }
 
+  const promptDirection = markdownProseDirection(
+    prompt.questions
+      .flatMap((question) => [
+        question.header,
+        question.question,
+        ...question.options.flatMap((option) => [option.label, option.description ?? ""]),
+      ])
+      .join(" "),
+  );
+  const questionTextAlign = promptDirection === "rtl" ? "text-right" : "text-left";
+
   return (
     <Collapsible
+      dir={promptDirection}
       open={!isCollapsed}
       onOpenChange={(open) => {
         setCollapsedQuestionId(open ? null : activeQuestion.id);
@@ -208,6 +221,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         <ComposerBanner.Content>
           <span
             className={cn("min-w-0 truncate text-muted-foreground", isCollapsed && "max-w-1/2")}
+            dir={textDirection(activeQuestion.header)}
           >
             {activeQuestion.header}
           </span>
@@ -216,7 +230,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               <ComposerBanner.Separator />
               <span
                 data-pending-user-input-selectable=""
-                className="min-w-0 flex-1 cursor-text truncate text-secondary-label select-text"
+                className={cn(
+                  "min-w-0 flex-1 cursor-text truncate text-secondary-label select-text",
+                  questionTextAlign,
+                )}
+                dir={markdownProseDirection(activeQuestion.question)}
               >
                 {activeQuestion.question}
               </span>
@@ -282,7 +300,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               text={activeQuestion.question}
               cwd={cwd}
               threadRef={threadRef}
-              className="pt-2 text-foreground/85"
+              className={cn("pt-2 text-foreground/85", questionTextAlign)}
             />
             {/* Rows span the header row's width so the radios align with the question text and the shortcut column sits under the dismiss button. */}
             <div className="-ms-2 mt-1.5 sm:-ms-1.5">
@@ -295,7 +313,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   isOptimisticallySelected || draftSelectedOptions?.[index] === true;
                 const optionDisabled = responseDisabled;
                 const className = cn(
-                  "group flex w-full items-start gap-2.5 rounded-md bg-transparent py-1.5 ps-2 text-left outline-none transition-colors duration-150 select-text focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25 sm:ps-1.5",
+                  questionTextAlign,
+                  "group flex w-full items-start gap-2.5 rounded-md bg-transparent py-1.5 ps-2 sm:ps-1.5 outline-none transition-colors duration-150 select-text focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
                   isSelected ? "text-foreground" : "text-foreground/70 hover:bg-muted/30",
                   optionDisabled && "cursor-not-allowed opacity-50",
                   !optionDisabled && "cursor-pointer",
@@ -310,12 +329,18 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                         <OptionRadio checked={isSelected} />
                       )}
                     </span>
-                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <span className="cursor-text text-sm font-medium select-text">
+                    <div className="min-w-0 flex-1 flex flex-col gap-0.5">
+                      <span
+                        className="cursor-text text-sm font-medium select-text"
+                        dir={textDirection(option.label)}
+                      >
                         {option.label}
                       </span>
                       {option.description && option.description !== option.label ? (
-                        <span className="cursor-text text-secondary-label text-2xs select-text">
+                        <span
+                          className="cursor-text text-secondary-label text-2xs select-text"
+                          dir={textDirection(option.description)}
+                        >
                           {option.description}
                         </span>
                       ) : null}
