@@ -1,5 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off - observes the children the launcher spawns with Node built-ins.
 import type * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - controls filesystem capacity without filling the test machine.
+import * as NodeFSP from "node:fs/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -28,12 +30,20 @@ import {
 } from "./cloud/serviceProtocol.ts";
 
 const spawnedChildren = vi.hoisted((): Array<NodeChildProcess.ChildProcess> => []);
+const spawnHook = vi.hoisted(() => ({
+  current: undefined as ((child: NodeChildProcess.ChildProcess) => void) | undefined,
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => ({
+  ...(await importOriginal<typeof NodeFSP>()),
+}));
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeChildProcess>();
   const spawn = (...args: Parameters<typeof actual.spawn>) => {
     const child = actual.spawn(...args);
     spawnedChildren.push(child);
+    spawnHook.current?.(child);
     return child;
   };
   return { ...actual, spawn: spawn as typeof actual.spawn };
@@ -127,6 +137,207 @@ const writeFakeRuntime = (
   });
 
 it.layer(NodeServices.layer)("service state persistence", (it) => {
+  it.effect.each([
+    "startup",
+    "home probe error",
+    "database probe error",
+    "pending update",
+    "update handoff",
+    "trial exit",
+    "failed trial start",
+    "stop",
+  ] as const)("waits for disk recovery during %s without losing the update lifecycle", (scenario) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-disk-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const databasePath = path.join(root, "userdata", "statev2.sqlite");
+      let backupPath = path.join(root, "runtime", "db-backup", "disk-update");
+      const pending = {
+        id: "disk-update",
+        fromVersion: "1.0.0",
+        targetVersion: "1.1.0",
+        dbPath: databasePath,
+        status: "pending" as const,
+      };
+      yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+      yield* fs.writeFileString(databasePath, "before trial");
+      const childSource = `
+const fs = require("node:fs");
+const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
+if (context.update?.status === "pending") {
+  if (context.childVersion !== context.update.targetVersion) throw new Error("wrong trial version");
+  if (fs.readFileSync(${JSON.stringify(path.dirname(backupPath))} + "/" + context.update.id + "/database", "utf8") !== "before trial") {
+    throw new Error("missing original backup");
+  }
+  if (${JSON.stringify(scenario)} === "trial exit") {
+    fs.writeFileSync(context.update.dbPath, "migrated");
+    process.on("message", () => process.exit(1));
+    process.send("migrated");
+  } else {
+    process.send({ type: "prepared", updateId: context.update.id });
+    process.on("message", (message) => {
+      if (message.type === "committed") process.send("ready");
+    });
+  }
+} else if (${JSON.stringify(scenario)} === "update handoff" && context.update === undefined) {
+  process.on("message", (message) => {
+    if (message.type === "update-accepted") process.send("exiting");
+    if (message === "exit") process.exit(0);
+  });
+  process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: ${JSON.stringify(databasePath)} });
+} else {
+  process.send("ready");
+}
+setInterval(() => {}, 1_000);
+`;
+      for (const version of ["1.0.0", "1.1.0"]) {
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", version),
+          childSource,
+        );
+      }
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+          ...([
+            "startup",
+            "home probe error",
+            "database probe error",
+            "update handoff",
+            "stop",
+          ].includes(scenario)
+            ? {}
+            : { update: pending }),
+        }),
+      );
+      let low = [
+        "startup",
+        "home probe error",
+        "database probe error",
+        "pending update",
+        "stop",
+      ].includes(scenario);
+      let recovered = false;
+      const blocked = Promise.withResolvers<void>();
+      const ready = Promise.withResolvers<void>();
+      const probing = Promise.withResolvers<void>();
+      const capacityResult = Promise.withResolvers<void>();
+      const actualStatfs = NodeFSP.statfs;
+      const stats = yield* Effect.promise(() => actualStatfs(root));
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          vi.useFakeTimers({
+            toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"],
+          });
+          const capacity = vi.spyOn(NodeFSP, "statfs").mockImplementation(async (directory) => {
+            if (scenario === "stop" && directory === root) {
+              probing.resolve();
+              await capacityResult.promise;
+            }
+            if (
+              (scenario === "home probe error" && directory === root) ||
+              (scenario === "database probe error" && directory === path.dirname(databasePath))
+            ) {
+              throw new Error("statfs unavailable");
+            }
+            if (
+              scenario === "failed trial start" &&
+              !recovered &&
+              (await fs.exists(backupPath).pipe(Effect.runPromise))
+            )
+              low = true;
+            return { ...stats, bavail: low ? 0 : 64 * 1024 ** 2, bsize: 1 };
+          });
+          const log = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+            if (String(chunk).includes("Waiting for free space")) blocked.resolve();
+            return true;
+          });
+          spawnHook.current = (child) =>
+            child.on("message", (message) => {
+              if (message === "ready") ready.resolve();
+              if (message === "migrated" || message === "exiting") {
+                low = true;
+                child.send("exit");
+              }
+            });
+          return { capacity, log };
+        }),
+        ({ capacity, log }) =>
+          Effect.sync(() => {
+            capacity.mockRestore();
+            log.mockRestore();
+            spawnHook.current = undefined;
+            vi.useRealTimers();
+          }),
+      );
+      const beforeSpawns = spawnedChildren.length;
+      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const running = launcher.run();
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(async () => {
+          await launcher.stop("SIGTERM");
+          await running;
+        }),
+      );
+      if (scenario === "stop") {
+        yield* Effect.promise(() => probing.promise);
+        const stopping = launcher.stop("SIGTERM");
+        capacityResult.resolve();
+        yield* Effect.promise(() => stopping);
+        yield* Effect.promise(() => running);
+        assert.equal(spawnedChildren.length, beforeSpawns);
+        assert.equal(vi.getTimerCount(), 0);
+        return;
+      }
+      yield* Effect.promise(() => Promise.race([blocked.promise, ready.promise, running]));
+      assert.equal(
+        spawnedChildren.length - beforeSpawns,
+        ["trial exit", "update handoff"].includes(scenario) ? 1 : 0,
+      );
+      if (scenario === "update handoff") {
+        const state = yield* Effect.promise(() => readServiceState(statePath));
+        backupPath = path.join(root, "runtime", "db-backup", state.update!.id);
+      }
+      assert.equal(
+        yield* fs.exists(backupPath),
+        scenario === "trial exit" || scenario === "failed trial start",
+      );
+      if (scenario === "trial exit")
+        assert.equal(yield* fs.readFileString(databasePath), "migrated");
+      if (scenario === "failed trial start") {
+        yield* fs.remove(path.join(root, "runtime", "versions", "1.1.0"), { recursive: true });
+      }
+      low = false;
+      recovered = true;
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(30_000));
+      yield* Effect.promise(() => Promise.race([ready.promise, running]));
+      const state = yield* Effect.promise(() => readServiceState(statePath));
+      assert.equal(
+        state.activeVersion,
+        ["pending update", "update handoff"].includes(scenario) ? "1.1.0" : "1.0.0",
+      );
+      assert.equal(
+        state.update?.status,
+        {
+          startup: undefined,
+          "home probe error": undefined,
+          "database probe error": undefined,
+          "pending update": "committed",
+          "update handoff": "committed",
+          "trial exit": "rolled-back",
+          "failed trial start": "failed",
+        }[scenario],
+      );
+      assert.equal(yield* fs.readFileString(databasePath), "before trial");
+      assert.isFalse(yield* fs.exists(backupPath));
+    }),
+  );
+
   it.effect(
     "loads optional service.env literally without changing inherited or managed variables",
     () =>
