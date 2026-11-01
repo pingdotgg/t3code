@@ -22,6 +22,10 @@ export const ChatCanvasContext = createContext<{
   preferredDetailsCard: ReturnType<typeof resolveThreadDetailsCardLayout>;
   /** Where the inline card sits now; null when it shows as a popover. */
   detailsCardPlacement: ReturnType<typeof resolveThreadDetailsCardLayout>;
+  /** How far the chat lane moves when the card claims or frees its space. */
+  detailsCardLaneShift: number;
+  /** True while a panel animates the canvas width; the card sits where the canvas settles. */
+  canvasSettling: boolean;
 } | null>(null);
 
 export const useChatCanvas = () => useContext(ChatCanvasContext);

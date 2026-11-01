@@ -12,8 +12,13 @@ const threadRef = {
   threadId: ThreadId.make("thread-1"),
 };
 const otherThreadRef = { ...threadRef, threadId: ThreadId.make("thread-2") };
-const measurements = (width: number, height = 900): ChatCanvasMeasurements => ({
+const measurements = (
+  width: number,
+  height = 900,
+  settledWidth = width,
+): ChatCanvasMeasurements => ({
   width,
+  settledWidth,
   height,
   padding: 48,
   maxChatWidth: 768,
@@ -41,6 +46,26 @@ describe("chat canvas model", () => {
       }).detailsCardMode;
     expect(resolve(1400)).toBe("inline");
     expect(resolve(900)).toBe("popover");
+  });
+
+  it("decides from the settled width while a panel animates the canvas", () => {
+    const resolve = (width: number, settledWidth: number) =>
+      resolveChatCanvasModel({
+        measurements: measurements(width, 900, settledWidth),
+        detailsCardMeasurement: { threadRef, width: 280, fullContentHeight: 300 },
+        threadRef,
+        preview: null,
+        detailsCardInlineOpen: true,
+      });
+    const opening = resolve(1400, 700);
+    expect(opening.detailsCardMode).toBe("popover");
+    expect(opening.laneAvoidsDetailsCard).toBe(false);
+    const closing = resolve(700, 1400);
+    expect(closing.detailsCardMode).toBe("inline");
+    expect(closing.canvasSettling).toBe(true);
+    expect(closing.detailsCardPlacement?.x).toBe(1400 - 280 - 12);
+    expect(closing.laneAvoidsDetailsCard).toBe(true);
+    expect(resolve(1400, 1400).canvasSettling).toBe(false);
   });
 
   it("moves the card into a popover when a preview below it leaves too little height", () => {

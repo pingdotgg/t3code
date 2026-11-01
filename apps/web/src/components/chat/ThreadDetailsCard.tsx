@@ -2,6 +2,7 @@ import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import {
   useLayoutEffect,
   useState,
+  type CSSProperties,
   type MouseEventHandler,
   type ReactNode,
   type RefObject,
@@ -18,6 +19,7 @@ import {
 } from "./threadDetailsCardLayout";
 import { observeResize } from "../../lib/observeResize";
 import { requestWorkspaceFocus } from "../../lib/workspaceFocus";
+import { usePanelAnimationSettings, usePanelPresence } from "../../panelAnimations";
 
 export function ThreadDetailsCard({
   threadRef,
@@ -47,17 +49,34 @@ export function ThreadDetailsCard({
   const popoverOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "popover"),
   );
-  const measurementKey = `${threadRef.environmentId}:${threadRef.threadId}:${preferredPlacement?.width ?? "popup"}:${contentKey}`;
+  const { active: animationsActive, durationMs } = usePanelAnimationSettings();
+  const inlineShown = placement !== null && inlineOpen;
+  // While a panel resizes the canvas, the card holds the spot it settles at and fades
+  // above the panel.
+  const settling = canvas?.canvasSettling ?? false;
+  // Toggled, the card drifts as far as the lane moves, so it leads the lane at a steady gap.
+  const drift = Math.max(24, canvas?.detailsCardLaneShift ?? 0);
+  const inline = usePanelPresence(
+    inlineShown,
+    placement,
+    animationsActive,
+    `${threadRef.environmentId}:${threadRef.threadId}`,
+    durationMs,
+  );
+  const inlinePlacement = inline.value;
+  // An exiting inline card keeps its size and density until it unmounts.
+  const sizedPlacement = placement ?? inlinePlacement;
+  const cardWidth = preferredPlacement?.width ?? inlinePlacement?.width;
+  const measurementKey = `${threadRef.environmentId}:${threadRef.threadId}:${cardWidth ?? "popup"}:${contentKey}`;
   const [measurements, setMeasurements] = useState({
     key: measurementKey,
     heights: { full: 0, compact: 0 },
   });
   const contentHeights =
     measurements.key === measurementKey ? measurements.heights : { full: 0, compact: 0 };
-  const height = placement?.height ?? Math.max(0, (canvas?.container.height ?? 0) - 52);
+  const height = sizedPlacement?.height ?? Math.max(0, (canvas?.container.height ?? 0) - 52);
   const density = resolveThreadDetailsCardDensity(height, contentHeights);
   const measureDetailsCard = canvas?.measureDetailsCard;
-  const cardWidth = preferredPlacement?.width;
   // The mode derives from canvas measurements, the preview frame and the
   // inline flag, which live in three stores, so no single write site sees the
   // card leave popover mode. A flag left set would reopen the popover unasked
@@ -119,7 +138,7 @@ export function ThreadDetailsCard({
         mode === "popover" &&
           "max-h-[min(calc(100dvh-6.5rem),calc(var(--available-height,100dvh)-1rem))]",
       )}
-      style={placement ? { maxHeight: height } : undefined}
+      style={sizedPlacement ? { maxHeight: height } : undefined}
       onContextMenu={onContextMenu}
       data-thread-details-card
     >
@@ -146,7 +165,7 @@ export function ThreadDetailsCard({
         useRightPanelStore.getState().setThreadPanelOpen(threadRef, "popover", open);
       }}
     >
-      {placement && inlineOpen ? (
+      {inline.present && inlinePlacement ? (
         <aside
           {...detailsArea}
           data-workspace-focus-key={`details:${threadRef.environmentId}:${threadRef.threadId}`}
@@ -154,17 +173,28 @@ export function ThreadDetailsCard({
           className={cn(
             "absolute z-20",
             topInset > 0 && "transition-[top] duration-150 ease-out motion-reduce:transition-none",
+            settling &&
+              "[[data-panel-animations=true]_&]:transition-[left] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out",
           )}
           style={{
-            right: placement.right,
-            top: placement.y,
-            width: placement.width,
+            left: inlinePlacement.x,
+            top: inlinePlacement.y,
+            width: inlinePlacement.width,
             maxHeight: height,
           }}
+          inert={!inlineShown}
           data-density={density}
           data-thread-details-panel="inline"
         >
-          {card}
+          <div
+            className={cn(
+              "[[data-panel-animations=true]_&]:transition-[opacity,translate] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out [[data-panel-animations=true]_&]:starting:translate-x-(--details-card-drift) [[data-panel-animations=true]_&]:starting:opacity-0",
+              !inlineShown && "translate-x-(--details-card-drift) opacity-0",
+            )}
+            style={{ "--details-card-drift": `${drift}px` } as CSSProperties}
+          >
+            {card}
+          </div>
         </aside>
       ) : null}
       {/* Rendered in both modes: base-ui keeps a popup that unmounts mid-open
