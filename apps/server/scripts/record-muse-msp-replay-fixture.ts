@@ -1,16 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off
 // The SDK's host factory is Promise-based and owns a raw child process, as production's does.
-/**
- * Records a Muse MSP replay transcript by running a registered fixture's input
- * through the real orchestrator and the real MuseAdapterV2 against a live
- * `muse serve`. The host's stdio is teed line by line.
- *
- *   node scripts/record-muse-msp-replay-fixture.ts --scenario simple
- *
- * Uses the machine's own `muse login`. `T3_MUSE_BIN` picks the binary. The
- * recording replays itself through the fixture's assertions before it is
- * written, so a run that fails them never replaces the existing transcript.
- */
 import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -68,7 +57,7 @@ if (fixture === undefined || variant === undefined) {
 }
 
 const museBinary = process.env.T3_MUSE_BIN ?? "muse";
-// Started as T3 starts it, so Windows needs no T3_MUSE_BIN for Muse's `muse.cmd` launcher.
+// Match T3's launch so Windows needs no T3_MUSE_BIN for `muse.cmd`.
 const museStart = Effect.runSync(museLaunch(museBinary));
 const home = process.env.HOME ?? "";
 
@@ -76,11 +65,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * Makes a recording portable: the workspace becomes `<workspace>` and the home
- * directory `~`, in both directions. Ids, timestamps and model output are kept
- * as recorded; they are opaque to T3 and carry no secrets.
- */
 function normalizeEntries(
   entries: ReadonlyArray<ProviderReplayEntry>,
   workspaces: ReadonlyArray<string>,
@@ -116,7 +100,7 @@ function encodeTranscriptNdjson(transcript: ProviderReplayTranscript): string {
   ].join("\n");
 }
 
-/** Recording follows wall time so a live Muse's own timeouts still elapse. */
+// Follow wall time so live Muse timeouts elapse.
 const followWallClock = Effect.gen(function* () {
   while (true) {
     yield* TestClock.withLive(Effect.sleep(CLOCK_TICK));
@@ -124,10 +108,6 @@ const followWallClock = Effect.gen(function* () {
   }
 });
 
-/**
- * Host factory that runs a live `muse serve` and tees every stdio line into
- * `entries`, in the order the connection writes and reads them.
- */
 function makeRecordingCreateHost(
   entries: Array<ProviderReplayEntry>,
   commandIds: Array<Array<string>>,
@@ -150,7 +130,6 @@ function makeRecordingCreateHost(
       entries.push({ type, ...(label === undefined ? {} : { label }), frame });
     };
     record("expect_outbound", { type: "host_start", args });
-    // The binary named by T3_MUSE_BIN, so the recorded version matches what ran.
     const child = NodeChildProcess.spawn(museStart.command, [...museStart.args, ...args], {
       cwd: options.cwd,
       env: options.environment ?? makeMuseEnvironment(),
@@ -161,7 +140,6 @@ function makeRecordingCreateHost(
     );
     async function* incoming() {
       let buffer = "";
-      // utf8 decoding keeps a character split across chunks intact.
       for await (const chunk of child.stdout.setEncoding("utf8")) {
         buffer += String(chunk);
         const lines = buffer.split("\n");
@@ -236,13 +214,13 @@ const record = Effect.gen(function* () {
 
   const entries: Array<ProviderReplayEntry> = [];
   const commandIds: Array<Array<string>> = [];
-  const placeholder = {
+  const placeholder: ProviderReplayTranscript = {
     provider: MUSE_PROVIDER_KIND,
     protocol: MUSE_MSP_REPLAY_PROTOCOL,
     version: museVersion,
     scenario: fixture.name,
     entries: [],
-  } satisfies ProviderReplayTranscript;
+  };
   const materializeInput = materializeFixtureInput({
     scenario: fixture.name,
     fixtureInput,
@@ -285,7 +263,6 @@ const record = Effect.gen(function* () {
       model: variant.modelSelection.model,
       commandIds,
     },
-    // The verbatim root first: it contains the canonical path.
     entries: normalizeEntries(entries, [
       yield* museWorkspaceRoot(canonicalWorkspace),
       canonicalWorkspace,

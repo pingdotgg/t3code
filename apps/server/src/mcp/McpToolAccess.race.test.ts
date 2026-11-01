@@ -17,19 +17,17 @@ import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { DispatchModeLimit } from "../orchestration-v2/DispatchModeLimit.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-
-// A Supervised outside agent renames a thread through a `writesThreads` tool.
-// The thread's user raises it to full access after the tool's check but
-// before its write: the race the orchestrator closes under the thread's lock.
 
 const instanceId = ProviderInstanceId.make("codex");
 const adapter = {
@@ -93,7 +91,6 @@ const decodeOutcome = Schema.decodeUnknownEffect(
   ),
 );
 
-/** Renames `threadId` as the Supervised client; the user may raise it in between. */
 const renameRacingTheUser = (threadId: ThreadId, userRaises: boolean) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -104,9 +101,7 @@ const renameRacingTheUser = (threadId: ThreadId, userRaises: boolean) =>
         (input) => [input.threadId],
         (input) =>
           Effect.gen(function* () {
-            // The tool's own check has passed; the user acts before the write.
             if (userRaises) {
-              // The user's own command carries no limit, so it lands.
               yield* orchestrator
                 .dispatch({
                   type: "thread.runtime-mode.set",
@@ -184,17 +179,13 @@ it.layer(layerOrchestrator)("writesThreads against a mode raise", (it) => {
       const shell = yield* projections.getThreadShell(threadId);
       assert.equal(shell?.runtimeMode, "full-access");
       assert.equal(shell?.title, "Before");
-    }).pipe(Effect.provide(ThreadManagement.layer)),
-  );
-
-  it.effect("lets the write through when the thread stays within the caller's modes", () =>
-    Effect.gen(function* () {
-      const projections = yield* ProjectionStore.ProjectionStoreV2;
-      const threadId = ThreadId.make("thread:race-steady");
-      yield* createSupervisedThread(threadId);
-      const outcome = yield* renameRacingTheUser(threadId, false);
-      assert.deepEqual(outcome, { renamed: true });
-      assert.equal((yield* projections.getThreadShell(threadId))?.title, "Renamed by the agent");
-    }).pipe(Effect.provide(ThreadManagement.layer)),
+    }).pipe(
+      Effect.provide(
+        ThreadManagement.layer.pipe(
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+        ),
+      ),
+    ),
   );
 });

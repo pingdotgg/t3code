@@ -1,9 +1,5 @@
-/**
- * Turn-item bodies for OpenCode tool calls, shared by the 1.x and 2.x runtimes.
- * Both report a tool as a name, a JSON input, text output, and free-form
- * metadata; only how they deliver those differs.
- */
 import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
+import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 
 // Search results stay on the timeline wire, so keep their text a preview.
@@ -14,9 +10,10 @@ type ToolItemBase = Omit<
   "type" | "toolName" | "input" | "output"
 >;
 
-export function openCodeToolProjectionKind(
+function openCodeToolProjectionKind(
   toolName: string,
 ): "command_execution" | "file_change" | "file_search" | "web_search" | "dynamic_tool" {
+  if (resolveT3McpToolId(toolName) !== null) return "dynamic_tool";
   const normalized = toolName.toLowerCase();
   if (normalized === "todowrite") {
     return "dynamic_tool";
@@ -71,10 +68,19 @@ function stableJson(value: unknown): string {
   }
 }
 
-/**
- * The turn item for one tool call. `completedMetadata` is the tool's metadata
- * once it succeeded: exit codes and diffs are only trusted from a finished call.
- */
+function nativeReadOutput(output: string): string {
+  const header = /^<path>[^\r\n]+<\/path>\r?\n<type>(directory|file)<\/type>\r?\n/.exec(output);
+  if (header === null) return output;
+  const body = output.slice(header[0].length);
+  // File lines are numbered; only a closing tag on its own line ends the envelope.
+  const envelope =
+    header[1] === "directory"
+      ? /^<entries>\r?\n([\s\S]*?)\r?\n<\/entries>(?=\r?\n|$)/.exec(body)
+      : /^<content>(?:\r?\n)?([\s\S]*?)\r?\n<\/content>(?=\r?\n|$)/.exec(body);
+  // OpenCode can append instructions after the envelope; keep that suffix verbatim.
+  return envelope === null ? output : envelope[1] + body.slice(envelope[0].length);
+}
+
 export function openCodeToolTurnItem(
   base: ToolItemBase,
   tool: {
@@ -99,7 +105,6 @@ export function openCodeToolTurnItem(
     case "file_change": {
       const oldStr = recordString(input, "oldString", "oldText");
       const newStr = recordString(input, "newString", "content", "newText");
-      // A failed edit has no diff; keep its error where the diff would be.
       const diffStr =
         recordString(tool.completedMetadata, "diff", "patch") ??
         (base.status === "failed" && output?.trim() ? output : undefined);
@@ -114,8 +119,6 @@ export function openCodeToolTurnItem(
     }
     case "file_search": {
       const pattern = recordString(input, "pattern", "query", "path", "filePath");
-      // OpenCode reports matches as plain text, so keep it as one result row
-      // under the searched path, like the ACP search projection.
       const searchRoot = (recordString(input, "path", "filePath") ?? pattern)?.trim();
       return {
         ...base,
@@ -154,6 +157,8 @@ export function openCodeToolTurnItem(
     }
     case "dynamic_tool": {
       const readPath = recordString(input, "filePath", "path", "file");
+      const cleanedOutput =
+        tool.name === "read" && output !== undefined ? nativeReadOutput(output) : output;
       return {
         ...base,
         title:
@@ -163,7 +168,7 @@ export function openCodeToolTurnItem(
         type: "dynamic_tool",
         toolName: tool.name,
         input,
-        ...(output === undefined ? {} : { output }),
+        ...(cleanedOutput === undefined ? {} : { output: cleanedOutput }),
       };
     }
   }

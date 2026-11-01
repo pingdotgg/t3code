@@ -22,28 +22,35 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
-import * as ServerSettings from "../serverSettings.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
+
+const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
+  Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+  Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+);
 
 const driver = ProviderDriverKind.make("claudeAgent");
 const instanceId = ProviderInstanceId.make("claudeAgent");
 const modelSelection = { instanceId, model: "claude-test" };
 
-// A delegated Claude child ends its turn while a background native subagent it
-// started keeps running (#17154). Cancelling the task stops the child, which
-// ends that subagent's process, so the task must end instead of waiting on it.
 it.effect("task_cancel ends a delegated child's background native subagent", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -133,9 +140,15 @@ it.effect("task_cancel ends a delegated child's background native subagent", () 
       );
       const layerOrchestration = Layer.merge(
         layerOrchestrator,
-        ThreadManagementService.layer.pipe(Layer.provide(layerOrchestrator)),
+        ThreadManagementService.layer.pipe(
+          Layer.provide(layerOrchestrator),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(
+            CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+          ),
+        ),
       );
-      const layerTest = OrchestratorMcpService.layer.pipe(
+      const layerTest = layerOrchestratorService.pipe(
         Layer.provideMerge(layerOrchestration),
         Layer.provide(
           Layer.mergeAll(
@@ -143,6 +156,7 @@ it.effect("task_cancel ends a delegated child's background native subagent", () 
             Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
             Layer.mock(ProjectService.ProjectService)({}),
             Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
             ServerSettings.layerTest(),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
             NodeServices.layer,
@@ -218,7 +232,6 @@ it.effect("task_cancel ends a delegated child's background native subagent", () 
         const childTurn = (yield* orchestrator.getThreadProjection(task.childThreadId!))
           .providerTurns[0]!;
 
-        // The child starts a background native subagent, then ends its turn.
         const now = yield* DateTime.now;
         const subagentId = NodeId.make("node:native-subagent");
         const native = {
@@ -349,7 +362,7 @@ it.effect("task_cancel ends a delegated child's background native subagent", () 
           childAfter.turnItems.find((item) => item.type === "subagent")?.status,
           "interrupted",
         );
-        // The child's own turn had completed, so the task keeps that result.
+
         const after = yield* service.taskStatus(scope, task.id);
         assert.equal(after.status, "completed");
         assert.notEqual(after.workState, "waiting_for_children");

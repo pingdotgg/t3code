@@ -1,3 +1,6 @@
+import { Button } from "../../components/ui/Button";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import * as Dialog from "../../components/ui/Dialog";
 import previewStreamScript from "@t3tools/mobile-preview-stream";
 import {
   previewStreamControlLabel,
@@ -9,23 +12,23 @@ import {
 } from "@t3tools/client-runtime/preview/server-browser-stream";
 import type { EnvironmentId, PreviewStreamHostSetup } from "@t3tools/contracts";
 import {
-  useEffect,
   useEffectEvent,
   useImperativeHandle,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type Ref,
 } from "react";
-import { ActivityIndicator, Alert, Platform, Pressable, TextInput, View } from "react-native";
+import { Platform, Pressable, TextInput, View } from "react-native";
 import { WebView } from "react-native-webview";
 import * as Clipboard from "expo-clipboard";
 
-import { AppText } from "../../components/AppText";
+import { AppText } from "../../components/ui/AppText";
+import { PdfPreview } from "../../components/PdfPreview";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { beginForegroundHandoff } from "../../lib/foreground-handoff";
 import { usePreviewStreamAccess } from "../../state/preview";
+import { previewPromptText } from "./previewPromptText";
 
 import {
   previewStreamDocument,
@@ -34,8 +37,8 @@ import {
 } from "./preview-stream-document";
 
 export interface PreviewStreamRef {
-  /** Navigation requires current control of the browser. */
   readonly command: (input: PreviewStreamInput) => void;
+  readonly paste: () => void;
   readonly togglePictureInPicture: () => void;
 }
 
@@ -46,20 +49,19 @@ export interface PreviewPictureInPictureState {
 
 type NativeStreamBridge = {
   readonly ref?: Ref<PreviewStreamRef>;
-  /** Refresh stream access; new access remounts the document with a fresh ticket. */
   readonly onUnauthorized: () => void;
-  /** The tab was closed on the server. */
+  /** Asks for fresh access after a refusal, once `delayMs` has passed. */
+  readonly onRefused: (delayMs: number) => void;
   readonly onGone?: () => void;
   readonly onViewport?: (viewport: { readonly width: number; readonly height: number }) => void;
   readonly onControl?: (control: PreviewStreamControl | null) => void;
   readonly onPictureInPicture?: (state: PreviewPictureInPictureState, detail?: string) => void;
-  /** True while frames show, so commands reach the page. Pass a stable function. */
+  /** True while frames show, so commands reach the page. */
   readonly onStreamingChange?: (streaming: boolean) => void;
-  /** The floating player shows a spinner without text or a reconnect button. */
   readonly compact?: boolean;
+  readonly pdfUri?: string | null;
 };
 
-/** Picks files on this device and sends them to the page's open picker; none cancels it. */
 async function sendFilesToPage(chooser: PreviewStreamFileChooser, pick: boolean) {
   const body = new FormData();
   if (pick) {
@@ -72,7 +74,6 @@ async function sendFilesToPage(chooser: PreviewStreamFileChooser, pick: boolean)
       endHandoff();
     }
     for (const asset of result.canceled ? [] : result.assets) {
-      // React Native's FormData uploads a file part from its URI.
       body.append("file", {
         uri: asset.uri,
         name: asset.name,
@@ -88,9 +89,8 @@ async function sendFilesToPage(chooser: PreviewStreamFileChooser, pick: boolean)
   if (!response.ok) throw new Error((await response.text()) || "The upload was refused.");
 }
 
-/** The file is on the environment; saving it here goes through the share sheet. */
 function offerDownload(download: PreviewStreamDownload) {
-  Alert.alert(`Downloaded ${download.fileName}`, undefined, [
+  Dialog.alert(`Downloaded ${download.fileName}`, undefined, [
     { text: "Not now", style: "cancel" },
     {
       text: "Save or share",
@@ -100,7 +100,7 @@ function offerDownload(download: PreviewStreamDownload) {
           attachment: { name: download.fileName, mimeType: "application/octet-stream" },
           signal: new AbortController().signal,
         }).catch((cause: unknown) =>
-          Alert.alert(
+          Dialog.alert(
             "Could not save the download",
             cause instanceof Error ? cause.message : undefined,
           ),
@@ -109,20 +109,25 @@ function offerDownload(download: PreviewStreamDownload) {
   ]);
 }
 
-// Consecutive refused tickets before the view stops and offers Reconnect, e.g. a
-// session without operate scope.
 const MAX_REFUSALS = 3;
 
 export function PreviewStreamWebView(
   props: Omit<PreviewStreamConfiguration, "access"> &
-    Omit<NativeStreamBridge, "onUnauthorized"> & {
+    Omit<NativeStreamBridge, "onUnauthorized" | "onRefused"> & {
       readonly environmentId: EnvironmentId;
       readonly paused?: boolean;
     },
 ) {
-  const { access, error, refresh } = usePreviewStreamAccess(props.environmentId);
+  const { access, error, refresh, retryAfter } = usePreviewStreamAccess(props.environmentId);
   if (access && !props.paused) {
-    return <AuthorizedPreviewStream {...props} access={access} onUnauthorized={refresh} />;
+    return (
+      <AuthorizedPreviewStream
+        {...props}
+        access={access}
+        onUnauthorized={refresh}
+        onRefused={retryAfter}
+      />
+    );
   }
   return (
     <View
@@ -132,7 +137,7 @@ export function PreviewStreamWebView(
           : "flex-1 items-center justify-center gap-4 px-6"
       }
     >
-      {props.compact || !error ? <ActivityIndicator colorClassName="accent-icon" /> : null}
+      {props.compact || !error ? <AppActivityIndicator colorClassName="accent-icon" /> : null}
       {!props.compact && (
         <>
           <AppText
@@ -144,13 +149,9 @@ export function PreviewStreamWebView(
             {error || "Connecting to browser..."}
           </AppText>
           {error && (
-            <Pressable
-              accessibilityRole="button"
-              className="rounded-full border border-secondary-border bg-secondary px-6 py-3"
-              onPress={refresh}
-            >
-              <AppText className="text-secondary-foreground">Retry</AppText>
-            </Pressable>
+            <View className="items-center">
+              <Button label="Retry" tone="secondary" onPress={refresh} />
+            </View>
           )}
         </>
       )}
@@ -171,13 +172,6 @@ function AuthorizedPreviewStream({
   }
   const processRetried = useRef(false);
   const unauthorized = useRef(0);
-  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(
-    () => () => {
-      if (refreshTimer.current !== null) clearTimeout(refreshTimer.current);
-    },
-    [],
-  );
   const configuration = JSON.stringify({
     access: props.access,
     threadId: props.threadId,
@@ -192,17 +186,9 @@ function AuthorizedPreviewStream({
       ref={ref}
       configuration={configuration}
       onUnauthorized={() => {
-        // The client has stopped. Restart it with a fresh ticket, backing off between refusals.
         const refusals = ++unauthorized.current;
         if (refusals >= MAX_REFUSALS) return false;
-        if (refreshTimer.current !== null) clearTimeout(refreshTimer.current);
-        refreshTimer.current = setTimeout(
-          () => {
-            refreshTimer.current = null;
-            props.onUnauthorized();
-          },
-          refusals === 1 ? 0 : 1_000 * 2 ** (refusals - 1),
-        );
+        props.onRefused(refusals === 1 ? 0 : 1_000 * 2 ** (refusals - 1));
         return true;
       }}
       onRetry={() => {
@@ -229,6 +215,7 @@ function PreviewStreamDocumentView({
   configuration,
   background,
   compact,
+  pdfUri,
   onUnauthorized,
   onGone,
   onViewport,
@@ -238,24 +225,24 @@ function PreviewStreamDocumentView({
   onRetry,
   onStreaming,
   onRecoverProcess,
-}: Omit<NativeStreamBridge, "onUnauthorized"> & {
+}: Omit<NativeStreamBridge, "onUnauthorized" | "onRefused"> & {
   readonly configuration: string;
   readonly background: string;
-  /** False when the view should stop retrying and fail. */
   readonly onUnauthorized: () => boolean;
   readonly onRetry: () => void;
   readonly onStreaming: () => void;
   readonly onRecoverProcess: () => boolean;
 }) {
   const webView = useRef<WebView<object>>(null);
-  const active = useRef(true);
+  const active = useRef(false);
   const failed = useRef(false);
+  const bootstrapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [status, setStatus] = useState<"connecting" | "streaming" | "error">("connecting");
   const [error, setError] = useState<string | null>(null);
   const [gone, setGone] = useState(false);
   const [hostSetup, setHostSetup] = useState<PreviewStreamHostSetup | null>(null);
-  const [started, setStarted] = useState(false);
   const [control, setControl] = useState<PreviewStreamControl | null>(null);
+  const dialogRef = useRef<PreviewStreamControl["dialog"]>(null);
   const [promptText, setPromptText] = useState("");
   const [fileChooser, setFileChooser] = useState<PreviewStreamFileChooser | null>(null);
   const answerFileChooser = (pick: boolean) => {
@@ -263,20 +250,34 @@ function PreviewStreamDocumentView({
     if (!chooser) return;
     setFileChooser(null);
     void sendFilesToPage(chooser, pick).catch((cause: unknown) =>
-      Alert.alert(
+      Dialog.alert(
         "Could not send the files to the page",
         cause instanceof Error ? cause.message : undefined,
       ),
     );
   };
-  const controlChanged = useEffectEvent((next: PreviewStreamControl | null) => onControl?.(next));
   const command = (input: PreviewStreamInput) =>
     webView.current?.injectJavaScript(
       `window.T3PreviewStream?.command(${JSON.stringify(input)}); true;`,
     );
+  // Reads here rather than in the screen: a tab switch during the iOS paste prompt unmounts
+  // this view and nulls its WebView ref, so the text can never type into another tab.
+  const paste = () =>
+    void Clipboard.getStringAsync().then(
+      (text) => {
+        if (text) command({ type: "text", text });
+      },
+      () => Dialog.alert("Could not read the clipboard"),
+    );
+  const clearBootstrapTimer = () => {
+    if (bootstrapTimer.current === null) return;
+    clearTimeout(bootstrapTimer.current);
+    bootstrapTimer.current = null;
+  };
   const fail = (message: string) => {
     if (!active.current || failed.current) return;
     failed.current = true;
+    clearBootstrapTimer();
     webView.current?.injectJavaScript("window.T3PreviewStream?.stop(); true;");
     onStreamingChange?.(false);
     setControl(null);
@@ -285,37 +286,37 @@ function PreviewStreamDocumentView({
     setError(message);
     setStatus("error");
   };
-  // The shared transport owns reconnects once the document acknowledges startup.
   const bootstrapTimedOut = useEffectEvent(() =>
     fail("Browser viewer could not start. Reconnect to try again."),
   );
-  useEffect(() => {
-    if (started) return;
-    const timer = setTimeout(bootstrapTimedOut, 15_000);
-    return () => clearTimeout(timer);
-  }, [started]);
-  const source = useMemo(
-    () => ({
-      html: previewStreamDocument(configuration, previewStreamScript),
-      baseUrl: Platform.OS === "android" ? "https://localhost/" : "file:///",
-    }),
-    [configuration],
-  );
-  useImperativeHandle(ref, () => ({
-    command,
-    togglePictureInPicture: () =>
-      webView.current?.injectJavaScript("window.T3PreviewStream?.pictureInPicture(); true;"),
-  }));
+  const streamEnded = useEffectEvent(() => {
+    onStreamingChange?.(false);
+    onControl?.(null);
+  });
+  // The stream lives exactly as long as this view.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the bootstrap timeout and stops the WebView stream when this view unmounts
   useLayoutEffect(() => {
     active.current = true;
     const view = webView.current;
+    bootstrapTimer.current = setTimeout(bootstrapTimedOut, 15_000);
     return () => {
+      if (bootstrapTimer.current !== null) clearTimeout(bootstrapTimer.current);
+      bootstrapTimer.current = null;
       active.current = false;
       view?.injectJavaScript("window.T3PreviewStream?.stop(); true;");
+      streamEnded();
     };
   }, []);
-  useEffect(() => () => onStreamingChange?.(false), [onStreamingChange]);
-  useEffect(() => () => controlChanged(null), []);
+  const source = {
+    html: previewStreamDocument(configuration, previewStreamScript),
+    baseUrl: Platform.OS === "android" ? "https://localhost/" : "file:///",
+  };
+  useImperativeHandle(ref, () => ({
+    command,
+    paste,
+    togglePictureInPicture: () =>
+      webView.current?.injectJavaScript("window.T3PreviewStream?.pictureInPicture(); true;"),
+  }));
   const processTerminated = () => {
     if (!active.current || failed.current) return;
     if (!onRecoverProcess()) fail("Browser viewer stopped. Reconnect to try again.");
@@ -328,121 +329,117 @@ function PreviewStreamDocumentView({
             {previewStreamControlLabel(control)}
           </AppText>
           {control?.canOperate ? (
-            <Pressable
-              accessibilityRole="button"
+            <Button
+              label={control.controller === "you" ? "Release control" : "Take control"}
+              tone="secondary"
               disabled={control.controller === "another-viewer"}
-              accessibilityState={{ disabled: control.controller === "another-viewer" }}
-              className="rounded-full border border-secondary-border bg-secondary px-3 py-2"
               onPress={() =>
                 command({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
               }
-            >
-              <AppText className="text-xs text-secondary-foreground">
-                {control.controller === "you" ? "Release control" : "Take control"}
-              </AppText>
-            </Pressable>
+            />
           ) : null}
         </View>
       ) : null}
-      <WebView<object>
-        ref={webView}
-        source={source}
-        originWhitelist={["*"]}
-        scrollEnabled={false}
-        bounces={false}
-        mixedContentMode="always"
-        allowUniversalAccessFromFileURLs
-        contentInsetAdjustmentBehavior="never"
-        setSupportMultipleWindows={false}
-        // Picture in picture plays the canvas as an inline muted video, started from native chrome.
-        allowsInlineMediaPlayback
-        allowsPictureInPictureMediaPlayback
-        mediaPlaybackRequiresUserAction={false}
-        style={{ flex: 1, backgroundColor: background }}
-        onError={() => fail("Browser viewer could not load. Reconnect to try again.")}
-        onHttpError={() => fail("Browser viewer could not load. Reconnect to try again.")}
-        onContentProcessDidTerminate={processTerminated}
-        onRenderProcessGone={processTerminated}
-        onShouldStartLoadWithRequest={(request) =>
-          request.url === "about:blank" || request.url === source.baseUrl
-        }
-        onMessage={(event) => {
-          if (!active.current || failed.current) return;
-          const message = previewStreamMessage(event.nativeEvent.data);
-          if (message === null) return;
-          switch (message.type) {
-            case "control":
-              setControl(message);
-              setPromptText(message.dialog?.defaultValue ?? "");
-              onControl?.(message);
-              return;
-            case "unauthorized":
-              if (!onUnauthorized()) {
-                fail("This session can't open the browser stream. Reconnect to try again.");
-              }
-              return;
-            case "gone":
-              setGone(true);
-              fail("This tab was closed.");
-              onGone?.();
-              return;
-            case "hostSetup":
-              setHostSetup({ need: message.need, command: message.command });
-              fail(previewStreamHostSetupMessage(message));
-              return;
-            case "viewport":
-              onViewport?.(message);
-              return;
-            case "clipboard":
-              void Clipboard.setStringAsync(message.text).catch(() => undefined);
-              return;
-            case "download":
-              offerDownload(message);
-              return;
-            case "fileChooser":
-              setFileChooser(message.chooser);
-              return;
-            case "pictureInPicture":
-              onPictureInPicture?.(message, message.detail);
-              return;
-            case "status":
-              setStarted(true);
-              if (message.status === "error") {
-                fail(message.detail ?? "Browser stream failed.");
+      <View className="relative flex-1">
+        <WebView<object>
+          ref={webView}
+          source={source}
+          originWhitelist={["*"]}
+          scrollEnabled={false}
+          bounces={false}
+          mixedContentMode="always"
+          allowUniversalAccessFromFileURLs
+          contentInsetAdjustmentBehavior="never"
+          setSupportMultipleWindows={false}
+          allowsInlineMediaPlayback
+          allowsPictureInPictureMediaPlayback
+          mediaPlaybackRequiresUserAction={false}
+          style={{ flex: 1, backgroundColor: background }}
+          onError={() => fail("Browser viewer could not load. Reconnect to try again.")}
+          onHttpError={() => fail("Browser viewer could not load. Reconnect to try again.")}
+          onContentProcessDidTerminate={processTerminated}
+          onRenderProcessGone={processTerminated}
+          onShouldStartLoadWithRequest={(request) =>
+            request.url === "about:blank" || request.url === source.baseUrl
+          }
+          onMessage={(event) => {
+            if (!active.current || failed.current) return;
+            const message = previewStreamMessage(event.nativeEvent.data);
+            if (message === null) return;
+            switch (message.type) {
+              case "control": {
+                setControl(message);
+                const previousDialog = dialogRef.current;
+                dialogRef.current = message.dialog;
+                setPromptText((draft) => previewPromptText(previousDialog, message.dialog, draft));
+                onControl?.(message);
                 return;
               }
-              setStatus(message.status);
-              if (message.status === "connecting") {
-                setControl(null);
-                onControl?.(null);
-              }
-              onStreamingChange?.(message.status === "streaming");
-              if (message.status === "streaming") onStreaming();
-          }
-        }}
-      />
+              case "unauthorized":
+                if (!onUnauthorized()) {
+                  fail("This session can't open the browser stream. Reconnect to try again.");
+                }
+                return;
+              case "gone":
+                setGone(true);
+                fail("This tab was closed.");
+                onGone?.();
+                return;
+              case "hostSetup":
+                setHostSetup({ need: message.need, command: message.command });
+                fail(previewStreamHostSetupMessage(message));
+                return;
+              case "viewport":
+                onViewport?.(message);
+                return;
+              case "clipboard":
+                void Clipboard.setStringAsync(message.text).catch(() => undefined);
+                return;
+              case "download":
+                offerDownload(message);
+                return;
+              case "fileChooser":
+                setFileChooser(message.chooser);
+                return;
+              case "pictureInPicture":
+                onPictureInPicture?.(message, message.detail);
+                return;
+              case "status":
+                clearBootstrapTimer();
+                if (message.status === "error") {
+                  fail(message.detail ?? "Browser stream failed.");
+                  return;
+                }
+                setStatus(message.status);
+                if (message.status === "connecting") {
+                  // Dialogs may have closed and reopened while this viewer was disconnected.
+                  dialogRef.current = null;
+                  setControl(null);
+                  onControl?.(null);
+                }
+                onStreamingChange?.(message.status === "streaming");
+                if (message.status === "streaming") onStreaming();
+            }
+          }}
+        />
+        {pdfUri ? (
+          <View className="absolute inset-0">
+            <PdfPreview key={pdfUri} uri={pdfUri} />
+          </View>
+        ) : null}
+      </View>
       {!compact && fileChooser && control?.controller === "you" ? (
         <View className="absolute inset-x-3 top-16 gap-3 rounded-xl border border-secondary-border bg-secondary p-4">
           <AppText className="text-sm text-secondary-foreground">
             The page asks for {fileChooser.multiple ? "files" : "a file"}.
           </AppText>
           <View className="flex-row justify-end gap-3">
-            <Pressable
-              accessibilityRole="button"
-              className="px-3 py-2"
-              onPress={() => answerFileChooser(false)}
-            >
-              <AppText className="text-secondary-foreground">Cancel</AppText>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              className="px-3 py-2"
+            <Button label="Cancel" tone="text" onPress={() => answerFileChooser(false)} />
+            <Button
+              label={`Choose ${fileChooser.multiple ? "files" : "file"}`}
+              tone="secondary"
               onPress={() => answerFileChooser(true)}
-            >
-              <AppText className="text-secondary-foreground">
-                Choose {fileChooser.multiple ? "files" : "file"}
-              </AppText>
-            </Pressable>
+            />
           </View>
         </View>
       ) : null}
@@ -454,22 +451,22 @@ function PreviewStreamDocumentView({
               {control.dialog.type === "prompt" ? (
                 <TextInput
                   accessibilityLabel="Dialog response"
-                  className="rounded-lg border border-secondary-border bg-background px-3 py-2 text-foreground"
+                  className="rounded-lg border border-input-border bg-input px-3 py-2 text-foreground"
+                  placeholderTextColorClassName="accent-placeholder"
+                  selectionColorClassName="accent-focus/32"
                   value={promptText}
                   onChangeText={setPromptText}
                 />
               ) : null}
               <View className="flex-row justify-end gap-3">
-                <Pressable
-                  accessibilityRole="button"
-                  className="px-3 py-2"
+                <Button
+                  label="Dismiss"
+                  tone="text"
                   onPress={() => command({ type: "dialog", accept: false })}
-                >
-                  <AppText className="text-secondary-foreground">Dismiss</AppText>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  className="px-3 py-2"
+                />
+                <Button
+                  label="Accept"
+                  tone="secondary"
                   onPress={() =>
                     command({
                       type: "dialog",
@@ -477,9 +474,7 @@ function PreviewStreamDocumentView({
                       ...(control.dialog?.type === "prompt" ? { promptText } : {}),
                     })
                   }
-                >
-                  <AppText className="text-secondary-foreground">Accept</AppText>
-                </Pressable>
+                />
               </View>
             </>
           ) : (
@@ -492,7 +487,7 @@ function PreviewStreamDocumentView({
           className="absolute inset-0 items-center justify-center gap-4 px-6"
           style={{ backgroundColor: background }}
         >
-          {status === "connecting" ? <ActivityIndicator colorClassName="accent-icon" /> : null}
+          {status === "connecting" ? <AppActivityIndicator colorClassName="accent-icon" /> : null}
           {compact ? null : (
             <AppText
               accessibilityLiveRegion="polite"
@@ -517,15 +512,13 @@ function PreviewStreamDocumentView({
             </Pressable>
           ) : null}
           {status === "error" && !gone && !compact ? (
-            <Pressable
-              accessibilityRole="button"
-              className="rounded-full border border-secondary-border bg-secondary px-6 py-3"
-              onPress={onRetry}
-            >
-              <AppText className="text-secondary-foreground">
-                {hostSetup ? "Try again" : "Reconnect"}
-              </AppText>
-            </Pressable>
+            <View className="items-center">
+              <Button
+                label={hostSetup ? "Try again" : "Reconnect"}
+                tone="secondary"
+                onPress={onRetry}
+              />
+            </View>
           ) : null}
         </View>
       ) : null}
