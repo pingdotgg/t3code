@@ -312,8 +312,6 @@ export interface ThreadListV2Layout {
   readonly snoozedShelfHeaderIndex: number | null;
   readonly settledCount: number;
   readonly settledShelfHeaderIndex: number | null;
-  /** Arm a timeout here to repartition at snooze expiry rather than the next minute tick. */
-  readonly nextSnoozeWakeAt: string | null;
   /** Threads listed only because their messages match the search. */
   readonly contentOnlyThreadKeys: ReadonlySet<string>;
 }
@@ -641,7 +639,6 @@ export function buildThreadListV2Items(input: {
   const working: EnvironmentThreadShell[] = [];
   const settled: EnvironmentThreadShell[] = [];
   const snoozed: EnvironmentThreadShell[] = [];
-  let nextSnoozeWakeAt: string | null = null;
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   const listedThreads = input.threads.filter(
     (thread) =>
@@ -678,13 +675,6 @@ export function buildThreadListV2Items(input: {
     const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
     if (supportsSnooze && effectiveSnoozed(thread, { now })) {
       snoozed.push(thread);
-      if (
-        thread.snoozedUntil != null &&
-        (nextSnoozeWakeAt === null ||
-          parseTimestampMs(thread.snoozedUntil) < parseTimestampMs(nextSnoozeWakeAt))
-      ) {
-        nextSnoozeWakeAt = thread.snoozedUntil;
-      }
       continue;
     }
     const hasQueuedMessages =
@@ -735,7 +725,6 @@ export function buildThreadListV2Items(input: {
       snoozedShelfHeaderIndex: null,
       settledCount: 0,
       settledShelfHeaderIndex: null,
-      nextSnoozeWakeAt,
       contentOnlyThreadKeys,
     };
   }
@@ -858,7 +847,6 @@ export function buildThreadListV2Items(input: {
     snoozedShelfHeaderIndex,
     settledCount: settledTotal,
     settledShelfHeaderIndex,
-    nextSnoozeWakeAt,
     contentOnlyThreadKeys,
   };
 }
