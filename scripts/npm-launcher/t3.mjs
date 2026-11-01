@@ -10,6 +10,10 @@ const { version } = JSON.parse(
   fs.readFileSync(path.join(import.meta.dirname, "../package.json"), "utf8"),
 );
 
+// Current CLI archives fit within 128 MiB. A larger release needs an explicit
+// limit change; extraction and other installer writes are separate costs.
+const MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024;
+
 const SUPPORTED = ["darwin-arm64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
 
 function t3Home() {
@@ -20,8 +24,8 @@ function t3Home() {
   return path.resolve(raw);
 }
 
-async function get(url) {
-  const response = await fetch(url);
+async function get(url, options) {
+  const response = await fetch(url, options);
   if (response.status === 404) {
     throw new Error(
       `${url} does not exist yet. If ${version} was just released, try again in a few minutes.`,
@@ -32,18 +36,34 @@ async function get(url) {
 }
 
 async function download(url, file) {
-  const response = await get(url);
-  const total = Number(response.headers.get("content-length")) || 0;
-  const hash = crypto.createHash("sha256");
-  const out = fs.openSync(file, "w");
+  const controller = new AbortController();
   const tty = process.stderr.isTTY;
-  let received = 0;
-  let shown = -1;
+  let out;
+  let identity;
+  let complete = false;
   try {
+    const response = await get(url, { signal: controller.signal });
+    const total = Number(response.headers.get("content-length")) || 0;
+    if (total > MAX_DOWNLOAD_BYTES) {
+      throw new Error(`download exceeds ${MAX_DOWNLOAD_BYTES}-byte limit`);
+    }
+    const hash = crypto.createHash("sha256");
+    out = fs.openSync(file, "wx");
+    identity = fs.fstatSync(out, { bigint: true });
+    let received = 0;
+    let shown = -1;
     for await (const chunk of response.body) {
+      if (chunk.byteLength > MAX_DOWNLOAD_BYTES - received) {
+        throw new Error(`download exceeds ${MAX_DOWNLOAD_BYTES}-byte limit`);
+      }
+      let offset = 0;
+      while (offset < chunk.byteLength) {
+        const written = fs.writeSync(out, chunk, offset, chunk.byteLength - offset);
+        if (written === 0) throw new Error(`could not write ${file}`);
+        offset += written;
+        received += written;
+      }
       hash.update(chunk);
-      fs.writeSync(out, chunk);
-      received += chunk.byteLength;
       // Redraw once per percent (or per MB without a length), not per chunk.
       const step = total ? Math.floor((received * 100) / total) : Math.floor(received / 1048576);
       if (tty && step !== shown) {
@@ -54,11 +74,35 @@ async function download(url, file) {
         );
       }
     }
-  } finally {
+    const digest = hash.digest("hex");
     fs.closeSync(out);
-    if (tty) process.stderr.write("\r\x1b[2K");
+    out = undefined;
+    complete = true;
+    return digest;
+  } finally {
+    if (!complete) controller.abort();
+    try {
+      if (out !== undefined) fs.closeSync(out);
+    } finally {
+      if (identity && !complete) {
+        let current;
+        try {
+          current = fs.lstatSync(file, { bigint: true });
+        } catch {
+          // Leave an unidentifiable path to the private staging owner.
+        }
+        if (
+          current?.isFile() &&
+          identity.ino > 0n &&
+          current.dev === identity.dev &&
+          current.ino === identity.ino
+        ) {
+          fs.rmSync(file, { force: true });
+        }
+      }
+      if (tty) process.stderr.write("\r\x1b[2K");
+    }
   }
-  return hash.digest("hex");
 }
 
 async function install(dir, key) {
