@@ -196,7 +196,7 @@ const formatPairOutput = (input: {
     "",
     `Pairing URL: ${input.pairingUrl}`,
     `App link: ${buildPairingAppLink(input.pairingUrl)}`,
-    `Token: ${input.token}`,
+    `Pairing code: ${input.token}`,
     `Expires: ${DateTime.formatIso(input.expiresAt)}`,
     ...input.notes.flatMap((note) => ["", `Note: ${note}`]),
     "",
