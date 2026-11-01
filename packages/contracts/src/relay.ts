@@ -119,6 +119,7 @@ export type RelayDeviceUnregistrationParams = typeof RelayDeviceUnregistrationPa
 export const RelayAgentActivityState = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
+  runId: Schema.optional(TrimmedNonEmptyString),
   projectTitle: TrimmedNonEmptyString,
   threadTitle: TrimmedNonEmptyString,
   phase: RelayAgentAwarenessPhase,
@@ -133,6 +134,7 @@ export type RelayAgentActivityState = typeof RelayAgentActivityState.Type;
 export const RelayAgentActivityAggregateRow = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
+  runId: Schema.optional(TrimmedNonEmptyString),
   projectTitle: TrimmedNonEmptyString,
   threadTitle: TrimmedNonEmptyString,
   modelTitle: TrimmedNonEmptyString,

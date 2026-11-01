@@ -1,5 +1,6 @@
 import type {
   RelayAgentActivityAggregateState,
+  RelayAgentActivityAggregateRow,
   RelayAgentAwarenessPreferences,
   RelayDeliveryKind,
   RelayDeliveryResult,
@@ -48,6 +49,8 @@ import {
   alertForTerminalAggregate,
   rowPhasesChanged,
   shouldAlertForActivity,
+  alertForActivityRows,
+  terminalTransitionRows,
 } from "./agentActivityAlerts.ts";
 const MIN_LIVE_ACTIVITY_UPDATE_INTERVAL_MS = 15_000;
 const FRESHLY_ARMED_GRACE_MS = 2 * 60 * 1_000;
@@ -649,6 +652,7 @@ const make = Effect.gen(function* () {
     const aggregate =
       input.aggregate === null ? null : sanitizeAgentActivityAggregateState(input.aggregate);
     let alert = input.alert ?? null;
+    let terminalAlertRows: ReadonlyArray<RelayAgentActivityAggregateRow> = [];
     const recoverTransportError = (cause: Apns.ApnsError) =>
       recoverApnsDeliveryTransportError(
         {
@@ -689,21 +693,24 @@ const make = Effect.gen(function* () {
     if (alert) {
       const preferences = parsePreferences(currentTarget.preferences_json);
       const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
-      alert =
-        !preferences?.notificationsEnabled || !aggregate
-          ? null
-          : (alertForAttentionTransition({
-              previousAggregate,
-              nextAggregate: aggregate,
-              preferences,
-            }) ??
-            alertForNewlyTerminal({
-              previousAggregate,
-              nextAggregate: aggregate,
-              preferences,
-              nowMs: now.epochMilliseconds,
-              includeUnobserved: true,
-            }));
+      alert = null;
+      if (preferences?.notificationsEnabled && aggregate) {
+        alert = alertForAttentionTransition({
+          previousAggregate,
+          nextAggregate: aggregate,
+          preferences,
+        });
+        if (!alert) {
+          terminalAlertRows = terminalTransitionRows({
+            previousAggregate,
+            nextAggregate: aggregate,
+            preferences,
+            nowMs: now.epochMilliseconds,
+            includeUnobserved: true,
+          });
+          alert = alertForActivityRows(terminalAlertRows);
+        }
+      }
     }
     if (
       aggregate !== null &&
@@ -731,6 +738,22 @@ const make = Effect.gen(function* () {
         apnsReason: "Stale APNs end job skipped.",
       });
       return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
+    }
+    if (terminalAlertRows.length > 0) {
+      const unclaimed = yield* Effect.filter(terminalAlertRows, (row) =>
+        row.phase === "completed" || row.phase === "failed"
+          ? attempts.claimActivityAlert({
+              userId: input.target.user_id,
+              deviceId: input.target.device_id,
+              environmentId: row.environmentId,
+              threadId: row.threadId,
+              phase: row.phase,
+              ...(row.runId ? { runId: row.runId } : {}),
+              updatedAt: row.updatedAt,
+            })
+          : Effect.succeed(false),
+      );
+      alert = alertForActivityRows(unclaimed);
     }
     const { epochSeconds, iso, request } = makeLiveActivityDeliveryRequest(
       apns,
@@ -885,6 +908,26 @@ const make = Effect.gen(function* () {
         apnsReason: "Notification is disabled or no longer fresh.",
       });
       return staleJobResult({ deviceId: input.target.device_id, kind: "push_notification" });
+    }
+    if (
+      (notification.phase === "completed" || notification.phase === "failed") &&
+      notification.updatedAt !== undefined &&
+      !(yield* attempts.claimActivityAlert({
+        userId: input.target.user_id,
+        deviceId: input.target.device_id,
+        environmentId: notification.environmentId,
+        threadId: notification.threadId,
+        phase: notification.phase,
+        ...(notification.runId ? { runId: notification.runId } : {}),
+        updatedAt: notification.updatedAt,
+      }))
+    ) {
+      if (input.sourceJobId)
+        yield* attempts.completeSourceJob({
+          sourceJobId: input.sourceJobId,
+          apnsReason: "Duplicate activity alert skipped.",
+        });
+      return duplicateJobResult({ deviceId: input.target.device_id, kind: "push_notification" });
     }
     const result = yield* apns
       .sendPushNotificationRequest({

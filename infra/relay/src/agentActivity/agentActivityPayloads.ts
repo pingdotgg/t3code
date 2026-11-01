@@ -109,6 +109,7 @@ export function notificationForActivity(
     body: `${activity.status}: ${activity.projectTitle}`,
     environmentId: activity.environmentId,
     threadId: activity.threadId,
+    ...(activity.runId ? { runId: activity.runId } : {}),
     deepLink: activity.deepLink,
     phase: activity.phase,
     updatedAt: activity.updatedAt,

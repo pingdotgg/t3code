@@ -7,6 +7,7 @@ import { and, eq, inArray, isNull, lt } from "drizzle-orm";
 import { QueryBuilder } from "drizzle-orm/pg-core";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
+import { stableStringify } from "@t3tools/shared/relaySigning";
 
 import * as RelayDb from "../db.ts";
 import { relayDeliveryAttempts } from "../persistence/schema.ts";
@@ -14,7 +15,12 @@ import { relayDeliveryAttempts } from "../persistence/schema.ts";
 export class DeliveryAttemptRecordPersistenceError extends Schema.TaggedError<DeliveryAttemptRecordPersistenceError>()(
   "DeliveryAttemptRecordPersistenceError",
   {
-    operation: Schema.Literals(["claim-source-job", "complete-source-job", "prune-expired"]),
+    operation: Schema.Literals([
+      "claim-source-job",
+      "complete-source-job",
+      "prune-expired",
+      "claim-activity-alert",
+    ]),
     sourceJobId: Schema.NullOr(Schema.String),
     userId: Schema.NullOr(Schema.String),
     environmentId: Schema.NullOr(Schema.String),
@@ -56,6 +62,15 @@ export type DeliverySourceJobClaimResult = "claimed" | "completed" | "in_flight"
 export class DeliveryAttempts extends Context.Service<
   DeliveryAttempts,
   {
+    readonly claimActivityAlert: (input: {
+      readonly userId: string;
+      readonly deviceId: string;
+      readonly environmentId: string;
+      readonly threadId: string;
+      readonly phase: "completed" | "failed";
+      readonly runId?: string;
+      readonly updatedAt: string;
+    }) => Effect.Effect<boolean, DeliveryAttemptRecordPersistenceError>;
     readonly claimSourceJob: (
       input: DeliveryAttemptInput & { readonly sourceJobId: string },
     ) => Effect.Effect<DeliverySourceJobClaimResult, DeliveryAttemptRecordPersistenceError>;
@@ -112,6 +127,60 @@ const make = Effect.gen(function* () {
   };
 
   return DeliveryAttempts.of({
+    claimActivityAlert: Effect.fn("relay.delivery_attempts.claim_activity_alert")(
+      function* (input) {
+        return yield* Effect.gen(function* () {
+          const identity = stableStringify([
+            "activity-alert",
+            input.userId,
+            input.deviceId,
+            input.environmentId,
+            input.threadId,
+            input.phase,
+            input.runId ? ["run", input.runId] : ["updatedAt", input.updatedAt],
+          ]);
+          const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(identity));
+          const sourceJobId = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(
+            "",
+          );
+          const id = yield* crypto.randomUUIDv4();
+          const createdAt = DateTime.formatIso(yield* DateTime.now);
+          // Reserve the sound before sending: an uncertain APNs response must not let another job ring again.
+          const inserted = yield* db
+            .insert(relayDeliveryAttempts)
+            .values(
+              insertValues(
+                {
+                  ...input,
+                  sourceJobId,
+                  kind: "activity_alert",
+                  token: null,
+                  apnsReason: "Activity alert reserved before delivery.",
+                },
+                id,
+                createdAt,
+              ),
+            )
+            .onConflictDoNothing({ target: relayDeliveryAttempts.sourceJobId })
+            .returning({ id: relayDeliveryAttempts.id });
+          return inserted.length > 0;
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new DeliveryAttemptRecordPersistenceError({
+                operation: "claim-activity-alert",
+                sourceJobId: null,
+                userId: input.userId,
+                environmentId: input.environmentId,
+                threadId: input.threadId,
+                deviceId: input.deviceId,
+                kind: "activity_alert",
+                cause,
+              }),
+          ),
+        );
+      },
+    ),
     claimSourceJob: Effect.fn("relay.delivery_attempts.claim_source_job")(function* (input) {
       yield* Effect.annotateCurrentSpan({
         "relay.delivery.kind": input.kind,

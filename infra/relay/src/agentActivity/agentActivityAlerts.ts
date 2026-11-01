@@ -35,10 +35,11 @@ export function rowPhasesChanged(
   nextAggregate: RelayAgentActivityAggregateState,
 ): boolean {
   if (previousAggregate.activities.length !== nextAggregate.activities.length) return true;
-  const previousPhases = new Map(
-    previousAggregate.activities.map((row) => [rowKey(row), row.phase]),
-  );
-  return nextAggregate.activities.some((row) => previousPhases.get(rowKey(row)) !== row.phase);
+  const previousRows = new Map(previousAggregate.activities.map((row) => [rowKey(row), row]));
+  return nextAggregate.activities.some((row) => {
+    const previous = previousRows.get(rowKey(row));
+    return previous?.phase !== row.phase || (previous?.runId ?? null) !== (row.runId ?? null);
+  });
 }
 
 function isAttentionPhase(phase: string): boolean {
@@ -84,16 +85,15 @@ function newlyTerminalRows(
   includeUnobserved = false,
 ): ReadonlyArray<RelayAgentActivityAggregateRow> {
   if (previousAggregate === null) return [];
-  const previousPhases = new Map(
-    previousAggregate.activities.map((row) => [rowKey(row), row.phase]),
-  );
+  const previousRows = new Map(previousAggregate.activities.map((row) => [rowKey(row), row]));
   return nextAggregate.activities.filter((row) => {
     if (row.phase !== "completed" && row.phase !== "failed") return false;
-    const previousPhase = previousPhases.get(rowKey(row));
+    const previous = previousRows.get(rowKey(row));
+    if (previous !== undefined && (previous.runId ?? null) !== (row.runId ?? null)) return true;
     return (
-      (includeUnobserved || previousPhase !== undefined) &&
-      previousPhase !== "completed" &&
-      previousPhase !== "failed"
+      (includeUnobserved || previous !== undefined) &&
+      previous?.phase !== "completed" &&
+      previous?.phase !== "failed"
     );
   });
 }

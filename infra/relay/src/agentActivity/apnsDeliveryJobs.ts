@@ -29,6 +29,7 @@ const ApnsDeliveryJobContext = {
 };
 
 export const ApnsNotificationPayload = Schema.Struct({
+  runId: Schema.optional(Schema.String),
   title: Schema.String,
   body: Schema.String,
   environmentId: Schema.String,
