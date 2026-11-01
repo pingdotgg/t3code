@@ -2235,7 +2235,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         interruptTurn: Effect.fn("MuseAdapter.interruptTurn")(
           function* (args) {
             const turn = active;
-            if (!turn && args.requestRuntimeRestart === true) return;
+            // Recovering an ended turn is done unless Muse still runs work Stop cannot end.
+            if (
+              !turn &&
+              args.requestRuntimeRestart === true &&
+              observedChildren.size === 0 &&
+              wake === undefined
+            )
+              return;
             if (
               !turn ||
               turn.providerTurn.id !== args.providerTurnId ||
