@@ -638,7 +638,7 @@ if [ -n "$DEFAULT_REMOTE_PORT" ] && [ "$REMOTE_MANAGED" = "managed" ] && [ "$DEF
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
 elif [ -n "$DEFAULT_REMOTE_PORT" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
-  if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+  if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@" || wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
     ADOPTED_PID="$DEFAULT_RUNTIME_PID"
     if [ "$REMOTE_MANAGED" = "managed" ]; then
       if [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
@@ -658,10 +658,8 @@ elif [ -n "$DEFAULT_REMOTE_PORT" ]; then
       REMOTE_MANAGED="external"
     fi
   else
-    REMOTE_PORT="$DEFAULT_REMOTE_PORT"
-    REMOTE_MANAGED="external"
-    printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
-    printf 'external\\n' >"$MANAGED_FILE"
+    printf 'The external T3 server did not become ready. Retry after its update or restart finishes; no replacement server was started.\\n' >&2
+    exit 1
   fi
 fi
 if [ "$REMOTE_MANAGED" = "external" ]; then
