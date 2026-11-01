@@ -92,19 +92,28 @@ export function HistorySwipeNavigation() {
   useEffect(() => {
     let gesture: SwipeGesture | null = null;
     // Begin and end IPC race the wheels, so they cannot say which gesture a wheel belongs to.
-    // A content claim holds while wheel events stay at the same pointer position.
-    let claimedAt: { x: number; y: number } | null = null;
+    // Wheels at one pointer position share a context; moving or typing starts a new one.
+    let pointerAt: { x: number; y: number } | null = null;
+    let contentClaimed = false;
+    const hideIndicator = () =>
+      setSwipe((current) =>
+        current === null || !current.tracking ? current : { ...current, tracking: false },
+      );
+    const resetContext = () => {
+      gesture = null;
+      contentClaimed = false;
+      pointerAt = null;
+      hideIndicator();
+    };
+    const isAtPointer = (event: MouseEvent) =>
+      event.clientX === pointerAt?.x && event.clientY === pointerAt.y;
     const onPointerMove = (event: PointerEvent) => {
-      if (claimedAt && (event.clientX !== claimedAt.x || event.clientY !== claimedAt.y)) {
-        claimedAt = null;
-      }
+      if (pointerAt && !isAtPointer(event)) resetContext();
     };
     // Keyboard shortcuts can replace content without moving the pointer.
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!["Alt", "Control", "Meta", "Shift"].includes(event.key)) claimedAt = null;
+      if (!["Alt", "Control", "Meta", "Shift"].includes(event.key)) resetContext();
     };
-    const hideIndicator = () =>
-      setSwipe((current) => (current === null ? null : { ...current, tracking: false }));
     // The fingers lifted: navigate if the swipe went far enough, then ignore its momentum.
     const release = () => {
       if (gesture?.kind === "tracking" && gesture.distance >= SWIPE_TRIGGER_DISTANCE) {
@@ -122,9 +131,11 @@ export function HistorySwipeNavigation() {
       gesture = null;
     });
     const onWheel = (event: WheelEvent) => {
-      if (claimedAt !== null) {
-        if (event.clientX === claimedAt.x && event.clientY === claimedAt.y) return;
-        claimedAt = null;
+      if (!isAtPointer(event)) {
+        resetContext();
+        pointerAt = { x: event.clientX, y: event.clientY };
+      } else if (contentClaimed) {
+        return;
       }
       if (gesture === null) {
         gesture =
@@ -138,7 +149,7 @@ export function HistorySwipeNavigation() {
         const path = event.composedPath();
         // Claim content scrolling while its layout still exists, before a possible remount.
         if (isInHorizontalScroller(path)) {
-          claimedAt = { x: event.clientX, y: event.clientY };
+          contentClaimed = true;
           gesture = null;
           return;
         }

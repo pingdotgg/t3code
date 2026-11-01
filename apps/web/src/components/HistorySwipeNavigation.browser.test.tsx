@@ -5,8 +5,16 @@ import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 
 type Scroller = "shadow" | "light" | "none" | "shadow-dialog";
 type Step = readonly [
-  // "move": the pointer moves to content without overflow elsewhere.
-  event: number | "begin" | "end" | "zoom" | "move" | "close-by-key" | "pointer-return",
+  // "move" and "move-to-scroller": the wheel position moves to new content elsewhere.
+  event:
+    | number
+    | "begin"
+    | "end"
+    | "zoom"
+    | "move"
+    | "move-to-scroller"
+    | "close-by-key"
+    | "pointer-return",
   after?: number | "remount" | "remove" | "close-dialog",
 ];
 
@@ -82,6 +90,23 @@ describe("HistorySwipeNavigation", () => {
       "forward",
     ],
     [
+      "content scrolling after a trailing history wheel started tracking elsewhere",
+      "none",
+      0,
+      [
+        ["begin"],
+        [130],
+        ["end"],
+        [18],
+        ["move-to-scroller"],
+        [7, "remount"],
+        ["begin"],
+        [130],
+        ["end"],
+      ],
+      "forward",
+    ],
+    [
       "the next gesture's first wheel arriving before the previous end, then scroller removal",
       "shadow",
       400,
@@ -146,6 +171,9 @@ describe("HistorySwipeNavigation", () => {
         for (const listener of listeners.end) listener();
       } else if (event === "move") {
         ({ viewport, content } = mountPanel(screen.container, "none", 0));
+        pointerX += 100;
+      } else if (event === "move-to-scroller") {
+        ({ viewport, content } = mountPanel(screen.container, "shadow", 400));
         pointerX += 100;
       } else if (event === "close-by-key") {
         content.dispatchEvent(
