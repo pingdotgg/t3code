@@ -9,6 +9,7 @@ import {
   T3_MCP_BEARER_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
+  T3_PI_BROWSER_TOOLS_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
 } from "./mcpExtensionSource.ts";
 
@@ -284,6 +285,7 @@ export function buildPiRpcLaunch(input: {
   delete environment[T3_MCP_URL_ENV];
   delete environment[T3_MCP_BEARER_ENV];
   delete environment[T3_PI_MCP_EXTENSION_PATH_ENV];
+  delete environment[T3_PI_BROWSER_TOOLS_ENV];
 
   return {
     args,
@@ -304,6 +306,7 @@ export function buildPiRpcLaunch(input: {
             [T3_MCP_BEARER_ENV]: bearerTokenFromAuthorizationHeader(
               input.mcpSession.authorizationHeader,
             ),
+            ...(input.mcpSession.browserToolsAvailable ? { [T3_PI_BROWSER_TOOLS_ENV]: "1" } : {}),
           }
         : {}),
     },

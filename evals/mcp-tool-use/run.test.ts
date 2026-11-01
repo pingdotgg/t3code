@@ -252,6 +252,19 @@ it("rebuilds the template from this checkout and sends a child T3's task prompt"
   ]);
   // The eval offers the device tools, so Claude's append carries the device block.
   assert.include(t3SystemAppend("claude-sonnet-5-5"), "## T3 Code devices");
+  const noBrowser = buildBase(template, {
+    model: "claude-sonnet-5-5",
+    keepUserInstructions: false,
+    browserToolsAvailable: false,
+  });
+  assert.notInclude(
+    noBrowser.system.map((block) => String(block.text)).join("\n"),
+    "## T3 Code browser",
+  );
+  assert.include(
+    noBrowser.system.map((block) => String(block.text)).join("\n"),
+    "## T3 Code devices",
+  );
   assert.equal(base.environment.cwd, "/home/user/app");
   assert.include(system[2], "model named Sonnet 5.5. The exact model ID is claude-sonnet-5-5.");
   const deferred = system[2]?.split("Load them first:\n")[1]?.split("\n\n")[0]?.split("\n") ?? [];

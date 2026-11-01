@@ -75,6 +75,18 @@ describe("Codex orchestration context", () => {
     // The ACP terminal fallback is ACP-only; Codex agents never need it.
     NodeAssert.ok(!orchestration.includes("acp-mcp-call"));
   });
+
+  it("only supplies preview routing when the session holds browser access", () => {
+    const context = (browser: boolean) =>
+      Object.values(
+        buildCodexAdditionalContext({ model: "gpt-6.1-sol" }, { browser, device: false }),
+      )
+        .map((entry) => entry.value)
+        .join("\n");
+
+    NodeAssert.doesNotMatch(context(false), /`preview_\*`/);
+    NodeAssert.match(context(true), /Honor the browser the user selected\./);
+  });
 });
 
 describe("Codex device context", () => {

@@ -50,6 +50,18 @@ async function loadHooks(
 }
 
 describe("Pi orchestration prompt section", () => {
+  it("only supplies preview routing when browser access is available", async () => {
+    const prompt = async (browserToolsAvailable: boolean) => {
+      const bridge = await loadMcpBridge({ browserToolsAvailable });
+      const hook = bridge.handlers.get("before_agent_start")!;
+      const result = await hook({ systemPrompt: "base" }, { ui: { notify: assert.fail } });
+      return result?.systemPrompt ?? "";
+    };
+
+    assert.notInclude(await prompt(false), "`preview_*`");
+    assert.include(await prompt(true), "Honor the browser the user selected.");
+  });
+
   it.each([
     {
       name: "on Pi builds without prompt sections",

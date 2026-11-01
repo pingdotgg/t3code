@@ -213,6 +213,8 @@ const McpToolUseWorld = Schema.StructWithRest(
     deviceDiscoveryFailures: Schema.optional(Schema.Record(Schema.String, DeviceOperationError)),
     /** false: agent device access is off. T3 denies every device call and drops its device text. */
     deviceAgentAccess: Schema.optional(Schema.Boolean),
+    /** false: browser automation is unavailable, so T3 drops its browser-routing text. */
+    browserToolsAvailable: Schema.optional(Schema.Boolean),
     /** Every capture reaches T3 with adb screencap's warning ahead of the PNG: T3 reports 0×0. */
     deviceInvalidCapture: Schema.optional(Schema.Boolean),
     /** Devices another thread's agent-device session holds, by device id: that thread's id. */
@@ -421,10 +423,10 @@ const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?:
   );
 
 /**
- * T3's Claude Code options for an eval thread: its system prompt append and its hooks. `device` says
- * whether the thread holds the `device` capability, as agent device access decides.
+ * T3's Claude Code options for an eval thread: its system prompt append and its hooks. The flags
+ * say whether the thread holds the corresponding MCP capabilities.
  */
-const claudeQueryOptions = (model: Model, device = true) => {
+const claudeQueryOptions = (model: Model, device = true, browser = true) => {
   // Refs whose device text follows the capability read deviceToolsAvailable; older ones ignore it.
   const input: Parameters<typeof makeClaudeQueryOptions>[0] & {
     readonly deviceToolsAvailable?: boolean;
@@ -434,14 +436,15 @@ const claudeQueryOptions = (model: Model, device = true) => {
     resume: false,
     cwd: null,
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
+    browserToolsAvailable: browser,
     deviceToolsAvailable: device,
   };
   return makeClaudeQueryOptions(input);
 };
 
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
-export const t3SystemAppend = (model: Model, device = true) => {
-  const { systemPrompt } = claudeQueryOptions(model, device);
+export const t3SystemAppend = (model: Model, device = true, browser = true) => {
+  const { systemPrompt } = claudeQueryOptions(model, device, browser);
   if (isRecord(systemPrompt) && systemPrompt.type === "preset" && systemPrompt.append) {
     return systemPrompt.append;
   }
@@ -528,6 +531,8 @@ export const buildBase = (
     readonly nativeSubagent?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
     readonly deviceAccess?: boolean;
+    /** false: the thread has no browser automation, so T3's text leaves browser routing out. */
+    readonly browserToolsAvailable?: boolean;
   },
 ) => {
   const t3 = visibleT3Tools(options);
@@ -546,7 +551,9 @@ export const buildBase = (
   const nativeDeferred = deferredList.split("\n").filter((name) => name && !isT3Name(name));
   const names = [...nativeDeferred, ...t3.map((tool) => tool.name)].toSorted().join("\n");
   const { model } = options;
-  const append = options.nativeSubagent ? "" : t3SystemAppend(model, options.deviceAccess);
+  const append = options.nativeSubagent
+    ? ""
+    : t3SystemAppend(model, options.deviceAccess, options.browserToolsAvailable);
   const modelLine = `You are powered by the model named ${MODELS[model]}. The exact model ID is ${model}.`;
   const joined = systemTexts.join("\n");
   // The capture's home directory names its user. Cases use `/home/user` paths instead.
@@ -610,6 +617,8 @@ const buildCodexBase = (
     readonly links?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
     readonly deviceAccess?: boolean;
+    /** false: the thread has no browser automation, so T3's text leaves browser routing out. */
+    readonly browserToolsAvailable?: boolean;
   },
 ): Base => {
   const t3 = visibleT3Tools(options);
@@ -645,7 +654,10 @@ const buildCodexBase = (
   });
   const context = buildCodexAdditionalContext(
     { model: options.model, reasoningEffort: effort },
-    { browser: true, device: options.deviceAccess ?? true },
+    {
+      browser: options.browserToolsAvailable ?? true,
+      device: options.deviceAccess ?? true,
+    },
   );
   input.push(
     ...Object.entries(context).map(([key, entry]) => message(`<${key}>${entry.value}</${key}>`)),
@@ -2051,6 +2063,7 @@ const main = Effect.gen(function* () {
   const keepUserInstructions = flags["user-instructions"] === "keep";
   const buildFor = (
     role: McpToolUseCase["setup"]["role"],
+    browserToolsAvailable: boolean,
     deviceAccess: boolean,
     links: boolean,
   ): Effect.Effect<Base, Schema.SchemaError> =>
@@ -2063,6 +2076,7 @@ const main = Effect.gen(function* () {
               effort: flags.effort,
               subagent: role === "delegated-child",
               links,
+              browserToolsAvailable,
               deviceAccess,
             }),
           ),
@@ -2075,6 +2089,7 @@ const main = Effect.gen(function* () {
               subagent: role === "delegated-child",
               nativeSubagent: role === "native-subagent",
               links,
+              browserToolsAvailable,
               deviceAccess,
             });
             return role === "native-subagent"
@@ -2086,18 +2101,19 @@ const main = Effect.gen(function* () {
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.linkedEnvironments === true}`;
-  const base = yield* buildFor("top", true, false);
-  const bases = new Map<string, Base>([["top:true:false", base]]);
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.browserToolsAvailable !== false}:${setup.world?.deviceAgentAccess !== false}:${setup.linkedEnvironments === true}`;
+  const base = yield* buildFor("top", true, true, false);
+  const bases = new Map<string, Base>([["top:true:true:false", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
-    const [role = "top", access, links] = key.split(":") as [
+    const [role = "top", browser, access, links] = key.split(":") as [
       McpToolUseCase["setup"]["role"],
       string,
       string,
+      string,
     ];
-    bases.set(key, yield* buildFor(role, access === "true", links === "true"));
+    bases.set(key, yield* buildFor(role, browser === "true", access === "true", links === "true"));
   }
   const baseFor = (testCase: McpToolUseCase) => bases.get(baseKey(testCase)) ?? base;
   const effort = flags.effort ?? base.codex?.reasoning.effort ?? "high";

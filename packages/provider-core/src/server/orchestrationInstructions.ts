@@ -20,8 +20,7 @@ Ordinary coding tasks need no T3 tools.
 - T3 tools may load late. Try the name once before you call it absent.`,
   `### Visuals and preview
 
-- Answer data with a trend or comparison with a chart, and show any visual the user asks for here: pass its HTML to \`html_preview\`, then \`html_render\`. If the visual is a file, pass that file's HTML. A screenshot on disk or a text description does not show it. Never start a server for it. Tools a web page exposes give data only. Never use them to show results. Asked for an image to post, send, or use elsewhere: a \`.png\` file and its path, never \`html_render\`.
-- Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Do not repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`,
+- Answer data with a trend or comparison with a chart, and show any visual the user asks for here: pass its HTML to \`html_preview\`, then \`html_render\`. If the visual is a file, pass that file's HTML. A screenshot on disk or a text description does not show it. Never start a server for it. Tools a web page exposes give data only. Never use them to show results. Asked for an image to post, send, or use elsewhere: a \`.png\` file and its path, never \`html_render\`.`,
 ];
 
 export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
@@ -33,8 +32,11 @@ export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
 
 ## T3 Code browser
 
-When browser work was asked, \`preview_*\` is the browser you share with the user: \`preview_status\` first, then \`preview_open\` if no tab can be automated. Prefer snapshot locators over coordinates. Switch browsers only if the tools are absent or \`preview_open\` says unsupported, the user asks, or two preview calls fail on one step. Then quote the error and switch.
+Honor the browser the user selected. Otherwise, when browser work was asked, \`preview_*\` is the browser you share with the user: \`preview_status\` first, then \`preview_open\` if no tab can be automated. Prefer snapshot locators over coordinates. Never use \`preview_*\` unasked to verify or show your own edit. Do not repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; for T3 preview browser work, use preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it. Switch browsers only if the tools are absent or \`preview_open\` says unsupported, the user asks, or two preview calls fail on one step. Then quote the error and switch.
 `;
+
+const T3_CODE_BROWSER_UNAVAILABLE_INSTRUCTIONS =
+  "T3 Code browser access is unavailable. Honor another browser the user selected, or use a non-browser route.";
 
 const T3_CODE_DEVICE_TOOLS = ["device_list", "device_open", "device_screenshot", "device_close"];
 
@@ -70,6 +72,7 @@ Investigate with read-only actions and do not edit files or otherwise execute th
 export interface T3AcpInstructionState {
   readonly interactionMode: ProviderInteractionMode;
   readonly hasT3Mcp: boolean;
+  readonly hasBrowserTools: boolean;
   readonly hasDeviceTools: boolean;
 }
 
@@ -84,6 +87,7 @@ export function t3AcpPromptWithInstructions(input: {
   if (
     input.previousState?.interactionMode === input.state.interactionMode &&
     input.previousState.hasT3Mcp === input.state.hasT3Mcp &&
+    input.previousState.hasBrowserTools === input.state.hasBrowserTools &&
     input.previousState.hasDeviceTools === input.state.hasDeviceTools
   ) {
     return input.prompt;
@@ -94,7 +98,10 @@ export function t3AcpPromptWithInstructions(input: {
       : T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS,
     ...(input.state.hasT3Mcp
       ? [
-          T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
+          ...(input.state.hasBrowserTools ? [T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()] : []),
+          ...(input.previousState?.hasBrowserTools === true && !input.state.hasBrowserTools
+            ? [T3_CODE_BROWSER_UNAVAILABLE_INSTRUCTIONS]
+            : []),
           ...(input.state.hasDeviceTools ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS] : []),
           T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim(),
           T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS,
@@ -104,10 +111,12 @@ export function t3AcpPromptWithInstructions(input: {
   return `<t3_code_instructions>\n${instructions.join("\n\n")}\n</t3_code_instructions>\n\n<user_request>\n${input.prompt}\n</user_request>`;
 }
 
-const orchestrationInstructions = (hasDeviceTools: boolean) =>
-  hasDeviceTools
-    ? `${T3_CODE_ORCHESTRATION_INSTRUCTIONS}\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS}\n`
-    : T3_CODE_ORCHESTRATION_INSTRUCTIONS;
+const orchestrationInstructions = (hasBrowserTools: boolean, hasDeviceTools: boolean) =>
+  [
+    T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+    ...(hasBrowserTools ? [T3_CODE_BROWSER_TOOL_INSTRUCTIONS] : []),
+    ...(hasDeviceTools ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS] : []),
+  ].join("\n");
 
 function prependT3OrchestrationInstructions(prompt: string, instructions: string): string {
   return `<t3_code_orchestration_instructions>${instructions.trim()}</t3_code_orchestration_instructions>\n\n<user_request>\n${prompt}\n</user_request>`;
@@ -117,25 +126,39 @@ function prependT3OrchestrationInstructions(prompt: string, instructions: string
 export function t3OrchestrationPrompt(input: {
   readonly prompt: string;
   readonly hasT3Mcp: boolean;
+  readonly hasBrowserTools: boolean;
   readonly hasDeviceTools: boolean;
   readonly orchestrationDelivered: boolean;
+  readonly browserInstructionsDelivered: boolean;
   readonly deviceInstructionsDelivered: boolean;
 }): string {
   if (!input.hasT3Mcp) return input.prompt;
   if (!input.orchestrationDelivered) {
     return prependT3OrchestrationInstructions(
       input.prompt,
-      orchestrationInstructions(input.hasDeviceTools),
+      orchestrationInstructions(input.hasBrowserTools, input.hasDeviceTools),
     );
   }
-  return input.hasDeviceTools && !input.deviceInstructionsDelivered
-    ? prependT3OrchestrationInstructions(input.prompt, T3_CODE_DEVICE_TOOL_INSTRUCTIONS)
+  const newToolInstructions = [
+    ...(input.hasBrowserTools && !input.browserInstructionsDelivered
+      ? [T3_CODE_BROWSER_TOOL_INSTRUCTIONS]
+      : []),
+    ...(!input.hasBrowserTools && input.browserInstructionsDelivered
+      ? [T3_CODE_BROWSER_UNAVAILABLE_INSTRUCTIONS]
+      : []),
+    ...(input.hasDeviceTools && !input.deviceInstructionsDelivered
+      ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS]
+      : []),
+  ];
+  return newToolInstructions.length > 0
+    ? prependT3OrchestrationInstructions(input.prompt, newToolInstructions.join("\n"))
     : input.prompt;
 }
 
 export function t3OrchestrationSystemPrompt(
   hasT3Mcp: boolean,
+  hasBrowserTools: boolean,
   hasDeviceTools: boolean,
 ): string | undefined {
-  return hasT3Mcp ? orchestrationInstructions(hasDeviceTools) : undefined;
+  return hasT3Mcp ? orchestrationInstructions(hasBrowserTools, hasDeviceTools) : undefined;
 }
