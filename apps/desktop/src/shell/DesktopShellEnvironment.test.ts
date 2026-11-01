@@ -269,37 +269,40 @@ describe("DesktopShellEnvironment", () => {
     "not json",
     '{"version":2,"key":"old","environment":{"PATH":"/bad/bin"}}',
     '{"version":1,"key":"other-shell","environment":{"PATH":"/bad/bin"}}',
-  ])("ignores an unusable cache and still starts before discovery: %s", (contents) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const stateDir = yield* fs.makeTempDirectoryScoped();
-      yield* fs.writeFileString(`${stateDir}/shell-environment-cache.json`, contents);
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
-      yield* runShellEnvironment({
-        env,
-        stateDir,
-        platform: "darwin",
-        handler: () => "",
-        processSpawner: ChildProcessSpawner.make(() =>
-          Deferred.succeed(started, undefined).pipe(
-            Effect.andThen(Deferred.await(release)),
-            Effect.as(makeProcess(envOutput({ PATH: "/fresh/bin" }))),
+  ])(
+    "ignores an unusable cache, reports unprepared and still starts before discovery: %s",
+    (contents) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const stateDir = yield* fs.makeTempDirectoryScoped();
+        yield* fs.writeFileString(`${stateDir}/shell-environment-cache.json`, contents);
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+        yield* runShellEnvironment({
+          env,
+          stateDir,
+          platform: "darwin",
+          handler: () => "",
+          processSpawner: ChildProcessSpawner.make(() =>
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.as(makeProcess(envOutput({ PATH: "/fresh/bin" }))),
+            ),
           ),
-        ),
-        use: (service) =>
-          Effect.gen(function* () {
-            const startup = yield* service.installIntoProcess.pipe(Effect.forkChild);
-            yield* Deferred.await(started);
-            assert.isDefined(startup.pollUnsafe());
-            assert.equal(env.PATH, "/usr/bin");
-            yield* Deferred.succeed(release, undefined);
-            return yield* service.awaitDiscovery;
-          }),
-      });
-      assert.equal(env.PATH, "/fresh/bin:/usr/bin");
-    }).pipe(Effect.provide(NodeServices.layer)),
+          use: (service) =>
+            Effect.gen(function* () {
+              const startup = yield* service.installIntoProcess.pipe(Effect.forkChild);
+              yield* Deferred.await(started);
+              assert.isDefined(startup.pollUnsafe());
+              assert.isFalse(yield* Fiber.join(startup));
+              assert.equal(env.PATH, "/usr/bin");
+              yield* Deferred.succeed(release, undefined);
+              return yield* service.awaitDiscovery;
+            }),
+        });
+        assert.equal(env.PATH, "/fresh/bin:/usr/bin");
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
