@@ -278,10 +278,6 @@ export function makeSideChatContext(input: {
   ].join("\n");
 }
 
-/** Side chat context is prepended to the provider prompt, never replayed as budgeted history. */
-export const isSideChatContextHandoff = (handoff: OrchestrationV2ContextHandoff): boolean =>
-  handoff.strategy === "manual_context" && handoff.transferId != null;
-
 function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>): string {
   const sections = items.flatMap((item) => {
     switch (item.type) {

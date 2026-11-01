@@ -79,6 +79,7 @@ import {
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveLatestThreadRun,
+  deriveSideChatTurnSupervised,
   deriveThreadStructureRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
 import {
@@ -381,6 +382,7 @@ import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplat
 const EMPTY_FEEDBACK_SUBMISSIONS: ReadonlyArray<CodexFeedbackSubmission> = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_TURN_ITEMS: ThreadStructure["turnItems"] = [];
+const SUPERVISED_RUNTIME_MODES: ReadonlyArray<RuntimeMode> = ["approval-required"];
 const EMPTY_AUTO_UPDATE_ENVIRONMENTS: ReadonlyArray<EnvironmentPresentation> = [];
 
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
@@ -935,10 +937,13 @@ export default function ChatView(props: ChatViewProps) {
     localServerError === null && visibleThreadError === serverRuntime?.lastError;
   const defaultRuntimeMode = resolveProjectSettings(settings, activeThread?.projectId ?? null)
     .settings.defaultRuntimeMode;
-  const runtimeMode =
-    composerRuntimeMode ??
-    (isServerThread ? activeThread?.runtimeMode : undefined) ??
-    defaultRuntimeMode;
+  const sideChatTurnSupervised =
+    serverProjection !== null && deriveSideChatTurnSupervised(serverProjection);
+  const runtimeMode = sideChatTurnSupervised
+    ? "approval-required"
+    : (composerRuntimeMode ??
+      (isServerThread ? activeThread?.runtimeMode : undefined) ??
+      defaultRuntimeMode);
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = canWriteSourceControl && isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
@@ -3651,6 +3656,9 @@ export default function ChatView(props: ChatViewProps) {
                                 activeEnvironmentUnavailable ? null : threadSyncPhase
                               }
                               runtimeMode={runtimeMode}
+                              allowedRuntimeModes={
+                                sideChatTurnSupervised ? SUPERVISED_RUNTIME_MODES : undefined
+                              }
                               defaultRuntimeMode={defaultRuntimeMode}
                               interactionMode={interactionMode}
                               lockedProvider={modelPickerLockedProvider}

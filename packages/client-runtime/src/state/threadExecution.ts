@@ -8,6 +8,7 @@ import {
 import {
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
+  isSideChatContextHandoff,
   latestProviderTurnForAttempt,
   type ModelSelection,
   type OrchestrationV2NotificationSource,
@@ -107,6 +108,24 @@ export function deriveThreadActivityRun(projection: ThreadStructure): ThreadRunS
     latestMatchingRun(projection, (candidate) => ACTIVITY_RUN_STATUSES.has(candidate.status)) ??
     presentedLatestRun(projection);
   return run === null ? null : summarizeThreadRun(projection, run);
+}
+
+/**
+ * The server supervises a side chat's turn while it carries the parent's context: its first
+ * turn, or the next after a run whose ready context was never delivered. Older servers omit
+ * `delivered`, so only the first turn is known.
+ */
+export function deriveSideChatTurnSupervised(projection: ThreadStructure): boolean {
+  if (projection.thread.lineage.sideChat !== true) return false;
+  return (
+    projection.runs.length === 0 ||
+    projection.contextHandoffs.some(
+      (handoff) =>
+        isSideChatContextHandoff(handoff) &&
+        handoff.status === "ready" &&
+        handoff.delivered === false,
+    )
+  );
 }
 
 /**
