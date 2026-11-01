@@ -66,12 +66,13 @@ export const make = Effect.gen(function* () {
     if (config.managementKey.length === 0) {
       return { ...base, accounts: [], error: "No management key configured." };
     }
-    const accounts = yield* api.readAccounts(config).pipe(Effect.result);
-    if (accounts._tag === "Failure") {
-      yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
-      return { ...base, accounts: [], error: accounts.failure.detail };
+    const read = yield* api.readAccounts(config).pipe(Effect.result);
+    if (read._tag === "Failure") {
+      yield* Effect.logDebug("usage limit source read failed", { id, cause: read.failure });
+      return { ...base, accounts: [], error: read.failure.detail };
     }
-    return { ...base, accounts: accounts.success };
+    const { accounts, hidden } = read.success;
+    return { ...base, accounts, ...(hidden.length > 0 ? { hidden } : {}) };
   });
 
   const publish = Effect.fn("UsageLimitSources.publish")(function* (

@@ -4,6 +4,7 @@ import {
   type ProviderConsumeResetCreditResult,
   type UsageLimitSourceAccount,
   type UsageLimitSourceConfig,
+  type UsageLimitSourceHiddenAccount,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -96,6 +97,8 @@ const CreditList = Schema.Struct({
 
 const decodeAuthFiles = Schema.decodeUnknownEffect(AuthFiles);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const driverOf = (account: typeof AuthFile.Type) =>
+  ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent");
 const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
 const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
@@ -269,7 +272,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const base = {
       id: account.id,
-      driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
+      driver: driverOf(account),
       ...(account.email ? { email: account.email } : {}),
       ...(account.id_token?.chatgpt_account_id?.trim()
         ? { workspaceId: account.id_token.chatgpt_account_id.trim() }
@@ -367,7 +370,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
 
   const readAccounts = Effect.fn("CliproxyApi.readAccounts")(function* (
     config: UsageLimitSourceConfig,
-  ): Effect.fn.Return<ReadonlyArray<UsageLimitSourceAccount>, UsageLimitSourceError> {
+  ): Effect.fn.Return<
+    {
+      readonly accounts: ReadonlyArray<UsageLimitSourceAccount>;
+      readonly hidden: ReadonlyArray<UsageLimitSourceHiddenAccount>;
+    },
+    UsageLimitSourceError
+  > {
     const accounts = yield* authFiles(config).pipe(
       Effect.mapError((error) =>
         isUsageLimitSourceError(error)
@@ -375,14 +384,25 @@ export const makeCliproxyApi = Effect.gen(function* () {
           : new UsageLimitSourceError({ detail: "The hub could not list accounts." }),
       ),
     );
-    return yield* Effect.forEach(
-      accounts.filter(
-        (account) =>
-          !account.disabled && (account.provider === "codex" || account.provider === "claude"),
-      ),
+    const available = accounts.filter(
+      (account) =>
+        !account.disabled && (account.provider === "codex" || account.provider === "claude"),
+    );
+    const hiddenIds = new Set(config.hiddenAccounts);
+    const hidden = available.filter((account) => hiddenIds.has(account.id));
+    const visible = yield* Effect.forEach(
+      available.filter((account) => !hiddenIds.has(account.id)),
       (account) => readAccount(config, account),
       { concurrency: 4 },
     );
+    return {
+      accounts: visible,
+      hidden: hidden.map((account) => ({
+        id: account.id,
+        driver: driverOf(account),
+        ...(account.email ? { email: account.email } : {}),
+      })),
+    };
   });
 
   const consume = Effect.fn("CliproxyApi.consume")(function* (

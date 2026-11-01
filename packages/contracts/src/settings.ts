@@ -859,6 +859,9 @@ export const UsageLimitSourceConfig = Schema.Struct({
   url: TrimmedNonEmptyString,
   managementKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("")), secretSetting),
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  hiddenAccounts: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
 });
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 

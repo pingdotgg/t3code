@@ -153,6 +153,10 @@ environment that will connect to the hub and enter its URL and management key.
 The accounts appear under **Usage → Limits**. Codex accounts show banked reset credits; select an
 account and choose **Use reset** to redeem one. No hub plugin is required.
 
+Each hub's accounts are also listed under the hub in **Settings → Providers → Usage providers**,
+with a switch for each. Turning an account off hides it from **Usage → Limits** without removing it
+from the hub, and you can turn it back on in the same place.
+
 This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same
 settings section when you no longer need it.
