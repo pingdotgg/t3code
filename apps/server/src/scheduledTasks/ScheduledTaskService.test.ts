@@ -4,11 +4,17 @@ import * as NodeUtil from "node:util";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it, vi } from "@effect/vitest";
 import {
+  EventId,
+  MessageId,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ScheduledTaskError,
   ScheduledTaskId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -20,6 +26,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 import * as Deferred from "effect/Deferred";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -476,6 +483,620 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
       assert.equal(new Set(attempts.map((attempt) => attempt.commandId)).size, 1);
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+const turnThreadId = ThreadId.make("thread:turn-outcome");
+const epoch = DateTime.makeUnsafe(0);
+
+const runOf = (
+  runId: string,
+  userMessageId: MessageId,
+  status: OrchestrationV2Run["status"],
+): OrchestrationV2Run => ({
+  id: RunId.make(runId),
+  threadId: turnThreadId,
+  ordinal: 1,
+  providerInstanceId: ProviderInstanceId.make("codex"),
+  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+  providerThreadId: null,
+  userMessageId,
+  rootNodeId: null,
+  activeAttemptId: null,
+  status,
+  requestedAt: epoch,
+  startedAt: null,
+  completedAt: null,
+  checkpointId: null,
+  contextHandoffId: null,
+});
+
+const runEvent = (run: OrchestrationV2Run): OrchestrationV2DomainEvent => ({
+  id: EventId.make(`event:${run.id}:${run.status}`),
+  type: "run.updated",
+  threadId: run.threadId,
+  runId: run.id,
+  occurredAt: epoch,
+  payload: run,
+});
+
+const providerErrorEvent = (runId: string, message: string): OrchestrationV2DomainEvent => ({
+  id: EventId.make(`event:${runId}:error`),
+  type: "turn-item.updated",
+  threadId: turnThreadId,
+  runId: RunId.make(runId),
+  occurredAt: epoch,
+  payload: {
+    id: TurnItemId.make(`turn-item:${runId}:error`),
+    threadId: turnThreadId,
+    runId: RunId.make(runId),
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: "failed",
+    title: null,
+    startedAt: epoch,
+    completedAt: epoch,
+    updatedAt: epoch,
+    type: "error",
+    failure: { class: "usage_limit", message, code: null, retryable: false },
+  },
+});
+
+// Dispatches to a bound thread succeed at once; the run's events are fed by hand.
+const makeTurnHarness = (
+  options: {
+    /** Runs inside the dispatch, so the turn's events can land before it returns. */
+    readonly duringDispatch?: (
+      events: Queue.Queue<OrchestrationV2DomainEvent>,
+      messageId: MessageId,
+    ) => Effect.Effect<void>;
+    /** The run the thread's projection says the scheduled message now belongs to. */
+    readonly messageRunId?: RunId;
+    /** The runs the thread's projection holds, as read back after the event stream drops. */
+    readonly runs?: ReadonlyArray<OrchestrationV2Run>;
+    /** How many times the event stream fails before it starts to deliver events. */
+    readonly streamFailures?: number;
+    /** Reads the thread as deleted, which the projection keeps as a flagged record. */
+    readonly threadDeleted?: boolean;
+    /**
+     * The first stream subscription fails only when the test releases `dropStream`.
+     * The listener's first catch-up can run before or after a dispatch, so the drop
+     * guarantees one resubscribe catch-up that sees the dispatched run.
+     */
+    readonly dropStreamOnCommand?: boolean;
+    /** Reads about the first dispatched message fail; later messages read normally. */
+    readonly firstMessageUnreadable?: boolean;
+    /** Makes every projection read fail, as for a thread whose records are gone. */
+    readonly recordsUnreadable?: boolean;
+    /** Makes the stream a live tail: events from before it was opened are not delivered. */
+    readonly liveTail?: boolean;
+    /** Runs when the projection's runs are read, so an event can land mid catch-up. */
+    readonly duringRunsRead?: (
+      events: Queue.Queue<OrchestrationV2DomainEvent>,
+    ) => Effect.Effect<void>;
+  } = {},
+) =>
+  Effect.gen(function* () {
+    const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+    const dispatched = yield* Queue.unbounded<MessageId>();
+    const subscriptions = yield* Ref.make(0);
+    const failedReads = yield* Queue.unbounded<void>();
+    const dropStream = yield* Deferred.make<void>();
+    const firstMessage = yield* Ref.make<MessageId | null>(null);
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: (input) =>
+              Ref.update(firstMessage, (first) => first ?? input.messageId).pipe(
+                Effect.andThen(Queue.offer(dispatched, input.messageId)),
+                Effect.andThen(options.duringDispatch?.(events, input.messageId) ?? Effect.void),
+                Effect.as(undefined as never),
+              ),
+            getThreadRecords: (_threadId, fields: ReadonlyArray<string>, filter) =>
+              Effect.gen(function* () {
+                const first = yield* Ref.get(firstMessage);
+                if (
+                  options.recordsUnreadable ||
+                  (options.firstMessageUnreadable &&
+                    first !== null &&
+                    filter?.messageIds?.includes(first))
+                ) {
+                  yield* Queue.offer(failedReads, undefined);
+                  return yield* Effect.fail(new Error("no records") as never);
+                }
+                if (fields.includes("runs")) yield* options.duringRunsRead?.(events) ?? Effect.void;
+                return {
+                  thread: { deletedAt: options.threadDeleted ? epoch : null },
+                  messages: (filter?.messageIds ?? []).map((id) => ({
+                    id,
+                    runId: options.messageRunId ?? null,
+                  })),
+                  runs: (options.runs ?? []).filter(
+                    (run) => filter?.runIds === undefined || filter.runIds.includes(run.id),
+                  ),
+                } as never;
+              }),
+            streamDomainEvents: Stream.unwrap(
+              Ref.getAndUpdate(subscriptions, (n) => n + 1).pipe(
+                Effect.flatMap((attempt) =>
+                  attempt < (options.streamFailures ?? (options.dropStreamOnCommand ? 1 : 0))
+                    ? (options.dropStreamOnCommand ? Deferred.await(dropStream) : Effect.void).pipe(
+                        Effect.as(Stream.fail(new Error("event stream dropped") as never)),
+                      )
+                    : (options.liveTail ? Queue.clear(events) : Effect.void).pipe(
+                        Effect.as(Stream.fromQueue(events)),
+                      ),
+                ),
+              ),
+            ),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    return { events, dispatched, subscriptions, failedReads, dropStream, layer };
+  });
+
+const upsertBoundTask = (
+  service: ScheduledTaskService.ScheduledTaskService["Service"],
+  enabled = false,
+) =>
+  service.upsert({
+    id: ScheduledTaskId.make("task:turn-outcome"),
+    title: "Check orchestration",
+    prompt: "Check progress",
+    enabled,
+    schedule: { type: "interval", everyMs: 60_000 },
+    projectId: ProjectId.make("project:test"),
+    threadId: turnThreadId,
+    workspaceStrategy: { type: "root" },
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+  });
+
+const untilStatus = (
+  service: ScheduledTaskService.ScheduledTaskService["Service"],
+  id: ScheduledTaskId,
+  status: string,
+) =>
+  service.subscribeList().pipe(
+    Stream.filter(({ tasks }) => tasks.some((t) => t.id === id && t.lastRunStatus === status)),
+    Stream.take(1),
+    Stream.runDrain,
+  );
+
+it.effect("a failed turn replaces the dispatched run's status with the provider error", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness();
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      const ran = yield* service.runNow({ id: task.id });
+      // Accepted is not finished: the turn has not ended yet.
+      assert.equal(ran.task.lastRunStatus, "running");
+      assert.equal(ran.task.runCount, 0);
+      const messageId = yield* Queue.take(harness.dispatched);
+      yield* Queue.offerAll(harness.events, [
+        runEvent(runOf("run:usage-limit", messageId, "queued")),
+        runEvent(runOf("run:usage-limit", messageId, "running")),
+        providerErrorEvent("run:usage-limit", "You have reached your usage limit."),
+        runEvent(runOf("run:usage-limit", messageId, "failed")),
+      ]);
+      yield* untilStatus(service, task.id, "failed");
+      const [settled] = (yield* service.list()).tasks;
+      assert.equal(settled?.lastRunStatus, "failed");
+      assert.equal(settled?.lastRunError, "You have reached your usage limit.");
+      assert.equal(settled?.runCount, 1);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a completed turn records the run as succeeded", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness();
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      const messageId = yield* Queue.take(harness.dispatched);
+      yield* Queue.offerAll(harness.events, [
+        runEvent(runOf("run:completes", messageId, "running")),
+        runEvent(runOf("run:completes", messageId, "completed")),
+      ]);
+      yield* untilStatus(service, task.id, "succeeded");
+      const [settled] = (yield* service.list()).tasks;
+      assert.isNull(settled?.lastRunError);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("an earlier run's turn ending cannot overwrite a newer run", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness();
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      const first = yield* Queue.take(harness.dispatched);
+      // Run now again while the first turn is still in flight.
+      yield* TestClock.adjust("1 second");
+      yield* service.runNow({ id: task.id });
+      const second = yield* Queue.take(harness.dispatched);
+      yield* Queue.offerAll(harness.events, [
+        runEvent(runOf("run:first", first, "failed")),
+        runEvent(runOf("run:second", second, "completed")),
+      ]);
+      yield* untilStatus(service, task.id, "succeeded");
+      const [settled] = (yield* service.list()).tasks;
+      assert.equal(settled?.lastRunStatus, "succeeded");
+      assert.isNull(settled?.lastRunError);
+      assert.equal(settled?.runCount, 2);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+const messageMovedEvent = (messageId: MessageId, runId: string): OrchestrationV2DomainEvent => ({
+  id: EventId.make(`event:${messageId}:moved`),
+  type: "message.updated",
+  threadId: turnThreadId,
+  runId: RunId.make(runId),
+  occurredAt: epoch,
+  payload: {
+    id: messageId,
+    threadId: turnThreadId,
+    runId: RunId.make(runId),
+    nodeId: null,
+    role: "user",
+    text: "Check progress",
+    attachments: [],
+    streaming: false,
+    createdAt: epoch,
+    updatedAt: epoch,
+    createdBy: "user",
+    creationSource: "web",
+  },
+});
+
+it.effect("a turn that ends while the dispatch is being recorded still advances the schedule", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness({
+      duringDispatch: (events, messageId) =>
+        Queue.offerAll(events, [
+          runEvent(runOf("run:fast", messageId, "queued")),
+          runEvent(runOf("run:fast", messageId, "failed")),
+        ]),
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service, true);
+      yield* TestClock.adjust("30 seconds");
+      yield* service.runNow({ id: task.id });
+      yield* untilStatus(service, task.id, "failed");
+      const [settled] = (yield* service.list()).tasks;
+      assert.equal(settled?.runCount, 1);
+      // Dispatched 30 seconds after the task was saved, so the next run is 60 seconds on from then.
+      assert.equal(
+        settled?.nextRunAt,
+        DateTime.formatIso(DateTime.makeUnsafe(Date.parse(task.nextRunAt!) + 30_000)),
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a queued message promoted to a steer keeps its run going in the active run", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness({ messageRunId: RunId.make("run:active") });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      const messageId = yield* Queue.take(harness.dispatched);
+      yield* Queue.offerAll(harness.events, [
+        runEvent(runOf("run:queued", messageId, "queued")),
+        // Promotion cancels the queued run before it moves the message into the active one.
+        runEvent(runOf("run:queued", messageId, "cancelled")),
+        messageMovedEvent(messageId, "run:active"),
+        runEvent(runOf("run:active", MessageId.make("message:active-turn"), "completed")),
+      ]);
+      yield* service.subscribeList().pipe(
+        Stream.filter(({ tasks }) => tasks.some((t) => t.lastRunStatus !== "running")),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      const [settled] = (yield* service.list()).tasks;
+      assert.equal(settled?.lastRunStatus, "succeeded");
+      assert.isNull(settled?.lastRunError);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a run whose outcome cannot be saved is released instead of left running", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness();
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const sql = yield* SqlClient.SqlClient;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      const messageId = yield* Queue.take(harness.dispatched);
+      // Only the release path may write the terminal state.
+      yield* sql`CREATE TRIGGER fail_outcome BEFORE UPDATE ON scheduled_tasks
+        WHEN OLD.last_run_status = 'running' AND NEW.last_run_status = 'succeeded'
+        BEGIN SELECT RAISE(FAIL, 'outcome unavailable'); END`;
+      yield* Queue.offerAll(harness.events, [
+        runEvent(runOf("run:unsaved", messageId, "completed")),
+      ]);
+      yield* untilStatus(service, task.id, "failed");
+      const [settled] = (yield* service.list()).tasks;
+      assert.equal(settled?.lastRunError, "Could not record how the run ended.");
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a dropped event stream is resumed, and runs that ended meanwhile are caught up", () =>
+  Effect.gen(function* () {
+    const runId = RunId.make("run:during-gap");
+    const harness = yield* makeTurnHarness({
+      streamFailures: 1,
+      messageRunId: runId,
+      runs: [runOf(runId, MessageId.make("unused"), "completed")],
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      yield* Queue.take(harness.dispatched);
+      // The run completed while no one was listening; the resumed listener finds it.
+      yield* TestClock.adjust("30 seconds");
+      yield* untilStatus(service, task.id, "succeeded");
+      assert.equal(yield* Ref.get(harness.subscriptions), 2);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("the event stream keeps being resumed after many failures", () =>
+  Effect.gen(function* () {
+    const runId = RunId.make("run:late");
+    const harness = yield* makeTurnHarness({
+      streamFailures: 8,
+      messageRunId: runId,
+      runs: [runOf(runId, MessageId.make("unused"), "failed")],
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      yield* Queue.take(harness.dispatched);
+      yield* TestClock.adjust("10 minutes");
+      yield* untilStatus(service, task.id, "failed");
+      assert.equal(yield* Ref.get(harness.subscriptions), 9);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("an event landing while the resumed listener catches up is not missed", () =>
+  Effect.gen(function* () {
+    const runId = RunId.make("run:handoff");
+    const harness = yield* makeTurnHarness({
+      streamFailures: 1,
+      liveTail: true,
+      messageRunId: runId,
+      // The projection read is stale: the run ends right after it.
+      runs: [runOf(runId, MessageId.make("unused"), "running")],
+      duringRunsRead: (events) =>
+        Queue.offer(events, runEvent(runOf(runId, MessageId.make("unused"), "completed"))).pipe(
+          Effect.asVoid,
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      yield* Queue.take(harness.dispatched);
+      yield* TestClock.adjust("30 seconds");
+      yield* untilStatus(service, task.id, "succeeded");
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a cancelled run is still recorded when its first save fails", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness();
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const sql = yield* SqlClient.SqlClient;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      const messageId = yield* Queue.take(harness.dispatched);
+      // Fails the first write only; the retry must still record the cancel.
+      yield* sql`CREATE TABLE fail_once (id INTEGER)`;
+      yield* sql`INSERT INTO fail_once VALUES (1)`;
+      yield* sql`CREATE TRIGGER fail_first_outcome BEFORE UPDATE ON scheduled_tasks
+        WHEN OLD.last_run_status = 'running' AND NEW.last_run_status = 'failed'
+          AND EXISTS (SELECT 1 FROM fail_once)
+        BEGIN DELETE FROM fail_once; SELECT RAISE(FAIL, 'outcome unavailable'); END`;
+      yield* Queue.offerAll(harness.events, [
+        runEvent(runOf("run:cancelled", messageId, "queued")),
+        runEvent(runOf("run:cancelled", messageId, "cancelled")),
+      ]);
+      yield* untilStatus(service, task.id, "failed");
+      const [settled] = (yield* service.list()).tasks;
+      assert.equal(settled?.lastRunError, "The run was cancelled.");
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect(
+  "a run whose thread cannot be read during catch-up is released, not retried forever",
+  () =>
+    Effect.gen(function* () {
+      const harness = yield* makeTurnHarness({ streamFailures: 1, recordsUnreadable: true });
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const { task } = yield* upsertBoundTask(service);
+        yield* service.runNow({ id: task.id });
+        yield* Queue.take(harness.dispatched);
+        yield* TestClock.adjust("1 minute");
+        yield* untilStatus(service, task.id, "failed");
+        const [settled] = (yield* service.list()).tasks;
+        assert.equal(settled?.lastRunError, "Could not read how the run ended.");
+        // The stream was resubscribed once for the drop, not again for the unreadable thread.
+        assert.equal(yield* Ref.get(harness.subscriptions), 2);
+      }).pipe(Effect.provide(harness.layer));
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a thread deleted while the stream was down fails its run on catch-up", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness({ streamFailures: 1, threadDeleted: true });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      yield* Queue.take(harness.dispatched);
+      yield* TestClock.adjust("30 seconds");
+      yield* untilStatus(service, task.id, "failed");
+      const [settled] = (yield* service.list()).tasks;
+      assert.equal(settled?.lastRunError, "The thread was deleted.");
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("giving up on a catch-up read leaves a newer run of the same task tracked", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness({
+      dropStreamOnCommand: true,
+      firstMessageUnreadable: true,
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      yield* Queue.take(harness.dispatched);
+      // Dropping the stream makes the resubscribe catch up the dispatched run, whose
+      // first read fails and backs off.
+      yield* Deferred.succeed(harness.dropStream, undefined);
+      yield* TestClock.adjust("1 second");
+      yield* Queue.take(harness.failedReads);
+      yield* TestClock.adjust("1 second");
+      yield* service.runNow({ id: task.id });
+      const newer = yield* Queue.take(harness.dispatched);
+      // The catch-up for the first run runs out of retries and gives up.
+      yield* TestClock.adjust("30 seconds");
+      yield* Queue.offer(harness.events, runEvent(runOf("run:newer", newer, "completed")));
+      yield* untilStatus(service, task.id, "succeeded");
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("records the provider error for every task steered into the same run", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness();
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      const { task: second } = yield* service.upsert({
+        ...task,
+        id: ScheduledTaskId.make("task:second-shared-run"),
+      });
+      yield* service.runNow({ id: task.id });
+      const firstMessage = yield* Queue.take(harness.dispatched);
+      yield* service.runNow({ id: second.id });
+      const secondMessage = yield* Queue.take(harness.dispatched);
+      yield* Queue.offerAll(harness.events, [
+        messageMovedEvent(firstMessage, "run:shared"),
+        messageMovedEvent(secondMessage, "run:shared"),
+        providerErrorEvent("run:shared", "You have reached your usage limit."),
+        runEvent(runOf("run:shared", firstMessage, "failed")),
+      ]);
+      yield* service.subscribeList().pipe(
+        Stream.filter(({ tasks }) => tasks.every((t) => t.lastRunStatus === "failed")),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      for (const settled of (yield* service.list()).tasks) {
+        assert.equal(settled.lastRunError, "You have reached your usage limit.");
+        assert.equal(settled.runCount, 1);
+      }
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("catches an outcome missed by reconnect while dispatch is still in flight", () =>
+  Effect.gen(function* () {
+    const releaseDispatch = yield* Deferred.make<void>();
+    const runId = RunId.make("run:dispatch-reconnect");
+    const harness = yield* makeTurnHarness({
+      dropStreamOnCommand: true,
+      liveTail: true,
+      messageRunId: runId,
+      runs: [runOf(runId, MessageId.make("other"), "completed")],
+      duringDispatch: () => Deferred.await(releaseDispatch),
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      const dispatch = yield* service.runNow({ id: task.id }).pipe(Effect.forkChild);
+      yield* Queue.take(harness.dispatched);
+      yield* Deferred.succeed(harness.dropStream, undefined);
+      yield* TestClock.adjust("1 second");
+      assert.equal(yield* Ref.get(harness.subscriptions), 2);
+      yield* Deferred.succeed(releaseDispatch, undefined);
+      yield* Fiber.join(dispatch);
+      yield* untilStatus(service, task.id, "succeeded");
+      assert.equal((yield* service.list()).tasks[0]?.runCount, 1);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect(
+  "a run interrupted mid-dispatch is released and the next run records its real outcome",
+  () =>
+    Effect.gen(function* () {
+      const dispatches = yield* Ref.make(0);
+      const harness = yield* makeTurnHarness({
+        // Only the first dispatch hangs, so the run can be interrupted in flight.
+        duringDispatch: () =>
+          Ref.getAndUpdate(dispatches, (n) => n + 1).pipe(
+            Effect.flatMap((n) => (n === 0 ? Effect.never : Effect.void)),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const { task } = yield* upsertBoundTask(service);
+        const interrupted = yield* service.runNow({ id: task.id }).pipe(Effect.forkChild);
+        yield* Queue.take(harness.dispatched);
+        yield* Fiber.interrupt(interrupted);
+        const [released] = (yield* service.list()).tasks;
+        assert.equal(released?.lastRunStatus, "failed");
+        assert.equal(released?.runCount, 1);
+
+        yield* TestClock.adjust("1 second");
+        const next = yield* service.runNow({ id: task.id });
+        assert.equal(next.task.lastRunStatus, "running");
+        const messageId = yield* Queue.take(harness.dispatched);
+        yield* Queue.offerAll(harness.events, [
+          runEvent(runOf("run:after-interrupt", messageId, "running")),
+          runEvent(runOf("run:after-interrupt", messageId, "completed")),
+        ]);
+        yield* untilStatus(service, task.id, "succeeded");
+        const [settled] = (yield* service.list()).tasks;
+        assert.isNull(settled?.lastRunError);
+        assert.equal(settled?.runCount, 2);
+      }).pipe(Effect.provide(harness.layer));
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("a run interrupted right after it reserves the task does not block the next run", () =>
