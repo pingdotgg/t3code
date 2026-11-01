@@ -461,3 +461,119 @@ it.effect.each([
       );
     }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
 );
+
+it.effect.each([
+  // The reader's snapshot stops the PASSIVE backfill.
+  { readerAfter: 0 },
+  // The WAL is fully backfilled, but the reader's snapshot stops the TRUNCATE reset.
+  { readerAfter: 38 },
+])(
+  "keeps admitting writes while an outside read transaction pins the WAL (readerAfter=$readerAfter)",
+  ({ readerAfter }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-pinned-wal-" });
+      const filename = path.join(directory, "state.sqlite");
+      // apps/server/src/persistence/Sqlite.ts
+      const journalSizeLimit = 32 * 1024 * 1024;
+      const payload = new Uint8Array(1024 * 1024).fill(7);
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const worker = startedWorkers.at(-1)!;
+        yield* sql`PRAGMA journal_mode = WAL`;
+        yield* sql.unsafe(`PRAGMA journal_size_limit = ${journalSizeLimit}`);
+        yield* sql`CREATE TABLE blobs(data BLOB NOT NULL)`;
+        yield* sql`INSERT INTO blobs VALUES (${payload})`;
+        // Stands in for `sqlite3 statev2.sqlite` or a backup script copying the database.
+        const openReader = Effect.acquireRelease(
+          Effect.sync(() => {
+            const outside = new NodeSqlite.DatabaseSync(filename, { readOnly: true });
+            outside.exec("BEGIN");
+            outside.prepare("SELECT COUNT(*) FROM blobs").get();
+            return outside;
+          }),
+          (outside) =>
+            Effect.sync(() => {
+              outside.exec("COMMIT");
+              outside.close();
+            }),
+        );
+
+        // The worker retries a blocked checkpoint on its own. Two blocked reports for the
+        // same WAL generation mean a write is waiting on a checkpoint the reader prevents.
+        let onBlocked: ((generation: unknown) => void) | undefined;
+        worker.on(
+          "message",
+          (message: { type?: unknown; blocked?: unknown; generation?: unknown }) => {
+            if (message?.type === "checkpoint" && message.blocked === true)
+              onBlocked?.(message.generation);
+          },
+        );
+        // 64 MiB of inserts passes both the size limit and the 10,000-frame ceiling.
+        for (let write = 1; write <= 64; write++) {
+          if (write === readerAfter + 1) yield* openReader;
+          const stalled = yield* Deferred.make<void>();
+          let seen: unknown;
+          onBlocked = (generation) => {
+            if (generation === seen) Deferred.doneUnsafe(stalled, Effect.void);
+            seen = generation;
+          };
+          const held = yield* Effect.raceFirst(
+            sql`INSERT INTO blobs VALUES (${payload})`.pipe(Effect.as(false)),
+            Deferred.await(stalled).pipe(Effect.as(true)),
+          );
+          onBlocked = undefined;
+          if (held) {
+            const walBytes = (yield* fs.stat(`${filename}-wal`)).size;
+            assert.fail(
+              `write ${write} is held by admission while an outside reader pins the WAL ` +
+                `(${walBytes} bytes, journal_size_limit ${journalSizeLimit})`,
+            );
+          }
+        }
+        assert.equal(yield* countBlobs(sql), 65);
+      }).pipe(Effect.provide(SqliteClient.layer({ filename, checkpointWorker: true })));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("resets the WAL once an outside reader that stopped TRUNCATE closes", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-truncate-retry-" });
+    const filename = path.join(directory, "state.sqlite");
+    const payload = new Uint8Array(1024 * 1024).fill(7);
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const worker = startedWorkers.at(-1)!;
+      yield* sql`PRAGMA journal_mode = WAL`;
+      yield* sql.unsafe(`PRAGMA journal_size_limit = ${32 * 1024 * 1024}`);
+      yield* sql`CREATE TABLE blobs(data BLOB NOT NULL)`;
+      yield* sql`INSERT INTO blobs VALUES (${payload})`;
+      const stopped = yield* Deferred.make<void>();
+      const reset = yield* Deferred.make<void>();
+      worker.on("message", (message: { type?: unknown; truncateId?: unknown; log?: unknown }) => {
+        if (message?.type !== "checkpoint" || message.truncateId === undefined) return;
+        Deferred.doneUnsafe(message.log === 0 ? reset : stopped, Effect.void);
+      });
+      // Same shape as readerAfter=38 above: the reader opens on a fully backfilled WAL.
+      for (let write = 1; write <= 38; write++) yield* sql`INSERT INTO blobs VALUES (${payload})`;
+      const outside = new NodeSqlite.DatabaseSync(filename, { readOnly: true });
+      outside.exec("BEGIN");
+      outside.prepare("SELECT COUNT(*) FROM blobs").get();
+      yield* sql`INSERT INTO blobs VALUES (${payload})`;
+      yield* Deferred.await(stopped);
+      const resetEarlier = yield* Deferred.isDone(reset);
+      outside.exec("COMMIT");
+      outside.close();
+      // No further write arrives; the worker has to retry on its own.
+      yield* Deferred.await(reset);
+      assert.isFalse(resetEarlier);
+      assert.equal((yield* fs.stat(`${filename}-wal`)).size, 0n);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, checkpointWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+const countBlobs = (sql: SqlClient.SqlClient) =>
+  Effect.map(sql<{ count: number }>`SELECT COUNT(*) AS count FROM blobs`, (rows) => rows[0]?.count);
