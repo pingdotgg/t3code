@@ -30,6 +30,7 @@ import {
   splitSharedServerPatch,
   supportsSharedSettingsSync,
 } from "@t3tools/client-runtime/state/shared-settings";
+import { subscribeBrowserClientSettings } from "~/clientPersistenceStorage";
 import { ensureLocalApi } from "~/localApi";
 import {
   getThemeDefinition,
@@ -75,6 +76,7 @@ let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
 let clientSettingsPersistenceQueue: Promise<void> = Promise.resolve();
 let deferredClientSettingsPatchCount = 0;
+let stopReloadingClientSettings: (() => void) | null = null;
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -153,6 +155,7 @@ async function hydrateClientSettings(): Promise<void> {
         replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
       }
       setClientSettingsHydrationStatus("ready");
+      stopReloadingClientSettings ??= subscribeBrowserClientSettings(reloadClientSettings);
     } catch (error) {
       if (hydrationGeneration === clientSettingsHydrationGeneration) {
         setClientSettingsHydrationStatus("failed");
@@ -187,11 +190,30 @@ function enqueueClientSettingsPersistence<A>(work: () => Promise<A>): Promise<A>
   return result;
 }
 
+function reloadClientSettings(): void {
+  deferredClientSettingsPatchCount += 1;
+  void enqueueClientSettingsPersistence(async () => {
+    try {
+      const persistedSettings = await ensureLocalApi().persistence.getClientSettings();
+      if (persistedSettings) {
+        replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
+      }
+    } finally {
+      deferredClientSettingsPatchCount -= 1;
+    }
+  }).catch((error) => {
+    console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} reload failed`, {
+      operation: "reload",
+      ...safeErrorLogAttributes(error),
+    });
+  });
+}
+
 export function persistClientSettingsPatch(
   patch: ClientSettingsPatch,
   persist: (settings: ClientSettings) => Promise<void> = defaultClientSettingsPersistence,
 ): Promise<void> {
-  // Patches queued before hydration must publish before newer optimistic patches.
+  // Patches queued behind hydration or a reload must publish before newer optimistic patches.
   const deferPatch =
     clientSettingsHydrationStatus !== "ready" || deferredClientSettingsPatchCount > 0;
   if (deferPatch) {
@@ -733,6 +755,8 @@ export function updateClientSettings(patch: ClientSettingsPatch): Promise<void> 
 
 export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationGeneration += 1;
+  stopReloadingClientSettings?.();
+  stopReloadingClientSettings = null;
   clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
   clientSettingsHydrationStatus = "pending";
   clientSettingsHydrationPromise = null;

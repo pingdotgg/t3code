@@ -1,6 +1,10 @@
 import { ClientSettingsSchema, type ClientSettings } from "@t3tools/contracts";
 
-import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
+import {
+  getLocalStorageItem,
+  setLocalStorageItem,
+  subscribeLocalStorageKey,
+} from "./hooks/useLocalStorage";
 
 const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
 
@@ -22,4 +26,13 @@ export function writeBrowserClientSettings(settings: ClientSettings): void {
   }
 
   setLocalStorageItem(CLIENT_SETTINGS_STORAGE_KEY, settings, ClientSettingsSchema);
+}
+
+/** Fires when another tab saves client settings. */
+export function subscribeBrowserClientSettings(onChange: () => void): () => void {
+  if (!hasWindow()) {
+    return () => undefined;
+  }
+
+  return subscribeLocalStorageKey(CLIENT_SETTINGS_STORAGE_KEY, onChange);
 }
