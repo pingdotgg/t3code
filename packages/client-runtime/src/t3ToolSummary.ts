@@ -79,6 +79,25 @@ function quantity(count: number, noun: string, plural = `${noun}s`): string {
   return `${count} ${count === 1 ? noun : plural}`;
 }
 
+/** One PR per single call; a batch counts what its result reports. */
+function pullRequestQuantity(
+  calls: ReadonlyArray<{
+    readonly input: Record<string, unknown> | undefined;
+    readonly output: Record<string, unknown> | undefined;
+  }>,
+  countKey: "linkedCount" | "unlinkedCount",
+): string {
+  let count = 0;
+  for (const call of calls) {
+    const reported = call.output?.[countKey];
+    if (typeof reported === "number") count += reported;
+    else if (call.input?.url !== undefined || call.input?.number !== undefined) count += 1;
+    // A batch result too large to compact loses its count, so the label drops the number.
+    else return "pull requests";
+  }
+  return quantity(count, "pull request");
+}
+
 export function summarizeT3ToolCalls(
   action: T3McpToolSummaryAction,
   calls: ReadonlyArray<T3ToolSummaryCall>,
@@ -175,6 +194,9 @@ export function summarizeT3ToolCalls(
       break;
     case "task-status":
       label = phrase("Checked", "check", `task status ${times}`);
+      break;
+    case "background-wait":
+      label = phrase("Updated", "update", `background waits ${times}`);
       break;
     case "task-cancel":
       label = phrase(
@@ -333,6 +355,19 @@ export function summarizeT3ToolCalls(
     case "environment-update":
       label = phrase("Updated", "update", `environment preferences ${times}`);
       break;
+    case "environment-links":
+      label = phrase("Listed", "list", `linked environments ${times}`);
+      break;
+    case "environment-link":
+      label = phrase("Asked to link", "ask to link", quantity(selected.length, "environment"));
+      break;
+    case "environment-unlink":
+      label = phrase(
+        "Forgot",
+        "forget",
+        quantity(countEntities(entityIds("environmentId")), "linked environment"),
+      );
+      break;
     case "attachment-prepare":
       label = phrase(
         "Prepared",
@@ -373,10 +408,10 @@ export function summarizeT3ToolCalls(
       break;
     }
     case "link-pr":
-      label = phrase("Linked", "link", quantity(selected.length, "pull request"));
+      label = phrase("Linked", "link", pullRequestQuantity(selected, "linkedCount"));
       break;
     case "unlink-pr":
-      label = phrase("Unlinked", "unlink", quantity(selected.length, "pull request"));
+      label = phrase("Unlinked", "unlink", pullRequestQuantity(selected, "unlinkedCount"));
       break;
     case "watch-pr":
       label = phrase("Watching", "watch", quantity(selected.length, "pull request"));

@@ -1,13 +1,14 @@
 import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeysEqual,
-} from "@t3tools/shared/threadPullRequests";
+} from "../sourceControl/threadPullRequests.ts";
 import {
   PullRequestLinkedThreadsResult,
   PullRequestOperationError,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -38,8 +39,9 @@ export const listLinkedPullRequestThreads = Effect.fn("listLinkedPullRequestThre
       WHERE json_extract(link.value, '$.number') = ${key.number}
         AND json_extract(link.value, '$.source') != 'stack-dismissed'
         AND t.deleted_at IS NULL
+        AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
       ORDER BY "updatedAt" DESC, id ASC
-    `;
+    `.pipe(NodeSqliteClient.readOnly);
     const threads = rows
       .filter((row) => threadPullRequestKeysEqual(row, key))
       .map(({ id, projectId, title, archivedAt }) => ({ id, projectId, title, archivedAt }));
