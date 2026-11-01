@@ -117,7 +117,15 @@ function relayAccountId(clerkToken: string): Option.Option<string> {
 
 /** @public */
 export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
-  const relay = yield* ManagedRelay.ManagedRelayClient;
+  const relayOption = yield* Effect.serviceOption(ManagedRelay.ManagedRelayClient);
+  if (Option.isNone(relayOption)) {
+    // A direct-only client has no relay account to list environments from.
+    return RelayEnvironmentDiscovery.of({
+      state: yield* SubscriptionRef.make(EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE),
+      refresh: Effect.void,
+    });
+  }
+  const relay = relayOption.value;
   const session = yield* ClientCapabilities.CloudSession;
   const connectivity = yield* Connectivity.Connectivity;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
