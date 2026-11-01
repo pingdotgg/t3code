@@ -5,6 +5,7 @@ import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
+  resolveCorrespondingProviderInstance,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
@@ -25,15 +26,18 @@ export function useScopedModelDisabledReason(
       );
       const providers = providersByEnvironment.get(candidate.environmentId);
       if (!environment?.serverConfig || !providers) continue;
-      const entry = applyProviderInstanceSettings(
+      const candidates = applyProviderInstanceSettings(
         deriveProviderInstanceEntries(providers),
         candidate.settings,
         candidate.projectId,
-      ).find((option) => option.instanceId === instanceId);
+      );
+      const entry = sourceEntry
+        ? resolveCorrespondingProviderInstance(sourceEntry, candidates)
+        : null;
       const options = getCustomModelOptionsByInstance(
         mergeEnvironmentSettings(candidate.settings, settings),
         providers,
-      ).get(instanceId);
+      ).get(entry?.instanceId ?? instanceId);
       if (
         !entry?.enabled ||
         !entry.isAvailable ||

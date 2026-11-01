@@ -21,7 +21,6 @@ import { getComposerProviderState } from "./components/chat/composerProviderStat
 import { type ClientSettings, UnifiedSettings } from "@t3tools/contracts/settings";
 import { resolveModelPreferences } from "@t3tools/shared/serverSettings";
 import * as Arr from "effect/Array";
-import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
 import {
   getDefaultServerModel,
@@ -32,6 +31,8 @@ import { ModelEsque } from "./components/chat/providerIconUtils";
 import {
   type ProviderInstanceEntry,
   deriveProviderInstanceEntries,
+  modelSelectionsAreEquivalent,
+  providerInstanceEntriesFor,
   NO_PROVIDER_MODEL_SELECTION,
   resolveDefaultProviderModelSelection,
   resolveProjectDefaultProviderModelSelection,
@@ -330,6 +331,7 @@ export function defaultModelSelectionsAreMixed(
         : resolveDefaultProviderModelSelection(providers, stored);
     return {
       stored,
+      entries: providerInstanceEntriesFor(providers, settings, projectId),
       effective: selection
         ? resolveEffectiveDefaultModelSelection(
             {
@@ -343,7 +345,25 @@ export function defaultModelSelectionsAreMixed(
         : null,
     };
   });
-  return selections.some((selection) => !Equal.equals(selection, selections[0]));
+  const first = selections[0];
+  return (
+    first !== undefined &&
+    selections.some(
+      (selection) =>
+        !modelSelectionsAreEquivalent(
+          first.stored,
+          first.entries,
+          selection.stored,
+          selection.entries,
+        ) ||
+        !modelSelectionsAreEquivalent(
+          first.effective,
+          first.entries,
+          selection.effective,
+          selection.entries,
+        ),
+    )
+  );
 }
 
 export function getCustomModelOptionsByInstance(

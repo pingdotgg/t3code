@@ -14,6 +14,7 @@ import {
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
   resolveDefaultProviderModelSelection,
+  resolveCorrespondingProviderInstance,
   resolveSelectableProviderInstance,
   shouldShowInstanceBadge,
 } from "./providerInstances";
@@ -56,6 +57,56 @@ const model = (slug: string, isCustom = false, isDefault = false) => ({
   isCustom,
   ...(isDefault ? { isDefault: true } : {}),
   capabilities: {},
+});
+
+describe("provider instances across environments", () => {
+  it("matches a unique named account without treating environment-local ids as identity", () => {
+    const [source, pro, business] = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("codex"),
+        instanceId: "linux-pro",
+        displayName: "ChatGPT - Pro",
+      }),
+      provider({
+        provider: ProviderDriverKind.make("codex"),
+        instanceId: "codex",
+        displayName: "ChatGPT - Pro",
+      }),
+      provider({
+        provider: ProviderDriverKind.make("codex"),
+        instanceId: "linux-pro",
+        displayName: "ChatGPT - Revotech",
+      }),
+    ]);
+    expect(resolveCorrespondingProviderInstance(source!, [business!, pro!])).toBe(pro);
+    expect(resolveCorrespondingProviderInstance(source!, [business!])).toBeNull();
+    expect(
+      resolveCorrespondingProviderInstance(source!, [
+        pro!,
+        { ...pro!, instanceId: ProviderInstanceId.make("duplicate") },
+      ]),
+    ).toBeNull();
+    expect(
+      resolveCorrespondingProviderInstance(source!, [
+        { ...pro!, driverKind: ProviderDriverKind.make("claudeAgent") },
+      ]),
+    ).toBeNull();
+    const identified = {
+      ...source!,
+      snapshot: {
+        ...source!.snapshot,
+        auth: { status: "authenticated" as const, email: "one@example.test" },
+      },
+    };
+    const differentAccount = {
+      ...pro!,
+      snapshot: {
+        ...pro!.snapshot,
+        auth: { status: "authenticated" as const, email: "two@example.test" },
+      },
+    };
+    expect(resolveCorrespondingProviderInstance(identified, [differentAccount])).toBeNull();
+  });
 });
 
 describe("isProviderInstancePickerReady", () => {
