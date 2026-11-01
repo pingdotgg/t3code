@@ -38,6 +38,7 @@ import {
   sidebarFolderExpansionKeys,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   sortActiveThreadsByOrderKey,
   sortPinnedThreadsByOrderKey,
@@ -969,21 +970,68 @@ describe("Working shelf (beta)", () => {
     ).toBe(false);
   });
 
-  it.each([
-    ["connected", true, false],
-    ["connected", false, true],
-    ["connecting", false, false],
-    ["reconnecting", false, true],
-    ["offline", false, true],
-    ["error", false, true],
-    ["unsupported", false, true],
-    ["available", false, true],
-  ] as const)(
-    "lists threads outside the shelf on a %s environment: %s",
-    (phase, shellIsLive, disconnected) => {
-      expect(isSidebarEnvironmentDisconnected(phase, shellIsLive)).toBe(disconnected);
-    },
-  );
+  describe("isSidebarEnvironmentDisconnected", () => {
+    const follow = (
+      states: ReadonlyArray<readonly [EnvironmentConnectionPhase, boolean]>,
+    ): boolean[] => {
+      let disconnected = false;
+      return states.map(([phase, shellIsLive]) => {
+        disconnected = isSidebarEnvironmentDisconnected(phase, shellIsLive, disconnected);
+        return disconnected;
+      });
+    };
+
+    it.each(["reconnecting", "offline", "error", "unsupported", "available"] as const)(
+      "lists threads outside the shelf on a %s environment",
+      (phase) => {
+        expect(
+          follow([
+            ["connected", true],
+            [phase, false],
+          ]),
+        ).toEqual([false, true]);
+      },
+    );
+
+    it("keeps the shelf through the resync a window refocus starts on a live socket", () => {
+      expect(
+        follow([
+          ["connected", true],
+          ["connected", false],
+          ["connected", true],
+        ]),
+      ).toEqual([false, false, false]);
+    });
+
+    it("keeps threads out of the shelf after a reconnect until the shell is live", () => {
+      expect(
+        follow([
+          ["connected", true],
+          ["reconnecting", false],
+          ["connected", false],
+          ["connected", true],
+        ]),
+      ).toEqual([false, true, true, false]);
+      expect(
+        follow([
+          ["available", false],
+          ["connecting", false],
+          ["connected", false],
+          ["connected", true],
+        ]),
+      ).toEqual([true, true, true, false]);
+    });
+
+    it("keeps cached placement through a cold start", () => {
+      expect(
+        follow([
+          ["connecting", false],
+          ["connected", false],
+          ["connected", true],
+        ]),
+      ).toEqual([false, false, false]);
+    });
+  });
 
   it("lists a running thread outside the shelf while its environment is disconnected", () => {
     const thread = { ...idle, runtime, environmentId: localEnvironmentId };

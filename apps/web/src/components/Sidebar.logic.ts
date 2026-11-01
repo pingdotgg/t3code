@@ -185,12 +185,16 @@ export function resolveSidebarThreadSection(input: {
   return "active";
 }
 
-// Keep cached placement on the first connection attempt, matching mobile's threadRouteIsHydrating.
+// Between a dropped connection and a live shell, placement holds. A first connection attempt keeps
+// the cached shelf, a reconnect keeps threads out until its resync lands, and the resync that
+// every window refocus starts on a healthy socket moves nothing.
 export function isSidebarEnvironmentDisconnected(
   phase: EnvironmentConnectionPhase,
   shellIsLive: boolean,
+  wasDisconnected: boolean,
 ): boolean {
-  return phase !== "connecting" && (phase !== "connected" || !shellIsLive);
+  if (phase === "connected" && shellIsLive) return false;
+  return phase === "connecting" || phase === "connected" ? wasDisconnected : true;
 }
 
 export function belongsInSidebarWorkingShelf<T extends { readonly environmentId: EnvironmentId }>(
