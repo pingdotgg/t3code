@@ -385,6 +385,26 @@ describe("ChatMarkdown inline code selection", () => {
   });
 });
 
+describe("ChatMarkdown file chip tooltips", () => {
+  it("wraps a long path so its file name stays inside the tooltip", async () => {
+    setup();
+    const path =
+      "/tmp/project/packages/client-runtime/src/state/generated/environment-connection-handshake-retry-policy-fixtures.ts";
+    await using screen = await renderText(`See [the fixtures](${path}).`);
+
+    await userEvent.hover(screen.container.querySelector(".chat-markdown-file-link")!);
+    const tooltip = page.getByText(path);
+    await expect.element(tooltip).toBeVisible();
+
+    const popup = tooltip.element().closest("[data-side]")!;
+    const pathEnd = document.createRange();
+    pathEnd.selectNodeContents(tooltip.element());
+    expect(pathEnd.getBoundingClientRect().right).toBeLessThanOrEqual(
+      popup.getBoundingClientRect().right,
+    );
+  });
+});
+
 describe("ChatMarkdown Windows file links", () => {
   const environmentId = EnvironmentId.make("env-windows");
   const renderWindows = (text: string, parseRawHtml: boolean) =>
