@@ -648,14 +648,19 @@ export const make = Effect.gen(function* () {
       Effect.forkScoped,
     );
   } else {
-    // Turning sign-in off ends Tailscale sessions now, not when they expire.
+    // Turning sign-in off ends Tailscale sessions and unused sign-in codes now, not when
+    // they expire.
+    const now = yield* DateTime.now;
     const signedIn = new Map(
-      (yield* sessions.listActive())
-        .filter((session) => session.subject.startsWith(TAILNET_SUBJECT_PREFIX))
-        .map((session) => [
-          session.subject.slice(TAILNET_SUBJECT_PREFIX.length),
-          session.client.label ?? null,
-        ]),
+      [
+        ...(yield* sessions.listActive()).map((session) => ({
+          subject: session.subject,
+          label: session.client.label ?? null,
+        })),
+        ...(yield* pairingLinks.listActive({ now })),
+      ]
+        .filter(({ subject }) => subject.startsWith(TAILNET_SUBJECT_PREFIX))
+        .map(({ subject, label }) => [subject.slice(TAILNET_SUBJECT_PREFIX.length), label]),
     );
     yield* Effect.forEach(signedIn, ([stableNodeId, label]) =>
       endAccess(stableNodeId, "sign_in_off", { device: label ?? stableNodeId, user: null }),

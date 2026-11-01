@@ -578,6 +578,9 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       return Effect.gen(function* () {
         const key = makeDpopKey();
         const session = yield* exchange((yield* signIn(key)).credential, key);
+        const unusedKey = makeDpopKey();
+        // The laptop has a sign-in code but no session yet.
+        const unused = yield* signIn(unusedKey, { remoteAddress: LAPTOP_ADDRESS });
         const config = yield* ServerConfig.ServerConfig;
         yield* TailnetSignIn.make.pipe(
           Effect.provideService(ServerConfig.ServerConfig, {
@@ -588,6 +591,8 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
           Effect.scoped,
         );
         expect(yield* revoked(session.access_token)).toBe(true);
+        // A sign-in code not yet exchanged cannot bring the device back.
+        expect((yield* Effect.exit(exchange(unused.credential, unusedKey)))._tag).toBe("Failure");
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 
