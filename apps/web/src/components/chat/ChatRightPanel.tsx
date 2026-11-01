@@ -2,11 +2,14 @@ import { usePreviewPanelInlineSize } from "../../hooks/usePreviewPanelInlineSize
 import { RightPanelSheet } from "../RightPanelSheet";
 import { RightPanelTabs, type RightPanelTabsProps } from "../RightPanelTabs";
 
-type ChatRightPanelProps = Omit<RightPanelTabsProps, "mode" | "inlineSize" | "maximized"> & {
+type ChatRightPanelProps = Omit<
+  RightPanelTabsProps,
+  "mode" | "inlineSize" | "maximized" | "widthStorageKey"
+> & {
   readonly sheet: boolean;
   readonly maximized: boolean;
   readonly workspaceLayoutElement: HTMLElement | null;
-  readonly widthStorageKey: string;
+  readonly widthStorageKey: string | undefined;
   readonly sheetAnimationDurationMs: number;
   readonly onCloseSheet: () => void;
 };
