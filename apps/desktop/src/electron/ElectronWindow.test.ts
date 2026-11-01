@@ -2,8 +2,10 @@ import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type * as Electron from "electron";
 import { beforeEach, vi } from "vite-plus/test";
 
@@ -62,6 +64,13 @@ const layerTestFor = (platform: NodeJS.Platform) =>
 
 const layerTest = layerTestFor("linux");
 
+function makeBrowserWindow(input: { readonly id: number; readonly destroyed: boolean }) {
+  return {
+    id: input.id,
+    isDestroyed: vi.fn(() => input.destroyed),
+  } as unknown as Electron.BrowserWindow;
+}
+
 function makeWindowsRevealWindow() {
   return {
     id: 41,
@@ -81,6 +90,30 @@ function makeWindowsRevealWindow() {
 }
 
 describe("ElectronWindow", () => {
+  it.effect("waits for a live main window and follows replacements", () =>
+    Effect.gen(function* () {
+      const electronWindow = yield* ElectronWindow.ElectronWindow;
+      const first = makeBrowserWindow({ id: 1, destroyed: false });
+      const destroyed = makeBrowserWindow({ id: 2, destroyed: true });
+      const inspectedDestroyed = yield* Deferred.make<void>();
+      vi.spyOn(destroyed, "isDestroyed").mockImplementation(() => {
+        Deferred.doneUnsafe(inspectedDestroyed, Effect.void);
+        return true;
+      });
+      const replacement = makeBrowserWindow({ id: 3, destroyed: false });
+      const waiting = yield* electronWindow.waitForMain.pipe(Effect.forkChild);
+      yield* electronWindow.setMain(first);
+      assert.strictEqual(yield* Fiber.join(waiting), first);
+      assert.strictEqual(yield* electronWindow.waitForMain, first);
+      yield* electronWindow.clearMain(Option.some(first));
+      yield* electronWindow.setMain(destroyed);
+      const next = yield* electronWindow.waitForMain.pipe(Effect.forkChild);
+      yield* Deferred.await(inspectedDestroyed);
+      yield* electronWindow.setMain(replacement);
+      assert.strictEqual(yield* Fiber.join(next), replacement);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   beforeEach(() => {
     activateWindowsForegroundMock.mockReset().mockResolvedValue(undefined);
     appFocusMock.mockReset();

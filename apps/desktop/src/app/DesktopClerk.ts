@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 
 import { codexAuthDeliveryUrl, readCodexAuthHandoff } from "@t3tools/shared/codexAuthHandoff";
@@ -124,14 +125,32 @@ export const make = Effect.gen(function* () {
   yield* electronApp.on("second-instance", (_event: unknown, argv: readonly string[]) => {
     handleSecondInstance(argv);
   });
-  // macOS hands a launch link to open-url, which can fire before configure runs.
-  const pendingOpenUrls: Array<string> = [];
-  let handleOpenUrl = (url: string) => {
-    pendingOpenUrls.push(url);
-    return true;
+  // macOS delivers launch events before shell probing and configure finish.
+  const pendingLinks: string[] = [];
+  let receiveLink = (url: string) => {
+    pendingLinks.push(url);
+  };
+  const providerAuthDestination = (value: string | undefined) => {
+    const destination = providerAuthReturnUrl(value);
+    const expectedOrigin = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}://app`;
+    return destination?.startsWith(`${expectedOrigin}/`) ? destination : undefined;
   };
   yield* electronApp.on("open-url", (event: { preventDefault: () => void }, url: string) => {
-    if (handleOpenUrl(url)) event.preventDefault();
+    if (
+      !readCodexAuthHandoff(url, environment.isDevelopment) &&
+      !providerAuthDestination(url) &&
+      !DesktopWebLinks.isWebLink(url) &&
+      promptLinkAppPath(url) === null &&
+      readPairingAppLink(url) === null
+    )
+      return;
+    event.preventDefault();
+    receiveLink(url);
+  });
+  yield* electronApp.on("open-file", (event: { preventDefault: () => void }, path: string) => {
+    if (!DesktopWebLinks.isWebPageFile(path)) return;
+    event.preventDefault();
+    receiveLink(NodeURL.pathToFileURL(path).href);
   });
 
   yield* Effect.acquireRelease(
@@ -162,8 +181,11 @@ export const make = Effect.gen(function* () {
       const electronApp = yield* ElectronApp.ElectronApp;
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       const webLinks = yield* DesktopWebLinks.DesktopWebLinks;
+      const scope = yield* Scope.Scope;
       const context = yield* Effect.context<ElectronWindow.ElectronWindow>();
       const runPromise = Effect.runPromiseWith(context);
+      // Concurrent loadURL calls abort each other on the same window.
+      const authNavigation = yield* Semaphore.make(1);
 
       const startProviderAuthHandoff = (value: string | undefined) => {
         if (!value) return false;
@@ -173,11 +195,12 @@ export const make = Effect.gen(function* () {
           Effect.gen(function* () {
             yield* electronApp.whenReady;
             yield* Effect.tryPromise({
-              try: () =>
+              try: (signal) =>
                 receiveCodexAuthCallback(
                   request.authorizationUrl,
-                  (url) => runPromise(shell.openExternal(url)),
+                  (url) => runPromise(shell.openExternal(url), { signal }),
                   (callbackUrl) => codexAuthDeliveryUrl(request, callbackUrl),
+                  signal,
                 ),
               catch: () =>
                 new CodexAuthCallbackError({
@@ -187,24 +210,29 @@ export const make = Effect.gen(function* () {
             });
           }).pipe(
             Effect.catch(() => Effect.logWarning("Could not complete ChatGPT desktop handoff.")),
+            Effect.forkIn(scope),
           ),
         );
         return true;
       };
       const resumeProviderAuth = (value: string | undefined) => {
-        const destination = providerAuthReturnUrl(value);
-        const expectedOrigin = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}://app`;
-        if (!destination?.startsWith(`${expectedOrigin}/`)) return false;
+        const destination = providerAuthDestination(value);
+        if (!destination) return false;
         void runPromise(
           Effect.gen(function* () {
-            const mainWindow = yield* electronWindow.currentMainOrFirst;
-            if (Option.isNone(mainWindow)) return;
-            yield* Effect.promise(() => mainWindow.value.loadURL(destination));
-            yield* electronWindow.reveal(mainWindow.value);
+            const mainWindow = yield* electronWindow.waitForMain;
+            if (mainWindow.isDestroyed()) return;
+            yield* Effect.promise(() => mainWindow.loadURL(destination));
+            const currentWindow = yield* electronWindow.main;
+            if (Option.isSome(currentWindow) && currentWindow.value === mainWindow) {
+              yield* electronWindow.reveal(mainWindow);
+            }
           }).pipe(
+            authNavigation.withPermit,
             Effect.catchCause((cause) =>
               Effect.logWarning("Could not return to provider setup", cause),
             ),
+            Effect.forkIn(scope),
           ),
         );
         return true;
@@ -217,21 +245,12 @@ export const make = Effect.gen(function* () {
       };
       const args = yield* HostProcess.Arguments;
       args.some((value) => startProviderAuthHandoff(value) || openAppLink(value));
-      const openWebLink = (url: string) => {
-        if (!DesktopWebLinks.isWebLink(url)) return false;
-        void runPromise(webLinks.receive(url));
-        return true;
-      };
-      handleOpenUrl = (url) =>
-        startProviderAuthHandoff(url) ||
-        resumeProviderAuth(url) ||
-        openWebLink(url) ||
-        openAppLink(url);
-      for (const url of pendingOpenUrls.splice(0)) handleOpenUrl(url);
-      yield* electronApp.on("open-file", (event: { preventDefault: () => void }, path: string) => {
-        if (!DesktopWebLinks.isWebPageFile(path)) return;
-        event.preventDefault();
-        void runPromise(webLinks.receive(NodeURL.pathToFileURL(path).href));
+      yield* Effect.sync(() => {
+        receiveLink = (url) => {
+          if (startProviderAuthHandoff(url) || resumeProviderAuth(url)) return;
+          void runPromise(webLinks.receive(url));
+        };
+        for (const url of pendingLinks.splice(0)) receiveLink(url);
       });
       handleSecondInstance = (argv) => {
         if (
