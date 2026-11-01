@@ -6,6 +6,7 @@ import {
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -388,18 +389,11 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
   },
 );
 
-const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosixEnvironment")(
-  function* (
-    config: ShellEnvironmentConfig,
-  ): Effect.fn.Return<
-    boolean,
-    never,
-    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
-  > {
-    const fileSystem = yield* FileSystem.FileSystem;
+const capturePosixEnvironment = Effect.fn("desktop.shellEnvironment.capturePosixEnvironment")(
+  function* (platform: NodeJS.Platform, preferredShell: string | undefined) {
     const shellEnvironment: EnvironmentPatch = {};
 
-    for (const shell of listLoginShellCandidates(config.platform, config.env.SHELL)) {
+    for (const shell of listLoginShellCandidates(platform, preferredShell)) {
       Object.assign(
         shellEnvironment,
         yield* readLoginShellEnvironment(shell, LOGIN_SHELL_ENV_NAMES),
@@ -408,9 +402,20 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     }
 
     const launchctlPath =
-      config.platform === "darwin" && !shellEnvironment.PATH
+      platform === "darwin" && !shellEnvironment.PATH
         ? yield* readLaunchctlPath
         : Option.none<string>();
+    return { shellEnvironment, launchctlPath };
+  },
+);
+
+const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosixEnvironment")(
+  function* (
+    config: ShellEnvironmentConfig,
+    captured: Effect.Effect<Effect.Success<ReturnType<typeof capturePosixEnvironment>>>,
+  ): Effect.fn.Return<boolean, never, FileSystem.FileSystem> {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const { shellEnvironment, launchctlPath } = yield* captured;
     const mergedPath = mergePaths(config.platform, [
       trimNonEmpty(shellEnvironment.PATH).pipe(Option.orElse(() => launchctlPath)),
       readEnvPath(config.env),
@@ -496,32 +501,26 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
   },
 );
 
-const installShellEnvironment = (
-  config: ShellEnvironmentConfig,
-): Effect.Effect<
-  boolean,
-  never,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
-> => {
-  if (config.platform === "win32") {
-    return installWindowsEnvironment(config);
-  }
-  if (config.platform === "darwin" || config.platform === "linux") {
-    return installPosixEnvironment(config);
-  }
-  return Effect.succeed(false);
-};
-
 /** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const config = { env: process.env, platform: environment.platform };
+  // Capture while other services initialize; process.env changes only at the startup barrier.
+  const capture =
+    config.platform === "darwin" || config.platform === "linux"
+      ? yield* capturePosixEnvironment(config.platform, config.env.SHELL).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.forkScoped({ startImmediately: true }),
+        )
+      : null;
   const installIntoProcess: DesktopShellEnvironment["Service"]["installIntoProcess"] =
     yield* Effect.cached(
-      installShellEnvironment({
-        env: process.env,
-        platform: environment.platform,
+      Effect.gen(function* () {
+        if (capture !== null) return yield* installPosixEnvironment(config, Fiber.join(capture));
+        if (config.platform === "win32") return yield* installWindowsEnvironment(config);
+        return false;
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

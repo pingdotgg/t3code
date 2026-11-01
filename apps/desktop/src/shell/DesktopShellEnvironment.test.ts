@@ -2,10 +2,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as PlatformError from "effect/PlatformError";
+import type * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -71,9 +73,20 @@ function runShellEnvironment(input: {
   readonly userShell?: string;
   readonly handler: (
     command: ChildProcess.Command,
-  ) => string | { output: string; exitCode: number };
+  ) =>
+    | string
+    | { output: string; exitCode: number }
+    | Effect.Effect<
+        ChildProcessSpawner.ChildProcessHandle,
+        PlatformError.PlatformError,
+        Scope.Scope
+      >;
   readonly failure?: PlatformError.PlatformError;
   readonly processSpawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  readonly beforeInstall?: Effect.Effect<void>;
+  readonly use?: (
+    service: DesktopShellEnvironment.DesktopShellEnvironment["Service"],
+  ) => Effect.Effect<boolean>;
 }) {
   const layerEnvironment = Layer.succeed(
     DesktopEnvironment.DesktopEnvironment,
@@ -87,6 +100,7 @@ function runShellEnvironment(input: {
       if (input.processSpawner) return input.processSpawner.spawn(command);
       if (input.failure !== undefined) return Effect.fail(input.failure);
       const result = input.handler(command);
+      if (Effect.isEffect(result)) return result;
       return Effect.succeed(
         typeof result === "string"
           ? makeProcess(result)
@@ -97,6 +111,8 @@ function runShellEnvironment(input: {
 
   const program = Effect.gen(function* () {
     const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
+    if (input.use) return yield* input.use(shellEnvironment);
+    if (input.beforeInstall) yield* input.beforeInstall;
     const prepared = yield* shellEnvironment.installIntoProcess;
     assert.equal(yield* shellEnvironment.installIntoProcess, prepared);
     return prepared;
@@ -154,6 +170,67 @@ describe("DesktopShellEnvironment", () => {
         assert.equal(env.PATH, "/shell-only/bin:/usr/bin");
         assert.deepEqual(commands, ["/test-shell"]);
       }),
+  );
+
+  it.effect("captures during service setup without installing before the startup boundary", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+      const commands: ChildProcess.Command[] = [];
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: "/nvm/bin:/usr/bin", SSH_AUTH_SOCK: "/shell.sock" });
+        },
+        beforeInstall: Effect.sync(() => {
+          assert.equal(commands.length, 1);
+          assert.equal(env.PATH, "/usr/bin");
+          assert.equal(env.SSH_AUTH_SOCK, undefined);
+          env.SSH_AUTH_SOCK = "/inherited.sock";
+        }),
+      });
+      assert.equal(commands.length, 1);
+      assert.equal(commands[0]?._tag === "StandardCommand" ? commands[0].args[0] : "", "-ilc");
+      assert.equal(env.PATH, "/nvm/bin:/usr/bin");
+      assert.equal(env.SSH_AUTH_SOCK, "/inherited.sock");
+    }),
+  );
+
+  it.effect("closes an in-flight capture when service initialization is abandoned", () =>
+    Effect.gen(function* () {
+      let released = false;
+      let spawned = false;
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+      const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        handler: () =>
+          Effect.acquireRelease(
+            Effect.sync(() => {
+              spawned = true;
+              return {
+                ...makeProcess(envOutput({ PATH: "/shell/bin" })),
+                exitCode: Deferred.await(exit),
+              };
+            }),
+            () =>
+              Effect.sync(() => {
+                released = true;
+              }),
+          ),
+        use: () =>
+          Effect.sync(() => {
+            assert.isTrue(spawned);
+            assert.isFalse(released);
+            assert.equal(env.PATH, "/usr/bin");
+            return false;
+          }),
+      });
+      assert.isTrue(released);
+      assert.equal(env.PATH, "/usr/bin");
+    }),
   );
 
   it.effect("rejects PATH output from a failed shell and tries the next candidate", () =>
