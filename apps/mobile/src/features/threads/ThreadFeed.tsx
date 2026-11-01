@@ -207,7 +207,10 @@ import {
 } from "../../lib/threadActivity";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import {
+  resolveThreadFeedIsAtEnd,
   resolveThreadFeedLiveFollow,
+  shouldCatchUpThreadFeedOnScrollEnd,
+  shouldMeasureThreadFeedGeometry,
   resolveThreadFeedReflowAnchor,
   resolveThreadFeedReflowOffset,
   resolveThreadFeedReflowScroll,
@@ -371,6 +374,8 @@ export interface ThreadFeedProps {
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onEndFollowEnabledChange?: (enabled: boolean) => void;
+  readonly onIsAtEndChange?: (isAtEnd: boolean) => void;
+  readonly onCatchUpToEnd?: () => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
 }
@@ -2594,7 +2599,13 @@ export const ThreadFeed = memo(function ThreadFeed({
   ref,
   ...props
 }: ThreadFeedProps & { readonly ref?: Ref<ThreadFeedHandle> }) {
-  const { listRef, onEndFollowEnabledChange, onHeaderMaterialVisibilityChange } = props;
+  const {
+    listRef,
+    onEndFollowEnabledChange,
+    onIsAtEndChange,
+    onCatchUpToEnd,
+    onHeaderMaterialVisibilityChange,
+  } = props;
   const workflowOpening = useWorkflowOpening(props.detailRef);
   const guestShare = useThreadGuestShare(props.detailRef);
   const deviceType = useDeviceType();
@@ -2639,18 +2650,31 @@ export const ThreadFeed = memo(function ThreadFeed({
   // LegendList's geometric follow threshold can reclaim users reading history when streamed rows grow.
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
   const endFollowEnabledRef = useRef(true);
+  const isAtEndRef = useRef(true);
   // Only user scrolls from drag through momentum break follow; ignore MVCP and programmatic adjustments.
   const userScrollSessionRef = useRef(false);
-  const setEndFollow = (enabled: boolean) => {
-    if (endFollowEnabledRef.current === enabled) {
-      return;
+  const setEndFollow = (enabled: boolean, reset = false) => {
+    const changed = endFollowEnabledRef.current !== enabled;
+    if (changed) {
+      endFollowEnabledRef.current = enabled;
+      setEndFollowEnabled(enabled);
     }
-    endFollowEnabledRef.current = enabled;
-    setEndFollowEnabled(enabled);
-    onEndFollowEnabledChange?.(enabled);
+    // Explicit resets resynchronize the parent even when follow is already enabled.
+    if (changed || reset) onEndFollowEnabledChange?.(enabled);
   };
   const transitionEndFollow = (event: ThreadFeedLiveFollowEvent) => {
-    setEndFollow(resolveThreadFeedLiveFollow(endFollowEnabledRef.current, event));
+    const reset = event.type === "reset";
+    setEndFollow(resolveThreadFeedLiveFollow(endFollowEnabledRef.current, event), reset);
+    const isAtEnd = resolveThreadFeedIsAtEnd(
+      isAtEndRef.current,
+      event,
+      endFollowEnabledRef.current,
+      userScrollSettleTimerRef.current !== null,
+    );
+    if (isAtEndRef.current !== isAtEnd || reset) {
+      isAtEndRef.current = isAtEnd;
+      onIsAtEndChange?.(isAtEnd);
+    }
   };
   // Capture the reader's anchor before width reflow; LegendList thresholds see only new geometry.
   // iOS preserves it during re-measures. Android restores after because following disables MVCP.
@@ -3183,6 +3207,20 @@ export const ThreadFeed = memo(function ThreadFeed({
       userScrollSettleTimerRef.current = null;
     }
   };
+  const reportGeometryChange = (type: "content-size-change" | "layout") => {
+    // Geometry reports can precede the follow scroll or release settling.
+    if (
+      !shouldMeasureThreadFeedGeometry(
+        endFollowEnabledRef.current,
+        userScrollSettleTimerRef.current !== null,
+      )
+    )
+      return;
+    const listState = listRef.current?.getState();
+    if (listState) {
+      transitionEndFollow({ type, isAtEnd: listState.isAtEnd });
+    }
+  };
   const handleScrollBeginDrag = () => {
     clearUserScrollSettle();
     userScrollSessionRef.current = true;
@@ -3195,12 +3233,15 @@ export const ThreadFeed = memo(function ThreadFeed({
     clearUserScrollSettle();
     const userScrollSessionActive = userScrollSessionRef.current;
     userScrollSessionRef.current = false;
-    transitionEndFollow({
+    const event = {
       type: "user-scroll-end",
-      // Without momentum, retain release position; stream growth during detection must not disable follow.
-      isAtEnd: releaseIsAtEnd ?? listRef.current?.getState().isAtEnd ?? false,
+      // Release intent survives streaming growth; measured position must stay current.
+      isAtEnd: listRef.current?.getState().isAtEnd ?? false,
+      ...(releaseIsAtEnd !== undefined ? { releaseIsAtEnd } : {}),
       userScrollSessionActive,
-    });
+    } satisfies ThreadFeedLiveFollowEvent;
+    transitionEndFollow(event);
+    if (shouldCatchUpThreadFeedOnScrollEnd(event)) onCatchUpToEnd?.();
   };
   // Zero release velocity may still produce momentum; wait for native detection before ending the session.
   const handleScrollEndDrag = () => {
@@ -3211,6 +3252,15 @@ export const ThreadFeed = memo(function ThreadFeed({
   const handleMomentumScrollBegin = () => {
     if (userScrollSessionRef.current) {
       clearUserScrollSettle();
+      // Release settling may have held back a native scroll frame's position.
+      const listState = listRef.current?.getState();
+      if (listState) {
+        transitionEndFollow({
+          type: "scroll",
+          isAtEnd: listState.isAtEnd,
+          userScrollSessionActive: true,
+        });
+      }
     }
   };
   const handleMomentumScrollEnd = () => {
@@ -3747,12 +3797,16 @@ export const ThreadFeed = memo(function ThreadFeed({
             onLoad={() => {
               loadedListKeyRef.current = listMountKey;
               setLoadedListKey(listMountKey);
+              reportGeometryChange("layout");
             }}
             // Row positions start below the header; the reflow anchor converts between them.
             onMetricsChange={(metrics) => {
               listHeaderSizeRef.current = metrics.headerSize;
             }}
             onScroll={handleScroll}
+            onContentSizeChange={() => reportGeometryChange("content-size-change")}
+            // LegendList updates its viewport before forwarding this shared layout callback.
+            onLayout={() => reportGeometryChange("layout")}
             onScrollBeginDrag={handleScrollBeginDrag}
             onScrollEndDrag={handleScrollEndDrag}
             onMomentumScrollBegin={handleMomentumScrollBegin}
