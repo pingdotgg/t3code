@@ -3,7 +3,8 @@ import { defineRule, type ESTree } from "@oxlint/plugins";
 const TS_FILE_PATTERN = /\.[cm]?tsx?$/u;
 const DIRECTIVE_PATTERN =
   /^\s*(?:(?:oxlint|eslint)-|@ts-|@effect-diagnostics|prettier-ignore|biome-ignore|c8 |istanbul |#(?:end)?region)/u;
-const DIVIDER_LINE_PATTERN = /^(?:[-=*#~_/+]{3,}.*|.*[-=*#~_]{3,})$/u;
+// A trailing run of three is usually a token prose names, like `===` or `---`; padding runs longer.
+const DIVIDER_LINE_PATTERN = /^(?:[-=*#~_/+]{3,}.*|.*[-=*#~_]{4,})$/u;
 const TEST_STEP_PATTERN = /^(?:arrange|act|assert|given|when|then)\s*[:.]?$/iu;
 const TASK_MARKER_PATTERN = /\b(?:TODO|FIXME|XXX|HACK)\b/u;
 // `regression: #123` and `quarantine: #123` test markers exist to carry the number.
