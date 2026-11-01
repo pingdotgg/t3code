@@ -321,7 +321,12 @@ const make = Effect.gen(function* () {
           stage: "validate_endpoint",
         });
       }
-      yield* links.upsert({ ...input, proof: verified, endpoint });
+      yield* links.upsert({
+        ...input,
+        proof: verified,
+        endpoint,
+        challengeIssuedAt: DateTime.formatIso(DateTime.makeUnsafe(challenge.iat * 1_000)),
+      });
       const environmentCredential = yield* credentials.create({
         environmentId: verified.environmentId,
         environmentPublicKey: verified.environmentPublicKey,

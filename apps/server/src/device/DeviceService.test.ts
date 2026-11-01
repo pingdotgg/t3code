@@ -294,6 +294,9 @@ const fixture = Effect.fn("fixture")(function* (
         start: Effect.void,
         ready: Effect.void,
         getSettings: Ref.get(settings),
+        getEnvironmentLabel: Ref.get(settings).pipe(
+          Effect.map((current) => current.environmentLabel),
+        ),
         updateSettings: (patch) =>
           Ref.updateAndGet(settings, (current) => ({
             ...current,

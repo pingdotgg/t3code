@@ -17,6 +17,7 @@ export interface SlowRpcAckRequest {
   readonly startedAt: string;
   readonly startedAtMs: number;
   readonly tag: string;
+  readonly environmentId?: string;
   readonly thresholdMs: number;
 }
 
@@ -68,7 +69,12 @@ function rpcAckThresholdMs(method: string): number {
     : slowRpcAckThresholdMs;
 }
 
-export function trackRpcRequestSent(requestId: string, method: string, tag = method): void {
+export function trackRpcRequestSent(
+  requestId: string,
+  method: string,
+  tag = method,
+  environmentId?: string,
+): void {
   if (!shouldTrackRpcAck(method)) {
     return;
   }
@@ -83,6 +89,7 @@ export function trackRpcRequestSent(requestId: string, method: string, tag = met
     startedAt: new Date(startedAtMs).toISOString(),
     startedAtMs,
     tag,
+    ...(environmentId === undefined ? {} : { environmentId }),
     thresholdMs,
   };
   const timeoutId = setTimeout(() => {

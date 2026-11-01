@@ -46,26 +46,45 @@ const environments = [
   },
 ] satisfies ReadonlyArray<RelayClientEnvironmentRecord>;
 
+function clerkTokenFor(accountId: string): string {
+  const payload = btoa(JSON.stringify({ sub: accountId })).replaceAll("=", "");
+  return `e30.${payload}.signature`;
+}
+
 function status(
   environment: RelayClientEnvironmentRecord,
   value: "online" | "offline",
+  label?: string,
 ): RelayEnvironmentStatusResponse {
   return {
     environmentId: environment.environmentId,
     endpoint: environment.endpoint,
     status: value,
     checkedAt: "2026-06-01T00:00:00.000Z",
+    ...(label
+      ? {
+          descriptor: {
+            environmentId: environment.environmentId,
+            label,
+            platform: { os: "darwin", arch: "arm64" },
+            serverVersion: "0.0.0-test",
+            capabilities: { repositoryIdentity: true },
+          },
+        }
+      : {}),
   };
 }
 
-const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
+const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* (options?: {
+  readonly connectivityChanges?: boolean;
+}) {
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>("online");
   const listCalls = yield* Ref.make(0);
   const listedEnvironments =
     yield* Ref.make<ReadonlyArray<RelayClientEnvironmentRecord>>(environments);
   const listFailure = yield* Ref.make<ManagedRelay.ManagedRelayClientError | null>(null);
   const secondListCall = yield* Deferred.make<void>();
-  const clerkToken = yield* Ref.make<string | null>("clerk-token");
+  const clerkToken = yield* Ref.make<string | null>(clerkTokenFor("account-1"));
   const sessionIdentity = { accountId: "account-1" };
   const wakeups = yield* SubscriptionRef.make<{
     readonly sequence: number;
@@ -126,7 +145,10 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
   } satisfies ManagedRelay.ManagedRelayClient["Service"]);
   const connectivity = Connectivity.Connectivity.of({
     status: SubscriptionRef.get(networkStatus),
-    changes: SubscriptionRef.changes(networkStatus),
+    changes:
+      options?.connectivityChanges === false
+        ? Stream.never
+        : SubscriptionRef.changes(networkStatus),
   });
   const layer = RelayEnvironmentDiscovery.layer.pipe(
     Layer.provide(
@@ -248,7 +270,7 @@ describe("RelayEnvironmentDiscovery", () => {
         const requests = yield* Ref.get(harness.statusRequests);
         yield* Deferred.succeed(
           requests.get(environments[1]!.environmentId)!,
-          status(environments[1]!, "online"),
+          status(environments[1]!, "online", "Renamed Environment"),
         );
 
         const partiallyResolved = yield* SubscriptionRef.changes(discovery.state).pipe(
@@ -262,6 +284,9 @@ describe("RelayEnvironmentDiscovery", () => {
         expect(
           partiallyResolved.environments.get(environments[0]!.environmentId)?.availability,
         ).toBe("checking");
+        expect(
+          partiallyResolved.environments.get(environments[1]!.environmentId)?.environment.label,
+        ).toBe("Renamed Environment");
 
         yield* Deferred.succeed(
           requests.get(environments[0]!.environmentId)!,
@@ -405,20 +430,29 @@ describe("RelayEnvironmentDiscovery", () => {
     }),
   );
 
-  it.effect("clears previously discovered rows when a refresh fails", () =>
+  it.effect("preserves known names throughout a same-account refresh failure", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
+      const harness = yield* makeHarness({ connectivityChanges: false });
       yield* Effect.gen(function* () {
         const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
         const requests = yield* Ref.get(harness.statusRequests);
         for (const environment of environments) {
           yield* Deferred.succeed(
             requests.get(environment.environmentId)!,
-            status(environment, "online"),
+            status(environment, "online", `Renamed ${environment.environmentId}`),
           );
         }
         yield* discovery.refresh;
-        expect((yield* SubscriptionRef.get(discovery.state)).environments.size).toBe(2);
+        const known = (yield* SubscriptionRef.get(discovery.state)).environments;
+        expect(known.size).toBe(2);
+        const subscribed = yield* Deferred.make<void>();
+        const observed = yield* SubscriptionRef.changes(discovery.state).pipe(
+          Stream.tap(() => Deferred.succeed(subscribed, undefined)),
+          Stream.takeUntil((current) => Option.isSome(current.error)),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* Deferred.await(subscribed);
 
         yield* Ref.set(
           harness.listFailure,
@@ -430,7 +464,22 @@ describe("RelayEnvironmentDiscovery", () => {
         yield* discovery.refresh;
 
         const failed = yield* SubscriptionRef.get(discovery.state);
-        expect(failed.environments.size).toBe(0);
+        for (const [id, entry] of known) {
+          expect(failed.environments.get(id)?.environment).toBe(entry.environment);
+        }
+        expect(
+          [...failed.environments.values()].every(
+            (entry) => Option.isNone(entry.status) && entry.availability === "error",
+          ),
+        ).toBe(true);
+        expect(failed.environments.get(environments[0]!.environmentId)?.environment.label).toBe(
+          `Renamed ${environments[0]!.environmentId}`,
+        );
+        expect(
+          (yield* Fiber.join(observed)).every(
+            (current) => current.environments.size === known.size,
+          ),
+        ).toBe(true);
         expect(Option.isSome(failed.error)).toBe(true);
         expect(
           RelayEnvironmentDiscovery.relayEnvironmentRegistration(
@@ -473,26 +522,47 @@ describe("RelayEnvironmentDiscovery", () => {
     }),
   );
 
-  it.effect("settles to a clean empty state when refreshed while signed out", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      yield* Effect.gen(function* () {
-        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
-        yield* Ref.set(harness.clerkToken, null);
-        yield* discovery.refresh;
+  it.effect.each(["signed-out", "account-changed"] as const)(
+    "clears known names at the account boundary: %s",
+    (boundary) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* Effect.gen(function* () {
+          const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+          const requests = yield* Ref.get(harness.statusRequests);
+          for (const environment of environments) {
+            yield* Deferred.succeed(
+              requests.get(environment.environmentId)!,
+              status(environment, "online", "Private old account name"),
+            );
+          }
+          yield* discovery.refresh;
+          expect((yield* SubscriptionRef.get(discovery.state)).environments.size).toBe(2);
+          yield* Ref.set(
+            harness.listFailure,
+            new ManagedRelay.ManagedRelayRequestFailedError({
+              action: "list relay-managed environments",
+              cause: new Error("New account is unreachable."),
+            }),
+          );
+          yield* Ref.set(
+            harness.clerkToken,
+            boundary === "signed-out" ? null : clerkTokenFor("account-2"),
+          );
+          yield* discovery.refresh;
 
-        const state = yield* SubscriptionRef.get(discovery.state);
-        expect(state.environments.size).toBe(0);
-        expect(state.refreshing).toBe(false);
-        expect(Option.isNone(state.error)).toBe(true);
-        expect(
-          RelayEnvironmentDiscovery.relayEnvironmentRegistration(
-            state,
-            environments[0]!.environmentId,
-          ),
-        ).toBe("unknown");
-      }).pipe(Effect.provide(harness.layer));
-    }),
+          const state = yield* SubscriptionRef.get(discovery.state);
+          expect(state.environments.size).toBe(0);
+          expect(
+            RelayEnvironmentDiscovery.relayEnvironmentRegistration(
+              state,
+              environments[0]!.environmentId,
+            ),
+          ).toBe("unknown");
+          expect(state.refreshing).toBe(false);
+          expect(Option.isNone(state.error)).toBe(boundary === "signed-out");
+        }).pipe(Effect.provide(harness.layer));
+      }),
   );
 
   it.effect("does not republish stale rows after sign-out invalidates an in-flight refresh", () =>

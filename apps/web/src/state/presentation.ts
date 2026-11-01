@@ -9,11 +9,13 @@ import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { serverEnvironment } from "./server";
+import { relayEnvironmentDiscovery } from "./relay";
 
 export const environmentPresentations = createEnvironmentPresentationAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   stateAtom: environmentCatalog.stateAtom,
   serverConfigValueAtom: serverEnvironment.configValueAtom,
+  relayDiscoveryValueAtom: relayEnvironmentDiscovery.stateValueAtom,
 });
 
 export const environmentSummaries = createEnvironmentSummaryAtoms({

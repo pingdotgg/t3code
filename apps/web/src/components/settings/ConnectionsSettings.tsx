@@ -69,6 +69,7 @@ import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
+import { DraftInput } from "../ui/draft-input";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import {
   revokeOtherServerClientSessions,
@@ -105,6 +106,7 @@ import { requestConfirmDialog } from "~/confirmDialog";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentUpdateStatesAtom, serverEnvironment } from "~/state/server";
+import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import {
   ServerUpdateAction,
   ServerUpdateProgress,
@@ -157,6 +159,8 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
   const desktopBridge = window.desktopBridge;
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
+  const environmentLabel = usePrimarySettings((settings) => settings.environmentLabel);
+  const updatePrimarySettings = useUpdatePrimarySettings();
   const peerLinkHosts = usePeerLinkHosts();
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
   const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
@@ -285,6 +289,11 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
   const canMaintain = useEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope);
   const canManageRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope);
   const canManageLocalBackend = !isLocalEnvironmentDisabled() && canMaintain;
+  const canEditEnvironmentLabel = useAtomValue(
+    serverEnvironment.updateSettings.permissionAtom(primaryEnvironmentId, {
+      patch: { environmentLabel },
+    }),
+  );
   const showsAccess = view === "access";
   const authAccessChanges = useEnvironmentQuery(
     showsAccess && canReadAccess && primaryEnvironmentId !== null
@@ -633,6 +642,37 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
         setPendingDesktopServerExposureMode(checked ? "network-accessible" : "local-only");
       }}
       aria-label="Enable network access"
+    />
+  );
+  const renderEnvironmentLabelRow = () => (
+    <SettingsRow
+      title="Host name"
+      description={
+        primaryServerConfig === null || primaryEnvironment?.connection.phase !== "connected"
+          ? "Connect to this environment to set its host name."
+          : primaryServerConfig.environment.capabilities.environmentLabel !== true
+            ? "Update this environment to set its host name."
+            : !canEditEnvironmentLabel
+              ? "You need permission to update this environment’s settings."
+              : "Shown to connected clients and in T3 Connect. Clear it to use this computer’s name."
+      }
+      control={
+        <div className="w-full sm:w-64">
+          <DraftInput
+            size="sm"
+            value={environmentLabel}
+            onCommit={(next) => updatePrimarySettings({ environmentLabel: next })}
+            placeholder="Use this computer’s name"
+            aria-label="Host name"
+            disabled={
+              !canEditEnvironmentLabel ||
+              primaryEnvironment?.connection.phase !== "connected" ||
+              primaryServerConfig?.environment.capabilities.environmentLabel !== true
+            }
+            spellCheck={false}
+          />
+        </div>
+      }
     />
   );
   const renderEndpointRows = () =>
@@ -1102,6 +1142,7 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
                 }
               />
             ) : null}
+            {renderEnvironmentLabelRow()}
             {canManageLocalBackend && desktopBridge ? (
               <>
                 {renderNetworkAccessRow()}

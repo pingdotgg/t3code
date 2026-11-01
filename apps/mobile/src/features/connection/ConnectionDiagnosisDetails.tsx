@@ -4,6 +4,7 @@ import {
   type ConnectionDiagnosis,
   connectionDiagnosisText,
   connectionRoutes,
+  environmentDisplayLabel,
   hasRelayRoute,
   presentConnectionDiagnosis,
   type EnvironmentPresentation,
@@ -37,7 +38,7 @@ export function useConnectionDiagnosis(
   const relayOnly =
     connectionRoutes(presentation.entry).length === 1 && hasRelayRoute(presentation.entry);
   const diagnosis = presentConnectionDiagnosis({
-    hostLabel: presentation.entry.target.label,
+    hostLabel: environmentDisplayLabel(presentation.entry, presentation.serverConfig),
     state,
     via: relayOnly ? "relay" : "direct",
     clientVersion: Constants.expoConfig?.version,

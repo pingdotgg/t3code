@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Duration from "effect/Duration";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
@@ -146,6 +147,56 @@ describe("settings mutation authorization", () => {
     operation: "remove" as const,
     instanceId: ProviderInstanceId.make("codex_work"),
   };
+
+  it.effect("allows a remote host rename only with settings permission", () =>
+    Effect.gen(function* () {
+      const renamed: Array<string | undefined> = [];
+      const handlers = group.toLayerHandler(WS_METHODS.serverUpdateSettings, (input) =>
+        Effect.sync(() => {
+          renamed.push(input.patch.environmentLabel);
+          return DEFAULT_SERVER_SETTINGS;
+        }),
+      );
+      const denied = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(handlers, RpcAuthorization.layer([AuthProvidersManageScope])),
+        ),
+      );
+      expect(
+        yield* denied[WS_METHODS.serverUpdateSettings]({
+          patch: { environmentLabel: "Studio Mac" },
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+      expect(renamed).toEqual([]);
+      const allowed = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.mergeAll(handlers, RpcAuthorization.layer([AuthSettingsWriteScope]))),
+      );
+      yield* allowed[WS_METHODS.serverUpdateSettings]({
+        patch: { environmentLabel: "Studio Mac" },
+      });
+      yield* allowed[WS_METHODS.serverUpdateSettings]({ patch: { environmentLabel: "" } });
+      expect(renamed).toEqual(["Studio Mac", ""]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("authorizes decoded duration settings without decoding them as wire numbers", () =>
+    Effect.gen(function* () {
+      const received: Array<number> = [];
+      const handlers = group.toLayerHandler(WS_METHODS.serverUpdateSettings, (input) =>
+        Effect.sync(() => {
+          received.push(Duration.toMillis(input.patch.automaticGitFetchInterval!));
+          return DEFAULT_SERVER_SETTINGS;
+        }),
+      );
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.mergeAll(handlers, RpcAuthorization.layer([AuthSettingsWriteScope]))),
+      );
+      yield* client[WS_METHODS.serverUpdateSettings]({
+        patch: { automaticGitFetchInterval: Duration.seconds(30) },
+      });
+      expect(received).toEqual([30_000]);
+    }).pipe(Effect.scoped),
+  );
 
   it.effect("allows provider-only mutations while denying mixed settings without their grant", () =>
     Effect.gen(function* () {

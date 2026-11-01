@@ -24,6 +24,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import { sourceControlHostSecretName } from "./sourceControl/sourceControlHostSecrets.ts";
@@ -97,6 +98,155 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("reads the configured host label without materializing provider secrets", () => {
+    const cause = new ServerSecretStore.SecretStoreReadError({
+      resource: "provider secret",
+      cause: PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "readFile",
+        pathOrDescriptor: "provider secret",
+        description: "Secret backend unavailable.",
+      }),
+    });
+    const layerSettings = ServerSettingsModule.layer.pipe(
+      Layer.provide(layerFailingSecretStore(cause)),
+      Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
+      Layer.provideMerge(
+        Layer.fresh(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-host-label-secret-test-",
+          }),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({
+          environmentLabel: "Studio Mac",
+          providerInstances: {
+            codex: {
+              driver: "codex",
+              environment: [
+                { name: "OPENAI_API_KEY", value: "", sensitive: true, valueRedacted: true },
+              ],
+            },
+          },
+        }),
+      );
+      assert.equal(yield* service.getEnvironmentLabel, "Studio Mac");
+      const error = yield* service.getSettings.pipe(Effect.flip);
+      assert.equal(error.operation, "read-secret");
+      assert.equal(yield* service.getEnvironmentLabel, "Studio Mac");
+    }).pipe(Effect.provide(layerSettings));
+  });
+
+  it.effect("retains the latest committed host name across settings read failures", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let failReads = true;
+      let settingsPath: string | undefined;
+      const failure = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "readFileString",
+      });
+      const layerSettings = layerServerSettings().pipe(
+        Layer.provideMerge(
+          Layer.succeed(FileSystem.FileSystem, {
+            ...fs,
+            readFileString: (path, encoding) =>
+              Effect.suspend(() =>
+                failReads && path === settingsPath
+                  ? Effect.fail(failure)
+                  : fs.readFileString(path, encoding),
+              ),
+          }),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        settingsPath = (yield* ServerConfig.ServerConfig).settingsPath;
+        yield* fs.writeFileString(settingsPath, '{"environmentLabel":"Studio Mac"}');
+        assert.equal(yield* service.getEnvironmentLabel, "");
+        failReads = false;
+        assert.equal(yield* service.getEnvironmentLabel, "Studio Mac");
+
+        for (const label of ["Renamed Mac", ""]) {
+          yield* service.updateSettings({ environmentLabel: label });
+          failReads = true;
+          const error = yield* service
+            .updateSettings({ environmentLabel: "Unsaved" })
+            .pipe(Effect.flip);
+          assert.equal(error.operation, "read-file");
+          assert.equal(yield* service.getEnvironmentLabel, label);
+          failReads = false;
+        }
+      }).pipe(Effect.provide(layerSettings));
+    }),
+  );
+
+  it.effect("retains the trusted host name in malformed-file reads and watch events", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const changed = yield* Deferred.make<FileSystem.WatchEvent>();
+      const watchersReady = yield* Deferred.make<void>();
+      let watcherCount = 0;
+      const layerSettings = layerServerSettings().pipe(
+        Layer.provideMerge(
+          Layer.succeed(FileSystem.FileSystem, {
+            ...fs,
+            watch: () =>
+              Stream.fromEffect(
+                Effect.gen(function* () {
+                  if (++watcherCount === 2) yield* Deferred.succeed(watchersReady, undefined);
+                  return yield* Deferred.await(changed);
+                }),
+              ).pipe(Stream.concat(Stream.never)),
+          }),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const broken = '{"environmentLabel":';
+        yield* fs.writeFileString(config.settingsPath, broken);
+        assert.equal(yield* service.getEnvironmentLabel, "");
+        yield* fs.writeFileString(config.settingsPath, '{"environmentLabel":"Studio Mac"}');
+        yield* service.start;
+        yield* Deferred.await(watchersReady);
+        const changes = yield* service.subscribeChanges;
+        yield* fs.writeFileString(config.settingsPath, broken);
+        yield* Deferred.succeed(changed, { _tag: "Update" as const, path: config.settingsPath });
+        yield* TestClock.adjust("100 millis");
+        const event = Option.getOrThrow(yield* Stream.runHead(changes));
+        assert.equal(event.environmentLabel, "Studio Mac");
+        assert.equal(yield* service.getEnvironmentLabel, "Studio Mac");
+        assert.equal((yield* service.getSettings).environmentLabel, "Studio Mac");
+        assert.equal(
+          yield* service.withSettingsSnapshot((settings) =>
+            Effect.succeed(settings.environmentLabel),
+          ),
+          "Studio Mac",
+        );
+        assert.equal(yield* fs.readFileString(config.settingsPath), broken);
+
+        yield* fs.writeFileString(config.settingsPath, '{"environmentLabel":""}');
+        yield* service.updateSettings({ environmentLabel: "" });
+        assert.equal(Option.getOrThrow(yield* Stream.runHead(changes)).environmentLabel, "");
+        assert.equal(yield* service.getEnvironmentLabel, "");
+        yield* fs.writeFileString(config.settingsPath, broken);
+        yield* service.updateSettings({ environmentLabel: "Unsaved" }).pipe(Effect.flip);
+        assert.equal((yield* service.getSettings).environmentLabel, "");
+        assert.equal(yield* service.getEnvironmentLabel, "");
+      }).pipe(Effect.provide(layerSettings));
+    }),
+  );
+
   it.effect("serializes concurrent model preference edits without cancelling duplicate adds", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;

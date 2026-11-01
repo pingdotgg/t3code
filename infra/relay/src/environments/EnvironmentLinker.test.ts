@@ -129,6 +129,8 @@ function layerTest(input?: {
           getForUser: () => Effect.succeed(null),
           findActiveManagedForEnvironment: () => Effect.succeed([]),
           setHoldWebhooksWhileOffline: () => Effect.void,
+          updateLabel: () => Effect.void,
+          recordEnvironmentLabel: () => Effect.void,
           revokeForUser: () => Effect.succeed(false),
         }),
         Layer.succeed(EnvironmentCredentials.EnvironmentCredentials, {
@@ -159,6 +161,7 @@ function layerTest(input?: {
 describe("EnvironmentLinker", () => {
   it.effect("uses verified JWT claims when linking an environment", () => {
     let persistedEnvironmentId: string | null = null;
+    let challengeIssuedAt: string | null = null;
     return Effect.gen(function* () {
       const { request, payload } = yield* makeRequest;
       const linker = yield* EnvironmentLinker.EnvironmentLinker;
@@ -166,12 +169,14 @@ describe("EnvironmentLinker", () => {
       expect(result.environmentId).toBe(payload.environmentId);
       expect(result.environmentCredential).toBe("t3env_credential_secret");
       expect(persistedEnvironmentId).toBe(payload.environmentId);
+      expect(challengeIssuedAt).toBe(DateTime.formatIso(yield* DateTime.now));
     }).pipe(
       Effect.provide(
         layerTest({
           upsert: (input) =>
             Effect.sync(() => {
               persistedEnvironmentId = input.proof.environmentId;
+              challengeIssuedAt = input.challengeIssuedAt;
             }),
         }),
       ),

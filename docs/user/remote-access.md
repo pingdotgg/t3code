@@ -64,6 +64,20 @@ opens and approve. The new limit applies the next time you add a machine. If you
 cancel or downgrade T3 Chat, machines you already linked stay linked, but you
 cannot add more until you are under the limit again.
 
+## Name this host
+
+In the web or desktop app, open **Settings → Sharing & access** and edit
+**Host name**. Connected clients and T3 Connect use the new name without a server restart.
+
+To rename another T3 Connect host, open its row menu in **Settings → Environments**
+and choose **Host name**. On mobile, open **Settings → Environments**, choose a T3 Connect
+host, and edit **Host name**.
+You need permission to update that environment’s settings. Labels on manually paired
+connections remain local to your device.
+
+Clear the field to return to the name detected from the host operating system. This setting changes
+the environment name shown by T3 Code; it does not change the machine's operating-system hostname.
+
 ## Pair over a LAN or private network
 
 Use direct pairing when the other device can reach the host's network address.

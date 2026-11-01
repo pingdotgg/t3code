@@ -69,6 +69,13 @@ export const servePeer = <E, R>(
     const layerEnvironment = Layer.succeed(ServerEnvironment.ServerEnvironment, {
       getEnvironmentId: Ref.get(descriptor).pipe(Effect.map((current) => current.environmentId)),
       getDescriptor: Ref.get(descriptor),
+      getDescriptorForSettings: (settings) =>
+        Ref.get(descriptor).pipe(
+          Effect.map((current) => ({
+            ...current,
+            label: settings.environmentLabel || current.label,
+          })),
+        ),
     });
     const authContext = yield* EnvironmentAuth.layer.pipe(
       Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
@@ -166,6 +173,8 @@ export const layerLinkingEnvironment = (
       Layer.succeed(ServerEnvironment.ServerEnvironment, {
         getEnvironmentId: Effect.succeed(descriptor.environmentId),
         getDescriptor: Effect.succeed(descriptor),
+        getDescriptorForSettings: (settings) =>
+          Effect.succeed({ ...descriptor, label: settings.environmentLabel || descriptor.label }),
       }),
     ),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-link-here-" })),

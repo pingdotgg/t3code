@@ -58,6 +58,12 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it("opens host-name search results on the view containing the host settings", () => {
+    expect(searchSettings("host name")).toContainEqual(
+      expect.objectContaining({ title: "Host name", to: "/settings/access" }),
+    );
+  });
+
   it("matches titles, sections, and remembered setting details", () => {
     expect(searchSettings("word", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     expect(searchSettings("network", ITEMS).map((item) => item.id)).toEqual(["network-access"]);

@@ -31,7 +31,6 @@ export class EnvironmentRpcUnavailableError extends Schema.TaggedError<Environme
 
 export interface EnvironmentRpcRequestObservation {
   readonly environmentId: string;
-  readonly environmentLabel: string;
   readonly method: string;
 }
 
@@ -137,7 +136,7 @@ const currentSession = Effect.fn("EnvironmentRpc.currentSession")(function* () {
           Effect.fail(
             new EnvironmentRpcUnavailableError({
               environmentId: supervisor.target.environmentId,
-              message: `${supervisor.target.label} is not connected.`,
+              message: "This environment is not connected.",
             }),
           ),
         onSome: Effect.succeed,
@@ -202,7 +201,6 @@ export const requestGuarded = Effect.fn("EnvironmentRpc.request")(function* <
   ) => Effect.Effect<EnvironmentRpcSuccess<TTag>, EnvironmentRpcFailure<TTag>>;
   const completeObservation = yield* observer.observe({
     environmentId: supervisor.target.environmentId,
-    environmentLabel: supervisor.target.label,
     method: tag,
   });
   return yield* method(input).pipe(Effect.ensuring(completeObservation));

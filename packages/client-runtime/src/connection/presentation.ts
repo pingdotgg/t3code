@@ -33,6 +33,8 @@ export interface EnvironmentPresentation {
   readonly serverConfig: EnvironmentServerConfig | null;
 }
 
+export { environmentDisplayLabel } from "@t3tools/shared/environmentDisplayLabel";
+
 export function presentConnectionState(
   state: SupervisorConnectionState,
 ): EnvironmentConnectionPresentation {

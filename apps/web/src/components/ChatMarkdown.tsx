@@ -153,6 +153,9 @@ import { resolveRemoteOpenState, useRemoteOpenResolution } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
+import { environmentPresentations } from "../state/presentation";
+import { environmentDisplayLabel } from "@t3tools/client-runtime/connection";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { shellEnvironment } from "../state/shell";
 import { assetEnvironment } from "../state/assets";
 import {
@@ -613,7 +616,13 @@ function useChatMarkdownState({
               isDesktopRenderer: window.desktopBridge !== undefined,
             }).mode !== "local-exec"
           ) {
-            description = `The file was not found on ${target.label} at ${error.checkedPath ?? error.resource.path}.`;
+            const presentation = appAtomRegistry.get(
+              environmentPresentations.presentationAtom(environmentId),
+            );
+            const host = presentation
+              ? environmentDisplayLabel(presentation.entry, presentation.serverConfig)
+              : "the remote environment";
+            description = `The file was not found on ${host} at ${error.checkedPath ?? error.resource.path}.`;
           }
         }
         toastManager.add(

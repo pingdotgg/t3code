@@ -10,7 +10,10 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
-import type { EnvironmentPresentation } from "./connection/presentation.ts";
+import {
+  environmentDisplayLabel,
+  type EnvironmentPresentation,
+} from "./connection/presentation.ts";
 import { connectionRoutes, routeHttpBaseUrl } from "./connection/routes.ts";
 import type { RelayDiscoveredEnvironment } from "./relay/discovery.ts";
 
@@ -103,7 +106,7 @@ export function linkableMachines(input: {
       const connect = input.connect.get(environment.environmentId)?.environment.endpoint;
       return {
         environmentId: environment.environmentId,
-        label: environment.entry.target.label,
+        label: environmentDisplayLabel(environment.entry, environment.serverConfig),
         machine: resolveEnvironmentMachineKind(environment.serverConfig),
         connected: environment.connection.phase === "connected",
         connectOnly: false,

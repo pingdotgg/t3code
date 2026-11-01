@@ -1,0 +1,1 @@
+ALTER TABLE "relay_environment_links" ADD COLUMN "label_updated_at" varchar(64);

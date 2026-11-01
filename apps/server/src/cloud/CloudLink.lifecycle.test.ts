@@ -177,6 +177,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
           ServerEnvironment.ServerEnvironment.of({
             getEnvironmentId: Effect.succeed(EnvironmentId.make("env_123")),
             getDescriptor: Effect.die("unused"),
+            getDescriptorForSettings: () => Effect.die("unused"),
           }),
         ),
         Effect.provideService(

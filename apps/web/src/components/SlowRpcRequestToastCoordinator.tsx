@@ -1,5 +1,7 @@
 import { type SlowRpcAckRequest, subscribeSlowRpcAckRequests } from "../rpc/requestLatencyState";
 import { toastManager } from "./ui/toast";
+import { useAtomValue } from "@effect/atom-react";
+import { environmentSummaries } from "../state/presentation";
 
 function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): string {
   const count = requests.length;
@@ -11,6 +13,10 @@ function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): strin
 }
 
 function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRequest> }) {
+  const identities = useAtomValue(environmentSummaries.identitiesAtom);
+  const labels = new Map<string, string>(
+    identities.map(({ environmentId, label }) => [environmentId, label]),
+  );
   return (
     <ul className="space-y-2.5 text-xs text-muted-foreground">
       {requests.map((request) => (
@@ -18,7 +24,11 @@ function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRe
           className="min-w-0 border-border/50 border-b pb-2 last:border-b-0 last:pb-0"
           key={request.requestId}
         >
-          <div className="wrap-break-word font-medium text-foreground">{request.tag}</div>
+          <div className="wrap-break-word font-medium text-foreground">
+            {request.environmentId === undefined
+              ? request.tag
+              : `${request.tag} · ${labels.get(request.environmentId) ?? "disconnected environment"}`}
+          </div>
           <div className="mt-0.5 text-3xs opacity-75">
             Started {new Date(request.startedAt).toLocaleTimeString()}
           </div>

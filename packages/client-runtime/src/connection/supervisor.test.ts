@@ -388,7 +388,7 @@ describe("EnvironmentSupervisor", () => {
         lastFailure: {
           _tag: "ConnectionTransientError",
           reason: "transport",
-          message: "Test environment connection failed unexpectedly.",
+          message: "The environment connection failed unexpectedly.",
         },
       });
 
@@ -488,7 +488,7 @@ describe("EnvironmentSupervisor", () => {
         lastFailure: {
           _tag: "ConnectionTransientError",
           reason: "timeout",
-          message: "Test environment did not respond during connection setup.",
+          message: "The environment did not respond during connection setup.",
         },
       });
       expect(yield* Ref.get(harness.prepareCount)).toBe(1);

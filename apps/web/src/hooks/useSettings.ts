@@ -570,7 +570,7 @@ function useSharedSettingsSyncTargetIds(includePending = false): ReadonlyArray<E
   const results = useAtomValue(environmentSessionStatesAtom(environmentIdsKey(targetIds)));
   return targetIds.flatMap((environmentId, index) => {
     const result = results[index]!;
-    // Let the server authorize shared edits with cold grants; suggestions still need confirmed grants.
+    // Edits can wait for pending grants; suggestions need confirmed grants.
     if (includePending && result._tag === "Initial") {
       return [environmentId];
     }

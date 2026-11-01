@@ -181,6 +181,64 @@ describe("pools", () => {
   };
   const laptop = { entry: { target: { label: "Laptop" } } };
 
+  it.each(["PrimaryConnectionTarget", "RelayConnectionTarget", "BearerConnectionTarget"])(
+    "uses the displayed %s name in account details, links, and notices",
+    (kind) => {
+      const expected = kind === "BearerConnectionTarget" ? "Local alias" : "New shared name";
+      const visible = {
+        entry: { target: { _tag: kind, label: "Local alias" } },
+        serverConfig: {
+          environment: { label: "New shared name" },
+          providers: [
+            provider({
+              usageLimits: {
+                checkedAt,
+                windows: [window],
+                externalUsage: { label: "Usage", url: "https://usage.example.test" },
+              },
+            }),
+            provider({
+              instanceId: ProviderInstanceId.make("unavailable"),
+              usageLimits: { checkedAt, windows: [], unavailable: { reason: "probeFailed" } },
+            }),
+          ],
+          usageLimitSources: [
+            {
+              ...source,
+              accounts: [
+                {
+                  id: "source-account",
+                  driver: claude,
+                  email: "source@example.test",
+                  usageLimits: { checkedAt, windows: [window] },
+                },
+              ],
+              error: "Hub unavailable",
+            },
+          ],
+        },
+      };
+      const input = new Map([
+        [EnvironmentId.make("env-a"), visible],
+        [
+          EnvironmentId.make("env-b"),
+          {
+            ...visible,
+            serverConfig: { ...visible.serverConfig, providers: [], usageLimitSources: [] },
+          },
+        ],
+      ]);
+      expect(collectLimitAccounts(input)[0]?.environments).toEqual([
+        { environmentId: "env-a", label: expected },
+      ]);
+      expect(collectLimitAccounts(input)[1]?.sourceLabel).toBe(`${expected} · hub`);
+      expect(collectExternalUsageLinks(input)[0]?.accounts).toEqual([`codex on ${expected}`]);
+      expect(
+        collectLimitNotices(input).every((notice) => notice.startsWith(`${expected} · `)),
+      ).toBe(true);
+    },
+  );
+
   it("merges one account reported natively on two environments and by a hub into one entry", () => {
     const native = provider({
       driver: claude,

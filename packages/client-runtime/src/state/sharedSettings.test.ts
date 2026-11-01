@@ -5,7 +5,16 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import { filterSharedServerPatch } from "./sharedSettings.ts";
+import { filterSharedServerPatch, splitSharedServerPatch } from "./sharedSettings.ts";
+
+describe("splitSharedServerPatch", () => {
+  it("keeps host names on the environment being edited", () => {
+    expect(splitSharedServerPatch({ environmentLabel: "Studio Mac" })).toEqual({
+      sharedPatch: {},
+      localPatch: { environmentLabel: "Studio Mac" },
+    });
+  });
+});
 
 describe("filterSharedServerPatch", () => {
   it("holds the restart preference until the target's config loads", () => {

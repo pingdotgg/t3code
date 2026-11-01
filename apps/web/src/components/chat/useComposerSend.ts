@@ -15,6 +15,7 @@ import {
   makeThreadErrorSetter,
 } from "../ChatView.logic";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
+import { environmentDisplayLabel } from "@t3tools/client-runtime/connection";
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_MODEL,
@@ -614,9 +615,10 @@ export function useComposerSend(input: ComposerSendInput) {
       linkedEnvironments,
     })[0];
     if (strandedThread) {
-      const owner =
-        readEnvironmentPresentation(strandedThread.environmentId)?.entry.target.label ??
-        "its machine";
+      const presentation = readEnvironmentPresentation(strandedThread.environmentId);
+      const owner = presentation
+        ? environmentDisplayLabel(presentation.entry, presentation.serverConfig)
+        : "its machine";
       toastManager.add(
         stackedThreadToast({
           type: "warning",

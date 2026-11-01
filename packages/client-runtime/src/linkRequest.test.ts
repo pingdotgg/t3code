@@ -99,6 +99,7 @@ const presentation = (
     readonly saved?: ReadonlyArray<string>;
     readonly reported?: ReadonlyArray<string>;
     readonly connected?: boolean;
+    readonly liveLabel?: string;
   } = {},
 ): EnvironmentPresentation & { readonly environmentId: EnvironmentId } => {
   const environmentId = EnvironmentId.make(id);
@@ -133,11 +134,11 @@ const presentation = (
       traceId: null,
     },
     serverConfig:
-      options.reported === undefined
+      options.reported === undefined && options.liveLabel === undefined
         ? null
         : ({
-            environment: { platform: { machine: "laptop" } },
-            directEndpoints: options.reported.map((httpBaseUrl) => ({
+            environment: { label: options.liveLabel ?? label, platform: { machine: "laptop" } },
+            directEndpoints: (options.reported ?? []).map((httpBaseUrl) => ({
               kind: "tailnet",
               httpBaseUrl,
             })),
@@ -190,6 +191,7 @@ describe("linkableMachines", () => {
     const vps = presentation("environment-vps", "VPS", {
       saved: ["https://vps.example.com", "https://vps.ts.net"],
       reported: ["https://vps.ts.net"],
+      liveLabel: "Shared host name",
     });
     const mini = presentation("environment-mini", "Mini", { connected: false });
     expect(
@@ -221,15 +223,18 @@ describe("linkableMachines", () => {
     ]);
   });
 
-  it("reaches a machine saved only over T3 Connect at its Connect address", () => {
+  it("finds a saved Connect machine by its current host name and address", () => {
     const here = presentation("environment-here", "Here", { saved: ["http://localhost:3773"] });
-    const box = presentation("environment-box", "Box");
-    const [listed] = linkableMachines({
+    const box = presentation("environment-box", "Box", { liveLabel: "Studio Mac" });
+    const machines = linkableMachines({
       environments: [here, box],
       threadEnvironmentId: here.environmentId,
       links: [],
       connect: new Map([[box.environmentId, discovered(box.environmentId, "Box")]]),
     });
+    const [listed] = machines;
+    expect(listed?.label).toBe("Studio Mac");
+    expect(linkRequestInitialMachine({ hint: "Studio Mac" }, machines)).toBe(box.environmentId);
     expect(listed?.urls).toEqual(["https://environment-box.t3.example"]);
     // Until discovery has found it, there is no address to offer.
     expect(

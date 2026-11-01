@@ -1,3 +1,4 @@
+import { environmentDisplayLabel } from "@t3tools/client-runtime/connection";
 import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomMount, useAtomValue } from "@effect/atom-react";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
@@ -343,7 +344,9 @@ export function useRefreshLimits(
   );
   const failedLabels = selected
     .filter(([environmentId]) => failedIds.has(environmentId))
-    .map(([, presentation]) => presentation.entry.target.label);
+    .map(([, presentation]) =>
+      environmentDisplayLabel(presentation.entry, presentation.serverConfig),
+    );
 
   const refresh = (afterPending: boolean) =>
     Promise.all(

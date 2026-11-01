@@ -1,3 +1,4 @@
+import { environmentDisplayLabel } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { View } from "react-native";
 
@@ -25,7 +26,14 @@ export function WorkspaceFilePreviewError(props: {
     return (
       <View className="flex-1 bg-sheet">
         <EnvironmentConnectionNotice
-          environmentLabel={environment.presentation?.entry.target.label ?? "Environment"}
+          environmentLabel={
+            environment.presentation
+              ? environmentDisplayLabel(
+                  environment.presentation.entry,
+                  environment.presentation.serverConfig,
+                )
+              : "Environment"
+          }
           connection={
             environment.presentation?.connection ?? {
               phase: "available",

@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
+import { ORCHESTRATION_PROTOCOL_VERSION, ServerSettingsError } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -18,10 +18,12 @@ import {
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
 
 const layerServerEnvironment = (baseDir: string) =>
   ServerEnvironment.layer.pipe(
+    Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
   );
@@ -97,6 +99,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         }).pipe(
           Effect.provide(
             ServerEnvironment.layer.pipe(
+              Layer.provide(ServerSettings.layerTest()),
               Layer.provide(layerEmptySecretStore),
               Layer.provide(ServerConfig.layer({ ...config, mode })),
             ),
@@ -235,7 +238,10 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         prefix: "t3-server-environment-publish-test-",
       });
       const layerTest = Layer.mergeAll(
-        ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer)),
+        ServerEnvironment.layer.pipe(
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(ServerSecretStore.layer),
+        ),
         ServerSecretStore.layer,
       ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)));
 
@@ -259,11 +265,79 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         yield* secrets.set(RELAY_URL_SECRET, encode("https://relay.example"));
         const linked = yield* serverEnvironment.getDescriptor;
         expect(linked.capabilities.agentActivityPublishing).toBe(true);
+        const snapshot = yield* serverEnvironment.getDescriptorForSettings({
+          environmentLabel: "Studio Mac",
+        });
+        expect(snapshot.label).toBe("Studio Mac");
+        expect(snapshot.capabilities).toEqual(linked.capabilities);
 
         yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode("false"));
         const disabled = yield* serverEnvironment.getDescriptor;
         expect(disabled.capabilities.agentActivityPublishing).toBe(false);
       }).pipe(Effect.provide(layerTest));
+    }),
+  );
+
+  it.effect("retains the configured host name when provider settings cannot materialize", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped();
+      const settings = Layer.effect(
+        ServerSettings.ServerSettingsService,
+        Effect.gen(function* () {
+          const current = yield* ServerSettings.ServerSettingsService;
+          return {
+            ...current,
+            getSettings: Effect.fail(
+              new ServerSettingsError({
+                settingsPath: "test settings",
+                operation: "read-secret",
+                cause: new Error("Provider secret unavailable"),
+              }),
+            ),
+          };
+        }),
+      ).pipe(Layer.provide(ServerSettings.layerTest({ environmentLabel: "Studio Mac" })));
+      const descriptor = yield* ServerEnvironment.ServerEnvironment.use(
+        (environment) => environment.getDescriptor,
+      ).pipe(
+        Effect.provide(
+          ServerEnvironment.layer.pipe(
+            Layer.provide(settings),
+            Layer.provide(layerEmptySecretStore),
+            Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+          ),
+        ),
+      );
+      expect(descriptor.label).toBe("Studio Mac");
+    }),
+  );
+
+  it.effect("applies configured environment label updates without a restart", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-label-test-",
+      });
+      yield* Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        const initial = yield* serverEnvironment.getDescriptor;
+
+        yield* serverSettings.updateSettings({ environmentLabel: "Studio Mac" });
+        const renamed = yield* serverEnvironment.getDescriptor;
+        yield* serverSettings.updateSettings({ environmentLabel: "" });
+        const reset = yield* serverEnvironment.getDescriptor;
+        // A queued settings event must describe its own snapshot even after another write.
+        const previousSnapshot = yield* serverEnvironment.getDescriptorForSettings({
+          environmentLabel: "Studio Mac",
+        });
+
+        expect(previousSnapshot).toEqual(renamed);
+        expect(yield* serverEnvironment.getDescriptor).toEqual(initial);
+        expect(renamed).toEqual({ ...initial, label: "Studio Mac" });
+        expect(reset).toEqual(initial);
+      }).pipe(Effect.provide(layerServerEnvironment(baseDir)));
     }),
   );
 });

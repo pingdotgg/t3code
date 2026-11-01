@@ -282,6 +282,9 @@ function makeMutableServerSettingsService(
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(settingsRef),
+      getEnvironmentLabel: Ref.get(settingsRef).pipe(
+        Effect.map((settings) => settings.environmentLabel),
+      ),
       updateSettings: (patch) =>
         Effect.gen(function* () {
           const current = yield* Ref.get(settingsRef);
