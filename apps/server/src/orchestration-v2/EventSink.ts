@@ -68,6 +68,8 @@ export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 
 export interface EventSinkV2Shape {
   readonly write: (input: {
+    /** Synchronous in-memory handoff after commit, before publication or pending cancellation. */
+    readonly onCommitted?: (events: ReadonlyArray<OrchestrationV2StoredEvent>) => void;
     /** Return no events if another thread owns this native session at commit time. */
     readonly unlessNativeThreadOwned?: Pick<
       OrchestrationV2ProviderThread,
@@ -409,6 +411,7 @@ const layerBase: Layer.Layer<
 
     const writeEffect = Effect.fn("orchestrationV2.EventSink.write")(function* (
       input: Parameters<EventSinkV2Shape["writeWithEffects"]>[0],
+      onCommitted?: Parameters<EventSinkV2Shape["write"]>[0]["onCommitted"],
     ) {
       yield* Effect.annotateCurrentSpan({
         "orchestration_v2.command_id": input.commandId ?? null,
@@ -452,6 +455,7 @@ const layerBase: Layer.Layer<
         }).pipe(Effect.withTracerEnabled(false)),
         ({ committed, outcomes }) =>
           Effect.gen(function* () {
+            yield* Effect.sync(() => onCommitted?.(committed));
             if (input.effects.length > 0) {
               yield* effectOutbox.notifyAvailable(input.effects.length);
             }
@@ -879,7 +883,7 @@ const layerBase: Layer.Layer<
 
     return EventSinkV2.of({
       write: (input) =>
-        writeEffect({ ...input, effects: [] }).pipe(
+        writeEffect({ ...input, effects: [] }, input.onCommitted).pipe(
           Effect.mapError(
             (cause) =>
               new EventSinkWriteError({

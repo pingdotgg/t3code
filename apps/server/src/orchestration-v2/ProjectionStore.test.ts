@@ -5011,6 +5011,44 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       );
 
       yield* projectionStore.apply({
+        id: EventId.make("event:projection-shared-provider-session:first-replaced"),
+        type: "provider-session.attached",
+        threadId: firstThreadId,
+        occurredAt: now,
+        payload: { ...session, status: "ready", lastError: null },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-shared-provider-session:second-released"),
+        type: "provider-session.updated",
+        threadId: secondThreadId,
+        occurredAt: now,
+        payload: { ...session, status: "stopped", lastError: "old runtime stopped" },
+      });
+      assert.equal(
+        (yield* projectionStore.getThreadProjection(firstThreadId)).providerSessions[0]?.status,
+        "ready",
+      );
+      assert.equal(
+        (yield* projectionStore.getThreadProjection(secondThreadId)).providerSessions[0]?.status,
+        "stopped",
+      );
+      assert.deepEqual(
+        (yield* projectionStore.getShellSnapshot()).threads
+          .filter((thread) => thread.id === firstThreadId || thread.id === secondThreadId)
+          .map((thread) => thread.lastError),
+        [null, "old runtime stopped"],
+      );
+      assert.equal(
+        (yield* projectionStore.getRuntimeRecoveryProjection(firstThreadId)).providerSessions[0]
+          ?.status,
+        "ready",
+      );
+      assert.lengthOf(
+        (yield* projectionStore.getRuntimeRecoveryProjection(secondThreadId)).providerSessions,
+        0,
+      );
+
+      yield* projectionStore.apply({
         id: EventId.make("event:projection-shared-provider-session:first-detached"),
         type: "provider-session.detached",
         threadId: firstThreadId,

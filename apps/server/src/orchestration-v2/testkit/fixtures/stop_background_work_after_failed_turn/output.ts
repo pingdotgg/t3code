@@ -19,21 +19,22 @@ export function assertStopBackgroundWorkAfterFailedTurnOutput(
   assertSemanticProjectionIntegrity(projection);
   assertUserMessagesInclude(projection, [STOP_BACKGROUND_WORK_AFTER_FAILED_TURN_PROMPT]);
 
-  const before = result.capturedShellSnapshots
-    .get("before-stop")
+  const afterExit = result.capturedShellSnapshots
+    .get("after-exit")
     ?.threads.find((thread) => thread.id === projection.thread.id);
   assert.deepEqual(
-    before?.pendingBackgroundTasks?.map((task) => task.kind),
-    ["command"],
-    "the failed turn leaves its command on the Waiting strip",
+    afterExit?.pendingBackgroundTasks,
+    [],
+    "provider exit settles the failed turn's background command",
   );
 
   const command = projection.turnItems.find((item) => item.type === "command_execution");
-  assert.equal(command?.status, "interrupted");
+  assert.isDefined(command);
+  assert.equal(command?.status, "failed");
   assert.isNotNull(command?.completedAt);
   const shell = result.shellSnapshot.threads.find((thread) => thread.id === projection.thread.id);
   assert.deepEqual(shell?.pendingBackgroundTasks ?? [], []);
-  assert.include(
+  assert.notInclude(
     projection.turnItems.map((item) => item.type),
     "run_interrupt_request",
   );

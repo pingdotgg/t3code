@@ -406,6 +406,16 @@ export const layerWithOptions = (
       const releaseRecordRetries = yield* FiberSet.make();
       const nextSubscriberId = yield* Ref.make(0);
       const sessionOpen = yield* KeyedLock.make<ProviderSessionId>();
+      const sessionRecords = yield* KeyedLock.make<ProviderSessionId>();
+      // Retain ownership only while a release is closing or awaiting persistence.
+      const pendingReleaseThreads = new Map<
+        ProviderAdapter.ProviderAdapterV2SessionRuntime,
+        {
+          readonly providerSessionId: ProviderSessionId;
+          readonly threadIds: Set<ThreadId>;
+          retrying: boolean;
+        }
+      >();
       const threadAttachment = yield* KeyedLock.make<string>();
       const threadAttachmentKey = (input: {
         readonly providerSessionId: ProviderSessionId;
@@ -582,33 +592,67 @@ export const layerWithOptions = (
 
       const writeProviderSessionEvents = Effect.fn(
         "ProviderSessionManager.writeProviderSessionEvents",
-      )(function* (input: {
-        readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
-        readonly threadIds: Iterable<ThreadId>;
-        readonly type: "provider-session.attached" | "provider-session.updated";
-        readonly payload: OrchestrationV2ProviderSession;
-      }) {
-        const now = yield* DateTime.now;
-        const events = yield* Effect.forEach(input.threadIds, (threadId) =>
-          Effect.gen(function* () {
-            return {
-              id: yield* idAllocator.allocate.event({
+      )(
+        function* (input: {
+          readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
+          readonly threadIds: Iterable<ThreadId>;
+          readonly type: "provider-session.attached" | "provider-session.updated";
+          readonly payload: OrchestrationV2ProviderSession;
+        }) {
+          const now = yield* DateTime.now;
+          const events = yield* Effect.forEach(input.threadIds, (threadId) =>
+            Effect.gen(function* () {
+              return {
+                id: yield* idAllocator.allocate.event({
+                  threadId,
+                  providerSessionId: input.runtime.providerSessionId,
+                }),
+                type: input.type,
                 threadId,
-                providerSessionId: input.runtime.providerSessionId,
+                driver: input.runtime.driver,
+                providerInstanceId: input.runtime.instanceId,
+                occurredAt: now,
+                payload: input.payload,
+              } satisfies OrchestrationV2DomainEvent;
+            }),
+          );
+          if (events.length > 0) {
+            yield* eventSink.write({
+              events,
+              // EventSink runs this inside its masked post-commit boundary. A pending
+              // interrupt must not leave the old release owning a durable attachment.
+              onCommitted: (committed) => {
+                if (input.type !== "provider-session.attached") return;
+                for (const [runtime, release] of pendingReleaseThreads) {
+                  if (
+                    runtime !== input.runtime &&
+                    release.providerSessionId === input.runtime.providerSessionId
+                  ) {
+                    for (const event of committed) release.threadIds.delete(event.event.threadId);
+                  }
+                }
+              },
+            });
+          }
+        },
+        (effect, input) =>
+          input.type !== "provider-session.attached"
+            ? effect
+            : Effect.gen(function* () {
+                const entry = (yield* Ref.get(sessions)).get(
+                  sessionKey(input.runtime.providerSessionId),
+                );
+                if (entry?.runtime !== input.runtime) return yield* Effect.interrupt;
+                // Pending attachment writes end with either their caller or their runtime.
+                yield* Effect.acquireUseRelease(
+                  sessionRecords
+                    .withLock(input.runtime.providerSessionId, effect)
+                    .pipe(Effect.forkIn(entry.scope)),
+                  Fiber.join,
+                  Fiber.interrupt,
+                );
               }),
-              type: input.type,
-              threadId,
-              driver: input.runtime.driver,
-              providerInstanceId: input.runtime.instanceId,
-              occurredAt: now,
-              payload: input.payload,
-            } satisfies OrchestrationV2DomainEvent;
-          }),
-        );
-        if (events.length > 0) {
-          yield* eventSink.write({ events });
-        }
-      });
+      );
 
       const writeReleasedSessionEvents = Effect.fn(
         "ProviderSessionManager.writeReleasedSessionEvents",
@@ -627,7 +671,7 @@ export const layerWithOptions = (
         };
         yield* writeProviderSessionEvents({
           runtime: input.entry.runtime,
-          threadIds: input.entry.attachedThreadIds,
+          threadIds: pendingReleaseThreads.get(input.entry.runtime)?.threadIds ?? [],
           type: "provider-session.updated",
           payload,
         });
@@ -850,13 +894,15 @@ export const layerWithOptions = (
         readonly detail?: string;
         readonly releasedBackgroundTasks: ReadonlyArray<ReleasedBackgroundTasks>;
         readonly releasedAt: DateTime.Utc;
-        readonly replaced: boolean;
       }) =>
         Effect.all(
           [
-            input.replaced
-              ? Effect.succeed(Exit.void)
-              : Effect.exit(writeReleasedSessionEvents(input)),
+            Effect.exit(
+              sessionRecords.withLock(
+                input.entry.runtime.providerSessionId,
+                writeReleasedSessionEvents(input),
+              ),
+            ),
             Effect.exit(
               writeReleasedRuntimeRequestEvents(input).pipe(
                 input.entry.requestEventPermit.withPermits(1),
@@ -868,20 +914,10 @@ export const layerWithOptions = (
         ).pipe(Effect.flatMap(Exit.asVoidAll));
 
       // Retry after removal from the live map; later releases cannot clear stale ready sessions and approvals.
-      const retryReleaseRecords = (
-        input: Omit<Parameters<typeof writeReleaseRecords>[0], "replaced">,
-      ) => {
+      const retryReleaseRecords = (input: Parameters<typeof writeReleaseRecords>[0]) => {
         const providerSessionId = input.entry.runtime.providerSessionId;
         const attempt = Effect.gen(function* () {
-          const exit = yield* Effect.exit(
-            sessionOpen.withLock(
-              providerSessionId,
-              Effect.gen(function* () {
-                const replaced = (yield* Ref.get(sessions)).has(sessionKey(providerSessionId));
-                yield* writeReleaseRecords({ ...input, replaced });
-              }),
-            ),
-          );
+          const exit = yield* Effect.exit(writeReleaseRecords(input));
           if (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) return yield* exit;
           yield* Effect.logWarning("orchestration-v2.provider-session-release-records-failed", {
             providerSessionId,
@@ -899,7 +935,18 @@ export const layerWithOptions = (
             ),
           }),
           Effect.delay("1 second"),
-          FiberSet.run(releaseRecordRetries),
+          Effect.ensuring(Effect.sync(() => pendingReleaseThreads.delete(input.entry.runtime))),
+          (retry) =>
+            Effect.uninterruptibleMask((restore) =>
+              restore(FiberSet.run(releaseRecordRetries)(retry)).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    const pending = pendingReleaseThreads.get(input.entry.runtime);
+                    if (pending !== undefined) pending.retrying = true;
+                  }),
+                ),
+              ),
+            ),
         );
       };
 
@@ -953,6 +1000,11 @@ export const layerWithOptions = (
               }
               const updated = new Map(current);
               updated.delete(key);
+              pendingReleaseThreads.set(existing.runtime, {
+                providerSessionId: input.providerSessionId,
+                threadIds: new Set(existing.attachedThreadIds),
+                retrying: false,
+              });
               return ["removed", updated] as const;
             }),
             DateTime.now,
@@ -1050,13 +1102,12 @@ export const layerWithOptions = (
                     releasedBackgroundTasks,
                     releasedAt,
                   };
-                  const recorded = yield* Effect.exit(
-                    writeReleaseRecords({ ...records, replaced: false }),
-                  );
+                  const recorded = yield* Effect.exit(writeReleaseRecords(records));
                   if (Exit.isFailure(recorded)) {
                     yield* retryReleaseRecords(records);
                     return yield* recorded;
                   }
+                  pendingReleaseThreads.delete(entry.runtime);
                   if (Option.isSome(closeExit) && Exit.isFailure(closeExit.value)) {
                     return yield* Effect.failCause(closeExit.value.cause);
                   }
@@ -1076,7 +1127,12 @@ export const layerWithOptions = (
               onNone: () => Effect.void,
               onSome: (entry) =>
                 // Revoke recorded credentials after process death, except those held by live replacements.
-                Ref.get(sessions).pipe(
+                Effect.sync(() => {
+                  if (pendingReleaseThreads.get(entry.runtime)?.retrying !== true) {
+                    pendingReleaseThreads.delete(entry.runtime);
+                  }
+                }).pipe(
+                  Effect.andThen(Ref.get(sessions)),
                   Effect.flatMap((current) =>
                     Effect.forEach(
                       entry.mcpCredentialIdByThread,
@@ -1930,7 +1986,7 @@ export const layerWithOptions = (
           });
         },
         (effect, entry, _event) =>
-          effect.pipe(
+          sessionRecords.withLock(entry.runtime.providerSessionId, effect).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("orchestration-v2.driver-session.status-persist-failed", {
                 providerSessionId: entry.runtime.providerSessionId,
