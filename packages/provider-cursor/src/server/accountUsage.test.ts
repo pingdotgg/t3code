@@ -23,6 +23,7 @@ const writeAuth = (accessToken: string) =>
   });
 
 interface DashboardRequest {
+  readonly method: string;
   readonly url: string;
   readonly init: RequestInit;
   readonly page: number;
@@ -37,9 +38,10 @@ const dashboard = (answer: (request: DashboardRequest) => Response | Promise<Res
         const body =
           request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
         const response = await answer({
+          method: request.method,
           url: url.toString(),
           init: { ...init, signal, body },
-          page: JSON.parse(body).page,
+          page: body === "" ? 0 : JSON.parse(body).page,
           headers: new Headers(request.headers),
         });
         return HttpClientResponse.fromWeb(request, response);
@@ -280,6 +282,112 @@ describe("Cursor account history", () => {
         assert.isTrue(missing.missing);
         assert.isFalse(requested);
       }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+const billingItem = (eventTime: string, usage: Record<string, string>) => ({
+  billingItemId: `item-${eventTime}`,
+  eventTime,
+  product: "cursor",
+  chargeCategory: "usage",
+  usageType: "included",
+  principal: { type: "user", id: "user_demo" },
+  usage,
+  pricing: { currency: "USD", contracted: "0.0000000000" },
+  displayExtras: { model: "composer-2.5", userEmail: "user@example.com", displayLabel: "Composer" },
+  hasTokenMeters: true,
+  totalTokens: "0",
+});
+
+const billingItemsRequest = (request: DashboardRequest) => {
+  const url = new URL(request.url);
+  return request.method === "GET" &&
+    url.origin === "https://cursor.com" &&
+    url.pathname === "/api/dashboard/v2/query-billing-items"
+    ? url.searchParams
+    : null;
+};
+
+describe("Cursor account billing items", () => {
+  it.effect("reads Cursor account history from the dashboard's billing items", () =>
+    Effect.gen(function* () {
+      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+      const { authPath } = yield* writeAuth(accessToken);
+      const result = yield* readAccountUsage(
+        authPath,
+        Date.parse("2026-11-01T00:00:00Z"),
+        Date.parse("2026-11-02T00:00:00Z"),
+        async (request) => {
+          const params = billingItemsRequest(request);
+          // Cursor still answers the old usage-events endpoint, with an empty body.
+          if (params === null) return Response.json({});
+          assert.strictEqual(params.get("scope"), "user");
+          assert.include(
+            request.headers.get("cookie") ?? "",
+            "WorkosCursorSessionToken=demo%3A%3A",
+          );
+          return params.get("cursor") === "page-2"
+            ? Response.json({
+                data: [billingItem("2026-11-01T01:00:00.000Z", { "completion-text-tokens": "7" })],
+              })
+            : Response.json({
+                data: [
+                  billingItem("2026-11-01T03:43:46.022Z", {
+                    "cache-write-text-tokens": "0",
+                    "cached-prompt-text-tokens": "46400",
+                    "completion-text-tokens": "312",
+                    "prompt-text-tokens": "1263",
+                  }),
+                ],
+                pagination: { nextCursor: "page-2" },
+              });
+        },
+      );
+      assert.isNull(result.error);
+      assert.deepStrictEqual(
+        result.records.map((record) => ({
+          timestampMs: record.timestampMs,
+          model: record.model,
+          totals: record.totals,
+        })),
+        [
+          {
+            timestampMs: Date.parse("2026-11-01T03:43:46.022Z"),
+            model: "composer-2.5",
+            totals: {
+              uncachedInputTokens: 1263,
+              cachedInputTokens: 46400,
+              cacheCreationTokens: 0,
+              outputTokens: 312,
+              reasoningTokens: 0,
+            },
+          },
+          {
+            timestampMs: Date.parse("2026-11-01T01:00:00.000Z"),
+            model: "composer-2.5",
+            totals: {
+              uncachedInputTokens: 0,
+              cachedInputTokens: 0,
+              cacheCreationTokens: 0,
+              outputTokens: 7,
+              reasoningTokens: 0,
+            },
+          },
+        ],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not present a billing response without items as empty history", () =>
+    Effect.gen(function* () {
+      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+      const { authPath } = yield* writeAuth(accessToken);
+      const result = yield* readAccountUsage(authPath, 0, 1781000000000, async () =>
+        Response.json({}),
+      );
+      assert.isNotNull(result.error, "a response without billing items read as empty history");
+      assert.deepStrictEqual(result.records, []);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 
