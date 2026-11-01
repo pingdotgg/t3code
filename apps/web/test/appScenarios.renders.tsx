@@ -294,7 +294,7 @@ it("app-switch-settings-section", async () => {
   ]);
 });
 
-// ChatView re-renders for any git status change; the composer and side chat timeline should not.
+// ChatView re-renders when the tree goes dirty or clean; the composer and side chat timeline should not.
 it("app-git-status-updates-with-side-chat", async () => {
   using _clock = frozenClock();
   useRightPanelStore.getState().openSideChat(scopeThreadRef(ENVIRONMENT_ID, WARM), SIDE_CHAT.id);
@@ -305,7 +305,7 @@ it("app-git-status-updates-with-side-chat", async () => {
     hasPrimaryRemote: true,
     isDefaultRef: true,
     refName: "main",
-    hasWorkingTreeChanges: true,
+    hasWorkingTreeChanges: insertions % 2 === 1,
     workingTree: {
       files: [{ path: "src/app.ts", insertions, deletions: 0 }],
       insertions,
