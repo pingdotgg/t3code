@@ -198,6 +198,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     readonly tailscale?: Tailscale.TailscaleStatus;
     /** A server started by hand runs for this T3 home. */
     readonly handStarted?: boolean;
+    /** A stopped server left a Serve mapping record. */
+    readonly serveRecord?: boolean;
     /** `t3 up` exits with an error. */
     readonly fails?: boolean;
     /** Runs as if in a terminal, answering each question with this text. */
@@ -388,6 +390,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
     },
     {
+      label: "with nothing running, a Serve mapping a stopped server left is removed",
+      prints: "Removed a Tailscale Serve mapping an earlier run left.",
+      installed: false,
+      serveRecord: true,
+      env: "",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
       // The service may inherit sign-in, so leaving it unchecked writes the off.
       label: "leaving Tailscale unchecked pins it off",
       installed: true,
@@ -425,8 +438,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-up-test-" });
       yield* fs.writeFileString(`${baseDir}/service.env`, input.env);
+      if (input.serveRecord === true) {
+        yield* fs.makeDirectory(`${baseDir}/userdata`, { recursive: true });
+        yield* fs.writeFileString(
+          `${baseDir}/userdata/tailscale-serve-claim.json`,
+          `{"localPort":3773,"localHost":"127.0.0.1","servePort":443}`,
+        );
+        vi.spyOn(Tailscale, "releaseTailscaleServe").mockReturnValue(Effect.succeed(true));
+      }
       if (input.handStarted === true) {
-        yield* fs.makeDirectory(`${baseDir}/userdata`);
+        yield* fs.makeDirectory(`${baseDir}/userdata`, { recursive: true });
         yield* fs.writeFileString(
           `${baseDir}/userdata/server-runtime.json`,
           `{"version":1,"pid":${process.pid},"port":3773,"origin":"http://127.0.0.1:3773","startedAt":"2026-10-31T00:00:00.000Z"}`,

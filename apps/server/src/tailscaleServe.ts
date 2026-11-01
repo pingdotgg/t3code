@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -14,7 +15,8 @@ import { loopbackUrlHostForAddress } from "./startupAccess.ts";
 
 type ClaimError =
   | Effect.Error<ReturnType<typeof claimTailscaleServe>>
-  | Effect.Error<ReturnType<typeof releaseTailscaleServe>>;
+  | Effect.Error<ReturnType<typeof releaseTailscaleServe>>
+  | PlatformError.PlatformError;
 
 // Serve is often refused only for now: Tailscale still starting at login, the
 // operator or HTTPS certs not yet granted, or another server on the port.
@@ -27,6 +29,9 @@ const retrySchedule = Schedule.min([
 const remedyFor = (cause: ClaimError, manualCommand: string) => {
   if (cause._tag === "TailscaleServeOccupiedError") {
     return "Another server holds this port. T3 Code leaves it alone and takes over once it stops.";
+  }
+  if (cause._tag === "PlatformError") {
+    return "Could not save the record that lets a later run remove the mapping, so Serve waits until it can.";
   }
   switch (cause._tag === "TailscaleCommandExitError" ? cause.stderrDiagnostic : undefined) {
     case "permission-denied":
@@ -49,9 +54,11 @@ const ServeClaim = Schema.fromJsonString(
 type ServeClaim = typeof ServeClaim.Type;
 const encodeClaim = Schema.encodeEffect(ServeClaim);
 const decodeClaim = Schema.decodeUnknownEffect(ServeClaim);
+const sameTarget = (a: ServeClaim, b: ServeClaim) =>
+  a.localPort === b.localPort && a.localHost === b.localHost && a.servePort === b.servePort;
 const readClaim = (fs: FileSystem.FileSystem, claimPath: string) =>
   fs.readFileString(claimPath).pipe(Effect.flatMap(decodeClaim), Effect.option);
-// A lost record only costs the cleanup after a crash, so it never stops Serve.
+// Serve waits for the record, so a crash never leaves a mapping that nothing removes.
 const writeClaim = (
   fs: FileSystem.FileSystem,
   stateDir: string,
@@ -59,13 +66,11 @@ const writeClaim = (
   claim: ServeClaim,
 ) =>
   encodeClaim(claim).pipe(
+    Effect.orDie,
     Effect.flatMap((json) =>
       fs
         .makeDirectory(stateDir, { recursive: true })
         .pipe(Effect.andThen(fs.writeFileString(claimPath, json))),
-    ),
-    Effect.catch((cause) =>
-      Effect.logWarning("Could not record the Tailscale Serve mapping", { cause }),
     ),
   );
 
@@ -104,13 +109,10 @@ export const layer = (options: {
       const fs = yield* FileSystem.FileSystem;
       const claimPath = (yield* Path.Path).join(options.stateDir, CLAIM_FILE);
       const manualCommand = `tailscale serve --bg --https=${target.servePort} http://${target.localHost}:${target.localPort}`;
-      // A run on another Serve port left this record, so its mapping is removed first. On
-      // this port the claim itself replaces a stopped server's root and keeps a live one.
+      // A record for another target is a mapping an earlier run left, so it is removed
+      // first, and only while Serve still points there.
       const previous = yield* Ref.make(
-        Option.filter(
-          yield* readClaim(fs, claimPath),
-          (claim) => claim.servePort !== target.servePort,
-        ),
+        Option.filter(yield* readClaim(fs, claimPath), (claim) => !sameTarget(claim, target)),
       );
       const recorded = yield* Ref.make(false);
       // Added before the retry fiber is forked, so it runs after that fiber is interrupted.
@@ -169,33 +171,42 @@ export const layer = (options: {
   );
 
 /**
+ * Removes the Serve mapping an earlier run recorded, while Serve still points there, then
+ * its record. Returns whether a mapping was removed.
+ */
+export const releaseRecorded = Effect.fn("TailscaleServe.releaseRecorded")(function* (
+  stateDir: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const claimPath = (yield* Path.Path).join(stateDir, CLAIM_FILE);
+  const claim = yield* readClaim(fs, claimPath);
+  if (Option.isNone(claim)) return false;
+  const released = yield* releaseTailscaleServe(claim.value);
+  yield* fs.remove(claimPath, { force: true });
+  return released;
+});
+
+/**
  * With Serve off, removes the mapping an earlier run set up but could not remove, and
  * retries until Tailscale answers. Does nothing when no such mapping was recorded.
  */
 export const layerReleaseLeftover = (options: { readonly stateDir: string }) =>
   Layer.effectDiscard(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const claimPath = (yield* Path.Path).join(options.stateDir, CLAIM_FILE);
-      const claim = yield* readClaim(fs, claimPath);
-      if (Option.isNone(claim)) return;
-      yield* releaseTailscaleServe(claim.value).pipe(
-        Effect.tapError((cause) =>
-          Effect.logDebug("Tailscale did not answer; retrying the leftover Serve removal", {
-            cause,
-          }),
-        ),
-        Effect.retry(retrySchedule),
-        Effect.tap((released) =>
-          released
-            ? Effect.logInfo("Removed the Tailscale Serve mapping left from when Serve was on")
-            : Effect.void,
-        ),
-        Effect.andThen(fs.remove(claimPath, { force: true })),
-        Effect.catch((cause) =>
-          Effect.logWarning("Could not remove the leftover Tailscale Serve record", { cause }),
-        ),
-        Effect.forkScoped,
-      );
-    }),
+    releaseRecorded(options.stateDir).pipe(
+      Effect.tapError((cause) =>
+        Effect.logDebug("Tailscale did not answer; retrying the leftover Serve removal", {
+          cause,
+        }),
+      ),
+      Effect.retry(retrySchedule),
+      Effect.tap((released) =>
+        released
+          ? Effect.logInfo("Removed the Tailscale Serve mapping left from when Serve was on")
+          : Effect.void,
+      ),
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not remove the leftover Tailscale Serve record", { cause }),
+      ),
+      Effect.forkScoped,
+    ),
   );

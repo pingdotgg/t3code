@@ -27,6 +27,7 @@ import { compareExactServiceVersions } from "../cloud/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { renderTerminalQrCode } from "../startupAccess.ts";
+import * as TailscaleServe from "../tailscaleServe.ts";
 import {
   isSupportedTailscaleVersion,
   MINIMUM_TAILSCALE_VERSION,
@@ -627,11 +628,25 @@ const setUp = Effect.fn("cli.up")(function* (
       runtime,
       (state) => state.serviceManaged !== true && isProcessAlive(state.pid),
     );
-    return yield* Console.log(
-      handStarted
-        ? "T3 Code is running here outside the background service, with the access it started with. Stop it to end that access."
-        : formatNextSteps(routes, false),
+    if (handStarted) {
+      return yield* Console.log(
+        "T3 Code is running here outside the background service, with the access it started with. Stop it to end that access.",
+      );
+    }
+    // Nothing runs here to remove a Serve mapping a stopped server left, so do it now.
+    yield* TailscaleServe.releaseRecorded(config.stateDir).pipe(
+      Effect.flatMap((released) =>
+        released
+          ? Console.log("Removed a Tailscale Serve mapping an earlier run left.")
+          : Effect.void,
+      ),
+      Effect.catch(() =>
+        Console.log(
+          "Tailscale did not answer, so a Serve mapping an earlier run left may remain. Run this again once Tailscale runs.",
+        ),
+      ),
     );
+    return yield* Console.log(formatNextSteps(routes, false));
   }
   // Tailscale left on while it is down here keeps its settings; turning it on needs it.
   const tailscaleKept = routes.tailscale && current.tailscale && Option.isNone(flags.tailscale);

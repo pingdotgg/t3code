@@ -40,6 +40,8 @@ interface FakeOptions {
   readonly heldOnOtherPort?: string;
   /** The claim record a previous run left. */
   readonly recorded?: string;
+  /** Writing the claim record fails, as on a read-only state dir. */
+  readonly recordFails?: boolean;
 }
 
 // Stands in for the tailscale CLI and keeps the Serve root like the daemon does.
@@ -138,24 +140,31 @@ const STATE_DIR = "/state";
 const CLAIM_PATH = "/state/tailscale-serve-claim.json";
 
 // In memory, so writes land within the test clock's steps.
-const memoryFileSystem = (files: Map<string, string>) => {
+const memoryFileSystem = (files: Map<string, string>, writeFails = false) => {
   const missing = FileSystem.makeNoop({});
   return FileSystem.makeNoop({
     readFileString: (path) => {
       const contents = files.get(path);
       return contents === undefined ? missing.readFileString(path) : Effect.succeed(contents);
     },
-    writeFileString: (path, data) => Effect.sync(() => void files.set(path, data)),
+    writeFileString: (path, data) =>
+      writeFails
+        ? missing.writeFileString(path, data)
+        : Effect.sync(() => void files.set(path, data)),
     makeDirectory: () => Effect.void,
     remove: (path) => Effect.sync(() => void files.delete(path)),
   });
 };
 
-const fakeLayers = (fake: ReturnType<typeof makeFakeTailscale>, files: Map<string, string>) =>
+const fakeLayers = (
+  fake: ReturnType<typeof makeFakeTailscale>,
+  files: Map<string, string>,
+  writeFails = false,
+) =>
   Layer.mergeAll(
     Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, fake.spawner),
     Layer.succeed(HostProcess.Platform, "linux"),
-    Layer.succeed(FileSystem.FileSystem, memoryFileSystem(files)),
+    Layer.succeed(FileSystem.FileSystem, memoryFileSystem(files, writeFails)),
     Path.layer,
   );
 
@@ -175,7 +184,7 @@ const startTailscaleServe = Effect.fn(function* (options: FakeOptions = {}) {
     }).pipe(
       Layer.provide(
         Layer.merge(
-          fakeLayers(fake, files),
+          fakeLayers(fake, files, options.recordFails),
           Layer.mock(HttpServer.HttpServer)({
             address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 18638),
           }),
@@ -252,6 +261,33 @@ describe("TailscaleServe", () => {
       assert.equal(state.otherRoot, null);
       assert.equal(state.root, LOCAL_TARGET);
       assert.include(files.get(CLAIM_PATH), `"servePort":${SERVE_PORT}`);
+    }),
+  );
+
+  it.effect("keeps the record of an older local port until its mapping is removed", () =>
+    Effect.gen(function* () {
+      const older = `{"localPort":18637,"localHost":"127.0.0.1","servePort":${SERVE_PORT}}`;
+      const { scope, settled, files } = yield* startTailscaleServe({
+        heldBy: "http://127.0.0.1:18637",
+        recorded: older,
+        statusFailures: 1,
+      });
+      yield* Deferred.await(settled);
+
+      yield* Scope.close(scope, Exit.void);
+
+      assert.equal(files.get(CLAIM_PATH), older);
+    }),
+  );
+
+  it.effect("does not start Serve until its cleanup record is saved", () =>
+    Effect.gen(function* () {
+      const { state, settled } = yield* startTailscaleServe({ recordFails: true });
+      yield* Deferred.await(settled);
+      yield* TestClock.adjust("1 minute");
+
+      assert.equal(state.serveAttempts, 0);
+      assert.equal(state.root, null);
     }),
   );
 
