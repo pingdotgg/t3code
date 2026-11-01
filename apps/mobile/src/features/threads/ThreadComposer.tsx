@@ -798,6 +798,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   ) : null;
 
   const fitsModelToolbar = Platform.OS === "android" && compactEditor.isExpanded;
+  if (!fitsModelToolbar && modelToolbarWidth > 0) {
+    setModelToolbarWidth(0);
+  }
   const modelControl = (
     <View
       className={fitsModelToolbar ? "min-w-0 flex-1 flex-row justify-end" : "min-w-0 shrink"}
