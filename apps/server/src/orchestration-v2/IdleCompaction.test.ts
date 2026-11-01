@@ -13,6 +13,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -153,7 +154,7 @@ function records(
 }
 
 describe("idleCompactionWindow", () => {
-  it("skips small contexts, unknown expiry, other providers, switched threads, and compactions", () => {
+  it("skips small contexts, unknown expiry, other providers, switched threads, compactions, and side chats", () => {
     const cache = { cacheExpiresInMs: 60 * MINUTE_MS };
     expect(idleCompactionWindow(records({ ...cache, usedTokens: 199_999 }), NOW_MS)).toBeNull();
     expect(idleCompactionWindow(records(), NOW_MS)).toBeNull();
@@ -171,6 +172,13 @@ describe("idleCompactionWindow", () => {
     const archived = records(cache);
     archived.thread = { ...archived.thread, archivedAt: at() };
     expect(idleCompactionWindow(archived, NOW_MS)).toBeNull();
+    const sideChat = records(cache);
+    expect(idleCompactionWindow(sideChat, NOW_MS)).not.toBeNull();
+    sideChat.thread = {
+      ...sideChat.thread,
+      lineage: { ...sideChat.thread.lineage, relationshipToParent: "fork", sideChat: true },
+    };
+    expect(idleCompactionWindow(sideChat, NOW_MS)).toBeNull();
   });
 });
 
@@ -209,7 +217,10 @@ describe("idleCompactionAction", () => {
 describe("IdleCompactionService", () => {
   it.effect.each([
     { mode: "onReturn", reads: 0 },
-    { mode: "onReturn", usageLimit: true, reads: 1, dispatches: 0 },
+    { mode: "onReturn", usageLimit: true, reads: 0, dispatches: 0 },
+    { mode: "onReturn", usageLimit: true, usedPercent: 94, reads: 0, dispatches: 0 },
+    { mode: "onReturn", usageLimit: true, usedPercent: 95, reads: 1, dispatches: 1 },
+    { mode: "off", usageLimit: true, usedPercent: 95, reads: 0, dispatches: 0 },
     { mode: "off", reads: 0 },
     { mode: "off", usageLimit: true, reads: 0 },
     { mode: "beforeCacheExpires", reads: 1 },
@@ -238,7 +249,7 @@ describe("IdleCompactionService", () => {
             "instance" in test ? test.instance : "claudeAgent",
           );
           const driver = ProviderDriverKind.make("driver" in test ? test.driver : "claudeAgent");
-          const base = records({ cacheExpiresInMs: 2 * MINUTE_MS });
+          const base = records({ cacheExpiresInMs: (test.mode === "onReturn" ? 60 : 2) * MINUTE_MS });
           const data: OrchestrationV2ThreadProjection = {
             ...base,
             thread: {
@@ -307,7 +318,13 @@ describe("IdleCompactionService", () => {
                 }),
             }),
             Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-              getInstance: () => Effect.undefined,
+              getInstance: () => Effect.succeed("usedPercent" in test ? {
+                snapshot: {
+                  getSnapshot: Effect.succeed({
+                    usageLimits: { windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: test.usedPercent, resetsAt: DateTime.formatIso(at(90 * MINUTE_MS)) }] },
+                  }),
+                },
+              } as ProviderInstance : undefined),
             }),
             Layer.mock(ServerSettings.ServerSettingsService)({
               getSettings: Effect.succeed({
