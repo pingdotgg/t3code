@@ -657,8 +657,8 @@ const make = Effect.gen(function* () {
             replaceTarget &&
             !customConfig.some((entry) => entry.command === rule.command)
               ? [
-                  ...customConfig,
                   ...DEFAULT_KEYBINDINGS.filter((entry) => entry.command === rule.command),
+                  ...customConfig,
                 ]
               : customConfig;
           const nextConfig = [

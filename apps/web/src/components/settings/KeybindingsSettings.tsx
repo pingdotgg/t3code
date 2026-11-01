@@ -760,7 +760,7 @@ function useKeybindingRowEditor({
     setDraft({
       keyDraft: next,
       isRecording: false,
-      ...(row.isUnassigned
+      ...(row.isUnassigned && whenDraftExpression === "false"
         ? { whenDraft: parseKeybindingWhenExpression(row.defaultWhen) ?? undefined }
         : {}),
     });
