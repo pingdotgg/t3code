@@ -86,6 +86,34 @@ To add a scenario, point a `SCENARIOS` entry at a generic ACP replay fixture
 The agent replays session updates, permission requests, and questions. It drops session setup
 and vendor frames, so Grok and fx recordings lose their vendor-only behavior.
 
+### Profiling dev startup
+
+Run `vp run profile:startup` to capture the first 20 seconds of inherited Node processes under
+`.t3/startup-profiles/<timestamp>`. Workers that execute the preload get separate profiles.
+It starts the normal dev runner and accepts its flags.
+Stop it with Ctrl+C after the capture. Set `T3CODE_STARTUP_PROFILE_DIR` to choose another output
+directory. Profiling adds overhead, so compare readiness with an ordinary `vp run dev` run.
+
+Open a `.cpuprofile` in Chrome DevTools' Performance panel for sampled function stacks and source
+lines. Each `.modules.json` is a Chrome trace containing timed module resolution, loading,
+synchronous subprocess calls, and startup measures. Per-file records include importer URLs,
+source loading, preparation, recursive dependency linking, and top-level evaluation. Preparation
+uses synchronous loader boundaries; linking includes dependencies, and CommonJS evaluation can
+include nested `require` calls. Some ESM/CommonJS interop reports a combined stage. `.process.json` records the process, Node version, and capture window.
+The server's nested Effect and SQL spans remain in `.t3/userdata/logs/server.trace.ndjson`.
+
+The preload temporarily adds module-body timing markers and uses one automatic debugger pause
+to instrument the live Node loader. The launcher adds `--no-node-snapshot` to inherited
+`NODE_OPTIONS` because Node 26's snapshotted loader cannot accept that breakpoint. Include the
+same flag when using the preload directly. This disables Node's built-in startup snapshot,
+can change compilation-cache hits, and adds overhead.
+Treat per-file captures as diagnostic runs; use uninstrumented runs for baseline startup latency.
+The first entry module can compile before loader instrumentation is installed.
+
+A fresh process still uses filesystem, Node compilation, provider, and Vite dependency caches.
+Measure a missing Vite dependency cache separately from a restart with an existing database.
+Neither the Vite ready message nor the HTTP listener proves that a browser has rendered the app.
+
 ### Sharing and remote debugging
 
 `vp run dev --share` publishes the web port over the machine's tailnet and prints a pairing URL
@@ -232,6 +260,29 @@ vp run dist:desktop:win
 DMGs default to the host architecture. Use `--arch` to choose another target and `--keep-stage`
 to retain packaging files for inspection. Run `vp run dist:desktop:artifact --help` for other
 options.
+
+### Prepared server bytecode
+
+Native macOS and Windows desktop artifact builds generate server bytecode with the packaged
+Electron executable, after ASAR creation and before signing. Linux builds skip generation until
+native packaging and relocated AppImage reuse have been validated. Cross-platform and
+cross-architecture builds also skip generation explicitly. CLI, SEA and WSL runtimes keep their
+existing behavior; only desktop backend imports covered by generation receive prepared bytecode.
+Worker-only modules compile normally.
+
+Electron's Node 24 cache has no read-only option and includes the producer UID in its directory
+name. The backend links individual prepared files into its writable cache with keys for the
+installed module paths. Node replaces files atomically, so regeneration cannot write through those
+links into signed resources. Windows uses hard links and falls back to normal caching when volumes
+differ or resource permissions prevent linking. Protected installations therefore may not reuse
+prepared bytecode. No cache bytes are copied during startup.
+
+The key calculation follows Node's internal portable ESM format. Generation checks that the
+packaged engine produced the expected CLI entry and fails the build if that format changes.
+The manifest also checks Electron, Node, OS, architecture and V8's flags-sensitive version tag.
+Missing or rejected entries compile from the shipped JavaScript. Prepared backends skip the
+explicit startup flush; Node can persist missing entries on normal exit. The writable fallback
+keeps the explicit flush needed when Windows force-kills the backend.
 
 ### Linux AppImage prerequisites
 
