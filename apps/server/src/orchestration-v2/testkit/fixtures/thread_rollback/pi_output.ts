@@ -41,8 +41,9 @@ export function assertPiThreadRollbackOutput(
   assertSemanticProjectionIntegrity(projection);
   assertRunOrdinals(projection, [1, 2, 3]);
   const turn = ["user_message", "reasoning", "assistant_message", "checkpoint"] as const;
-  assertTurnItemTypeSequence(projection, [...turn, ...turn, ...turn]);
-  assertVisibleTurnItemTypeSequence(projection, [...turn, ...turn]);
+  const turnWithWarning = [turn[0], "system_notice", ...turn.slice(1)] as const;
+  assertTurnItemTypeSequence(projection, [...turnWithWarning, ...turn, ...turnWithWarning]);
+  assertVisibleTurnItemTypeSequence(projection, [...turnWithWarning, ...turnWithWarning]);
   assertUserMessagesInclude(projection, [
     THREAD_ROLLBACK_FIRST_PROMPT,
     THREAD_ROLLBACK_SECOND_PROMPT,

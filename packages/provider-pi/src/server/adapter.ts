@@ -86,6 +86,11 @@ const PI_UNSOLICITED_ACTIVITY_ERROR =
   "Pi started agent work outside an active T3 turn. The session was stopped to prevent invisible tool execution.";
 const SETTLE_PROBE_MAX_ATTEMPTS = 3;
 const SETTLE_PROBE_RETRY_DELAY = Duration.millis(100);
+const MAX_HELD_EXTENSION_EVENTS = 20;
+const MAX_EXTENSION_DISPLAYS = 20;
+const MAX_EXTENSION_DISPLAY_CHARS = 4_000;
+// Extension status can tick per token; coalesce in-turn rows so each change is not a persisted event.
+const EXTENSION_DISPLAY_FLUSH_DELAY = Duration.millis(500);
 
 const PiProviderCapabilitiesV2 = {
   runtimePolicy: { enforcement: "client-boundary" },
@@ -202,6 +207,18 @@ function contentText(content: unknown): string {
       return "";
     })
     .join("");
+}
+
+/** Extension UI text is written for a terminal; drop escape sequences and bound its size. */
+function piDisplayText(text: string): string {
+  return text
+    .replace(
+      /\u001b\[[0-?]*[ -/]*[@-~]|\u001b[\]PX^_][\s\S]*?(?:\u0007|\u001b\\|$)|\u001b[@-_]/g,
+      "",
+    )
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "")
+    .trim()
+    .slice(0, MAX_EXTENSION_DISPLAY_CHARS);
 }
 
 const MAX_STRUCTURED_TOOL_OUTPUT_BYTES = 64 * 1024;
@@ -398,6 +415,8 @@ function piApprovalRequestKind(title: string): "command" | "file-change" {
     : "command";
 }
 
+type AppThreadId = OrchestrationV2ProviderThread["appThreadId"];
+
 interface PiThreadState {
   providerThread: OrchestrationV2ProviderThread;
   activeTurn: ActivePiTurn | null;
@@ -549,7 +568,20 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let appliedModel: string | null = null;
       let appliedThinking: string | null = null;
       let appliedSessionName: string | null = null;
-      const outOfTurnExtensionErrors: Array<PiRpcRecord> = [];
+      // Extension output with no turn waits for a turn of the thread whose session it arrived in.
+      const heldExtensionEvents: Array<{
+        readonly threadId: AppThreadId;
+        readonly key: string;
+        readonly event: PiRpcRecord;
+      }> = [];
+      // Pi cannot be queried for extension status or widgets, so mirror the latest text per key.
+      const extensionDisplays = new Map<
+        string,
+        { readonly text: string; readonly cleared: boolean; readonly seen: boolean; shown: boolean }
+      >();
+      let extensionDisplayFlushScheduled = false;
+      // Session switches emit session_start output before the switched-to thread state exists.
+      let loadingAppThreadId: AppThreadId = input.threadId;
       let lastKnownLeaf: string | null = null;
       // Failed get_entries leaves an untrustworthy turn boundary; re-sync the cursor on next capture.
       let leafCursorStale = false;
@@ -1229,13 +1261,25 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         });
       });
 
+      /** Holds a normalized, bounded event; session switches rerun session_start, so repeats are dropped. */
+      const holdExtensionEvent = (event: PiRpcRecord) => {
+        const threadId = threadState?.providerThread.appThreadId ?? loadingAppThreadId;
+        const key = JSON.stringify([threadId, event]);
+        if (heldExtensionEvents.some((held) => held.key === key)) return;
+        heldExtensionEvents.push({ threadId, key, event });
+        if (heldExtensionEvents.length > MAX_HELD_EXTENSION_EVENTS) heldExtensionEvents.shift();
+      };
+
       const emitSystemNotice = Effect.fnUntraced(function* (
         turn: ActivePiTurn,
         nativeItemId: string,
         message: string,
       ) {
         const emittedAt = yield* DateTime.now;
-        yield* emitItemNode(turn, nativeItemId, "system", "completed", emittedAt, emittedAt);
+        // Status rows update in place; their node never changes after the first update.
+        if (!turn.itemOrdinals.has(nativeItemId)) {
+          yield* emitItemNode(turn, nativeItemId, "system", "completed", emittedAt, emittedAt);
+        }
         yield* emit({
           type: "turn_item.updated",
           driver: PI_PROVIDER,
@@ -1282,20 +1326,98 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         );
       });
 
+      // One item per key and turn, updated in place; unchanged text is shown only once.
+      const showExtensionDisplays = Effect.fnUntraced(function* (turn: ActivePiTurn) {
+        for (const [displayKey, display] of extensionDisplays) {
+          if (display.shown) continue;
+          display.shown = true;
+          if (display.cleared) extensionDisplays.delete(displayKey);
+          yield* emitSystemNotice(turn, `${displayKey}:${turn.providerTurn.id}`, display.text);
+        }
+      });
+
+      const flushExtensionOutput = Effect.fnUntraced(function* (turn: ActivePiTurn) {
+        const owned = (held: (typeof heldExtensionEvents)[number]) =>
+          held.threadId === null || held.threadId === turn.turnInput.threadId;
+        const due = heldExtensionEvents.filter(owned);
+        heldExtensionEvents.splice(
+          0,
+          heldExtensionEvents.length,
+          ...heldExtensionEvents.filter((held) => !owned(held)),
+        );
+        for (const held of due) {
+          yield* held.event["type"] === "extension_error"
+            ? emitExtensionError(held.event)
+            : handleExtensionUiRequest(held.event);
+        }
+        yield* showExtensionDisplays(turn);
+      });
+
       const handleExtensionUiRequest = Effect.fnUntraced(function* (event: PiRpcRecord) {
         const method = recordString(event, "method");
         const nativeRequestId = recordString(event, "id");
         if (method === undefined) return;
         if (method === "notify") {
-          const state = threadState;
-          const turn = state?.activeTurn ?? null;
-          const message = recordString(event, "message") ?? "";
-          if (turn === null || message.length === 0) return;
+          const message = piDisplayText(recordString(event, "message") ?? "");
+          if (message.length === 0) return;
+          const turn = threadState?.activeTurn ?? null;
+          if (turn === null) {
+            // Startup problems such as MCP connection failures arrive before any turn exists.
+            const notifyType = recordString(event, "notifyType");
+            if (notifyType === "warning" || notifyType === "error") {
+              holdExtensionEvent({ type: "extension_ui_request", method, message });
+            }
+            return;
+          }
           yield* emitSystemNotice(
             turn,
             `notify:${turn.providerTurn.id}:${turn.nextItemOrdinal}`,
             message,
           );
+          return;
+        }
+        if (method === "setStatus" || method === "setWidget") {
+          const key = piDisplayText(
+            recordString(event, method === "setStatus" ? "statusKey" : "widgetKey") ?? "",
+          ).slice(0, 100);
+          if (key.length === 0) return;
+          const displayKey = `${method}:${key}`;
+          // Pi clears a key by omitting its statusText or widgetLines.
+          let text: string;
+          if (method === "setStatus") {
+            const status = piDisplayText(recordString(event, "statusText") ?? "");
+            text =
+              status.length === 0 ? "" : piDisplayText(`${key}: ${status.replace(/\s+/g, " ")}`);
+          } else {
+            const lines = recordField(event, "widgetLines");
+            const strings = Array.isArray(lines)
+              ? lines.filter((line) => typeof line === "string")
+              : [];
+            text = piDisplayText(strings.join("\n"));
+          }
+          const previous = extensionDisplays.get(displayKey);
+          if ((previous?.text ?? "") === text) return;
+          extensionDisplays.delete(displayKey);
+          // Rows update in place, so a thread that saw earlier text must see it go away.
+          const seen = previous !== undefined && (previous.shown || previous.seen);
+          if (text.length > 0 || seen) {
+            extensionDisplays.set(displayKey, {
+              text: text.length > 0 ? text : `${key} cleared`,
+              cleared: text.length === 0,
+              seen,
+              shown: false,
+            });
+          }
+          if (extensionDisplays.size > MAX_EXTENSION_DISPLAYS) {
+            extensionDisplays.delete(extensionDisplays.keys().next().value!);
+          }
+          if (threadState?.activeTurn != null && !extensionDisplayFlushScheduled) {
+            extensionDisplayFlushScheduled = true;
+            yield* Queue.offer(connection.events, { type: "t3.show_extension_displays" }).pipe(
+              Effect.delay(EXTENSION_DISPLAY_FLUSH_DELAY),
+              Effect.forkIn(scope),
+            );
+          }
           return;
         }
         if (
@@ -1304,6 +1426,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           method !== "input" &&
           method !== "editor"
         ) {
+          // setTitle would rename user-owned threads; set_editor_text needs cross-device draft ownership.
           yield* Effect.logDebug("Ignoring pi extension UI update.", { method });
           return;
         }
@@ -1439,7 +1562,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const state = threadState;
         const turn = state?.activeTurn ?? null;
         if (turn === null) {
-          outOfTurnExtensionErrors.push(event);
+          const bounded = (field: string, maxChars: number) =>
+            piDisplayText(recordString(event, field) ?? "").slice(0, maxChars) || undefined;
+          holdExtensionEvent({
+            type: "extension_error",
+            extensionPath: bounded("extensionPath", 500),
+            event: bounded("event", 100),
+            error: bounded("error", 2_000),
+          });
           return;
         }
         const emittedAt = yield* DateTime.now;
@@ -1526,6 +1656,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const interrupted = turn.interrupted || turn.nativeAborted;
         const completedAt = yield* DateTime.now;
         yield* completeOpenStreamItems(turn);
+        yield* showExtensionDisplays(turn);
         if (turn.activeCompaction !== null) {
           const status = interrupted ? "cancelled" : turn.failure === null ? "completed" : "failed";
           yield* emitCompaction(turn, turn.activeCompaction, status);
@@ -2055,6 +2186,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             }
             return;
           }
+          case "t3.show_extension_displays": {
+            extensionDisplayFlushScheduled = false;
+            if (turn !== null) yield* showExtensionDisplays(turn);
+            return;
+          }
           case "t3.ui_request_expired": {
             const requestId = recordString(event, "requestId");
             if (requestId === undefined) return;
@@ -2062,12 +2198,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (pending === undefined || pending !== event["pending"]) return;
             pendingPrompts.delete(requestId);
             yield* cancelPrompt(pending, yield* DateTime.now);
-            return;
-          }
-          case "t3.flush_extension_errors": {
-            for (const extensionError of outOfTurnExtensionErrors.splice(0)) {
-              yield* emitExtensionError(extensionError);
-            }
             return;
           }
           case "t3.rollback_barrier": {
@@ -2199,6 +2329,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             "Cannot switch Pi threads while native work is awaiting a turn",
           );
         }
+        loadingAppThreadId = threadInput.threadId;
         const existing = threadInput.existingProviderThread;
         const resumeId = existing?.nativeThreadRef?.nativeId;
         const needsNewSession = resumeId == null && registrationAttempted;
@@ -2207,6 +2338,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           lastNativeThreadId = resumeId ?? lastNativeThreadId;
           // Failed lifecycle operations can still change native sessions; invalidate bindings and defaults.
           threadState = null;
+          // Pi's TUI resets extension UI on session swaps and RPC sends no clears, so reset the mirror.
+          extensionDisplays.clear();
           appliedModel = null;
           appliedThinking = null;
           appliedSessionName = null;
@@ -2581,6 +2714,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 lastRunOrdinal: turnInput.runOrdinal,
               });
               yield* updateProviderSession("running", null);
+              yield* flushExtensionOutput(activeTurn);
               if (wake !== null) {
                 for (const event of wake.events) {
                   if (!continuation && event["type"] === "agent_settled") {
@@ -2592,9 +2726,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 }
               } else if (continuation) {
                 yield* finalizeTurn(state);
-              }
-              if (outOfTurnExtensionErrors.length > 0) {
-                yield* Queue.offer(connection.events, { type: "t3.flush_extension_errors" });
               }
             }).pipe(
               sessionEventPermit.withPermits(1),
@@ -2919,9 +3050,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               ),
               (barrier) =>
                 Effect.gen(function* () {
+                  // Forking replaces Pi's session, so extension UI resets as on a switch.
+                  const previousDisplays = new Map(extensionDisplays);
+                  extensionDisplays.clear();
                   const forkData = yield* lifecycleRequest({ type: "fork", entryId: forkEntryId });
-                  if (recordField(forkData, "cancelled") === true)
+                  if (recordField(forkData, "cancelled") === true) {
+                    extensionDisplays.clear();
+                    for (const [key, display] of previousDisplays) {
+                      extensionDisplays.set(key, display);
+                    }
                     return yield* protocolError("A Pi extension cancelled the session fork");
+                  }
                   const forkState = yield* request({ type: "get_state" }).pipe(
                     Effect.onError(() =>
                       Effect.sync(() => {

@@ -168,6 +168,7 @@ interface FakePi {
   readonly deferNextModelSelection: () => void;
   readonly queueModels: (models: ReadonlyArray<unknown>) => void;
   readonly vetoNextNewSession: () => void;
+  readonly vetoNextFork: () => void;
   readonly allRequests: () => ReadonlyArray<PiRpcRecord>;
   readonly queueStats: (data: unknown) => void;
   /** Pi before 0.84.4 answers clear_queue as an unknown command. */
@@ -210,6 +211,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   let failState = false;
   let vetoSwitch = false;
   let vetoNewSession = false;
+  let vetoFork = false;
   let deferredLifecycle: string | undefined;
   let sessionFile = FAKE_SESSION_FILE;
   let sessionGeneration = 0;
@@ -279,8 +281,11 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         return { ...base, data: messagesQueue.shift() ?? { messages: [] } };
       case "get_session_stats":
         return { ...base, data: statsQueue.shift() ?? {} };
-      case "fork":
-        return { ...base, data: { text: "Hello pi", cancelled: false } };
+      case "fork": {
+        const cancelled = vetoFork;
+        vetoFork = false;
+        return { ...base, data: { text: "Hello pi", cancelled } };
+      }
       case "clear_queue":
         return clearQueue === "unknown_command"
           ? { ...base, success: false, error: "Unknown command: clear_queue" }
@@ -388,6 +393,9 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     },
     vetoNextNewSession: () => {
       vetoNewSession = true;
+    },
+    vetoNextFork: () => {
+      vetoFork = true;
     },
     allRequests: () => allRequests,
     vetoNextSwitch: () => {
@@ -532,6 +540,31 @@ const startTurn = Effect.fnUntraced(function* (
     modelSelection: selection ?? modelSelection(model),
     runtimePolicy,
   });
+});
+
+// Settles a started Pi turn and returns the latest text of each system notice it showed, sorted.
+const settleTurnNotices = Effect.fnUntraced(function* (
+  fake: FakePi,
+  takeEvent: Effect.Success<ReturnType<typeof openRuntime>>["takeEvent"],
+  beforeResponse: Effect.Effect<void> = Effect.void,
+) {
+  yield* fake.takeRequest("prompt");
+  yield* beforeResponse;
+  yield* fake.emit({ type: "response", command: "prompt", success: true });
+  yield* fake.emit({ type: "agent_start" });
+  yield* fake.emit({ type: "agent_settled" });
+  const notices: Array<string> = [];
+  while (true) {
+    const event = yield* takeEvent(
+      (event) =>
+        event.type === "turn.terminal" ||
+        (event.type === "turn_item.updated" && event.turnItem.type === "system_notice"),
+    );
+    if (event.type === "turn.terminal") return notices;
+    if (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") {
+      notices.push(event.turnItem.message);
+    }
+  }
 });
 
 describe("PiAdapterV2", () => {
@@ -1559,6 +1592,250 @@ describe("PiAdapterV2", () => {
         }
       }
       assert.equal(itemIds.size, 4);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("shows startup warnings and current extension status in the next turn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const warning = {
+        type: "extension_ui_request",
+        method: "notify",
+        message: "MCP server github failed to connect",
+        notifyType: "warning",
+      };
+      yield* fake.emit({ ...warning, id: "warn-1" });
+      yield* fake.emit({ ...warning, id: "warn-2" });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "info",
+        method: "notify",
+        message: "Loaded 3 skills",
+      });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "startup-sync",
+        method: "confirm",
+        title: "?",
+      });
+      const pending = yield* takeEvent((event) => event.type === "runtime_request.updated");
+      if (pending.type !== "runtime_request.updated") return;
+      yield* runtime.respondToRuntimeRequest({
+        requestId: pending.runtimeRequest.id,
+        decision: "accept",
+      });
+      yield* fake.takeRequest("extension_ui_response");
+      const otherThreadId = ThreadId.make("thread-pi-startup-other");
+      const otherThread = yield* runtime.ensureThread({
+        threadId: otherThreadId,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, otherThread, "default", [], "Hello", undefined, 1, otherThreadId);
+      assert.deepStrictEqual(yield* settleTurnNotices(fake, takeEvent), []);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const ui = (method: string, fields: Record<string, unknown>) =>
+        fake.emit({ type: "extension_ui_request", id: `ui-${method}`, method, ...fields });
+      yield* ui("setStatus", { statusKey: "mode", statusText: "plan" });
+      yield* ui("setStatus", { statusKey: "plan", statusText: "\u001b[33mplanning\u001b[0m" });
+      yield* ui("setStatus", { statusKey: "gone", statusText: "temporary" });
+      yield* ui("setStatus", { statusKey: "gone" });
+      yield* ui("setWidget", {
+        widgetKey: "todo",
+        widgetLines: [
+          "\u001b[1mTodo\u001b[0m\u001bPdiscard\u001b\\\u001bXdiscard\u0007",
+          "1. Read\u001b^discard\u001b\\\u001b_discard",
+        ],
+      });
+      const turnNotices = (runOrdinal: number, beforeResponse?: Effect.Effect<void>) =>
+        startTurn(runtime, providerThread, "default", [], "Hello pi", undefined, runOrdinal).pipe(
+          Effect.andThen(settleTurnNotices(fake, takeEvent, beforeResponse)),
+        );
+
+      assert.deepStrictEqual(
+        yield* turnNotices(
+          1,
+          ui("setStatus", { statusKey: "plan", statusText: "reading" }).pipe(
+            Effect.andThen(ui("setStatus", { statusKey: "plan", statusText: "executing" })),
+            Effect.andThen(ui("setWidget", { widgetKey: "todo" })),
+          ),
+        ),
+        // In-turn changes coalesce into one update per row.
+        [
+          "MCP server github failed to connect",
+          "mode: plan",
+          "plan: planning",
+          "Todo\n1. Read",
+          "plan: executing",
+          "todo cleared",
+        ],
+      );
+
+      yield* ui("setStatus", { statusKey: "plan", statusText: "done" });
+      assert.deepStrictEqual(yield* turnNotices(2), ["plan: done"]);
+
+      yield* ui("setStatus", { statusKey: "plan", statusText: "verifying" });
+      yield* ui("setStatus", { statusKey: "plan" });
+      assert.deepStrictEqual(yield* turnNotices(3), ["plan cleared"]);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps extension output on a cancelled rollback and resets it after a fork", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const status = fake.emit({
+        type: "extension_ui_request",
+        id: "status",
+        method: "setStatus",
+        statusKey: "mode",
+        statusText: "plan",
+      });
+      yield* status;
+      yield* startTurn(runtime, providerThread);
+      assert.deepStrictEqual(yield* settleTurnNotices(fake, takeEvent), ["mode: plan"]);
+
+      const rollback = () =>
+        runtime.rollbackThread({
+          providerThread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("checkpoint-start"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [
+            {
+              id: ProviderTurnId.make("turn-1"),
+              providerThreadId: providerThread.id,
+              nodeId: NodeId.make("node-1"),
+              runAttemptId: null,
+              nativeTurnRef: { driver: PI_PROVIDER, nativeId: "u1", strength: "strong" },
+              ordinal: 1,
+              status: "completed",
+              startedAt: null,
+              completedAt: null,
+            },
+          ],
+        });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        method: "setStatus",
+        statusKey: "mode",
+      });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        method: "setWidget",
+        widgetKey: "pending",
+        widgetLines: ["Pending widget"],
+      });
+      // A dialog round trip proves the idle clear and widget reached the mirror before the fork.
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "fork-sync",
+        method: "confirm",
+        title: "?",
+      });
+      const pending = yield* takeEvent((event) => event.type === "runtime_request.updated");
+      if (pending.type !== "runtime_request.updated") return;
+      yield* runtime.respondToRuntimeRequest({
+        requestId: pending.runtimeRequest.id,
+        decision: "accept",
+      });
+      yield* fake.takeRequest("extension_ui_response");
+      fake.vetoNextFork();
+      assert.isTrue(Exit.isFailure(yield* rollback().pipe(Effect.exit)));
+      yield* startTurn(runtime, providerThread, "default", [], "After veto", undefined, 2);
+      assert.deepStrictEqual(yield* settleTurnNotices(fake, takeEvent), [
+        "mode cleared",
+        "Pending widget",
+      ]);
+
+      const snapshot = yield* rollback();
+      // The forked session's extensions set their status again, which this branch has not shown.
+      yield* status;
+      yield* fake.emit({
+        type: "extension_ui_request",
+        method: "setWidget",
+        widgetKey: "pending",
+        widgetLines: ["Pending widget"],
+      });
+      yield* startTurn(runtime, snapshot.providerThread, "default", [], "Again", undefined, 3);
+      assert.deepStrictEqual(yield* settleTurnNotices(fake, takeEvent), [
+        "mode: plan",
+        "Pending widget",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps idle extension output with the thread that was loaded", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "status",
+        method: "setStatus",
+        statusKey: "mcp",
+        statusText: "2 servers",
+      });
+      yield* startTurn(runtime, providerThread);
+      assert.deepStrictEqual(yield* settleTurnNotices(fake, takeEvent), ["mcp: 2 servers"]);
+
+      // Session switches rerun session_start, so each thread can receive the same warning.
+      const warning = {
+        type: "extension_ui_request",
+        id: "warn",
+        method: "notify",
+        message: "Extension warning",
+        notifyType: "error",
+      };
+      yield* fake.emit(warning);
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "status-2",
+        method: "setStatus",
+        statusKey: "mcp",
+        statusText: "3 servers",
+      });
+      // A dialog round trip proves both were handled while the first thread was loaded.
+      yield* fake.emit({ type: "extension_ui_request", id: "sync", method: "confirm", title: "?" });
+      const pending = yield* takeEvent((event) => event.type === "runtime_request.updated");
+      if (pending.type !== "runtime_request.updated") return;
+      yield* runtime.respondToRuntimeRequest({
+        requestId: pending.runtimeRequest.id,
+        decision: "accept",
+      });
+      yield* fake.takeRequest("extension_ui_response");
+
+      const otherThreadId = ThreadId.make("thread-pi-test-other");
+      const otherThread = yield* runtime.ensureThread({
+        threadId: otherThreadId,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* fake.emit(warning);
+      yield* startTurn(runtime, otherThread, "default", [], "Hello", undefined, 1, otherThreadId);
+      // Pi resets extension status when it swaps sessions, so the first thread's status stays behind.
+      assert.deepStrictEqual(yield* settleTurnNotices(fake, takeEvent), ["Extension warning"]);
+
+      const resumed = yield* runtime.resumeThread({ providerThread });
+      yield* startTurn(runtime, resumed, "default", [], "Hello again", undefined, 2);
+      assert.deepStrictEqual(yield* settleTurnNotices(fake, takeEvent), ["Extension warning"]);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
