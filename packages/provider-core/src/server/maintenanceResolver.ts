@@ -241,10 +241,18 @@ function isYarnGlobalCommandPath(commandPath: string): boolean {
   return /\/yarn\/(?:data\/)?global\/node_modules\//.test(normalizeCommandPath(commandPath));
 }
 
-/** Version-manager installs are pinned in its config, so updating them means editing that. */
+/**
+ * Version-manager installs are pinned in its config, so updating them means editing that.
+ * A command wrapper is a symlink to the `mise` binary, which dispatches on argv[0].
+ */
 function isMiseCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
-  return normalized.includes("/mise/installs/") || normalized.includes("/mise/shims/");
+  return (
+    normalized.includes("/mise/installs/") ||
+    normalized.includes("/mise/shims/") ||
+    normalized.includes("/mise/command-wrappers/") ||
+    /\/mise(?:\.exe)?$/.test(normalized)
+  );
 }
 
 const winGetClaudeCommandPath =
