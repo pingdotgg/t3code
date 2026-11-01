@@ -6673,6 +6673,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : yield* contextHandoffService
             .prepareProviderHandoff({
               threadId: command.threadId,
+              historyThreadId: sideChatFork ? sourceProjection.thread.id : undefined,
               targetRunId: runId,
               transferId: pendingForkTransfer.id,
               fromProviderThreadIds:

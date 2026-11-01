@@ -923,6 +923,58 @@ it.effect("resolves an explicit checkpoint fork to its source run", () =>
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
+it.effect.each([true, false])(
+  "portable fork recovery uses the readable history thread (sideChat=%s)",
+  (sideChat) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const parentId = ThreadId.make("recovery-parent");
+      const childId = ThreadId.make("recovery-child");
+      yield* createParent(parentId);
+      yield* writeParentRun({
+        threadId: parentId,
+        runId: RunId.make("recovery-stable-run"),
+        ordinal: 1,
+        status: "completed",
+        text: "Earlier parent history",
+        stable: true,
+      });
+      yield* writeParentRun({
+        threadId: parentId,
+        runId: RunId.make("recovery-busy-run"),
+        ordinal: 2,
+        status: "running",
+        text: "Parent work in progress",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("recovery-fork"),
+        sourceThreadId: parentId,
+        targetThreadId: childId,
+        sourcePoint: { type: "latest_stable" },
+        sideChat,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* askSideChat(childId, "recovery-first-message");
+
+      const child = yield* orchestrator.getThreadProjection(childId);
+      const handoff = child.contextHandoffs.find((item) => item.strategy === "full_thread_summary");
+      assert.isDefined(handoff);
+      assert.equal(child.contextTransfers[0]?.resolution?.strategy, "portable_context");
+      assert.equal(handoff!.threadId, childId);
+      assert.equal(handoff!.targetRunId, child.runs[0]?.id);
+      const historyThreadId = sideChat ? parentId : childId;
+      assert.include(
+        handoff!.history?.coverage ?? "",
+        `t3_thread_read({threadId:"${historyThreadId}"`,
+      );
+      if (sideChat) {
+        assert.notInclude(handoff!.history?.coverage ?? "", `threadId:"${childId}"`);
+      }
+    }).pipe(Effect.provide(forkCases[0]!.layer)),
+);
+
 it.effect("a side chat of an idle parent still starts with the framing note", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

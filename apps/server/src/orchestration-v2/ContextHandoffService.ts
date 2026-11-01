@@ -69,6 +69,8 @@ export interface ContextHandoffServiceV2Shape {
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
   readonly prepareProviderHandoff: (input: {
     readonly threadId: ThreadId;
+    /** Source history may live outside the thread that owns this handoff. */
+    readonly historyThreadId?: ThreadId | undefined;
     readonly targetRunId: RunId;
     readonly transferId: OrchestrationV2ContextHandoff["transferId"];
     readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
@@ -485,6 +487,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       "orchestrationV2.contextHandoff.prepareProviderHandoff",
     )(function* (input: {
       readonly threadId: ThreadId;
+      readonly historyThreadId?: ThreadId | undefined;
       readonly targetRunId: RunId;
       readonly transferId: OrchestrationV2ContextHandoff["transferId"];
       readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
@@ -519,7 +522,10 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           ),
         );
       const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
-      const coverage = handoffCoverage(input);
+      const coverage = handoffCoverage({
+        ...input,
+        threadId: input.historyThreadId ?? input.threadId,
+      });
       const selected = selectHistory({
         messages: input.items.flatMap((item) => {
           const message = historicalMessage(item);
