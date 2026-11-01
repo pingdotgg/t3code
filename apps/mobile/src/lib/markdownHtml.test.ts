@@ -100,6 +100,40 @@ describe("HTML in native Markdown", () => {
     ]);
   });
 
+  it("renders <br> in a native table cell as a line break without breaking the row", async () => {
+    const markdown =
+      "| Item | Value |\n| --- | --- |\n| Completed | • First item<br>• Second item<br>• Third item |\n| Plain | one line |";
+    const native = await parseMarkdown(
+      markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+    );
+    expect(native.children).toMatchObject([
+      {
+        type: "Table",
+        attributes: { bodyRowCount: "2" },
+        children: [
+          { type: "TableHead" },
+          {
+            type: "TableBody",
+            children: [
+              {
+                children: [
+                  { children: [{ content: "Completed" }] },
+                  { children: [{ content: "• First item\n• Second item\n• Third item" }] },
+                ],
+              },
+              {
+                children: [
+                  { children: [{ content: "Plain" }] },
+                  { children: [{ content: "one line" }] },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
   it("keeps a table row intact when an anchor href contains a pipe", () => {
     const document = parseMarkdownDocument(
       "| Preview | Logs |\n| - | - |\n| <a href='https://example.com/?a=1&#124;2'>Open</a> | done |",
