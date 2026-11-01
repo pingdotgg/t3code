@@ -160,9 +160,12 @@ T3_MCP_BEARER_TOKEN=<provider-session-token>
 ```
 
 The extension preserves public names under `mcp__t3-code__` for saved loadouts
-and tool selectors. Modern Pi also receives hidden `mcp__t3_code__` aliases,
-which reserve the normalized namespace against configured MCP servers without
-adding declarations or search results. On Pi 0.99+,
+and tool selectors. Modern Pi also receives `mcp__t3_code__` aliases, Pi's own
+name for the server, which reserve it against configured MCP servers. They are
+`model-only` and hide their own declarations, so the model can call them without
+added declarations, search results, or codemode entries. An alias follows its
+public tool: dropped when that tool is excluded, and off while a direct one is
+off. Pi's `hidden` exposure would make them unreachable. On Pi 0.99+,
 `orchestrator_capabilities`, `delegate_task`, and `task_status` remain directly
 available; optional tools are discovered through Pi's builtin `tool_search`.
 On older Pi or without builtin search, all tools remain directly available.
