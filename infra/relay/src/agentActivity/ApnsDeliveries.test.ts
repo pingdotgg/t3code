@@ -439,6 +439,7 @@ describe("ApnsDeliveries", () => {
           preferences_json: notificationsDisabledPreferences,
         },
         aggregate: inputAggregate,
+        notificationAggregate: inputAggregate,
         nowMs: 5_000,
       });
 
