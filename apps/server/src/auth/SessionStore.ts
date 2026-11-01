@@ -1050,20 +1050,24 @@ const make = Effect.gen(function* () {
 
   const revokeAllExcept: SessionStore["Service"]["revokeAllExcept"] = Effect.fn(
     "SessionStore.revokeAllExcept",
-  )(function* (sessionId) {
-    const revokedAt = yield* DateTime.now;
-    const revokedSessionIds = yield* authSessions
-      .revokeAllExcept({
-        currentSessionId: sessionId,
-        revokedAt,
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) => new OtherSessionsRevocationError({ currentSessionId: sessionId, cause }),
-        ),
-      );
-    return yield* forgetRevokedSessions(revokedSessionIds);
-  });
+  )(
+    function* (sessionId) {
+      const revokedAt = yield* DateTime.now;
+      const revokedSessionIds = yield* authSessions
+        .revokeAllExcept({
+          currentSessionId: sessionId,
+          revokedAt,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) => new OtherSessionsRevocationError({ currentSessionId: sessionId, cause }),
+          ),
+        );
+      return yield* forgetRevokedSessions(revokedSessionIds);
+    },
+    // As in revokeBySubject: the write and its notices go together.
+    Effect.uninterruptible,
+  );
 
   const revokeBySubject: SessionStore["Service"]["revokeBySubject"] = Effect.fn(
     "SessionStore.revokeBySubject",

@@ -19,6 +19,7 @@ import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
+import * as AuthTailnetDeviceBlocks from "../persistence/AuthTailnetDeviceBlocks.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as TailscaleHost from "../tailscale/TailscaleHost.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
@@ -1642,6 +1643,25 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       expect(yield* service.listDevices("bearer:laptop")).toMatchObject([
         { stableNodeId: "nPhone", blockedAt: null, activeSessionCount: 1, current: false },
       ]);
+
+      // A block whose revocation never ran ends the device's sessions at the next recheck,
+      // even when Tailscale cannot look the device up.
+      const blockList = yield* AuthTailnetDeviceBlocks.AuthTailnetDeviceBlockRepository;
+      yield* blockList.block({
+        stableNodeId: "nPhone",
+        label: null,
+        blockedAt: yield* DateTime.now,
+      });
+      tailnet.status = hostStatus({
+        Peer: {
+          phone: { ID: "nPhone", TailscaleIPs: [PHONE_ADDRESS], UserID: `int64:${OWNER_ID}` },
+        },
+      });
+      tailnet.node = null;
+      yield* service.recheckSessions;
+      expect((yield* Effect.flip(sessions.verify(renewed.access_token)))._tag).toBe(
+        "SessionTokenRevokedError",
+      );
     }).pipe(Effect.provide(layerTest(tailnet)));
   });
 });

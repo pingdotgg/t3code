@@ -561,6 +561,8 @@ export const make = Effect.gen(function* () {
     if (address === undefined) return { end: "not_on_tailnet" } as const;
     const lookup = yield* host.whois(address, { fromServer: true }).pipe(Effect.option);
     if (Option.isNone(lookup) || lookup.value.stableNodeId !== stableNodeId) {
+      // A blocked device ends without a lookup, so its cleanup does not wait out the grace.
+      if (yield* blocks.isBlocked({ stableNodeId })) return { end: "blocked" } as const;
       const now = yield* Clock.currentTimeMillis;
       const since = lookupFailingSince.get(stableNodeId) ?? now;
       lookupFailingSince.set(stableNodeId, since);
@@ -777,11 +779,12 @@ export const make = Effect.gen(function* () {
     const blockedAt = yield* DateTime.now;
     // A grant exchange checks blocks in its own write, so once the block lands none can make
     // a session; one made before is revoked here. Not one transaction: an open socket that
-    // wakes on the revocation must read it committed.
+    // wakes on the revocation must read it committed. A dropped request still does both.
     return yield* blocks
       .block({ stableNodeId, label, blockedAt })
       .pipe(
         Effect.andThen(sessions.revokeBySubject(subject)),
+        Effect.uninterruptible,
         Effect.mapError(accessError("Could not block the device.")),
       );
   });
