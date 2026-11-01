@@ -73,6 +73,23 @@ const isSqliteBusy = (cause: unknown) =>
   (("errcode" in cause && cause.errcode === 5) ||
     ("code" in cause && cause.code === "SQLITE_BUSY"));
 
+const ownershipLockPath = (statePath: string) =>
+  NodePath.join(NodePath.dirname(statePath), "server-owner.sqlite");
+
+/** Whether a running server holds the ownership lock. Read-only, so it never creates the lock file. */
+export const isServerOwnershipHeld = (statePath: string): boolean => {
+  let db: NodeSqlite.DatabaseSync | undefined;
+  try {
+    db = new NodeSqlite.DatabaseSync(ownershipLockPath(statePath), { readOnly: true, timeout: 0 });
+    db.prepare("SELECT 1 FROM sqlite_schema").get();
+    return false;
+  } catch (cause) {
+    return isSqliteBusy(cause);
+  } finally {
+    db?.close();
+  }
+};
+
 // Pre-lock servers publish only runtime state; require start-time proof of PID reuse before treating it as stale.
 const legacyOwnerIsLive = Effect.fn("legacyOwnerIsLive")(function* (
   state: PersistedServerRuntimeState,
@@ -188,7 +205,7 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
   const ownerId = yield* crypto
     .randomUUIDv4()
     .pipe(Effect.mapError((cause) => new ServerOwnershipError({ stateDir, cause })));
-  const lockPath = NodePath.join(stateDir, "server-owner.sqlite");
+  const lockPath = ownershipLockPath(statePath);
   const lock = yield* Effect.acquireRelease(
     Effect.try({
       try: () => {
