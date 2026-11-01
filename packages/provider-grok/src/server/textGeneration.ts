@@ -30,9 +30,10 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
   const crypto = yield* Crypto.Crypto;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  const runGrokJson: TextGenerationOperations.Runner = (request) => {
-    const { operation, cwd, prompt, modelSelection } = request;
-    return Effect.gen(function* () {
+  const runGrokJson: TextGenerationOperations.Runner = Effect.fn("GrokTextGeneration.runGrokJson")(
+    function* (request) {
+      const { operation, cwd, prompt, modelSelection } = request;
+
       const outputRef = yield* Ref.make("");
       const runtime = yield* makeGrokAcpRuntime({
         grokSettings,
@@ -115,19 +116,26 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       }
 
       return yield* TextGenerationOperations.decodeJsonReply(request, "Grok Agent", trimmed);
-    }).pipe(
-      Effect.mapError((cause) =>
-        isTextGenerationError(cause)
-          ? cause
-          : new TextGenerationError({
-              operation,
-              detail: "Grok ACP text generation failed.",
-              cause,
-            }),
-      ),
-      Effect.scoped,
-    );
-  };
+    },
+    (effect, request) => {
+      const { operation } = request;
+      return effect.pipe(
+        Effect.mapError((cause) =>
+          isTextGenerationError(cause)
+            ? cause
+            : new TextGenerationError({
+                operation,
+                detail: "Grok ACP text generation failed.",
+                cause,
+              }),
+        ),
+        Effect.scoped,
+      );
+    },
+  );
 
-  return TextGenerationOperations.fromRunner("GrokTextGeneration", runGrokJson);
+  return TextGenerationOperations.fromRunner(
+    "GrokTextGeneration",
+    TextGenerationOperations.withoutInvestigation("Grok", runGrokJson),
+  );
 });

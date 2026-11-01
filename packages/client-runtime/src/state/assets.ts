@@ -7,12 +7,13 @@ import {
   type ProjectCloneSnapshot,
   WS_METHODS,
 } from "@t3tools/contracts";
-import { mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
+import { mediaMimeTypeFromExtension } from "@t3tools/shared/mediaPreview";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import {
   getProjectFaviconResourceKey,
   isProjectFaviconFallbackUrl,
 } from "@t3tools/shared/projectFavicon";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -45,7 +46,7 @@ const decodeAssetCollectionKey = Schema.decodeUnknownSync(
   Schema.Tuple([EnvironmentId, Schema.Array(AssetResource)]),
 );
 
-export function parseAssetCollectionKey(
+function parseAssetCollectionKey(
   key: string,
 ): readonly [EnvironmentId, ReadonlyArray<AssetResource>] {
   try {
@@ -69,17 +70,44 @@ export const EMPTY_ASSET_URL_ATOM = Atom.make(AsyncResult.initial<never, never>(
 
 export type AssetUrlState =
   | { readonly _tag: "Loading" }
-  | { readonly _tag: "Failure" }
+  | {
+      readonly _tag: "Failure";
+      readonly reason?: "missing-file-access";
+    }
   | {
       readonly _tag: "Success";
       readonly url: string;
-      /** When the signed URL stops working, in epoch milliseconds. */
       readonly expiresAt: number;
-      /** The host path the server chose to serve, when it differs from what was asked for. */
       readonly sourcePath?: string;
-      /** Pixel size from the image header, when the server could read one. */
       readonly imageDimensions?: AssetImageDimensions;
+      readonly fileRevision?: string;
     };
+
+export const MISSING_FILE_ACCESS_MESSAGE =
+  "This connection cannot read host files. Pair again with a new link to view it.";
+
+export function blockedAssetUrlState(
+  resource: AssetResource | null,
+  fileAccess: {
+    readonly canReadFiles: boolean;
+    readonly isPending: boolean;
+    readonly error: string | null;
+  },
+): AssetUrlState | null {
+  if (
+    resource === null ||
+    fileAccess.canReadFiles ||
+    (resource._tag !== "workspace-file" &&
+      resource._tag !== "media-file" &&
+      resource._tag !== "draft-workspace-file")
+  ) {
+    return null;
+  }
+  if (fileAccess.isPending) return { _tag: "Loading" };
+  return fileAccess.error === null
+    ? { _tag: "Failure", reason: "missing-file-access" }
+    : { _tag: "Failure" };
+}
 
 export function assetUrlStateFromResult(
   result: AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>,
@@ -97,6 +125,7 @@ export function assetUrlStateFromResult(
     ...(result.value.imageDimensions !== undefined
       ? { imageDimensions: result.value.imageDimensions }
       : {}),
+    ...(result.value.fileRevision !== undefined ? { fileRevision: result.value.fileRevision } : {}),
   };
 }
 
@@ -130,11 +159,10 @@ export function createAssetEnvironmentAtoms<R, E>(
     )
       return yield* error;
     const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-    const asset = yield* registry.run(
-      local.environmentId,
-      request(WS_METHODS.assetsCreateUrl, input),
-    );
-    // Callers resolve against the thread's server, so preserve the local server's origin.
+    // Map the full cause so retry defects and interruption survive.
+    const asset = yield* registry
+      .run(local.environmentId, request(WS_METHODS.assetsCreateUrl, input))
+      .pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, () => error))));
     return { ...asset, relativeUrl: new URL(asset.relativeUrl, local.httpBaseUrl).href };
   });
   const createUrl = createEnvironmentQueryAtomFamily(runtime, {
@@ -172,10 +200,6 @@ export function createAssetEnvironmentAtoms<R, E>(
   };
 }
 
-/**
- * Keeps project icons visible while their environment reconnects. Each resource
- * owns its last resolved URL, including a confirmed missing-icon response.
- */
 export function createProjectFaviconUrlAtomFamily(input: {
   readonly imageCache?: ProjectFaviconCache;
   readonly createUrl: (target: {
@@ -185,7 +209,6 @@ export function createProjectFaviconUrlAtomFamily(input: {
   readonly preparedConnection: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<Option.Option<{ readonly httpBaseUrl: string }>>;
-  /** The environment's tracked clones, empty when it reports none. */
   readonly projectClones?: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<ReadonlyArray<ProjectCloneSnapshot>>;
@@ -234,7 +257,7 @@ export function createProjectFaviconUrlAtomFamily(input: {
     return Atom.make((get): string | null => {
       const result = get(image);
       if (isProjectFaviconFallbackUrl(get(resolvedUrl))) return null;
-      return Option.getOrElse(AsyncResult.value(result), () => cache.peek(target));
+      return AsyncResult.getOrElse(result, () => cache.peek(target));
     }).pipe(Atom.setIdleTTL(ASSET_URL_IDLE_TTL_MS));
   });
   return (target: ProjectFaviconTarget) =>

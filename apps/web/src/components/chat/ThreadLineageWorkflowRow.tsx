@@ -3,27 +3,24 @@ import type {
   RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { ProviderDriverKind, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
-import { ChevronDownIcon, LoaderCircleIcon, SquareIcon } from "lucide-react";
+import { ChevronDownIcon, SquareIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { AgentElapsed } from "./AgentElapsed";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadRelationshipIcon } from "./ThreadRelationshipIcon";
+import type { ProviderInstanceEntry } from "../../providerInstances";
 import { cn } from "../../lib/utils";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible-section-header";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Spinner } from "../ui/spinner";
 import {
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./threadDetailsPanelStyles";
 
-/**
- * Wall clock for the phase: its members run in parallel, so the span from the
- * first start to the last finish is the time the phase actually took. Shaped
- * for AgentElapsed, which ticks it while the phase is still running.
- */
 function phaseElapsed(phase: SubagentWorkflowGroup["phases"][number]) {
   const instants = (key: "startedAt" | "completedAt") =>
     phase.members
@@ -35,13 +32,11 @@ function phaseElapsed(phase: SubagentWorkflowGroup["phases"][number]) {
   const completedAt = running ? null : (instants("completedAt").at(-1) ?? null);
   return {
     status: running ? ("running" as const) : ("completed" as const),
-    // A settled phase whose members never reported an end has no span to show.
     startedAt: running || completedAt !== null ? startedAt : null,
     completedAt,
   };
 }
 
-/** Phase state for the header's label; the tone and member badges show it visually. */
 function phaseStatusLabel(phase: SubagentWorkflowGroup["phases"][number]) {
   if (phase.state === "running") return "running";
   if (phase.members.some((member) => member.status === "failed")) return "failed";
@@ -53,26 +48,25 @@ function phaseStatusLabel(phase: SubagentWorkflowGroup["phases"][number]) {
   return phase.state === "done" ? "done" : "not started";
 }
 
-/** Members run under the coordinator's provider, so they share its glyph. */
 function WorkflowMemberRow({
   member,
   providerInstanceId,
   provider,
   providers,
+  providerEntries,
   driver,
   onOpen,
-  isThreadAvailable,
 }: {
   member: RuntimeSubagent;
   providerInstanceId: ProviderInstanceId;
   provider: ServerProvider | undefined;
   providers: ReadonlyArray<ServerProvider> | undefined;
+  providerEntries: ReadonlyArray<ProviderInstanceEntry>;
   driver: ProviderDriverKind | undefined;
   onOpen: (threadId: string) => void;
-  isThreadAvailable: (threadId: string) => boolean;
 }) {
   const threadId = member.childThreadId;
-  const canOpen = threadId !== null && isThreadAvailable(threadId);
+  const canOpen = threadId !== null;
   return (
     <li>
       <Tooltip>
@@ -87,7 +81,12 @@ function WorkflowMemberRow({
             />
           }
         >
-          <ThreadRelationshipIcon driver={driver} provider={provider} status={member.status} />
+          <ThreadRelationshipIcon
+            driver={driver}
+            provider={provider}
+            providerEntries={providerEntries}
+            status={member.status}
+          />
           <span className="min-w-0 flex-1 truncate">{member.title}</span>
           <span className="sr-only">{member.status}</span>
           {member.startedAt ? (
@@ -122,9 +121,9 @@ export function ThreadLineageWorkflowRow({
   providerInstanceId,
   provider,
   providers,
+  providerEntries,
   driver,
   onOpenThread,
-  isThreadAvailable,
   onStop,
   stopping,
   stopDisabled,
@@ -134,20 +133,18 @@ export function ThreadLineageWorkflowRow({
   readonly providerInstanceId: ProviderInstanceId;
   readonly provider: ServerProvider | undefined;
   readonly providers: ReadonlyArray<ServerProvider> | undefined;
+  readonly providerEntries: ReadonlyArray<ProviderInstanceEntry>;
   readonly driver: ProviderDriverKind | undefined;
   readonly onOpenThread: (threadId: string) => void;
-  readonly isThreadAvailable: (threadId: string) => boolean;
   readonly onStop?: (() => void) | undefined;
   readonly stopping: boolean;
   readonly stopDisabled: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  // The running phase opens itself until the user picks a side for it.
   const [phaseOpen, setPhaseOpen] = useState<ReadonlyMap<number, boolean>>(() => new Map());
   const label = group.workflow.workflowName ?? group.workflow.title;
   const phases = group.phases.filter((phase) => phase.members.length > 0);
   return (
-    // The flag lets the lineage list trade its compact height for the open tree.
     <li className="group" data-workflow-expanded={expanded ? "" : undefined}>
       <div className={cn("relative", THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS)}>
         {header}
@@ -168,7 +165,7 @@ export function ThreadLineageWorkflowRow({
                 }
               >
                 {stopping ? (
-                  <LoaderCircleIcon aria-hidden className="size-3 animate-spin" />
+                  <Spinner aria-hidden size="xs" />
                 ) : (
                   <SquareIcon aria-hidden className="size-3 fill-current" />
                 )}
@@ -234,9 +231,9 @@ export function ThreadLineageWorkflowRow({
                         providerInstanceId={providerInstanceId}
                         provider={provider}
                         providers={providers}
+                        providerEntries={providerEntries}
                         driver={driver}
                         onOpen={onOpenThread}
-                        isThreadAvailable={isThreadAvailable}
                       />
                     ))}
                   </ul>
@@ -251,9 +248,9 @@ export function ThreadLineageWorkflowRow({
               providerInstanceId={providerInstanceId}
               provider={provider}
               providers={providers}
+              providerEntries={providerEntries}
               driver={driver}
               onOpen={onOpenThread}
-              isThreadAvailable={isThreadAvailable}
             />
           ))}
           {phases.length === 0 && group.unphasedMembers.length === 0 ? (

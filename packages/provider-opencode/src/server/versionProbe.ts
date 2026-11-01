@@ -1,4 +1,3 @@
-/** Detects whether an OpenCode instance runs 1.x or 2.x, so the driver can pick its runtime. */
 import { parseSemver } from "@t3tools/shared/semver";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
@@ -17,7 +16,8 @@ export interface ProbedOpenCode {
   readonly version: string;
 }
 
-const OPENCODE_VERSION_PROBE_TIMEOUT = "4 seconds";
+// Meant to stop a hung `--version`; wrapped installs can take several seconds to start cold.
+const OPENCODE_VERSION_PROBE_TIMEOUT = "10 seconds";
 const OPENCODE_SERVER_PROBE_TIMEOUT = "5 seconds";
 // 2.x's own CLI decodes `{version, pid}` from `/api/info`; requiring both keeps unrelated JSON out.
 const decodeApiInfo = Schema.decodeUnknownOption(
@@ -33,15 +33,10 @@ function probed(version: string | null | undefined): ProbedOpenCode | undefined 
   return { generation: major >= 2 ? "v2" : "v1", version };
 }
 
-/** `opencode --version` prints `1.18.32` on 1.x and `opencode v2.0.18` on 2.x. */
 export const classifyOpenCodeCliVersion = (output: string) =>
   probed(parseGenericCliVersion(output));
 
-/**
- * 2.x answers `/api/info` and 1.x answers `/global/health`. Each serves its web UI's HTML with a
- * 200 on the other's path, so only a JSON body counts. Both versions answer a wrong password with
- * a 401 on either path, so a 401 says nothing about the version.
- */
+// Cross-version paths return HTML 200s, so require JSON; either version returns 401 for bad passwords.
 function classifyOpenCodeProbeResponse(
   path: "/api/info" | "/global/health",
   response: {
@@ -91,8 +86,7 @@ const probeOpenCodeBinary = Effect.fn("probeOpenCodeBinary")(function* (
   });
 });
 
-// Server failures reach clients through the provider status, so their details are fixed text:
-// the underlying error can carry the configured URL, its credentials, or the password header.
+// Use fixed status text; underlying errors may expose URLs, credentials, or password headers.
 const probeOpenCodeServer = Effect.fn("probeOpenCodeServer")(function* (
   serverUrl: string,
   serverPassword: string,
@@ -110,7 +104,6 @@ const probeOpenCodeServer = Effect.fn("probeOpenCodeServer")(function* (
     ? `Basic ${Buffer.from(`opencode:${serverPassword}`, "utf8").toString("base64")}`
     : undefined;
   for (const path of ["/api/info", "/global/health"] as const) {
-    // A path prefix and query on the configured URL are kept: `/base/?x=1` → `/base/api/info?x=1`.
     const url = new URL(baseUrl);
     url.pathname = `${url.pathname.replace(/\/+$/, "")}${path}`;
     const request = HttpClientRequest.get(url.href);
@@ -163,7 +156,6 @@ const probeOpenCodeServer = Effect.fn("probeOpenCodeServer")(function* (
   });
 });
 
-/** Probes a configured server when `serverUrl` is set, otherwise the local binary. */
 export const probeOpenCodeRuntime = (
   settings: {
     readonly binaryPath: string;
@@ -180,11 +172,6 @@ export const probeOpenCodeRuntime = (
     ? probeOpenCodeServer(settings.serverUrl, settings.serverPassword)
     : probeOpenCodeBinary(settings.binaryPath, environment);
 
-/**
- * One instance's runtime, remembered after the first successful probe. Settings changes rebuild
- * the driver; `refresh` re-probes (status checks use it, so an in-place upgrade re-routes). A
- * failed probe is never remembered. `lastSuccess` never probes, for calls too hot to wait on one.
- */
 export const makeOpenCodeRuntimeProbe = <E>(probe: Effect.Effect<ProbedOpenCode, E>) =>
   Effect.map(
     Cache.makeWith(() => probe, {

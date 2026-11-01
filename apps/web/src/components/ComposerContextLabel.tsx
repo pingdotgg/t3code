@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import { cn } from "../lib/utils";
 import { THREAD_DETAILS_PANEL_LABEL_CLASS } from "./chat/threadDetailsPanelStyles";
 
-/** Keeps text measurable while the composer's outer label box collapses. */
 export function ComposerContextLabel({
   children,
   displayMode = "toolbar",

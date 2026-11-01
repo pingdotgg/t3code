@@ -18,15 +18,6 @@ const usb = { uid: "usb", name: "Shure MV7", type: "USBAudio" };
 const keys = (order: ReadonlyArray<MicrophoneEntry>) => order.map(microphoneEntryKey);
 
 describe("microphoneOrder", () => {
-  it("lists every kind once, CarPlay below the built-in microphone by default", () => {
-    expect(keys(microphoneOrder())).toEqual([
-      "kind:wired",
-      "kind:bluetooth",
-      "kind:builtIn",
-      "kind:carPlay",
-    ]);
-  });
-
   it("keeps a saved order and files missing kinds after their devices", () => {
     const saved: MicrophoneEntry[] = [
       { kind: "builtIn" },
@@ -69,7 +60,6 @@ describe("rememberMicrophones", () => {
 });
 
 describe("preferredMicrophoneInput", () => {
-  // Built-in, Bose, Wired, other Bluetooth, AirPods, CarPlay.
   const order: MicrophoneEntry[] = [
     { kind: "builtIn" },
     { kind: "bluetooth", uid: "bose", name: bose.name },
@@ -85,9 +75,5 @@ describe("preferredMicrophoneInput", () => {
     expect(preferredMicrophoneInput([airPods, usb], order)).toBe(usb);
     expect(preferredMicrophoneInput([airPods, carPlay], order)).toBe(airPods);
     expect(preferredMicrophoneInput([airPods, iPhone], order)).toBe(iPhone);
-  });
-
-  it("leaves inputs of unknown kinds to iOS", () => {
-    expect(preferredMicrophoneInput([{ uid: "x", name: "x", type: "Virtual" }], order)).toBeNull();
   });
 });

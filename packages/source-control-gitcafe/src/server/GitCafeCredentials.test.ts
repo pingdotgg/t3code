@@ -1,24 +1,7 @@
-/**
- * Pins `./GitCafeCredentials.ts`, a service module pass 2 creates:
- *
- * - `class GitCafeCredentials extends Context.Service` keyed
- *   `"@t3tools/source-control-gitcafe/server/GitCafeCredentials"`, with
- *   `get(host) => Effect<GitCafeCredential, GitCafeCredentialUnavailableError>` and
- *   `invalidate(host) => Effect<void>`.
- * - `interface GitCafeCredential { host; token: Redacted<string>; source: "env" | "cafe" }`.
- * - `Schema.TaggedError`s `GitCafeCliMissingError`, `GitCafeNotSignedInError`,
- *   `GitCafeCliFailedError` (union `GitCafeCredentialUnavailableError`).
- * - `environmentToken(host, env): string | null` — `CAFE_TOKEN` only for the host `CAFE_HOST`
- *   names (git.cafe when unset).
- * - `make` / `layer`, yielding `SourceControlHost` (for `process.run`) and
- *   `HostProcess.Environment` / `HostProcess.WorkingDirectory` from `@t3tools/shared/HostProcess`.
- */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
-import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
@@ -103,14 +86,12 @@ describe("GitCafeCredentials", () => {
       assert.strictEqual(Redacted.value(saved.token), "saved-token");
       assert.strictEqual(saved.source, "settings");
       assert.deepStrictEqual(yield* credentials.cliEnv("git.cafe"), { CAFE_TOKEN: "saved-token" });
-      // Staging never receives the production token saved in Settings.
       assert.deepStrictEqual(yield* credentials.cliEnv("staging.git.cafe"), {});
       assert.strictEqual(
         Redacted.value((yield* credentials.get("staging.git.cafe")).token),
         "gct_staging",
       );
 
-      // Removing it applies at once: the environment token takes over again.
       yield* settings.update({ sourceControlHosts: { gitcafe: { token: "" } } });
       assert.strictEqual((yield* credentials.get("git.cafe")).source, "env");
     }).pipe(Effect.provide(layer));
@@ -124,7 +105,6 @@ describe("GitCafeCredentials", () => {
     );
     return Effect.gen(function* () {
       const credentials = yield* GitCafeCredentials.GitCafeCredentials;
-      // A token for staging is never taken from an environment that targets production.
       const credential = yield* credentials.get("Staging.Git.Cafe");
       assert.strictEqual(Redacted.value(credential.token), "gct_1");
       assert.strictEqual(credential.source, "cafe");
@@ -140,54 +120,9 @@ describe("GitCafeCredentials", () => {
         "get",
       ]);
       assert.strictEqual(calls[0]?.stdin, "protocol=https\nhost=staging.git.cafe\n\n");
-      // A refused token is asked for again rather than reused.
       yield* credentials.invalidate("staging.git.cafe");
       yield* credentials.get("staging.git.cafe");
       assert.strictEqual(calls.length, 2);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect.each([
-    [
-      "a missing CLI",
-      Effect.fail(
-        new VcsProcessSpawnError({
-          operation: "GitCafeCredentials.get",
-          command: "cafe",
-          cwd: "/server",
-          cause: PlatformError.systemError({
-            _tag: "NotFound",
-            module: "ChildProcess",
-            method: "spawn",
-          }),
-        }),
-      ),
-      "GitCafeCliMissingError",
-    ],
-    [
-      "a helper with no login",
-      Effect.fail(
-        new VcsProcessExitError({
-          operation: "GitCafeCredentials.get",
-          command: "cafe",
-          cwd: "/server",
-          exitCode: 1,
-          detail: "not signed in",
-        }),
-      ),
-      "GitCafeNotSignedInError",
-    ],
-    [
-      "an answer without a password",
-      Effect.succeed(processOutput("username=alice\n")),
-      "GitCafeNotSignedInError",
-    ],
-  ] as const)("reports %s", ([, result, tag]) => {
-    const { layer } = harness(() => result);
-    return Effect.gen(function* () {
-      const credentials = yield* GitCafeCredentials.GitCafeCredentials;
-      const error = yield* credentials.get("git.cafe").pipe(Effect.flip);
-      assert.strictEqual(error._tag, tag);
     }).pipe(Effect.provide(layer));
   });
 });

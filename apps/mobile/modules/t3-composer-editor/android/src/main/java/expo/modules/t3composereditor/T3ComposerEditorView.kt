@@ -29,7 +29,6 @@ import android.widget.EditText
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
-import expo.modules.t3markdowntext.T3ContextChip
 import org.json.JSONObject
 import kotlin.math.max
 
@@ -58,10 +57,24 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   private var applyingNativeValue = false
   private var desiredLineHeightPx = 0
   private var lastContentHeight = 0
+  private var lastContentWidth = 0
   private var contentInsetVertical = 0
   private var tokensJson = "[]"
   private var tokens: List<ComposerToken> = emptyList()
-  private var chipTheme = ComposerChipTheme.default()
+  private val redrawChipsWithIcon: (String) -> Unit = { uri ->
+    editor.text?.let { editable ->
+      editable.getSpans(0, editable.length, ComposerChipSpan::class.java)
+        .filter { it.iconUri == uri }
+        .forEach {
+          editable.setSpan(
+            it,
+            editable.getSpanStart(it),
+            editable.getSpanEnd(it),
+            editable.getSpanFlags(it)
+          )
+        }
+    }
+  }
   private var autoCorrect = true
   private var spellCheck = true
   private var nativeEventCount = 0
@@ -241,17 +254,6 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
       } else {
         applySelectionTheme(parseColor(theme.optString("selection"), editor.currentTextColor))
       }
-      chipTheme = ComposerChipTheme(
-        chipBackground = parseColor(theme.optString("chipBackground"), chipTheme.chipBackground),
-        chipBorder = parseColor(theme.optString("chipBorder"), chipTheme.chipBorder),
-        chipText = parseColor(theme.optString("chipText"), chipTheme.chipText),
-        skillBackground = parseColor(
-          theme.optString("skillBackground"),
-          chipTheme.skillBackground,
-        ),
-        skillBorder = parseColor(theme.optString("skillBorder"), chipTheme.skillBorder),
-        skillText = parseColor(theme.optString("skillText"), chipTheme.skillText),
-      )
       applyTokenSpans()
     } catch (_: Exception) {
     }
@@ -425,12 +427,19 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   }
 
   private fun emitContentSizeIfNeeded() {
-    val height = editor.layout?.height ?: editor.measuredHeight
-    val contentHeight = height + contentInsetVertical * 2
-    if (contentHeight == lastContentHeight) return
+    // The laid-out text without insets. A one-line draft reports its natural width, so
+    // JS can tell whether it fits a narrower row than the one it is laid out in; past
+    // one line only the height matters. Trailing whitespace hangs past a line without
+    // wrapping it, so getLineMax leaves it out.
+    val layout = editor.layout
+    val contentHeight = layout?.height ?: editor.measuredHeight
+    val contentWidth = if (layout?.lineCount == 1) layout.getLineMax(0).toInt() else 0
+    if (contentHeight == lastContentHeight && contentWidth == lastContentWidth) return
     lastContentHeight = contentHeight
+    lastContentWidth = contentWidth
+    val density = resources.displayMetrics.density
     onComposerContentSizeChange(
-      mapOf("height" to contentHeight / resources.displayMetrics.density),
+      mapOf("width" to contentWidth / density, "height" to contentHeight / density),
     )
   }
 
@@ -445,20 +454,18 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
       if (token.start < 0 || token.end <= token.start || token.end > editable.length) return@forEach
       val expectedSource = editable.substring(token.start, token.end)
       if (expectedSource != token.source) return@forEach
+      T3ChipIcons.load(context, token.iconUri, redrawChipsWithIcon)
       editable.setSpan(
         ComposerChipSpan(
           T3ContextChip(
             content = T3ContextChip.Content(
               label = token.label,
-              symbol = token.symbol,
-              detail = token.detail
+              detail = token.detail,
+              iconUri = token.iconUri,
+              tintsIcon = token.tintsIcon
             ),
-            fontSize = editor.textSize * 0.8f,
-            colors = T3ContextChip.Colors(
-              accent = T3ContextChip.color(token.accent, chipTheme.chipText),
-              foreground = chipTheme.chipText,
-              border = chipTheme.chipBorder
-            ),
+            fontSize = editor.textSize,
+            color = T3ContextChip.color(token.accent, editor.currentTextColor),
             maximumWidth = (
               editor.width.takeIf {
                 it > 0
@@ -501,34 +508,17 @@ private data class ComposerToken(
   val label: String,
   val detail: String,
   val accent: String,
-  val symbol: String,
+  val iconUri: String,
+  val tintsIcon: Boolean,
   val start: Int,
   val end: Int
 )
 
-private data class ComposerChipTheme(
-  val chipBackground: Int,
-  val chipBorder: Int,
-  val chipText: Int,
-  val skillBackground: Int,
-  val skillBorder: Int,
-  val skillText: Int
-) {
-  companion object {
-    fun default() = ComposerChipTheme(
-      chipBackground = Color.rgb(238, 240, 243),
-      chipBorder = Color.rgb(210, 214, 220),
-      chipText = Color.rgb(35, 39, 45),
-      skillBackground = Color.rgb(233, 239, 255),
-      skillBorder = Color.rgb(185, 200, 245),
-      skillText = Color.rgb(45, 72, 155),
-    )
-  }
-}
-
 private class ComposerChipSpan(
   private val chip: T3ContextChip
 ) : ReplacementSpan() {
+  val iconUri get() = chip.iconUri
+
   override fun getSize(
     paint: Paint,
     text: CharSequence,
@@ -574,7 +564,8 @@ private fun parseTokens(value: String): List<ComposerToken> = try {
       label = token.optString("label"),
       detail = token.optString("detail"),
       accent = token.optString("accent"),
-      symbol = token.optString("symbol", "doc"),
+      iconUri = if (token.isNull("iconUri")) "" else token.optString("iconUri"),
+      tintsIcon = token.optBoolean("tintsIcon"),
       start = token.optInt("start"),
       end = token.optInt("end"),
     )
@@ -594,10 +585,8 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
   var clipboardFragment = ""
 
   /**
-   * Placeholder shown while the draft is empty. An editable TextView never ellipsizes its hint,
-   * so a long placeholder wraps once a wide system font or a large font scale (Samsung defaults)
-   * runs out of width, and the resting composer grows to two lines. The hint is instead cut to
-   * one line with an ellipsis for whatever width the editor is measured at.
+   * Editable TextView hints do not ellipsize, so long placeholders wrap and grow the composer.
+   * Truncate the hint to the measured width instead.
    */
   var placeholder = ""
     set(value) {
@@ -755,16 +744,22 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
     return shouldIntercept
   }
 
-  // coerceToText opens content: URIs synchronously. Leave URI-backed
-  // clipboard items to Android's normal paste path so the UI thread never
-  // reads an arbitrary provider just to measure a text paste.
-  private fun ClipData.plainText(): String? =
-    takeIf { itemCount > 0 }
-      ?.getItemAt(0)
-      ?.takeIf { it.uri == null }
-      ?.coerceToText(context)
-      ?.toString()
-      ?.takeIf(String::isNotEmpty)
+  // Match native paste's newlines, including empty items.
+  // URI-backed clips stay native: coerceToText can read a provider synchronously.
+  private fun ClipData.plainText(): String? {
+    var joined: StringBuilder? = null
+    for (index in 0 until itemCount) {
+      val item = getItemAt(index)
+      if (item.uri != null) return null
+      val itemText = item.coerceToText(context) ?: continue
+      if (joined == null) {
+        joined = StringBuilder(itemText)
+      } else {
+        joined.append('\n').append(itemText)
+      }
+    }
+    return joined?.toString()?.takeIf(String::isNotEmpty)
+  }
 
   override fun onKeyShortcut(keyCode: Int, event: KeyEvent): Boolean {
     if (keyCode == KeyEvent.KEYCODE_V && event.isCtrlPressed && event.isShiftPressed) {

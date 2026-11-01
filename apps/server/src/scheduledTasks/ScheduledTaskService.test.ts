@@ -3,13 +3,21 @@ import * as NodeUtil from "node:util";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
-import { ScheduledTaskError } from "@t3tools/contracts";
+import {
+  ProjectId,
+  ProviderInstanceId,
+  ScheduledTaskError,
+  ScheduledTaskId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as Fiber from "effect/Fiber";
+import * as Stream from "effect/Stream";
 import * as Deferred from "effect/Deferred";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -18,6 +26,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
@@ -66,8 +75,6 @@ it.effect("loads only due tasks and skips corrupt due rows without decoding sett
     const credential = "CREDENTIAL-SECRET-DO-NOT-LOG";
     for (const row of [
       { id: "due-now", next: now, enabled: 1, status: "never" },
-      // Ids that cannot decode as ScheduledTaskId — empty, whitespace-only,
-      // and NULL (SQLite's TEXT primary key admits it).
       { id: "", next: now, enabled: 1, status: "never" },
       { id: "   ", next: now, enabled: 1, status: "never" },
       { id: null, next: now, enabled: 1, status: "never" },
@@ -77,8 +84,6 @@ it.effect("loads only due tasks and skips corrupt due rows without decoding sett
         enabled: 1,
         status: "failed",
       },
-      // An unparseable next_run_at sorts before every real timestamp, so it
-      // passes the due filter and would defect the poll if not skipped.
       { id: "due-bad-date", next: "", enabled: 1, status: "never" },
       {
         id: "due-corrupt",
@@ -127,8 +132,6 @@ it.effect("loads only due tasks and skips corrupt due rows without decoding sett
       tasks.map((task) => task.id),
       ["due-earlier", "due-now"],
     );
-    // Corrupt rows sort between the healthy due rows; each is skipped with a
-    // warning instead of stopping the poll.
     assert.equal(warnings.length, 6);
     const annotations = warnings.map(
       (warning) => (warning as ReadonlyArray<unknown>)[1] as Record<string, unknown>,
@@ -137,8 +140,6 @@ it.effect("loads only due tasks and skips corrupt due rows without decoding sett
       annotations.map((annotation) => annotation.taskId),
       ["due-bad-date", null, "", "   ", "due-corrupt", "due-cred"],
     );
-    // The typed diagnostic carries a taskId only when the stored id itself
-    // decodes; the corrupt-id rows are still skipped, not fatal.
     const causes = annotations.map((annotation) => annotation.cause);
     assert.deepEqual(
       causes.map((cause) => (isScheduledTaskError(cause) ? cause.taskId : undefined)),
@@ -163,16 +164,12 @@ it.effect(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const now = "2026-09-09T12:00:00.000Z";
-      // An interval that decodes but overflows the representable DateTime
-      // range must not defect recovery or the poll.
       const hugeInterval = '{"type":"interval","everyMs":9000000000000000}';
       for (const row of [
         { id: "stuck-valid", next: now, status: "running" },
         { id: "stuck-corrupt", next: now, status: "running", scheduleJson: "broken" },
         { id: "stuck-huge", next: now, status: "running", scheduleJson: hugeInterval },
         { id: null, next: now, status: "running" },
-        // A due row with an unparseable next_run_at must not defect the poll
-        // before the healthy due tasks run.
         { id: "due-bad-date", next: "", status: "never" },
         { id: "due-healthy", next: now, status: "never" },
         { id: "due-huge", next: now, status: "never", scheduleJson: hugeInterval },
@@ -182,13 +179,7 @@ it.effect(
         yield* insertRow(sql, { ...row, enabled: 1 }, now);
       }
 
-      // it.effect freezes the clock; pin it just past the seeded due time so
-      // the poll sees the rows as due.
       yield* TestClock.setTime(Date.parse(now) + 1_000);
-      // Runs are dispatched serially, so the fourth dispatch can only happen
-      // after the first three runs' completions were recorded — a drain
-      // receipt for the poll fiber, never a sleep. The fourth launch is held
-      // open so its in-flight state is observed deterministically.
       const dispatched = yield* Ref.make(0);
       const lastDispatched = yield* Deferred.make<void>();
       const releaseLast = yield* Deferred.make<void>();
@@ -211,6 +202,10 @@ it.effect(
                       Effect.andThen(Effect.die(new Error("test launch failure"))),
                     ),
                 }),
+                Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                  namedProjectsRoot: "/projects",
+                  isScratchProject: () => Effect.succeed(false),
+                }),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
                 Layer.mock(SecretRequests.SecretRequests)({}),
                 NodeCrypto.layer,
@@ -218,12 +213,9 @@ it.effect(
               ),
             ),
           );
-          // The poll loop delays before its first pass, so the frozen test
-          // clock must advance once to trigger it.
+          // The poll delays before its first pass; advance the frozen clock once.
           yield* TestClock.adjust("6 seconds");
           yield* Deferred.await(lastDispatched);
-          // The fourth dispatch implies the first three completions landed;
-          // markRunning commits before dispatch, so due-third is 'running'.
           const inflight = yield* sql<{
             last_run_status: string;
           }>`SELECT last_run_status FROM scheduled_tasks WHERE task_id = 'due-third'`;
@@ -242,9 +234,6 @@ it.effect(
        FROM scheduled_tasks ORDER BY task_id`;
       const byId = new Map(rows.map((row) => [row.task_id, row]));
       assert.equal(rows.length, 9);
-      // The decodable stuck run is rescheduled for its next occurrence; the
-      // undecodable and unrepresentable rows are released without a next run.
-      // A NULL id must still match its own row — `= NULL` never does.
       assert.equal(byId.get("stuck-valid")?.last_run_status, "failed");
       assert.isNotNull(byId.get("stuck-valid")?.next_run_at);
       assert.equal(byId.get("stuck-corrupt")?.last_run_status, "failed");
@@ -257,8 +246,6 @@ it.effect(
         assert.equal(row?.last_run_error, "Run was interrupted by a server restart.");
         assert.equal(row?.run_count, 1);
       }
-      // The healthy due tasks were dispatched and recorded failed runs; the
-      // corrupt due row was skipped without running.
       for (const id of ["due-healthy", "due-huge", "due-second"]) {
         const row = byId.get(id);
         assert.equal(row?.last_run_status, "failed");
@@ -277,7 +264,6 @@ it.effect(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const now = "2026-09-09T12:00:00.000Z";
-      // Equal next_run_at means dispatch order follows task_id order.
       for (const row of [
         { id: "run-a", next: now, status: "never" },
         { id: "run-b-victim", next: now, status: "never" },
@@ -299,10 +285,6 @@ it.effect(
                 Layer.mock(ThreadLaunchService.ThreadLaunchService)({
                   launch: () =>
                     Ref.updateAndGet(dispatched, (n) => n + 1).pipe(
-                      // A concurrent writer (the CLI shares the SQLite file)
-                      // corrupts the next row between the poll read and its
-                      // dispatch re-read. Serial dispatch makes the
-                      // interleaving deterministic.
                       Effect.andThen((n) =>
                         n === 1
                           ? sql`UPDATE scheduled_tasks
@@ -317,6 +299,10 @@ it.effect(
                       Effect.andThen(Effect.die(new Error("test launch failure"))),
                     ),
                 }),
+                Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                  namedProjectsRoot: "/projects",
+                  isScratchProject: () => Effect.succeed(false),
+                }),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
                 Layer.mock(SecretRequests.SecretRequests)({}),
                 NodeCrypto.layer,
@@ -325,8 +311,6 @@ it.effect(
             ),
           );
           yield* TestClock.adjust("6 seconds");
-          // The third dispatch (run-d) can only happen after the victim's
-          // re-read was handled — a receipt that the poll fiber survived.
           yield* Deferred.await(lastDispatched);
           assert.equal(yield* Ref.get(dispatched), 3);
           const rows = yield* sql<{
@@ -350,4 +334,145 @@ it.effect(
         }),
       );
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("thread cleanup notifies subscribers and a finishing run cannot recreate the task", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const subscribed = yield* Deferred.make<void>();
+    const running = yield* Deferred.make<void>();
+    const removed = yield* Deferred.make<void>();
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: () =>
+              Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.andThen(Effect.die("test dispatch failure")),
+              ),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const threadId = ThreadId.make("thread:deleted-during-run");
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:deleted-during-run"),
+        title: "Check orchestration",
+        prompt: "Check progress",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: ProjectId.make("project:test"),
+        threadId,
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      yield* service.subscribeList().pipe(
+        Stream.runForEach(({ tasks }) => {
+          const current = tasks.find((candidate) => candidate.id === task.id);
+          if (current === undefined) return Deferred.succeed(removed, undefined);
+          return current.lastRunStatus === "running"
+            ? Deferred.succeed(running, undefined)
+            : Deferred.succeed(subscribed, undefined);
+        }),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(subscribed);
+      const run = yield* service.runNow({ id: task.id }).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* Deferred.await(running);
+      yield* service.deleteForThread(threadId);
+      yield* Deferred.await(removed);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(run);
+      assert.lengthOf((yield* service.list()).tasks, 0);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a bound run follows its thread when promotion moves it mid-send", () =>
+  Effect.gen(function* () {
+    const scratch = ProjectId.make("project:scratch");
+    const promoted = ProjectId.make("project:promoted");
+    const sends = yield* Ref.make<Array<{ projectId: ProjectId; commandId: string }>>([]);
+    // Rebind lands first, then the promotion commits between the shell read and the retry.
+    const shellProjects = yield* Ref.make([scratch, promoted]);
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: (input) =>
+              Ref.updateAndGet(sends, (all) => [
+                ...all,
+                { projectId: input.projectId, commandId: input.commandId },
+              ]).pipe(
+                Effect.flatMap((all) =>
+                  all.length < 3
+                    ? Effect.fail(
+                        new ThreadManagementService.ThreadManagementThreadNotFoundError({
+                          projectId: input.projectId,
+                          threadId: input.threadId,
+                        }),
+                      )
+                    : Effect.succeed({} as never),
+                ),
+              ),
+            getThreadShell: () =>
+              Ref.modify(shellProjects, ([next, ...rest]) => [
+                { projectId: next ?? promoted } as never,
+                rest,
+              ]),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const threadId = ThreadId.make("thread:promoted-during-run");
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:promoted-during-run"),
+        title: "Check in",
+        prompt: "Check progress",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: promoted,
+        threadId,
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+
+      const result = yield* service.runNow({ id: task.id });
+
+      assert.equal(result.threadId, threadId);
+      const attempts = yield* Ref.get(sends);
+      assert.deepEqual(
+        attempts.map((attempt) => attempt.projectId),
+        [promoted, scratch, promoted],
+      );
+      assert.equal(new Set(attempts.map((attempt) => attempt.commandId)).size, 1);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

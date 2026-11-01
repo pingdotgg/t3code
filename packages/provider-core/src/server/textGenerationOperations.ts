@@ -1,11 +1,3 @@
-/**
- * The text generation operations every provider shares. A provider supplies a
- * runner that sends one prompt and decodes the reply; prompts, linked source
- * control context, and output sanitizing live here so providers cannot drift
- * on them.
- *
- * @module textGeneration/TextGenerationOperations
- */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -18,6 +10,7 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildReviewGuidePrompt,
   buildThreadTitlePrompt,
 } from "./textGenerationPrompts.ts";
 import {
@@ -28,29 +21,41 @@ import {
 
 export type Operation = keyof ProviderTextGeneration;
 
-/** One prompt for a provider to run. */
 export interface Request<S extends Schema.Top> {
   readonly operation: Operation;
   readonly cwd: string;
   readonly prompt: string;
   readonly outputSchema: S;
   readonly modelSelection: ModelSelection;
-  /** The user's attachments, already listed in the prompt. Providers that accept images send them. */
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  /** Investigate cwd with read-only tools across turns; fail if the runner cannot guarantee read-only access. */
+  readonly investigate?: { readonly timeoutMs: number } | undefined;
 }
 
-/** Runs one request and decodes the reply as its `outputSchema`. */
+const INVESTIGATION_TIMEOUT_MS = 15 * 60_000;
+
+export const investigationUnsupported = (operation: Operation, provider: string) =>
+  new TextGenerationError({
+    operation,
+    detail: `${provider} cannot investigate a checkout read-only. Choose another review guide model, or source control writer model when none is set.`,
+  });
+
 export type Runner = <S extends Schema.Top>(
   request: Request<S>,
 ) => Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]>;
 
-/** Decodes the JSON object in a text reply, which models often wrap in prose. */
+export const withoutInvestigation =
+  (provider: string, run: Runner): Runner =>
+  (request) =>
+    request.investigate
+      ? Effect.fail(investigationUnsupported(request.operation, provider))
+      : run(request);
+
 export const decodeJsonReply = <S extends Schema.Top>(
   request: Pick<Request<S>, "operation" | "outputSchema">,
   provider: string,
   text: string,
 ) => {
-  // Each request builds its own output schema, so the decoder cannot be hoisted.
   const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(request.outputSchema));
   return decodeOutput(extractJsonObject(text)).pipe(
     Effect.mapError(
@@ -64,7 +69,6 @@ export const decodeJsonReply = <S extends Schema.Top>(
   );
 };
 
-/** The text generation service over `run`. `name` prefixes each operation's span. */
 export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
   const generateCommitMessage: ProviderTextGeneration["generateCommitMessage"] = Effect.fn(
     `${name}.generateCommitMessage`,
@@ -105,6 +109,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
         diffPatch: input.diffPatch,
         policy: input.policy,
         changeRequestTemplate: input.changeRequestTemplate,
+        threadContext: input.threadContext,
       }),
     });
     return { title: sanitizePrTitle(generated.title), body: generated.body.trim() };
@@ -138,8 +143,10 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
       ...buildThreadTitlePrompt({
         message: input.message,
         previousTitle: input.previousTitle,
+        forkSource: input.forkSource,
         linkedContext: input.linkedContext,
         attachments: input.attachments,
+        instructions: input.instructions,
       }),
     });
     return {
@@ -148,10 +155,23 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     };
   });
 
+  const generateReviewGuide: ProviderTextGeneration["generateReviewGuide"] = Effect.fn(
+    `${name}.generateReviewGuide`,
+  )(function* (input) {
+    return yield* run({
+      operation: "generateReviewGuide",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      investigate: { timeoutMs: INVESTIGATION_TIMEOUT_MS },
+      ...buildReviewGuidePrompt(input),
+    });
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateReviewGuide,
   } satisfies ProviderTextGeneration;
 }

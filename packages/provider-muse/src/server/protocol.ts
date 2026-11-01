@@ -13,9 +13,7 @@ const MuseUsage = Schema.Struct({
 });
 
 export const MuseItem = Schema.Struct({
-  /** `workflow`: the launched entry's name. */
   entryId: Schema.optional(Schema.String),
-  /** `workflow`: each child agent's latest attempt, re-sent whole on every change. */
   children: Schema.optional(
     Schema.Array(
       Schema.Struct({
@@ -25,10 +23,13 @@ export const MuseItem = Schema.Struct({
         label: Schema.optional(Schema.String),
         terminal: Schema.optional(Schema.String),
         durationMs: Schema.optional(Schema.Finite),
+        /** Present on a failed attempt, even one whose `terminal` is `completed`. */
+        failureKind: Schema.optional(Schema.String),
         failureReason: Schema.optional(Schema.String),
       }),
     ),
   ),
+  finalSummary: Schema.optional(Schema.String),
   itemId: NonEmptyString,
   kind: NonEmptyString,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -151,9 +152,35 @@ export const MuseTurnCompleted = Schema.Struct({
   turnId: NonEmptyString,
   terminal: NonEmptyString,
   reason: Schema.optional(Schema.String),
-  error: Schema.optional(Schema.Struct({ message: Schema.String })),
+  error: Schema.optional(
+    Schema.Struct({
+      message: Schema.String,
+      quota: Schema.optional(Schema.Struct({ resetsAtMs: Schema.Finite })),
+    }),
+  ),
   usage: Schema.optional(MuseUsage),
 });
+/** The latest instant a JavaScript Date holds; formatting a later one throws. */
+export const LATEST_DATE_MS = 8.64e15;
+const DateMillis = Schema.Finite.check(
+  Schema.isGreaterThan(0),
+  Schema.isLessThanOrEqualTo(LATEST_DATE_MS),
+);
+/** Latest response subscription windows; verbatim Meta percentages may exceed 100. */
+export const MuseSubscriptionUsage = Schema.Struct({
+  observedAtMs: DateMillis,
+  tier: Schema.String,
+  window: Schema.Struct({
+    usedPercent: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    windowDurationMins: Schema.Finite.check(Schema.isGreaterThan(0)),
+    resetsAtMs: DateMillis,
+  }),
+  weekly: Schema.Struct({
+    usedPercent: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    resetsAtMs: DateMillis,
+  }),
+});
+export type MuseSubscriptionUsage = typeof MuseSubscriptionUsage.Type;
 export const MuseTurnRetryScheduled = Schema.Struct({
   turnId: NonEmptyString,
   nextAttempt: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -173,7 +200,6 @@ export const MuseDelta = Schema.Struct({
   field: Schema.optional(Schema.String),
 });
 
-/** The T3 decision for one native Muse choice, or none when T3 has no equivalent. */
 export function museApprovalDecision(
   choice: Pick<MuseApproval["availableChoices"][number], "decision" | "scope">,
 ): ProviderApprovalDecision | undefined {
@@ -198,10 +224,7 @@ export function museApprovalDecision(
   }
 }
 
-/**
- * Maps each canonical decision to one native choice. Muse shell approvals offer
- * no `denied` choice, only `abort` ("Reject"), so `decline` falls back to it.
- */
+/** Shell approvals offer abort instead of denied; decline falls back to abort. */
 export function museApprovalChoices(approval: Pick<MuseApproval, "availableChoices">) {
   const choices = new Map<ProviderApprovalDecision, MuseApproval["availableChoices"][number]>();
   const rank = (choice: MuseApproval["availableChoices"][number]) =>
@@ -218,7 +241,6 @@ export function museApprovalChoices(approval: Pick<MuseApproval, "availableChoic
   return choices;
 }
 
-/** The approval buttons to show: one per native choice, preferring `decline` over `cancel`. */
 export function museApprovalOptions(approval: Pick<MuseApproval, "availableChoices">) {
   const choices = museApprovalChoices(approval);
   const declineChoiceId = choices.get("decline")?.choiceId;

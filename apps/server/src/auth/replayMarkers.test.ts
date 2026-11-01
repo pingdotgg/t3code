@@ -12,8 +12,6 @@ import * as ServerConfig from "../config.ts";
 import { pruneExpiredReplayMarkers, REPLAY_MARKER_MAX_AGE } from "./replayMarkers.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 
-// Every secret name the server stores today. The last three stand for names
-// built from an id at runtime.
 const REAL_SECRET_NAMES = [
   "server-signing-key",
   "asset-access-signing-key",

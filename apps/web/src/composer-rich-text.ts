@@ -1,15 +1,3 @@
-/**
- * Inline markdown styling for the rich text composer.
- *
- * The composer's stored prompt stays plain markdown (`**bold**`), while the
- * Tiptap surface renders styled text. These helpers translate between the two:
- * parsing markdown into marked spans for the document, serializing marked
- * spans back to markdown in the document serializer.
- *
- * Deliberately small: bold, italic, strikethrough, and inline code only.
- * Unmatched markers stay literal text so nothing the user typed is ever lost.
- */
-
 export type RichTextMark = "bold" | "italic" | "strike" | "code";
 
 interface RichTextSpan {
@@ -38,7 +26,6 @@ function pushSpan(spans: RichTextSpan[], text: string, marks: RichTextMark[]): v
   }
 }
 
-/** Parse the supported inline styles, leaving unmatched and escaped markers literal. */
 export function parseInlineMarkdown(text: string): RichTextSpan[] {
   const root: RichTextSpan[] = [];
   const stack: { delimiter: string; mark: RichTextMark; spans: RichTextSpan[] }[] = [];
@@ -52,7 +39,6 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
       continue;
     }
     if (char === "`") {
-      // Multi-backtick code stays literal; a single-backtick span owns its contents.
       const run = text.slice(index).match(/^`+/)![0];
       const close = text.indexOf(run, index + run.length);
       if (
@@ -82,8 +68,6 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
     const canOpen = after !== "" && !/\s/.test(after) && (char !== "_" || !/\w/.test(before));
     while (index < end) {
       const top = stack.at(-1);
-      // Inside italic, a double marker opens bold before closing the single
-      // marker. Once bold is active, closing runs unwind both styles.
       const opensNestedBold =
         top?.mark === "italic" &&
         end - index === 2 &&
@@ -103,8 +87,7 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
       } else if (canOpen && (char !== "~" || end - index >= 2)) {
         const length = char === "~" || end - index >= 2 ? 2 : 1;
         const mark = char === "~" ? "strike" : length === 2 ? "bold" : "italic";
-        // A mark cannot nest inside itself, including alternate delimiters.
-        // This bounds the stack to the supported styles for arbitrary input.
+        // Prevent self-nesting, including alternate delimiters, to bound the stack by supported styles.
         if (stack.some((frame) => frame.mark === mark)) {
           pushSpan(current(), text.slice(index, end), []);
           index = end;

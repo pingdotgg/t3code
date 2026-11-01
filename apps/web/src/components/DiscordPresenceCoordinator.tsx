@@ -29,7 +29,7 @@ import { deriveProviderInstanceEntries } from "../providerInstances";
 import { useServerConfigs } from "../state/entities";
 import { useEnvironmentIds } from "../state/environments";
 import { environmentShell } from "../state/shell";
-import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
+import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveSidebarThreadStatus } from "./Sidebar.logic";
 
 interface EnvironmentPresenceCounts {
@@ -54,7 +54,7 @@ function resolveModelLabel(
     (candidate) => candidate.instanceId === thread.providerInstanceId,
   );
   const model = entry?.models.find((candidate) => candidate.slug === thread.modelSelection.model);
-  if (model !== undefined) return getTriggerDisplayModelLabel(model);
+  if (model !== undefined) return getTriggerDisplayModelName(model, entry?.driverKind);
   return thread.modelSelection.model.length > 0 ? thread.modelSelection.model : null;
 }
 

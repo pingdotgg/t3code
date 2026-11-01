@@ -4,6 +4,11 @@
 
 This document covers the unified release workflow for stable and nightly desktop releases.
 
+Beta is the product label, not a release channel or version suffix. Release channels
+remain stable and nightly. To ship 0.1.0 Beta, use `channel=stable` and
+`version=0.1.0`. Removing the Beta label later is a branding change independent of
+the version.
+
 ## What the workflow does
 
 - Workflow: `.github/workflows/release.yml`
@@ -26,27 +31,29 @@ This document covers the unified release workflow for stable and nightly desktop
 - Runs lint, typecheck, and tests alongside artifact builds. Publishing waits for every check.
 - Reads the shared production T3 Connect relay URL and Clerk client configuration before packaging clients.
 - Builds the platform-independent JS (server bundle, web client, Electron main) once in the `build_bundle` job and hands it to every platform job as the `js-bundle` artifact; the platform jobs only package it, so no runner rebuilds it.
-- Builds six desktop artifacts in parallel for both channels, each as its own job (`desktop_<platform>_<arch>`, one call of `release-desktop.yml`) on hardware of its own architecture, gated only on the bundle. The Windows jobs embed the same-arch Linux CLI archive as the WSL runtime and wait for that artifact partway through, not for the whole Linux job:
+- Builds six desktop artifacts in parallel for both channels, each as its own job (`desktop_<platform>_<arch>`, one call of `release-desktop.yml`), gated only on the bundle. macOS and Linux targets build on hardware of their own architecture. Both Windows targets build and sign (with jsign) on a Linux runner, which packages faster than Windows runners, and a Windows job of the target's architecture (`windows-2025` or `windows-11-arm`, the `verify_runner`) runs the packaged natives and the CLI archive. The Windows jobs embed the same-arch Linux CLI archive as the WSL runtime and wait for that artifact partway through, not for the whole Linux job:
   - macOS `arm64` DMG
   - macOS `x64` DMG
   - Linux `x64` and `arm64` AppImage and `.deb`, from one electron-builder run. The `.deb` updates in the app through electron-updater, which installs it with `dpkg`.
   - Windows `x64` and `arm64` NSIS installer
+- Opens the packaged Linux x64 AppImage (under Xvfb) and macOS arm64 DMG against a seeded database and opens a thread (`scripts/smoke-desktop-app.ts`). A build whose backend or bundle cannot start fails here, so nothing is published. The database in `scripts/fixtures/desktop-launch` is an old snapshot on purpose: the packaged server must migrate it forward, as it does for upgrading users. Do not regenerate it on schema changes.
 - Publishes one GitHub Release with all produced files.
   - Stable tags with a suffix after `X.Y.Z` (for example `1.2.3-alpha.1`) are published as GitHub prereleases.
   - Only plain stable `X.Y.Z` releases are marked as the repository's latest release.
   - Nightly runs are always GitHub prereleases and never marked latest.
   - Automatically generated release notes are pinned to the previous tag in the same channel, so stable compares to the previous stable tag and nightly compares to the previous nightly tag.
+  - The release job's **Write release notes** step (`scripts/generate-release-notes.ts`) builds the body: a computed header line, a short summary from `gpt-6.1-terra`, and GitHub's generated list folded under `<details>`. It needs the `OPENAI_API_KEY` secret. The summary leaves out commits whose scopes are all mobile; the header counts every commit. The desktop update popover, on every channel, shows the highlights paragraph and the header counts as a short note per release, with the offered release's age from the update feed's `releaseDate`. The nightly Discord post shows the part above `<details>`. If the step fails or there is nothing to summarize, it writes no file and the release uses GitHub's generated notes as before.
 - Includes Electron auto-update metadata (for example `latest*.yml`, `nightly*.yml`, and `*.blockmap`) in release assets.
-- Builds a self-contained CLI archive per platform (`t3-<version>-<platform>-<arch>.tar.gz`, `.zip` on Windows) in the same job as that target's desktop artifact and attaches them to the GitHub Release with a `SHA256SUMS` file, on every channel, for five targets: macOS arm64, Linux x64 and arm64, Windows x64 and arm64. Every archive is built, signed, and smoke-tested on hardware of its own architecture. There is no macOS x64 archive: Node single-executables are unsupported on x64 macOS (the SEA docs list macOS as arm64 only) and the binary segfaults on start; the x64 desktop app is Electron and unaffected.
-  - The archive holds the server as a Node single-executable (`scripts/build-cli-archive.ts`), so unpacking it needs neither Node, npm, nor a compiler. It is the only form in which T3 Code manages a runtime: the desktop's SSH environments, the boot service, `t3 update`, and the install scripts all download and verify this archive against `SHA256SUMS`. The npm packages exist for people who run `npx t3` or `npm install -g t3` themselves and carry the same archive contents; nothing in the product installs from npm. The `curl | sh` installers are `scripts/install.sh` and `scripts/install.ps1`; the marketing site copies them into its `public/` at build time (`apps/marketing/scripts/stage-install-scripts.mjs`) and serves them at `t3.codes/install.sh` and `/install.ps1`.
-  - The executable is built with a Node that supports `--build-sea` (`VP_NODE_VERSION=26.8.2`, kept in step with `SEA_NODE_VERSION` in `apps/server/vite.config.ts`), while the repo stays on `engines.node`.
+- Builds a self-contained CLI archive per platform (`t3-<version>-<platform>-<arch>.tar.gz`, `.zip` on Windows) in the same job as that target's desktop artifact and attaches them to the GitHub Release with a `SHA256SUMS` file, on every channel, for five targets: macOS arm64, Linux x64 and arm64, Windows x64 and arm64. Every archive is smoke-tested on hardware of its own architecture, and every one but the Windows archives is also built and signed there. There is no macOS x64 archive: Node single-executables are unsupported on x64 macOS (the SEA docs list macOS as arm64 only) and the binary segfaults on start; the x64 desktop app is Electron and unaffected.
+  - The archive holds the server as a Node single-executable (`scripts/build-cli-archive.ts`), so unpacking it needs neither Node, npm, nor a compiler. It is the only form in which T3 Code manages a runtime: the desktop's SSH environments, the boot service, `t3 update`, and the install scripts all download and verify this archive against `SHA256SUMS`. The `t3` npm package exists for people who run `npx t3` or `npm install -g t3` themselves, and it downloads this same archive too; nothing in the product installs from npm. The `curl | sh` installers are `scripts/install.sh` and `scripts/install.ps1`; the marketing site copies them into its `public/` at build time (`apps/marketing/scripts/stage-install-scripts.mjs`) and serves them at `t3.codes/install.sh` and `/install.ps1`.
+  - The root `package.json` pins `engines.node` to the exact Node version used by development, CI and standalone executables. Keep it exact: cross-target builds download that version, and native executable builds reject a different host Node version. TEMPORARY: Linux arm64 executables build only on a Linux arm64 host and are injected with postject, because Node's `--build-sea` output cannot load on 16 or 64 KiB page kernels. Revert when [nodejs/node#67048](https://github.com/nodejs/node/issues/67048) is fixed. Runtime changes need a new T3 release version because installed runtimes are cached by that version.
   - macOS archives are signed with the Developer ID certificate and notarized when the Apple secrets are present (ad hoc otherwise, which still runs from `curl`/`tar` installs). Windows executables use the same Azure Trusted Signing setup as the installer. Every native addon in the macOS archive is signed too, since the hardened runtime refuses unsigned libraries.
-  - Each archive is extracted and executed on its build runner (`scripts/smoke-cli-archive.ts`) before it is uploaded.
-- Publishes the CLI to npm with OIDC trusted publishing from the same workflow file, as the same bytes the GitHub Release carries: `scripts/build-npm-platform-packages.ts` unpacks the five CLI archives into `@t3code/t3-<platform>-<arch>` packages (each with `os`/`cpu` set so npm installs only the matching one) and generates the `t3` launcher, whose `bin/t3.js` lists them as `optionalDependencies` and execs the installed executable. `npx t3` therefore needs Node only to run the launcher, never to run the server. `node apps/server/scripts/cli.ts publish` publishes the platform packages first and the launcher last, after a `--dry-run` pass over all of them so an auth or scope error fails before anything is live.
+  - Each archive is extracted and executed (`scripts/smoke-cli-archive.ts`) on its build runner, or on the `verify_runner` for Windows.
+- After the GitHub Release is published, publishes the `t3` npm package with OIDC trusted publishing from the same workflow file. It is only a launcher (`scripts/npm-launcher/t3.mjs`): on first run it downloads its exact version's CLI archive from the GitHub Release, verifies it against `SHA256SUMS`, and unpacks it into `<T3 home>/runtime/versions/<version>`, the layout the install scripts and `t3 update` share. The executables are not on npm. They used to be, as `@t3code/t3-<platform>-<arch>` optional dependencies, but npm's publish-time scanning held those 80-250 MB packages back for up to an hour after the launcher was live, and every install in that window got a launcher with no executable. Those packages stay on npm at their old versions and get no new ones. Because the launcher reads from the release, `publish_cli` runs after `release`, never before.
   - stable releases publish npm dist-tag `latest`
   - nightly releases publish npm dist-tag `nightly`
   - preview releases publish npm dist-tag `preview`, which nothing resolves unless asked for by name
-  - one-time setup: the `@t3code` npm scope (org) must exist, and `t3` and each `@t3code/t3-<platform>-<arch>` package needs a trusted publisher registered for this workflow file (see below).
+  - one-time setup: package `t3` needs a trusted publisher registered for this workflow file (see below).
 - Builds the hosted web app on Vercel while the desktop jobs run, and makes it live only after a release is published:
   - stable releases are aliased to the `latest` hosted app channel
   - nightly releases are aliased to the `nightly` hosted app channel
@@ -145,11 +152,14 @@ Required `production` environment secrets:
 - `CLERK_SECRET_KEY`
 - `APNS_PRIVATE_KEY`
 
+Optional `production` environment secrets:
+
+- `T3CHAT_LINK_SECRET` for the T3 Chat account link. It must match
+  `T3CODE_LINK_SECRET` on T3 Chat.
+
 After changing a variable or secret, run the **Deploy T3 Connect relay** workflow manually from
 `main` with **force** unchecked. Alchemy compares the values the Worker reads and redeploys it when
-one changed. Check **force** only to redeploy resources with no detected change: a forced run also
-replaces the Postgres runtime role and its password
-([alchemy-run/alchemy#1832](https://github.com/alchemy-run/alchemy/issues/1832)).
+one changed. Check **force** only to redeploy resources with no detected change.
 
 The account-scoped repository credentials are consumed by Alchemy while provisioning relay stages; they
 are not bound into the relay Worker. The production deployment uses an Axiom personal access token,
@@ -158,11 +168,17 @@ database. Local personal stages provision isolated branches from it and are neve
 Production adopts the configured relay API and tunnel DNS zones as retained Cloudflare resources.
 Personal stages reference the production-owned zones.
 
-Developers deploy personal stages locally rather than through pull-request automation:
+Developers deploy personal stages locally:
 
 ```sh
 vp run --filter t3code-relay deploy -- --stage "$USER" --env-file .env.local
 ```
+
+A same-repository PR labeled `relay:preview` deploys stage `pr-<number>` through
+`.github/workflows/relay-preview.yml`, after approval in the `relay-preview` environment. Removing the
+label or closing the PR runs `.github/workflows/relay-preview-cleanup.yml`, which destroys the stage
+and sweeps its managed tunnels and DNS records. A nightly run destroys stages of closed labeled PRs
+whose teardown failed. Fork PRs get no preview.
 
 ### Managed tunnel cleanup rollout
 
@@ -294,6 +310,48 @@ and `VERCEL_ORG_ID` secrets. It also respects the optional `VERCEL_TEAM_SLUG`
 variable. The Vercel project's root directory must be `apps/marketing`.
 Git deployments remain disabled in `apps/marketing/vercel.ts`.
 
+## Mobile TestFlight and store releases
+
+Merges to main publish compatible OTAs and build iOS prereleases with the `testflight`
+profile at version `3.0.0`. Build numbers increment automatically. The committed app
+version remains the App Store release version; Android keeps using that version.
+
+To release iOS, dispatch **Mobile EAS Production** with `mode=build`,
+`profile=production`, `platform=ios`, and the intended version, such as `2.0.1`.
+The workflow commits and pushes the version before building and uploading it.
+Select that build in App Store Connect for App Store review.
+
+To force a TestFlight rebuild, select `profile=testflight`, `platform=ios`, and
+leave the version blank. Submit the first `3.0.0` build for external beta review
+in App Store Connect. Later builds may still require review; uploads alone do
+not guarantee external approval. TestFlight builds expire after 90 days.
+
+Both release and TestFlight binaries receive compatible production-channel OTAs,
+separated by their major-version fingerprints. Manual `mode=update` uses the
+selected profile's version. Before releasing `3.0.0` to the App Store, advance
+`build.testflight.env.T3CODE_MOBILE_VERSION` in `apps/mobile/eas.json` to the next
+unreleased major and get its first beta build approved.
+
+## Android APK mirror
+
+`.github/workflows/mobile-android-apk.yml` checks the Google Play Alpha closed-testing
+track hourly. Each new beta gets one `android-beta-<build-number>` prerelease
+containing its APK. Unchanged checks publish nothing, and interrupted draft
+uploads resume on the next check.
+
+Normal Nightly releases include the newest processed internal-testing APK available
+when the release publishes. Internal builds do not create separate Android releases.
+If Play credentials or a processed APK are unavailable, the Nightly can still publish
+without an APK. Android submissions continue to go to internal testing; promote a
+build to Alpha to publish it as a beta.
+
+The APK is the universal APK Play generates and signs from the
+uploaded bundle, so no signing key lives in GitHub. The job skips itself until
+`GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` holds a Play service account key with the "Release to
+production, exclude devices, and use Play App Signing" permission, which downloading generated
+APKs requires. The job reads tracks without opening a Play edit, so it can share the service
+account EAS Submit uses.
+
 ## Hosted web app release deployment
 
 The hosted app is intentionally not deployed by Vercel's Git integration. The
@@ -364,24 +422,34 @@ One-time Vercel dashboard setup:
   - `make_latest` is always `false`
 - Uses the next stable patch version as the nightly base. For example, `0.0.17` produces nightlies on `0.0.18-nightly.*`.
 - Publishes Electron auto-update metadata to the dedicated `nightly` updater channel, so desktop users can opt into that track independently from stable.
-- Publishes the CLI npm packages (`t3` and `@t3code/t3-<platform>-<arch>`) to the `nightly` npm dist-tag using the same nightly version.
+- Publishes the `t3` npm launcher to the `nightly` npm dist-tag using the same nightly version.
 - Does not commit version bumps back to `main`.
 
 ## Server self-update release invariant
 
-Connected servers update to the client's exact version, not to an npm dist-tag. Every released
-desktop or hosted client version must therefore have a matching `t3@<version>` package available on
-npm before users can receive that client.
+Connected servers update to the client's exact version, not to an npm dist-tag. Servers that update
+themselves download that version's CLI archive from the GitHub Release; servers run through npm are
+handed a `t3@<version>` command to run. Every released client version must therefore have its
+release archives, and then its npm launcher, available before users can receive that client.
 
 The workflow enforces this ordering:
 
-1. `publish_cli` publishes the exact release version to npm, on every channel.
-2. `release` depends on `publish_cli` before exposing desktop artifacts in GitHub Releases.
-3. `deploy_web` depends on `release` before moving the hosted channel to the new client.
+1. `release` publishes the GitHub Release with the CLI archives and `SHA256SUMS`. Every channel
+   uploads to a draft and publishes only after all assets are attached, so a new version in the
+   desktop update feed already has its archives. **Update everything** relies on this to update
+   background-service hosts before npm has the version. Rerunning `release` after publication
+   replaces assets in a public release, so service updates can fail until the upload finishes.
+2. `publish_cli` publishes the `t3@<version>` launcher, which downloads from that release, on every
+   channel.
+3. `deploy_web` depends on both before moving the hosted channel to the new client.
    `build_web` builds that client earlier with `vercel deploy --prod --skip-domain`, which
    leaves the custom domains alone but moves the project's own `*.vercel.app` production
    hostname. That hostname is behind Vercel SSO, so users only get the client through the
    custom domains.
+
+Desktop auto-update reads the GitHub Release directly, so a desktop client can see the new version
+a few minutes before `t3@<version>` is on npm. Only the copied manual command for npm-run servers
+depends on npm, and it works once `publish_cli` finishes.
 
 Preserve these dependencies when changing the release graph. Publishing a client first would leave
 the **Update server** action targeting a package version that does not exist yet.
@@ -464,32 +532,21 @@ blockmaps, with a 60 MB maximum for a representative sidecar-to-sidecar update.
 
 ## 0) npm OIDC trusted publishing setup (CLI)
 
-The workflow runs `node scripts/build-npm-platform-packages.ts` on the downloaded CLI archives, then
+After the GitHub Release is published, the workflow runs `node scripts/build-npm-launcher.ts`, then
 `node apps/server/scripts/cli.ts publish --packages-dir npm-packages`, which runs `npm publish` on
-each `@t3code/t3-<platform>-<arch>.tgz` and finally on `t3.tgz`, the launcher. The script publishes
-tarballs it built itself rather than directories: `npm publish <dir>` strips `node_modules/` from the
-tarball no matter what `files` says, and the executable loads its native addons from there. Seven
-packages are published per release: `t3`, `@t3code/t3-darwin-arm64`, `@t3code/t3-darwin-x64`,
-`@t3code/t3-linux-arm64`, `@t3code/t3-linux-x64`, `@t3code/t3-win32-arm64`,
-`@t3code/t3-win32-x64`.
+`t3.tgz`. That is the only package published per release.
 
 Checklist:
 
-1. Confirm the npm org owns package `t3` and the `@t3code` scope exists on npm (create the org if
-   it does not).
-2. For `t3` and each `@t3code/t3-<platform>-<arch>` package, configure a Trusted Publisher in the
-   npm package settings (a package that has never been published needs a first publish or a
-   placeholder before the setting exists; the `--dry-run` step in `publish_cli` reports which
-   names are still rejected):
+1. Confirm the npm org owns package `t3`.
+2. For `t3`, configure a Trusted Publisher in the npm package settings:
    - Provider: GitHub Actions
    - Repository: this repo
    - Workflow file: `.github/workflows/release.yml`
    - Environment (if used): match your npm trusted publishing config
-3. Ensure npm account and org policies allow trusted publishing for every package.
-4. Create release tag `vX.Y.Z` and push; workflow will:
-   - build and smoke-test the five CLI archives
-   - build the npm packages from those archives
-   - publish them with npm dist-tag `latest`
+3. Ensure npm account and org policies allow trusted publishing for the package.
+4. Create release tag `vX.Y.Z` and push; the workflow publishes the GitHub Release and then the
+   launcher with npm dist-tag `latest`.
 5. Nightly runs publish with npm dist-tag `nightly`; preview runs with `preview`.
 
 ## 1) Release validation and unsigned builds
