@@ -3,7 +3,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import type * as Scope from "effect/Scope";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
@@ -172,6 +174,84 @@ describe("Cursor skills", () => {
         expect(yield* probeCursorSkills(workspace, { HOME: userHome })).toEqual(expected);
       }),
     ));
+
+  it("finds sibling skills when one skill ships more files than the scan budget", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDirectory = (prefix: string) =>
+          fileSystem
+            .makeTempDirectoryScoped({ directory: NodeOS.tmpdir(), prefix })
+            .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+        const userHome = yield* tempDirectory("cursor-skills-home-");
+        const workspace = yield* tempDirectory("cursor-skills-workspace-");
+        const root = path.join(workspace, ".cursor", "skills");
+        const artifacts = path.join(root, "a-large", "artifacts");
+        yield* fileSystem.makeDirectory(artifacts, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(root, "a-large", "SKILL.md"), "---\n---\n");
+        yield* fileSystem.makeDirectory(path.join(root, "b-small"), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(root, "b-small", "SKILL.md"), "---\n---\n");
+        // More ordinary files than the whole-scan entry budget of 10,000.
+        yield* Effect.forEach(
+          Array.from({ length: 11_000 }, (_, index) => path.join(artifacts, `file-${index}.txt`)),
+          (file) => fileSystem.writeFileString(file, ""),
+          { concurrency: 64, discard: true },
+        );
+
+        const expected = [
+          {
+            name: "a-large",
+            path: path.join(root, "a-large", "SKILL.md"),
+            scope: "project",
+            enabled: true,
+          },
+          {
+            name: "b-small",
+            path: path.join(root, "b-small", "SKILL.md"),
+            scope: "project",
+            enabled: true,
+          },
+        ];
+        expect(yield* discoverCursorSkills(workspace, { HOME: userHome })).toEqual(expected);
+        expect(yield* probeCursorSkills(workspace, { HOME: userHome })).toEqual(expected);
+      }),
+    ));
+
+  it("stops a scan of a huge file tree instead of statting every file", async () => {
+    const root = "/workspace/.cursor/skills";
+    let stats = 0;
+    const fileSystem = FileSystem.layerNoop({
+      realPath: (path) => Effect.succeed(path),
+      readDirectory: (path) =>
+        path === root
+          ? Effect.succeed(Array.from({ length: 200_000 }, (_, index) => `file-${index}`))
+          : Effect.succeed([]),
+      stat: (path) => {
+        stats += 1;
+        if (path === root) return Effect.succeed({ type: "Directory" } as FileSystem.File.Info);
+        if (path.startsWith(`${root}/file-`)) {
+          return Effect.succeed({ type: "File" } as FileSystem.File.Info);
+        }
+        return Effect.fail(
+          PlatformError.systemError({ _tag: "NotFound", module: "FileSystem", method: "stat" }),
+        );
+      },
+    });
+
+    const result = await probeCursorSkills("/workspace", { HOME: "/home" }).pipe(
+      Effect.result,
+      Effect.provide(Layer.mergeAll(fileSystem, Path.layer)),
+      Effect.runPromise,
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { reason: "scan-budget-exhausted" },
+    });
+    expect(stats).toBeGreaterThanOrEqual(100_000);
+    expect(stats).toBeLessThanOrEqual(100_000);
+  });
 
   it.skipIf(!symlinksSupported)(
     "treats a symlinked skill outside the root as a package boundary",
