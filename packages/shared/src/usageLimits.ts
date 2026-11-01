@@ -56,6 +56,13 @@ export function exhaustedUsageWindow(
       return exhausted.find(
         (window) => !window.id.startsWith("go_") || model.startsWith("opencode-go/"),
       );
+    case "claudeAgent": {
+      const slug = model.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+      return exhausted.find((window) => {
+        const scope = window.id.match(/^seven_day_(.+)$/)?.[1];
+        return scope === undefined || slug.includes(scope);
+      });
+    }
     default:
       return exhausted[0];
   }
