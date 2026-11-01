@@ -12,13 +12,13 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
-import { CheckIcon, LockIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
+import { CheckIcon, EyeIcon, EyeOffIcon, LockIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
 import { useId, useRef, useState, type FormEvent } from "react";
 
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { WorkLogRow } from "./WorkLog";
 
 export function SecretRequestCard(props: {
@@ -65,6 +65,7 @@ function PendingSecretRequestForm(props: {
     reportDefect: false,
   });
   const [secret, setSecret] = useState("");
+  const [revealed, setRevealed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Enter and click can both submit before a render.
@@ -84,6 +85,7 @@ function PendingSecretRequestForm(props: {
     });
     if (result._tag === "Success") {
       setSecret("");
+      setRevealed(false);
       return;
     }
     if (!isAtomCommandInterrupted(result)) {
@@ -122,25 +124,39 @@ function PendingSecretRequestForm(props: {
       </div>
       <div className="flex min-w-0 items-center gap-2">
         <div className="min-w-0 flex-1">
-          <Input
-            id={inputId}
-            // Password fields prompt to save credentials; this secret is not a login.
-            type="text"
-            className="[-webkit-text-security:disc]"
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            data-1p-ignore
-            data-lpignore="true"
-            data-bwignore
-            placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
-            value={secret}
-            disabled={submitting}
-            aria-invalid={error !== null || undefined}
-            aria-describedby={error !== null ? `${privacyId} ${errorId}` : privacyId}
-            onChange={(event) => setSecret(event.currentTarget.value)}
-          />
+          <InputGroup>
+            <InputGroupInput
+              id={inputId}
+              type={revealed ? "text" : "password"}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              data-1p-ignore
+              data-lpignore="true"
+              data-bwignore
+              placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
+              value={secret}
+              disabled={submitting}
+              aria-invalid={error !== null || undefined}
+              aria-describedby={error !== null ? `${privacyId} ${errorId}` : privacyId}
+              onChange={(event) => setSecret(event.currentTarget.value)}
+            />
+            <InputGroupAddon align="inline-end">
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost-muted"
+                aria-label={revealed ? "Hide secret" : "Show secret"}
+                aria-controls={inputId}
+                aria-pressed={revealed}
+                disabled={submitting}
+                onClick={() => setRevealed((current) => !current)}
+              >
+                {revealed ? <EyeOffIcon /> : <EyeIcon />}
+              </Button>
+            </InputGroupAddon>
+          </InputGroup>
         </div>
         <Button type="submit" disabled={submitting || secret.trim().length === 0}>
           Save securely
