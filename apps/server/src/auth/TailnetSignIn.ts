@@ -223,13 +223,18 @@ export const make = Effect.gen(function* () {
   const grantSignIns = yield* Ref.make(0);
   // The last scan that settled the question: it read every peer, or found a grant. A scan
   // that could not reuses it for a while, so one failed lookup does not lock the owner out.
-  const lastCleanScan = yield* Ref.make<{ readonly granted: boolean; readonly at: number } | null>(
-    null,
-  );
-  const scanPolicy = yield* Effect.cachedWithTTL(
+  // Each scan names the Tailscale account (this machine's node) it read, since switching
+  // accounts switches tailnets and policies.
+  const lastCleanScan = yield* Ref.make<{
+    readonly account: string | null;
+    readonly granted: boolean;
+    readonly at: number;
+  } | null>(null);
+  const [scanPolicy, rescanPolicy] = yield* Effect.cachedInvalidateWithTTL(
     Effect.gen(function* () {
       const signInsBefore = yield* Ref.get(grantSignIns);
       const status = yield* host.status;
+      const account = status.selfNodeId;
       const { granted, unreadable } = yield* policyGrantedPeers(status, (address) =>
         host.whois(address, { fromServer: true }),
       );
@@ -238,16 +243,20 @@ export const make = Effect.gen(function* () {
       const ttlOf = (found: boolean) => (found ? POLICY_SCAN_TTL : NO_GRANT_SCAN_TTL);
       if (granted.length > 0 || unreadable.length === 0) {
         const found = granted.length > 0;
-        yield* Ref.set(lastCleanScan, { granted: found, at: now });
+        yield* Ref.set(lastCleanScan, { account, granted: found, at: now });
         if (!found)
           yield* Ref.update(grantSignIns, (count) => (count === signInsBefore ? 0 : count));
-        return { granted: found, ttl: ttlOf(found) };
+        return { account, granted: found, ttl: ttlOf(found) };
       }
       const last = yield* Ref.get(lastCleanScan);
-      const left = last === null ? 0 : Duration.toMillis(POLICY_SCAN_TTL) - (now - last.at);
+      const left =
+        last === null || last.account !== account
+          ? 0
+          : Duration.toMillis(POLICY_SCAN_TTL) - (now - last.at);
       if (last === null || left <= 0) return yield* Effect.fail(unreadable);
       // Reused no longer than the full scan it came from is good for.
       return {
+        account,
         granted: last.granted,
         ttl: Duration.min(ttlOf(last.granted), Duration.millis(left)),
       };
@@ -258,12 +267,20 @@ export const make = Effect.gen(function* () {
    * Why the owner rule is off, or null while it applies. It is off once the policy grants
    * T3 Code here or the operator says so, and while the policy cannot be read.
    */
-  const ownerRuleOff = Effect.gen(function* () {
+  const ownerRuleOff = Effect.fn("TailnetSignIn.ownerRuleOff")(function* (account: string | null) {
     if (yield* fs.exists(requireGrantPath).pipe(Effect.orElseSucceed(() => true))) {
       return "no_grant" as const;
     }
-    // Scanned first, so a scan that finds no grants can clear the sign-in count.
-    const scan = yield* scanPolicy.pipe(Effect.option);
+    // Scanned first, so a scan that finds no grants can clear the sign-in count. A scan of
+    // another account says nothing here, so it is redone; one that still differs is unknown.
+    const scan = yield* scanPolicy.pipe(
+      Effect.filterOrElse(
+        (cached) => cached.account === account,
+        () => rescanPolicy.pipe(Effect.andThen(scanPolicy)),
+      ),
+      Effect.option,
+      Effect.map(Option.filter((scanned) => scanned.account === account)),
+    );
     if (Option.isSome(scan) && scan.value.granted) return "no_grant" as const;
     if ((yield* Ref.get(grantSignIns)) > 0) return "no_grant" as const;
     return Option.isNone(scan) ? ("policy_unknown" as const) : null;
@@ -282,7 +299,7 @@ export const make = Effect.gen(function* () {
         ? refused("grant_unusable")
         : ({ _tag: "Allowed", scopes: granted, via: "grant" } satisfies AccessDecision);
     }
-    const off = yield* ownerRuleOff;
+    const off = yield* ownerRuleOff(status.selfNodeId);
     if (off !== null) return refused(off);
     const ownerUserId = TailscaleHost.tailnetOwnerUserId(status, config.tailscaleOwnerUserId);
     if (ownerUserId === null) return refused("owner_unknown");

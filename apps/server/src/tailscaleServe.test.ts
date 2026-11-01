@@ -354,6 +354,35 @@ describe("TailscaleServe", () => {
     }),
   );
 
+  it.effect("records the account a retry claims on, so shutdown removes that mapping", () =>
+    Effect.gen(function* () {
+      const { state, scope, settled, files } = yield* startTailscaleServe({
+        refusedServeAttempts: 1,
+      });
+      yield* Deferred.await(settled);
+      state.account = "work";
+      yield* TestClock.adjust("1 second");
+      assert.equal(state.root, LOCAL_TARGET);
+
+      yield* Scope.close(scope, Exit.void);
+
+      assert.equal(state.releases, 1);
+      // The refused try on the first account may have left nothing; its record waits there.
+      assert.equal(files.get(CLAIM_PATH), record(18638, SERVE_PORT));
+    }),
+  );
+
+  it.effect("waits on an unreadable record instead of replacing it", () =>
+    Effect.gen(function* () {
+      const { state, settled, files } = yield* startTailscaleServe({ recorded: "{" });
+      yield* Deferred.await(settled);
+      yield* TestClock.adjust("1 minute");
+
+      assert.equal(state.serveAttempts, 0);
+      assert.equal(files.get(CLAIM_PATH), "{");
+    }),
+  );
+
   it.effect("keeps its record on shutdown after Tailscale switched to another account", () =>
     Effect.gen(function* () {
       const { state, scope, settled, files } = yield* startTailscaleServe();

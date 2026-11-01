@@ -45,7 +45,8 @@ const remedyFor = (cause: ClaimError, manualCommand: string) => {
   if (cause._tag === "TailscaleServeOccupiedError") {
     return "Another server holds this port. T3 Code leaves it alone and takes over once it stops.";
   }
-  if (cause._tag === "PlatformError" || cause._tag === "ServeRecordError") {
+  if (cause._tag === "ServeRecordError") return `${cause.message} Serve waits until then.`;
+  if (cause._tag === "PlatformError") {
     return "Could not save the record that lets a later run remove the mapping, so Serve waits until it can.";
   }
   switch (cause._tag === "TailscaleCommandExitError" ? cause.stderrDiagnostic : undefined) {
@@ -190,14 +191,11 @@ export const layer = (options: {
       const attempt = Effect.gen(function* () {
         // Recorded before the claim, since a claim can apply the mapping and still fail.
         // Release removes only a root that points here, so it is safe when none landed.
-        if ((yield* Ref.get(account)) === null) {
-          const now = yield* currentAccount();
-          const records = yield* readRecords(options.stateDir).pipe(
-            Effect.catchTags({
-              ServeRecordError: (error) =>
-                Effect.logWarning(error.message).pipe(Effect.as(NO_RECORDS)),
-            }),
-          );
+        // Checked on every try, since Tailscale may have switched accounts since the last.
+        const now = yield* currentAccount();
+        if ((yield* Ref.get(account)) !== now) {
+          // An unreadable record may name a mapping to remove, so Serve waits for it.
+          const records = yield* readRecords(options.stateDir);
           const earlier = records[now];
           if (earlier !== undefined && !sameTarget(earlier, target)) {
             yield* Ref.set(releasing, earlier);

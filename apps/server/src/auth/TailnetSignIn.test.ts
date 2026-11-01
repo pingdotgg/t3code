@@ -685,6 +685,22 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 
+    // Switching Tailscale accounts switches tailnets, so the last account's scan says nothing.
+    it.effect("after a switch to another Tailscale account, its own policy decides at once", () => {
+      const tailnet = withLaptop();
+      return Effect.gen(function* () {
+        yield* signIn(makeDpopKey());
+        tailnet.status = hostStatus({
+          Peer: peers,
+          Self: { ...hostStatus().Self, ID: "nBoxAtWork" },
+        });
+        tailnet.devices = {
+          [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["standard"] }) },
+        };
+        expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("no_grant");
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
     it.effect("a grant sign-in during a scan that finds no grants keeps the owner rule off", () => {
       const tailnet = withLaptop();
       return Effect.gen(function* () {
