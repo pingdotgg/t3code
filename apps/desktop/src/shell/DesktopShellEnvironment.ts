@@ -254,6 +254,7 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
   readonly probe: DesktopShellEnvironmentProbe;
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  readonly env: NodeJS.ProcessEnv;
   readonly timeout: Duration.Duration;
   readonly shell?: boolean;
 }): Effect.fn.Return<string, never, ChildProcessSpawner.ChildProcessSpawner> {
@@ -263,6 +264,8 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
       const child = yield* spawner.spawn(
         ChildProcess.make(input.command, input.args, {
           shell: input.shell ?? false,
+          env: input.env,
+          extendEnv: false,
           stdin: "ignore",
           stdout: "pipe",
           stderr: "ignore",
@@ -318,6 +321,7 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
 const readLoginShellEnvironment = (
   shell: string,
   names: ReadonlyArray<string>,
+  env: NodeJS.ProcessEnv,
 ): Effect.Effect<EnvironmentPatch, never, ChildProcessSpawner.ChildProcessSpawner> =>
   names.length === 0
     ? Effect.succeed({})
@@ -325,20 +329,24 @@ const readLoginShellEnvironment = (
         probe: "login-shell",
         command: shell,
         args: ["-ilc", buildEnvironmentCaptureCommand(shell, names)],
+        env,
         timeout: LOGIN_SHELL_TIMEOUT,
       }).pipe(Effect.map((output) => extractEnvironment(output, names)));
 
-const readLaunchctlPath = runCommandOutput({
-  probe: "launchctl-path",
-  command: "/bin/launchctl",
-  args: ["getenv", "PATH"],
-  timeout: LAUNCHCTL_TIMEOUT,
-}).pipe(Effect.map(trimNonEmpty));
+const readLaunchctlPath = (env: NodeJS.ProcessEnv) =>
+  runCommandOutput({
+    env,
+    probe: "launchctl-path",
+    command: "/bin/launchctl",
+    args: ["getenv", "PATH"],
+    timeout: LAUNCHCTL_TIMEOUT,
+  }).pipe(Effect.map(trimNonEmpty));
 
 const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEnvironment")(
   function* (
     names: ReadonlyArray<string>,
     options: WindowsProbeOptions,
+    env: NodeJS.ProcessEnv,
   ): Effect.fn.Return<EnvironmentPatch, never, ChildProcessSpawner.ChildProcessSpawner> {
     if (names.length === 0) return {};
 
@@ -355,6 +363,7 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
         probe: options.loadProfile ? "powershell-profile" : "powershell-no-profile",
         command,
         args,
+        env,
         timeout: LOGIN_SHELL_TIMEOUT,
       });
       const environment = extractEnvironment(output, names);
@@ -373,8 +382,8 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
   ): Effect.fn.Return<boolean, never, ChildProcessSpawner.ChildProcessSpawner> {
     const [noProfile, profile] = yield* Effect.all(
       [
-        readWindowsEnvironment(["PATH"], { loadProfile: false }),
-        readWindowsEnvironment(WINDOWS_PROFILE_ENV_NAMES, { loadProfile: true }),
+        readWindowsEnvironment(["PATH"], { loadProfile: false }, config.env),
+        readWindowsEnvironment(WINDOWS_PROFILE_ENV_NAMES, { loadProfile: true }, config.env),
       ],
       { concurrency: 2 },
     );
@@ -412,14 +421,14 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     for (const shell of listLoginShellCandidates(config.platform, config.env.SHELL)) {
       Object.assign(
         shellEnvironment,
-        yield* readLoginShellEnvironment(shell, LOGIN_SHELL_ENV_NAMES),
+        yield* readLoginShellEnvironment(shell, LOGIN_SHELL_ENV_NAMES, config.env),
       );
       if (shellEnvironment.PATH) break;
     }
 
     const launchctlPath =
       config.platform === "darwin" && !shellEnvironment.PATH
-        ? yield* readLaunchctlPath
+        ? yield* readLaunchctlPath(config.env)
         : Option.none<string>();
     const mergedPath = mergePaths(config.platform, [
       trimNonEmpty(shellEnvironment.PATH).pipe(Option.orElse(() => launchctlPath)),

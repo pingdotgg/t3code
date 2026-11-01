@@ -177,6 +177,10 @@ describe("DesktopShellEnvironment", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const stateDir = yield* fs.makeTempDirectoryScoped();
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner.pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        const executable = yield* HostProcess.ExecutablePath;
         const first = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
         yield* runShellEnvironment({
           env: first,
@@ -187,6 +191,8 @@ describe("DesktopShellEnvironment", () => {
               PATH: "/old/bin:/usr/bin",
               __MISE_DIFF: "old-mise",
               SSH_AUTH_SOCK: "/old-session.sock",
+              JAVA_HOME: "/old/java",
+              SSL_CERT_FILE: "/old/cert.pem",
             }),
         });
         const cachePath = `${stateDir}/shell-environment-cache.json`;
@@ -200,17 +206,27 @@ describe("DesktopShellEnvironment", () => {
           PATH: "/launcher/bin",
           SSH_AUTH_SOCK: "/current-session.sock",
         };
+        const source = [
+          "const values = { PATH: '/fresh/bin:' + process.env.PATH, __MISE_DIFF: 'fresh-mise', JAVA_HOME: process.env.JAVA_HOME, SSL_CERT_FILE: process.env.SSL_CERT_FILE };",
+          "for (const [name, value] of Object.entries(values)) {",
+          "  if (value !== undefined) process.stdout.write('__T3CODE_ENV_' + name + '_START__\\n' + value + '\\n__T3CODE_ENV_' + name + '_END__\\n');",
+          "}",
+        ].join("\n");
         let calls = 0;
         yield* runShellEnvironment({
           env,
           stateDir,
           platform: "darwin",
           handler: () => "",
-          processSpawner: ChildProcessSpawner.make(() => {
+          processSpawner: ChildProcessSpawner.make((command) => {
             calls++;
             return Deferred.succeed(started, undefined).pipe(
               Effect.andThen(Deferred.await(release)),
-              Effect.as(makeProcess(envOutput({ PATH: "/fresh/bin", __MISE_DIFF: "fresh-mise" }))),
+              Effect.andThen(
+                command._tag === "StandardCommand"
+                  ? spawner.spawn(ChildProcess.make(executable, ["-e", source], command.options))
+                  : Effect.succeed(makeProcess("")),
+              ),
             );
           }),
           use: (service) =>
@@ -229,6 +245,8 @@ describe("DesktopShellEnvironment", () => {
               yield* service.awaitDiscovery;
               assert.equal(env.PATH, "/fresh/bin:/launcher/bin");
               assert.equal(env.__MISE_DIFF, "fresh-mise");
+              assert.isUndefined(env.JAVA_HOME);
+              assert.isUndefined(env.SSL_CERT_FILE);
               const fresh = yield* Stream.runHead(service.updates);
               assert.isTrue(Option.isSome(fresh));
               if (Option.isSome(fresh)) {
@@ -240,6 +258,8 @@ describe("DesktopShellEnvironment", () => {
         });
         const refreshed = yield* fs.readFileString(cachePath).pipe(Effect.flatMap(decodeCache));
         assert.equal(refreshed.environment.PATH, "/fresh/bin:/launcher/bin");
+        assert.notProperty(refreshed.environment, "JAVA_HOME");
+        assert.notProperty(refreshed.environment, "SSL_CERT_FILE");
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
