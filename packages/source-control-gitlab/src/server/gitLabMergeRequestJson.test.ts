@@ -148,6 +148,14 @@ describe("decodeMergeRequestDetailJson", () => {
     ]);
   });
 
+  it.each(["canceled", "canceling"])("maps a %s pipeline to cancelled", (status) => {
+    const detail = expectSuccess(
+      decodeMergeRequestDetailJson(detailJson({ head_pipeline: { status } })),
+    );
+
+    expect(detail.checks[0]?.status).toBe("cancelled");
+  });
+
   it("reads an uncounted change set as its floor", () => {
     const detail = expectSuccess(
       decodeMergeRequestDetailJson(detailJson({ changes_count: "1000+" })),

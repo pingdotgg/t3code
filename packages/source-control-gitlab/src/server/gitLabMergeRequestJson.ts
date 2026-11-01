@@ -262,7 +262,7 @@ function toPipelineStatus(value: string | null | undefined): PullRequestCheckSta
     case "failed":
       return "failure";
     case "canceled":
-    case "cancelling":
+    case "canceling":
       return "cancelled";
     case "skipped":
       return "skipped";
