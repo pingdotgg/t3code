@@ -35,11 +35,11 @@ import {
 } from "../ClaudeProvider.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
+import { resolveClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
 import {
   makeClaudeCodeModelRoutes,
-  resolveClaudeModelCatalog,
   resolveClaudeModelSettingsKey,
-} from "../ClaudeModelCatalog.ts";
+} from "../ClaudeCodeModelRoutes.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -180,11 +180,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       processEnv.CLAUDE_CONFIG_DIR !== (yield* HostProcess.Environment).CLAUDE_CONFIG_DIR;
     // Only a successful probe records routes, so a failed one never sends turns back to slugs
     // the backend rejects.
-    const modelRoutes = yield* makeClaudeCodeModelRoutes(modelCatalog, (cwd) =>
-      resolveClaudeModelSettingsKey(
-        customHome ? ["project", "local"] : ["user", "project", "local"],
-        cwd,
-      ),
+    const modelRoutes = yield* makeClaudeCodeModelRoutes(
+      modelCatalog,
+      (cwd) =>
+        resolveClaudeModelSettingsKey(
+          customHome ? ["project", "local"] : ["user", "project", "local"],
+          cwd,
+        ),
+      stateDir,
     );
     const orchestrationAdapter = yield* createClaudeAdapterV2(
       {
@@ -235,7 +238,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           ),
           Effect.tap(({ capabilities }) =>
             Ref.set(lastGoodCapabilities, capabilities).pipe(
-              Effect.andThen(modelRoutes.record(capabilities.models ?? [], stateDir)),
+              Effect.andThen(modelRoutes.record(capabilities.models ?? [])),
             ),
           ),
           Effect.ensuring(modelRoutes.settle),

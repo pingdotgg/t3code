@@ -90,11 +90,13 @@ import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutab
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
-  makeClaudeCodeModelRoutes,
   resolveClaudeModelCatalog,
-  resolveClaudeModelSettingsKey,
   withClaudeCodeModelRoutes,
 } from "../../provider/ClaudeModelCatalog.ts";
+import {
+  makeClaudeCodeModelRoutes,
+  resolveClaudeModelSettingsKey,
+} from "../../provider/ClaudeCodeModelRoutes.ts";
 import { resolveProviderCatalog } from "../../provider/ModelManifest.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -3468,11 +3470,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const routes = yield* makeClaudeCodeModelRoutes(
           Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
           (cwd) => resolveClaudeModelSettingsKey(["project", "local"], cwd),
-        );
-        yield* routes.record(
-          [{ value: "haiku", resolvedModel: "us.anthropic.claude-haiku-4-5-20251001-v1:0" }],
           probeCwd,
         );
+        yield* routes.record([
+          { value: "haiku", resolvedModel: "us.anthropic.claude-haiku-4-5-20251001-v1:0" },
+        ]);
         yield* routes.settle;
         const openedModel = (cwd: string) =>
           Effect.scoped(

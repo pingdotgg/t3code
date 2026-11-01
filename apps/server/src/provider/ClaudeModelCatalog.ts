@@ -6,15 +6,7 @@ import {
   type ServerProviderModel,
   type ServerProviderUpdateRequiredModel,
 } from "@t3tools/contracts";
-import {
-  resolveSettings as resolveClaudeSettings,
-  type SettingSource,
-  type Settings as ClaudeSdkSettings,
-} from "@anthropic-ai/claude-agent-sdk";
-import * as Deferred from "effect/Deferred";
-import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
 import {
   getModelSelectionStringOptionValue,
   getProviderOptionCurrentValue,
@@ -188,81 +180,6 @@ export function withClaudeCodeModelRoutes(
     }),
   };
 }
-
-// Env names that pick the backend, its region, or the model a family alias resolves to.
-const MODEL_SETTINGS_ENV_PREFIXES = [
-  "ANTHROPIC_",
-  "CLAUDE_CODE_USE_",
-  "AWS_",
-  "CLOUD_ML_",
-  "VERTEX_",
-];
-
-/** Equal keys mean Claude Code resolves model ids the same way under both settings. */
-function claudeModelSettingsKey(settings: ClaudeSdkSettings): string {
-  const sortedEntries = (record: Readonly<Record<string, string | undefined>> | undefined) =>
-    Object.entries(record ?? {}).toSorted(([a], [b]) => a.localeCompare(b));
-  return JSON.stringify([
-    settings.availableModels ?? null,
-    sortedEntries(settings.modelOverrides),
-    sortedEntries(settings.env).filter(([name]) =>
-      MODEL_SETTINGS_ENV_PREFIXES.some((prefix) => name.startsWith(prefix)),
-    ),
-  ]);
-}
-
-export const resolveClaudeModelSettingsKey = Effect.fn("resolveClaudeModelSettingsKey")(function* (
-  settingSources: ReadonlyArray<SettingSource>,
-  cwd: string | null,
-) {
-  return yield* Effect.tryPromise(() =>
-    resolveClaudeSettings({
-      ...(cwd === null ? {} : { cwd }),
-      settingSources: [...settingSources],
-    }),
-  ).pipe(
-    Effect.map(({ effective }) => claudeModelSettingsKey(effective)),
-    Effect.orElseSucceed(() => undefined),
-  );
-});
-
-export interface ClaudeCodeModelRoutes {
-  /** Keeps a successful probe's model list with the settings key of the cwd it ran in. */
-  readonly record: (
-    models: ReadonlyArray<ClaudeCodeReportedModel>,
-    probeCwd: string,
-  ) => Effect.Effect<void>;
-  /** Releases turns waiting for the first probe, whatever its outcome. */
-  readonly settle: Effect.Effect<void>;
-  readonly catalogFor: (cwd: string | null) => Effect.Effect<ClaudeModelCatalog>;
-}
-
-export const makeClaudeCodeModelRoutes = Effect.fn("makeClaudeCodeModelRoutes")(function* (
-  catalog: Effect.Effect<ClaudeModelCatalog>,
-  settingsKey: (cwd: string | null) => Effect.Effect<string | undefined>,
-) {
-  const firstProbeSettled = yield* Deferred.make<void>();
-  const reported = yield* Ref.make<{
-    readonly models: ReadonlyArray<ClaudeCodeReportedModel>;
-    readonly settingsKey: string | undefined;
-  }>({ models: [], settingsKey: undefined });
-  return {
-    record: Effect.fn("ClaudeCodeModelRoutes.record")(function* (models, probeCwd) {
-      yield* Ref.set(reported, { models, settingsKey: yield* settingsKey(probeCwd) });
-    }),
-    settle: Deferred.succeed(firstProbeSettled, undefined).pipe(Effect.asVoid),
-    catalogFor: Effect.fn("ClaudeCodeModelRoutes.catalogFor")(function* (cwd) {
-      yield* Deferred.await(firstProbeSettled);
-      const base = yield* catalog;
-      const { models, settingsKey: probeKey } = yield* Ref.get(reported);
-      const routed = withClaudeCodeModelRoutes(base, models);
-      // Project settings can point an alias at another model, so routes hold only where the
-      // cwd resolves the same model settings as the probe's.
-      if (routed === base || probeKey === undefined) return base;
-      return (yield* settingsKey(cwd)) === probeKey ? routed : base;
-    }),
-  } satisfies ClaudeCodeModelRoutes;
-});
 
 export function resolveClaudeModelSlug(catalog: ClaudeModelCatalog, slugOrAlias: string): string {
   return resolveClaudeCatalogModel(catalog, slugOrAlias)?.model.slug ?? slugOrAlias;
