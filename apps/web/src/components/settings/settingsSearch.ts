@@ -334,6 +334,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["wide full width column layout messages composer monitor"],
   },
   {
+    // Prefixed because the slider control already owns the `terminal-height` id.
+    id: "setting-terminal-height",
+    title: "Terminal height",
+    to: "/settings/appearance",
+    searchTerms: ["drawer size tall shell console percent window layout"],
+  },
+  {
     id: "thread-details-items",
     title: "Thread details",
     to: "/settings/appearance",
