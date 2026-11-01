@@ -7,6 +7,7 @@ import { useProject, useThreadShell } from "~/state/entities";
 import { ContextChip, ContextChipLabel } from "./ContextChip";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { textDirection } from "~/textDirection";
 
 export function ThreadContextChip(props: {
   record: Pick<ThreadContextRecord, "environmentId" | "threadId" | "title">;
@@ -34,7 +35,7 @@ export function ThreadContextChip(props: {
             ) : (
               <MessagesSquareIcon />
             )}
-            <ContextChipLabel>{title}</ContextChipLabel>
+            <ContextChipLabel dir={textDirection(title)}>{title}</ContextChipLabel>
           </ContextChip>
         }
       />

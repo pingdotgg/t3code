@@ -12,6 +12,7 @@ import { toastManager } from "../ui/toast";
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { pullRequestReviewKey } from "./pullRequestReviewStore";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
+import { textDirection } from "~/textDirection";
 
 export function PullRequestCommentForm({
   environmentId,
@@ -90,6 +91,7 @@ export function PullRequestCommentForm({
         // Lock while posting because success clears the draft.
         disabled={submitting !== null || actionPending}
         value={body}
+        dir={textDirection(body)}
         rows={3}
         placeholder="Leave a comment"
         aria-label={`Comment on this ${sourceControlClients.get(detail.provider).changeRequest.singular}`}

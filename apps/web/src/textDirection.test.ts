@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { markdownProseDirection, textDirection } from "./textDirection";
+import {
+  markdownCodeParts,
+  markdownPreview,
+  markdownProseDirection,
+  markdownWithDirection,
+  textDirection,
+} from "./textDirection";
 
 describe("textDirection", () => {
   it.each([
@@ -52,6 +58,15 @@ describe("markdownProseDirection", () => {
     ["Hebrew around a URL", "ראה https://github.com/pingdotgg/t3code/pull/24050 לפני", "rtl"],
     ["English around inline code", "Should I edit `useMemo` or keep it?", "ltr"],
     ["English quoting one Hebrew word", "Please check the שלום label before the release", "ltr"],
+    [
+      "a fence-looking line with trailing text inside code",
+      "```js\nconst x = 1;\n```not a close\nשלום שלום שלום שלום שלום שלום\n```\nDone",
+      "ltr",
+    ],
+    ["a shorter fence inside code", "````js\n```\nשלום שלום שלום\n````\nDone", "ltr"],
+    ["a different fence marker inside code", "~~~js\n```\nשלום שלום שלום\n~~~\nDone", "ltr"],
+    ["code nested in a block quote", "> ```js\n> שלום שלום שלום\n> ```\nDone", "ltr"],
+    ["a valid longer closing fence", "```js\nשלום שלום שלום\n````  \nDone", "ltr"],
   ])("reads %s", (_, markdown, direction) => {
     expect(markdownProseDirection(markdown)).toBe(direction);
   });
@@ -59,4 +74,49 @@ describe("markdownProseDirection", () => {
   it("leaves markdown without prose letters to its surroundings", () => {
     expect(markdownProseDirection("```\nconst a = 1;\n```")).toBeUndefined();
   });
+
+  it("keeps unclosed fences inside their own question field", () => {
+    expect(markdownProseDirection("Question\n```ts\nx", "בחר באפשרות הזאת בבקשה")).toBe("rtl");
+  });
+});
+
+it("reads only the visible preview prose without losing truncated code boundaries", () => {
+  const text = `שלום עולם בבקשה תבדוק עכשיו\n\`run({ items: [1, 2] })\` ${"hidden English words ".repeat(20)}`;
+  const preview = markdownPreview(text, 42);
+  expect(preview.direction).toBe("rtl");
+  expect(preview.parts.map((part) => part.text).join("")).toBe(
+    text.replace(/\s+/g, " ").slice(0, 42) + "…",
+  );
+  expect(preview.parts.at(-1)?.code).toBe(true);
+});
+
+it("seeds native paragraphs without changing Markdown block structure or code", () => {
+  expect(markdownWithDirection("[!NOTE]", "rtl")).toBe("\u200f[!NOTE]");
+  for (const image of [
+    "![diagram](https://example.com/a.png)",
+    "[![diagram](https://example.com/a.png)](https://example.com)",
+    "![diagram][image]\n\n[image]: https://example.com/a.png",
+  ]) {
+    expect(markdownWithDirection(image, "rtl")).toBe(image);
+  }
+  const rich =
+    "| Name | Value |\n| --- | --- |\n| React | עברית |\n\n- [ ] React שינוי\n\n> [!NOTE]\n> React עדכון\n\n$$\nx^2\n$$\n\nReact המשך";
+  expect(markdownWithDirection(rich, "rtl")).toBe(
+    "| Name | Value |\n| --- | --- |\n| React | עברית |\n\n- [ ] \u200fReact שינוי\n\n> [!NOTE]\n> \u200fReact עדכון\n\n$$\nx^2\n$$\n\n\u200fReact המשך",
+  );
+  const markdown = "# React עדכון\n\n- React שינוי\n\n> English ציטוט\n\n```ts\nfoo()\n```";
+  expect(markdownWithDirection(markdown, "rtl")).toBe(
+    "# \u200fReact עדכון\n\n- \u200fReact שינוי\n\n> \u200fEnglish ציטוט\n\n```ts\nfoo()\n```",
+  );
+});
+
+it("preserves literal markdown while separating code from prose", () => {
+  const markdown =
+    "שלום\n```js\nvalue({ items: [1, 2] });\n```not a close\nעדיין קוד\n```\nאחרי `run()`";
+  const parts = markdownCodeParts(markdown);
+  expect(parts.map((part) => part.text).join("")).toBe(markdown);
+  expect(parts.filter((part) => part.code).map((part) => part.text)).toEqual([
+    "```js\nvalue({ items: [1, 2] });\n```not a close\nעדיין קוד\n```",
+    "`run()`",
+  ]);
 });

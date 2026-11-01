@@ -6,13 +6,13 @@ import { act, render } from "../../../test/render";
 import { Dialog, DialogPopup } from "../ui/dialog";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 
-function Composer({ dialog = false }: { dialog?: boolean }) {
+function Composer({ dialog = false, firstPrompt }: { dialog?: boolean; firstPrompt?: string }) {
   const composerFormRef = useRef<HTMLFormElement>(null);
   const [entries, setEntries] = useState(
     ["first", "second"].map((id) => ({
       id,
       createdAt: "2026-10-01T00:00:00.000Z",
-      prompt: `${id} prompt`,
+      prompt: id === "first" && firstPrompt !== undefined ? firstPrompt : `${id} prompt`,
       attachments: [],
       droppedImageNames: [],
     })),
@@ -66,6 +66,16 @@ const editor = () => page.getByRole("textbox", { name: "Message" });
 const stash = () => page.getByRole("list", { name: "Stashed prompts" });
 const press = (keys: string) => userEvent.keyboard(keys);
 const focus = (element: Element) => act(async () => (element as HTMLElement).focus());
+
+it("reads the visible stash preview independently of its hidden tail and restores the full prompt", async () => {
+  const prompt = `${"שלום עולם תבדוק בבקשה ".repeat(6)}${"hidden English words ".repeat(30)}`;
+  await using screen = await render(<Composer firstPrompt={prompt} />);
+  const restore = screen.getByRole("button", { name: /^Restore stashed prompt: שלום/ });
+  await expect.element(restore).toHaveAttribute("dir", "rtl");
+  await expect.element(restore).toHaveTextContent(prompt.slice(0, 90) + "…");
+  await restore.click();
+  await expect.element(editor()).toHaveValue(prompt);
+});
 
 it("leaves dialog, unrelated input and question button shortcuts alone while the stash is open", async () => {
   await using _screen = await render(<Composer dialog />);

@@ -24,6 +24,13 @@ private struct ComposerControlledDocumentPayload: Decodable {
   let tokensJson: String
   let mostRecentEventCount: Int
   let isNativeEcho: Bool
+  let paragraphDirections: [ComposerParagraphDirectionPayload]?
+}
+
+private struct ComposerParagraphDirectionPayload: Decodable {
+  let start: Int
+  let end: Int
+  let direction: String
 }
 
 private struct ComposerThemePayload: Decodable {
@@ -424,6 +431,8 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var value = ""
   private var tokensJson = "[]"
   private var tokens: [ComposerTokenPayload] = []
+  private var paragraphDirections: [ComposerParagraphDirectionPayload] = []
+  private var paragraphDirectionValue = ""
   private var requestedSelection: ComposerSelectionPayload?
   private var theme = ComposerThemePayload(
     text: "#262626",
@@ -659,6 +668,8 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     }
     let previousSelection = sourceSelection()
     value = document.value
+    paragraphDirections = document.paragraphDirections ?? []
+    paragraphDirectionValue = document.value
     requestedSelection = document.selection
     applyControlledDocument(force: tokensNeedRebuild)
     applyRequestedSelection()
@@ -869,6 +880,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     let shouldForce = force || hasDeferredForcedRebuild
     let currentSource = textView.serializedText()
     guard shouldForce || currentSource != value || !documentMatchesExpectedTokens() else {
+      applyParagraphDirections()
       updatePlaceholderVisibility()
       return
     }
@@ -884,6 +896,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     requestedSelection = nil
     textView.selectedRange = displayRange(for: targetSelection)
     restoreBaseTypingAttributes()
+    applyParagraphDirections()
     isApplyingControlledValue = false
     if currentSource != value || previousSelection.start != targetSelection.start || previousSelection.end != targetSelection.end {
       revealSelectionAfterLayout()
@@ -1060,17 +1073,55 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     return nil
   }
 
+  private func paragraphStyle(direction: String? = nil) -> NSMutableParagraphStyle {
+    let paragraph = NSMutableParagraphStyle()
+    if let direction {
+      paragraph.alignment = direction == "rtl" ? .right : .left
+      paragraph.baseWritingDirection = direction == "rtl" ? .rightToLeft : .leftToRight
+    }
+    paragraph.minimumLineHeight = lineHeight
+    paragraph.maximumLineHeight = lineHeight
+    return paragraph
+  }
+
   private func baseAttributes() -> [NSAttributedString.Key: Any] {
     let font = UIFont(name: fontFamily, size: fontSize)
       ?? UIFont.systemFont(ofSize: fontSize)
-    let paragraph = NSMutableParagraphStyle()
-    paragraph.minimumLineHeight = lineHeight
-    paragraph.maximumLineHeight = lineHeight
     return [
       .font: font,
       .foregroundColor: UIColor(composerHex: theme.text) ?? .label,
-      .paragraphStyle: paragraph,
+      .paragraphStyle: paragraphStyle(),
     ]
+  }
+
+  private func applyParagraphDirections() {
+    guard !paragraphDirections.isEmpty, textView.markedTextRange == nil,
+          textView.serializedText() == paragraphDirectionValue else { return }
+    let wasApplyingControlledValue = isApplyingControlledValue
+    isApplyingControlledValue = true
+    let selection = textView.selectedRange
+    let sourceLength = (paragraphDirectionValue as NSString).length
+    textView.textStorage.beginEditing()
+    for paragraph in paragraphDirections {
+      guard paragraph.start >= 0, paragraph.end >= paragraph.start,
+            paragraph.end <= sourceLength else { continue }
+      let range = displayRange(for: ComposerSelectionPayload(start: paragraph.start, end: paragraph.end))
+      guard range.length > 0 else { continue }
+      let style = paragraphStyle(direction: paragraph.direction)
+      let current = textView.textStorage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
+      if current != style {
+        textView.textStorage.addAttribute(.paragraphStyle, value: style, range: range)
+      }
+    }
+    textView.textStorage.endEditing()
+    if textView.selectedRange != selection { textView.selectedRange = selection }
+    let sourceCaret = textView.sourceOffset(forDisplayOffset: selection.location)
+    if let paragraph = paragraphDirections.last(where: { $0.start <= sourceCaret }) {
+      var attributes = baseAttributes()
+      attributes[.paragraphStyle] = paragraphStyle(direction: paragraph.direction)
+      textView.typingAttributes = attributes
+    }
+    isApplyingControlledValue = wasApplyingControlledValue
   }
 
   private func applyTypography() {
@@ -1086,7 +1137,12 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     guard textView.markedTextRange == nil else {
       return
     }
-    textView.typingAttributes = baseAttributes()
+    var attributes = baseAttributes()
+    // UIKit selects the paragraph's style when the caret moves; retain its bidi direction.
+    if let paragraph = textView.typingAttributes[.paragraphStyle] {
+      attributes[.paragraphStyle] = paragraph
+    }
+    textView.typingAttributes = attributes
   }
 
   private func applyTheme() {

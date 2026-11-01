@@ -181,14 +181,16 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   }
 
   const promptDirection = markdownProseDirection(
-    prompt.questions
-      .flatMap((question) => [
-        question.header,
-        question.question,
-        ...question.options.flatMap((option) => [option.label, option.description ?? ""]),
-      ])
-      .join(" "),
+    ...prompt.questions.flatMap((question) => [
+      question.header,
+      question.question,
+      ...question.options.flatMap((option) => [option.label, option.description ?? ""]),
+    ]),
   );
+  const labelDirection = (text: string) =>
+    promptDirection === "rtl" && /[\p{Script=Hebrew}\p{Script=Arabic}]/u.test(text)
+      ? "rtl"
+      : textDirection(text);
   const questionTextAlign = promptDirection === "rtl" ? "text-right" : "text-left";
 
   return (
@@ -210,7 +212,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         <ComposerBanner.Content>
           <span
             className={cn("min-w-0 truncate text-muted-foreground", isCollapsed && "max-w-1/2")}
-            dir={textDirection(activeQuestion.header)}
+            dir={labelDirection(activeQuestion.header)}
           >
             {activeQuestion.header}
           </span>
@@ -291,13 +293,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                       )}
                     </span>
                     <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <span className="text-sm font-medium" dir={textDirection(option.label)}>
+                      <span className="text-sm font-medium" dir={labelDirection(option.label)}>
                         {option.label}
                       </span>
                       {option.description && option.description !== option.label ? (
                         <span
                           className="text-secondary-label text-2xs"
-                          dir={textDirection(option.description)}
+                          dir={labelDirection(option.description)}
                         >
                           {option.description}
                         </span>

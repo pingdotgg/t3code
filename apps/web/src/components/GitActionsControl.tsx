@@ -111,6 +111,7 @@ import { getSourceControlPresentation, sourceControlIcon } from "~/sourceControl
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useOpenLink } from "~/browser/useOpenLink";
+import { textDirection } from "~/textDirection";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -1792,6 +1793,7 @@ export default function GitActionsControl({
               <p className="text-sm font-medium">Commit message (optional)</p>
               <Textarea
                 value={dialogCommitMessage}
+                dir={textDirection(dialogCommitMessage)}
                 onChange={(event) => setDialogCommitMessage(event.target.value)}
                 placeholder="Leave empty to auto-generate"
                 size="sm"

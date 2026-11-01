@@ -2520,7 +2520,7 @@ const MAX_COLLAPSED_USER_MESSAGE_LINES = 8;
 const MAX_COLLAPSED_USER_MESSAGE_LENGTH = 600;
 const MARKDOWN_LINK = /!?\[([^\]\n]*)\]\((?:<[^>\n]*>|[^\s)]*)\)/g;
 
-function visibleUserMessageText(text: string): string {
+export function visibleUserMessageText(text: string): string {
   const linkLabels = (segment: string) => segment.replace(MARKDOWN_LINK, "$1");
   let visible = "";
   let cursor = 0;
