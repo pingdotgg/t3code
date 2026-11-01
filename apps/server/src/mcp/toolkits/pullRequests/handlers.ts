@@ -392,6 +392,55 @@ const make = Effect.gen(function* () {
         return { ...target, alreadyLinked, ...next };
       }),
     ),
+    link_pull_requests: writesThread((input) =>
+      Effect.gen(function* () {
+        const thread = yield* requireThread(PullRequestLinkFailedError, input.threadId);
+        const targets: Array<ResolvedTarget> = [];
+        const invalidUrls: Array<string> = [];
+        for (const url of input.urls) {
+          const target = yield* resolveTarget({ url }, undefined).pipe(Effect.option);
+          if (Option.isNone(target)) invalidUrls.push(url);
+          else if (!targets.some((seen) => threadPullRequestKeysEqual(seen, target.value)))
+            targets.push(target.value);
+        }
+        const links = threadPullRequestsOf(thread);
+        const isLinked = (target: ResolvedTarget) =>
+          links.some(
+            (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, target),
+          );
+        const fresh = targets.filter((target) => !isLinked(target));
+        const alreadyLinked = targets.filter(isLinked);
+        yield* Effect.forEach(fresh, (target) =>
+          Effect.gen(function* () {
+            yield* engine.dispatch({
+              type: "thread.pull-request.link",
+              commandId: yield* commandId("mcp-pr-link", thread.id),
+              threadId: thread.id,
+              host: target.host,
+              repository: target.repository,
+              number: target.number,
+              url: target.url,
+              source: "agent",
+            });
+          }).pipe(Effect.catchCause(dispatchFailure(PullRequestLinkFailedError))),
+        );
+        const byRepository = (prs: ReadonlyArray<ResolvedTarget>) =>
+          [...Map.groupBy(prs, (pr) => `${pr.host}/${pr.repository}`).values()].map((group) => ({
+            host: group[0]!.host,
+            repository: group[0]!.repository,
+            numbers: group.map((pr) => pr.number),
+          }));
+        return {
+          linked: byRepository(fresh),
+          alreadyLinked: byRepository(alreadyLinked),
+          linkedCount: targets.length,
+          ...(invalidUrls.length > 0 ? { invalidUrls } : {}),
+          ...(thread.lineage.relationshipToParent === "subagent"
+            ? { next: CHILD_PULL_REQUEST_REPORT_NEXT }
+            : {}),
+        };
+      }),
+    ),
     unlink_pull_request: writesThread((input) =>
       Effect.gen(function* () {
         const thread = yield* requireThread(PullRequestUnlinkFailedError, input.threadId);
