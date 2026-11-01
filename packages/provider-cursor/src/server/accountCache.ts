@@ -25,8 +25,13 @@ interface CursorFetchRange {
 export function isCursorCacheFresh(
   cache: CursorAccountCache | undefined,
   nowMs: number,
+  retentionStartMs: number,
 ): cache is CursorAccountCache {
-  return cache !== undefined && nowMs - cache.fetchedAtMs < CURSOR_ACCOUNT_TTL_MS;
+  return (
+    cache !== undefined &&
+    cache.sinceMs <= retentionStartMs &&
+    nowMs - cache.fetchedAtMs < CURSOR_ACCOUNT_TTL_MS
+  );
 }
 
 export function cursorFetchRange(
@@ -56,6 +61,8 @@ export function mergeCursorFetch(
   const replacedKeys = new Set(previous.filter(inRange).map((record) => record.dedupeKey));
   const changed =
     cache === undefined ||
+    cache.sinceMs > retentionStartMs ||
+    previous.some((record) => record.timestampMs < retentionStartMs) ||
     replacedKeys.size !== added.length ||
     added.some((record) => !replacedKeys.has(record.dedupeKey));
   return {
