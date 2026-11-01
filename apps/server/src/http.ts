@@ -563,6 +563,8 @@ const streamStaticFile = (file: FileSystem.File, size: bigint) =>
     }),
   );
 
+const decodeStaticPathname = Option.liftThrowable(decodeURIComponent);
+
 const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
   function* (immutableBuildAssets: ReadonlySet<string>) {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -601,7 +603,11 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
 
     const path = yield* Path.Path;
     const staticRoot = path.resolve(staticDir);
-    const staticRequestPath = url.value.pathname === "/" ? "/index.html" : url.value.pathname;
+    const decodedPathname = decodeStaticPathname(url.value.pathname);
+    if (Option.isNone(decodedPathname)) {
+      return HttpServerResponse.text("Invalid static file path", { status: 400 });
+    }
+    const staticRequestPath = decodedPathname.value === "/" ? "/index.html" : decodedPathname.value;
     const rawStaticRelativePath = staticRequestPath.replace(/^[/\\]+/, "");
     const hasRawLeadingParentSegment = rawStaticRelativePath.startsWith("..");
     const staticRelativePath = path.normalize(rawStaticRelativePath).replace(/^[/\\]+/, "");
