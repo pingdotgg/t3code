@@ -117,13 +117,14 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
       };
     }
   }
-  // Nothing describes this model's options yet, so its saved options go out
-  // with legacy plan choices filtered, and the session validates the remaining values.
-  // Callers pass only options saved for this model (see
-  // `deriveEffectiveComposerModelState`).
+  // ACP validates saved choices against its live catalog; agent=plan may select a model.
   if (getListedModelCapabilities(models, model, provider) === null) {
     const preservedOptions = modelOptions?.filter(
-      (option) => planModeEnabled || option.id !== "agent" || option.value !== "plan",
+      (option) =>
+        provider === "acpRegistry" ||
+        planModeEnabled ||
+        option.id !== "agent" ||
+        option.value !== "plan",
     );
     return {
       provider,

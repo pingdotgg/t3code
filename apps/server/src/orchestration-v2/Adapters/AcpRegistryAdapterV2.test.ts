@@ -978,13 +978,30 @@ describe("AcpRegistryAdapterV2", () => {
         category: "model",
         type: "select",
         currentValue: "later-model",
-        options: [{ value: "later-model", name: "Later model" }],
+        options: [
+          { value: "later-model", name: "Later model" },
+          { value: "chosen-model", name: "Chosen model" },
+        ],
       },
     ] as const;
 
     it.effect("opens a model from the catalog by writing the first usable model select", () =>
       Effect.gen(function* () {
         const setup = { sessionId: "agent-session", configOptions: modelOptions };
+        const providerApplied = modelOptions.map((option) =>
+          option.id === "provider" ? { ...option, currentValue: "codex" } : option,
+        );
+        const dependentOption = {
+          id: "agent",
+          name: "Agent",
+          category: "model",
+          type: "select",
+          currentValue: "build",
+          options: [
+            { value: "build", name: "Build" },
+            { value: "plan", name: "Plan" },
+          ],
+        };
         const catalog = acpRegistryProbeResult(ProviderInstanceId.make("acp-registry-mode-pick"), {
           sessionId: setup.sessionId,
           initializeResult: { protocolVersion: 1 },
@@ -1018,10 +1035,28 @@ describe("AcpRegistryAdapterV2", () => {
               value: "codex",
             }),
             answer("session/set_config_option", {
-              configOptions: modelOptions.map((option) =>
-                option.id === "provider" ? { ...option, currentValue: "codex" } : option,
-              ),
+              configOptions: providerApplied,
             }),
+            outbound("session/set_config_option", {
+              sessionId: "agent-session",
+              configId: "model",
+              value: "chosen-model",
+            }),
+            answer("session/set_config_option", {
+              configOptions: [...providerApplied, dependentOption],
+            }),
+            outbound("session/set_config_option", {
+              sessionId: "agent-session",
+              configId: "agent",
+              value: "plan",
+            }),
+            answer("session/set_config_option", {
+              configOptions: [...providerApplied, { ...dependentOption, currentValue: "plan" }],
+            }),
+          ],
+          storedOptions: [
+            { id: "model", value: "chosen-model" },
+            { id: "agent", value: "plan" },
           ],
           storedModel: model,
         });

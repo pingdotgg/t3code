@@ -83,7 +83,7 @@ function withoutPlanAgentOption(caps: ModelCapabilities): ModelCapabilities {
   return {
     ...caps,
     optionDescriptors: (caps.optionDescriptors ?? []).flatMap((descriptor) => {
-      if (descriptor.type !== "select" || descriptor.id !== "agent") {
+      if (descriptor.type !== "select" || descriptor.id !== "agent" || descriptor.selectsModel) {
         return [descriptor];
       }
       const options = descriptor.options.filter((option) => option.id !== "plan");

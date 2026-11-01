@@ -6895,10 +6895,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           // The requested model owns the model picker. A saved option under the
           // picker's ID (an older descriptor set, or another model's option of
           // the same ID) must neither replace that model nor fail the open.
-          const modelOptionId = findModelConfigOption(configOptions)?.id;
           for (const selection of configSelections) {
-            if (!availableConfigIds.has(selection.id) || selection.id === modelOptionId) continue;
-            const option = configOptions.find((candidate) => candidate.id === selection.id);
+            const liveConfigOptions = yield* runtime.getConfigOptions;
+            const modelOptionId = findModelConfigOption(liveConfigOptions)?.id;
+            const option = liveConfigOptions.find((candidate) => candidate.id === selection.id);
+            if (option === undefined || selection.id === modelOptionId) continue;
             // Secondary model choices fail on rejection rather than silently using another model.
             if (option?.category === "model" && option.type === "select") {
               yield* runtime.setConfigOption(selection.id, selection.value);
