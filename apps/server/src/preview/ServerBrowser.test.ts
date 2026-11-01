@@ -786,7 +786,7 @@ it.live("streams to a read-only viewer without allowing takeover, input, or view
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("keeps a tab's zoom when its viewer resizes", () =>
+it.effect("keeps a tab's zoom when its viewer resizes", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const browser = yield* ServerBrowser.ServerBrowser;
