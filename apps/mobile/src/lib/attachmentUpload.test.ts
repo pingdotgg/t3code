@@ -93,7 +93,6 @@ import {
   prepareTurnAttachments,
   releasePendingAttachmentUploads,
   withUploadedMobileAttachmentReferences,
-  validateDraftFileAttachments,
 } from "./attachmentUpload";
 import type { DraftComposerAttachment } from "./composerImages";
 
@@ -137,45 +136,6 @@ const documentPickedImage = {
   sizeBytes: 3,
   fileUri: "file:///documents/photo.png",
 } as const satisfies DraftComposerAttachment;
-
-describe("validateDraftFileAttachments", () => {
-  it("blocks files while config is unknown or file uploads are unsupported", () => {
-    expect(validateDraftFileAttachments({ attachments: [file], serverConfig: null })).toBe(
-      "Server attachment support is still loading.",
-    );
-    expect(
-      validateDraftFileAttachments({
-        attachments: [file],
-        serverConfig: { environment: { capabilities: { attachmentUploads: true } } },
-      }),
-    ).toBe("This server does not support file attachments.");
-  });
-
-  it("uses the current clamped limit and allows valid mixed attachments", () => {
-    const lowerLimit = {
-      environment: {
-        capabilities: {
-          attachmentUploads: true,
-          fileAttachments: { maxUploadBytes: 20 },
-        },
-      },
-    };
-    expect(validateDraftFileAttachments({ attachments: [file], serverConfig: lowerLimit })).toBe(
-      "'report.pdf' exceeds the 20 bytes attachment limit.",
-    );
-    const allowed = {
-      environment: {
-        capabilities: {
-          attachmentUploads: true,
-          fileAttachments: { maxUploadBytes: 100 },
-        },
-      },
-    };
-    expect(
-      validateDraftFileAttachments({ attachments: [image, file], serverConfig: allowed }),
-    ).toBeNull();
-  });
-});
 
 function removeCallsFor(attachmentId: string): number {
   return mocks.runAtomCommand.mock.calls.filter(

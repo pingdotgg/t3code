@@ -1,6 +1,7 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomMount, useAtomValue } from "@effect/atom-react";
 import type { ResetAvailability } from "@t3tools/shared/usageLimits";
+import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   AuthProvidersManageScope,
   type EnvironmentId,
@@ -158,6 +159,7 @@ function AccountInstanceLabel({ value }: { readonly value: string }) {
 
 export function AccountLimits(props: {
   readonly driver: Driver;
+  readonly accentColor?: string | undefined;
   readonly label: string;
   readonly instanceLabel: string;
   readonly detail: string | undefined;
@@ -169,7 +171,8 @@ export function AccountLimits(props: {
   readonly footer?: ReactNode;
 }) {
   const { limits, now, dense = false } = props;
-  const color = useBarColor(props.driver);
+  const providerColor = useBarColor(props.driver);
+  const color = normalizeProviderAccentColor(props.accentColor) ?? providerColor;
   if (!limits) return null;
   const notice = limitsNotice(limits);
   const externalUsage = limits.externalUsage;

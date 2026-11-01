@@ -104,19 +104,14 @@ describe("chat canvas layout", () => {
     expect(result.overlapsDetailsCard).toBe(false);
     expect(result.chat).toEqual({ left: 424, width: 736, insetStart: 0, insetEnd: 0 });
   });
-  it("centers the chat beside a details card it would crowd, when asked", () => {
-    const layout = (centerBesideDetails: boolean) =>
-      resolveChatCanvasLayout({
-        container: { width: 1344, height: 988 },
-        maxChatWidth: 736,
-        detailsCard: { left: 1052, right: 1332, bottom: 339 },
-        preview: null,
-        centerBesideDetails,
-      }).chat;
-    // Pushed left just enough to clear the card.
-    expect(layout(false).left).toBe(1052 - 32 - 736);
-    // Equal space on both sides of the chat.
-    expect(layout(true)).toMatchObject({ left: (1052 - 736) / 2, width: 736 });
+  it("moves the chat left only as far as a details card it would crowd requires", () => {
+    const { chat } = resolveChatCanvasLayout({
+      container: { width: 1344, height: 988 },
+      maxChatWidth: 736,
+      detailsCard: { left: 1052, right: 1332, bottom: 339 },
+      preview: null,
+    });
+    expect(chat).toMatchObject({ left: 1052 - 32 - 736, width: 736 });
   });
   it("keeps the chat canvas-centered when it clears the details card", () => {
     const result = resolveChatCanvasLayout({
@@ -124,7 +119,6 @@ describe("chat canvas layout", () => {
       maxChatWidth: 736,
       detailsCard: { left: 1876, right: 2188, bottom: 339 },
       preview: null,
-      centerBesideDetails: true,
     });
     expect(result.chat.left).toBe((2200 - 736) / 2);
   });
@@ -135,7 +129,6 @@ describe("chat canvas layout", () => {
         maxChatWidth: 736,
         detailsCard: { left: width - 292, right: width - 12, bottom: 339 },
         preview: null,
-        centerBesideDetails: true,
       }).chat.left;
     for (let width = 1300; width < 1800; width += 1) {
       expect(Math.abs(leftAt(width + 1) - leftAt(width))).toBeLessThanOrEqual(1);
@@ -301,6 +294,9 @@ describe("workspace card beside chat", () => {
       detailsCard: { left: width - 292, right: width - 12, bottom: 400 },
       preview: player,
     });
+  it("keeps chat centered while the card fits beside it", () => {
+    expect(withCard(1500).chat).toEqual({ left: 382, width: 736, insetStart: 0, insetEnd: 0 });
+  });
   it("narrows chat only after it reaches the left padding", () => {
     expect(withCard(1108).chat).toMatchObject({ left: 48, width: 736 });
     expect(withCard(1028).chat).toEqual({ left: 48, width: 656, insetStart: 0, insetEnd: 276 });

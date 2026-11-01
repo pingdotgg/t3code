@@ -60,6 +60,7 @@ export function useBrowserViewportResize(options: {
       ? resolveBrowserDeviceViewportLayout(containerSize, effectiveViewport, zoomFactor)
       : resolveBrowserViewportLayout(containerSize, effectiveViewport, zoomFactor);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the drag and the keyboard commit timer when the component unmounts
   useEffect(
     () => () => {
       dragVersionRef.current += 1;
@@ -73,6 +74,7 @@ export function useBrowserViewportResize(options: {
     [],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending keyboard viewport commit timer once the source viewport changes
   useEffect(() => {
     const pending = keyboardViewportRef.current;
     if (!pending || pending.sourceKey === sourceViewportKey) return;
