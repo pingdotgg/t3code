@@ -38,7 +38,6 @@ import {
   MissingMacPasskeyProvisioningProfileError,
   packWindowsServerAsar,
   preflightWindowsDesktopBuild,
-  MAC_BACKEND_LAUNCHER_EXTRA_RESOURCES,
   renderMacHelperEntitlements,
   renderMacPasskeyEntitlements,
   resolveMacWebAuthnEntitlements,
@@ -68,6 +67,7 @@ import {
   wslRuntimeArchiveStem,
 } from "./build-desktop-artifact.ts";
 import afterPackMacos from "./after-pack-macos.ts";
+import { withBackendHelperEntitlements } from "./sign-macos.ts";
 import {
   ReleasePackageManifestError,
   releasePackageFiles,
@@ -1446,16 +1446,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             undefined,
             {
               entitlementsPath: "/stage/entitlements.mac.plist",
-              helperEntitlementsPath: "/stage/entitlements.mac.inherit.plist",
               provisioningProfilePath: "/stage/profile.provisionprofile",
             },
           );
           const mac = config.mac as Record<string, unknown>;
-          assert.equal(mac.entitlementsInherit, "/stage/entitlements.mac.inherit.plist");
+          assert.notProperty(mac, "entitlementsInherit");
           assert.match(config.afterPack as string, /scripts[\\/]after-pack-macos\.ts$/);
-          assert.includeDeepMembers(config.extraResources as Array<unknown>, [
-            ...MAC_BACKEND_LAUNCHER_EXTRA_RESOURCES,
-          ]);
           assert.isTrue(
             DESKTOP_FILE_EXCLUSIONS.some((glob) =>
               NodePath.matchesGlob(
@@ -1501,6 +1497,48 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             NSCameraUsageDescription: "camera",
             NSLocalNetworkUsageDescription: "network",
           });
+
+          const app = path.join(appOutDir, "T3 Code (Nightly).app");
+          const frameworks = path.join(contents, "Frameworks");
+          const builderOptions = (filePath: string) => ({
+            entitlements: filePath === app ? "/stage/main.plist" : "/builder/default.plist",
+            hardenedRuntime: true,
+            additionalArguments: ["--arg"],
+          });
+          const signOptions = yield* withBackendHelperEntitlements(
+            { app, optionsForFile: builderOptions },
+            "/stage/backend-helper.plist",
+          );
+          const signOptionsFor = (filePath: string) =>
+            signOptions.optionsForFile!(filePath, { platform: "darwin" });
+          for (const helperFile of [
+            "T3 Code (Nightly) Helper.app",
+            "T3 Code (Nightly) Helper.app/Contents/MacOS/T3 Code (Nightly) Helper",
+          ]) {
+            assert.deepStrictEqual(signOptionsFor(path.join(frameworks, helperFile)), {
+              entitlements: "/stage/backend-helper.plist",
+              hardenedRuntime: true,
+              additionalArguments: ["--arg"],
+            });
+          }
+          for (const otherFile of [
+            app,
+            path.join(contents, "MacOS/T3 Code (Nightly)"),
+            path.join(frameworks, "T3 Code (Nightly) Helper (Renderer).app"),
+            path.join(
+              frameworks,
+              "T3 Code (Nightly) Helper (GPU).app/Contents/MacOS/T3 Code (Nightly) Helper (GPU)",
+            ),
+            path.join(frameworks, "Electron Framework.framework"),
+            path.join(contents, "Resources/backend-launcher/t3-backend-launcher"),
+          ]) {
+            assert.deepStrictEqual(signOptionsFor(otherFile), builderOptions(otherFile));
+          }
+          const builderSignOptions = { app, optionsForFile: builderOptions };
+          assert.strictEqual(
+            yield* withBackendHelperEntitlements(builderSignOptions, undefined),
+            builderSignOptions,
+          );
         }),
       ),
   );

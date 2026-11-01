@@ -6,10 +6,9 @@
 
 extern char **environ;
 
-/* macOS files every descendant under its responsible app, so a bundle-less
- * browser an agent starts checks in as T3 Code itself. Disclaiming here makes
- * the exec'd Helper responsible for its own tree. POSIX_SPAWN_SETEXEC replaces
- * this process, keeping the PID, open descriptors and signals the parent owns. */
+/* Disclaiming makes the exec'd Helper responsible for its descendants instead
+ * of the desktop app. POSIX_SPAWN_SETEXEC keeps the PID, open descriptors and
+ * signals the parent owns. */
 typedef int (*setdisclaim_fn)(posix_spawnattr_t *, int);
 
 static int exec_target(char *const argv[], int disclaim, const char **stage) {
