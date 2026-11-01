@@ -29,6 +29,16 @@ const HubDeviceList = Schema.Struct({
     Schema.Array(Schema.Struct({ message: Schema.String, error: Schema.optional(Schema.String) })),
   ),
 });
+const IosGridDeviceList = Schema.Struct({
+  devices: Schema.Array(
+    Schema.Struct({
+      device: Schema.String,
+      name: Schema.String,
+      runtime: Schema.String,
+      state: Schema.String,
+    }),
+  ),
+});
 const HubActionResult = Schema.Struct({
   ok: Schema.Boolean,
   id: Schema.optional(Schema.String),
@@ -63,6 +73,7 @@ export const makeDeviceHubOperations = (options: {
   readonly origin: string;
   readonly http: HttpClient.HttpClient;
   readonly run: DeviceHostReady["run"];
+  readonly iosAvailable: Effect.Effect<boolean>;
   /** Whether to list AVDs, which the hub does not report until they boot. */
   readonly androidAvailable: Effect.Effect<boolean>;
 }): DeviceOperations => {
@@ -129,6 +140,40 @@ export const makeDeviceHubOperations = (options: {
         const head = errorHead(error.error ?? "");
         return boundDiagnostics(head ? `${error.message} ${head}` : error.message);
       }) ?? [];
+    if (yield* options.iosAvailable) {
+      // The hub's recent-device list excludes never-used simulators; its grid includes them
+      // and retains the hub's availability and single-device session filters.
+      const grid = yield* hubJson(
+        HttpClientRequest.get(`${origin}${vendorPrefix("ios")}/grid/api`),
+        IosGridDeviceList,
+        "list",
+      ).pipe(Effect.result);
+      if (grid._tag === "Failure") {
+        details.push(
+          "Could not list all iOS simulators. Recently used simulators remain available.",
+        );
+      } else {
+        for (const device of grid.success.devices) {
+          if (
+            !/^iOS-\d+(?:-\d+)*$/.test(device.runtime) ||
+            devices.some(
+              (listed) =>
+                listed.platform === "ios" &&
+                listed.id.toUpperCase() === device.device.toUpperCase(),
+            )
+          )
+            continue;
+          devices.push({
+            id: device.device,
+            name: device.name,
+            version: device.runtime.replace("iOS-", "iOS ").replaceAll("-", "."),
+            platform: "ios",
+            booted: device.state === "Booted",
+            physical: false,
+          });
+        }
+      }
+    }
     let androidDiscoveryIncomplete = false;
     if (androidAvailable) {
       const avds = yield* run("emulator", ["-list-avds"]);

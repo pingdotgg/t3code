@@ -318,6 +318,13 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
         http,
         run,
         // Keep probing negative reports so an SDK installed after connecting is still found.
+        iosAvailable: Effect.suspend(() =>
+          summary.platforms.some((p) => p.platform === "ios" && p.available)
+            ? Effect.succeed(true)
+            : platformAvailability("ios").pipe(
+                Effect.map((availability) => availability.available),
+              ),
+        ),
         androidAvailable: Effect.suspend(() =>
           summary.platforms.some((p) => p.platform === "android" && p.available)
             ? Effect.succeed(true)
