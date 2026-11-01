@@ -8,6 +8,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   RunId,
   RuntimeRequestId,
@@ -19,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { isAutoSettlementCandidate, resolveAutoSettlementAt } from "./ThreadSettlementService.ts";
 
@@ -72,6 +74,7 @@ const createRun = Effect.fn(function* (
   threadId: ThreadId,
   status: OrchestrationV2Run["status"] = "completed",
   ordinal = 1,
+  completedAt = old,
 ) {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const runId = RunId.make(`run:${threadId}:${ordinal}`);
@@ -93,7 +96,7 @@ const createRun = Effect.fn(function* (
       status,
       requestedAt: old,
       startedAt: status === "queued" ? null : old,
-      completedAt: ["completed", "rolled_back", "failed"].includes(status) ? old : null,
+      completedAt: ["completed", "rolled_back", "failed"].includes(status) ? completedAt : null,
       checkpointId: null,
       contextHandoffId: null,
     },
@@ -132,6 +135,69 @@ const createItem = Effect.fn(function* (
       toolName: "background",
       input: persistent ? { persistent: true } : null,
       output: null,
+    },
+  });
+});
+
+const createFailure = Effect.fn(function* (
+  threadId: ThreadId,
+  runId: RunId,
+  failureClass: "usage_limit" | "provider_error",
+) {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  yield* store.apply({
+    id: EventId.make(`event:failure:${runId}`),
+    type: "turn-item.updated",
+    threadId,
+    occurredAt: old,
+    payload: {
+      id: TurnItemId.make(`failure:${runId}`),
+      threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      type: "error",
+      status: "failed",
+      title: failureClass,
+      startedAt: old,
+      completedAt: old,
+      updatedAt: old,
+      failure: {
+        class: failureClass,
+        message: failureClass,
+        code: null,
+        retryable: true,
+        resetAt: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
+      },
+    },
+  });
+});
+
+const attachSessionError = Effect.fn(function* (threadId: ThreadId, lastError: string) {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const driver = ProviderDriverKind.make("codex");
+  yield* store.apply({
+    id: EventId.make(`event:session:${threadId}`),
+    type: "provider-session.attached",
+    threadId,
+    driver,
+    providerInstanceId,
+    occurredAt: old,
+    payload: {
+      id: ProviderSessionId.make(`provider-session:${threadId}`),
+      driver,
+      providerInstanceId,
+      status: "error",
+      cwd: "/workspace",
+      model: modelSelection.model,
+      capabilities: CodexProviderCapabilitiesV2,
+      createdAt: old,
+      updatedAt: old,
+      lastError,
     },
   });
 });
@@ -210,6 +276,49 @@ it.effect(
         snoozedAt: DateTime.subtract(old, { days: 1 }),
       });
       yield* createRun(woke, "failed");
+      const limited = yield* createThread("usage-limited");
+      yield* createFailure(limited, yield* createRun(limited, "failed"), "usage_limit");
+      // A message queued behind the limit is the newest run, but the limit still blocks.
+      const queuedBehindLimit = yield* createThread("queued-behind-limit");
+      yield* createFailure(
+        queuedBehindLimit,
+        yield* createRun(queuedBehindLimit, "failed"),
+        "usage_limit",
+      );
+      yield* createRun(queuedBehindLimit, "queued", 2);
+      // Held queues run out of order; the run that ended last decides, not the ordinal.
+      const limitEndedLast = yield* createThread("limit-ended-last");
+      yield* createFailure(
+        limitEndedLast,
+        yield* createRun(limitEndedLast, "failed", 1, DateTime.add(old, { hours: 1 })),
+        "usage_limit",
+      );
+      yield* createFailure(
+        limitEndedLast,
+        yield* createRun(limitEndedLast, "failed", 2),
+        "provider_error",
+      );
+      // threadErrorSummary: a matching session error keeps the limit, a differing one replaces it.
+      const sessionErrorMatchingLimit = yield* createThread("session-error-matching-limit");
+      yield* createFailure(
+        sessionErrorMatchingLimit,
+        yield* createRun(sessionErrorMatchingLimit, "failed"),
+        "usage_limit",
+      );
+      yield* attachSessionError(sessionErrorMatchingLimit, "usage_limit");
+      const sessionErrorAfterLimit = yield* createThread("session-error-after-limit");
+      yield* createFailure(
+        sessionErrorAfterLimit,
+        yield* createRun(sessionErrorAfterLimit, "failed"),
+        "usage_limit",
+      );
+      yield* attachSessionError(sessionErrorAfterLimit, "Session crashed.");
+      const providerFailed = yield* createThread("provider-failed");
+      yield* createFailure(
+        providerFailed,
+        yield* createRun(providerFailed, "failed"),
+        "provider_error",
+      );
       const background = yield* createThread("idle-background");
       yield* createItem(background, yield* createRun(background), "idle");
       const persistent = yield* createThread("persistent-monitor");
@@ -250,7 +359,17 @@ it.effect(
       );
       assert.deepEqual(
         new Set(eligible.map((thread) => thread.id)),
-        new Set([idle, completed, queued, woke, background, persistent, rolledBack]),
+        new Set([
+          idle,
+          completed,
+          queued,
+          woke,
+          providerFailed,
+          sessionErrorAfterLimit,
+          background,
+          persistent,
+          rolledBack,
+        ]),
       );
       assert.deepEqual(
         new Set(eligible.map((thread) => thread.id)),
