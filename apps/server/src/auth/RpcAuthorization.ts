@@ -1,10 +1,12 @@
 import {
   CLIENT_GUARDED_RPC_SCOPES,
+  PLUGIN_MANAGEMENT_REQUIRED_SCOPES,
   type DeviceListInput,
   clientRpcRequiredScopes,
   authScopeRequiredResponse,
   AssetCreateUrlInput,
   AuthAccessReadScope,
+  AuthAccessWriteScope,
   ServerSettingsPatch,
   ProviderInstanceMutation,
   requiredScopesForServerSettingsPatch,
@@ -115,6 +117,34 @@ export const RPC_REQUIRED_SCOPES = {
   // Delivery logs hold request bodies, so they need the same scope as the URL.
   [WS_METHODS.scheduledTasksListWebhookDeliveries]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: AuthOrchestrationOperateScope,
+  // Plugin management also requires execution authority; see requiredScopesForRpcCall.
+  [WS_METHODS.pluginsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginsAdd]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsRefresh]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsConsent]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsEnable]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsDisable]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsRemove]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsResume]: AuthAccessWriteScope,
+  // Saved setting values are readable like the catalogue; secrets are never sent. Saving one
+  // configures code that runs as the server's OS user, so it takes the administrative scope.
+  [WS_METHODS.pluginsSettingsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginsSettingsUpdate]: AuthAccessWriteScope,
+  // Running an action the administrator already enabled is ordinary operation, like starting a
+  // turn; it cannot change what code runs.
+  [WS_METHODS.pluginActionsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginActionsInvoke]: AuthOrchestrationOperateScope,
+  // A view call runs the plugin's own `view:` handlers, like an action a client takes.
+  [WS_METHODS.pluginViewsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginViewsReadBundle]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginViewsCall]: AuthOrchestrationOperateScope,
+  // Installing or updating from npm changes which code the server runs, so it is administrative.
+  [WS_METHODS.pluginsNpmList]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginsNpmAdd]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsNpmStageUpdate]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsNpmApplyUpdate]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsNpmDiscardUpdate]: AuthAccessWriteScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,
@@ -169,6 +199,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeWorktreeSetup]: AuthOrchestrationReadScope,
   [WS_METHODS.worktreeSetupCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeResourceTelemetry]: AuthDiagnosticsReadScope,
+  [WS_METHODS.subscribeContributionStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginsNotificationsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.gitResolvePullRequest]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsListRefs]: AuthOrchestrationReadScope,
@@ -246,10 +278,26 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
 
+const pluginManagementMethods: ReadonlySet<string> = new Set([
+  WS_METHODS.pluginsAdd,
+  WS_METHODS.pluginsRefresh,
+  WS_METHODS.pluginsConsent,
+  WS_METHODS.pluginsEnable,
+  WS_METHODS.pluginsDisable,
+  WS_METHODS.pluginsRemove,
+  WS_METHODS.pluginsResume,
+  WS_METHODS.pluginsSettingsUpdate,
+  WS_METHODS.pluginsNpmAdd,
+  WS_METHODS.pluginsNpmStageUpdate,
+  WS_METHODS.pluginsNpmApplyUpdate,
+  WS_METHODS.pluginsNpmDiscardUpdate,
+]);
+
 const requiredScopesForRpcCall = (
   method: string,
   payload: unknown,
 ): ReadonlyArray<AuthEnvironmentScope> => {
+  if (pluginManagementMethods.has(method)) return PLUGIN_MANAGEMENT_REQUIRED_SCOPES;
   if (method === WS_METHODS.serverRetryResourceTelemetry) {
     return [AuthEnvironmentMaintainScope, AuthDiagnosticsReadScope];
   }

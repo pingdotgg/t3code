@@ -8,7 +8,11 @@ import {
   type EnvironmentThreadSearchMatch,
   type ShownOrder,
 } from "@t3tools/client-runtime/state/thread-search";
-import { isListedThreadLineage, THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  isListedThreadLineage,
+  THREAD_JUMP_KEYBINDING_COMMANDS,
+} from "@t3tools/contracts";
 import {
   foldSearchQuery,
   PALETTE_MESSAGE_LIMIT,
@@ -53,6 +57,8 @@ import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "../../state/server";
+import { runPluginAction, usePluginActions } from "../../state/plugin-actions";
+import { useEnvironmentScope } from "../../state/session";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -62,6 +68,7 @@ import { useStartTriage } from "../triage/useStartTriage";
 import { useNewTaskFlow } from "../threads/new-task-flow-provider";
 import { useActiveNewTask } from "../../state/active-new-task";
 import {
+  buildPluginActionPaletteItems,
   filterCommandPaletteItems,
   nextPaletteIndex,
   type CommandPaletteItem,
@@ -102,6 +109,7 @@ const ACTION_ICONS: Record<string, AppSymbolName> = {
 
 function itemIcon(item: CommandPaletteItem): AppSymbolName {
   if (item.kind === "thread") return "text.bubble";
+  if (item.key.startsWith("plugin-action:")) return "cube";
   return ACTION_ICONS[item.key] ?? "ellipsis";
 }
 
@@ -231,6 +239,17 @@ export function CommandPalette(props: {
   const activeThread = useThreadShell(activeThreadRef);
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const environments = useWorkspaceEnvironments();
+  // Plugin actions belong to the open thread's environment, else the first connected one.
+  const pluginActionEnvironmentId =
+    activeThreadRef?.environmentId ??
+    environments.find((environment) => environment.connectionState === "connected")
+      ?.environmentId ??
+    null;
+  const pluginActions = usePluginActions(pluginActionEnvironmentId);
+  const canRunPluginActions = useEnvironmentScope(
+    pluginActionEnvironmentId,
+    AuthOrchestrationOperateScope,
+  );
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [query, setQuery] = useState("");
   // Ranking is relative to when the palette opened, so rows do not reorder as time passes.
@@ -401,6 +420,18 @@ export function CommandPalette(props: {
         })),
       );
     }
+    if (pluginActionEnvironmentId !== null) {
+      actions.push(
+        ...buildPluginActionPaletteItems({
+          actions: pluginActions,
+          canOperate: canRunPluginActions,
+          environmentId: pluginActionEnvironmentId,
+          threadId: activeThread?.id ?? null,
+          projectId: activeThread?.projectId ?? null,
+          runAction: (input) => void runPluginAction(input),
+        }),
+      );
+    }
     const openProjects = projects.filter((project) => project.archivedAt == null);
     const projectItems: CommandPaletteItem[] = [
       ...openProjects.filter((project) => project.pinnedAt != null),
@@ -467,6 +498,9 @@ export function CommandPalette(props: {
     environments.length,
     canTriage,
     navigation,
+    canRunPluginActions,
+    pluginActionEnvironmentId,
+    pluginActions,
     projects,
     runCommand,
     savedConnectionsById,

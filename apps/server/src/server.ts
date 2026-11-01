@@ -26,6 +26,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
+import * as ContributionStatusStore from "@t3tools/provider-core/server/ContributionStatusStore";
 import { withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
 import {
@@ -78,6 +79,19 @@ import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as DeviceHubProxy from "./device/DeviceHubProxy.ts";
+import * as PluginApprovals from "./plugins/PluginApprovals.ts";
+import * as PluginCatalog from "./plugins/PluginCatalog.ts";
+import * as PluginEventDelivery from "./plugins/PluginEventDelivery.ts";
+import * as PluginEventFeed from "./plugins/PluginEventFeed.ts";
+import * as PluginActions from "./plugins/PluginActions.ts";
+import * as PluginSettings from "./plugins/PluginSettings.ts";
+import * as PluginNpm from "./plugins/PluginNpm.ts";
+import * as PluginStatus from "./plugins/PluginStatus.ts";
+import * as PluginNotifications from "./plugins/PluginNotifications.ts";
+import * as PluginSupervisor from "./plugins/PluginSupervisor.ts";
+import * as PluginContextEnrichment from "./plugins/PluginContextEnrichment.ts";
+import * as PluginTools from "./plugins/PluginTools.ts";
+import * as PluginViews from "./plugins/PluginViews.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
@@ -460,6 +474,22 @@ const layerDevice = DeviceService.layer.pipe(
   Layer.provide(NetService.layer),
 );
 
+// Zero enabled plugins means zero plugin processes; each starts on first use.
+const layerPlugin = Layer.mergeAll(
+  PluginTools.layer,
+  PluginSettings.layer(),
+  PluginViews.layer,
+  PluginNpm.layer,
+  PluginStatus.layer,
+  PluginNotifications.layer,
+  PluginContextEnrichment.layer,
+).pipe(
+  Layer.provideMerge(PluginCatalog.layer()),
+  Layer.provide(PluginSupervisor.layer()),
+  // Shared with the event feed: the catalogue starts event cursors on enable.
+  Layer.provideMerge(PluginEventDelivery.layer),
+);
+
 const layerWorkspaceEntries = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer));
 
 const layerWorkspaceFileSystem = WorkspaceFileSystem.layer.pipe(
@@ -625,6 +655,16 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
+  // Resolves action targets from the orchestrator's threads and projects.
+  PluginActions.layer,
+  // The orchestrator's own event sink, so commits wake event delivery.
+  PluginEventFeed.layer().pipe(
+    Layer.provide(Layer.merge(ProjectionStoreV2.layer, RuntimeLayer.layerEventSink)),
+  ),
+  // Plugins answer pending approvals through the orchestrator, like a client.
+  PluginApprovals.layer.pipe(
+    Layer.provide(Layer.merge(ProjectionStoreV2.layer, RuntimeLayer.layerEventSink)),
+  ),
 ).pipe(
   Layer.provideMerge(layerOrchestrationApplication),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
@@ -634,7 +674,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(layerSourceControlProviderRegistry),
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
-  Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),
+  Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice, layerPlugin)),
+  // The same layer reference provider adapters write through, so memoization
+  // gives producers and the WebSocket stream one store.
+  Layer.provideMerge(ContributionStatusStore.layer),
   Layer.provideMerge(layerPersistence),
   Layer.provideMerge(
     Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),

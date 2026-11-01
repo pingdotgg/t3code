@@ -22,6 +22,7 @@ import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type ChatAttachment,
   CommandId,
+  isPluginContextTurnItem,
   type GuestMessageId,
   isCompactionCommandMessage,
   isOrchestrationV2WorkActive,
@@ -30,6 +31,7 @@ import {
   type NodeId,
   type ModelSelection,
   OrchestrationV2Command,
+  type OrchestrationV2ApprovalResolvedBy,
   type OrchestrationV2InternalCommand,
   type OrchestrationV2LimitRecoveryUpdate,
   type OrchestrationV2ServerCommand,
@@ -59,6 +61,7 @@ import {
   latestProviderTurnForAttempt,
   parseGoalCommand,
   orchestrationV2RunWorkStartedAt,
+  PluginApprovalKind,
   orchestrationV2WorktreePending,
   ProviderInstanceId,
   ProviderInteractionMode,
@@ -124,6 +127,7 @@ import {
   isBufferedProviderNotification,
   isUndeliveredMailboxSteer,
 } from "./NotificationMailbox.ts";
+import { notAddedPluginContextItem } from "./RunContextEnrichment.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import {
   decideGuestMessageSend,
@@ -325,6 +329,11 @@ export interface OrchestratorV2DispatchResult {
   readonly replayed?: true;
 }
 
+interface OrchestratorV2DispatchOptions {
+  /** Rechecked under the dispatch locks after planning, immediately before committing new events. */
+  readonly beforeCommit?: Effect.Effect<void, OrchestratorV2Error>;
+}
+
 export interface OrchestratorV2Shape {
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
   readonly recoverDelegatedTasks: Effect.Effect<void>;
@@ -338,6 +347,7 @@ export interface OrchestratorV2Shape {
   readonly awaitRestartContinuation: (run: OrchestrationV2Run) => Effect.Effect<void>;
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
+    options?: OrchestratorV2DispatchOptions,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
   readonly autoArmLimitRecovery: (input: {
     readonly commandId: CommandId;
@@ -539,6 +549,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "queued-run.cancel":
     case "queued-run.edit":
     case "runtime-request.respond":
+    case "runtime-request.plugin-respond":
     case "runtime-request.delivery.fail":
     case "thread.user-input.dismiss":
     case "checkpoint.rollback":
@@ -577,6 +588,8 @@ const decodeUserInputAnswers = Schema.decodeUnknownEffect(
     ]),
   ),
 );
+
+const isPluginApprovalKind = Schema.is(PluginApprovalKind);
 
 function pendingThreadTitleGenerationEffect(
   commandId: CommandId,
@@ -8799,6 +8812,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command: Extract<OrchestrationV2Command, { readonly type: "runtime-request.respond" }>,
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
       effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+      resolvedBy?: OrchestrationV2ApprovalResolvedBy,
     ) {
       const context = yield* projectionStore
         .getRuntimeResponseContext(command.threadId, command.requestId)
@@ -8825,6 +8839,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           commandType: command.type,
           cause: runtimeRequest.responseCapability.reason,
+        });
+      }
+      if (
+        resolvedBy !== undefined &&
+        (context.item?.type !== "approval_request" || !isPluginApprovalKind(runtimeRequest.kind))
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Plugins cannot answer ${runtimeRequest.kind} requests.`,
         });
       }
       if (
@@ -9072,6 +9096,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ),
                   },
                 }
+              : {}),
+            ...(approvalTurnItem.type === "approval_request" && resolvedBy !== undefined
+              ? { resolvedBy }
               : {}),
             status: resolvedNodeStatus,
             completedAt: now,
@@ -11297,6 +11324,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
         });
       }
+      // Plugins still answering never reach this run; close their items with it.
+      for (const contextItem of projection.turnItems
+        .filter(isPluginContextTurnItem)
+        .filter((candidate) => candidate.runId === run.id && candidate.status === "running")) {
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          runId: run.id,
+          nodeId: rootNode.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: notAddedPluginContextItem(contextItem, {
+            status: "interrupted",
+            reason: "The run was interrupted before the plugin answered.",
+            now,
+          }),
+        });
+      }
       yield* emitEvent({
         type: "run-attempt.updated",
         threadId: command.threadId,
@@ -13053,6 +13098,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "runtime-request.respond":
         yield* dispatchRuntimeRequestRespond(command, events, effects);
         break;
+      case "runtime-request.plugin-respond":
+        yield* dispatchRuntimeRequestRespond(
+          {
+            type: "runtime-request.respond",
+            commandId: command.commandId,
+            threadId: command.threadId,
+            requestId: command.requestId,
+            decision: command.resolvedBy.decision,
+          },
+          events,
+          effects,
+          command.resolvedBy,
+        );
+        break;
       case "thread.user-input.dismiss":
         yield* dispatchThreadUserInputDismiss(command, events, effects);
         break;
@@ -13253,6 +13312,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchWithReceiptEffect = Effect.fn("orchestrationV2.dispatch.withReceipt")(function* (
     command: OrchestrationV2ServerCommand,
     sideChatIds: ReadonlyArray<ThreadId> = [],
+    beforeCommit?: Effect.Effect<void, OrchestratorV2Error>,
   ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorV2Error> {
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.command_id": command.commandId,
@@ -13416,6 +13476,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       } satisfies OrchestratorV2DispatchResult;
     }
     const acceptedAt = plan.events.at(-1)?.occurredAt ?? (yield* DateTime.now);
+    if (beforeCommit !== undefined) yield* beforeCommit;
     const committed = yield* eventSink
       .commitCommand({
         commandId: command.commandId,
@@ -13475,10 +13536,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   }, withCommandMetrics);
 
   // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
-  const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
+  const dispatchWithReceipt = Effect.fnUntraced(function* (
+    command: OrchestrationV2ServerCommand,
+    options?: OrchestratorV2DispatchOptions,
+  ) {
     const dispatch = threadDispatch.withLock(
       commandThreadId(command),
-      dispatchWithReceiptEffect(command),
+      dispatchWithReceiptEffect(command, [], options?.beforeCommit),
     );
     // A parent's lock comes before its side chats' locks, so a delete cascade and a side chat
     // fork or command never interleave. A fork from a side chat or onto an existing thread would
@@ -13501,7 +13565,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           Effect.flatMap((sideChatIds) =>
             sideChatIds.reduce(
               (locked, sideChatId) => threadDispatch.withLock(sideChatId, locked),
-              dispatchWithReceiptEffect(command, sideChatIds),
+              dispatchWithReceiptEffect(command, sideChatIds, options?.beforeCommit),
             ),
           ),
         ),

@@ -46,6 +46,7 @@ import {
   type RenderFailureProps,
 } from "./components/RenderErrorBoundary";
 import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRouteScreen";
+import { PluginNotificationBannerHost } from "./features/plugins/PluginNotificationBannerHost";
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
 import { AttachmentFileScreen } from "./features/files/AttachmentFileScreen";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
@@ -95,6 +96,10 @@ import { SettingsNavigationRouteScreen } from "./features/settings/SettingsNavig
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
 import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
+import {
+  SettingsPluginRouteScreen,
+  SettingsPluginsRouteScreen,
+} from "./features/settings/SettingsPluginsRouteScreen";
 import { SettingsProviderAccountsRouteScreen } from "./features/settings/SettingsProviderAccountsRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentDetailRouteScreen } from "./features/settings/SettingsEnvironmentDetailRouteScreen";
@@ -390,6 +395,15 @@ const SETTINGS_SCREENS = {
       headerTitleStyle: { fontSize: 16, fontWeight: "800" },
     },
   }),
+  SettingsPlugins: createNativeStackScreen({
+    screen: SettingsPluginsRouteScreen,
+    linking: "settings/plugins",
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Plugins" },
+  }),
+  SettingsPlugin: createNativeStackScreen({
+    screen: SettingsPluginRouteScreen,
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Plugin" },
+  }),
   SettingsScheduledTaskNew: createNativeStackScreen({
     screen: SettingsScheduledTaskNewRouteScreen,
     linking: "settings/scheduled-tasks/new",
@@ -544,6 +558,7 @@ function RootStackLayout(props: {
               </AdaptiveWorkspaceLayout>
             </AndroidWorkspaceTabsProvider>
           </WorkspaceConnectionStatusProvider>
+          <PluginNotificationBannerHost />
         </SettingsEnvironmentFilterProvider>
       </HardwareKeyboardCommandProvider>
     </NewTaskFlowProvider>
