@@ -1,4 +1,9 @@
-import { isListedThreadLineage, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import {
+  isListedThreadLineage,
+  type IdleCompactionMode,
+  type OrchestrationV2ThreadProjection,
+  type ServerProviderUsageWindow,
+} from "@t3tools/contracts";
 import { COMPACTION_SUGGESTION_MIN_TOKENS } from "@t3tools/shared/claudeCompaction";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
@@ -10,6 +15,8 @@ const MIN_CONTEXT_TOKENS = COMPACTION_SUGGESTION_MIN_TOKENS;
 // Start this long before the cache expires: enough for the session to resume
 // and send the compaction while the cache is still warm.
 const LEAD_MS = 2 * 60_000;
+// Close enough to a usage limit that the next turn may well be the one it stops.
+const NEAR_USAGE_LIMIT_PERCENT = 95;
 
 export type IdleCompactionRecords = Pick<
   OrchestrationV2ThreadProjection,
@@ -100,4 +107,36 @@ export function idleCompactionWindow(
   const endMs = expiresAt === undefined ? Number.NaN : Date.parse(expiresAt);
   if (!Number.isFinite(endMs) || nowMs >= endMs) return null;
   return { runId: latestRun.id, startMs: endMs - LEAD_MS, endMs };
+}
+
+/**
+ * What to do with an idle compaction window. A nearly spent usage window that
+ * resets after the cache expires compacts at once: a stop on that limit would
+ * resume against an expired cache. "Never" always wins.
+ */
+export function idleCompactionAction(input: {
+  readonly mode: IdleCompactionMode;
+  readonly compactBeforeUsageLimit: boolean;
+  readonly window: { readonly startMs: number; readonly endMs: number };
+  readonly usageWindows: ReadonlyArray<ServerProviderUsageWindow>;
+  readonly nowMs: number;
+}): "compact" | "wait" | "skip" {
+  const { mode, window, nowMs } = input;
+  if (mode === "off") return "skip";
+  if (input.compactBeforeUsageLimit && usageLimitOutlastsCache(input.usageWindows, window.endMs))
+    return "compact";
+  if (mode !== "beforeCacheExpires") return "skip";
+  return nowMs < window.startMs ? "wait" : "compact";
+}
+
+export function usageLimitOutlastsCache(
+  usageWindows: ReadonlyArray<ServerProviderUsageWindow>,
+  cacheExpiresAt: number,
+): boolean {
+  return usageWindows.some(
+    (usage) =>
+      usage.usedPercent >= NEAR_USAGE_LIMIT_PERCENT &&
+      usage.resetsAt !== undefined &&
+      Date.parse(usage.resetsAt) > cacheExpiresAt,
+  );
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
   EventId,
+  IDLE_COMPACTION_TEXT,
   MessageId,
   type OrchestrationV2ThreadProjection,
   NodeId,
@@ -13,6 +14,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -21,12 +23,17 @@ import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as IdleCompactionService from "./IdleCompactionService.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
-import { idleCompactionWindow, type IdleCompactionRecords } from "./IdleCompaction.ts";
+import {
+  idleCompactionAction,
+  idleCompactionWindow,
+  type IdleCompactionRecords,
+} from "./IdleCompaction.ts";
 
 const NOW_MS = Date.parse("2026-10-19T12:00:00.000Z");
 const MINUTE_MS = 60_000;
@@ -176,10 +183,55 @@ describe("idleCompactionWindow", () => {
   });
 });
 
+describe("idleCompactionAction", () => {
+  it("compacts near a usage limit that outlasts the cache, unless set to never", () => {
+    const window = { startMs: NOW_MS + 58 * MINUTE_MS, endMs: NOW_MS + 60 * MINUTE_MS };
+    const usage = (usedPercent: number, resetsInMs?: number) => ({
+      id: "five_hour",
+      kind: "session" as const,
+      label: "Session",
+      usedPercent,
+      ...(resetsInMs === undefined ? {} : { resetsAt: DateTime.formatIso(at(resetsInMs)) }),
+    });
+    const action = (
+      mode: "onReturn" | "beforeCacheExpires" | "off",
+      usageWindows: ReadonlyArray<ReturnType<typeof usage>>,
+      nowMs = NOW_MS,
+      compactBeforeUsageLimit = true,
+    ) => idleCompactionAction({ mode, compactBeforeUsageLimit, window, usageWindows, nowMs });
+    const nearLimit = [usage(95, 90 * MINUTE_MS)];
+
+    expect(action("onReturn", nearLimit)).toBe("compact");
+    expect(action("beforeCacheExpires", nearLimit)).toBe("compact");
+    expect(action("off", nearLimit)).toBe("skip");
+    expect(action("onReturn", nearLimit, NOW_MS, false)).toBe("skip");
+    expect(action("onReturn", [usage(94, 90 * MINUTE_MS)])).toBe("skip");
+    expect(action("onReturn", [usage(95, 30 * MINUTE_MS)])).toBe("skip");
+    expect(action("onReturn", [usage(95)])).toBe("skip");
+    // Inside the cache window, only the cache-expiry mode compacts without a usage reason.
+    expect(action("onReturn", [], window.startMs)).toBe("skip");
+    expect(action("beforeCacheExpires", [])).toBe("wait");
+    expect(action("beforeCacheExpires", [], window.startMs)).toBe("compact");
+  });
+});
+
 describe("IdleCompactionService", () => {
   it.effect.each([
     { mode: "onReturn", reads: 0 },
+    { mode: "onReturn", usageLimit: true, reads: 0, dispatches: 0 },
+    { mode: "onReturn", usageLimit: true, usedPercent: 94, reads: 0, dispatches: 0 },
+    { mode: "onReturn", usageLimit: true, usedPercent: 95, reads: 1, dispatches: 1 },
+    { mode: "off", usageLimit: true, usedPercent: 95, reads: 0, dispatches: 0 },
+    {
+      mode: "onReturn",
+      override: "off",
+      usageLimit: true,
+      usedPercent: 95,
+      reads: 0,
+      dispatches: 0,
+    },
     { mode: "off", reads: 0 },
+    { mode: "off", usageLimit: true, reads: 0 },
     { mode: "beforeCacheExpires", reads: 1 },
     { mode: "beforeCacheExpires", override: "off", reads: 0 },
     { mode: "onReturn", override: "beforeCacheExpires", reads: 1 },
@@ -190,10 +242,11 @@ describe("IdleCompactionService", () => {
     { mode: "beforeCacheExpires", driver: "claudeAgent", instance: "custom-claude", reads: 1 },
     { mode: "beforeCacheExpires", unconfigured: true, reads: 1 },
   ] as const)(
-    "loads history only for eligible idle compaction: $mode/$override/$enabled/$projectDisabled/$instance/$unconfigured",
+    "loads history only for eligible idle compaction: $mode/$usageLimit/$override/$enabled/$projectDisabled/$instance/$unconfigured",
     (scenario) => {
       const test = {
         override: "default",
+        usageLimit: false,
         enabled: true,
         projectDisabled: false,
         ...scenario,
@@ -205,7 +258,9 @@ describe("IdleCompactionService", () => {
             "instance" in test ? test.instance : "claudeAgent",
           );
           const driver = ProviderDriverKind.make("driver" in test ? test.driver : "claudeAgent");
-          const base = records({ cacheExpiresInMs: 2 * MINUTE_MS });
+          const base = records({
+            cacheExpiresInMs: (test.usageLimit ? 60 : 2) * MINUTE_MS,
+          });
           const data: OrchestrationV2ThreadProjection = {
             ...base,
             thread: {
@@ -259,8 +314,13 @@ describe("IdleCompactionService", () => {
                 occurredAt: at(),
                 payload: data.runs[0]!,
               }),
-              dispatch: () =>
+              dispatch: (command) =>
                 Effect.sync(() => {
+                  expect(command).toMatchObject({
+                    type: "message.dispatch",
+                    text: IDLE_COMPACTION_TEXT,
+                    threadId,
+                  });
                   dispatches++;
                   return { sequence: 1, storedEvents: [] };
                 }),
@@ -273,10 +333,35 @@ describe("IdleCompactionService", () => {
                   return data;
                 }),
             }),
+            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+              getInstance: () =>
+                Effect.succeed(
+                  "usedPercent" in test
+                    ? ({
+                        snapshot: {
+                          getSnapshot: Effect.succeed({
+                            usageLimits: {
+                              windows: [
+                                {
+                                  id: "five_hour",
+                                  kind: "session",
+                                  label: "Session",
+                                  usedPercent: test.usedPercent,
+                                  resetsAt: DateTime.formatIso(at(90 * MINUTE_MS)),
+                                },
+                              ],
+                            },
+                          }),
+                        },
+                      } as unknown as ProviderInstance)
+                    : undefined,
+                ),
+            }),
             Layer.mock(ServerSettings.ServerSettingsService)({
               getSettings: Effect.succeed({
                 ...DEFAULT_SERVER_SETTINGS,
                 idleCompaction: test.mode,
+                compactBeforeUsageLimit: test.usageLimit,
                 providerInstances:
                   "unconfigured" in test
                     ? {}
@@ -303,7 +388,7 @@ describe("IdleCompactionService", () => {
             yield* Deferred.await(done);
           }).pipe(Effect.provide(dependencies), Effect.withTracer(tracer));
           expect(historyReads).toBe(test.reads);
-          expect(dispatches).toBe(test.reads);
+          expect(dispatches).toBe("dispatches" in test ? test.dispatches : test.reads);
         }),
       );
     },
