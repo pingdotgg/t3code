@@ -107,60 +107,6 @@ V2 may add V2-native orchestration events, projection tables, command policies, 
 
 V2 command dispatch returns the last committed stored-event sequence for accepted commands. Duplicate command ids must return the same receipt-backed result without re-running provider side effects. This is the API-level boundary the frontend uses for reconnect/recovery cursors.
 
-## Tracked Follow-Up: Durable Effect Outbox
+## Durable Effect Outbox
 
-The current app pipeline uses domain events plus reactors to trigger provider side effects:
-
-```text
-command
-  -> domain event(s)
-  -> projection
-  -> reactor observes event
-  -> provider side effect
-  -> provider output ingestion
-  -> domain event(s)
-```
-
-This is valid, but it can become hard to trace because the provider side effect is implicit in a live subscription. If V2 needs stronger restart/recovery/debuggability, introduce a durable effect outbox for orchestration side effects:
-
-```text
-command
-  -> transaction:
-       append domain event(s)
-       append provider effect request(s)
-  -> projection
-  -> stream to UI
-
-effect worker
-  -> claim effect request
-  -> call provider
-  -> ingest provider output
-  -> append domain event(s)
-  -> mark effect request completed/failed
-```
-
-Example effect request:
-
-```ts
-type ProviderEffectRequest = {
-  id: ProviderEffectRequestId;
-  kind:
-    | "provider.turn.start"
-    | "provider.turn.interrupt"
-    | "provider.runtime-request.respond"
-    | "provider.thread.rollback"
-    | "provider.thread.fork";
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
-  threadId: ThreadId;
-  runId: RunId | null;
-  nodeId: NodeId | null;
-  provider: ProviderKind;
-  payload: unknown;
-  causationEventId: EventId;
-  commandId: CommandId | null;
-  attempts: number;
-  lastError: string | null;
-};
-```
-
-This should be treated as an infrastructure improvement, not a prerequisite for the first V2 slice. The first V2 implementation can use the existing reactor pattern, but it should keep the provider side-effect boundary clear enough that moving to an outbox later does not require redesigning the graph or provider adapters.
+Commands record side effects, such as starting a provider turn or capturing a checkpoint, as requests in a durable outbox, committed in the same transaction as their events. The effect worker runs them after the commit, so side-effect intent is persisted rather than implicit in a live event subscription. A thread's effects run one at a time in enqueue order; title generation is ordered separately. [`OrchestrationEffectRequestV2`](../../apps/server/src/orchestration-v2/EffectOutbox.ts) lists the requests, and [Durable intent and side effects](../internals/overview.md#durable-intent-and-side-effects) covers recovery and the constraints on new code.
