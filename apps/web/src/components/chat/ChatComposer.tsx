@@ -1106,6 +1106,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     existingAttachmentCount: editingQueuedAttachments?.length ?? 0,
     terminalContexts: composerTerminalContexts,
     elementContextCount: composerPreviewAnnotations.length + composerReviewComments.length,
+    threadContextCount: composerThreadContexts.length,
   });
   const composerTriggerKind = composerTrigger?.kind ?? null;
   const compactSlashCommandAvailable =
