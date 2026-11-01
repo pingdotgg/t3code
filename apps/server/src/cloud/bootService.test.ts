@@ -201,7 +201,14 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                 ...(environmentPath === undefined || environmentPath === ""
                   ? {}
                   : { PATH: environmentPath }),
-                ...(insideService ? { T3_BOOT_SERVICE_UNIT: "t3code.service" } : {}),
+                ...(insideService
+                  ? {
+                      T3_BOOT_SERVICE_UNIT:
+                        platform === "darwin"
+                          ? BootService.BOOT_SERVICE_PLIST_FILE
+                          : BootService.BOOT_SERVICE_UNIT_FILE,
+                    }
+                  : {}),
               },
             }),
           ),
@@ -904,6 +911,49 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(commands).toContain(bootstrap);
       expect(yield* fs.exists(markerPath)).toBe(false);
       expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
+  const stopsRunningLaunchAgent = (command: string) =>
+    /^launchctl (bootout|kill|stop|remove|unload)\b.*\bcom\.t3tools\.t3code\.service(\.plist)?$/.test(
+      command,
+    );
+
+  // regression: #28552 booting out the agent from inside it kills the caller before bootstrap
+  it.effect("hands an in-service install to launchd without booting out the running agent", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, commands, makeService } = yield* makeHarness("darwin");
+      const plan = yield* service.install();
+      const state = yield* fs.readFileString(statePath);
+      const plist = yield* fs.readFileString(plan.unitPath);
+      const inside = yield* makeService(undefined, "1.2.4", undefined, true);
+      commands.length = 0;
+
+      const result = yield* inside.install();
+
+      expect(commands.filter(stopsRunningLaunchAgent)).toEqual([]);
+      expect(result).toMatchObject({ handedOff: true });
+      expect(yield* fs.readFileString(statePath)).toBe(state);
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(plist);
+    }),
+  );
+
+  // regression: #28552
+  it.effect("queues an in-service restart on macOS without booting out the running agent", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, commands, makeService } = yield* makeHarness("darwin");
+      const plan = yield* service.install();
+      const state = yield* fs.readFileString(statePath);
+      const plist = yield* fs.readFileString(plan.unitPath);
+      const inside = yield* makeService(undefined, "1.2.3", undefined, true);
+      commands.length = 0;
+
+      const outcome = yield* inside.restart;
+
+      expect(commands.filter(stopsRunningLaunchAgent)).toEqual([]);
+      expect(outcome).toBe("queued");
+      expect(yield* fs.readFileString(statePath)).toBe(state);
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(plist);
     }),
   );
 });
