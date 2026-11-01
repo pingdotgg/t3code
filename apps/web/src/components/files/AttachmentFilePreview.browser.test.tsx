@@ -2516,6 +2516,9 @@ function pdfScroll(screen: Screen) {
   return { region, canvas, offset, scrollTo };
 }
 
+// Both PDF scroll tests are real pdf.js rendering with no hidden wait: about 3s locally and
+// 11s on upstream's CI, but past the 15s ceiling on the fork's slower GitHub-hosted runners.
+// oxlint-disable-next-line t3code/no-test-timeout-or-unreasoned-skip -- CPU-bound PDF rendering, not a hidden wait.
 it("keeps workspace PDF scroll and zoom after reloads", async () => {
   using fixture = await workspacePdfPreview();
   const { preview, urls } = fixture;
@@ -2575,8 +2578,9 @@ it("keeps workspace PDF scroll and zoom after reloads", async () => {
     expect(region().scrollTop).toBe(0);
     expect(region().scrollLeft).toBe(0);
   });
-});
+}, 45_000);
 
+// oxlint-disable-next-line t3code/no-test-timeout-or-unreasoned-skip -- CPU-bound PDF rendering, not a hidden wait.
 it("clamps workspace PDF scroll when pages shrink or disappear", async () => {
   using fixture = await workspacePdfPreview();
   const { preview, urls } = fixture;
@@ -2611,7 +2615,7 @@ it("clamps workspace PDF scroll when pages shrink or disappear", async () => {
   await expect.element(screen.getByText("1 / 1 pages", { exact: true })).toBeVisible();
   await screen.rerender(preview(urls.original, "five"));
   await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
-});
+}, 45_000);
 
 it("unwraps one text attachment without turning off the word wrap setting", async () => {
   const file = new Blob(["a long line"], { type: "text/plain" });
