@@ -656,6 +656,128 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       );
     },
   );
+  it.effect("keeps Android activity off when the relay rejects turning it on", () => {
+    vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
+    vi.spyOn(Platform, "Version", "get").mockReturnValue(36);
+    vi.mocked(Notifications.getDevicePushTokenAsync).mockResolvedValue({
+      type: "android",
+      data: "fcm-token",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (request.url.endsWith("/v1/client/dpop-token")) {
+        return Response.json({
+          access_token: "dpop",
+          issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          token_type: "DPoP",
+          expires_in: 300,
+          scope: "mobile:registration",
+        });
+      }
+      return new Response("Service unavailable", { status: 503 });
+    });
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test" } };
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk"), "user-a");
+
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        updateAgentAwarenessRegistrationPreferences({ liveActivitiesEnabled: true }),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(vi.mocked(configureAndroidAgentNotifications).mock.lastCall).toEqual([
+        expect.any(String),
+        "user-a",
+        false,
+      ]);
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
+  });
+
+  it.effect("keeps Android activity off when reading notification permission fails", () => {
+    vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
+    vi.spyOn(Platform, "Version", "get").mockReturnValue(36);
+    vi.mocked(Notifications.getPermissionsAsync).mockRejectedValueOnce(
+      new Error("permission lookup failed"),
+    );
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test" } };
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk"), "user-a");
+
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        updateAgentAwarenessRegistrationPreferences({ liveActivitiesEnabled: true }),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(vi.mocked(configureAndroidAgentNotifications).mock.lastCall).toEqual([
+        expect.any(String),
+        "user-a",
+        false,
+      ]);
+    }).pipe(Effect.provide(layerRelayTest));
+  });
+
+  it.effect("keeps a newer Android activity toggle when an older registration fails", () => {
+    vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
+    vi.spyOn(Platform, "Version", "get").mockReturnValue(36);
+    vi.mocked(Notifications.getDevicePushTokenAsync).mockResolvedValue({
+      type: "android",
+      data: "fcm-token",
+    });
+    let olderRequestArrived!: () => void;
+    const olderArrived = new Promise<void>((resolve) => {
+      olderRequestArrived = resolve;
+    });
+    let failOlderRequest!: () => void;
+    const olderFails = new Promise<void>((resolve) => {
+      failOlderRequest = resolve;
+    });
+    let deviceRequests = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (request.url.endsWith("/v1/client/dpop-token")) {
+        return Response.json({
+          access_token: "dpop",
+          issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          token_type: "DPoP",
+          expires_in: 300,
+          scope: "mobile:registration",
+        });
+      }
+      deviceRequests += 1;
+      if (deviceRequests === 1) {
+        olderRequestArrived();
+        await olderFails;
+        return new Response("Service unavailable", { status: 503 });
+      }
+      return Response.json({ ok: true });
+    });
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test" } };
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk"), "user-a");
+
+    return Effect.gen(function* () {
+      const older = yield* Effect.forkChild(
+        Effect.exit(updateAgentAwarenessRegistrationPreferences({})),
+      );
+      yield* Effect.promise(() => olderArrived);
+
+      yield* updateAgentAwarenessRegistrationPreferences({ liveActivitiesEnabled: true });
+      failOlderRequest();
+      expect(Exit.isFailure(yield* Fiber.join(older))).toBe(true);
+
+      expect(vi.mocked(configureAndroidAgentNotifications).mock.lastCall).toEqual([
+        expect.any(String),
+        "user-a",
+        true,
+      ]);
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
+  });
+
   it.effect("preserves relay rejection errors with React Native response headers", () => {
     vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
     vi.mocked(Notifications.getDevicePushTokenAsync).mockResolvedValue({
