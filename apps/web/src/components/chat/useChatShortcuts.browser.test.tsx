@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { expect, it } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { isPreviewFocused } from "~/lib/previewFocus";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { render } from "../../../test/render";
 import type { ChatComposerHandle } from "./ChatComposer";
@@ -146,10 +148,10 @@ it.each([
 const sideChatKeybindings: ResolvedKeybindingsConfig = [
   ctrl("m", "modelPicker.toggle", true),
   ctrl("x", "thread.stop", true),
-  ctrl("f", "chat.find"),
+  ...DEFAULT_RESOLVED_KEYBINDINGS.filter((binding) => binding.command === "chat.find"),
 ];
 
-// A side chat in the main chat's panel: no window listeners, only its pane's find and its
+// A side chat in the main chat's right panel: no window listeners, only its pane's find and its
 // composer's own chords. Passing `findCloses` opens its find.
 function SideChat(props: {
   toggles: string[];
@@ -164,7 +166,7 @@ function SideChat(props: {
     composerElement,
     keybindings: sideChatKeybindings,
     scriptKeybindings: [],
-    getShortcutContext: () => shortcutContext,
+    getShortcutContext: () => ({ ...shortcutContext, previewFocus: isPreviewFocused() }),
     threadFindActive: props.findCloses !== undefined,
     composerRef: {
       current: {
@@ -181,13 +183,15 @@ function SideChat(props: {
   });
   return (
     <>
-      <div data-side-chat-pane>
-        <input aria-label="Side chat find" />
-        <div tabIndex={0} aria-label="Side chat timeline">
-          Conversation
-        </div>
-        <div ref={setComposerElement}>
-          <textarea aria-label="Side chat composer" />
+      <div data-preview-panel-mode="inline">
+        <div data-side-chat-pane>
+          <input aria-label="Side chat find" />
+          <div tabIndex={0} aria-label="Side chat timeline">
+            Conversation
+          </div>
+          <div ref={setComposerElement}>
+            <textarea aria-label="Side chat composer" />
+          </div>
         </div>
       </div>
       <textarea aria-label="Main composer" />
