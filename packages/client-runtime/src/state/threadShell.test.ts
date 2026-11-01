@@ -284,6 +284,12 @@ describe("v2 thread shell lists", () => {
 
     registry.set(snapshotAtom(environmentId), {
       ...v2ShellSnapshot,
+      threads: [{ ...root, pendingGuestMessageCount: 1 }, sideChat],
+    });
+    expect(isThreadWorking(registry.get(parent)!)).toBe(false);
+
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
       threads: [
         root,
         { ...sideChat, status: "completed" as const, activityRunStatus: null, activeRunId: null },

@@ -10,10 +10,21 @@ type WorkingThreadInput = Pick<
   | "hasPendingUserInput"
   | "pendingSubagentRequest"
   | "hasWorkingSideChat"
+  | "pendingGuestMessageCount"
   | "interactionMode"
   | "latestRun"
   | "runtime"
 >;
+
+// A stopped thread that needs its owner stays out of Working even while its side chat runs.
+function heldBySideChat(thread: WorkingThreadInput): boolean {
+  return (
+    thread.hasWorkingSideChat === true &&
+    thread.runtime?.status !== "failed" &&
+    thread.runtime?.lastError == null &&
+    (thread.pendingGuestMessageCount ?? 0) === 0
+  );
+}
 
 export function isThreadWorking(thread: WorkingThreadInput): boolean {
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
@@ -21,7 +32,7 @@ export function isThreadWorking(thread: WorkingThreadInput): boolean {
   if (
     !threadRuntimeIsActive(thread.runtime) &&
     thread.runtime?.status !== "idle" &&
-    !(thread.hasWorkingSideChat && thread.runtime?.status !== "failed")
+    !heldBySideChat(thread)
   ) {
     return false;
   }
