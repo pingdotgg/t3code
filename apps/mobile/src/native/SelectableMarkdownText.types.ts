@@ -64,6 +64,10 @@ export interface MarkdownLinkCustomization {
 
 export interface SelectableMarkdownTextProps {
   readonly markdown: string;
+  readonly onCiteSelection?: (selection: {
+    text: string;
+    selection: { start: number; end: number };
+  }) => void;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly preserveSoftBreaks?: boolean;

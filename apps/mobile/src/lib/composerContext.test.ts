@@ -1,5 +1,9 @@
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import {
   ComposerContextId,
+  EnvironmentId,
+  ThreadId,
+  MessageId,
   type OrchestrationMessageContext,
   type ServerProviderSkill,
 } from "@t3tools/contracts";
@@ -156,6 +160,28 @@ describe("mobile composer context", () => {
     expect(createComposerContextHistory()(source)?.records).toEqual([]);
   });
   it("keeps exact source positions and repeated references alongside existing native tokens", () => {
+    const citation = serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("env"),
+      threadId: ThreadId.make("thread"),
+      messageId: MessageId.make("message"),
+      text: "Use $HOME and @file.ts",
+      start: 0,
+      end: 22,
+      prefix: "",
+      suffix: "",
+    });
+    const quoted = composerContextEditorTokens(`Before ${citation} after`, [], new Set());
+    expect(quoted).toMatchObject([
+      {
+        type: "citation",
+        source: citation,
+        value: "Use $HOME and @file.ts",
+        start: 7,
+        end: 7 + citation.length,
+      },
+    ]);
+    expect(serializeComposerMessageForServer(citation, undefined).text).toBe(citation);
     const reference = formatComposerContextReference(terminal);
     const text = `Use $babysit with $disabled $agentOnly $HOME $PATH $anything $notaskill $20 $20k and [app.ts](src/app.ts) with ${reference} then ${reference}`;
     const babysit: ServerProviderSkill = {

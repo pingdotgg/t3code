@@ -181,7 +181,7 @@ export function ComposerEditor({
             ? props.context?.records.find((record) => record.contextId === token.contextId)
             : undefined;
         const presentation = contextChipPresentation(
-          token.type === "context" ? token.kind : token.type,
+          token.type === "context" ? token.kind : token.type === "citation" ? "thread" : token.type,
           record,
         );
         const icon = contextChipIcon(
@@ -195,11 +195,13 @@ export function ComposerEditor({
           end: token.end,
           accent: contextChipAccent(presentation.accent, theme, chipTextColor),
           label:
-            token.type === "skill"
-              ? (skillLabels.get(token.value) ?? token.value)
-              : token.type === "context"
-                ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
-                : basename(token.value),
+            token.type === "citation"
+              ? token.value
+              : token.type === "skill"
+                ? (skillLabels.get(token.value) ?? token.value)
+                : token.type === "context"
+                  ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
+                  : basename(token.value),
           detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
           iconUri: contextChipIconUri(icon),
           tintsIcon: icon.kind === "chip",

@@ -1,3 +1,6 @@
+import { voiceInputBlocksSubmission } from "@t3tools/client-runtime/voice-input";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import type { AssistantCitation } from "@t3tools/contracts";
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
@@ -125,7 +128,11 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
-import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
+import {
+  captureComposerDraftInsertion,
+  rememberComposerDraftSelection,
+  getComposerDraftSnapshot,
+} from "../../state/use-composer-drafts";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import {
   ANDROID_READING_MAX_WIDTH,
@@ -1284,6 +1291,33 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     composerEditorRef.current?.blur();
   };
 
+  const canCiteAssistantText =
+    props.composerDraftKey !== null &&
+    !props.isSavingQueuedEdit &&
+    !props.draftMode?.interactionLocked;
+  const handleCiteAssistantText = (citation: AssistantCitation) => {
+    if (!canCiteAssistantText || props.composerDraftKey === null) return;
+    const voice = voiceInputSession.getSnapshot();
+    if (voice.ownerKey === props.composerDraftKey && voiceInputBlocksSubmission(voice.state)) {
+      Dialog.alert(
+        "Finish voice input first",
+        "You can cite this text after recording or transcription finishes.",
+      );
+      return;
+    }
+    const { text: draft, start, end } = captureComposerDraftInsertion(props.composerDraftKey);
+    const before = draft.slice(0, start);
+    const insertion = `${before && !/\s$/.test(before) ? " " : ""}${serializeAssistantCitation(citation)} `;
+    const next = before + insertion + draft.slice(end);
+    const cursor = start + insertion.length;
+    rememberComposerDraftSelection(props.composerDraftKey, next, { start: cursor, end: cursor });
+    props.onChangeDraftMessage(next);
+    requestAnimationFrame(() => {
+      composerEditorRef.current?.focus();
+      composerEditorRef.current?.setSelection({ start: cursor, end: cursor });
+    });
+  };
+
   const handleUseArtifactTemplate = (template: CodexArtifactTemplate) => {
     const draftMessage =
       props.composerDraftKey === null ? "" : getComposerDraftSnapshot(props.composerDraftKey).text;
@@ -1420,6 +1454,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
               onEndFollowEnabledChange={handleEndFollowEnabledChange}
               skills={selectedProviderSkills}
               onUseArtifactTemplate={handleUseArtifactTemplate}
+              onCiteAssistantText={canCiteAssistantText ? handleCiteAssistantText : undefined}
             />
           </RenderErrorBoundary>
         </View>

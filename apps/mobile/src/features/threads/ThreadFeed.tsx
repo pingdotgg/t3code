@@ -1,3 +1,5 @@
+import type { SelectableMarkdownTextProps } from "../../native/SelectableMarkdownText.types";
+import { ASSISTANT_CITATION_MAX_TEXT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -373,6 +375,7 @@ export interface ThreadFeedProps {
   readonly onEndFollowEnabledChange?: (enabled: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
+  readonly onCiteAssistantText?: (citation: AssistantCitation) => void;
 }
 
 async function waitForThreadShell(
@@ -1179,6 +1182,7 @@ function ArtifactTemplateCard(props: {
 
 const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly markdown: string;
+  readonly onCiteSelection?: SelectableMarkdownTextProps["onCiteSelection"];
   readonly environmentId: EnvironmentId;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
@@ -1197,6 +1201,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   return (
     <AssistantMarkdownBlocks
       markdown={liveMarkdown}
+      onCiteSelection={props.onCiteSelection}
       markdownStyles={props.markdownStyles}
       linkHandlers={linkHandlers}
       onUseArtifactTemplate={props.onUseArtifactTemplate}
@@ -1209,6 +1214,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
 // Folds split first, so an artifact card inside a fold stays inside it.
 function AssistantMarkdownBlocks(props: {
   readonly markdown: string;
+  readonly onCiteSelection?: SelectableMarkdownTextProps["onCiteSelection"];
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
@@ -1252,6 +1258,7 @@ function AssistantMarkdownBlocks(props: {
         <SelectableMarkdownText
           key={`markdown:${offset}`}
           markdown={renderCodexInlineDirectivesAsMarkdown(segment.markdown)}
+          onCiteSelection={props.onCiteSelection}
           skills={props.skills}
           textStyle={props.markdownStyles.nativeTextStyle}
           {...props.linkHandlers}
@@ -1656,6 +1663,7 @@ function renderFeedEntry(
     ThreadFeedProps,
     | "environmentId"
     | "onUseArtifactTemplate"
+    | "onCiteAssistantText"
     | "skills"
     | "dispatchingMessageId"
     | "onEditPendingMessage"
@@ -2254,6 +2262,31 @@ function renderFeedEntry(
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
             <AssistantMarkdownContent
               markdown={renderedText}
+              onCiteSelection={
+                props.onCiteAssistantText
+                  ? ({ text, selection }) => {
+                      if (!text.trim()) return;
+                      if (text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH) {
+                        Dialog.alert(
+                          "Select a shorter quote",
+                          `Quotes can contain up to ${ASSISTANT_CITATION_MAX_TEXT_LENGTH.toLocaleString()} characters.`,
+                        );
+                        return;
+                      }
+                      props.onCiteAssistantText?.({
+                        version: 1,
+                        environmentId: props.environmentId,
+                        threadId: props.threadId,
+                        messageId: message.id,
+                        text,
+                        start: selection.start,
+                        end: Math.max(selection.end, selection.start + 1),
+                        prefix: "",
+                        suffix: "",
+                      });
+                    }
+                  : undefined
+              }
               environmentId={props.environmentId}
               markdownStyles={styles}
               linkHandlers={props.markdownLinkHandlers}
@@ -3596,6 +3629,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             dispatchingMessageId: props.dispatchingMessageId,
             onEditPendingMessage: props.onEditPendingMessage,
             onUseArtifactTemplate: props.onUseArtifactTemplate,
+            onCiteAssistantText: props.onCiteAssistantText,
             threadId: props.threadId,
             copiedRowId,
             expandedWorkRows,

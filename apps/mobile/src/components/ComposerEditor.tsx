@@ -1,3 +1,4 @@
+import { collectAssistantCitations } from "@t3tools/shared/assistantCitations";
 import * as Dialog from "./ui/Dialog";
 import { ComposerContextId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -187,6 +188,37 @@ export function ComposerEditor({
         onContextPress={(selection) => {
           if (chipsInert) {
             onInertChipPress?.();
+            return;
+          }
+          const citation = collectAssistantCitations(selection.source)[0]?.citation;
+          if (citation) {
+            Dialog.alert(
+              "Assistant quote",
+              citation.comment
+                ? `${citation.text}\n\nYour comment: ${citation.comment}`
+                : citation.text,
+              [
+                { text: "Done", style: "cancel" },
+                ...(!props.readOnly && props.editable !== false
+                  ? [
+                      {
+                        text: "Remove quote",
+                        style: "destructive" as const,
+                        onPress: () => {
+                          const current = draftKey
+                            ? getComposerDraftSnapshot(draftKey).text
+                            : props.value;
+                          if (current.slice(selection.start, selection.end) === selection.source) {
+                            changeText(
+                              current.slice(0, selection.start) + current.slice(selection.end),
+                            );
+                          }
+                        },
+                      },
+                    ]
+                  : []),
+              ],
+            );
             return;
           }
           const path = composerMentionPath(selection.source, draft.context);

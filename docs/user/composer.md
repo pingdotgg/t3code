@@ -132,8 +132,11 @@ delete it like other inline context. Copying, reloading, and restoring a
 with its quote, and sending tells the agent which words were quoted and which comment you wrote.
 The quoted text and comment count toward the message limit.
 
-Mobile displays saved quotes and comments, but does not create citations or
-navigate to their sources.
+On iPad and other native mobile clients, select text in an assistant response and
+choose **Cite** to insert it at the cursor in your draft. Tap the quote to read it
+or remove it, then add your instructions and send. Mobile displays saved quotes
+and comments, but does not navigate to their sources. Code blocks retain their
+Copy menu; citing selections inside code blocks is not supported yet.
 
 ## Recall a sent prompt
 
