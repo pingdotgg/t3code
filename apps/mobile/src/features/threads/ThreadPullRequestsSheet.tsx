@@ -44,12 +44,13 @@ export function ThreadPullRequestsSheet(
     project: selectedThreadProject,
     runtime: selectedEnvironmentRuntime,
   });
-  const rowInputs = useMemo(() => ({ lines, actions }), [lines, actions]);
+  const rowInputs = { lines, actions };
   const { singular } = actions.terminology;
   const title = `Linked ${actions.terminology.plural}`;
 
   const content = (
     <View className="flex-1 android:bg-sheet-solid ios:bg-screen">
+      {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- Sheet content; sheets sit outside workspace columns and keep their own header handling. */}
       <LegendList
         data={lines}
         keyExtractor={linkedPullRequestKey}

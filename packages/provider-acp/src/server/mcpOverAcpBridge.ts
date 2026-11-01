@@ -82,7 +82,7 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
   options: AcpMcpOverAcpBridgeOptions,
 ): Effect.fn.Return<AcpMcpOverAcpBridge> {
   const fetchImplementation = options.fetchImplementation ?? fetch;
-  const connections = new Map<string, Connection>();
+  const connections = yield* Effect.sync(() => new Map<string, Connection>());
 
   const connectionFor = (connectionId: string): Effect.Effect<Connection, AcpMcpOverAcpError> =>
     Effect.suspend(() => {
@@ -92,11 +92,18 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
         : Effect.succeed(connection);
     });
 
+  // Only initialization needs ordering; negotiated calls may wait independently.
+  const untilNegotiated = <A, E>(connection: Connection, effect: Effect.Effect<A, E>) =>
+    Effect.suspend(() =>
+      connection.protocolVersion === null ? connection.mutex.withPermits(1)(effect) : effect,
+    );
+
   const send = (
     connection: Connection,
     message: unknown,
   ): Effect.Effect<ReadonlyArray<unknown>, AcpMcpOverAcpError> =>
-    connection.mutex.withPermits(1)(
+    untilNegotiated(
+      connection,
       Effect.gen(function* () {
         const body = JSON.stringify(message);
         if (Buffer.byteLength(body) > MAX_MESSAGE_BYTES) {

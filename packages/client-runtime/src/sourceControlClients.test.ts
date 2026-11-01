@@ -1,7 +1,7 @@
 import { ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { sourceControlClients } from "./sourceControlClients.ts";
+import { appSignInTargetForRemote, sourceControlClients } from "./sourceControlClients.ts";
 import { normalizeThreadPullRequestKey } from "./threadPullRequests.ts";
 
 const parse = (url: string) => {
@@ -357,11 +357,32 @@ describe("sourceControlClients.findByPublicDomain", () => {
     expect(kindOf("gist.github.com")).toBe("github");
     expect(kindOf("GitLab.com")).toBe("gitlab");
     expect(kindOf("codeberg.org")).toBe("forgejo");
+    expect(kindOf("git.cafe")).toBe("gitcafe");
     expect(kindOf("notgithub.com")).toBeUndefined();
     expect(kindOf("github.com.example")).toBeUndefined();
   });
 
   it("leaves findByPublicHost to the public host alone", () => {
     expect(sourceControlClients.findByPublicHost("gist.github.com")).toBeUndefined();
+  });
+});
+
+describe("appSignInTargetForRemote", () => {
+  it("names the repository a GitHub remote points at, in the remote's casing", () => {
+    for (const remote of [
+      "https://github.com/octocat/Hello-World.git",
+      "git@github.com:octocat/Hello-World.git",
+    ]) {
+      expect(appSignInTargetForRemote(remote)?.input).toEqual({
+        provider: "github",
+        host: "github.com",
+        repository: "octocat/Hello-World",
+      });
+    }
+  });
+
+  it("skips hosts the app is not registered on", () => {
+    expect(appSignInTargetForRemote("https://ghe.acme.test/acme/web.git")).toBeNull();
+    expect(appSignInTargetForRemote("https://gitlab.com/acme/web.git")).toBeNull();
   });
 });

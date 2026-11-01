@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CheckpointId,
+  ChatAttachmentId,
   EnvironmentId,
   NodeId,
   ProviderInstanceId,
@@ -21,11 +22,12 @@ import {
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -38,6 +40,7 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -167,6 +170,12 @@ interface FakePi {
   readonly vetoNextNewSession: () => void;
   readonly allRequests: () => ReadonlyArray<PiRpcRecord>;
   readonly queueStats: (data: unknown) => void;
+  /** Pi before 0.84.4 answers clear_queue as an unknown command. */
+  readonly setClearQueue: (
+    result:
+      | { readonly steering: ReadonlyArray<string>; readonly followUp: ReadonlyArray<string> }
+      | "unknown_command",
+  ) => void;
   readonly closeStdout: Effect.Effect<void>;
   readonly lastSpawn: () => {
     readonly args: ReadonlyArray<string>;
@@ -174,11 +183,7 @@ interface FakePi {
   };
 }
 
-/**
- * Pi 1.0.0's idle `get_state` reply, taken from the `simple` replay fixture
- * (fixtures/simple/pi_transcript.ndjson) minus the model object. Pi omits
- * `model` when none is selected and `sessionName` until one is set.
- */
+/** Pi omits `model` when none is selected and `sessionName` until one is set. */
 const recordedIdleState = (sessionFile: string) => ({
   thinkingLevel: "high",
   isStreaming: false,
@@ -210,6 +215,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   let sessionGeneration = 0;
   let models: ReadonlyArray<unknown> = [];
   let isStreaming: boolean | null = null;
+  let clearQueue: Parameters<FakePi["setClearQueue"]>[0] = { steering: [], followUp: [] };
   let stdinBuffer = "";
 
   const emit = (record: PiRpcRecord, chunkBytes?: number) =>
@@ -275,6 +281,10 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         return { ...base, data: statsQueue.shift() ?? {} };
       case "fork":
         return { ...base, data: { text: "Hello pi", cancelled: false } };
+      case "clear_queue":
+        return clearQueue === "unknown_command"
+          ? { ...base, success: false, error: "Unknown command: clear_queue" }
+          : { ...base, data: clearQueue };
       default:
         return base;
     }
@@ -388,6 +398,9 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
       isStreaming = streaming;
     },
     queueStats: (data) => statsQueue.push(data),
+    setClearQueue: (result) => {
+      clearQueue = result;
+    },
     closeStdout: Queue.end(stdout),
     lastSpawn: () => lastSpawn,
   } satisfies FakePi;
@@ -522,6 +535,92 @@ const startTurn = Effect.fnUntraced(function* (
 });
 
 describe("PiAdapterV2", () => {
+  it.effect("keeps native image bytes and the saved path in the prompt", () =>
+    Effect.gen(function* () {
+      const host = yield* ProviderHost.ProviderHost;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const attachment: ChatAttachment = {
+        id: ChatAttachmentId.make("image"),
+        type: "image",
+        name: "image.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+      };
+      const path = host.resolveAttachmentPath(attachment)!;
+      yield* fileSystem.writeFile(path, new Uint8Array([1, 2, 3]));
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread, "default", [attachment]);
+      const prompt = yield* fake.takeRequest("prompt");
+      assert.include(String(prompt["message"]), path);
+      assert.deepEqual(prompt["images"], [{ type: "image", data: "AQID", mimeType: "image/png" }]);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("lists unavailable attachments alongside resolvable files in the native prompt", () =>
+    Effect.gen(function* () {
+      const host = yield* ProviderHost.ProviderHost;
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake).pipe(
+        Effect.provideService(ProviderHost.ProviderHost, {
+          ...host,
+          resolveAttachmentPath: (attachment) =>
+            attachment.id === "available" ? host.resolveAttachmentPath(attachment) : null,
+        }),
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const attachments: ReadonlyArray<ChatAttachment> = [
+        {
+          id: ChatAttachmentId.make("available"),
+          type: "file",
+          name: "notes.txt",
+          mimeType: "text/plain",
+          sizeBytes: 1,
+        },
+        {
+          id: ChatAttachmentId.make("missing-file"),
+          type: "file",
+          name: "missing.txt",
+          mimeType: "text/plain",
+          sizeBytes: 1,
+        },
+        {
+          id: ChatAttachmentId.make("missing-image"),
+          type: "image",
+          name: "missing.png",
+          mimeType: "image/png",
+          sizeBytes: 1,
+        },
+        {
+          id: ChatAttachmentId.make("missing-future"),
+          type: "future",
+          name: "future.bin",
+          mimeType: "application/octet-stream",
+          sizeBytes: 1,
+        },
+      ];
+      yield* startTurn(runtime, providerThread, "default", attachments);
+      const prompt = yield* fake.takeRequest("prompt");
+      assert.isString(prompt["message"]);
+      const message = String(prompt["message"]);
+      assert.include(message, host.resolveAttachmentPath(attachments[0]!)!);
+      for (const attachment of attachments.slice(1)) {
+        assert.include(message, attachment.name);
+        assert.include(message, attachment.id);
+      }
+      assert.equal((message.match(/unavailable/g) ?? []).length, 3);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each([false, true])(
     "completes a resumed user turn before native wake events arrive, Pi streaming=%s",
     (streaming) =>
@@ -1943,6 +2042,69 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("nests tools called through another tool under their caller", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      const takeToolEvents = Effect.fnUntraced(function* (toolCallId: string) {
+        const node = yield* takeEvent(
+          (event) =>
+            event.type === "node.updated" && event.node.nativeItemRef?.nativeId === toolCallId,
+        );
+        const item = yield* takeEvent(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === toolCallId,
+        );
+        if (node.type !== "node.updated" || item.type !== "turn_item.updated")
+          return yield* Effect.die("Expected tool node and item events");
+        return { node: node.node, item: item.turnItem };
+      });
+
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_code",
+        toolName: "codemode",
+        args: { code: "await read({ path: 'a.ts' })" },
+      });
+      const caller = yield* takeToolEvents("call_code");
+      assert.equal(caller.node.parentNodeId, caller.node.rootNodeId);
+      assert.isNull(caller.item.parentItemId);
+
+      // Pi tags every phase, so an update that arrives before its start still nests.
+      const phases = [
+        { type: "tool_execution_update", partialResult: { content: [] }, status: "running" },
+        { type: "tool_execution_start", args: { path: "a.ts" }, status: "running" },
+        {
+          type: "tool_execution_end",
+          isError: true,
+          result: { content: [{ type: "text", text: "ENOENT" }] },
+          status: "failed",
+        },
+      ] as const;
+      for (const { status, ...phase } of phases) {
+        yield* fake.emit({
+          ...phase,
+          toolCallId: "call_code/1",
+          toolName: "read",
+          parentToolCallId: "call_code",
+        });
+        const nested = yield* takeToolEvents("call_code/1");
+        assert.equal(nested.node.status, status);
+        assert.equal(nested.node.parentNodeId, caller.node.id);
+        assert.equal(nested.item.parentItemId, caller.item.id);
+      }
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect(
     "keeps native and MCP images available to the shared asset reader with typed results",
     () =>
@@ -3140,6 +3302,34 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("keeps an input dialog's title as the header above its placeholder", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-input-placeholder",
+        method: "input",
+        title: "Name",
+        placeholder: "Your name",
+      });
+      const event = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+      );
+      if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
+        return assert.fail("expected a user input request");
+      }
+      assert.equal(event.turnItem.questions[0]?.header, "Name");
+      assert.equal(event.turnItem.questions[0]?.question, "Your name");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("emits a valid empty select option and returns its original value", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
@@ -3171,6 +3361,8 @@ describe("PiAdapterV2", () => {
           ["Empty value", ""],
         ],
       );
+      assert.equal(questions[0]?.header, "Question");
+      assert.equal(questions[0]?.question, "Pick a tag");
       yield* runtime.respondToRuntimeRequest({
         requestId: event.turnItem.requestId,
         answers: { "ui-select": "" },
@@ -3205,6 +3397,7 @@ describe("PiAdapterV2", () => {
       if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
         return assert.fail("expected a user input request");
       }
+      assert.equal(decodeUserInputQuestions(event.turnItem.questions)[0]?.header, "Question");
       assert.equal(decodeUserInputQuestions(event.turnItem.questions)[0]?.question, title);
       yield* runtime.respondToRuntimeRequest({
         requestId: event.turnItem.requestId,
@@ -3240,6 +3433,7 @@ describe("PiAdapterV2", () => {
         return;
       assert.equal(event.turnItem.questions[0]?.initialAnswer, prefill);
       assert.deepEqual(event.turnItem.questions[0]?.options, []);
+      assert.equal(event.turnItem.questions[0]?.header, "Question");
       assert.equal(event.turnItem.questions[0]?.question, "Commit message");
       const edited = "  fix(server): edited commit message\n\n";
       yield* runtime.respondToRuntimeRequest({
@@ -3792,6 +3986,61 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect.each([
+    {
+      pi: "clears its native queue",
+      clearQueue: { steering: ["Use the other file", ""], followUp: ["Then summarize"] },
+      notices: [
+        "Stop cleared 3 queued messages Pi had not read:\n\nUse the other file\n\nThen summarize",
+      ],
+    },
+    { pi: "predates clear_queue", clearQueue: "unknown_command", notices: [] },
+  ] as const)("Stop aborts and retires Pi when it $pi", ({ clearQueue, notices }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      fake.setClearQueue(clearQueue);
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      const runningTurn = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      const providerTurnId =
+        runningTurn.type === "provider_turn.updated" ? runningTurn.providerTurn.id : undefined;
+      assert.isDefined(providerTurnId);
+
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: providerTurnId!,
+        requestRuntimeRestart: true,
+      });
+      yield* fake.takeRequest("abort");
+      assert.deepEqual(
+        fake
+          .allRequests()
+          .map((request) => request["type"])
+          .filter((type) => type === "clear_queue" || type === "abort"),
+        ["clear_queue", "abort"],
+      );
+      const emitted: Array<string> = [];
+      yield* takeEvent((event) => {
+        if (event.type === "turn_item.updated" && event.turnItem.type === "system_notice")
+          emitted.push(event.turnItem.message);
+        return (
+          event.type === "provider_session.updated" && event.providerSession.status === "stopped"
+        );
+      });
+      assert.deepEqual<ReadonlyArray<string>>(emitted, notices);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("stops active retry progress when the turn is interrupted", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
@@ -4047,8 +4296,16 @@ describe("PiAdapterV2", () => {
 });
 
 describe("PiRpc framing", () => {
-  it.effect("reassembles records across chunk boundaries and strips CR", () =>
-    Effect.gen(function* () {
+  it.effect("reassembles records and warns when dropping oversized records", () => {
+    const warnings: Array<ReadonlyArray<unknown>> = [];
+    const warned = Deferred.makeUnsafe<void>();
+    const logCapture = Logger.make<unknown, void>(({ logLevel, message }) => {
+      if (logLevel === "Warn" && Array.isArray(message)) {
+        warnings.push(message);
+        Deferred.doneUnsafe(warned, Effect.void);
+      }
+    });
+    return Effect.gen(function* () {
       const stdout = yield* Queue.unbounded<Uint8Array>();
       const spawner = ChildProcessSpawner.make(() =>
         Effect.succeed(
@@ -4079,9 +4336,11 @@ describe("PiRpc framing", () => {
       yield* push('{"type":"agent_');
       yield* push('start"}\r\n{"type":"agent_settled"}\nnot json\n{"type":"queue_update"}\n');
 
-      yield* push('{"type":"must_not_emit","text":"');
+      const head = '{"type":"must_not_emit","text":"';
+      yield* push(head);
       const chunk = new TextEncoder().encode("x".repeat(8 * 1024 * 1024));
       for (let index = 0; index < 32; index++) yield* Queue.offer(stdout, chunk);
+      yield* Deferred.await(warned);
       yield* push('"}\n{"type":"after_oversized"}\n');
 
       const first = yield* Queue.take(connection.events);
@@ -4091,8 +4350,20 @@ describe("PiRpc framing", () => {
       const third = yield* Queue.take(connection.events);
       assert.equal(third["type"], "queue_update");
       assert.equal((yield* Queue.take(connection.events))["type"], "after_oversized");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
+      assert.lengthOf(warnings, 1);
+      const [text, annotations] = warnings[0] ?? [];
+      assert.equal(text, "Dropping oversized pi stdout record.");
+      assert.deepEqual(annotations, {
+        recordLength: head.length + 28 * chunk.length,
+        maxRecordLength: 232084864,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.merge(NodeServices.layer, Logger.layer([logCapture], { mergeWithExisting: false })),
+      ),
+    );
+  });
 });
 
 describe("PiRpc early process exit", () => {

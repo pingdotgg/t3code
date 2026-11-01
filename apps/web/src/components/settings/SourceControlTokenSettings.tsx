@@ -46,7 +46,7 @@ export function SourceControlTokenSettings({
     setSaving(true);
     const result = await updateSettings({
       environmentId,
-      // The map travels whole: every other saved token as its redaction marker, which keeps it.
+      // Send the whole map; other tokens' redaction markers preserve their values.
       input: {
         patch: {
           sourceControlHosts: { [definition.kind]: { tokens: { ...tokens, [target]: token } } },

@@ -155,7 +155,7 @@ export const make = Effect.gen(function* () {
       more: rows.length > 0 && (links === undefined || /rel="?next"?/i.test(links)),
     };
   });
-  // Use a stable, small page size that also works with Forgejo's default maximum of 50.
+  // Forgejo's default page limit is 50.
   const page = Effect.fn("ForgejoPullRequestProvider.page")(function* <A>(
     input: ForgejoCli.ForgejoApiInput,
     schema: Schema.Codec<A, unknown, never, never>,
@@ -324,6 +324,7 @@ export const make = Effect.gen(function* () {
         return { items, truncated: more, continues: true, cursorAdvance: consumed };
       },
     ),
+    getChangeRequestPreview: (input) => getPull(input).pipe(Effect.map(forgejoChangeRequest)),
     getChangeRequestSummary: (input) => getPull(input).pipe(Effect.map(forgejoChangeRequest)),
     getChangeRequestChecks: Effect.fn("ForgejoPullRequestProvider.getChangeRequestChecks")(
       function* (input) {
@@ -373,7 +374,7 @@ export const make = Effect.gen(function* () {
               })),
             ),
             page({ ...input, path: `${pullPath(input)}/reviews` }, ForgejoReview),
-            // Without these, each commit lists its files and a big merge outgrows the output limit.
+            // Commit file lists can exceed the output limit on large merges.
             page(
               { ...input, path: `${pullPath(input)}/commits?files=false&verification=false` },
               ForgejoCommit,
@@ -602,12 +603,16 @@ export const make = Effect.gen(function* () {
     }),
     listReviewerCandidates: Effect.fn("ForgejoPullRequestProvider.listReviewerCandidates")(
       function* (input) {
+        // Unpaginated in Forgejo: paging it returns the full list on every page.
         const [pr, users] = yield* Effect.all(
-          [getPull(input), page({ ...input, path: `${repoPath(input)}/assignees` }, ForgejoUser)],
+          [
+            getPull(input),
+            readArray({ ...input, path: `${repoPath(input)}/assignees` }, ForgejoUser),
+          ],
           { concurrency: 2 },
         );
         return {
-          candidates: users.items
+          candidates: users
             .filter((user) => user.login !== pr.user?.login)
             .flatMap((user) => {
               const actor = forgejoActor(user);
@@ -624,7 +629,7 @@ export const make = Effect.gen(function* () {
                   ]
                 : [];
             }),
-          truncated: users.truncated,
+          truncated: false,
         };
       },
     ),

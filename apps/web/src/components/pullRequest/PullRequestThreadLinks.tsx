@@ -12,6 +12,7 @@ import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pu
 import { useProjects, useServerConfigs, useThreadShell, useThreadShells } from "~/state/entities";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
+import { useThreadSearch } from "~/state/queries";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { openCommandPalette } from "~/commandPaletteBus";
 import { Button } from "../ui/button";
@@ -68,8 +69,7 @@ function EnabledPullRequestThreadLinks({
         })
       : null,
   );
-  // Refreshes can briefly clear the query value. Keep the last response so polling
-  // does not hide the linked-thread count between responses.
+  // Retain the last count while refresh temporarily clears query data.
   const [lastRelations, setLastRelations] = useState(relations.data);
   if (relations.data !== null && relations.data !== lastRelations) {
     setLastRelations(relations.data);
@@ -192,6 +192,8 @@ function ThreadPicker({
   const linking = usePullRequestLinking(environmentId);
   const projects = useProjects();
   const [query, setQuery] = useState("");
+  // Mounts older settled threads matching the query, which shells may leave out.
+  useThreadSearch([environmentId], query, { titlesOnly: true });
   const projectNames = new Map(
     projects
       .filter((project) => project.environmentId === environmentId)
