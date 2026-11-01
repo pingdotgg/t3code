@@ -198,11 +198,12 @@ export function inlineCodeFilePathCandidate(codeText: string, cwd?: string): str
     if (!hasPosition && !FILE_EXTENSION_PATTERN.test(basename)) return null;
   }
   // `/images/logo.jpg` in code is usually a URL path, not a file.
+  const decodedCandidate = safeDecodeURIComponent(candidate);
   if (
     candidate.startsWith("/") &&
-    !isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(candidate)) &&
-    !POSIX_FILE_ROOT_PREFIXES.some((prefix) => candidate.startsWith(prefix)) &&
-    workspaceRelativeFilePath(safeDecodeURIComponent(candidate), cwd) === null
+    !isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(decodedCandidate)) &&
+    !POSIX_FILE_ROOT_PREFIXES.some((prefix) => decodedCandidate.startsWith(prefix)) &&
+    workspaceRelativeFilePath(decodedCandidate, cwd) === null
   ) {
     return null;
   }
