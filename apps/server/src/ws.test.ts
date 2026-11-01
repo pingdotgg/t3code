@@ -2,6 +2,7 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  AuthOrchestrationReadScope,
   AuthSessionId,
   EnvironmentId,
   ProjectId,
@@ -10,6 +11,7 @@ import {
   ProviderInstanceId,
   WS_METHODS,
   WsServerRefreshProvidersRpc,
+  WsRpcGroup,
   WsSubscribeServerConfigRpc,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadShell,
@@ -20,6 +22,7 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
+import * as Exit from "effect/Exit";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -31,6 +34,7 @@ import { Headers } from "effect/http";
 import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
@@ -957,6 +961,91 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         Layer.fresh(layerConfigSources),
         Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
         Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
+);
+
+it.effect("server.getSettings returns redacted settings to installed native clients", () =>
+  Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const provider = ProviderInstanceId.make("claudeAgent");
+    const favorites = [{ provider, model: "claude-sonnet-4-5" }];
+    const providerModelPreferences = {
+      [provider]: {
+        hiddenModels: ["claude-opus-4-5"],
+        modelOrder: ["claude-sonnet-4-5", "claude-haiku-4-5"],
+      },
+    };
+    const saved = yield* settings.updateSettings({
+      defaultModelSelection: {
+        instanceId: provider,
+        model: "claude-haiku-4-5",
+      },
+      favorites,
+      providerModelPreferences,
+      sourceControlHosts: { gitcafe: { token: "gitcafe-secret" } },
+    });
+    const exit = yield* Deferred.make<Exit.Exit<unknown, unknown>>();
+    const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+      ...WS_RPC_SERVER_OPTIONS,
+      onFromServer: (response) =>
+        response._tag === "Exit" ? Deferred.succeed(exit, response.exit) : Effect.void,
+    }).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("settings-test"),
+            subject: "settings-test",
+            method: "browser-session-cookie",
+            scopes: [],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+        ).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              layerUnusedConfigRpcServices,
+              Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+              Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+              Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+              Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+              Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                scratchRoot: Effect.succeedNone,
+                namedProjectsRoot: process.cwd(),
+              }),
+              Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+              Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+            ),
+          ),
+        ),
+      ),
+    );
+    // Swift TestFlight builds send this tag on connect and from the composer.
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("settings"),
+      tag: "server.getSettings",
+      payload: {},
+      headers: Headers.empty,
+    });
+    const result = yield* Deferred.await(exit);
+    if (!Exit.isSuccess(result)) return yield* Effect.die(result.cause);
+    const value = result.value as typeof saved;
+    assert.deepEqual(value, ServerSettings.redactServerSettingsForClient(saved));
+    assert.deepEqual(value.defaultModelSelection, saved.defaultModelSelection);
+    assert.deepEqual(value.favorites, favorites);
+    assert.deepEqual(value.providerModelPreferences, providerModelPreferences);
+    assert.notInclude(JSON.stringify(value), "gitcafe-secret");
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+        RpcAuthorization.layer([AuthOrchestrationReadScope]),
       ),
     ),
     Effect.scoped,
