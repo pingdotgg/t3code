@@ -51,6 +51,11 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   cwd: Schema.NullOr(Schema.String),
   approvalPolicy: Schema.optional(Schema.Unknown),
   sandboxPolicy: Schema.optional(Schema.Unknown),
+  /**
+   * The administrator's ceiling, when a managed policy sets one. `runtimeMode` is already under
+   * it; adapters use it to refuse native mode choices a user makes beside T3 Code's own.
+   */
+  maxRuntimeMode: Schema.optional(RuntimeMode),
 });
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 
@@ -118,6 +123,14 @@ export const ProviderAdapterV2Event = Schema.Union([
     type: Schema.Literal("turn_item.updated"),
     driver: ProviderDriverKind,
     turnItem: OrchestrationV2TurnItem,
+  }),
+  // Start before the root terminal; clear only after the final covered projection.
+  // Consumer lifetime cannot depend on a producer probe that runs ahead of its queue.
+  Schema.Struct({
+    type: Schema.Literal("background_work.updated"),
+    driver: ProviderDriverKind,
+    providerTurnId: ProviderTurnId,
+    pending: Schema.Boolean,
   }),
   /** Unpersisted deltas go only to clients showing the row; final output arrives in turn_item.updated. */
   Schema.Struct({

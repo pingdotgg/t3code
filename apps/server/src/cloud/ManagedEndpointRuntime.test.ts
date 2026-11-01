@@ -1,13 +1,17 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
+import * as References from "effect/References";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -17,7 +21,9 @@ import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay
 import * as RelayClient from "@t3tools/shared/relayClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const layerRelayClientAvailable = Layer.succeed(
   RelayClient.RelayClient,
@@ -36,29 +42,35 @@ const layerRelayClientAvailable = Layer.succeed(
 
 const unusedHttpClient = HttpClient.make(() => Effect.die("unused"));
 
+const emptySecretStoreLayer = Layer.mock(ServerSecretStore.ServerSecretStore)({
+  get: () => Effect.succeedNone,
+  set: () => Effect.void,
+});
+
 const runtimeDependencies = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
   relayClientLayer = layerRelayClientAvailable,
   httpClient = unusedHttpClient,
+  secretStoreLayer = emptySecretStoreLayer,
 ) =>
   Layer.mergeAll(
+    ManagedPolicy.layerTest(),
     Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Layer.succeed(HttpClient.HttpClient, httpClient),
     relayClientLayer,
-    Layer.mock(ServerSecretStore.ServerSecretStore)({
-      get: () => Effect.succeedNone,
-    }),
+    secretStoreLayer,
   );
 
 const buildCloudManagedEndpointRuntime = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
   relayClientLayer = layerRelayClientAvailable,
   httpClient = unusedHttpClient,
+  secretStoreLayer = emptySecretStoreLayer,
 ) =>
   Effect.gen(function* () {
     const context = yield* Layer.build(
       ManagedEndpointRuntime.layer.pipe(
-        Layer.provide(runtimeDependencies(spawner, relayClientLayer, httpClient)),
+        Layer.provide(runtimeDependencies(spawner, relayClientLayer, httpClient, secretStoreLayer)),
       ),
     );
     return yield* Effect.service(ManagedEndpointRuntime.CloudManagedEndpointRuntime).pipe(
@@ -148,6 +160,28 @@ describe("CloudManagedEndpointRuntime", () => {
     ).toBe("warning");
   });
 
+  it("classifies connection unregistration apart from registration and routine output", () => {
+    expect(
+      ManagedEndpointRuntime.classifyRelayClientOutput(
+        "2026-10-06T00:00:00Z INF Unregistered tunnel connection connIndex=0 event=0 ip=198.41.200.23",
+      ),
+    ).toBe("unregistered");
+    for (const level of ["ERR", "WRN", "FTL", "PNC"]) {
+      expect(
+        ManagedEndpointRuntime.classifyRelayClientOutput(
+          `2026-10-06T00:00:00Z ${level} Unregistered tunnel connection connIndex=0`,
+        ),
+      ).toBe("warning");
+    }
+    for (const line of [
+      "2026-10-06T00:00:00Z INF Initiating graceful shutdown due to signal terminated ...",
+      "2026-10-06T00:00:00Z INF Starting metrics server on 127.0.0.1:20241/metrics",
+      "2026-10-06T00:00:00Z DBG Unregistered tunnel connection connIndex=0",
+    ]) {
+      expect(ManagedEndpointRuntime.classifyRelayClientOutput(line)).toBe("debug");
+    }
+  });
+
   it("recognizes tunnel authorization failures without matching ordinary transport errors", () => {
     expect(
       ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
@@ -202,6 +236,83 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(Option.getOrNull(yield* Stream.runHead(runtime.recoveryRequests))).toEqual(config);
     }),
   );
+
+  it.effect("logs a connection unregistration at info with the connector token redacted", () => {
+    const logs: Array<{ readonly level: string; readonly message: unknown }> = [];
+    const unregistrationLogged = Deferred.makeUnsafe<void>();
+    const logger = Logger.make(({ logLevel, message }) => {
+      logs.push({ level: logLevel, message });
+      if (Array.isArray(message) && message[0] === "Relay client tunnel connection unregistered") {
+        Deferred.doneUnsafe(unregistrationLogged, Effect.void);
+      }
+    });
+
+    return Effect.gen(function* () {
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "secret-connector-token",
+        tunnelId: "tunnel-1",
+      };
+      const encoder = new TextEncoder();
+      const output = yield* Queue.unbounded<Uint8Array>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const handle = makeHandle({
+            pid: 701,
+            onKill: () => {},
+            output: Stream.fromQueue(output),
+          });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      yield* runtime.applyConfig(config);
+      yield* Queue.offer(
+        output,
+        encoder.encode(
+          "2026-10-06T00:00:00Z INF Unregistered tunnel connection connIndex=0 token=secret-connector-token\n",
+        ),
+      );
+      yield* Deferred.await(unregistrationLogged);
+
+      // An unregistration is not a registration, so the registration timeout still recovers.
+      yield* TestClock.adjust(Duration.minutes(3));
+      expect(Option.getOrNull(yield* Stream.runHead(runtime.recoveryRequests))).toEqual(config);
+
+      yield* Queue.offer(
+        output,
+        encoder.encode(
+          "2026-10-06T00:00:01Z INF Starting metrics server on 127.0.0.1:20241/metrics\n" +
+            "2026-10-06T00:00:01Z INF Registered tunnel connection connIndex=0\n",
+        ),
+      );
+      yield* Stream.runHead(runtime.tunnelConnected);
+
+      const relayLogs = logs.filter(
+        ({ message }) =>
+          Array.isArray(message) && String(message[0]).startsWith("Relay client tunnel"),
+      );
+      expect(relayLogs.map(({ level, message }) => [level, (message as unknown[])[0]])).toEqual([
+        ["Info", "Relay client tunnel connection unregistered"],
+        ["Info", "Relay client tunnel connection registered"],
+      ]);
+      expect((relayLogs[0]!.message as unknown[])[1]).toMatchObject({
+        output:
+          "2026-10-06T00:00:00Z INF Unregistered tunnel connection connIndex=0 token=<redacted>",
+      });
+      const logged = JSON.stringify(logs.map(({ message }) => message));
+      expect(logged).not.toContain("secret-connector-token");
+      expect(logged).not.toContain("Starting metrics server");
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Logger.layer([logger], { mergeWithExisting: false }),
+          Layer.succeed(References.MinimumLogLevel, "Info"),
+        ),
+      ),
+    );
+  });
 
   const tunnelConfig = {
     providerKind: "cloudflare_tunnel" as const,
@@ -300,6 +411,117 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(fixture.spawned[0]!.args).not.toContain("--protocol");
       expect(fixture.spawned[0]!.options.env?.TUNNEL_TRANSPORT_PROTOCOL).toBe("quic");
     }),
+  );
+
+  it.effect(
+    "retains automatic HTTP/2 fallback across restarts until expiry and respects overrides",
+    () =>
+      Effect.gen(function* () {
+        const context = yield* Layer.build(
+          ServerSecretStore.layer.pipe(
+            Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-transport-test-" })),
+            Layer.provide(NodeServices.layer),
+          ),
+        );
+        const secretStoreLayer = Layer.succeed(
+          ServerSecretStore.ServerSecretStore,
+          context.pipe(Context.get(ServerSecretStore.ServerSecretStore)),
+        );
+        const fixture = yield* makeTransportSpawner();
+        const start = (spawner = fixture.spawner) =>
+          buildCloudManagedEndpointRuntime(
+            spawner,
+            layerRelayClientAvailable,
+            unusedHttpClient,
+            secretStoreLayer,
+          );
+        yield* Effect.gen(function* () {
+          const runtime = yield* start();
+          yield* runtime.applyConfig(tunnelConfig);
+          expect(yield* Queue.take(fixture.started)).toBe(0);
+          expect(fixture.spawned[0]!.args).not.toContain("--protocol");
+          yield* fixture.emit(0, quicDialWarning.repeat(30));
+          expect(yield* Queue.take(fixture.started)).toBe(1);
+          yield* fixture.observe(runtime, 1);
+          expect(fixture.spawned[1]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
+        }).pipe(Effect.scoped);
+
+        yield* TestClock.adjust(Duration.hours(1));
+        for (const transport of [undefined, "quic", "http2", "auto", undefined]) {
+          yield* Effect.gen(function* () {
+            const next = yield* makeTransportSpawner(transport ? { transport } : {});
+            const restarted = yield* start(next.spawner);
+            yield* restarted.applyConfig(tunnelConfig);
+            if (transport === undefined) {
+              expect(next.spawned[0]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
+            } else {
+              expect(next.spawned[0]!.args).not.toContain("--protocol");
+              expect(next.spawned[0]!.options.env?.TUNNEL_TRANSPORT_PROTOCOL).toBe(transport);
+              yield* next.observe(restarted, 0, quicDialWarning.repeat(30));
+              expect(next.spawned).toHaveLength(1);
+            }
+          }).pipe(Effect.scoped);
+        }
+
+        // Reusing the hint one hour later must not extend its original lifetime.
+        yield* TestClock.adjust(Duration.hours(23));
+        yield* Effect.gen(function* () {
+          const next = yield* makeTransportSpawner();
+          const restarted = yield* start(next.spawner);
+          yield* restarted.applyConfig(tunnelConfig);
+          expect(next.spawned[0]!.args).not.toContain("--protocol");
+          expect(yield* Queue.take(next.started)).toBe(0);
+          yield* next.emit(0, quicDatagramWarning.repeat(30));
+          expect(yield* Queue.take(next.started)).toBe(1);
+          expect(next.spawned[1]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
+        }).pipe(Effect.scoped);
+      }),
+  );
+
+  it.effect(
+    "ignores invalid or unreadable fallback state and still falls back if persistence fails",
+    () =>
+      Effect.gen(function* () {
+        for (const cached of [
+          "not json",
+          '{"fellBackAt":"invalid"}',
+          '{"fellBackAt":9007199254740991}',
+          null,
+        ]) {
+          yield* Effect.gen(function* () {
+            const fixture = yield* makeTransportSpawner();
+            const runtime = yield* buildCloudManagedEndpointRuntime(
+              fixture.spawner,
+              layerRelayClientAvailable,
+              unusedHttpClient,
+              Layer.mock(ServerSecretStore.ServerSecretStore)({
+                get: () =>
+                  cached === null
+                    ? Effect.fail(
+                        new ServerSecretStore.SecretStoreReadError({
+                          resource: "test",
+                          cause: "unreadable",
+                        }),
+                      )
+                    : Effect.succeedSome(new TextEncoder().encode(cached)),
+                set: () =>
+                  Effect.fail(
+                    new ServerSecretStore.SecretStorePersistError({
+                      resource: "test",
+                      cause: "read-only",
+                    }),
+                  ),
+              }),
+            );
+            yield* runtime.applyConfig(tunnelConfig);
+            expect(yield* Queue.take(fixture.started)).toBe(0);
+            expect(fixture.spawned[0]!.args).not.toContain("--protocol");
+            yield* fixture.emit(0, quicDialWarning.repeat(30));
+            expect(yield* Queue.take(fixture.started)).toBe(1);
+            expect(fixture.spawned[1]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
+          }).pipe(Effect.scoped);
+        }
+      }),
   );
 
   it.effect("requests recovery after a failed HTTP/2 spawn and retries with HTTP/2", () =>

@@ -21,6 +21,7 @@ import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const TEST_SERVER_PORT = 13_773;
 
@@ -39,6 +40,7 @@ const layerServerConfig = (overrides?: Partial<ServerConfig.ServerConfig["Servic
 
 const layerEnvironmentAuth = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
   EnvironmentAuth.layer.pipe(
+    Layer.provide(ManagedPolicy.layerTest()),
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(ServerEnvironment.layerIdentity),
@@ -301,6 +303,20 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       const bearer = yield* serverAuth.issueSession();
       const verified = yield* serverAuth.authenticateHttpRequest({
         cookies: { [sessions.legacyCookieName ?? "t3_session"]: "stale" },
+        headers: { authorization: `Bearer ${bearer.token}` },
+      } as never);
+
+      expect(verified.sessionId).toBe(bearer.sessionId);
+    }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
+  );
+
+  it.effect("prefers a bearer token over an empty primary cookie", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const bearer = yield* serverAuth.issueSession();
+      const verified = yield* serverAuth.authenticateHttpRequest({
+        cookies: { [sessions.cookieName]: "" },
         headers: { authorization: `Bearer ${bearer.token}` },
       } as never);
 
@@ -703,40 +719,44 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
         );
 
       const rpc = yield* serverAuth.issueWebSocketTicket(session, { use: "rpc" });
-      const bare = yield* Effect.flip(upgrade(rpc.ticket, "rpc"));
+      const bare = yield* Effect.flip(upgrade(Redacted.value(rpc.ticket), "rpc"));
       expect(bare._tag).toBe("ServerAuthInvalidCredentialError");
       const signed = yield* upgrade(
-        rpc.ticket,
+        Redacted.value(rpc.ticket),
         "rpc",
-        key.sign({ method: "GET", url: socketUrl, token: rpc.ticket, iat }),
+        key.sign({ method: "GET", url: socketUrl, token: Redacted.value(rpc.ticket), iat }),
       );
       expect(signed.sessionId).toBe(session.sessionId);
 
       const wrongKey = yield* Effect.flip(
         upgrade(
-          rpc.ticket,
+          Redacted.value(rpc.ticket),
           "rpc",
-          other.sign({ method: "GET", url: socketUrl, token: rpc.ticket, iat }),
+          other.sign({ method: "GET", url: socketUrl, token: Redacted.value(rpc.ticket), iat }),
         ),
       );
       expect(wrongKey._tag).toBe("ServerAuthInvalidCredentialError");
       const onMedia = yield* Effect.flip(
         upgrade(
-          rpc.ticket,
+          Redacted.value(rpc.ticket),
           "media",
-          key.sign({ method: "GET", url: socketUrl, token: rpc.ticket, iat }),
+          key.sign({ method: "GET", url: socketUrl, token: Redacted.value(rpc.ticket), iat }),
         ),
       );
       expect(onMedia._tag).toBe("ServerAuthInvalidCredentialError");
 
       const media = yield* serverAuth.issueWebSocketTicket(session, { use: "media" });
-      expect((yield* upgrade(media.ticket, "media")).sessionId).toBe(session.sessionId);
-      const mediaOnRpc = yield* Effect.flip(upgrade(media.ticket, "rpc"));
+      expect((yield* upgrade(Redacted.value(media.ticket), "media")).sessionId).toBe(
+        session.sessionId,
+      );
+      const mediaOnRpc = yield* Effect.flip(upgrade(Redacted.value(media.ticket), "rpc"));
       expect(mediaOnRpc._tag).toBe("ServerAuthInvalidCredentialError");
 
       // Clients that predate ticket binding still connect with the unbound ticket they mint.
       const legacy = yield* serverAuth.issueWebSocketTicket(session);
-      expect((yield* upgrade(legacy.ticket, "rpc")).sessionId).toBe(session.sessionId);
+      expect((yield* upgrade(Redacted.value(legacy.ticket), "rpc")).sessionId).toBe(
+        session.sessionId,
+      );
     }).pipe(
       Effect.provide(layerEnvironmentAuth({ desktopBootstrapToken: "desktop-bootstrap-token" })),
     ),
@@ -757,10 +777,10 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       const rpc = yield* serverAuth.issueWebSocketTicket(session, { use: "rpc" });
       const request = {
         method: "GET",
-        url: `/ws?wsTicket=${rpc.ticket}&dpop=${key.sign({
+        url: `/ws?wsTicket=${Redacted.value(rpc.ticket)}&dpop=${key.sign({
           method: "GET",
           url: "http://192.168.1.50:3773/ws",
-          token: rpc.ticket,
+          token: Redacted.value(rpc.ticket),
           iat: Math.floor((yield* DateTime.now).epochMilliseconds / 1_000),
         })}`,
         cookies: {},
