@@ -34,8 +34,8 @@ jobs:
       github.event_name == 'workflow_run' &&
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'success'
-    # The build workflow completes for every PR push (its label gate is on the
-    # job), so this runs often and usually finds nothing. Keep it cheap.
+    # The build workflow completes for every PR label event (its label gate is
+    # on the job), so this runs often and usually finds nothing. Keep it cheap.
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
