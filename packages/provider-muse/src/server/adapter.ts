@@ -1366,7 +1366,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               });
           }
         }
-        if (wake && active?.nativeId !== wake.nativeId) {
+        // Muse compacts the latest run, which can be the held wake; its compaction item ends this turn.
+        if (
+          wake &&
+          active?.nativeId !== wake.nativeId &&
+          !(active?.compact && itemEvent?.kind === "compaction")
+        ) {
           const turnId = typeof params.turnId === "string" ? params.turnId : itemEvent?.turnId;
           if (turnId === wake.nativeId) {
             wake.events.push([method, data]);

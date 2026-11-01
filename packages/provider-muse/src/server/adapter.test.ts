@@ -1669,6 +1669,79 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("ends a compaction whose item names the held wake as its run", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const offered =
+        yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        { continuationRequests: { offer: (request) => Deferred.succeed(offered, request) } },
+      );
+      const previous = yield* startConversation(harness, fake);
+      yield* fake.emit("turn/completed", { turnId: previous.nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
+      yield* fake.emit("turn/started", { turnId: "background-wake" });
+      yield* Deferred.await(offered);
+      yield* fake.emit("turn/completed", { turnId: "background-wake", terminal: "completed" });
+      yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread, 2));
+      yield* fake.emit("item/completed", {
+        item: {
+          itemId: "manual-compact",
+          kind: "compaction",
+          revision: 1,
+          status: "completed",
+          turnId: "background-wake",
+          outcome: "compacted",
+        },
+      });
+      const terminal = yield* harness.takeEvent("turn.terminal");
+      assert.strictEqual(terminal.runOrdinal, 2);
+      assert.strictEqual(terminal.status, "completed");
+      assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("drops a held wake when Stop closes the compacting host", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const offered =
+        yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        { continuationRequests: { offer: (request) => Deferred.succeed(offered, request) } },
+      );
+      const previous = yield* startConversation(harness, fake);
+      yield* fake.emit("turn/completed", { turnId: previous.nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
+      yield* fake.emit("turn/started", { turnId: "background-wake" });
+      const continuation = yield* Deferred.await(offered);
+      yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread, 2));
+      const running = yield* harness.takeEvent(
+        "provider_turn.updated",
+        (event) => event.providerTurn.status === "running",
+      );
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: running.providerTurn.id,
+        requestRuntimeRestart: true,
+      });
+      assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+      const dispatched = yield* continuation.dispatchIfCurrent(Effect.void);
+      assert.isTrue(Option.isNone(dispatched));
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("keeps a running wake held when Muse declines compaction", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
