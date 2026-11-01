@@ -619,7 +619,8 @@ describe("PreviewManager", () => {
     withManager((manager) =>
       Effect.gen(function* () {
         const send = vi.fn();
-        const host = { isDestroyed: () => false, send };
+        const focus = vi.fn();
+        const host = { isDestroyed: () => false, send, focus };
         const older = makeFaviconWebContents({ id: 42 });
         const newer = makeFaviconWebContents({ id: 43 });
         for (const tab of [older, newer]) Object.assign(tab.webContents, { hostWebContents: host });
@@ -648,6 +649,22 @@ describe("PreviewManager", () => {
         expect(preventDefault).toHaveBeenCalledOnce();
         expect(send).toHaveBeenCalledExactlyOnceWith("desktop:menu-action", "view.reopenClosed");
 
+        yield* manager.setForwardedShortcuts([
+          { command: "preview.focusUrl", shortcut: parseKeybindingShortcut("mod+l")! },
+        ]);
+        beforeInput({ preventDefault } as never, { ...key, key: "l", shift: false } as never);
+        expect(focus).toHaveBeenCalledOnce();
+        expect(send).toHaveBeenLastCalledWith("desktop:menu-action", "preview.focusUrl");
+        expect(focus.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[1]!);
+        beforeInput(
+          { preventDefault } as never,
+          { ...key, key: "l", shift: false, isAutoRepeat: true } as never,
+        );
+        expect(focus).toHaveBeenCalledOnce();
+        expect(send).toHaveBeenCalledTimes(2);
+        send.mockClear();
+        yield* manager.setForwardedShortcuts([{ command: "view.reopenClosed", shortcut }]);
+
         Object.assign(newer.webContents, { focusedFrame: null });
         const agentInput = newer.listeners.get("before-input-event")!;
         const agentPreventDefault = vi.fn();
@@ -663,7 +680,7 @@ describe("PreviewManager", () => {
           { ...key, key: "T", shift: true } as never,
         );
         expect(agentPreventDefault).not.toHaveBeenCalled();
-        expect(send).toHaveBeenCalledOnce();
+        expect(send).not.toHaveBeenCalled();
       }),
     ),
   );
