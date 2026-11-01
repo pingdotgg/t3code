@@ -136,6 +136,11 @@ export function t3OrchestrationPrompt(input: {
 export function t3OrchestrationSystemPrompt(
   hasT3Mcp: boolean,
   hasDeviceTools: boolean,
+  mcpServerName?: string,
 ): string | undefined {
-  return hasT3Mcp ? orchestrationInstructions(hasDeviceTools) : undefined;
+  if (!hasT3Mcp) return undefined;
+  const instructions = orchestrationInstructions(hasDeviceTools);
+  return mcpServerName === undefined || mcpServerName === "t3-code"
+    ? instructions
+    : `${instructions}\n\nThis session's T3 MCP server is registered as \`${mcpServerName}\`. Call its tools as \`tools["${mcpServerName}"].<tool_name>\`, or find them with a namespace-agnostic catalog search, such as \`search({ query: "orchestrator_capabilities" })\`.`;
 }
