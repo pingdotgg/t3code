@@ -11,6 +11,7 @@ import * as NetAddress from "effect/net/NetAddress";
 
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import { resolveBaseDir } from "./os-jank.ts";
 
 interface HeadlessServeAccessInfo {
   readonly connectionString: string;
@@ -217,7 +218,13 @@ export const announceHeadlessAccess = Effect.fn("announceHeadlessAccess")(functi
   readonly serviceManaged: boolean;
 }) {
   if (input.serviceManaged) {
-    return yield* Console.log("T3 Code server is ready. Run `t3 pair` to pair a device.");
+    // Bare `t3 pair` only finds a server in the default home.
+    const { baseDir } = yield* ServerConfig.ServerConfig;
+    const pair =
+      baseDir === (yield* resolveBaseDir(undefined))
+        ? "t3 pair"
+        : `t3 pair --base-dir '${baseDir.replaceAll("'", `'\\''`)}'`;
+    return yield* Console.log(`T3 Code server is ready. Run \`${pair}\` to pair a device.`);
   }
   const accessInfo = yield* issueHeadlessServeAccessInfo();
   yield* Console.log(formatHeadlessServeOutput(accessInfo));

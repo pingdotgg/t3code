@@ -2,11 +2,13 @@ import type * as NodeOS from "node:os";
 import * as NodeUtil from "node:util";
 
 import { describe, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as NetAddress from "effect/net/NetAddress";
+import * as Path from "effect/Path";
 import { HttpServer } from "effect/http";
 
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -85,11 +87,24 @@ describe("acceptsPrivateNetworkConnection", () => {
 });
 
 it.effect.each([
-  { serviceManaged: false, issued: 1, printsToken: true },
-  { serviceManaged: true, issued: 0, printsToken: false },
+  { serviceManaged: false, baseDir: "/home/u/.t3", issued: 1, printsToken: true, hint: "" },
+  {
+    serviceManaged: true,
+    baseDir: "/home/u/.t3",
+    issued: 0,
+    printsToken: false,
+    hint: "Run `t3 pair` to pair a device.",
+  },
+  {
+    serviceManaged: true,
+    baseDir: "/srv/it's t3",
+    issued: 0,
+    printsToken: false,
+    hint: "Run `t3 pair --base-dir '/srv/it'\\''s t3'` to pair a device.",
+  },
 ])(
   "prints a startup pairing token only outside the background service: %o",
-  ({ serviceManaged, issued, printsToken }) =>
+  ({ serviceManaged, baseDir, issued, printsToken, hint }) =>
     Effect.gen(function* () {
       const printed: Array<string> = [];
       let issuedCount = 0;
@@ -100,6 +115,7 @@ it.effect.each([
               host: "127.0.0.1",
               port: 3773,
               privateNetworkOnly: false,
+              baseDir,
             } as never),
             Layer.mock(HttpServer.HttpServer)({
               address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 3773),
@@ -115,8 +131,10 @@ it.effect.each([
                   };
                 }),
             }),
+            Path.layer,
           ),
         ),
+        Effect.provideService(HostProcess.HomeDirectory, "/home/u"),
         Effect.provideService(Console.Console, {
           ...globalThis.console,
           log: (...args: ReadonlyArray<unknown>) => {
@@ -126,5 +144,6 @@ it.effect.each([
       );
       expect(issuedCount).toBe(issued);
       expect(printed.join("\n").includes("startup-secret")).toBe(printsToken);
+      expect(printed.join("\n").includes(hint)).toBe(true);
     }),
 );
