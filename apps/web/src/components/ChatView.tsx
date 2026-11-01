@@ -2764,12 +2764,22 @@ export default function ChatView(props: ChatViewProps) {
       ...rightPanelShortcuts,
       ...threadLifecycleShortcuts,
       "thread.rename": ({ event }) => {
-        if (!isServerThread || !canOperateThread || document.querySelector('[role="dialog"]'))
+        if (
+          !isServerThread ||
+          !activeThreadId ||
+          !canOperateThread ||
+          document.querySelector('[role="dialog"]')
+        )
           return false;
         if (!event.repeat) chatHeaderRef.current?.startRename();
       },
       "thread.regenerateTitle": ({ event }) => {
-        if (!isServerThread || !canOperateThread || document.querySelector('[role="dialog"]'))
+        if (
+          !isServerThread ||
+          !activeThreadId ||
+          !canOperateThread ||
+          document.querySelector('[role="dialog"]')
+        )
           return false;
         if (event.repeat) return;
         void updateThreadMetadata({
