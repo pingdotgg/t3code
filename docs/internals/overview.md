@@ -20,22 +20,14 @@ method on it. See [environment auth](./environment-auth.md).
 
 ### Pull request linking compatibility
 
-Web, desktop, mobile, and environments upgrade independently. Negotiate linking through the
-environment descriptor, never through a client version or an assumed coordinated release:
+Every protocol-2 environment advertises `threadPullRequests`. Once an environment's server config
+has loaded, clients use persisted `pullRequests[]`, multi-link commands, stack UI, and reverse thread
+lookup. Before that, they hide linking actions.
 
-| Environment capability                | Client behavior                                                                                                   |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `threadPullRequests: true`            | Use persisted `pullRequests[]`, multi-link commands, stack UI, and reverse thread lookup.                         |
-| Only `threadPullRequestLinking: true` | Use `linkedPullRequest` and the existing `thread.meta.update` single-link operation. Do not call multi-link RPCs. |
-| Neither flag                          | Hide linking actions; existing branch-discovered PR display remains available.                                    |
-
-New environments continue advertising the legacy flag, accepting legacy metadata commands, and
-emitting the derived `linkedPullRequest` field for older clients. That hostless field includes only
-links in the thread project's own repository; cross-host and cross-repository links require the
-multi-link protocol. New clients accept snapshots that
-omit `pullRequests`. Retain the legacy wire fields, projection column, and replay support; this feature
-does not schedule their removal. Missing new capabilities must also override cached multi-link data
-after an environment downgrade.
+Environments keep advertising `threadPullRequestLinking`, accepting legacy metadata commands, and
+emitting the derived `linkedPullRequest` field, because older clients still read them. That
+hostless field includes only links in the thread project's own repository. Retain the legacy wire
+fields, projection column, and replay support.
 
 Provider-specific behavior belongs behind an adapter. Orchestration works with normalized commands
 and events, so adding a provider should not require branches throughout the domain or clients.

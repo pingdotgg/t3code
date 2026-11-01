@@ -11,7 +11,7 @@ import type { EnvironmentOption } from "../components/BranchToolbar.logic";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
-} from "../logicalProject";
+} from "@t3tools/client-runtime/state/project-grouping";
 import { useProjects } from "../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useClientSettings } from "./useSettings";

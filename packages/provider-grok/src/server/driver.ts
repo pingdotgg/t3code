@@ -50,6 +50,7 @@ const DRIVER_KIND = ProviderDriverKind.make("grok");
 // npm latest matches the stable channel installed by grok update.
 const GROK_NPM_PACKAGE = "@xai-official/grok";
 // `grok update` installs under `GROK_HOME`; use the resolved executable and instance environment.
+// npm 12 blocks the postinstall that moves the new binary in, yet exits 0, so allow it by env.
 // Homebrew casks need brew upgrades; `grok update` would install a second copy.
 // Keep casks manual when their brew cannot vouch for them.
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
@@ -83,7 +84,7 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
       updateArgs: ["update"],
       updateLockKey: "grok",
       platform: context.platform,
-      env: context.env,
+      env: { ...context.env, npm_config_allow_scripts: GROK_NPM_PACKAGE },
     });
   }),
 };
@@ -168,16 +169,21 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
     const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
 
     const checkProvider = checkGrokProviderStatus(effectiveConfig, processEnv, cwd).pipe(
-      Effect.flatMap((snapshot) =>
-        effectiveConfig.enabled && snapshot.installed && snapshot.auth.status === "authenticated"
-          ? readGrokAccount(processEnv).pipe(
-              Effect.map(({ email, usageLimits }) => ({
-                ...snapshot,
-                auth: email ? { ...snapshot.auth, email } : snapshot.auth,
-                usageLimits,
-              })),
-            )
-          : Effect.succeed(snapshot),
+      Effect.filterOrElse(
+        (snapshot) =>
+          !(
+            effectiveConfig.enabled &&
+            snapshot.installed &&
+            snapshot.auth.status === "authenticated"
+          ),
+        (snapshot) =>
+          readGrokAccount(processEnv).pipe(
+            Effect.map(({ email, usageLimits }) => ({
+              ...snapshot,
+              auth: email ? { ...snapshot.auth, email } : snapshot.auth,
+              usageLimits,
+            })),
+          ),
       ),
       Effect.map(stampIdentity),
       Effect.provideService(HttpClient.HttpClient, httpClient),

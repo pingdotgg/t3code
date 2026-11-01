@@ -56,6 +56,7 @@ import {
   formatUsageContractMismatch,
   formatUsd,
   makeWindow,
+  usageSourceMessages,
 } from "@t3tools/shared/usageFormat";
 import { Button, InlineButton } from "../ui/button";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -153,6 +154,7 @@ function UsageModelDialogHost({
   readonly onSetPrice: (model: string) => void;
 }) {
   const selectedKey = useAtomValue(selectedUsageModelKeyAtom);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the shared selected-model atom on unmount
   useEffect(() => () => selectUsageModel(null), []);
   const model =
     selectedKey === null
@@ -289,6 +291,7 @@ export function UsagePage() {
     if (periodOption && !showingLimits) selectWindow(periodOption.days);
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window capture keydown listener for usage metric and period shortcuts
   useEffect(() => {
     globalThis.window.addEventListener("keydown", onUsageKeyDown, true);
     return () => globalThis.window.removeEventListener("keydown", onUsageKeyDown, true);
@@ -335,6 +338,7 @@ export function UsagePage() {
   const autoRefreshLimits = useEffectEvent(() => {
     void refreshLimits(true);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes provider limits from the server when the connected environment set changes
   useEffect(() => {
     if (showingLimits && connectedLimitsEnvironments) autoRefreshLimits();
   }, [showingLimits, connectedLimitsEnvironments]);
@@ -391,6 +395,25 @@ export function UsagePage() {
         </span>
       ) : null}
       <div className="ms-auto hidden shrink-0 items-center justify-end gap-2 @4xl/usage-header:flex">
+        {/* Limits are always current, so they have no period. The period sits before the metric
+            tabs so dropping it never moves them. */}
+        {showingLimits ? null : (
+          <ToggleGroup
+            aria-label="Usage period"
+            variant="segmented"
+            value={[String(windowDays)]}
+            onValueChange={(next) => {
+              const value = next[0];
+              if (value) selectWindow(Number(value));
+            }}
+          >
+            {WINDOW_OPTIONS.map((option) => (
+              <Toggle key={option.days} value={String(option.days)} title={shortcutTitle(option)}>
+                {option.label}
+              </Toggle>
+            ))}
+          </ToggleGroup>
+        )}
         <ToggleGroup
           aria-label="Usage metric"
           variant="segmented"
@@ -402,24 +425,6 @@ export function UsagePage() {
         >
           {METRIC_OPTIONS.map((option) => (
             <Toggle key={option.value} value={option.value} title={shortcutTitle(option)}>
-              {option.label}
-            </Toggle>
-          ))}
-        </ToggleGroup>
-        <ToggleGroup
-          aria-label="Usage period"
-          variant="segmented"
-          value={[String(windowDays)]}
-          disabled={showingLimits}
-          // Limits are always current; the New design hides the period instead of greying it.
-          className={showingLimits ? "redesign:hidden" : undefined}
-          onValueChange={(next) => {
-            const value = next[0];
-            if (value) selectWindow(Number(value));
-          }}
-        >
-          {WINDOW_OPTIONS.map((option) => (
-            <Toggle key={option.days} value={String(option.days)} title={shortcutTitle(option)}>
               {option.label}
             </Toggle>
           ))}
@@ -436,6 +441,31 @@ export function UsagePage() {
         </Button>
       </div>
       <div className="ms-auto flex shrink-0 items-center justify-end gap-1 @4xl/usage-header:hidden">
+        {showingLimits ? null : (
+          <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
+            <SelectTrigger
+              aria-label="Usage period"
+              size="compact"
+              variant="ghost"
+              className="w-auto min-w-0"
+            >
+              <SelectValue>
+                {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {WINDOW_OPTIONS.map((option) => (
+                <SelectItem
+                  key={option.days}
+                  value={String(option.days)}
+                  title={shortcutTitle(option)}
+                >
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        )}
         <Select
           value={metric}
           onValueChange={(value) => {
@@ -455,33 +485,6 @@ export function UsagePage() {
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {METRIC_OPTIONS.map((option) => (
               <SelectItem key={option.value} value={option.value} title={shortcutTitle(option)}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
-        <Select
-          value={String(windowDays)}
-          disabled={showingLimits}
-          onValueChange={(value) => selectWindow(Number(value))}
-        >
-          <SelectTrigger
-            aria-label="Usage period"
-            size="compact"
-            variant="ghost"
-            className={cn("w-auto min-w-0", showingLimits && "redesign:hidden")}
-          >
-            <SelectValue>
-              {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            {WINDOW_OPTIONS.map((option) => (
-              <SelectItem
-                key={option.days}
-                value={String(option.days)}
-                title={shortcutTitle(option)}
-              >
                 {option.label}
               </SelectItem>
             ))}
@@ -648,23 +651,14 @@ function UsageOverview({
   const chartLoadingProviders = new Set(
     activeProviders.filter((provider) => loadingProviders.has(provider)),
   );
-  const sourceMessages = [
-    ...new Set(
-      selectedEnvironments.flatMap(
-        (environment) =>
-          environment.summary?.sources.flatMap((source) =>
-            source.message &&
-            !source.action &&
-            !hiddenProviders.has(source.fingerprint.provider) &&
-            (source.status === "partial" ||
-              source.status === "failed" ||
-              source.fingerprint.provider === "cursor")
-              ? [source.message]
-              : [],
-          ) ?? [],
-      ),
+  const sourceMessages = usageSourceMessages(
+    selectedEnvironments.flatMap(
+      (environment) =>
+        environment.summary?.sources.filter(
+          (source) => !hiddenProviders.has(source.fingerprint.provider),
+        ) ?? [],
     ),
-  ];
+  );
   const breakdownPeriods: readonly (DailyTotals | HourlyTotals)[] = (
     shownHourly ? merged.hourly : merged.daily
   ).toReversed();
@@ -1337,7 +1331,7 @@ function UsageEnvironmentFilter({
             />
           ) : (
             <ChevronDownIcon
-              className="size-3.5 opacity-0 transition-opacity group-hover/usage-environment:opacity-100 group-focus-visible/usage-environment:opacity-100 group-data-popup-open/usage-environment:opacity-100 redesign:opacity-60 redesign:group-hover/usage-environment:opacity-100 redesign:group-focus-visible/usage-environment:opacity-100 redesign:group-data-popup-open/usage-environment:opacity-100"
+              className="size-3.5 opacity-60 transition-opacity group-hover/usage-environment:opacity-100 group-focus-visible/usage-environment:opacity-100 group-data-popup-open/usage-environment:opacity-100"
               aria-hidden
             />
           )}
@@ -1450,7 +1444,7 @@ function UsageProviderFilter({
       <MenuTrigger render={<InlineButton />} className="group/usage-provider min-w-0 max-w-full">
         <span className="min-w-0 truncate">{label}</span>
         <ChevronDownIcon
-          className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/usage-provider:opacity-100 group-focus-visible/usage-provider:opacity-100 group-data-popup-open/usage-provider:opacity-100 redesign:opacity-60 redesign:group-hover/usage-provider:opacity-100 redesign:group-focus-visible/usage-provider:opacity-100 redesign:group-data-popup-open/usage-provider:opacity-100"
+          className="size-3.5 shrink-0 text-muted-foreground opacity-60 transition-opacity group-hover/usage-provider:opacity-100 group-focus-visible/usage-provider:opacity-100 group-data-popup-open/usage-provider:opacity-100"
           aria-hidden
         />
       </MenuTrigger>

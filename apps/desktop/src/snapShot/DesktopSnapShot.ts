@@ -1,5 +1,6 @@
 // @effect-diagnostics globalTimers:off -- Capture timeouts and Electron overlay animation timers run at native callback boundaries outside Effect fibers.
 
+import { pipe } from "effect/Function";
 import {
   DEFAULT_CLIENT_SETTINGS,
   DesktopPendingSnapShot,
@@ -49,6 +50,7 @@ import { niriSocketPath } from "./NiriSnapShot.ts";
 import { CaptureShortcutConfig, niriCaptureConfigPath } from "./CaptureShortcutConfig.ts";
 import type { PortalCaptureShortcut } from "./PortalCaptureShortcut.ts";
 import {
+  CaptureSetupRequiredError,
   isGnomeCaptureSession,
   niriCaptureBinding,
   portalShortcutTrigger,
@@ -127,6 +129,7 @@ const DesktopSnapShotOperation = Schema.Literals([
   "disabled",
   "no-window-selected",
   "window-unavailable",
+  "setup-required",
   "capture",
 ]);
 
@@ -154,6 +157,8 @@ export class DesktopSnapShotError extends Schema.TaggedError<DesktopSnapShotErro
         return "No window was selected.";
       case "window-unavailable":
         return "The active window is not available for capture.";
+      case "setup-required":
+        return "Finish SnapShot setup in Settings → SnapShots.";
       case "capture":
         return "Could not capture the active window.";
     }
@@ -163,9 +168,9 @@ export class DesktopSnapShotError extends Schema.TaggedError<DesktopSnapShotErro
 const isDesktopSnapShotError = Schema.is(DesktopSnapShotError);
 
 function captureFailure(cause: unknown, captureId?: string): DesktopSnapShotError {
-  return isDesktopSnapShotError(cause)
-    ? cause
-    : new DesktopSnapShotError({ operation: "capture", captureId, cause });
+  if (isDesktopSnapShotError(cause)) return cause;
+  const operation = cause instanceof CaptureSetupRequiredError ? "setup-required" : "capture";
+  return new DesktopSnapShotError({ operation, captureId, cause });
 }
 
 export class DesktopSnapShot extends Context.Service<
@@ -605,7 +610,7 @@ function createSnapShotFlashWindow(bounds: Electron.Rectangle): Electron.BaseWin
   return window;
 }
 
-export class SnapShotFlash {
+class SnapShotFlash {
   private flashWindow: Electron.BaseWindow | undefined;
   private animationTimer: ReturnType<typeof setInterval> | undefined;
   private closeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1288,10 +1293,10 @@ export const make = Effect.gen(function* () {
     if (isModifierPairShortcut(shortcut)) {
       registered = yield* Effect.tryPromise(() =>
         startPairShortcutProcess(snapShotShortcutModifierPair(shortcut), onCurrentShortcut, () => {
-          void runPromise(
-            setShortcutFailure(
-              snapShotShortcutRegistrationFailureMessage(shortcut, environment.platform),
-            ),
+          void pipe(
+            snapShotShortcutRegistrationFailureMessage(shortcut, environment.platform),
+            setShortcutFailure,
+            runPromise,
           ).catch(() => undefined);
         }),
       ).pipe(
@@ -1718,24 +1723,28 @@ export const make = Effect.gen(function* () {
           ),
         ),
     ),
-    setAnimationDestination: (id, destination) =>
-      Effect.promise(async () => {
-        if (linuxFeedback?.id === id && destination.relativeFrame) {
-          await linuxFeedback.feedback
-            .animateTo(destination.relativeFrame)
-            .catch(() => closeLinuxFeedback(id));
-          return;
-        }
-        transition.animateTo(id, destination);
-        await transition.waitForLanding(id);
-      }),
-    dismissAnimation: (id) =>
-      Effect.sync(() => {
+    setAnimationDestination: Effect.fn("DesktopSnapShot.setAnimationDestination")(
+      function (id, destination) {
+        return Effect.promise(async () => {
+          if (linuxFeedback?.id === id && destination.relativeFrame) {
+            await linuxFeedback.feedback
+              .animateTo(destination.relativeFrame)
+              .catch(() => closeLinuxFeedback(id));
+            return;
+          }
+          transition.animateTo(id, destination);
+          await transition.waitForLanding(id);
+        });
+      },
+    ),
+    dismissAnimation: Effect.fn("DesktopSnapShot.dismissAnimation")(function (id) {
+      return Effect.sync(() => {
         closeLinuxFeedback(id);
         transition.dismiss(id);
-      }),
-    acknowledge: (id) =>
-      Effect.promise(async () => {
+      });
+    }),
+    acknowledge: Effect.fn("DesktopSnapShot.acknowledge")(function (id) {
+      return Effect.promise(async () => {
         await completeLinuxFeedback(id);
         await transition.complete(id);
       }).pipe(
@@ -1751,7 +1760,8 @@ export const make = Effect.gen(function* () {
         Effect.mapError(
           (cause) => new DesktopSnapShotError({ operation: "acknowledge", captureId: id, cause }),
         ),
-      ),
+      );
+    }),
   });
 });
 

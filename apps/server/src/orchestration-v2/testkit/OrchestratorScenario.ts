@@ -279,19 +279,18 @@ export function runOrchestratorV2Scenario(
       const capturedShellSnapshots = new Map<string, OrchestrationV2ThreadShellSnapshot>();
       let anonymousBackgroundDispatchIndex = 0;
 
-      const awaitDispatch = (key: string) =>
-        Effect.gen(function* () {
-          const fiber = backgroundDispatches.get(key);
-          if (!fiber) {
-            return yield* new OrchestratorV2ScenarioStepError({
-              scenario: scenario.name,
-              step: `await:${key}`,
-            });
-          }
-          const events = yield* Fiber.join(fiber);
-          backgroundDispatches.delete(key);
-          storedEventGroups.push(events);
-        });
+      const awaitDispatch = Effect.fn("awaitDispatch")(function* (key: string) {
+        const fiber = backgroundDispatches.get(key);
+        if (!fiber) {
+          return yield* new OrchestratorV2ScenarioStepError({
+            scenario: scenario.name,
+            step: `await:${key}`,
+          });
+        }
+        const events = yield* Fiber.join(fiber);
+        backgroundDispatches.delete(key);
+        storedEventGroups.push(events);
+      });
 
       const waitForPendingRuntimeRequest = (
         threadId: ThreadId,
