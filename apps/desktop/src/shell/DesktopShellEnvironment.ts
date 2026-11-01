@@ -1,5 +1,6 @@
 import {
   buildEnvironmentCaptureCommand,
+  listExistingPosixCliDirs,
   listLoginShellCandidates,
   setWindowsPath,
 } from "@t3tools/shared/shell";
@@ -411,9 +412,13 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       config.platform === "darwin" && !shellEnvironment.PATH
         ? yield* readLaunchctlPath
         : Option.none<string>();
+    const probedPath = trimNonEmpty(shellEnvironment.PATH).pipe(Option.orElse(() => launchctlPath));
     const mergedPath = mergePaths(config.platform, [
-      trimNonEmpty(shellEnvironment.PATH).pipe(Option.orElse(() => launchctlPath)),
+      probedPath,
       readEnvPath(config.env),
+      Option.isNone(probedPath)
+        ? trimNonEmpty(listExistingPosixCliDirs(config.env, config.platform).join(":"))
+        : Option.none(),
     ]);
 
     if (Option.isSome(mergedPath)) {

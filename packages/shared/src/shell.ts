@@ -194,6 +194,30 @@ export function mergePathEntries(
   return merged.length > 0 ? merged.join(delimiter) : undefined;
 }
 
+function isDirectory(dirPath: string): boolean {
+  try {
+    return NodeFS.statSync(dirPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// Last resort when no PATH probe answers: a slow profile trips the login-shell
+// timeout, and `launchctl getenv PATH` is unset on recent macOS, which leaves a
+// Finder launch on the bare `/usr/bin:/bin:/usr/sbin:/sbin` PATH. Callers append
+// these after the inherited PATH so a caller-chosen nvm/mise/fnm binary still wins.
+export function listExistingPosixCliDirs(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): ReadonlyArray<string> {
+  const home = trimNonEmpty(env.HOME);
+  return [
+    platform === "darwin" ? "/opt/homebrew/bin" : "/home/linuxbrew/.linuxbrew/bin",
+    "/usr/local/bin",
+    ...(home ? [`${home}/.local/bin`] : []),
+  ].filter(isDirectory);
+}
+
 function envCaptureStart(name: string): string {
   return `__T3CODE_ENV_${name}_START__`;
 }

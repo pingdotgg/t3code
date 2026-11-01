@@ -1,5 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
+  listExistingPosixCliDirs,
   listLoginShellCandidates,
   mergePathEntries,
   readEnvironmentFromLoginShell,
@@ -35,7 +36,10 @@ function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): vo
 
   const shellPath = shellEnvironment.PATH;
   const launchctlPath = platform === "darwin" && !shellPath ? readPathFromLaunchctl() : undefined;
-  const mergedPath = mergePathEntries(shellPath ?? launchctlPath, env.PATH, platform);
+  const probedPath = shellPath ?? launchctlPath;
+  const mergedPath = probedPath
+    ? mergePathEntries(probedPath, env.PATH, platform)
+    : mergePathEntries(env.PATH, listExistingPosixCliDirs(env, platform).join(":"), platform);
   if (mergedPath) {
     env.PATH = mergedPath;
   }

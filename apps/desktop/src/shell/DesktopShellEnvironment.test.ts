@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as PlatformError from "effect/PlatformError";
@@ -332,6 +333,63 @@ describe("DesktopShellEnvironment", () => {
 
       assert.isFalse(prepared);
     }),
+  );
+
+  // The inherited PATH already holds the platform's absolute fallback dirs, so each
+  // case only depends on whether the fixture HOME has ~/.local/bin, not on this host.
+  it.effect.each([
+    { platform: "linux", brewBin: "/home/linuxbrew/.linuxbrew/bin" },
+    { platform: "darwin", brewBin: "/opt/homebrew/bin" },
+  ] as const)(
+    "falls back to existing CLI dirs when probes return no PATH on $platform",
+    ({ platform, brewBin }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cases = [
+          {
+            localBin: true,
+            inherited: (home: string) =>
+              `${home}/.nvm/bin:/usr/local/bin:/usr/bin:${brewBin}:/usr/bin`,
+            probe: "",
+            expected: (home: string) =>
+              `${home}/.nvm/bin:/usr/local/bin:/usr/bin:${brewBin}:${home}/.local/bin`,
+          },
+          {
+            localBin: true,
+            inherited: (home: string) => `${home}/.local/bin:/usr/local/bin:${brewBin}:/usr/bin`,
+            probe: "",
+            expected: (home: string) => `${home}/.local/bin:/usr/local/bin:${brewBin}:/usr/bin`,
+          },
+          {
+            localBin: false,
+            inherited: () => `/usr/local/bin:${brewBin}:/usr/bin`,
+            probe: "",
+            expected: () => `/usr/local/bin:${brewBin}:/usr/bin`,
+          },
+          {
+            localBin: true,
+            inherited: () => "/usr/bin",
+            probe: envOutput({ PATH: "/opt/tools/bin:/usr/bin" }),
+            expected: () => "/opt/tools/bin:/usr/bin",
+          },
+        ];
+
+        for (const testCase of cases) {
+          const home = yield* fileSystem.makeTempDirectoryScoped();
+          if (testCase.localBin) {
+            yield* fileSystem.makeDirectory(`${home}/.local/bin`, { recursive: true });
+          }
+          const env: NodeJS.ProcessEnv = {
+            HOME: home,
+            SHELL: "/bin/zsh",
+            PATH: testCase.inherited(home),
+          };
+
+          yield* runShellEnvironment({ env, platform, handler: () => testCase.probe });
+
+          assert.equal(env.PATH, testCase.expected(home));
+        }
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("loads PowerShell profile environment on Windows", () =>
