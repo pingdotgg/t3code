@@ -1353,6 +1353,21 @@ export function settingsForThisPlatform(
   );
 }
 
+const normalizedSearchFields = new WeakMap<SettingsSearchItem, readonly [string, ...string[]]>();
+
+function searchFields(item: SettingsSearchItem) {
+  let fields = normalizedSearchFields.get(item);
+  if (fields === undefined) {
+    fields = [
+      normalizeSearchText(item.title),
+      normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
+      ...(item.searchTerms ?? []).map(normalizeSearchText),
+    ];
+    normalizedSearchFields.set(item, fields);
+  }
+  return fields;
+}
+
 export function searchSettings(
   query: string,
   items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS,
@@ -1363,12 +1378,8 @@ export function searchSettings(
 
   return settingsForThisPlatform(items)
     .flatMap((item, index) => {
-      const title = normalizeSearchText(item.title);
-      const fields = [
-        title,
-        normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
-        ...(item.searchTerms ?? []).map(normalizeSearchText),
-      ];
+      const fields = searchFields(item);
+      const title = fields[0];
       if (!queryTokens.every((token) => fields.some((field) => field.includes(token)))) return [];
 
       const exactPhraseField = fields.findIndex((field) => field.includes(normalizedQuery));
