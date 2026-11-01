@@ -1,3 +1,4 @@
+import { captureDelegatedExecution, withinDelegatedExecution } from "./codexDelegatedExecution.ts";
 import { pipe } from "effect/Function";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
@@ -751,13 +752,16 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
     const approvalPolicy =
-      input.runtimePolicy.approvalPolicy === undefined
-        ? runtimeModeDefaults.approvalPolicy
-        : yield* decodeTurnApprovalPolicy(input.runtimePolicy.approvalPolicy);
+      input.runtimePolicy.delegatedExecution !== undefined
+        ? "never"
+        : input.runtimePolicy.approvalPolicy === undefined
+          ? runtimeModeDefaults.approvalPolicy
+          : yield* decodeTurnApprovalPolicy(input.runtimePolicy.approvalPolicy);
     const sandboxPolicy =
-      input.runtimePolicy.sandboxPolicy === undefined
+      input.runtimePolicy.delegatedExecution?.sandboxPolicy ??
+      (input.runtimePolicy.sandboxPolicy === undefined
         ? runtimeModeDefaults.sandboxPolicy
-        : yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy);
+        : yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy));
     const selectedEffort =
       getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort") ??
       codexDefaultReasoningEffortOverride(input.modelSelection.model);
@@ -792,12 +796,15 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       threadId: input.nativeThreadId,
       input: input.codexInput,
       ...(additionalContext ? { additionalContext } : {}),
-      cwd: input.runtimePolicy.cwd,
+      cwd: input.runtimePolicy.delegatedExecution?.cwd ?? input.runtimePolicy.cwd,
       model: input.modelSelection.model,
       // Catalogues can default summaries to "none"; request them explicitly on every turn.
       summary: "detailed",
       // Omitting the reviewer on resume preserves the previous Auto reviewer.
-      approvalsReviewer: runtimeModeDefaults.approvalsReviewer,
+      approvalsReviewer:
+        input.runtimePolicy.delegatedExecution !== undefined
+          ? "user"
+          : runtimeModeDefaults.approvalsReviewer,
       ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
       ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
       ...(effort === undefined ? {} : { effort }),
@@ -1340,14 +1347,36 @@ function codexThreadRuntimeParams(input: {
 }): {
   readonly cwd?: string;
   readonly model?: string;
+  readonly approvalPolicy?: "never";
+  readonly sandbox?: "read-only" | "workspace-write";
   readonly config: Readonly<Record<string, Schema.Json>>;
 } {
   const { mcpSession } = input;
+  const ceiling = input.runtimePolicy?.delegatedExecution;
   return {
     ...(input.runtimePolicy?.cwd == null ? {} : { cwd: input.runtimePolicy.cwd }),
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
+    ...(ceiling === undefined
+      ? {}
+      : {
+          cwd: ceiling.cwd,
+          approvalPolicy: "never" as const,
+          sandbox:
+            ceiling.sandboxPolicy.type === "readOnly"
+              ? ("read-only" as const)
+              : ("workspace-write" as const),
+        }),
     config: {
       ...CODEX_THREAD_CONFIG,
+      ...(ceiling?.sandboxPolicy.type !== "workspaceWrite"
+        ? {}
+        : {
+            "sandbox_workspace_write.writable_roots": [...ceiling.sandboxPolicy.writableRoots],
+            "sandbox_workspace_write.network_access": ceiling.sandboxPolicy.networkAccess,
+            "sandbox_workspace_write.exclude_slash_tmp": ceiling.sandboxPolicy.excludeSlashTmp,
+            "sandbox_workspace_write.exclude_tmpdir_env_var":
+              ceiling.sandboxPolicy.excludeTmpdirEnvVar,
+          }),
       ...(mcpSession === undefined
         ? {}
         : {
@@ -1633,6 +1662,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   adapterOptions: CodexAdapterV2Options,
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const path = yield* Path.Path;
   const readMcpSession = (threadId: ThreadId | null) =>
     // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
     threadId === null ? Effect.succeed(undefined) : mcpSessions.read(threadId);
@@ -1790,6 +1820,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
         );
         const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
+        const effectiveSettings = new Map<string, CodexSchema.ServerNotification__ThreadSettings>();
         const turnTokenUsageByThread = new Map<string, CodexTurnTokenUsageState>();
         const usageStateForThread = (nativeThreadId: string) => {
           let state = turnTokenUsageByThread.get(nativeThreadId);
@@ -4468,11 +4499,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
 
         yield* client.handleServerNotification("thread/settings/updated", (payload) =>
-          updateSubagentSelection(
-            payload.threadId,
-            payload.threadSettings.model,
-            payload.threadSettings.effort,
-            payload.threadSettings.serviceTier,
+          Effect.sync(() => {
+            effectiveSettings.set(payload.threadId, payload.threadSettings);
+          }).pipe(
+            Effect.andThen(
+              updateSubagentSelection(
+                payload.threadId,
+                payload.threadSettings.model,
+                payload.threadSettings.effort,
+                payload.threadSettings.serviceTier,
+              ),
+            ),
           ),
         );
         yield* client.handleServerNotification("model/rerouted", (payload) =>
@@ -5203,6 +5240,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload,
               );
             }
+            if (
+              context.input.runtimePolicy.delegatedExecution !== undefined ||
+              context.input.runtimePolicy.approvalPolicy === "never"
+            ) {
+              return { decision: "decline" } as const;
+            }
             const allowance = sessionAllowance(payload.threadId, context);
             if (allowance.has("command")) {
               return {
@@ -5273,6 +5316,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 `No active Codex turn context for file change approval turn ${payload.turnId}.`,
                 payload,
               );
+            }
+            if (
+              context.input.runtimePolicy.delegatedExecution !== undefined ||
+              context.input.runtimePolicy.approvalPolicy === "never"
+            ) {
+              return { decision: "decline" } as const;
             }
             const allowance = sessionAllowance(payload.threadId, context);
             if (allowance.has("file-change")) {
@@ -5347,6 +5396,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               );
             }
 
+            if (
+              context.input.runtimePolicy.delegatedExecution !== undefined ||
+              context.input.runtimePolicy.approvalPolicy === "never"
+            ) {
+              return { permissions: {}, scope: "turn" } as const;
+            }
             const requestKind = providerRequestKindFromPermissions(payload.permissions);
             const artifacts = yield* buildApprovalRequestArtifacts({
               context,
@@ -5423,6 +5478,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               } satisfies CodexSchema.McpServerElicitationRequestResponse;
             }
 
+            if (
+              context.input.runtimePolicy.delegatedExecution !== undefined ||
+              context.input.runtimePolicy.approvalPolicy === "never"
+            ) {
+              return { action: "decline" } as const;
+            }
             const nativeRequestId =
               payload.mode === "url"
                 ? payload.elicitationId
@@ -5485,6 +5546,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 `No active Codex turn context for exec approval thread ${payload.conversationId}.`,
                 payload,
               );
+            }
+            if (
+              context.input.runtimePolicy.delegatedExecution !== undefined ||
+              context.input.runtimePolicy.approvalPolicy === "never"
+            ) {
+              return {
+                decision: {
+                  denied: {
+                    rejection: "Tool approval is disabled. Retry within the inherited sandbox.",
+                  },
+                },
+              };
             }
             const allowance = sessionAllowance(payload.conversationId, context);
             if (allowance.has("command")) {
@@ -5554,6 +5627,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 `No active Codex turn context for apply patch approval thread ${payload.conversationId}.`,
                 payload,
               );
+            }
+            if (
+              context.input.runtimePolicy.delegatedExecution !== undefined ||
+              context.input.runtimePolicy.approvalPolicy === "never"
+            ) {
+              return {
+                decision: {
+                  denied: {
+                    rejection: "Tool approval is disabled. Retry within the inherited sandbox.",
+                  },
+                },
+              };
             }
             const allowance = sessionAllowance(payload.conversationId, context);
             if (allowance.has("file-change")) {
@@ -6902,6 +6987,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           providerSessionId: input.providerSessionId,
           providerSession: session,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          getDelegatedExecution: Effect.fn("CodexAdapterV2.getDelegatedExecution")(
+            function* (runId) {
+              const context = [...(yield* Ref.get(activeTurns)).values()].find(
+                (turn) => turn.input.runId === runId && turn.subagent === null,
+              );
+              if (context === undefined) return undefined;
+              const captured = captureDelegatedExecution(
+                adapterOptions.instanceId,
+                effectiveSettings.get(context.providerThread.nativeThreadRef?.nativeId ?? ""),
+                path.isAbsolute,
+              );
+              const ceiling = context.input.runtimePolicy.delegatedExecution;
+              return captured !== undefined &&
+                (ceiling === undefined || withinDelegatedExecution(captured, ceiling))
+                ? captured
+                : undefined;
+            },
+          ),
           canReuseContextUsage: canReuseCodexContextUsage,
           // Idle release can beat delayed subagent resumes: Codex reports them completed between turns with no resume-expected signal.
           hasPendingBackgroundWork: Effect.gen(function* () {

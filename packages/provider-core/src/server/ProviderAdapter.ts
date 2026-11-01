@@ -1,3 +1,4 @@
+import { DelegatedExecution } from "@t3tools/contracts";
 import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
 import {
   ChatAttachment,
@@ -46,6 +47,7 @@ import type {
 } from "./selectionTransition.ts";
 
 export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
+  delegatedExecution: Schema.optional(DelegatedExecution),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   cwd: Schema.NullOr(Schema.String),
@@ -565,6 +567,7 @@ export type ProviderAdapterV2SubagentOutcome = {
 };
 
 export interface ProviderAdapterV2SessionRuntime {
+  readonly getDelegatedExecution?: (runId: RunId) => Effect.Effect<DelegatedExecution | undefined>;
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
   readonly providerSessionId: ProviderSessionId;

@@ -166,6 +166,12 @@ export type OrchestratorMcpTerminalDelegatedTaskStatus =
   typeof OrchestratorMcpTerminalDelegatedTaskStatus.Type;
 
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
+  approvalPolicy: Schema.optional(
+    Schema.Literals(["inherit", "never"]).annotate({
+      description:
+        "Never asks for tool approval. Codex only, same provider and shared directory. Inherits effective access limits; unsupported policies fail before dispatch. Task questions still require an answer.",
+    }),
+  ),
   task: OrchestratorMcpPrompt,
   target: Schema.optional(OrchestratorMcpTarget),
   title: Schema.optional(OrchestratorMcpTitle),
@@ -601,6 +607,7 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
   /** Models left out of `models`: unlisted visible models, or matches past the cap with `search`. */
   omittedModels: Schema.optional(NonNegativeInt),
   runtimeModes: Schema.optional(Schema.Array(RuntimeMode)),
+  delegatedApprovalPolicies: Schema.optional(Schema.Array(Schema.Literals(["inherit", "never"]))),
   canRunChildTask: Schema.Boolean,
   canRunCrossProviderChildTask: Schema.Boolean,
   constraints: Schema.Array(Schema.String),

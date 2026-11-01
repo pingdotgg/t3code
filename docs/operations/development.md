@@ -339,3 +339,36 @@ passed as `--wsl-runtime`; see the
 Add `--signed` after configuring the platform credentials in the
 [release runbook](./release.md). macOS passkeys need a signed, provisioned app; follow the
 [Connect setup](./connect-setup.md#desktop-passkeys) for local signing and renderer HMR.
+
+## Test bounded Codex delegation locally
+
+Use an isolated Codex home authenticated for the selected model. The test uses
+disposable Git workspaces and an in-memory T3 database. It does not start a
+server, install the candidate, or touch a running T3 instance.
+
+From `apps/server`, run:
+
+```sh
+T3_BOUNDED_CODEX_E2E=1 \
+T3_BOUNDED_CODEX_HOME=/absolute/path/to/isolated-codex-home \
+vp test run src/orchestration-v2/testkit/BoundedDelegation.live.test.ts
+```
+
+The model defaults to `gpt-6.1-sol`. Set `T3_BOUNDED_CODEX_MODEL` to another
+model available to the same authenticated account if needed. The test runs the
+real Codex app-server through `OrchestratorMcpService.delegateTask`, the
+orchestrator, and the adapter. HTTP MCP transport is not exercised. It verifies allowed
+writes, denied sibling-path writes, no pending human approvals, rejection of
+worktree relocation, and matching child and grandchild permission ceilings.
+It writes `bounded-delegation-receipt.json` in the isolated Codex home.
+On macOS, run this test outside an enclosing Seatbelt sandbox so Codex can
+create its own sandbox. Do not disable the child sandbox to make it pass.
+
+Run the local regression tests separately:
+
+```sh
+vp test run src/orchestration-v2/Adapters/codexDelegatedExecution.test.ts \
+  src/orchestration-v2/Adapters/CodexAdapterV2.test.ts \
+  src/orchestration-v2/RuntimePolicy.test.ts \
+  src/mcp/OrchestratorMcpService.test.ts src/mcp/McpToolAccess.test.ts
+```
