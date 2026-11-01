@@ -141,17 +141,19 @@ export function evaluatePullRequestWatch(
     detail.mergeability === "unknown" ? watch.conflicting : detail.mergeability === "conflicting";
 
   // The queue's checks run on a commit of its own, so its head can stay green after the queue
-  // drops it. A removal from before the watch started is old news. Hosts stamp removals to the
-  // second, so one in the watch's first second still counts.
+  // drops it. After the first read, IDs avoid comparing the server clock with the host clock.
+  // The initial read uses whole seconds to exclude historical removals.
   const removal = detail.mergeQueueRemoval;
   if (
     removal !== undefined &&
     removal.id !== watch.mergeQueueRemovalId &&
-    Date.parse(removal.removedAt) >= Math.floor(Date.parse(watch.startedAt) / 1000) * 1000
+    (watch.mergeQueueRemovalId !== undefined ||
+      Date.parse(removal.removedAt) >= Math.floor(Date.parse(watch.startedAt) / 1000) * 1000)
   ) {
     changes.push({ kind: "merge-queue-removed", reason: removal.reason });
   }
-  const mergeQueueRemovalId = removal?.id ?? watch.mergeQueueRemovalId;
+  // Null records an empty baseline; historical IDs are saved without waking the watch.
+  const mergeQueueRemovalId = removal?.id ?? watch.mergeQueueRemovalId ?? null;
 
   const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
   const progress = headMoved || (changes.length > 0 && !commentsOnly);
@@ -168,7 +170,7 @@ export function evaluatePullRequestWatch(
       remarksThrough,
       remarkIds,
       conflicting,
-      ...(mergeQueueRemovalId === undefined ? {} : { mergeQueueRemovalId }),
+      mergeQueueRemovalId,
       wakes,
       checksAwaitedSince,
     },

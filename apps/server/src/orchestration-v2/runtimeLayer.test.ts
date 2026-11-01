@@ -3995,7 +3995,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* worker.drain();
       removal = {
         id: "first",
-        removedAt: "2999-01-01T00:00:00Z",
+        removedAt: "2000-01-01T00:00:00Z",
         reason: "Required checks failed",
       };
       yield* reactor.sweep;
