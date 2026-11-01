@@ -1039,6 +1039,9 @@ function deriveTurnFolds(input: {
   }
   const groupsByRunId = new Map<RunId, TurnGroup>();
   const runlessFailedKeys = new Set<RunId>();
+  // The first assistant message after a steer answers it, so it stays visible.
+  const runsAwaitingSteerReply = new Set<RunId>();
+  const steerReplyEntryIds = new Set<string>();
 
   // Key runless responses per prompt to prevent V2 runs unfolding imported turns.
   let runlessKey: RunId | null = null;
@@ -1057,6 +1060,7 @@ function deriveTurnFolds(input: {
     }
     if (entry.kind === "message" && timelineEntryIsSteer(entry)) {
       const steerRunId = entry.message.runId ?? responseKey;
+      if (steerRunId !== null) runsAwaitingSteerReply.add(steerRunId);
       const group = steerRunId === null ? undefined : groupsByRunId.get(steerRunId);
       if (group !== undefined && group.entries.length > 0) {
         // Back-to-back steers split once, after the last of them.
@@ -1094,6 +1098,9 @@ function deriveTurnFolds(input: {
     }
     group.entries.push(entry);
     if (entry.kind === "message") {
+      if (runsAwaitingSteerReply.delete(runId)) {
+        steerReplyEntryIds.add(entry.id);
+      }
       if (input.terminalAssistantMessageIds.has(entry.message.id)) {
         group.terminalEntry = entry;
       }
@@ -1121,7 +1128,7 @@ function deriveTurnFolds(input: {
       ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
       : group.entries.length;
     for (const [index, entry] of group.entries.entries()) {
-      if (entry.id === group.terminalEntry?.id) {
+      if (entry.id === group.terminalEntry?.id || steerReplyEntryIds.has(entry.id)) {
         continue;
       }
       const isCompaction = timelineEntryIsCompaction(entry);

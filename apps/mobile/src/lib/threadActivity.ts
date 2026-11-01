@@ -1070,13 +1070,12 @@ function deriveThreadFeedRunFolds(
   const interruptedRunIds = new Set<RunId>();
   const failedRunIds = new Set(feedFailedRunIds);
   const promptIndexByRunId = new Map<RunId, number>();
+  const isSteer = (entry: ThreadFeedEntry) =>
+    entry.type === "message" &&
+    (entry.message.inputIntent === "steer" ||
+      entry.message.inputIntent === "promoted_queued_to_steer");
   for (const [index, entry] of feed.entries()) {
-    if (
-      entry.type !== "message" ||
-      entry.message.role !== "user" ||
-      entry.message.inputIntent === "steer" ||
-      entry.message.inputIntent === "promoted_queued_to_steer"
-    ) {
+    if (entry.type !== "message" || entry.message.role !== "user" || isSteer(entry)) {
       continue;
     }
     const runId = entry.message.runId;
@@ -1089,11 +1088,15 @@ function deriveThreadFeedRunFolds(
   let runlessKey: RunId | null = null;
   let responseKey: RunId | null = null;
   let pendingUserBoundary: string | null = null;
+  // The first assistant message after a steer answers it, so it stays visible.
+  const runsAwaitingSteerReply = new Set<RunId>();
+  const steerReplyEntryIds = new Set<string>();
   for (const [index, entry] of feed.entries()) {
     if (entry.type === "message" && entry.message.role === "user") {
       pendingUserBoundary = entry.message.createdAt;
       runlessKey = entry.message.runId == null ? RunId.make(`runless:${entry.id}`) : null;
       responseKey = entry.message.runId ?? runlessKey;
+      if (responseKey !== null && isSteer(entry)) runsAwaitingSteerReply.add(responseKey);
       continue;
     }
     const ownRunId =
@@ -1119,6 +1122,7 @@ function deriveThreadFeedRunFolds(
     group.entries.push(entry);
     if (entry.type === "message") {
       terminalAssistantMessageIdByRun.set(runId, entry.id);
+      if (runsAwaitingSteerReply.delete(runId)) steerReplyEntryIds.add(entry.id);
     }
     if (entry.type !== "activity-group") continue;
     for (const activity of entry.activities) {
@@ -1153,6 +1157,7 @@ function deriveThreadFeedRunFolds(
         .filter(
           (entry) =>
             entry.id !== terminalAssistantId &&
+            !steerReplyEntryIds.has(entry.id) &&
             entry.type !== "html-render" &&
             entry.type !== "mcp-app" &&
             !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&

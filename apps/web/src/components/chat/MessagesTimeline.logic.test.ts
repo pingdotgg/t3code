@@ -1390,6 +1390,65 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("keeps the agent's reply to each steer visible after the settled turn folds", () => {
+    const runId = RunId.make("steer-reply-run");
+    const time = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
+    const message = (
+      id: string,
+      second: number,
+      role: "user" | "assistant",
+      inputIntent?: "turn_start" | "steer",
+    ): TimelineEntry => ({
+      kind: "message",
+      id,
+      createdAt: time(second),
+      message: {
+        id: MessageId.make(id),
+        role,
+        text: id,
+        runId,
+        ...(inputIntent ? { inputIntent } : {}),
+        createdAt: time(second),
+        updatedAt: time(second),
+        streaming: false,
+      },
+    });
+    const work = (id: string, second: number): TimelineEntry => ({
+      kind: "work",
+      id,
+      createdAt: time(second),
+      entry: { id, createdAt: time(second), runId, label: "Ran command", tone: "tool" },
+    });
+
+    const rowIds = deriveMessagesTimelineRows({
+      timelineEntries: [
+        message("prompt", 0, "user", "turn_start"),
+        message("progress-note", 2, "assistant"),
+        work("work-before-steer", 4),
+        message("steer", 10, "user", "steer"),
+        message("steer-reply", 12, "assistant"),
+        message("progress-after-reply", 13, "assistant"),
+        work("work-after-steer", 15),
+        message("second-steer", 20, "user", "steer"),
+        message("second-steer-reply", 22, "assistant"),
+        work("work-after-second-steer", 25),
+        message("final", 30, "assistant"),
+      ],
+      latestRun: { runId, status: "completed", startedAt: time(0), completedAt: time(30) },
+      isWorking: false,
+      expandedRunIds: new Set(),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    }).map((row) => row.id);
+
+    expect(rowIds).toEqual(expect.arrayContaining(["steer-reply", "second-steer-reply", "final"]));
+    expect(rowIds).not.toContain("progress-note");
+    expect(rowIds).not.toContain("progress-after-reply");
+    expect(rowIds).not.toContain("work-before-steer");
+    expect(rowIds).not.toContain("work-after-steer");
+    expect(rowIds).not.toContain("work-after-second-steer");
+  });
+
   it("stacks back-to-back steers as one burst with a single steer label", () => {
     const runId = RunId.make("double-steer-run");
     const time = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
@@ -3673,7 +3732,8 @@ describe("linked timeline resources", () => {
       message("steer", "user", 1),
       event("created", "thread_created"),
       message("after-steer", "assistant", 3),
-      message("final", "assistant", 4),
+      message("progress", "assistant", 4),
+      message("final", "assistant", 5),
     ];
     const segmentKey = RunId.make(`${runId}:steer:steer`);
     const rowIds = (expanded: RunId[]) =>
@@ -3689,6 +3749,7 @@ describe("linked timeline resources", () => {
       `turn-fold:${segmentKey}`,
       "created",
       "after-steer",
+      "progress",
       "final",
       "summary:created",
       "assistant-meta:final",
