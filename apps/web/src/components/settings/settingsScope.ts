@@ -1,5 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { ProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
 
+import { resolveSidebarProjectScopeKey } from "../../sidebarProjectGrouping";
 import type {
   SidebarProjectGroupMember,
   SidebarProjectSnapshot,
@@ -51,6 +53,31 @@ export function validateSettingsScopeSearch(raw: Record<string, unknown>): Setti
     ...(project === undefined ? {} : { project }),
     ...(machine === undefined ? {} : { machine }),
     ...(checkout === undefined ? {} : { checkout }),
+  };
+}
+
+/** A link to one scratch folder opens the shared No project group. */
+export function resolveSettingsProjectSearch(
+  search: SettingsScopeSearch,
+  groups: readonly SidebarProjectSnapshot[],
+  settings: ProjectGroupingSettings,
+  singleEnvironment = false,
+): SettingsScopeSearch {
+  const project = resolveSidebarProjectScopeKey({
+    key: search.project ?? null,
+    groups,
+    settings,
+  });
+  if (project === null || project === search.project) return search;
+  const member = singleEnvironment
+    ? groups
+        .flatMap((group) => group.memberProjects)
+        .find((member) => member.physicalProjectKey === search.project)
+    : undefined;
+  return {
+    ...search,
+    project,
+    ...(search.machine === undefined && member ? { machine: member.environmentId } : {}),
   };
 }
 
