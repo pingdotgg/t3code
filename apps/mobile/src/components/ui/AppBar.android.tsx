@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Keyboard, Pressable, TextInput, type TextInputInstance, View } from "react-native";
+import { Keyboard, type TextInputInstance, View } from "react-native";
 import { useHardwareBack } from "../../lib/backHandler";
 import { useToolbarLayout } from "./useToolbarLayout";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -7,17 +7,14 @@ import { AndroidWorkspaceSidebarButton } from "../../features/layout/workspace-s
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import { AndroidScreenHeader } from "./AndroidScreenHeader";
 import { ScreenHeaderButton } from "./ScreenHeaderButton.android";
-import { SymbolView } from "./AppSymbol";
 import { Menu } from "./Menu";
 import { SearchField } from "./SearchField";
 import { androidHeaderMenuActions, findHeaderMenuAction } from "./headerMenu.android";
 import type { AppBarProps } from "./AppBar.types";
-import { useAndroidControlSizing } from "./useAndroidControlSizing";
 
 export function AppBar(props: AppBarProps) {
   const { search } = props;
   const { paddingTop, paddingBottom } = useToolbarLayout();
-  const { scale, buttonSize, iconSize, smallIconSize } = useAndroidControlSizing();
   const { themeVariables } = useAppearancePreferences();
   const inputRef = useRef<TextInputInstance>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -28,7 +25,7 @@ export function AppBar(props: AppBarProps) {
     setSearchOpen(false);
     Keyboard.dismiss();
   };
-  useHardwareBack(searching && search?.mode !== "inline", () => {
+  useHardwareBack(searching, () => {
     closeSearch();
     return true;
   });
@@ -43,23 +40,7 @@ export function AppBar(props: AppBarProps) {
         if (action && !action.disabled) action.onPress();
       }}
     >
-      {search?.mode === "inline" ? (
-        <Pressable
-          accessibilityLabel={menu.title}
-          accessibilityRole="button"
-          className="items-center justify-center rounded-full bg-subtle"
-          style={{ width: buttonSize, height: buttonSize }}
-        >
-          <SymbolView
-            name={menu.icon}
-            size={smallIconSize}
-            tintColorClassName="accent-header-foreground"
-            type="monochrome"
-          />
-        </Pressable>
-      ) : (
-        <ScreenHeaderButton accessibilityLabel={menu.title} icon={menu.icon} />
-      )}
+      <ScreenHeaderButton accessibilityLabel={menu.title} icon={menu.icon} />
     </Menu>
   ));
   const options = (
@@ -75,72 +56,6 @@ export function AppBar(props: AppBarProps) {
       optionsVersion={props.optionsVersion}
     />
   );
-  if (search?.mode === "inline") {
-    return (
-      <>
-        {options}
-        <View
-          className="border-b border-header-border bg-header px-3"
-          style={{
-            paddingTop,
-            paddingBottom: 8.75 * scale,
-            borderBottomWidth: 0,
-          }}
-        >
-          <View className="flex-row items-center gap-2" style={{ minHeight: buttonSize }}>
-            {props.onBack ? (
-              <Pressable
-                accessibilityLabel="Navigate up"
-                accessibilityRole="button"
-                hitSlop={8}
-                onPress={props.onBack}
-                className="items-center justify-center"
-                style={{ width: buttonSize, height: buttonSize }}
-              >
-                <SymbolView
-                  name="chevron.left"
-                  size={iconSize}
-                  tintColorClassName="accent-header-foreground"
-                  type="monochrome"
-                />
-              </Pressable>
-            ) : null}
-            <View
-              className="flex-1 flex-row items-center bg-input"
-              style={{
-                minHeight: Math.max(48, 38.5 * scale),
-                gap: 8.75 * scale,
-                borderRadius: 14 * scale,
-                paddingHorizontal: 12.25 * scale,
-              }}
-            >
-              <SymbolView
-                name="magnifyingglass"
-                size={Math.round(17 * scale)}
-                tintColorClassName="accent-header-foreground"
-                type="monochrome"
-              />
-              <TextInput
-                accessibilityLabel={search.placeholder}
-                autoCapitalize="none"
-                onChangeText={search.onChangeText}
-                value={search.value}
-                placeholder={
-                  search.compactToolbar
-                    ? (search.compactPlaceholder ?? search.placeholder)
-                    : search.placeholder
-                }
-                placeholderTextColorClassName="accent-placeholder"
-                className="flex-1 text-base font-sans text-header-foreground"
-                style={{ paddingVertical: 7 * scale }}
-              />
-            </View>
-            {menuView}
-          </View>
-        </View>
-      </>
-    );
-  }
   const header = (
     <AndroidScreenHeader
       title={props.title}
