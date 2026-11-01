@@ -39,14 +39,7 @@ export function useReviewFilePatches({
   preview: RenderablePatch | null;
 }) {
   const registry = useContext(RegistryContext);
-  const scope = JSON.stringify([
-    environmentId,
-    cwd,
-    source?.kind,
-    source?.diffHash,
-    baseRef,
-    ignoreWhitespace,
-  ]);
+  const scope = reviewFilePatchScope({ environmentId, cwd, source, baseRef, ignoreWhitespace });
   const [requested, setRequested] = useState(() => ({ scope, indices: DEFAULT_INDICES }));
   const queries = reviewFileQueries({
     environmentId,
@@ -157,7 +150,20 @@ export function useReviewFilePatches({
   };
 }
 
-function reviewFileQueries({
+export function reviewFilePatchScope({
+  environmentId,
+  cwd,
+  source,
+  baseRef,
+  ignoreWhitespace,
+}: Pick<
+  Parameters<typeof useReviewFilePatches>[0],
+  "environmentId" | "cwd" | "source" | "baseRef" | "ignoreWhitespace"
+>) {
+  return JSON.stringify([environmentId, cwd, source?.kind, baseRef, ignoreWhitespace]);
+}
+
+export function reviewFileQueries({
   environmentId,
   cwd,
   source,
