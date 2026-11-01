@@ -17,7 +17,7 @@ const NO_REDIRECT: RequestInit = { redirect: "manual" };
 const TIMEOUT = Duration.seconds(30);
 const API_HOST_SUFFIX = ".api.entire.io";
 
-export const EntireApiFailure = Schema.Literals([
+const EntireApiFailure = Schema.Literals([
   "missing-tool",
   "unauthenticated",
   "rate-limited",
@@ -167,13 +167,21 @@ export const make = Effect.gen(function* () {
         reason: "failed",
         detail: "Entire repositories are named gh/<owner>/<repo> or et/<project>/<repo>.",
       });
-    const coordinates = yield* cli
-      .repository(yield* reference(input))
-      .pipe(
-        Effect.mapError((cause) =>
-          fail({ status: null, reason: cliFailure(cause), detail: cause.message, cause }),
-        ),
-      );
+    const coordinates = yield* cli.repository(yield* reference(input)).pipe(
+      Effect.mapError((cause) =>
+        fail({
+          status: null,
+          reason: cliFailure(cause),
+          detail:
+            cause._tag === "EntireCliMissingError"
+              ? "The Entire CLI is not installed on the server."
+              : cause._tag === "EntireNotSignedInError"
+                ? "The Entire CLI on the server is not signed in. Run entire login."
+                : "The Entire CLI could not find the repository.",
+          cause,
+        }),
+      ),
+    );
     return { repository, coordinates };
   });
 
@@ -184,7 +192,17 @@ export const make = Effect.gen(function* () {
   ) {
     const cells = yield* cli.cells.pipe(
       Effect.mapError((cause) =>
-        fail({ status: null, reason: cliFailure(cause), detail: cause.message, cause }),
+        fail({
+          status: null,
+          reason: cliFailure(cause),
+          detail:
+            cause._tag === "EntireCliMissingError"
+              ? "The Entire CLI is not installed on the server."
+              : cause._tag === "EntireNotSignedInError"
+                ? "The Entire CLI on the server is not signed in. Run entire login."
+                : "The Entire CLI could not list processing cells.",
+          cause,
+        }),
       ),
     );
     const match = cells.find(
@@ -230,7 +248,17 @@ export const make = Effect.gen(function* () {
           : `/api/v1/repos/${encodeURIComponent(coordinates.repoId)}`;
     const token = yield* cli.token.pipe(
       Effect.mapError((cause) =>
-        fail({ status: null, reason: cliFailure(cause), detail: cause.message, cause }),
+        fail({
+          status: null,
+          reason: cliFailure(cause),
+          detail:
+            cause._tag === "EntireCliMissingError"
+              ? "The Entire CLI is not installed on the server."
+              : cause._tag === "EntireNotSignedInError"
+                ? "The Entire CLI on the server is not signed in. Run entire login."
+                : "The Entire CLI could not read the authentication token.",
+          cause,
+        }),
       ),
     );
     const base = HttpClientRequest.make(input.method ?? "GET")(

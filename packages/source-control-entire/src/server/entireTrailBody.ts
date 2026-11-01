@@ -96,7 +96,11 @@ function renderList(node: ProseMirrorNode, ordered: boolean): string {
 function renderBlock(node: ProseMirrorNode): string {
   switch (node.type) {
     case "paragraph":
-      return renderInline(node);
+      return renderInline(node).replace(
+        /^( {0,3})(#{1,6}(?=\s|$)|[>+-](?=\s|$)|\d{1,9}[.)](?=\s))/gmu,
+        (_, indent: string, marker: string) =>
+          indent + marker.replace(/[#>+.)-]/u, (char) => `\\${char}`),
+      );
     case "heading": {
       const level = typeof node.attrs?.level === "number" ? node.attrs.level : 1;
       return `${"#".repeat(Math.min(Math.max(level, 1), 6))} ${renderInline(node)}`;
@@ -164,7 +168,7 @@ const BLANK_QUOTE = /^\s{0,3}>\s*$/u;
 const LIST_ITEM = /^(\s*)(?:[-*+]|(\d+)[.)])\s+/u;
 const UNDERSCORE_EMPHASIS = /(^|[^\w\\])(__?)(?=\S).*?(?<=\S)\2(?!\w)/u;
 const STRIKE = /~~(?=\S).*?~~/u;
-const ESCAPE = /\\[\\`*_~[]/u;
+const ESCAPE = /\\[\\`*_~[\]#>+.)-]/u;
 /** `***x***` reads back as bold `*x` and a stray `*`. */
 const BOLD_ITALIC = /\*\*\*/u;
 

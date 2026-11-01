@@ -2,6 +2,8 @@ import { assert, describe, it } from "@effect/vitest";
 import { GitCommandError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as EntireCli from "./EntireCli.ts";
 
 import * as EntireApi from "./EntireApi.ts";
 import { API_ORIGIN, fakeEntire, REMOTE_URL } from "./entireTestServer.ts";
@@ -9,6 +11,36 @@ import { API_ORIGIN, fakeEntire, REMOTE_URL } from "./entireTestServer.ts";
 const request = { cwd: "/repo", repository: "gh/acme/web", operation: "test" } as const;
 
 describe("EntireApi", () => {
+  it.effect.each([
+    [new EntireCli.EntireCliMissingError(), "missing-tool"],
+    [new EntireCli.EntireNotSignedInError(), "unauthenticated"],
+    [
+      new EntireCli.EntireCliFailedError({
+        operation: "find repository",
+        detail: "private command output",
+      }),
+      "failed",
+    ],
+  ] as const)("keeps CLI failures in the cause with reason %s", ([cause, reason]) => {
+    const server = fakeEntire({});
+    return Effect.gen(function* () {
+      const cli = yield* EntireCli.EntireCli;
+      const api = yield* EntireApi.make.pipe(
+        Effect.provideService(EntireCli.EntireCli, {
+          ...cli,
+          repository: () => Effect.fail(cause),
+        }),
+        Effect.provide(FetchHttpClient.layer),
+      );
+      const error = yield* api
+        .requestJson({ ...request, path: "/trails/7" }, Schema.Unknown)
+        .pipe(Effect.flip);
+      assert.strictEqual(error.reason, reason);
+      assert.strictEqual(error.cause, cause);
+      assert.notInclude(error.message, "private command output");
+      assert.deepStrictEqual(server.sent, []);
+    }).pipe(Effect.provide(server.layer));
+  });
   it.effect("sends the CLI's bearer to the repository's cell and never follows a redirect", () => {
     const server = fakeEntire({ "GET /trails/7": { ok: true } });
     return Effect.gen(function* () {
