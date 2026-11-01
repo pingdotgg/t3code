@@ -54,6 +54,15 @@ describe("parseMarkdownFileLink", () => {
     expect(parseMarkdownFileLink("docs/My%20Folder/")?.path).toBe("docs/My Folder/");
   });
 
+  // regression: #16096 relative links with non-ASCII names open as files
+  it("recognizes relative paths with non-ASCII names", () => {
+    expect(parseMarkdownFileLink("pastexam/線性代數/exam_易志偉.pdf")?.path).toBe(
+      "pastexam/線性代數/exam_易志偉.pdf",
+    );
+    expect(parseMarkdownFileLink("Résumé%20final.pdf")?.path).toBe("Résumé final.pdf");
+    expect(parseMarkdownFileLink("資料.備份")?.path).toBe("資料.備份");
+  });
+
   it("accepts conventional extensionless names with or without a position", () => {
     expect(parseMarkdownFileLink("Makefile")).toEqual({ path: "Makefile" });
     expect(parseMarkdownFileLink("Dockerfile:8")).toEqual({ path: "Dockerfile", line: 8 });

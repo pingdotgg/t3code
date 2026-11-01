@@ -38,6 +38,8 @@ export class ProviderTurnControlError extends Schema.TaggedError<ProviderTurnCon
     operation: Schema.Literals(["interrupt", "restart", "steer"]),
     providerTurnId: ProviderTurnId,
     turnCompleted: Schema.optional(Schema.Boolean),
+    /** The provider never confirmed the stop; Force stop is the way out. */
+    unresponsive: Schema.optional(Schema.Boolean),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
@@ -127,7 +129,11 @@ export const layer: Layer.Layer<
       const interruptProviderThread = targetsRecordedSession
         ? providerThread
         : { ...providerThread, providerSessionId: input.providerSessionId };
-      if (providerTurn.status !== "running") {
+      const continuingRun =
+        input.operation === "steer" &&
+        context.run?.status === "running" &&
+        context.run.activeAttemptId === providerTurn.runAttemptId;
+      if (providerTurn.status !== "running" && !continuingRun) {
         if (input.operation === "steer") {
           return yield* new ProviderTurnControlError({
             threadId: input.threadId,
@@ -214,11 +220,26 @@ export const layer: Layer.Layer<
             });
           }
           // Settled turns still reach adapters, which alone know whether background work remains.
-          yield* session.value.interruptTurn({
-            providerThread: loaded.providerThread,
-            providerTurnId: loaded.providerTurn.id,
-            requestRuntimeRestart: true,
-          });
+          yield* session.value
+            .interruptTurn({
+              providerThread: loaded.providerThread,
+              providerTurnId: loaded.providerTurn.id,
+              requestRuntimeRestart: true,
+            })
+            .pipe(
+              Effect.catchTags({
+                ProviderAdapterInterruptTimeoutError: (cause) =>
+                  Effect.fail(
+                    new ProviderTurnControlError({
+                      threadId: input.threadId,
+                      operation: "interrupt",
+                      providerTurnId: input.providerTurnId,
+                      unresponsive: true,
+                      cause,
+                    }),
+                  ),
+              }),
+            );
           // Use real time; ingestion fibers do not advance TestClock and would leave Stop blocked.
           yield* Effect.gen(function* () {
             const deadline = (yield* Clock.currentTimeMillis) + 2_000;
