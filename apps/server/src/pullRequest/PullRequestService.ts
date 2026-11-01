@@ -14,6 +14,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import {
   PullRequestOperationError,
@@ -96,6 +97,7 @@ import {
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as ViewedFiles from "./pullRequestViewedFiles.ts";
+import { listLinkedPullRequestRepositories } from "./linkedThreads.ts";
 import { toChangeBreakdown } from "./pullRequestChangeBreakdown.ts";
 
 export interface PullRequestMergeEvent extends PullRequestRef {
@@ -710,6 +712,7 @@ export const make = Effect.gen(function* () {
   const filesViewedStore = yield* PullRequestFilesViewed.PullRequestFilesViewedRepository;
   const readCache = yield* PullRequestReadCache.PullRequestReadCache;
   const clock = yield* Clock.Clock;
+  const sql = yield* SqlClient.SqlClient;
 
   /**
    * Where each project's remote is served from, by the remote's recognised base URL: a remote no
@@ -895,11 +898,17 @@ export const make = Effect.gen(function* () {
         ),
       ),
       Effect.flatMap((projects) =>
-        resolveRemoteHosts(projects, filter).pipe(
-          Effect.map((remoteHosts) => ({ remoteHosts, projects })),
-        ),
+        Effect.gen(function* () {
+          const remoteHosts = yield* resolveRemoteHosts(projects, filter);
+          const linkedRepositories = yield* listLinkedPullRequestRepositories(
+            projects
+              .filter((project) => project.repositoryIdentity == null)
+              .map((project) => project.id),
+          ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+          return { remoteHosts, projects, linkedRepositories };
+        }),
       ),
-      Effect.map(({ remoteHosts, projects }) => {
+      Effect.map(({ remoteHosts, projects, linkedRepositories }) => {
         const supported: SupportedProject[] = [];
         const unimplemented = new Map<
           string,
@@ -959,6 +968,33 @@ export const make = Effect.gen(function* () {
                 : sourceControlDefinitions.canonicalRepositoryKey(repositoryKey.toLowerCase()),
           });
         }
+        const withoutRepository = projects.filter((project) => project.repositoryIdentity == null);
+        for (const link of linkedRepositories) {
+          const definition = sourceControlDefinitions.findByPublicHost(link.host);
+          const api = definition === undefined ? null : registry.get(definition.kind);
+          if (!api?.readsPublicHostWithoutCheckout || api.servesHost?.(link.host) === false)
+            continue;
+          if (filter.host !== undefined && link.host !== filter.host.toLowerCase()) continue;
+          const project = withoutRepository.find((project) => project.id === link.projectId);
+          if (project === undefined) continue;
+          const key = listCursorKey(link.host, link.repository);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const roots = viewerRoots.get(link.host);
+          if (roots === undefined) viewerRoots.set(link.host, [project.workspaceRoot]);
+          else if (!roots.includes(project.workspaceRoot)) roots.push(project.workspaceRoot);
+          supported.push({
+            cursorKey: key,
+            project,
+            api: withRateLimitBackoff(api, link.host, rateLimits),
+            repository: link.repository,
+            host: link.host,
+            remote: sourceControlDefinitions.repositoryKeyFromRemote(
+              `https://${link.host}/${link.repository}`,
+            ),
+            repositoryKey: null,
+          });
+        }
         return { supported, unimplemented, viewerRoots };
       }),
     );
@@ -967,9 +1003,14 @@ export const make = Effect.gen(function* () {
   const requireProject = (ref: PullRequestRef): Effect.Effect<SupportedProject, PullRequestError> =>
     listWorkspaceProjects({ projectId: ref.projectId }).pipe(
       Effect.flatMap(({ supported }): Effect.Effect<SupportedProject, PullRequestError> => {
-        const own = supported[0];
         const repository = ref.repository.trim();
         const host = ref.host?.trim().toLowerCase();
+        const own =
+          supported.find(
+            (candidate) =>
+              candidate.repository.toLowerCase() === repository.toLowerCase() &&
+              (host === undefined || candidate.host === host),
+          ) ?? supported[0];
         if (own !== undefined && own.repository.toLowerCase() === repository.toLowerCase()) {
           if (host === undefined || host === own.host) return Effect.succeed(own);
         }
@@ -2617,22 +2658,24 @@ export const make = Effect.gen(function* () {
     "PullRequestService.listStatsUncached",
   )(function* (input) {
     if (input.refs.length === 0) return { stats: [] };
-    const { supported } = yield* listWorkspaceProjects({});
-    const byProject = new Map(supported.map((project) => [project.project.id, project]));
+    const { supported } = yield* listWorkspaceProjects({
+      projectIds: [...new Set(input.refs.map((ref) => ref.projectId))],
+    });
     const wanted = new Map<
       string,
       { readonly project: SupportedProject; readonly number: number }
     >();
     for (const ref of input.refs) {
-      const project = byProject.get(ref.projectId);
-      if (
-        project === undefined ||
-        project.api.listChangeRequestStats === undefined ||
-        project.repository.toLowerCase() !== ref.repository.trim().toLowerCase()
-      ) {
+      const project = supported.find(
+        (project) =>
+          project.project.id === ref.projectId &&
+          project.repository.toLowerCase() === ref.repository.trim().toLowerCase() &&
+          (ref.host === undefined || project.host === ref.host.toLowerCase()),
+      );
+      if (project === undefined || project.api.listChangeRequestStats === undefined) {
         continue;
       }
-      wanted.set(`${project.project.id} ${ref.number}`, { project, number: ref.number });
+      wanted.set(`${project.cursorKey} ${ref.number}`, { project, number: ref.number });
     }
     const byHost = new Map<string, Array<{ project: SupportedProject; number: number }>>();
     for (const entry of wanted.values()) {

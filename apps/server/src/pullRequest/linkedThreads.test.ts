@@ -1,10 +1,14 @@
+import { ProjectId } from "@t3tools/contracts";
 import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import { listLinkedPullRequestThreads } from "./linkedThreads.ts";
+import {
+  listLinkedPullRequestRepositories,
+  listLinkedPullRequestThreads,
+} from "./linkedThreads.ts";
 
 const encodePayload = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -54,18 +58,24 @@ it.effect(
           number: 7,
           source: "created",
         },
-        { id: "deleted", host: "github.com", repository: "acme/web", number: 7, source: "manual" },
+        {
+          id: "deleted",
+          host: "github.com",
+          repository: "acme/deleted",
+          number: 7,
+          source: "manual",
+        },
         {
           id: "side-chat",
           host: "github.com",
-          repository: "acme/web",
+          repository: "acme/side-chat",
           number: 7,
           source: "manual",
         },
         {
           id: "dismissed",
           host: "github.com",
-          repository: "acme/web",
+          repository: "acme/dismissed",
           number: 7,
           source: "stack-dismissed",
         },
@@ -137,6 +147,17 @@ it.effect(
           'https://github.com/acme/web/pull/7', 'manual', ${createdAt})
       `;
 
+      assert.deepStrictEqual(
+        (yield* listLinkedPullRequestRepositories([ProjectId.make("project-1")]))
+          .filter((row) => row.host === "github.com")
+          .map((row) => row.repository),
+        ["acme/api", "acme/web"],
+      );
+      assert.deepStrictEqual(
+        yield* listLinkedPullRequestRepositories([ProjectId.make("other")]),
+        [],
+      );
+      assert.deepStrictEqual(yield* listLinkedPullRequestRepositories([]), []);
       expect(
         (yield* listLinkedPullRequestThreads({
           host: "forge.example:3000",

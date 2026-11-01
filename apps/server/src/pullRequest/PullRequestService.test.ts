@@ -10,6 +10,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import type {
   OrchestrationProjectShell,
@@ -258,6 +259,11 @@ function makeService(input: {
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
   readonly resolveRepositoryIdentity?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]["resolve"];
   readonly onProjectRead?: () => void;
+  readonly linkedRepositories?: ReadonlyArray<{
+    projectId: string;
+    repository: string;
+    host?: string;
+  }>;
 }) {
   // Build in the test scope; per-call Effect.provide would close the marks database on service acquisition.
   return Effect.flatMap(
@@ -297,16 +303,100 @@ function makeService(input: {
           resolve: input.resolveRepositoryIdentity ?? (() => Effect.succeed(null)),
         }),
         SourceControlRateLimit.layer,
-        PullRequestFilesViewed.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+        PullRequestFilesViewed.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
         Layer.effect(PullRequestReadCache.PullRequestReadCache, PullRequestReadCache.make).pipe(
           Layer.provide(KeyValueStore.layerMemory),
           Layer.provide(NodeServices.layer),
         ),
       ),
     ),
-    (context) => Effect.provideContext(PullRequestService.make, context),
+    (context) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        for (const [index, link] of (input.linkedRepositories ?? []).entries()) {
+          const payload = JSON.stringify({
+            pullRequests: [{ ...link, host: link.host ?? "github.com", source: "manual" }],
+          });
+          yield* sql`
+          INSERT INTO orchestration_v2_projection_threads (
+            thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+            created_at, updated_at, archived_at, payload_json
+          ) VALUES (
+            ${`linked-${index}`}, ${link.projectId}, 'Linked', 'codex', 'full-access', 'default',
+            '2026-07-01', '2026-07-01', '2026-07-02', ${payload}
+          )
+        `;
+        }
+        return yield* PullRequestService.make;
+      }).pipe(Effect.provideContext(context)),
   );
 }
+
+it.effect("browses linked repositories in a non-Git project alongside matching checkouts", () =>
+  Effect.gen(function* () {
+    const selected = "workspace" as ProjectId;
+    const service = yield* makeService({
+      projects: [
+        project({ id: selected, title: "Workspace", workspaceRoot: "/workspace" }),
+        project({ id: "checkout", title: "Web", workspaceRoot: "/web", repository: "acme/web" }),
+      ],
+      linkedRepositories: [
+        { projectId: selected, repository: "acme/web" },
+        { projectId: selected, repository: "acme/skills" },
+        { projectId: selected, repository: "acme/skills" },
+        { projectId: "other", repository: "acme/unrelated" },
+        { projectId: selected, repository: "acme/private", host: "github.example.com" },
+      ],
+      providers: [
+        fakePullRequestProvider("github", {
+          readsPublicHostWithoutCheckout: true,
+          listChangeRequests: ({ repository, state }) =>
+            Effect.succeed({
+              items: [
+                {
+                  ...changeRequest(1, "2026-07-02T00:00:00Z"),
+                  title: repository,
+                  state: state === "all" ? "open" : state,
+                },
+              ],
+              truncated: false,
+              continues: false,
+            }),
+          getChangeRequestSummary: ({ repository }) =>
+            Effect.succeed({ ...changeRequest(1, "2026-07-02T00:00:00Z"), title: repository }),
+          listChangeRequestStats: ({ changeRequests }) =>
+            Effect.succeed(changeRequests.map((ref) => ({ ...ref, additions: 12, deletions: 3 }))),
+        }),
+      ],
+    });
+    for (const state of ["open", "merged"] as const) {
+      const result = yield* service.list({ projectIds: [selected], state });
+      assert.deepStrictEqual(
+        result.entries.map((entry) => [entry.projectId, entry.repository, entry.state]).sort(),
+        [
+          [selected, "acme/skills", state],
+          [selected, "acme/web", state],
+        ],
+      );
+    }
+    const all = yield* service.list({ state: "open" });
+    assert.deepStrictEqual(all.entries.map((entry) => [entry.projectId, entry.repository]).sort(), [
+      ["checkout", "acme/web"],
+      [selected, "acme/skills"],
+    ]);
+    const refs = ["acme/web", "acme/skills"].map((repository) => ({
+      projectId: selected,
+      host: "github.com",
+      repository,
+      number: 1,
+    }));
+    assert.deepStrictEqual(
+      (yield* service.listStats({ refs })).stats.map((stat) => stat.repository).sort(),
+      ["acme/skills", "acme/web"],
+    );
+    assert.strictEqual((yield* service.summary(refs[1]!)).title, "acme/skills");
+  }),
+);
 
 it.effect("lists GitHub Enterprise PRs for a stored unknown repository after host discovery", () =>
   Effect.gen(function* () {
