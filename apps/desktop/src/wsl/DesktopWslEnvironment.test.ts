@@ -39,8 +39,7 @@ const posixShellRunner = (() => {
 
 const runShell = (script: string) => {
   if (posixShellRunner === null) throw new Error("no POSIX shell runner available");
-  // The install script arrives on stdin in production too, which is what lets
-  // its own /proc scan not match itself.
+  // Pass the script on stdin, as production does, to avoid matching its own /proc scan.
   const result = NodeChildProcess.spawnSync(
     posixShellRunner.file,
     [...posixShellRunner.args, "-s"],
@@ -54,10 +53,7 @@ const sh = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const awaitHolder = (condition: string) =>
   `i=0; until ${condition}; do i=$((i + 1)); [ "$i" -lt 500 ] || exit 1; sleep 0.01; done`;
 
-// Holds a cache busy the way a running server does: the holder's argv[0] is the
-// runtime entry, which the prune and install scripts look for in /proc cmdline.
-// It reads a pipe the script keeps open on fd 7, so it exits with the script
-// instead of outliving it on a timer.
+// Use runtime-entry argv[0] for /proc detection; an open pipe keeps it alive only while this script runs.
 const holdRuntimeBusy = (entry: string) =>
   [
     `exec 7> >(exec -a ${entry} cat >/dev/null 2>&1)`,
@@ -124,8 +120,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     const archivePath = `${work}/wsl-runtime.tar.gz`;
     const archiveSha = readField(result.stdout, "archiveSha");
     const runtimeId = `sha256-${archiveSha}`;
-    // The script reads $HOME, and WSL does not inherit the parent process's
-    // environment, so the home override rides in the script itself.
+    // WSL does not inherit HOME; embed the fixture's override in the script.
     const installScript = (archive = archivePath, sha = archiveSha) =>
       [
         `HOME=${sh(`${work}/home`)}`,
@@ -288,8 +283,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         `cat > "$work/install.sh" <<'T3CODE_INSTALL_SCRIPT'`,
         fixture.installScript(),
         "T3CODE_INSTALL_SCRIPT",
-        // Both racers run the same file, and neither file path contains the
-        // runtime root, so the script's own /proc scan cannot see them.
+        // Keep runtime roots out of both racers' argv so their /proc scans cannot match themselves.
         'sh "$work/install.sh" > "$work/first.out" 2>&1 &',
         "first=$!",
         'sh "$work/install.sh" > "$work/second.out" 2>&1 &',

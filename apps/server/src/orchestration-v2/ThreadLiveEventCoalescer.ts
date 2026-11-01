@@ -21,69 +21,64 @@ const MAX_PENDING_UPDATES = 512;
 type ThreadLiveEvent = Extract<OrchestrationV2ThreadStreamItem, { readonly kind: "event" }>;
 export type ThreadLiveInput = ThreadLiveEvent | { readonly kind: "synchronized" };
 
-function isToolUpdated(input: ThreadLiveEvent): boolean {
-  if (input.event.type !== "turn-item.updated" || input.event.payload.status !== "running")
-    return false;
-  switch (input.event.payload.type) {
+function coalescibleUpdateKey(input: ThreadLiveEvent): string | null {
+  const { event } = input;
+  const prefix = `${event.threadId}\u0000${event.runId ?? ""}\u0000${event.type}`;
+  if (event.type === "message.updated") {
+    return event.payload.role === "assistant" && event.payload.streaming
+      ? `${prefix}\u0000${event.payload.id}`
+      : null;
+  }
+  if (event.type !== "turn-item.updated" || event.payload.status !== "running") return null;
+  switch (event.payload.type) {
+    case "assistant_message":
+    case "reasoning":
+      if (!event.payload.streaming) return null;
+      break;
     case "command_execution":
     case "file_change":
     case "file_search":
     case "web_search":
     case "dynamic_tool":
-      return true;
+      break;
     default:
-      return false;
+      return null;
   }
+  return `${prefix}\u0000${event.payload.type}\u0000${event.payload.id}`;
 }
 
-function stableToolCallIdentity(input: ThreadLiveEvent): string | null {
-  return input.event.type === "turn-item.updated" ? input.event.payload.id : null;
-}
-
-export function coalesceLiveToolUpdatedEvents(
+// These events replace whole entities. Keep each survivor at its original
+// position/sequence so a resume cursor cannot skip an unrelated earlier update.
+export function coalesceLiveUpdatedEvents(
   events: ReadonlyArray<ThreadLiveEvent>,
 ): ReadonlyArray<ThreadLiveEvent> {
-  const survivors: Array<ThreadLiveEvent> = [];
-  let pendingUpdates: Array<ThreadLiveEvent> = [];
+  const latestUpdates = new Map<string, number>();
+  const superseded = new Set<number>();
+  const pendingKeys = new Map<ThreadLiveEvent["event"]["type"], string>();
 
-  const flushUpdates = () => {
-    const seen = new Set<string>();
-    const latestUpdates: Array<ThreadLiveEvent> = [];
-    for (let index = pendingUpdates.length - 1; index >= 0; index -= 1) {
-      const event = pendingUpdates[index]!;
-      const identity = stableToolCallIdentity(event);
-      const key = identity
-        ? `${event.event.threadId}\u0000${event.event.runId ?? ""}\u0000${identity}`
-        : null;
-      if (key && seen.has(key)) {
-        continue;
-      }
-      if (key) {
-        seen.add(key);
-      }
-      latestUpdates.push(event);
-    }
-    latestUpdates.reverse();
-    survivors.push(...latestUpdates);
-    pendingUpdates = [];
-  };
-
-  for (const event of events) {
-    if (isToolUpdated(event)) {
-      pendingUpdates.push(event);
+  for (const [index, event] of events.entries()) {
+    const key = coalescibleUpdateKey(event);
+    if (key === null) {
+      latestUpdates.clear();
+      pendingKeys.clear();
       continue;
     }
-    flushUpdates();
-    survivors.push(event);
+    // Both entity families use insertion order; partial timelines also reject
+    // unseen items below their watermark. Keep identity switches within each
+    // family, while allowing paired message/item updates to coalesce.
+    const pendingKey = pendingKeys.get(event.event.type);
+    if (pendingKey !== undefined && pendingKey !== key) latestUpdates.clear();
+    pendingKeys.set(event.event.type, key);
+    const previous = latestUpdates.get(key);
+    if (previous !== undefined) superseded.add(previous);
+    latestUpdates.set(key, index);
   }
-  flushUpdates();
-  return survivors;
+  return events.filter((_, index) => !superseded.has(index));
 }
 
 export const makeThreadLiveEventCoalescer = Effect.fn(
   "ThreadLiveEventCoalescer.makeThreadLiveEventCoalescer",
 )(function* <E = never>(options?: {
-  readonly coalesceWindow?: Duration.Input;
   readonly maxItems?: number;
   readonly maxSerializedBytes?: number;
 }) {
@@ -95,7 +90,6 @@ export const makeThreadLiveEventCoalescer = Effect.fn(
     E | LiveStreamBufferError | Cause.Done
   >();
   const mutex = yield* Semaphore.make(1);
-  const coalesceWindow = options?.coalesceWindow ?? COALESCE_WINDOW;
   let pendingUpdates: Array<RetainedLiveItem<ThreadLiveEvent>> = [];
   let windowGeneration = 0;
   let windowFiber: Fiber.Fiber<void, never> | null = null;
@@ -116,14 +110,14 @@ export const makeThreadLiveEventCoalescer = Effect.fn(
     }
     const items = yield* budget.replace(
       pendingUpdates,
-      coalesceLiveToolUpdatedEvents(pendingUpdates.map((item) => item.value)),
+      coalesceLiveUpdatedEvents(pendingUpdates.map((item) => item.value)),
     );
     pendingUpdates = [];
     yield* Queue.offerAll(output, items);
   }, Effect.uninterruptible);
 
   const flushWindow = (generation: number) =>
-    Effect.sleep(coalesceWindow).pipe(
+    Effect.sleep(COALESCE_WINDOW).pipe(
       Effect.andThen(
         mutex.withPermits(1)(
           Effect.suspend(() => (generation === windowGeneration ? flushPending() : Effect.void)),
@@ -156,7 +150,7 @@ export const makeThreadLiveEventCoalescer = Effect.fn(
                 Effect.uninterruptible,
               );
             }
-            if (input.kind === "event" && isToolUpdated(input)) {
+            if (input.kind === "event" && coalescibleUpdateKey(input) !== null) {
               if (pendingUpdates.length === 1) {
                 const generation = ++windowGeneration;
                 windowFiber = yield* Effect.forkIn(flushWindow(generation), coalescerScope);
