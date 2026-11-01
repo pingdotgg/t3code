@@ -99,7 +99,9 @@ describe("trailBodyMarkdown", () => {
       content: [
         paragraph(text("**Mercury**, snake_case, _x_, ~~y~~, [a](b), `c` and C:\\*")),
         paragraph(text("2 * 3 = 6, user_id, [WIP]")),
-        ...["# heading", "> quote", "- item", "1. item"].map((value) => paragraph(text(value))),
+        ...["# heading", "> quote", "- item", "* item", "---", "1. item"].map((value) =>
+          paragraph(text(value)),
+        ),
       ],
     };
     const markdown = trailBodyMarkdown({ text_snapshot: "", content_json });
@@ -115,12 +117,23 @@ describe("trailBodyMarkdown", () => {
         "",
         "\\- item",
         "",
+        "\\* item",
+        "",
+        "\\---",
+        "",
         "1\\. item",
       ].join("\n"),
     );
     // Entire's converter reads no escapes, so saving them back would keep the backslashes.
     expect(unpreservedMarkdown(markdown)).toBe("escaped markdown characters");
-    for (const value of ["\\# heading", "\\> quote", "\\- item", "1\\. item"]) {
+    for (const value of [
+      "\\# heading",
+      "\\> quote",
+      "\\- item",
+      "\\* item",
+      "\\---",
+      "1\\. item",
+    ]) {
       expect(unpreservedMarkdown(value)).toBe("escaped markdown characters");
     }
     expect(unpreservedMarkdown("2 * 3 = 6, user_id, [WIP]")).toBeNull();

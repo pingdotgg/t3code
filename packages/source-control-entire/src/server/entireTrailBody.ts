@@ -97,9 +97,9 @@ function renderBlock(node: ProseMirrorNode): string {
   switch (node.type) {
     case "paragraph":
       return renderInline(node).replace(
-        /^( {0,3})(#{1,6}(?=\s|$)|[>+-](?=\s|$)|\d{1,9}[.)](?=\s))/gmu,
+        /^( {0,3})(#{1,6}(?=\s|$)|[>*+-](?=\s|$)|-(?=(?:[ \t]*-){2,}[ \t]*$)|\d{1,9}[.)](?=\s))/gmu,
         (_, indent: string, marker: string) =>
-          indent + marker.replace(/[#>+.)-]/u, (char) => `\\${char}`),
+          indent + marker.replace(/[#>*+.)-]/u, (char) => `\\${char}`),
       );
     case "heading": {
       const level = typeof node.attrs?.level === "number" ? node.attrs.level : 1;
