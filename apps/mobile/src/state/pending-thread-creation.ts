@@ -21,15 +21,42 @@ export type PendingThreadCreation = {
   readonly outcome: PendingThreadCreationOutcome | null;
 };
 
+export function selectThreadCreationDetail<Ref>(input: {
+  readonly threadRef: Ref | null;
+  readonly threadKey: string | null;
+  readonly queuedMessagesByThreadKey: Readonly<
+    Record<string, ReadonlyArray<QueuedThreadMessage> | undefined>
+  >;
+  readonly outcomes: Readonly<Record<string, PendingThreadCreationOutcome | undefined>>;
+}): { readonly pendingCreation: PendingThreadCreation | null; readonly detailRef: Ref | null } {
+  const pendingCreation = ((): PendingThreadCreation | null => {
+    if (input.threadKey === null) {
+      return null;
+    }
+    const queued = input.queuedMessagesByThreadKey[input.threadKey]?.find(
+      (message) => message.creation !== undefined,
+    );
+    const outcome = input.outcomes[input.threadKey] ?? null;
+    const message = queued ?? outcome?.message ?? null;
+    return message === null ? null : { message, outcome };
+  })();
+  // The shell can arrive before creation is acknowledged. Wait for delivery
+  // before subscribing: an early not-found is cached as a deleted thread.
+  // Every detail reader must use this ref, not the route id.
+  const detailRef =
+    pendingCreation === null || pendingCreation.outcome?.kind === "delivered"
+      ? input.threadRef
+      : null;
+  return { pendingCreation, detailRef };
+}
+
 export function resolvePendingThreadCreation(input: {
   readonly threadKey: string | null;
   readonly pending: PendingThreadCreation | null;
   readonly previous: PendingThreadCreation | null;
   readonly detail: {
     readonly messages: ReadonlyArray<{ readonly id: string }>;
-    readonly runs?: ReadonlyArray<{ readonly status: string }>;
-    readonly latestTurn?: { readonly turnId: string } | null;
-    readonly session?: { readonly status: string } | null;
+    readonly runs: ReadonlyArray<{ readonly status: string }>;
   } | null;
 }): PendingThreadCreation | null {
   const creation = input.pending ?? input.previous;
@@ -41,21 +68,18 @@ export function resolvePendingThreadCreation(input: {
   }
   if (creation.outcome?.kind === "failed") return creation;
   const detail = input.detail;
-  const latestRun = detail?.runs?.at(-1);
-  const terminalStatus = latestRun?.status ?? detail?.session?.status;
+  const latestRun = detail?.runs.at(-1);
+  const terminalStatus = latestRun?.status;
   if (
     terminalStatus === "failed" ||
-    terminalStatus === "error" ||
     terminalStatus === "cancelled" ||
-    terminalStatus === "stopped" ||
     terminalStatus === "interrupted"
   )
     return null;
-  // Message delivery and turn startup are separate events. The prompt alone
-  // cannot replace the preparing pill; wait for the turn's timing too.
+  // Message delivery can precede startup; wait for turn timing before replacing the preparing pill.
   if (
     detail !== null &&
-    (latestRun !== undefined || detail.latestTurn != null) &&
+    latestRun !== undefined &&
     !isPendingThreadCreationVisible({
       creationMessageId: creation.message.messageId,
       loadedMessageIds: detail.messages.map((message) => message.id),
@@ -88,12 +112,8 @@ export function clearPendingThreadCreationOutcome(threadKey: string): void {
   appAtomRegistry.set(pendingThreadCreationOutcomesAtom, next);
 }
 
-/**
- * The server creates the thread, then builds the worktree, and only then starts
- * the turn, so the thread shell and an empty detail arrive seconds ahead of the
- * prompt.
- */
-export function isPendingThreadCreationVisible(input: {
+/** Thread shell and empty detail precede the prompt: worktree setup runs between creation and turn start. */
+function isPendingThreadCreationVisible(input: {
   readonly creationMessageId: string;
   readonly loadedMessageIds: ReadonlyArray<string> | null;
 }): boolean {
@@ -106,10 +126,7 @@ export function pendingThreadCreationMessage(message: QueuedThreadMessage): Loca
     role: "user",
     text: message.text,
     context: message.context,
-    // Deliberately no attachments. Their ids are local draft ids the server
-    // cannot resolve, so the feed's attachment rows would sit on a spinner that
-    // only ends when the real message arrives — and never, if the creation is
-    // rejected.
+    // Local draft ids cannot resolve server-side and would spin forever on rejected creation.
     streaming: false,
     createdAt: message.createdAt,
     updatedAt: message.createdAt,

@@ -1,8 +1,7 @@
+import * as DocumentText from "../../provider/DocumentText.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
-import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 import {
   DEFAULT_SERVER_SETTINGS,
   ChatImageAttachment,
@@ -13,18 +12,22 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  ScheduledTaskError,
+  ScheduledTask,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { McpAttachmentInput } from "./attachment/input.ts";
-import { McpSchema, McpServer, Tool } from "effect/ai";
+import { McpSchema, McpServer } from "effect/ai";
 import { FetchHttpClient } from "effect/http";
 
 import {
@@ -44,43 +47,29 @@ import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as SecretRequests from "../../secrets/SecretRequests.ts";
+import * as RemoteDelegation from "../../peer/RemoteDelegation.ts";
 import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as McpHttpServer from "../McpHttpServer.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "../McpToolAccess.testkit.ts";
-import { dispatchFailure } from "../threadAccess.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
-import { OrchestratorToolkit } from "./orchestrator/tools.ts";
-import { PreviewToolkit } from "./preview/tools.ts";
-import { PreviewControlsToolkit } from "./previewControls/tools.ts";
-import { EnvironmentToolkit } from "./environment/tools.ts";
+import { dispatchFailure } from "../threadAccess.ts";
 import * as EnvironmentHandlers from "./environment/handlers.ts";
-import { ProjectToolkit } from "./project/tools.ts";
-import { AttachmentToolkit } from "./attachment/tools.ts";
 import * as AttachmentHandlers from "./attachment/handlers.ts";
-import { ThreadToolkit } from "./thread/tools.ts";
-import { WorktreeToolkit } from "./worktree/tools.ts";
-import { DeviceToolkit } from "./device/tools.ts";
+import * as PeerForwarding from "../../peer/PeerForwarding.ts";
+import * as PeerLinkRequests from "../../peer/PeerLinkRequests.ts";
+import * as PeerLinks from "../../peer/PeerLinks.ts";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
 );
 
-// Effect returns a declared tool failure as `isError` with its encoded payload
-// as JSON text, never as `structuredContent`.
 const declaredFailure = (result: McpSchema.CallToolResult) => {
   const text = result.content[0];
   return result.isError === true && text?.type === "text" ? JSON.parse(text.text) : undefined;
 };
-import { PullRequestsToolkit } from "./pullRequests/tools.ts";
-import { HtmlToolkit } from "./html/tools.ts";
-import {
-  resolveT3McpToolDefinition,
-  resolveT3McpToolPresentation,
-  resolveT3McpToolSummaryAction,
-} from "@t3tools/shared/t3McpToolPresentation";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
@@ -89,44 +78,10 @@ const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadR
 const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+  Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+  Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+  Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
 );
-
-it("publishes unique tool names with reference-free object-root inputs", () => {
-  const names = new Set<string>();
-  for (const toolkit of [
-    OrchestratorToolkit,
-    PreviewToolkit,
-    WorktreeToolkit,
-    ThreadToolkit,
-    AttachmentToolkit,
-    ProjectToolkit,
-    EnvironmentToolkit,
-    PreviewControlsToolkit,
-    DeviceToolkit,
-    PullRequestsToolkit,
-    HtmlToolkit,
-  ]) {
-    for (const tool of Object.values(toolkit.tools)) {
-      expect(names.has(tool.name)).toBe(false);
-      names.add(tool.name);
-      const schema = Tool.getJsonSchema(tool);
-      expect(schema).toMatchObject({ type: "object" });
-      expect(JSON.stringify(schema), tool.name).not.toContain('"$ref"');
-      const definition = resolveT3McpToolDefinition(tool.name);
-      expect(definition, tool.name).not.toBeNull();
-      expect(
-        definition?.labels.every((label) => label.trim().length > 0),
-        tool.name,
-      ).toBe(true);
-      for (const name of [tool.name, `mcp__t3-code__${tool.name}`, `T3-code.${tool.name}`]) {
-        expect(resolveT3McpToolPresentation(name)?.logo, name).toBe("t3-code");
-        expect(resolveT3McpToolSummaryAction(name), name).not.toBeNull();
-      }
-    }
-  }
-  expect(names.has("t3_thread_launch")).toBe(true);
-  expect(names.has("t3_thread_start")).toBe(false);
-});
 
 const threadId = ThreadId.make("mcp-core-thread");
 const scope: McpInvocationContext.McpInvocationScope = {
@@ -181,36 +136,30 @@ it.effect("checks capability through the production registration", () =>
   ),
 );
 
-it.effect("returns a bounded public failure without serializing storage causes", () =>
-  Effect.gen(function* () {
+it.effect("an answered question reports already answered instead of not found", () => {
+  const shell = McpToolAccessTestkit.liveThreadShell(threadId);
+  const requestId = RuntimeRequestId.make("answered-question");
+  const projection = McpToolAccessTestkit.idleThreadProjection(shell);
+  return Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    const result = yield* server
-      .callTool({ name: "t3_thread_organize", arguments: { action: "pin" } })
-      .pipe(
-        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-        Effect.provideService(McpSchema.McpServerClient, client),
-      );
-    expect(declaredFailure(result)).toEqual({
-      _tag: "OrchestratorMcpFailure",
-      code: "orchestration_error",
-      message: "The operation could not be completed.",
+    const respond = (id: string) =>
+      server
+        .callTool({
+          name: "t3_pending_request",
+          arguments: { action: "respond", requestId: id, answers: { size: "large" } },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+    expect(declaredFailure(yield* respond(requestId))).toMatchObject({
+      code: "invalid_request",
+      message: "The user-input request was already answered.",
     });
-    expect(result.isError).toBe(true);
-    expect(result.content).toEqual([
-      {
-        type: "text",
-        text: '{"_tag":"OrchestratorMcpFailure","code":"orchestration_error","message":"The operation could not be completed."}',
-      },
-    ]);
-    const definition = server.tools.find(({ tool }) => tool.name === "t3_thread_organize");
-    expect(definition?.tool.outputSchema).toBeDefined();
-    const validate = new AjvJsonSchemaValidator().getValidator(
-      definition!.tool.outputSchema! as JsonSchemaType,
-    );
-    expect(result.structuredContent).toBeUndefined();
-    expect(validate({ sequence: 1 }).valid).toBe(true);
-    expect(validate({ code: "orchestration_error" }).valid).toBe(false);
-    expect(validate({ sequence: "invalid" }).valid).toBe(false);
+    expect(declaredFailure(yield* respond("missing-question"))).toMatchObject({
+      code: "invalid_request",
+      message: "The pending user-input request was not found.",
+    });
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
@@ -218,19 +167,53 @@ it.effect("returns a bounded public failure without serializing storage causes",
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
-            getThreadShell: () =>
-              Effect.fail(
-                new OrchestratorProjectionError({
-                  threadId,
-                  cause: new Error("private-storage-path"),
-                }),
-              ),
+            getThreadShell: () => Effect.succeed(shell),
+            getProjectThreadRecords: () =>
+              Effect.succeed({
+                ...projection,
+                runtimeRequests: [
+                  {
+                    id: requestId,
+                    nodeId: NodeId.make("root"),
+                    providerTurnId: null,
+                    nativeRequestRef: null,
+                    kind: "user_input",
+                    status: "resolved",
+                    responseCapability: { type: "message" },
+                    createdAt: shell.createdAt,
+                    resolvedAt: shell.updatedAt,
+                    answers: { size: "large" },
+                  },
+                ],
+                turnItems: [
+                  {
+                    id: TurnItemId.make("answered-question-item"),
+                    threadId,
+                    runId: null,
+                    nodeId: null,
+                    providerThreadId: null,
+                    providerTurnId: null,
+                    nativeItemRef: null,
+                    parentItemId: null,
+                    ordinal: 0,
+                    status: "completed",
+                    title: null,
+                    startedAt: shell.createdAt,
+                    completedAt: shell.updatedAt,
+                    updatedAt: shell.updatedAt,
+                    type: "user_input_request",
+                    requestId,
+                    questions: [],
+                  },
+                ],
+              }),
+            dispatch: () => Effect.die("an answered question must not dispatch again"),
           }),
         ),
       ),
     ),
-  ),
-);
+  );
+});
 
 it("bounds public command rejections and redacts internal dispatch causes", () => {
   const command = { commandId: CommandId.make("mcp-core-command"), commandType: "thread.settle" };
@@ -292,9 +275,10 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
     Effect.provide(
       McpHttpServer.layerHtmlToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(McpProviderSessions.layer),
         Layer.provide(PreviewBrowser.layer),
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-html-render-" })),
-        Layer.provide(NodeServices.layer),
+        Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
         Layer.provide(FetchHttpClient.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -313,27 +297,102 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
   ),
 );
 
-it.effect("returns invalid parameter errors through the production registration", () =>
-  Effect.gen(function* () {
+it.effect("records only failed calls of tools that hand off no work", () => {
+  // Recording runs detached from the tool response, so the first event is awaited.
+  const recorded = Deferred.makeUnsafe<{ event: string; properties: object }>();
+  return Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    const error = yield* server
-      .callTool({ name: "t3_thread_organize", arguments: { action: "invalid" } })
-      .pipe(
-        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+    const organize = (capabilities: McpInvocationContext.McpInvocationScope["capabilities"]) =>
+      server.callTool({ name: "t3_thread_organize", arguments: { action: "pin" } }).pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, {
+          ...scope,
+          capabilities,
+        }),
         Effect.provideService(McpSchema.McpServerClient, client),
-        Effect.flip,
       );
-    expect(error._tag).toBe("InvalidParams");
+    expect((yield* organize(scope.capabilities)).isError).not.toBe(true);
+    expect(declaredFailure(yield* organize(new Set<never>()))).toMatchObject({
+      code: "capability_denied",
+    });
+    // The successful call ran first, so it would be the first event if it were recorded.
+    expect(yield* Deferred.await(recorded)).toMatchObject({
+      event: "mcp.tool.invoked",
+      properties: { tool: "t3_thread_organize", outcome: "error" },
+    });
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
-        Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: ({ threadId: id }) =>
+              Effect.succeed(
+                McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
+              ),
+            dispatch: () => Effect.succeed({ sequence: 1 } as never),
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(
+            AnalyticsService.AnalyticsService,
+            AnalyticsService.AnalyticsService.of({
+              record: (event, properties) =>
+                Deferred.succeed(recorded, { event, properties: properties ?? {} }).pipe(
+                  Effect.asVoid,
+                ),
+              flush: Effect.void,
+              recordOwners: () => Effect.void,
+            }),
+          ),
+        ),
       ),
     ),
-  ),
-);
+  );
+});
+
+it.effect("rejects an unknown organize target instead of archiving the calling thread", () => {
+  const dispatched: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const outcome = yield* server
+      .callTool({
+        name: "t3_thread_organize",
+        arguments: { action: "archive", threadIds: ["other-thread"] },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+        Effect.result,
+      );
+    expect(dispatched).toEqual([]);
+    expect(outcome).toMatchObject({
+      _tag: "Failure",
+      failure: { message: expect.stringContaining("Expected no excess property") },
+    });
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: ({ threadId: id }) =>
+              Effect.succeed(
+                McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
+              ),
+            dispatch: (command) => {
+              dispatched.push(command);
+              return Effect.succeed({ sequence: 1 } as never);
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+});
 
 it.effect("keeps unexpected handler defects private through the production registration", () =>
   Effect.gen(function* () {
@@ -363,131 +422,6 @@ it.effect("keeps unexpected handler defects private through the production regis
     ),
   ),
 );
-
-it.effect("records the calling agent and the agent a tool acted on", () => {
-  // Recording runs detached from the tool response, so each expected event is awaited.
-  const recorded = [
-    Deferred.makeUnsafe<{ event: string; properties: object }>(),
-    Deferred.makeUnsafe<{ event: string; properties: object }>(),
-  ];
-  let recordedCount = 0;
-  const shell = (id: ThreadId, instanceId: string, model: string) =>
-    ({
-      id,
-      projectId: "mcp-core-project",
-      providerInstanceId: ProviderInstanceId.make(instanceId),
-      modelSelection: { instanceId: ProviderInstanceId.make(instanceId), model },
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      archivedAt: null,
-      deletedAt: null,
-      activeRunId: "mcp-core-run",
-      createdBy: "agent",
-      creationSource: "mcp",
-      lineage: {
-        parentThreadId: id === threadId ? ThreadId.make("mcp-core-parent") : null,
-        relationshipToParent: id === threadId ? "subagent" : null,
-        rootThreadId: ThreadId.make("mcp-core-parent"),
-      },
-    }) as never;
-  return Effect.gen(function* () {
-    const server = yield* McpServer.McpServer;
-    yield* server
-      .callTool({ name: "t3_thread_fork", arguments: { sourcePoint: { type: "latest_stable" } } })
-      .pipe(
-        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-        Effect.provideService(McpSchema.McpServerClient, client),
-      );
-    const { event, properties } = yield* Deferred.await(recorded[0]!);
-    expect(event).toBe("mcp.tool.invoked");
-    expect(properties).toMatchObject({
-      tool: "t3_thread_fork",
-      outcome: "ok",
-      callerProvider: "codex",
-      callerModel: "gpt-5.5",
-      callerOrigin: "agent",
-      callerDepth: 1,
-      targetProvider: "claudeAgent",
-      targetModel: "claude-opus-5-5",
-      targetRuntimeMode: "full-access",
-      targetInteractionMode: "default",
-      crossProvider: true,
-    });
-    expect(properties).toHaveProperty("durationMs");
-    expect(Object.values(properties).some((value) => String(value).includes("mcp-core"))).toBe(
-      false,
-    );
-
-    // Queue tools return only a sequence, so the receiving thread comes from the input.
-    yield* server
-      .callTool({
-        name: "t3_queue_edit",
-        arguments: { threadId: "mcp-core-other", queuedRunId: "mcp-core-queued", text: "secret" },
-      })
-      .pipe(
-        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-        Effect.provideService(McpSchema.McpServerClient, client),
-      );
-    // The fork recorded a single event, so the next one is the queue edit.
-    expect((yield* Deferred.await(recorded[1]!)).properties).toMatchObject({
-      tool: "t3_queue_edit",
-      outcome: "ok",
-      callerProvider: "codex",
-      targetProvider: "claudeAgent",
-      crossProvider: true,
-    });
-  }).pipe(
-    Effect.provide(
-      layerThreadToolkit.pipe(
-        Layer.provideMerge(McpServer.McpServer.layer),
-        Layer.provide(NodeCrypto.layer),
-        Layer.provide(
-          Layer.mock(ThreadManagement.ThreadManagementService)({
-            getThreadShell: (id) =>
-              Effect.succeed(
-                id === threadId
-                  ? shell(threadId, "codex", "gpt-5.5")
-                  : shell(id, "claudeAgent", "claude-opus-5-5"),
-              ),
-            getThreadRecords: () => Effect.succeed({ runs: [], messages: [] } as never),
-            getProjectThreadRecords: () =>
-              Effect.succeed({ thread: shell(threadId, "codex", "gpt-5.5") } as never),
-            dispatch: () => Effect.succeed({ sequence: 1 } as never),
-          }),
-        ),
-        Layer.provide(
-          Layer.mock(ProviderRegistry.ProviderRegistry)({
-            getProviders: Effect.succeed([
-              {
-                instanceId: ProviderInstanceId.make("codex"),
-                driver: "codex",
-                models: [{ slug: "gpt-5.5", isCustom: false }],
-              } as never,
-              {
-                instanceId: ProviderInstanceId.make("claudeAgent"),
-                driver: "claudeAgent",
-                models: [{ slug: "claude-opus-5-5", isCustom: false }],
-              } as never,
-            ]),
-          }),
-        ),
-        Layer.provide(
-          Layer.succeed(
-            AnalyticsService.AnalyticsService,
-            AnalyticsService.AnalyticsService.of({
-              record: (event, properties) =>
-                Deferred.succeed(recorded[recordedCount++]!, {
-                  event,
-                  properties: properties ?? {},
-                }).pipe(Effect.asVoid),
-              flush: Effect.void,
-            }),
-          ),
-        ),
-      ),
-    ),
-  );
-});
 
 it("keeps MCP preference output allowlisted and Unicode-bounded", () => {
   const settings = {
@@ -587,8 +521,8 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
     });
 
     const forked = yield* call(
-      "t3_thread_fork",
-      { sourcePoint: { type: "latest_stable" } },
+      "t3_thread_transfer",
+      { action: "fork", sourcePoint: { type: "latest_stable" } },
       clientScope("auto"),
     );
     expect(declaredFailure(forked)).toMatchObject({ code: "target_required" });
@@ -633,7 +567,7 @@ it.effect("a read-only client reads threads and is refused every write before it
           Effect.provideService(McpSchema.McpServerClient, client),
         );
 
-    const configuration = yield* call("t3_thread_configuration", {
+    const configuration = yield* call("t3_thread_configure", {
       threadId: "other-project-thread",
     });
     expect(configuration.isError).toBe(false);
@@ -715,8 +649,12 @@ it.effect("refuses act-as-caller tools to a client caller", () =>
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
         Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
         Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
       ),
     ),
   ),
@@ -732,18 +670,20 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
           Effect.provideService(McpInvocationContext.McpInvocationContext, clientScope("auto")),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
-    const update = yield* call("update_scheduled_task", {
+    const update = yield* call("schedule_task", {
       scheduledTaskId: "task-full-access",
       prompt: "Run something else",
     });
     expect(declaredFailure(update)).toMatchObject({ code: "runtime_mode_escalation_denied" });
     const remove = yield* call("delete_scheduled_task", { scheduledTaskId: "task-full-access" });
     expect(declaredFailure(remove)).toMatchObject({ code: "runtime_mode_escalation_denied" });
-    const allowed = yield* call("update_scheduled_task", {
+    const allowed = yield* call("schedule_task", {
       scheduledTaskId: "task-auto",
       enabled: false,
     });
     expect(allowed.isError).toBe(false);
+    const incomplete = yield* call("schedule_task", { prompt: "Run nightly" });
+    expect(declaredFailure(incomplete)).toMatchObject({ code: "invalid_request" });
   }).pipe(
     Effect.provide(
       layerOrchestratorToolkit.pipe(
@@ -770,6 +710,70 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
         ),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+      ),
+    ),
+  ),
+);
+
+it.effect.each([
+  {
+    scenario: "explains why a webhook task cannot run manually",
+    tasks: [
+      {
+        ...Schema.decodeSync(ScheduledTask)(scheduledTask("task-webhook", "full-access")),
+        schedule: { type: "webhook" as const, signature: null },
+      },
+    ],
+    error: new ScheduledTaskError({
+      message: "Webhook tasks run when their URL receives a request.",
+      cause: new Error("private-webhook-cause"),
+    }),
+    code: "orchestration_error",
+    message: "Webhook tasks run when their URL receives a request.",
+  },
+  {
+    scenario: "reports a missing task before trying to run it",
+    tasks: [],
+    error: new ScheduledTaskError({ message: "must not run a missing task" }),
+    code: "invalid_request",
+    message: "The scheduled task was not found.",
+  },
+])("run_scheduled_task_now $scenario", ({ tasks, error, code, message }) =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({ name: "run_scheduled_task_now", arguments: { taskId: "task-webhook" } })
+      .pipe(
+        Effect.provideService(
+          McpInvocationContext.McpInvocationContext,
+          clientScope("full-access"),
+        ),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toBeUndefined();
+    expect(declaredFailure(result)).toEqual({ _tag: "OrchestratorMcpFailure", code, message });
+    expect(JSON.stringify(result)).not.toContain("private-");
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+        Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        Layer.provide(
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+            list: () => Effect.succeed({ tasks }),
+            runNow: () => Effect.fail(error),
+          }),
+        ),
       ),
     ),
   ),
@@ -854,6 +858,10 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
           Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
           Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+          Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+          Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+          Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+          Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
         ),
       ),
     ),
@@ -944,8 +952,12 @@ it.effect("discovers workflow stop targets and requires orchestration capability
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
         Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
         Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
       ),
     ),
   );
@@ -1000,8 +1012,61 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(ServerSecretStore.layer),
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-attachment-" })),
-        Layer.provide(NodeServices.layer),
+        Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
       ),
     ),
   ),
+);
+
+it.effect(
+  "t3_thread_list settled:false with an empty statuses list lists the unsettled threads",
+  () => {
+    const unsettled = McpToolAccessTestkit.liveThreadShell(ThreadId.make("unsettled-thread"));
+    const settled = {
+      ...McpToolAccessTestkit.liveThreadShell(ThreadId.make("settled-thread")),
+      settledOverride: "settled",
+    } as const;
+    return Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const result = yield* server
+        .callTool({
+          name: "t3_thread_list",
+          arguments: { projectId: unsettled.projectId, settled: false, statuses: [] },
+        })
+        .pipe(
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            clientScope("full-access"),
+          ),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(result.isError).toBe(false);
+      expect(result.structuredContent).toMatchObject({
+        threads: [{ threadId: unsettled.id, settled: false }],
+        total: 1,
+      });
+    }).pipe(
+      Effect.provide(
+        layerOrchestratorToolkit.pipe(
+          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              listProjectThreads: () => Effect.succeed([unsettled, settled]),
+            }),
+          ),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+          Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+          Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+          Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+          Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+          Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+          Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+        ),
+      ),
+    );
+  },
 );

@@ -1,8 +1,4 @@
-/**
- * Both of its `generate` endpoints answer 403 on OpenCode's free tier ("free tier can only be
- * used from within OpenCode"), so each request runs as a prompt in a temporary session, as 1.x
- * does, and the session is removed afterwards.
- */
+// Generate endpoints return 403 on the free tier; use and remove a temporary prompt session.
 import { AbsolutePath, Location, Model, Provider, Session } from "@opencode/client/effect";
 import { TextGenerationError } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -20,107 +16,105 @@ const isTextGenerationError = Schema.is(TextGenerationError);
 
 const GENERATION_TIMEOUT = "3 minutes";
 
-/**
- * Denying `shell` or `read` outright gets the whole session refused on
- * OpenCode's free models, and an ask that is never answered would hang, so asks
- * are rejected as they arrive.
- */
+// Free models refuse denied read/shell permissions; ask and reject requests as they arrive.
 const GENERATION_PERMISSIONS = [{ action: "*", resource: "*", effect: "ask" }] as const;
 
-/** A failure's cause is the provider's own error, kept out of `detail`. */
+// Provider error text stays in cause, outside detail.
 type Outcome =
   | { readonly _tag: "text"; readonly text: string }
   | { readonly _tag: "failed"; readonly detail: string; readonly cause?: unknown };
 
-const runOnServer = (
+const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
   connection: OpenCode2Server.OpenCode2Connection,
   input: TextGenerationOperations.Request<Schema.Top>,
-) =>
-  Effect.gen(function* () {
-    const { resolveAttachmentPath } = yield* ProviderHost.ProviderHost;
-    const { client } = connection;
-    const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(input.modelSelection.model);
-    if (parsed === null) {
-      return yield* new TextGenerationError({
-        operation: input.operation,
-        detail: "OpenCode model selection must use the 'provider/model' format.",
-      });
-    }
-    const variant = getModelSelectionStringOptionValue(input.modelSelection, "variant");
-    const outcome = yield* Deferred.make<Outcome>();
-    let sessionId: string | undefined;
-    const texts = new Map<string, string>();
-    // Subscribed first: the stream is volatile, and the reply arrives on it.
-    const events = yield* connection.events;
-    yield* events.pipe(
-      Stream.runForEach((event) => {
-        // An execution end a newer server sent in a shape this build cannot
-        // read still ends the generation, as it ends a turn in the adapter.
-        if (event.type === "unreadable.execution.ended") {
-          if (event.sessionID !== sessionId) return Effect.void;
-          return Deferred.succeed(
-            outcome,
-            event.executionType === "session.execution.succeeded"
-              ? { _tag: "text", text: [...texts.values()].join("\n").trim() }
-              : {
-                  _tag: "failed",
-                  detail: "OpenCode ended the generation in a way this version cannot read.",
-                  cause: event,
-                },
-          );
-        }
-        if (
-          sessionId === undefined ||
-          !("data" in event) ||
-          !("sessionID" in event.data) ||
-          event.data.sessionID !== sessionId
-        ) {
+) {
+  const { resolveAttachmentPath } = yield* ProviderHost.ProviderHost;
+  const { client } = connection;
+  const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(input.modelSelection.model);
+  if (parsed === null) {
+    return yield* new TextGenerationError({
+      operation: input.operation,
+      detail: "OpenCode model selection must use the 'provider/model' format.",
+    });
+  }
+  const variant = getModelSelectionStringOptionValue(input.modelSelection, "variant");
+  const outcome = yield* Deferred.make<Outcome>();
+  let sessionId: string | undefined;
+  const texts = new Map<string, string>();
+  // Subscribed first: the stream is volatile, and the reply arrives on it.
+  const events = yield* connection.events;
+  yield* events.pipe(
+    Stream.runForEach((event) => {
+      // An execution end a newer server sent in a shape this build cannot
+      // read still ends the generation, as it ends a turn in the adapter.
+      if (event.type === "unreadable.execution.ended") {
+        if (event.sessionID !== sessionId) return Effect.void;
+        return Deferred.succeed(
+          outcome,
+          event.executionType === "session.execution.succeeded"
+            ? { _tag: "text", text: [...texts.values()].join("\n").trim() }
+            : {
+                _tag: "failed",
+                detail: "OpenCode ended the generation in a way this version cannot read.",
+                cause: event,
+              },
+        );
+      }
+      if (
+        sessionId === undefined ||
+        !("data" in event) ||
+        !("sessionID" in event.data) ||
+        event.data.sessionID !== sessionId
+      ) {
+        return Effect.void;
+      }
+      switch (event.type) {
+        case "session.text.ended":
+          texts.set(`${event.data.assistantMessageID}:${event.data.ordinal}`, event.data.text);
           return Effect.void;
-        }
-        switch (event.type) {
-          case "session.text.ended":
-            texts.set(`${event.data.assistantMessageID}:${event.data.ordinal}`, event.data.text);
-            return Effect.void;
-          case "permission.asked":
-            return client.permission
-              .reply({
-                sessionID: event.data.sessionID,
-                requestID: event.data.id,
-                decision: "reject",
-                message: "Tools are not available while generating text.",
-              })
-              .pipe(Effect.ignore({ log: true }));
-          case "session.execution.succeeded":
-            return Deferred.succeed(outcome, {
-              _tag: "text",
-              text: [...texts.values()].join("\n").trim(),
-            });
-          case "session.execution.failed":
-            return Deferred.succeed(outcome, {
-              _tag: "failed",
-              detail: "OpenCode could not generate the text.",
-              cause: event.data.error,
-            });
-          case "session.execution.interrupted":
-            return Deferred.succeed(outcome, {
-              _tag: "failed",
-              detail: "OpenCode stopped the generation.",
-            });
-          default:
-            return Effect.void;
-        }
+        case "permission.asked":
+          return client.permission
+            .reply({
+              sessionID: event.data.sessionID,
+              requestID: event.data.id,
+              decision: "reject",
+              message: "Tools are not available while generating text.",
+            })
+            .pipe(Effect.ignore({ log: true }));
+        case "session.execution.succeeded":
+          return Deferred.succeed(outcome, {
+            _tag: "text",
+            text: [...texts.values()].join("\n").trim(),
+          });
+        case "session.execution.failed":
+          return Deferred.succeed(outcome, {
+            _tag: "failed",
+            detail: "OpenCode could not generate the text.",
+            cause: event.data.error,
+          });
+        case "session.execution.interrupted":
+          return Deferred.succeed(outcome, {
+            _tag: "failed",
+            detail: "OpenCode stopped the generation.",
+          });
+        default:
+          return Effect.void;
+      }
+    }),
+    // The reply only arrives on this stream, so a lost stream ends the wait.
+    Effect.exit,
+    Effect.flatMap((exit) =>
+      Deferred.succeed(outcome, {
+        _tag: "failed",
+        detail: "The OpenCode event stream was lost.",
+        cause: exit,
       }),
-      // The reply only arrives on this stream, so a lost stream ends the wait.
-      Effect.exit,
-      Effect.flatMap((exit) =>
-        Deferred.succeed(outcome, {
-          _tag: "failed",
-          detail: "The OpenCode event stream was lost.",
-          cause: exit,
-        }),
-      ),
-      Effect.forkScoped,
-    );
+    ),
+    Effect.forkScoped,
+  );
+  // The limit covers creating the session and sending the prompt as well, since
+  // either request can stall while the event stream stays connected.
+  const generate = Effect.gen(function* () {
     const session = yield* client.session.create({
       title: `T3 Code ${input.operation}`,
       location: Location.PublicRef.make({ directory: AbsolutePath.make(input.cwd) }),
@@ -147,34 +141,40 @@ const runOnServer = (
       text: input.prompt,
       ...(images.length === 0 ? {} : { files: images }),
     });
-    const result = yield* Deferred.await(outcome).pipe(
-      Effect.timeoutOrElse({
-        duration: GENERATION_TIMEOUT,
-        orElse: () =>
-          client.session.interrupt({ sessionID: Session.ID.make(session.id) }).pipe(
-            Effect.ignore,
-            Effect.as<Outcome>({
-              _tag: "failed",
-              detail: "OpenCode did not finish generating in time.",
-            }),
-          ),
-      }),
-    );
-    if (result._tag === "failed") {
-      return yield* new TextGenerationError({
-        operation: input.operation,
-        detail: result.detail,
-        ...(result.cause === undefined ? {} : { cause: result.cause }),
-      });
-    }
-    if (result.text.length === 0) {
-      return yield* new TextGenerationError({
-        operation: input.operation,
-        detail: "OpenCode returned empty output.",
-      });
-    }
-    return result.text;
-  }).pipe(Effect.scoped);
+    return yield* Deferred.await(outcome);
+  });
+  const result = yield* generate.pipe(
+    Effect.timeoutOrElse({
+      duration: GENERATION_TIMEOUT,
+      orElse: () =>
+        (sessionId === undefined
+          ? Effect.void
+          : client.session
+              .interrupt({ sessionID: Session.ID.make(sessionId) })
+              .pipe(Effect.timeout("5 seconds"), Effect.ignore)
+        ).pipe(
+          Effect.as<Outcome>({
+            _tag: "failed",
+            detail: "OpenCode did not finish generating in time.",
+          }),
+        ),
+    }),
+  );
+  if (result._tag === "failed") {
+    return yield* new TextGenerationError({
+      operation: input.operation,
+      detail: result.detail,
+      ...(result.cause === undefined ? {} : { cause: result.cause }),
+    });
+  }
+  if (result.text.length === 0) {
+    return yield* new TextGenerationError({
+      operation: input.operation,
+      detail: "OpenCode returned empty output.",
+    });
+  }
+  return result.text;
+}, Effect.scoped);
 
 export const make = Effect.fn("OpenCode2TextGeneration.make")(function* () {
   const server = yield* OpenCode2Server.OpenCode2Server;

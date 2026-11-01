@@ -22,13 +22,16 @@ import {
   DialogFooter,
 } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
+import type { ChangeRequestTerminology } from "~/sourceControlPresentation";
 import { PullRequestStackLayers } from "./PullRequestStackLayers";
 import { PullRequestStackHeader } from "./PullRequestStackHeader";
 import { PullRequestStackLayerContent } from "./PullRequestStackLayerContent";
 import { PullRequestGlyph } from "./pullRequestIcons";
+import { readableFailure } from "./pullRequestDetail.logic";
 
 export function PullRequestStackMenu({
   hostLabel,
+  terminology,
   stack,
   reference,
   environmentId,
@@ -41,6 +44,7 @@ export function PullRequestStackMenu({
   onRetry,
 }: {
   hostLabel: string;
+  terminology: ChangeRequestTerminology;
   notice?: string | null;
   onRetry?: (() => void) | undefined;
   stack: PullRequestStack;
@@ -111,7 +115,12 @@ export function PullRequestStackMenu({
       toastManager.update(toastId, {
         type: "error",
         title: action === "merge" ? "Could not merge the stack" : "Could not rebase the stack",
-        description: String(squashAtomCommandFailure(result)),
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          action === "merge"
+            ? "The host refused the merge. Check that you have write access, that the checks it requires have passed, and that the branch is not conflicting."
+            : "The host refused the rebase. A rebase stops at the first commit that does not apply cleanly.",
+        ),
       });
     } else {
       toastManager.update(toastId, {
@@ -215,7 +224,7 @@ export function PullRequestStackMenu({
           />
           <TooltipPopup>
             Merge stack through #{reference.number} into {stack.base} ({mergeLayers.length}{" "}
-            {mergeLayers.length === 1 ? "pull request" : "pull requests"})
+            {mergeLayers.length === 1 ? terminology.singular : terminology.plural})
           </TooltipPopup>
         </Tooltip>
       ) : null}
@@ -229,8 +238,8 @@ export function PullRequestStackMenu({
           <DialogHeader>
             <DialogTitle>
               {confirmation === "merge"
-                ? `Merge ${mergeLayers.length} pull requests?`
-                : `Rebase ${unmerged.length} pull requests?`}
+                ? `Merge ${mergeLayers.length} ${mergeLayers.length === 1 ? terminology.singular : terminology.plural}?`
+                : `Rebase ${unmerged.length} ${unmerged.length === 1 ? terminology.singular : terminology.plural}?`}
             </DialogTitle>
             <DialogDescription>
               {confirmation === "merge"

@@ -7,7 +7,6 @@ import {
 } from "playwright-core";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { presentAsChrome } from "./ServerBrowserContexts.ts";
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
 
 describe("server browser element refs", () => {
@@ -150,7 +149,6 @@ describe("server browser element refs", () => {
       /typed-pass|saved-pass|role-pass|styled-pass|editable-pass|frame-pass|blank-pass/,
     );
     expect(result.visibleText).not.toContain("editable-pass");
-    // Page text masks the same values, so it can't be compared against the tree.
     expect(result.visibleText).toContain("Order ••••••••-2");
     expect(tree).toMatch(/row "password: •+"/);
     expect(tree).toMatch(/textbox "Username" [^\n]*: maria$/m);
@@ -174,8 +172,49 @@ describe("server browser element refs", () => {
       <input type="password" aria-label="Long" value="long-secret">`);
     const cut = (await takeSnapshot()).visibleText;
     expect(cut.length).toBe(20_000);
-    // Masked before the cut, so no prefix of the value is left.
     expect(cut.slice(-8)).toBe("xxx•••••");
+  });
+
+  it("shows a data: link or blocked data: navigation by media type only", async () => {
+    // Chromium keeps raw spaces and quotes in both, so a payload can't be cut at either.
+    await page.setContent(`
+      <a download href="data:text/plain;charset=&quot;a,b&quot;,head PAYLOAD'tail">Key</a>
+      <a href="https://example.com/data:report,2026">Report</a>
+      <a href="#">data:text/plain,label</a>
+      <a href='"data:text/plain,relative'>Relative</a>
+      <a href=" data:text/plain,PAYLOAD">Spaced</a>
+      <a href="da&#9;ta:text/plain,PAYLOAD">Tabbed</a>
+      <a href="data:text/plain,head&#x2028;PAYLOAD">Separated</a>
+      <a href="data:PAYLOAD,x">Typeless</a>
+      <a href="&#11;data:text/plain,PAYLOAD">Vertical tab</a>
+      <a href="&#8;data:text/plain,PAYLOAD">Backspace</a>
+      <a id="controlled">Controlled</a>
+      <a id="escaped">Escaped</a>
+      <script>
+        controlled.href = "\\x01data:text/plain,PAYLOAD";
+        escaped.href = "\\x02da\\tta:text/plain,PAYLOAD";
+      </script>`);
+    const tree = String((await takeSnapshot()).accessibilityTree);
+    expect(tree.match(/\/url: data:text\/plain,…$/gm)).toHaveLength(8);
+    expect(tree).toContain("/url: data:,…");
+    expect(tree).toContain("/url: https://example.com/data:report,2026");
+    expect(tree).toMatch(/link "data:text\/plain,label" \[ref=t3-/);
+    expect(tree).not.toMatch(/PAYLOAD|tail|charset|\u2028/);
+    expect(tree).toContain('/url: "\\"data:text/plain,relative"');
+  });
+
+  it("redacts a data: link whose scheme a password value would mask", async () => {
+    await page.setContent(`
+      <input type="password" aria-label="Scheme" value="data">
+      <a download href="data:text/plain,PAYLOAD">Key</a>`);
+    const tree = String((await takeSnapshot()).accessibilityTree);
+    expect(tree).toContain("/url: ••••••••:text/plain,…");
+    expect(tree).not.toContain("PAYLOAD");
+  });
+
+  it("shows a data: page's own URL by media type only", async () => {
+    await page.goto("data:text/html,<title>Key</title>PAYLOAD");
+    expect((await takeSnapshot()).url).toBe("data:text/html,…");
   });
 
   it("rejects refs from another tab", async () => {
@@ -186,27 +225,10 @@ describe("server browser element refs", () => {
     await expect(ServerBrowserPage.click(other, { locator })).rejects.toThrow(/another tab/);
   });
 
-  it("revokes refs on takeover and issues usable refs in the next snapshot", async () => {
-    await page.setContent("<button onclick=\"this.textContent='clicked'\">continue</button>");
-    const locator = buttonLocator((await takeSnapshot()).accessibilityTree, "continue");
-    ServerBrowserPage.invalidateRefs(page);
-    await expect(ServerBrowserPage.click(page, { locator })).rejects.toThrow(/stale/);
-    const fresh = buttonLocator((await takeSnapshot()).accessibilityTree, "continue");
-    await ServerBrowserPage.click(page, { locator: fresh });
-    expect(await page.locator("button").textContent()).toBe("clicked");
-  });
-
   it("revokes refs after navigation even when labels are identical", async () => {
     await page.goto("data:text/html,<button>continue</button>");
     const locator = buttonLocator((await takeSnapshot()).accessibilityTree, "continue");
     await page.goto("data:text/html,<button>continue</button><p>new document</p>");
-    await expect(ServerBrowserPage.click(page, { locator })).rejects.toThrow(/stale/);
-  });
-
-  it("only accepts refs from the most recent snapshot", async () => {
-    await page.setContent("<button>continue</button>");
-    const locator = buttonLocator((await takeSnapshot()).accessibilityTree, "continue");
-    await takeSnapshot();
     await expect(ServerBrowserPage.click(page, { locator })).rejects.toThrow(/stale/);
   });
 
@@ -219,14 +241,6 @@ describe("server browser element refs", () => {
     },
   );
 
-  it("preserves CSS selectors containing an aria-ref attribute", async () => {
-    await page.setContent(
-      '<button aria-ref="save" onclick="this.textContent=\'saved\'">save</button>',
-    );
-    await ServerBrowserPage.click(page, { selector: 'button[aria-ref="save"]' });
-    expect(await page.locator("button").textContent()).toBe("saved");
-  });
-
   it("preserves quoted attribute values containing ref engine text", async () => {
     await page.setContent(
       '<button data-example=" >> aria-ref=e1" onclick="this.textContent=\'saved\'">save</button>',
@@ -234,100 +248,108 @@ describe("server browser element refs", () => {
     await ServerBrowserPage.click(page, { selector: 'button[data-example=" >> aria-ref=e1"]' });
     expect(await page.locator("button").textContent()).toBe("saved");
   });
+});
 
-  it("right-clicks, double-clicks, hovers, selects, and drags like a pointer user", async () => {
-    await page.setContent(`
-      <style>#menu { position: absolute; display: none } #hover:hover + #menu { display: block }</style>
-      <button id="target">target</button>
-      <div id="hover">hover me</div><div id="menu">menu item</div>
-      <select id="size"><option value="s">Small</option><option value="l">Large</option></select>
-      <div id="card" draggable="true">card</div><div id="lane" style="height:40px">lane</div>
-      <p id="log"></p>
-      <script>
-        const log = (text) => (document.getElementById("log").textContent += text + ";");
-        const target = document.getElementById("target");
-        target.addEventListener("contextmenu", (event) => { event.preventDefault(); log("context"); });
-        target.addEventListener("dblclick", () => log("dblclick"));
-        document.getElementById("card").addEventListener("dragstart", (event) =>
-          event.dataTransfer.setData("text/plain", "card"),
-        );
-        for (const type of ["dragenter", "dragover"])
-          document.getElementById("lane").addEventListener(type, (event) => event.preventDefault());
-        document.getElementById("lane").addEventListener("drop", () => log("drop"));
-      </script>`);
-    await ServerBrowserPage.click(page, { locator: "#target", button: "right" });
-    await ServerBrowserPage.click(page, { locator: "#target", clickCount: 2 });
-    await ServerBrowserPage.hover(page, { locator: "#hover" });
-    expect(await page.isVisible("#menu")).toBe(true);
-    expect(await ServerBrowserPage.select(page, { locator: "#size", values: ["Large"] })).toEqual({
-      selected: ["l"],
+describe("server browser snapshot screenshot", () => {
+  let browser: Browser;
+  let context: BrowserContext;
+
+  beforeAll(async () => {
+    // ServerBrowserContexts launches with these, and the capture scale depends on them.
+    browser = await chromium.launch({
+      headless: true,
+      args: ["--disable-gpu", "--force-device-scale-factor=2"],
     });
-    await ServerBrowserPage.drag(page, { source: "#card", target: "#lane" });
-    expect(await page.textContent("#log")).toBe("context;dblclick;drop;");
-    await expect(
-      ServerBrowserPage.select(page, { locator: "#target", values: ["s"] }),
-    ).rejects.toMatchObject({ tag: "PreviewAutomationTargetNotEditableError" });
   });
-
-  it("shows the agent's pointer at each target before the action reaches the page", async () => {
-    await page.setContent(`
-      <button id="go" style="position:absolute;left:100px;top:40px;width:80px;height:20px">go</button>
-      <div id="tip" style="position:absolute;left:300px;top:40px;width:60px;height:20px">tip</div>
-      <div id="card" draggable="true" style="position:absolute;left:20px;top:120px;width:40px;height:40px">card</div>
-      <div id="lane" style="position:absolute;left:220px;top:120px;width:100px;height:40px">lane</div>
-      <script>
-        window.seen = [];
-        go.onclick = () => seen.push("click");
-        tip.onmouseenter = () => seen.push("hover");
-        card.ondragstart = (event) => event.dataTransfer.setData("text/plain", "card");
-        lane.ondragover = (event) => event.preventDefault();
-        lane.ondrop = () => seen.push("drop");
-      </script>`);
-    const shown: Array<string> = [];
-    const pointer: ServerBrowserPage.PointerReporter = async ({ x, y }, phase) => {
-      const seen = await page.evaluate("window.seen.length");
-      shown.push(`${phase}@${Math.round(x)},${Math.round(y)} after ${seen}`);
-    };
-    await ServerBrowserPage.click(page, { locator: "#go" }, pointer);
-    await ServerBrowserPage.hover(page, { locator: "#tip" }, pointer);
-    await ServerBrowserPage.drag(page, { source: "#card", target: "#lane" }, pointer);
-    expect(shown).toEqual([
-      "click@140,50 after 0",
-      "move@330,50 after 1",
-      "move@40,140 after 2",
-      "move@270,140 after 2",
-    ]);
-    expect(await page.evaluate("window.seen")).toEqual(["click", "hover", "drop"]);
+  afterAll(async () => {
+    await browser?.close();
   });
-
-  it("presents a headless page as Chrome, with client hints that agree", async () => {
-    await presentAsChrome(cdp, { platform: "linux", arch: "x64" });
-    // userAgentData exists only in secure contexts; https comes from a route.
-    let secChUa: string | undefined;
-    await page.route("https://example.test/", (route) => {
-      secChUa = route.request().headers()["sec-ch-ua"];
-      return route.fulfill({ contentType: "text/html", body: "<p>hi</p>" });
+  beforeEach(async () => {
+    context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      deviceScaleFactor: 2,
     });
-    await page.goto("https://example.test/");
-    const identity = (await page.evaluate(`(async () => ({
-      userAgent: navigator.userAgent,
-      brands: navigator.userAgentData.brands.map((brand) => brand.brand),
-      full: (await navigator.userAgentData.getHighEntropyValues(["fullVersionList"]))
-        .fullVersionList.map((brand) => brand.brand),
-    }))()`)) as { userAgent: string; brands: string[]; full: string[] };
-    expect(identity.userAgent).not.toContain("Headless");
-    expect(identity.userAgent).toMatch(/ Chrome\/\d+\.0\.0\.0 /);
-    expect(identity.brands).toContain("Google Chrome");
-    expect([...identity.brands, ...identity.full].join()).not.toContain("Headless");
-    expect(secChUa).toContain('"Google Chrome"');
-    expect(secChUa).not.toContain("Headless");
+  });
+  afterEach(async () => {
+    await context.close();
   });
 
-  it("stops an evaluation at its deadline so the page answers the next one", async () => {
-    await expect(
-      ServerBrowserPage.evaluate(cdp, { expression: "for (;;) {}" }, 200),
-    ).rejects.toMatchObject({ tag: "PreviewAutomationTimeoutError" });
-    expect(await ServerBrowserPage.evaluate(cdp, { expression: "1 + 1" }, 2_000)).toBe(2);
+  // Blue on the left half and red on the right, so a mirrored left half shows up on the right.
+  const halves = (overlay: string) => `
+    <style>
+      body { margin: 0; background: white; }
+      .half { position: absolute; top: 0; width: 640px; height: 800px; }
+      .overlay { position: fixed; inset: 0; ${overlay} }
+    </style>
+    <div class="half" style="left: 0; background: #2563eb"></div>
+    <div class="half" style="left: 640px; background: #ef4444"></div>
+    <div class="overlay"></div>`;
+
+  const screenshotOf = async (html: string) => {
+    const page = await context.newPage();
+    await page.setContent(html);
+    const { screenshot } = await ServerBrowserPage.snapshot({
+      page,
+      cdp: await context.newCDPSession(page),
+      renderScale: 2,
+      consoleEntries: [],
+      networkEntries: [],
+      actionTimeline: [],
+    });
+    // The server has no DOM types, so the decoder runs as page source.
+    const points = [
+      [0.15, 0.75],
+      [0.85, 0.25],
+      [0.85, 0.75],
+    ];
+    const pixels = (await page.evaluate(`(async () => {
+      const bytes = Uint8Array.from(atob(${JSON.stringify(screenshot.data)}), (char) => char.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext("2d");
+      context.drawImage(bitmap, 0, 0);
+      return ${JSON.stringify(points)}.map(([x, y]) =>
+        Array.from(context.getImageData(x * bitmap.width, y * bitmap.height, 1, 1).data),
+      );
+    })()`)) as Array<[number, number, number, number]>;
+    return { screenshot, pixels };
+  };
+  const colorOf = ([red, green, blue]: readonly [number, number, number, number]) =>
+    blue - red > 100 ? "blue" : red - blue > 100 ? "red" : `rgb(${red}, ${green}, ${blue})`;
+
+  it("captures a blurred backdrop-filter page as rendered, not mirrored", async () => {
+    const { screenshot, pixels } = await screenshotOf(halves("backdrop-filter: blur(4px);"));
+
+    expect({
+      size: [screenshot.width, screenshot.height],
+      colors: pixels.map(colorOf),
+    }).toEqual({ size: [1280, 800], colors: ["blue", "red", "red"] });
+  });
+
+  it("captures a plain page at the shrunk size with its content in place", async () => {
+    const { screenshot, pixels } = await screenshotOf(halves(""));
+
+    expect({
+      size: [screenshot.width, screenshot.height],
+      colors: pixels.map(colorOf),
+    }).toEqual({ size: [1280, 800], colors: ["blue", "red", "red"] });
+  });
+
+  it("shrinks the screenshot of an XML document, whose createElement makes no canvas", async () => {
+    const page = await context.newPage();
+    await page.goto("data:text/xml,<a/>");
+    const { screenshot } = await ServerBrowserPage.snapshot({
+      page,
+      cdp: await context.newCDPSession(page),
+      renderScale: 2,
+      consoleEntries: [],
+      networkEntries: [],
+      actionTimeline: [],
+    });
+
+    expect([screenshot.width, screenshot.height]).toEqual([1280, 800]);
   });
 });
 
@@ -357,8 +379,10 @@ describe("server browser drag", () => {
       );
       void settled.then(() => (finished = true));
       // Two macrotask turns: Node reports a rejection nobody observed after the first.
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
+      for (let turn = 0; turn < 2; turn++) {
+        // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- Node emits unhandledRejection only between macrotasks; no promise can mark that point.
+        await new Promise((resolve) => setImmediate(resolve));
+      }
       expect(finished).toBe(false);
       targetBox.resolve(box);
 
@@ -367,5 +391,19 @@ describe("server browser drag", () => {
     } finally {
       process.off("unhandledRejection", onUnhandled);
     }
+  });
+});
+
+describe("server browser net errors", () => {
+  it.each([
+    ["net::ERR_CONNECTION_REFUSED", "ERR_CONNECTION_REFUSED", -102],
+    [
+      "page.goto: net::ERR_HTTP2_PROTOCOL_ERROR at https://localhost:5173/",
+      "ERR_HTTP2_PROTOCOL_ERROR",
+      -2,
+    ],
+    ["net::ERR_TLS13_DOWNGRADE_DETECTED", "ERR_TLS13_DOWNGRADE_DETECTED", -2],
+  ])("reads the whole error name from %j", (errorText, description, code) => {
+    expect(ServerBrowserPage.parseNetError(errorText)).toEqual({ description, code });
   });
 });

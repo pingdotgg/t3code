@@ -5,8 +5,10 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
+import * as NodeZlib from "node:zlib";
 
 import { assert, describe, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
@@ -16,9 +18,11 @@ import {
   ProviderInstanceId,
   UsageDay,
   type UsageSource,
+  type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -29,10 +33,13 @@ import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import * as SqlClient from "effect/sql/SqlClient";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as Sqlite from "../persistence/Sqlite.ts";
+import * as CodexUsageHistory from "./CodexUsageHistory.ts";
 import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
 import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
@@ -42,6 +49,19 @@ import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
 import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
 import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as UsageService from "./UsageService.ts";
+import * as MuseSdk from "../../../../packages/provider-muse/src/server/sdk.ts";
+import { MuseUsageHome } from "@t3tools/provider-muse/server";
+import { makeScanCacheWriter, SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
+
+vi.mock("node:fs/promises", { spy: true });
+vi.mock("../../../../packages/provider-muse/src/server/sdk.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof MuseSdk>()),
+  createMuseSdkHostEffect: vi.fn(() =>
+    Effect.try(() => {
+      throw new Error("Muse is not installed in this test");
+    }),
+  ),
+}));
 
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -123,12 +143,15 @@ const layerService = (input: {
   ) => Effect.Effect<Response, HttpClientError.HttpClientError>;
   readonly environment?: NodeJS.ProcessEnv;
   readonly platform?: NodeJS.Platform;
+  readonly hostname?: string;
 }) =>
   layerCursorUsageAccounts(
     CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer)),
   ).pipe(
     Layer.provideMerge(AntigravityUsage.layer),
+    Layer.provideMerge(MuseUsageHome.layer),
     Layer.provideMerge(ProviderHostLive.layer),
+    Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
     Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
     Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
     Layer.provideMerge(
@@ -136,6 +159,7 @@ const layerService = (input: {
     ),
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(Layer.succeed(HostProcess.Platform, input.platform ?? "linux")),
+    Layer.provideMerge(Layer.succeed(HostProcess.Hostname, input.hostname ?? "usage-test-host")),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),
     Layer.provideMerge(
       Layer.succeed(
@@ -178,9 +202,7 @@ const NARROW_WINDOW: UsageSummaryInput = {
   untilDay: UsageDay.make("2026-09-02"),
 };
 
-/**
- * Each waiting gate holds one libuv pool thread; keep at most three.
- */
+// Each waiting gate holds a libuv thread; allow at most three.
 const makeGate = (path: string, lastWriteSeconds?: number) =>
   Effect.promise(async () => {
     NodeChildProcess.execFileSync("mkfifo", [path]);
@@ -204,7 +226,6 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 
 const CURSOR_NOW = Date.parse("2026-08-02T12:00:00Z");
 const HOUR_MS = 60 * 60 * 1000;
-const CURSOR_RETENTION_MS = 92 * 24 * HOUR_MS;
 
 function makeFakeCursor() {
   const state = {
@@ -260,7 +281,499 @@ function cursorSource(summary: { readonly sources: readonly UsageSource[] }) {
   return summary.sources.find((source) => source.fingerprint.provider === "cursor");
 }
 
+const seedCodexHistory = (input: {
+  id: string;
+  nativeTurnId?: string;
+  sessionId?: string;
+  model?: string;
+  options?: readonly { id: string; value: string | boolean }[];
+}) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const { id } = input;
+    const selection = {
+      instanceId: "codex",
+      model: input.model ?? "gpt-6-astra",
+      options: input.options ?? [{ id: "serviceTier", value: "priority" }],
+    };
+    const run = {
+      id: `run-${id}`,
+      activeAttemptId: `attempt-${id}`,
+      status: "running",
+      modelSelection: selection,
+    };
+    yield* sql`INSERT INTO orchestration_v2_projection_run_attempts ${sql.insert({
+      attempt_id: run.activeAttemptId,
+      thread_id: `thread-${id}`,
+      run_id: run.id,
+      attempt_ordinal: 1,
+      root_node_id: `node-${id}`,
+      provider: "codex",
+      provider_thread_id: `provider-thread-${id}`,
+      provider_turn_id: `turn-${id}`,
+      status: "completed",
+      payload_json: encodeUnknownJsonString({ nativeThreadId: input.sessionId ?? "session" }),
+    })}`;
+    yield* sql`INSERT INTO orchestration_v2_projection_provider_turns ${sql.insert({
+      provider_turn_id: `turn-${id}`,
+      thread_id: `thread-${id}`,
+      provider_thread_id: `provider-thread-${id}`,
+      node_id: `node-${id}`,
+      run_attempt_id: run.activeAttemptId,
+      ordinal: 1,
+      status: "completed",
+      payload_json: encodeUnknownJsonString({
+        nativeTurnRef: { driver: "codex", nativeId: input.nativeTurnId ?? id, strength: "strong" },
+      }),
+    })}`;
+    const changedSelection = {
+      ...selection,
+      options: [{ id: "serviceTier", value: "ultrafast" }],
+    };
+    // These selections disagree so reading the current projection or the wrong event is visible.
+    yield* sql`INSERT INTO orchestration_v2_projection_runs ${sql.insert({
+      run_id: run.id,
+      thread_id: `thread-${id}`,
+      ordinal: 1,
+      provider: "codex",
+      provider_thread_id: `provider-thread-${id}`,
+      status: "completed",
+      requested_at: "2026-08-01T10:00:00Z",
+      payload_json: encodeUnknownJsonString({
+        ...run,
+        status: "completed",
+        modelSelection: { ...selection, options: [] },
+      }),
+    })}`;
+    for (const [index, payload] of [
+      { ...run, activeAttemptId: "earlier-attempt", modelSelection: changedSelection },
+      { ...run, status: "queued", modelSelection: changedSelection },
+      run,
+      { ...run, modelSelection: changedSelection },
+    ].entries()) {
+      yield* sql`INSERT INTO orchestration_events ${sql.insert({
+        event_id: `event-${id}-${index}`,
+        aggregate_kind: "thread",
+        stream_id: `thread-${id}`,
+        stream_version: index + 1,
+        event_type: "run.updated",
+        occurred_at: "2026-08-01T10:00:00Z",
+        actor_kind: "system",
+        metadata_json: "{}",
+        application_event_version: 2,
+        payload_json: encodeUnknownJsonString(payload),
+      })}`;
+    }
+  });
+
+describe("Codex usage history", () => {
+  const historyLayer = CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory));
+  const request = (nativeTurnId: string) => ({
+    sessionId: "session",
+    nativeTurnId,
+    model: "gpt-6-astra",
+  });
+
+  it.effect("resolves a batch from each attempt's first running selection", () =>
+    Effect.gen(function* () {
+      yield* seedCodexHistory({ id: "fast" });
+      yield* seedCodexHistory({
+        id: "ultrafast",
+        options: [{ id: "serviceTier", value: "ultrafast" }],
+      });
+      yield* seedCodexHistory({ id: "legacy-option", options: [{ id: "fastMode", value: true }] });
+      yield* seedCodexHistory({ id: "standard", options: [] });
+      const requests = ["fast", "ultrafast", "legacy-option", "standard", "fast"].map(request);
+      const history = yield* CodexUsageHistory.CodexUsageHistory;
+      const resolved = yield* history.resolve(requests);
+      assert.strictEqual(resolved.size, requests.length);
+      assert.deepStrictEqual(
+        requests.map((item) => resolved.get(item)),
+        ["fast", "ultrafast", "fast", "standard", "fast"],
+      );
+    }).pipe(Effect.provide(historyLayer)),
+  );
+
+  it.effect("leaves ambiguous, mismatched, and missing V2 evidence unresolved", () =>
+    Effect.gen(function* () {
+      for (const id of [
+        "valid",
+        "duplicate-model",
+        "duplicate-session",
+        "imported",
+        "v1-event",
+        "queued",
+        "missing-selection",
+      ]) {
+        yield* seedCodexHistory({ id });
+      }
+      yield* seedCodexHistory({
+        id: "second-model",
+        nativeTurnId: "duplicate-model",
+        model: "other-model",
+      });
+      yield* seedCodexHistory({
+        id: "second-session",
+        nativeTurnId: "duplicate-session",
+        sessionId: "other-session",
+      });
+      yield* seedCodexHistory({ id: "wrong-model", model: "other-model" });
+      yield* seedCodexHistory({ id: "wrong-session", sessionId: "other-session" });
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE orchestration_v2_projection_provider_turns
+        SET run_attempt_id = NULL WHERE provider_turn_id = 'turn-imported'`;
+      yield* sql`DELETE FROM orchestration_v2_projection_run_attempts WHERE attempt_id = 'attempt-imported'`;
+      yield* sql`UPDATE orchestration_events SET application_event_version = 1
+        WHERE stream_id = 'thread-v1-event'`;
+      yield* sql`UPDATE orchestration_events
+        SET payload_json = json_set(payload_json, '$.status', 'queued')
+        WHERE stream_id = 'thread-queued'`;
+      yield* sql`UPDATE orchestration_events
+        SET payload_json = json_remove(payload_json, '$.modelSelection')
+        WHERE event_id = 'event-missing-selection-2'`;
+      const requests = [
+        "valid",
+        "duplicate-model",
+        "duplicate-session",
+        "wrong-model",
+        "wrong-session",
+        "missing-turn",
+        "imported",
+        "v1-event",
+        "queued",
+        "missing-selection",
+      ].map(request);
+      const history = yield* CodexUsageHistory.CodexUsageHistory;
+      const resolved = yield* history.resolve(requests);
+      assert.deepStrictEqual([...resolved], [[requests[0], "fast"]]);
+    }).pipe(Effect.provide(historyLayer)),
+  );
+
+  it.effect(
+    "reports SQL failures through the typed channel and can resolve again after repair",
+    () =>
+      Effect.gen(function* () {
+        yield* seedCodexHistory({ id: "retry" });
+        const history = yield* CodexUsageHistory.CodexUsageHistory;
+        const sql = yield* SqlClient.SqlClient;
+        const input = request("retry");
+        yield* sql`ALTER TABLE orchestration_events RENAME TO unavailable_events`;
+        const error = yield* Effect.flip(history.resolve([input]));
+        assert.instanceOf(error, CodexUsageHistory.CodexUsageHistoryReadError);
+        assert.strictEqual(error.requestedTurnCount, 1);
+        yield* sql`ALTER TABLE unavailable_events RENAME TO orchestration_events`;
+        assert.strictEqual((yield* history.resolve([input])).get(input), "fast");
+      }).pipe(Effect.provide(historyLayer)),
+  );
+});
+
 describe("UsageService", () => {
+  it.live("counts compressed Codex rollouts across refresh, rewrites, and cache restarts", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const sessions = NodePath.join(home, "codex", "sessions");
+      const compressedPath = NodePath.join(sessions, "compressed.jsonl.zst");
+      const usage = (output_tokens: number, timestamp = "2026-08-01T10:00:00Z") =>
+        encodeUnknownJsonString({
+          type: "event_msg",
+          timestamp,
+          payload: {
+            type: "token_count",
+            info: { last_token_usage: { input_tokens: 10, output_tokens } },
+          },
+        }) + "\n";
+      const rollout = (id: string, output: number) =>
+        [
+          { type: "session_meta", payload: { id } },
+          { type: "turn_context", payload: { model: "gpt-6-astra" } },
+        ]
+          .map((line) => encodeUnknownJsonString(line))
+          .join("\n") +
+        "\n" +
+        usage(output);
+      const compressed = rollout("compressed-session", 23);
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(sessions, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(sessions, "plain.jsonl"),
+          rollout("plain-session", 17),
+        );
+        await NodeFSP.writeFile(compressedPath, NodeZlib.zstdCompressSync(compressed));
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const first = yield* service.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(first), 40);
+        assert.strictEqual(
+          first.sources.find((source) => source.fingerprint.provider === "codex")?.distinctSessions,
+          2,
+        );
+        assert.deepStrictEqual((yield* service.readSummary(WINDOW)).buckets, first.buckets);
+        yield* service.awaitPersisted;
+        // The same rollout may remain in a plain file while compression finishes.
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(NodePath.join(sessions, "copy.jsonl"), compressed),
+        );
+        assert.strictEqual(totalOutputTokens(yield* service.readSummary(WINDOW)), 40);
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(
+            compressedPath,
+            NodeZlib.zstdCompressSync(compressed + usage(31, "2026-08-01T10:00:05Z")),
+          ),
+        );
+        const rewritten = yield* service.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(rewritten), 71);
+        assert.deepStrictEqual((yield* service.readSummary(WINDOW)).buckets, rewritten.buckets);
+        yield* service.awaitPersisted;
+        const restarted = yield* UsageService.make;
+        assert.deepStrictEqual((yield* restarted.readSummary(WINDOW)).buckets, rewritten.buckets);
+        yield* restarted.awaitPersisted;
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(layerService({ prefix: "usage-compressed-codex", home, settings })),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps the first host identity across recreation and explicit override removal", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      for (const [hostname, override, expected] of [
+        ["container-a", undefined, "container-a"],
+        ["container-b", undefined, "container-a"],
+        ["container-c", "physical-host", "physical-host"],
+        ["container-d", undefined, "container-a"],
+      ] as const) {
+        const summary = yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          return yield* service.readSummary(WINDOW);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            layerService({
+              prefix: "usage-host-id",
+              home,
+              settings,
+              hostname,
+              environment: override === undefined ? {} : { T3CODE_HOST_ID: override },
+            }),
+          ),
+        );
+        const source = summary.sources.find((source) => source.fingerprint.provider === "claude");
+        assert.strictEqual(source?.fingerprint.hostId, expected);
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("concurrent initialization keeps one host identity across service recreation", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const prefix = "usage-host-id-race";
+      const hostIdPath = NodePath.join(home, prefix, "usage-host-id");
+      const bothRead = yield* Deferred.make<void>();
+      let reads = 0;
+      const summaries = yield* Effect.forEach(
+        ["container-a", "container-b"],
+        (hostname) =>
+          Effect.gen(function* () {
+            const fileSystem = yield* FileSystem.FileSystem;
+            let firstRead = true;
+            const service = yield* UsageService.make.pipe(
+              Effect.provideService(FileSystem.FileSystem, {
+                ...fileSystem,
+                readFileString: (path, encoding) =>
+                  Effect.gen(function* () {
+                    if (path !== hostIdPath || !firstRead) {
+                      return yield* fileSystem.readFileString(path, encoding);
+                    }
+                    firstRead = false;
+                    // Both instances observe the missing file before either can create it.
+                    const result = yield* Effect.exit(fileSystem.readFileString(path, encoding));
+                    reads += 1;
+                    if (reads === 2) yield* Deferred.succeed(bothRead, undefined);
+                    yield* Deferred.await(bothRead);
+                    return yield* result;
+                  }),
+              }),
+            );
+            return yield* service.readSummary(WINDOW);
+          }).pipe(
+            Effect.scoped,
+            Effect.provide(layerService({ prefix, home, settings, hostname })),
+          ),
+        { concurrency: "unbounded" },
+      );
+      const persisted = yield* Effect.promise(() => NodeFSP.readFile(hostIdPath, "utf8"));
+      const hostId = persisted.trim();
+      assert.include(["container-a", "container-b"], hostId);
+      const restarted = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        return yield* service.readSummary(WINDOW);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(layerService({ prefix, home, settings, hostname: "container-c" })),
+      );
+      for (const summary of [...summaries, restarted]) {
+        const source = summary.sources.find((source) => source.fingerprint.provider === "claude");
+        assert.strictEqual(source?.fingerprint.hostId, hostId);
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "repairs initial Codex prices after unchanged-file retries, persists evidence and corrections, and honors later native tiers",
+    () =>
+      Effect.gen(function* () {
+        const { home, settings } = yield* setup;
+        const sessions = NodePath.join(home, "codex", "sessions");
+        const fastPath = NodePath.join(sessions, "fast.jsonl");
+        const ultraPath = NodePath.join(sessions, "ultra.jsonl");
+        const meta = (id: string) => ({
+          type: "session_meta",
+          payload: { id, model_provider: "openai" },
+        });
+        const context = (turn_id?: string) => ({
+          type: "turn_context",
+          payload: { model: "gpt-6-astra", turn_id },
+        });
+        const usage = (output_tokens: number) => ({
+          type: "event_msg",
+          timestamp: "2026-08-01T10:00:00Z",
+          payload: {
+            type: "token_count",
+            info: { last_token_usage: { input_tokens: 0, output_tokens } },
+          },
+        });
+        const tier = (service_tier?: string) => ({
+          type: "event_msg",
+          payload: { type: "thread_settings_applied", thread_settings: { service_tier } },
+        });
+        const lines = (records: readonly unknown[]) =>
+          records.map((record) => encodeUnknownJsonString(record)).join("\n") + "\n";
+        const verify = (summary: UsageSummary, output: number, cost: number) => {
+          assert.strictEqual(totalOutputTokens(summary), output);
+          assert.strictEqual(
+            summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+            cost,
+          );
+        };
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(sessions, { recursive: true });
+          await NodeFSP.writeFile(
+            fastPath,
+            lines([meta("fast-session"), context("fast-turn"), usage(1)]) +
+              encodeUnknownJsonString(usage(2)),
+          );
+          await NodeFSP.writeFile(
+            ultraPath,
+            lines([meta("ultra-session"), context("ultra-turn"), usage(4)]),
+          );
+        });
+        yield* Effect.gen(function* () {
+          const first = yield* UsageService.make;
+          verify(yield* first.readSummary(WINDOW), 7, 7);
+          yield* first.awaitPersisted;
+          const pending = yield* UsageService.make;
+          verify(yield* pending.readSummary(WINDOW), 7, 7);
+          yield* seedCodexHistory({ id: "fast-turn", sessionId: "fast-session" });
+          yield* seedCodexHistory({
+            id: "ultra-turn",
+            sessionId: "ultra-session",
+            options: [{ id: "serviceTier", value: "ultrafast" }],
+          });
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`ALTER TABLE orchestration_events RENAME TO unavailable_events`;
+          verify(yield* pending.readSummary(WINDOW), 7, 7);
+          yield* pending.awaitPersisted;
+          const retry = yield* UsageService.make;
+          verify(yield* retry.readSummary(WINDOW), 7, 7);
+          yield* sql`ALTER TABLE unavailable_events RENAME TO orchestration_events`;
+          // History repair must touch both the committed record and tentative tail.
+          verify(yield* retry.readSummary(WINDOW), 7, 30);
+          yield* retry.awaitPersisted;
+          yield* sql`ALTER TABLE orchestration_events RENAME TO resolved_events`;
+          verify(yield* retry.readSummary(WINDOW), 7, 30);
+          const resolved = yield* UsageService.make;
+          verify(yield* resolved.readSummary(WINDOW), 7, 30);
+          yield* sql`ALTER TABLE resolved_events RENAME TO orchestration_events`;
+
+          // Completing the tail reparses it; neither an absent turn ID nor a new
+          // turn with no retained attempt may inherit the inferred Fast speed.
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(
+              fastPath,
+              "\n" + lines([context(), usage(3), context("unretained-turn"), usage(4)]),
+            ),
+          );
+          verify(yield* resolved.readSummary(WINDOW), 14, 37);
+          yield* seedCodexHistory({
+            id: "native-turn",
+            sessionId: "fast-session",
+            options: [{ id: "serviceTier", value: "ultrafast" }],
+          });
+          yield* seedCodexHistory({ id: "later-native-turn", sessionId: "fast-session" });
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(
+              fastPath,
+              lines([
+                context("native-turn"),
+                tier(),
+                usage(5),
+                context("later-native-turn"),
+                usage(6),
+                tier("priority"),
+              ]) + encodeUnknownJsonString(usage(7)),
+            ),
+          );
+          verify(yield* resolved.readSummary(WINDOW), 32, 62);
+          yield* resolved.awaitPersisted;
+          const native = yield* UsageService.make;
+          verify(yield* native.readSummary(WINDOW), 32, 62);
+          yield* seedCodexHistory({
+            id: "after-restart-native",
+            sessionId: "fast-session",
+            options: [{ id: "serviceTier", value: "ultrafast" }],
+          });
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(
+              fastPath,
+              "\n" +
+                lines([context("after-restart-native"), usage(8), tier("ultrafast"), usage(9)]),
+            ),
+          );
+          verify(yield* native.readSummary(WINDOW), 49, 132);
+          yield* native.awaitPersisted;
+          yield* Effect.promise(async () => {
+            await NodeFSP.rm(fastPath);
+            await NodeFSP.rm(ultraPath);
+          });
+          yield* sql`DELETE FROM orchestration_events`;
+          const deleted = yield* UsageService.make;
+          verify(yield* deleted.readSummary(WINDOW), 49, 132);
+        }).pipe(
+          Effect.provide(
+            layerService({
+              prefix: "usage-initial-tier",
+              home,
+              settings,
+              ratesDocument: {
+                "gpt-6-astra": {
+                  input_cost_per_token: 0,
+                  output_cost_per_token: 1,
+                  input_cost_per_token_priority: 0,
+                  output_cost_per_token_priority: 2,
+                  input_cost_per_token_ultrafast: 0,
+                  output_cost_per_token_ultrafast: 6,
+                },
+              },
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.live(
     "reads Pi per-model usage and auxiliary costs once across forks and repeated entries",
     () =>
@@ -442,6 +955,227 @@ describe("UsageService", () => {
                       },
                     ],
                   },
+                },
+              },
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "reads Muse inference history once, persists appended usage, and reprices unknown models",
+    () =>
+      Effect.gen(function* () {
+        const { home, settings } = yield* setup;
+        const museHome = NodePath.join(home, "configured-data", "muse");
+        const dir = NodePath.join(museHome, "sessions", "2026", "08", "01", "parent");
+        const child = NodePath.join(dir, "subagent", "child");
+        const entry = (
+          id: string,
+          sessionId = "parent",
+          timestamp = "2026-08-01T00:00:00Z",
+          model = "muse-unknown",
+        ) => ({
+          schema_version: 1,
+          record_type: "event",
+          payload_type: "runtime.session",
+          payload_schema_version: 1,
+          id,
+          recorded_at: Date.parse(timestamp) * 1000 + 999,
+          stream: { kind: "session", id: sessionId },
+          payload: {
+            source_run_record_id: id,
+            event: {
+              kind: "model_completed",
+              model,
+              usage: {
+                input_tokens: 100,
+                cached_tokens: 60,
+                cache_read_tokens: 60,
+                cache_write_tokens: 10,
+                output_tokens: 20,
+                reasoning_tokens: 8,
+              },
+            },
+          },
+        });
+        const parent = entry("inference-1");
+        const review = {
+          ...entry("review", "child"),
+          payload_schema_version: 3,
+          payload: {
+            event: {
+              ...parent.payload.event,
+              kind: "automated_review_completed",
+              model: { model_id: "priced-model" },
+              usage: {
+                input_tokens: 100,
+                cached_input_tokens: 60,
+                output_tokens: 20,
+                reasoning_tokens: 8,
+              },
+            },
+          },
+        };
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(child, { recursive: true });
+          await NodeFSP.writeFile(
+            NodePath.join(dir, "session.jsonl"),
+            [
+              parent,
+              parent,
+              {
+                ...parent,
+                payload: { event: { ...parent.payload.event, kind: "workflow_completed" } },
+              },
+              { ...parent, payload_type: "goal_usage_attribution" },
+              entry("before", "parent", "2026-07-31T23:59:59.999Z"),
+              entry("after", "parent", "2026-08-02T00:00:00Z"),
+            ]
+              .map((line) => encodeUnknownJsonString(line))
+              .join("\n") + "\n{broken}\n",
+          );
+          await NodeFSP.writeFile(
+            NodePath.join(child, "session.jsonl"),
+            [
+              { ...parent, id: "copied-envelope", stream: { kind: "session", id: "child" } },
+              entry("child-inference", "child"),
+              review,
+            ]
+              .map((line) => encodeUnknownJsonString(line))
+              .join("\n") + "\n",
+          );
+          await NodeFSP.writeFile(
+            NodePath.join(child, "telemetry.jsonl"),
+            encodeUnknownJsonString(entry("not-a-session")) + "\n",
+          );
+        });
+        using _create = vi.spyOn(MuseSdk, "createMuseSdkHostEffect").mockImplementation((options) =>
+          Effect.succeed({
+            initializeResult: {
+              grantedCapabilities: [],
+              museHome: NodePath.join(options.environment?.XDG_DATA_HOME ?? home, "muse"),
+            },
+            close: async () => {},
+          } as unknown as MuseSdk.MuseSdkHost),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          const window = {
+            timeZone: "UTC",
+            sinceDay: UsageDay.make("2026-08-01"),
+            untilDay: UsageDay.make("2026-08-01"),
+          };
+          const muse = (summary: UsageSummary) =>
+            summary.buckets.filter((bucket) => bucket.provider === "muse");
+          const first = yield* service.readSummary(window);
+          const buckets = muse(first);
+          assert.strictEqual(
+            buckets.reduce((sum, b) => sum + b.records, 0),
+            3,
+          );
+          assert.strictEqual(
+            buckets.reduce((sum, b) => sum + totalTokens(b.totals), 0),
+            360,
+          );
+          const unknown = buckets.find((b) => b.model === "muse-unknown");
+          assert.strictEqual(unknown?.costSource, "unpriced");
+          assert.strictEqual(unknown?.unpricedRecords, 2);
+          assert.deepStrictEqual(unknown?.totals, {
+            uncachedInputTokens: 60,
+            cachedInputTokens: 120,
+            cacheCreationTokens: 20,
+            outputTokens: 40,
+            reasoningTokens: 16,
+          });
+          const priced = buckets.find((b) => b.model === "priced-model");
+          assert.strictEqual(priced?.costSource, "modelPriced");
+          assert.closeTo(priced?.costUsd ?? NaN, 0.000172, 1e-12);
+          assert.closeTo(priced?.cacheSavingsUsd ?? NaN, 0.000108, 1e-12);
+          const sources = first.sources.filter((source) => source.fingerprint.provider === "muse");
+          assert.strictEqual(sources.length, 1);
+          assert.strictEqual(sources[0]?.scannedFiles, 2);
+          assert.strictEqual(sources[0]?.distinctSessions, 2);
+          const local = muse(
+            yield* service.readSummary({ ...window, timeZone: "America/Los_Angeles" }),
+          );
+          assert.strictEqual(
+            local.reduce((sum, b) => sum + b.records, 0),
+            1,
+          );
+          assert.strictEqual(local[0]?.day, "2026-08-01");
+          const hourly = muse(
+            yield* service.readSummary({
+              ...window,
+              resolution: "hour",
+              sinceTime: "2026-08-01T00:00:00.000Z",
+              untilTime: "2026-08-02T00:00:00.000Z",
+            }),
+          );
+          assert.strictEqual(
+            hourly.reduce((sum, b) => sum + b.records, 0),
+            3,
+          );
+          const appended = encodeUnknownJsonString(entry("appended", "child"));
+          const file = NodePath.join(child, "session.jsonl");
+          yield* Effect.promise(() => NodeFSP.appendFile(file, appended.slice(0, -10)));
+          assert.deepStrictEqual(muse(yield* service.readSummary(window)), buckets);
+          yield* service.awaitPersisted;
+          const restarted = yield* UsageService.make;
+          yield* Effect.promise(() => NodeFSP.appendFile(file, appended.slice(-10) + "\n"));
+          const grown = muse(yield* restarted.readSummary(window));
+          assert.strictEqual(
+            grown.reduce((sum, b) => sum + b.records, 0),
+            4,
+          );
+          assert.strictEqual(
+            grown.reduce((sum, b) => sum + totalTokens(b.totals), 0),
+            480,
+          );
+          const settingsService = yield* ServerSettings.ServerSettingsService;
+          yield* settingsService.updateSettings({
+            usagePriceOverrides: {
+              "muse-unknown": {
+                inputCostPerMillionTokens: 2,
+                outputCostPerMillionTokens: 4,
+                cacheReadCostPerMillionTokens: 0.2,
+                cacheWriteCostPerMillionTokens: 1,
+              },
+            },
+          });
+          const repriced = muse(yield* restarted.readSummary(window)).find(
+            (b) => b.model === "muse-unknown",
+          );
+          assert.strictEqual(repriced?.unpricedRecords, 0);
+          assert.closeTo(repriced?.costUsd ?? NaN, 0.000486, 1e-12);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            layerService({
+              prefix: "usage-muse",
+              home,
+              environment: { XDG_DATA_HOME: NodePath.dirname(museHome) },
+              settings: {
+                ...settings,
+                providerInstances: {
+                  ...settings.providerInstances,
+                  [ProviderInstanceId.make("muse")]: {
+                    driver: ProviderDriverKind.make("muse"),
+                    enabled: false,
+                  },
+                  [ProviderInstanceId.make("muse-alias")]: {
+                    driver: ProviderDriverKind.make("muse"),
+                    enabled: false,
+                  },
+                },
+              },
+              ratesDocument: {
+                "priced-model": {
+                  input_cost_per_token: 0.000002,
+                  output_cost_per_token: 0.000004,
+                  cache_read_input_token_cost: 0.0000002,
+                  cache_creation_input_token_cost: 0.0000002,
                 },
               },
             }),
@@ -651,26 +1385,6 @@ describe("UsageService", () => {
       );
     }).pipe(Effect.scoped),
   );
-  it.live("omits Cursor account usage when no file login is saved", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      for (const platform of ["linux", "win32", "darwin"] as const) {
-        const service = yield* UsageService.make.pipe(
-          Effect.provide(
-            layerService({
-              prefix: `usage-service-cursor-no-login-${platform}`,
-              home,
-              settings,
-              platform,
-              environment: { AGENT_CLI_CREDENTIAL_STORE: "file" },
-            }),
-          ),
-        );
-        const summary = yield* service.readSummary(WINDOW);
-        assert.isFalse(summary.sources.some((source) => source.fingerprint.provider === "cursor"));
-      }
-    }).pipe(Effect.scoped),
-  );
 
   it.live("keeps Cursor credential errors visible when a saved login cannot be read", () =>
     Effect.gen(function* () {
@@ -689,138 +1403,6 @@ describe("UsageService", () => {
       const cursor = summary.sources.find((source) => source.fingerprint.provider === "cursor");
       assert.strictEqual(cursor?.message, "Cursor credentials could not be read.");
     }).pipe(Effect.scoped),
-  );
-
-  it.live("answers Cursor from its cache while one shared refresh runs", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      yield* writeCursorLogin(home);
-      yield* TestClock.setTime(CURSOR_NOW);
-      const cursor = makeFakeCursor();
-      cursor.state.events = [{ timestampMs: CURSOR_NOW - 2 * HOUR_MS, outputTokens: 5 }];
-      const gate = yield* Deferred.make<void>();
-      cursor.state.gate = gate;
-      yield* Effect.gen(function* () {
-        const service = yield* makeWithCursor(cursor.read);
-        const cold = yield* service.readSummary(WINDOW);
-        assert.strictEqual(cursorSource(cold)?.refreshing, true);
-        assert.strictEqual(cursorSource(cold)?.status, "ok");
-        assert.strictEqual(totalOutputTokens(cold), 0);
-        const joined = yield* service.readSummary(WINDOW);
-        assert.strictEqual(cursorSource(joined)?.refreshing, true);
-
-        const waited = yield* service
-          .readSummary({ ...WINDOW, awaitRefresh: true })
-          .pipe(Effect.forkChild);
-        yield* Deferred.succeed(gate, undefined);
-        const refreshed = yield* Fiber.join(waited);
-        assert.isFalse(refreshed.sources.some((source) => source.refreshing));
-        assert.strictEqual(cursorSource(refreshed)?.status, "ok");
-        assert.strictEqual(totalOutputTokens(refreshed), 5);
-        assert.strictEqual(cursor.state.calls.length, 1);
-
-        yield* TestClock.adjust(Duration.seconds(30));
-        const cached = yield* service.readSummary(WINDOW);
-        assert.isUndefined(cursorSource(cached)?.refreshing);
-        assert.strictEqual(totalOutputTokens(cached), 5);
-        assert.strictEqual(cursor.state.calls.length, 1);
-
-        yield* TestClock.adjust(Duration.seconds(31));
-        cursor.state.events.push({ timestampMs: CURSOR_NOW, outputTokens: 7 });
-        const stale = yield* service.readSummary(WINDOW);
-        assert.strictEqual(cursorSource(stale)?.refreshing, true);
-        assert.strictEqual(totalOutputTokens(stale), 5);
-        const fresh = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
-        assert.isUndefined(cursorSource(fresh)?.refreshing);
-        assert.strictEqual(totalOutputTokens(fresh), 12);
-        assert.strictEqual(cursor.state.calls.length, 2);
-      }).pipe(Effect.provide(layerService({ prefix: "usage-service-cursor-swr", home, settings })));
-    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
-  );
-
-  it.live("caches Cursor's whole retention and then refetches only the newest edge", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      yield* writeCursorLogin(home);
-      yield* TestClock.setTime(CURSOR_NOW);
-      const cursor = makeFakeCursor();
-      cursor.state.events = [
-        { timestampMs: Date.parse("2026-07-10T10:00:00Z"), outputTokens: 17 },
-        { timestampMs: CURSOR_NOW - 24 * HOUR_MS, outputTokens: 5 },
-        { timestampMs: CURSOR_NOW - HOUR_MS / 2, outputTokens: 7 },
-        { timestampMs: CURSOR_NOW - HOUR_MS / 2, outputTokens: 7 },
-      ];
-      yield* Effect.gen(function* () {
-        const service = yield* makeWithCursor(cursor.read);
-        const read = (input: UsageSummaryInput) =>
-          service.readSummary({ ...input, awaitRefresh: true });
-        assert.strictEqual(totalOutputTokens(yield* read(WINDOW)), 19);
-        assert.deepStrictEqual(cursor.state.calls, [
-          { sinceMs: CURSOR_NOW - CURSOR_RETENTION_MS, untilMs: CURSOR_NOW },
-        ]);
-
-        const wide = { ...WINDOW, sinceDay: UsageDay.make("2026-07-01") };
-        assert.strictEqual(totalOutputTokens(yield* read(wide)), 36);
-        assert.strictEqual(cursor.state.calls.length, 1);
-
-        cursor.state.events.push(
-          { timestampMs: CURSOR_NOW - HOUR_MS / 6, outputTokens: 11 },
-          { timestampMs: CURSOR_NOW + HOUR_MS, outputTokens: 13 },
-        );
-        yield* TestClock.adjust(Duration.hours(2));
-        assert.strictEqual(totalOutputTokens(yield* read(WINDOW)), 43);
-        assert.deepStrictEqual(cursor.state.calls[1], {
-          sinceMs: CURSOR_NOW - HOUR_MS,
-          untilMs: CURSOR_NOW + 2 * HOUR_MS,
-        });
-
-        cursor.state.accountKey = "account-b";
-        yield* TestClock.adjust(Duration.minutes(2));
-        assert.strictEqual(totalOutputTokens(yield* read(wide)), 60);
-        assert.strictEqual(cursor.state.calls.length, 4);
-        assert.strictEqual(cursorSource(yield* read(wide))?.fingerprint.volumeId, "account-b");
-      }).pipe(
-        Effect.provide(
-          layerService({ prefix: "usage-service-cursor-incremental", home, settings }),
-        ),
-      );
-    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
-  );
-
-  it.live("reports a failed Cursor refresh from its cache without refreshing", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      yield* writeCursorLogin(home);
-      yield* TestClock.setTime(CURSOR_NOW);
-      const cursor = makeFakeCursor();
-      cursor.state.events = [{ timestampMs: CURSOR_NOW - HOUR_MS * 3, outputTokens: 5 }];
-      yield* Effect.gen(function* () {
-        const service = yield* makeWithCursor(cursor.read);
-        yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
-
-        yield* TestClock.adjust(Duration.minutes(2));
-        cursor.state.error = "Sign in to Cursor again to read account usage.";
-        const failed = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
-        assert.strictEqual(cursorSource(failed)?.status, "partial");
-        assert.strictEqual(cursorSource(failed)?.message, cursor.state.error);
-        assert.isUndefined(cursorSource(failed)?.refreshing);
-        assert.strictEqual(totalOutputTokens(failed), 5);
-
-        const again = yield* service.readSummary(WINDOW);
-        assert.strictEqual(cursorSource(again)?.status, "partial");
-        assert.isUndefined(cursorSource(again)?.refreshing);
-        assert.strictEqual(cursor.state.calls.length, 2);
-
-        yield* TestClock.adjust(Duration.minutes(2));
-        cursor.state.accountKey = "account-b";
-        const switched = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
-        assert.strictEqual(cursorSource(switched)?.status, "missing");
-        assert.strictEqual(cursorSource(switched)?.message, cursor.state.error);
-        assert.strictEqual(totalOutputTokens(switched), 0);
-      }).pipe(
-        Effect.provide(layerService({ prefix: "usage-service-cursor-failure", home, settings })),
-      );
-    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.live("restores the Cursor account cache after a restart", () =>
@@ -877,6 +1459,37 @@ describe("UsageService", () => {
       const cursor = summary.sources.find((source) => source.fingerprint.provider === "cursor");
       assert.strictEqual(cursor?.status, "missing");
       assert.strictEqual(cursor?.action, "enableCursorKeychain");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("ignores a stale macOS Keychain login when Cursor is not installed", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const cursor = makeFakeCursor();
+      cursor.state.error = "Sign in to Cursor again to read account usage.";
+      const readCursorSource = Effect.gen(function* () {
+        const service = yield* makeWithCursor(cursor.read);
+        const summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        return cursorSource(summary);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cursor-keychain-uninstalled",
+            home,
+            settings: { ...settings, cursorKeychainUsageEnabled: true },
+            platform: "darwin",
+            environment: {},
+          }),
+        ),
+      );
+
+      assert.isUndefined(yield* readCursorSource);
+      assert.lengthOf(cursor.state.calls, 0);
+
+      yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(home, ".cursor")));
+      const installed = yield* readCursorSource;
+      assert.strictEqual(installed?.message, "Sign in to Cursor again to read account usage.");
+      assert.lengthOf(cursor.state.calls, 1);
     }).pipe(Effect.scoped),
   );
 
@@ -983,6 +1596,85 @@ describe("UsageService", () => {
           1,
         );
       }).pipe(Effect.scoped),
+  );
+
+  it.live("includes host and merged OpenCode instance histories once across list aliases", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const hostRoot = NodePath.join(home, "opencode");
+      const instanceRoot = NodePath.join(home, "opencode-work");
+      const alias = NodePath.join(home, "opencode-alias");
+      const dataHome = NodePath.join(home, "data");
+      const xdgRoot = NodePath.join(dataHome, "opencode");
+      const histories = [
+        { root: hostRoot, id: "host", output: 5 },
+        { root: instanceRoot, id: "work", output: 7 },
+        { root: xdgRoot, id: "xdg", output: 11 },
+      ];
+      yield* Effect.promise(async () => {
+        for (const { root, id, output } of histories) {
+          const directory = NodePath.join(root, "storage", "message", "session-1");
+          await NodeFSP.mkdir(directory, { recursive: true });
+          await NodeFSP.writeFile(
+            NodePath.join(directory, `${id}.json`),
+            encodeUnknownJsonString({
+              role: "assistant",
+              modelID: "example-model",
+              time: { created: Date.parse("2026-08-01T10:00:00Z") },
+              tokens: { input: 10, output },
+            }),
+          );
+        }
+        await NodeFSP.symlink(instanceRoot, alias, "junction");
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-opencode-instances",
+            home,
+            environment: { XDG_DATA_HOME: dataHome },
+            settings: {
+              ...settings,
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("opencode-work")]: {
+                  driver: ProviderDriverKind.make("opencode"),
+                  environment: [
+                    {
+                      name: "OPENCODE_DATA_DIR",
+                      value: ` ${instanceRoot}, ${alias} `,
+                      sensitive: false,
+                    },
+                  ],
+                },
+                [ProviderInstanceId.make("opencode-xdg")]: {
+                  driver: ProviderDriverKind.make("opencode"),
+                  environment: [{ name: "OPENCODE_DATA_DIR", value: "", sensitive: false }],
+                },
+              },
+            },
+          }),
+        ),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      const sources = summary.sources.filter(
+        (source) => source.fingerprint.provider === "opencode",
+      );
+      const expectedRoots = yield* Effect.promise(() =>
+        Promise.all(histories.map(({ root }) => NodeFSP.realpath(root))),
+      );
+      assert.deepStrictEqual(
+        sources.map((source) => source.fingerprint.resolvedHomePath).sort(),
+        expectedRoots.sort(),
+      );
+      assert.deepStrictEqual(
+        summary.buckets
+          .filter((bucket) => bucket.provider === "opencode")
+          .map((bucket) => bucket.totals.outputTokens)
+          .sort((a, b) => a - b),
+        [5, 7, 11],
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.live("counts aliased OpenCode and Antigravity directories once", () =>
@@ -1429,22 +2121,127 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live("counts appended usage on a rescan of a grown transcript", () =>
-    Effect.gen(function* () {
-      const { transcript, settings, home } = yield* setup;
-      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+  it.live(
+    "retains Codex reconciliation and partial coverage through persisted restart, append and repair",
+    () =>
+      Effect.gen(function* () {
+        const { home, settings } = yield* setup;
+        const dir = NodePath.join(home, "codex", "sessions");
+        const transcript = NodePath.join(dir, "rollout.jsonl");
+        const usage = (input: number, output: number) => ({
+          input_tokens: input,
+          output_tokens: output,
+          total_tokens: input + output,
+        });
+        const counted = (input: number, output: number, totalInput: number, totalOutput: number) =>
+          encodeUnknownJsonString({
+            type: "event_msg",
+            timestamp: "2026-08-01T10:00:00Z",
+            payload: {
+              type: "token_count",
+              info: {
+                last_token_usage: usage(input, output),
+                total_token_usage: usage(totalInput, totalOutput),
+              },
+            },
+          });
+        const tier = (service_tier: string) =>
+          encodeUnknownJsonString({
+            type: "event_msg",
+            payload: { type: "thread_settings_applied", thread_settings: { service_tier } },
+          });
+        const bad = counted(10, 2, 130, 28);
+        // Cross the reader's projection threshold so cumulative fields must survive selection.
+        const stale = counted(20, 5, 100, 20).replace(
+          '"payload":',
+          '"padding":' + encodeUnknownJsonString("x".repeat(9 * 1024 * 1024)) + ',"payload":',
+        );
+        let content = [
+          encodeUnknownJsonString({ type: "turn_context", payload: { model: "gpt-6-astra" } }),
+          counted(100, 20, 100, 20),
+          stale,
+          tier("priority"),
+          bad,
+        ].join("\n");
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(dir, { recursive: true });
+          await NodeFSP.writeFile(transcript, content);
+        });
+        yield* Effect.gen(function* () {
+          const verify = (
+            summary: UsageSummary,
+            output: number,
+            cost: number,
+            malformed: number,
+          ) => {
+            assert.strictEqual(totalOutputTokens(summary), output);
+            assert.strictEqual(
+              summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+              cost,
+            );
+            const source = summary.sources.find(
+              (source) => source.fingerprint.provider === "codex",
+            );
+            assert.strictEqual(source?.status, malformed === 0 ? "ok" : "partial");
+            assert.strictEqual(source?.malformedRecords, malformed);
+            if (malformed > 0) assert.match(source?.message ?? "", /1 malformed or inconsistent/);
+            else assert.notMatch(source?.message ?? "", /malformed|inconsistent/);
+          };
+          const open = vi.spyOn(NodeFSP, "open");
+          open.mockClear();
+          yield* Effect.addFinalizer(() => Effect.sync(() => open.mockRestore()));
+          const first = yield* UsageService.make;
+          const cold = yield* first.readSummary(WINDOW);
+          assert.isTrue(open.mock.calls.some(([path]) => path === transcript));
+          verify(cold, 20, 20, 1);
+          yield* first.awaitPersisted;
+          const restarted = yield* UsageService.make;
+          open.mockClear();
+          verify(yield* first.readSummary(WINDOW), 20, 20, 1);
+          verify(yield* restarted.readSummary(WINDOW), 20, 20, 1);
+          assert.isFalse(open.mock.calls.some(([path]) => path === transcript));
+          open.mockRestore();
 
-      const service = yield* UsageService.make.pipe(
-        Effect.provide(layerService({ prefix: "usage-service-grow-test", home, settings })),
-      );
+          const append = "\n" + counted(10, 2, 140, 30) + "\n";
+          content += append;
+          yield* Effect.promise(() => NodeFSP.appendFile(transcript, append));
+          verify(yield* restarted.readSummary(WINDOW), 22, 24, 1);
+          yield* restarted.awaitPersisted;
+          const resumed = yield* UsageService.make;
+          verify(yield* resumed.readSummary(WINDOW), 22, 24, 1);
+          const next = tier("ultrafast") + "\n" + counted(10, 2, 150, 32) + "\n";
+          content += next;
+          yield* Effect.promise(() => NodeFSP.appendFile(transcript, next));
+          verify(yield* resumed.readSummary(WINDOW), 24, 36, 1);
 
-      const first = yield* service.readSummary(WINDOW);
-      assert.strictEqual(totalOutputTokens(first), 5);
-
-      yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
-      const second = yield* service.readSummary(WINDOW);
-      assert.strictEqual(totalOutputTokens(second), 12);
-    }).pipe(Effect.scoped),
+          const repaired = content.replace(bad, counted(30, 8, 130, 28));
+          assert.strictEqual(Buffer.byteLength(repaired), Buffer.byteLength(content));
+          yield* Effect.promise(async () => {
+            const stat = await NodeFSP.stat(transcript);
+            await NodeFSP.writeFile(transcript, repaired);
+            await NodeFSP.utimes(transcript, stat.atime, stat.mtimeMs / 1000 + 1);
+          });
+          verify(yield* resumed.readSummary(WINDOW), 32, 52, 0);
+        }).pipe(
+          Effect.provide(
+            layerService({
+              prefix: "usage-codex-reconciliation",
+              home,
+              settings,
+              ratesDocument: {
+                "gpt-6-astra": {
+                  input_cost_per_token: 0,
+                  output_cost_per_token: 1,
+                  input_cost_per_token_priority: 0,
+                  output_cost_per_token_priority: 2,
+                  input_cost_per_token_ultrafast: 0,
+                  output_cost_per_token_ultrafast: 6,
+                },
+              },
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped),
   );
 
   it.live(
@@ -1502,9 +2299,9 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live(
-    "upgrades a v4 cache: reprices live Codex tiers, keeps deleted rollouts, leaves v4 intact",
-    () =>
+  it.live.each([4, 5, 6, 7, 8])(
+    "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts and the old file",
+    (version) =>
       Effect.gen(function* () {
         const { home, settings } = yield* setup;
         const sessions = NodePath.join(home, "codex", "sessions");
@@ -1524,7 +2321,10 @@ describe("UsageService", () => {
               timestamp: "2026-08-01T10:00:00Z",
               payload: {
                 type: "token_count",
-                info: { last_token_usage: { input_tokens: 0, output_tokens: outputTokens } },
+                info: {
+                  last_token_usage: { input_tokens: 0, output_tokens: outputTokens },
+                  total_token_usage: { input_tokens: 100, output_tokens: outputTokens + 30 },
+                },
               },
             },
           ]
@@ -1540,33 +2340,65 @@ describe("UsageService", () => {
 
         yield* Effect.gen(function* () {
           const { stateDir } = yield* ServerConfig.ServerConfig;
-          const cachePath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
-          const legacyPath = NodePath.join(stateDir, "usage-scan-cache.json");
+          const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+          const legacyPath = NodePath.join(
+            stateDir,
+            version === 4 ? "usage-scan-cache.json" : `usage-scan-cache-v${version}.json`,
+          );
           const first = yield* UsageService.make;
           yield* first.readSummary(WINDOW);
           yield* first.awaitPersisted;
 
           const legacy = yield* Effect.promise(async () => {
+            const livePath = await NodeFSP.realpath(live);
             const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
-              files: Record<string, { r: unknown[][]; cs: { speed?: unknown } }>;
+              files: Record<string, { r: unknown[][]; mr: number; cs: Record<string, unknown> }>;
             };
-            for (const file of Object.values(document.files)) {
-              file.r = file.r.map((row) => [...row.slice(0, 10), 0]);
-              delete file.cs.speed;
+            for (const [path, file] of Object.entries(document.files)) {
+              file.r = file.r.map((row) => [
+                ...row.slice(0, 6),
+                path === livePath ? 99 : row[6],
+                ...row.slice(7, 10),
+                version === 4 ? 0 : 1,
+              ]);
+              if (version === 4) delete file.cs.speed;
+              if (version < 6) {
+                delete file.cs.lastCumulativeUsage;
+                delete file.cs.malformedRecords;
+              }
+              if (version === 8 && path === livePath) {
+                file.r = [];
+                file.mr = 1;
+                file.cs.malformedRecords = 1;
+              }
             }
-            const text = encodeUnknownJsonString({ ...document, version: 4 });
-            await NodeFSP.writeFile(legacyPath, text);
+            const text = encodeUnknownJsonString({ ...document, version });
             await NodeFSP.rm(cachePath);
+            await NodeFSP.writeFile(legacyPath, text);
+            if (version === 6) {
+              for (const [name, olderVersion] of [
+                ["usage-scan-cache-v5.json", 5],
+                ["usage-scan-cache.json", 4],
+              ] as const) {
+                await NodeFSP.writeFile(
+                  NodePath.join(stateDir, name),
+                  encodeUnknownJsonString({ ...document, version: olderVersion, files: {} }),
+                );
+              }
+            }
             await NodeFSP.rm(deleted);
             return text;
           });
 
-          const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
+          const upgraded = yield* UsageService.make;
+          const summary = yield* upgraded.readSummary(WINDOW);
           assert.strictEqual(totalOutputTokens(summary), 30);
           assert.strictEqual(
             summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
-            80,
+            60 + 20 * (version === 4 ? 1 : 2),
           );
+          yield* upgraded.awaitPersisted;
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v10.json");
           assert.strictEqual(
             yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
             legacy,
@@ -1574,13 +2406,15 @@ describe("UsageService", () => {
         }).pipe(
           Effect.provide(
             layerService({
-              prefix: "usage-service-v4-upgrade-test",
+              prefix: "usage-service-cache-upgrade-test",
               home,
               settings,
               ratesDocument: {
                 "gpt-6-astra": {
                   input_cost_per_token: 0,
                   output_cost_per_token: 1,
+                  input_cost_per_token_priority: 0,
+                  output_cost_per_token_priority: 2,
                   input_cost_per_token_ultrafast: 0,
                   output_cost_per_token_ultrafast: 6,
                 },
@@ -1760,46 +2594,47 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "keeps the later read when a scan that read earlier finishes first",
-    () =>
-      Effect.gen(function* () {
-        const { transcript, settings, home } = yield* setup;
-        const dir = NodePath.dirname(transcript);
-        const gate = (name: string) => NodePath.join(dir, `${name}.jsonl`);
-        const wideProbe = gate("wide-probe");
-        const wideHold = gate("wide-hold");
-        const narrowProbe = gate("narrow-probe");
-        const narrowHold = gate("narrow-hold");
-        yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
-        yield* makeGate(wideProbe, BEFORE_NARROW_WINDOW);
-        yield* makeGate(wideHold, BEFORE_NARROW_WINDOW);
-        yield* Effect.gen(function* () {
-          const service = yield* UsageService.make;
-          const wide = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
-          yield* openGate(wideProbe);
-          yield* replaceFile(transcript, claudeLine(1, 5) + claudeLine(2, 7));
-          yield* makeGate(narrowProbe);
-          yield* makeGate(narrowHold);
-          const narrow = yield* service.readSummary(NARROW_WINDOW).pipe(Effect.forkChild);
-          yield* openGate(narrowProbe);
-          yield* openGate(wideHold);
-          yield* Fiber.join(wide);
-          yield* openGate(narrowHold);
-          yield* Fiber.join(narrow);
-
-          yield* Effect.promise(() =>
-            Promise.all(
-              [transcript, wideProbe, wideHold, narrowProbe, narrowHold].map((path) =>
-                NodeFSP.rm(path),
-              ),
-            ),
-          );
-          assert.strictEqual(totalOutputTokens(yield* service.readSummary(WINDOW)), 12);
-        }).pipe(
-          Effect.provide(layerService({ prefix: "usage-service-late-read-test", home, settings })),
+  it.live("keeps an absent directory missing when its cached files only contain diagnostics", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() =>
+        NodeFSP.rm(NodePath.join(home, "claude", "projects"), { recursive: true }),
+      );
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const mtimeMs = yield* Clock.currentTimeMillis;
+        const cache = makeScanCacheWriter()(
+          new Map([
+            [
+              transcript,
+              {
+                size: 0,
+                mtimeMs,
+                provider: "claude" as const,
+                records: [],
+                tailRecords: [],
+                malformedRecords: 2,
+                position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+              },
+            ],
+          ]),
+          {},
         );
-      }).pipe(Effect.scoped),
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(stateDir, { recursive: true });
+          await NodeFSP.writeFile(NodePath.join(stateDir, SCAN_CACHE_FILE_NAME), cache);
+        });
+        const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
+        const source = summary.sources.find((source) => source.fingerprint.provider === "claude");
+        assert.strictEqual(source?.status, "missing");
+        assert.strictEqual(source?.scannedFiles, 0);
+        assert.strictEqual(source?.malformedRecords, 2);
+      }).pipe(
+        Effect.provide(
+          layerService({ prefix: "usage-service-missing-diagnostics", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.live("reports saved usage of a removed directory only for windows it reaches", () =>
@@ -1894,119 +2729,6 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live("shares one scan between concurrent identical requests", () =>
-    Effect.gen(function* () {
-      const { transcript, settings, home } = yield* setup;
-      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
-
-      let ratesFetches = 0;
-      const service = yield* UsageService.make.pipe(
-        Effect.provide(
-          layerService({
-            prefix: "usage-service-flight-test",
-            home,
-            settings,
-            onRatesFetch: () => {
-              ratesFetches += 1;
-            },
-          }),
-        ),
-      );
-
-      const [first, second] = yield* Effect.all(
-        [service.readSummary(WINDOW), service.readSummary(WINDOW)],
-        { concurrency: 2 },
-      );
-      assert.deepStrictEqual(first, second);
-      assert.strictEqual(ratesFetches, 2);
-
-      yield* service.readSummary(WINDOW);
-      assert.strictEqual(ratesFetches, 2);
-    }).pipe(Effect.scoped),
-  );
-
-  it.live("refetches a rate table inside its TTL only when the client asks", () =>
-    Effect.gen(function* () {
-      const { transcript, settings, home } = yield* setup;
-      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
-
-      let ratesFetches = 0;
-      const service = yield* UsageService.make.pipe(
-        Effect.provide(
-          layerService({
-            prefix: "usage-service-rates-refresh-test",
-            home,
-            settings,
-            ratesDocument: {
-              "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
-            },
-            onRatesFetch: () => {
-              ratesFetches += 1;
-            },
-          }),
-        ),
-      );
-
-      const first = yield* service.readSummary(WINDOW);
-      assert.strictEqual(ratesFetches, 1);
-      assert.strictEqual(first.pricing.status, "fresh");
-
-      yield* TestClock.adjust(Duration.minutes(2));
-      yield* service.readSummary(WINDOW);
-      assert.strictEqual(ratesFetches, 1);
-
-      const [refreshed] = yield* Effect.all([service.refreshRates, service.refreshRates], {
-        concurrency: 2,
-      });
-      assert.strictEqual(ratesFetches, 2);
-      assert.strictEqual(refreshed.status, "fresh");
-      assert.strictEqual(refreshed.knownModels, 1);
-    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
-  );
-
-  it.live("preserves cached estimates when both pricing downloads fail and recovers", () =>
-    Effect.gen(function* () {
-      const { transcript, settings, home } = yield* setup;
-      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
-      let status = 200;
-      const requests: string[] = [];
-      const service = yield* UsageService.make.pipe(
-        Effect.provide(
-          layerService({
-            prefix: "usage-service-rates-failure-test",
-            home,
-            settings,
-            ratesDocument: {
-              "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
-            },
-            ratesStatus: () => status,
-            onRatesFetch: (request) => requests.push(request.url),
-          }),
-        ),
-      );
-      const first = yield* service.readSummary(WINDOW);
-      yield* TestClock.adjust(Duration.minutes(2));
-      status = 503;
-
-      const failed = yield* service.refreshRates;
-      assert.strictEqual(failed.status, "cached");
-      assert.strictEqual(failed.fetchedAt, first.pricing.fetchedAt);
-      assert.strictEqual(requests.length, 3);
-      assert.strictEqual(
-        requests[2],
-        "https://api.github.com/repos/BerriAI/litellm/contents/model_prices_and_context_window.json?ref=main",
-      );
-      const cached = yield* service.readSummary(WINDOW);
-      assert.deepStrictEqual(cached.buckets, first.buckets);
-
-      status = 200;
-      yield* TestClock.adjust(Duration.minutes(1));
-      const recovered = yield* service.refreshRates;
-      assert.strictEqual(recovered.status, "fresh");
-      assert.notStrictEqual(recovered.fetchedAt, first.pricing.fetchedAt);
-    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
-  );
-
   it.live.each(["network", "http", "invalidJson", "empty"] as const)(
     "recovers pricing through the GitHub API after a %s failure",
     (failure) =>
@@ -2066,126 +2788,6 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live("tries the GitHub API after the primary pricing request times out", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      const primaryStarted = yield* Deferred.make<void>();
-      const service = yield* UsageService.make.pipe(
-        Effect.provide(
-          layerService({
-            prefix: "usage-service-rates-timeout-test",
-            home,
-            settings,
-            ratesResponse: (request) =>
-              request.url.startsWith("https://api.github.com/")
-                ? Effect.succeed(
-                    Response.json({
-                      "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
-                    }),
-                  )
-                : Deferred.succeed(primaryStarted, undefined).pipe(Effect.andThen(Effect.never)),
-          }),
-        ),
-      );
-      const refresh = yield* service.refreshRates.pipe(Effect.forkChild);
-      yield* Deferred.await(primaryStarted);
-      yield* TestClock.adjust(Duration.seconds(10));
-      const pricing = yield* Fiber.join(refresh);
-      assert.strictEqual(pricing.status, "fresh");
-      assert.strictEqual(pricing.knownModels, 1);
-    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
-  );
-
-  it.live("keeps pricing unavailable when neither download has usable rates", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      const service = yield* UsageService.make.pipe(
-        Effect.provide(layerService({ prefix: "usage-service-rates-empty-test", home, settings })),
-      );
-      const pricing = yield* service.refreshRates;
-      assert.strictEqual(pricing.status, "unavailable");
-      assert.isNull(pricing.fetchedAt);
-    }).pipe(Effect.scoped),
-  );
-
-  it.live.each([false, true])(
-    "throttles failed pricing loads from completion with cached rates: %s",
-    (hasCachedRates) =>
-      Effect.gen(function* () {
-        const { settings, home } = yield* setup;
-        const primaryStarted = yield* Deferred.make<void>();
-        const fallbackStarted = yield* Deferred.make<void>();
-        let responding = true;
-        let requests = 0;
-        const service = yield* UsageService.make.pipe(
-          Effect.provide(
-            layerService({
-              prefix: "usage-service-rates-retry-floor-test",
-              home,
-              settings,
-              onRatesFetch: () => {
-                requests += 1;
-              },
-              ratesResponse: (request) =>
-                responding
-                  ? Effect.succeed(
-                      Response.json({
-                        "claude-fable-5": {
-                          input_cost_per_token: 1e-5,
-                          output_cost_per_token: 5e-5,
-                        },
-                      }),
-                    )
-                  : Deferred.succeed(
-                      request.url.startsWith("https://api.github.com/")
-                        ? fallbackStarted
-                        : primaryStarted,
-                      undefined,
-                    ).pipe(Effect.andThen(Effect.never)),
-            }),
-          ),
-        );
-        let fetchedAt: string | null = null;
-        if (hasCachedRates) {
-          fetchedAt = (yield* service.refreshRates).fetchedAt;
-          yield* TestClock.adjust(Duration.hours(24));
-        }
-        responding = false;
-        const refresh = yield* service.refreshRates.pipe(Effect.forkChild);
-        yield* Deferred.await(primaryStarted);
-        yield* TestClock.adjust(Duration.seconds(10));
-        yield* Deferred.await(fallbackStarted);
-        yield* TestClock.adjust(Duration.seconds(10));
-        const failed = yield* Fiber.join(refresh);
-        const expectedStatus = hasCachedRates ? "cached" : "unavailable";
-        assert.strictEqual(failed.status, expectedStatus);
-        assert.strictEqual(failed.fetchedAt, fetchedAt);
-        const requestsAfterFailure = requests;
-        assert.strictEqual(requestsAfterFailure, hasCachedRates ? 3 : 2);
-
-        responding = true;
-        const [immediate, summary] = yield* Effect.all(
-          [service.refreshRates, service.readSummary(WINDOW)],
-          { concurrency: 2 },
-        );
-        assert.strictEqual(immediate.status, expectedStatus);
-        assert.strictEqual(summary.pricing.status, expectedStatus);
-        assert.strictEqual(requests, requestsAfterFailure);
-        yield* TestClock.adjust(Duration.seconds(59));
-        const coolingDown = yield* service.refreshRates;
-        assert.strictEqual(coolingDown.status, expectedStatus);
-        assert.strictEqual(coolingDown.fetchedAt, fetchedAt);
-        assert.strictEqual(requests, requestsAfterFailure);
-
-        yield* TestClock.adjust(Duration.seconds(1));
-        const recovered = yield* service.refreshRates;
-        assert.strictEqual(recovered.status, "fresh");
-        assert.strictEqual(recovered.knownModels, 1);
-        assert.notStrictEqual(recovered.fetchedAt, fetchedAt);
-        assert.strictEqual(requests, requestsAfterFailure + 1);
-      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
-  );
-
   it.live("does not orphan an in-flight scan when its first caller is interrupted", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
@@ -2194,6 +2796,7 @@ describe("UsageService", () => {
       );
 
       let orphanedAt: number | undefined;
+      // oxlint-disable-next-line t3code/no-polling-loop-in-tests -- Fixed-count scheduler interruption matrix; each iteration exercises a different interruption point.
       for (let interruptAt = 1; interruptAt <= 31; interruptAt += 1) {
         const tasks: Array<() => void> = [];
         const dispatcher: Scheduler.SchedulerDispatcher = {

@@ -1,5 +1,4 @@
-import { memo, useEffect, useEffectEvent, useRef, useState } from "react";
-import { useStableCallback } from "../../hooks/useStableCallback";
+import { memo, useEffect, useRef, useState } from "react";
 import { isThemeColor, themeColorToHex, type ThemeColorRole } from "../../themePalette";
 import { cn } from "../../lib/utils";
 import { hexToHsv, hsvToHex, type HsvColor } from "../../lib/color";
@@ -67,13 +66,46 @@ function themeRgbValue(hex: string) {
   return themeHexToRgb(hex).join(", ");
 }
 
+// Local state updates immediately for a smooth thumb; the parent commit
+// (which can regenerate a whole guided palette) is batched to one call per
+// animation frame. The popover flushes it on close, the drag surfaces on
+// release, and the picker on unmount, so the final frame is never lost.
+function createFrameCommitter() {
+  let pending: { readonly color: string; readonly commit: (color: string) => void } | null = null;
+  let frame: number | null = null;
+  const flush = () => {
+    if (frame !== null) {
+      cancelAnimationFrame(frame);
+      frame = null;
+    }
+    const next = pending;
+    pending = null;
+    next?.commit(next.color);
+  };
+  return {
+    schedule(color: string, commit: (color: string) => void) {
+      pending = { color, commit };
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        flush();
+      });
+    },
+    flush,
+  };
+}
+
+type FrameCommitter = ReturnType<typeof createFrameCommitter>;
+
 function ThemeColorPickerPanel({
   label,
   value,
+  committer,
   onChange,
 }: {
   label: string;
   value: string;
+  committer: FrameCommitter;
   onChange: (value: string) => void;
 }) {
   const normalizedValue = normalizeThemePickerColor(value);
@@ -88,55 +120,22 @@ function ThemeColorPickerPanel({
 
   if (syncedValue !== normalizedValue) {
     setSyncedValue(normalizedValue);
-    // While a text field is focused, the incoming value may be the guided
-    // editor's readability-adjusted echo of what is being typed; rewriting the
-    // draft would fight the keystrokes. The swatch still tracks via hsv.
+    // Ignore readability-adjusted echoes while typing so drafts keep keystrokes; hsv still updates the
+    // swatch.
     if (!isEditingText) {
       setHexDraft(normalizedValue);
       setRgbDraft(themeRgbValue(normalizedValue));
     }
-    // Keep the current hue/saturation when the incoming value is just our own
-    // change echoed back; hex → HSV is lossy for greys, white, and black.
+    // Preserve hue/saturation for echoed changes; hex-to-HSV loses them for greys, white, and black.
     if (currentColor !== normalizedValue) setHsv(hexToHsv(normalizedValue));
   }
-
-  // Local state updates immediately for a smooth thumb; the parent commit
-  // (which can regenerate a whole guided palette) is batched to one call per
-  // animation frame.
-  const commitColor = useStableCallback(onChange);
-  const pendingCommitRef = useRef<string | null>(null);
-  const commitFrameRef = useRef<number | null>(null);
-  // The final drag frame must not be lost when the popover closes or the
-  // pointer lifts before the animation frame fires.
-  const flushPendingCommit = () => {
-    if (commitFrameRef.current !== null) {
-      cancelAnimationFrame(commitFrameRef.current);
-      commitFrameRef.current = null;
-    }
-    const pending = pendingCommitRef.current;
-    pendingCommitRef.current = null;
-    if (pending !== null) commitColor(pending);
-  };
-  // Flush only on unmount; rerunning this cleanup mid-drag would commit early.
-  const flushOnUnmount = useEffectEvent(() => flushPendingCommit());
-  useEffect(() => () => flushOnUnmount(), []);
-  const scheduleCommit = (color: string) => {
-    pendingCommitRef.current = color;
-    if (commitFrameRef.current !== null) return;
-    commitFrameRef.current = requestAnimationFrame(() => {
-      commitFrameRef.current = null;
-      const pending = pendingCommitRef.current;
-      pendingCommitRef.current = null;
-      if (pending !== null) commitColor(pending);
-    });
-  };
 
   const commitHsv = (nextHsv: HsvColor) => {
     setHsv(nextHsv);
     const nextColor = hsvToHex(nextHsv.h, nextHsv.s, nextHsv.v);
     setHexDraft(nextColor);
     setRgbDraft(themeRgbValue(nextColor));
-    scheduleCommit(nextColor + alphaSuffix);
+    committer.schedule(nextColor + alphaSuffix, onChange);
   };
 
   const handleHexChange = (nextValue: string) => {
@@ -158,7 +157,7 @@ function ThemeColorPickerPanel({
   };
 
   return (
-    <div className="w-72 bg-popover">
+    <div className="w-72">
       <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
         <div className="min-w-0">
           <p className="truncate text-xs font-semibold text-foreground">{label}</p>
@@ -174,13 +173,13 @@ function ThemeColorPickerPanel({
           label={label}
           value={hsv}
           onChange={commitHsv}
-          onInteractionEnd={flushPendingCommit}
+          onInteractionEnd={committer.flush}
         />
         <ColorHueSlider
           label={`${label} hue`}
           value={hsv.h}
           onChange={(h) => commitHsv({ ...hsv, h })}
-          onInteractionEnd={flushPendingCommit}
+          onInteractionEnd={committer.flush}
         />
         <div className="grid grid-cols-[1fr_1.2fr] gap-2">
           <label className="grid min-w-0 gap-1">
@@ -241,15 +240,36 @@ function ThemeColorPicker({
   label,
   value,
   onChange,
+  onEditStart,
+  onEditCancel,
   onInteract,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  onEditStart?: () => void;
+  onEditCancel?: () => void;
   onInteract?: () => void;
 }) {
+  const [committer] = useState(createFrameCommitter);
+  // Escape reverts the edit, so commits after it (the pending frame flushed on close, or a drag
+  // still firing through the exit animation) are dropped instead of landing on the restored colors.
+  const cancelledRef = useRef(false);
+  // Unmounting with the popover open (the editor closes mid-drag) never fires onOpenChange.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- flushes the frame committer on unmount, since an open popover never fires onOpenChange
+  useEffect(() => committer.flush, [committer]);
   return (
-    <Popover>
+    <Popover
+      onOpenChange={(open, eventDetails) => {
+        cancelledRef.current = !open && eventDetails.reason === "escape-key";
+        if (open) {
+          onEditStart?.();
+          return;
+        }
+        committer.flush();
+        if (cancelledRef.current) onEditCancel?.();
+      }}
+    >
       <Tooltip>
         <TooltipTrigger
           render={
@@ -280,7 +300,14 @@ function ThemeColorPicker({
         side="bottom"
         sideOffset={10}
       >
-        <ThemeColorPickerPanel label={label} onChange={onChange} value={value} />
+        <ThemeColorPickerPanel
+          committer={committer}
+          label={label}
+          onChange={(nextValue) => {
+            if (!cancelledRef.current) onChange(nextValue);
+          }}
+          value={value}
+        />
       </PopoverPopup>
     </Popover>
   );
@@ -290,6 +317,8 @@ export const ThemeColorField = memo(function ThemeColorField({
   role,
   value,
   onChange,
+  onEditStart,
+  onEditCancel,
   onSelect,
   onToggleSelected,
   selected = false,
@@ -298,6 +327,8 @@ export const ThemeColorField = memo(function ThemeColorField({
   role: ThemeColorRole;
   value: string;
   onChange: (role: ThemeColorRole, value: string) => void;
+  onEditStart?: (role: ThemeColorRole) => void;
+  onEditCancel?: (role: ThemeColorRole) => void;
   onSelect?: (role: ThemeColorRole) => void;
   onToggleSelected?: (role: ThemeColorRole) => void;
   selected?: boolean;
@@ -338,6 +369,8 @@ export const ThemeColorField = memo(function ThemeColorField({
         <ThemeColorPicker
           label={label}
           onChange={(nextValue) => onChange(role, nextValue)}
+          onEditCancel={() => onEditCancel?.(role)}
+          onEditStart={() => onEditStart?.(role)}
           onInteract={() => onSelect?.(role)}
           value={swatchValue}
         />

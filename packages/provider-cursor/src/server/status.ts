@@ -34,44 +34,42 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 
 const CURSOR_SDK_CATALOG_TIMEOUT_MS = 15_000;
 
-export function buildInitialCursorProviderSnapshot(
-  cursorSettings: CursorSettings,
-): Effect.Effect<ServerProviderDraft> {
-  return Effect.gen(function* () {
-    const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
-    const models = getCursorFallbackModels(cursorSettings);
+export const buildInitialCursorProviderSnapshot = Effect.fn(
+  "CursorProviderStatus.buildInitialCursorProviderSnapshot",
+)(function* (cursorSettings: CursorSettings): Effect.fn.Return<ServerProviderDraft> {
+  const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
+  const models = getCursorFallbackModels(cursorSettings);
 
-    if (!cursorSettings.enabled) {
-      return buildServerProvider({
-        presentation: CURSOR_PRESENTATION,
-        enabled: false,
-        checkedAt,
-        models,
-        probe: {
-          installed: false,
-          version: null,
-          status: "warning",
-          auth: { status: "unknown" },
-          message: "Cursor is disabled in T3 Code settings.",
-        },
-      });
-    }
-
+  if (!cursorSettings.enabled) {
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
-      enabled: true,
+      enabled: false,
       checkedAt,
       models,
       probe: {
-        installed: true,
+        installed: false,
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Checking Cursor SDK availability...",
+        message: "Cursor is disabled in T3 Code settings.",
       },
     });
+  }
+
+  return buildServerProvider({
+    presentation: CURSOR_PRESENTATION,
+    enabled: true,
+    checkedAt,
+    models,
+    probe: {
+      installed: true,
+      version: null,
+      status: "warning",
+      auth: { status: "unknown" },
+      message: "Checking Cursor SDK availability...",
+    },
   });
-}
+});
 
 function getCursorFallbackModels(
   cursorSettings: Pick<CursorSettings, "customModels">,
@@ -184,9 +182,9 @@ export function buildCursorDiscoveredModelsFromSdk(
   });
 }
 
-function cursorSdkAuth(user: SDKUser, type: "api-key" | "browser"): ServerProviderAuth {
-  const email = user.userEmail?.trim();
-  const apiKeyName = user.apiKeyName.trim();
+function cursorSdkAuth(user: SDKUser | undefined, type: "api-key" | "browser"): ServerProviderAuth {
+  const email = user?.userEmail?.trim();
+  const apiKeyName = user?.apiKeyName.trim();
   return {
     status: "authenticated",
     type,
@@ -296,7 +294,19 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
     yield* Effect.logWarning("Cursor SDK catalog probe failed", {
       cause: catalogResult.failure.cause,
     });
-    const authenticationFailure = catalogResult.failure.authenticationFailure;
+    const failure = catalogResult.failure;
+    let message = "Cursor SDK catalog request failed. Check server logs for details.";
+    if (failure.authenticationFailure) {
+      message =
+        authenticationType === "browser"
+          ? "Cursor sign-in expired or was rejected. Sign in again in provider settings."
+          : "Cursor SDK authentication failed. Check CURSOR_API_KEY.";
+    } else if (failure.planRequired) {
+      message =
+        authenticationType === "browser"
+          ? "Cursor needs a paid plan to run in T3 Code. Upgrade this account or sign in with a different one."
+          : "Cursor needs a paid plan to run in T3 Code. Upgrade the account that owns CURSOR_API_KEY or use a key from a paid account.";
+    }
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
       enabled: cursorSettings.enabled,
@@ -306,12 +316,8 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
         installed: true,
         version: null,
         status: "error",
-        auth: { status: authenticationFailure ? "unauthenticated" : "unknown" },
-        message: authenticationFailure
-          ? authenticationType === "browser"
-            ? "Cursor sign-in expired or was rejected. Sign in again in provider settings."
-            : "Cursor SDK authentication failed. Check CURSOR_API_KEY."
-          : "Cursor SDK catalog request failed. Check server logs for details.",
+        auth: { status: failure.authenticationFailure ? "unauthenticated" : "unknown" },
+        message,
       },
     });
   }

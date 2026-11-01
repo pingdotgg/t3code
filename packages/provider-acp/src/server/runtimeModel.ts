@@ -50,6 +50,8 @@ export interface AcpAgentTerminalState {
   readonly command?: string;
   readonly cwd?: string;
   readonly output: string;
+  /** UTF-8 byte length of `output`, so appending a chunk never re-encodes the buffer. */
+  readonly outputBytes: number;
   readonly exitStatus?: EffectAcpSchema.TerminalExitStatus;
   readonly pendingOutputBytes?: Uint8Array;
 }
@@ -60,6 +62,7 @@ type AcpAgentTerminalUpdate = Extract<
 >;
 
 const MAX_ACP_TERMINAL_OUTPUT_BYTES = 16 * 1024 * 1024;
+const ACP_TERMINAL_OUTPUT_TRIM_BYTES = 1024 * 1024;
 const MAX_ACP_TERMINAL_FRAME_BYTES = MAX_ACP_TERMINAL_OUTPUT_BYTES;
 
 function isBase64DataCode(code: number): boolean {
@@ -126,26 +129,38 @@ function decodeTerminalOutputChunk(
     : { text, pendingOutputBytes: Uint8Array.from(bytes.subarray(completeEnd)) };
 }
 
-function truncateTerminalOutput(output: string): string {
-  const bytes = Buffer.from(output, "utf8");
-  if (bytes.length <= MAX_ACP_TERMINAL_OUTPUT_BYTES) return output;
-  let start = bytes.length - MAX_ACP_TERMINAL_OUTPUT_BYTES;
-  while (start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start += 1;
-  return bytes.subarray(start).toString("utf8");
+// Drop an extra batch at UTF-8 boundaries so flattening the retained string is amortized.
+function appendTerminalOutput(
+  output: string,
+  outputBytes: number,
+  text: string,
+): Pick<AcpAgentTerminalState, "output" | "outputBytes"> {
+  const combined = `${output}${text}`;
+  const combinedBytes = outputBytes + Buffer.byteLength(text, "utf8");
+  const excess = combinedBytes - MAX_ACP_TERMINAL_OUTPUT_BYTES;
+  if (excess <= 0) return { output: combined, outputBytes: combinedBytes };
+  let start = 0;
+  let dropped = 0;
+  while (dropped < excess + ACP_TERMINAL_OUTPUT_TRIM_BYTES) {
+    const codePoint = combined.codePointAt(start)!;
+    dropped += codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
+    start += codePoint < 0x10000 ? 1 : 2;
+  }
+  return { output: combined.slice(start), outputBytes: combinedBytes - dropped };
 }
 
 export function applyAcpAgentTerminalUpdate(
   previous: AcpAgentTerminalState | undefined,
   update: AcpAgentTerminalUpdate,
 ): AcpAgentTerminalState {
-  const current = previous ?? { output: "" };
+  const current = previous ?? { output: "", outputBytes: 0 };
   if (update.sessionUpdate === "terminal_output_chunk") {
     const decoded = decodeTerminalOutputChunk(current.pendingOutputBytes, update.data);
     if (decoded === undefined) return current;
     const { pendingOutputBytes: _pendingOutputBytes, ...withoutPendingOutputBytes } = current;
     return {
       ...withoutPendingOutputBytes,
-      output: truncateTerminalOutput(`${current.output}${decoded.text}`),
+      ...appendTerminalOutput(current.output, current.outputBytes, decoded.text),
       ...(decoded.pendingOutputBytes === undefined
         ? {}
         : { pendingOutputBytes: decoded.pendingOutputBytes }),
@@ -173,7 +188,7 @@ export function applyAcpAgentTerminalUpdate(
       const { pendingOutputBytes: _pendingOutputBytes, ...withoutPendingOutputBytes } = next;
       next = {
         ...withoutPendingOutputBytes,
-        output: truncateTerminalOutput(decoded.text),
+        ...appendTerminalOutput("", 0, decoded.text),
         ...(decoded.pendingOutputBytes === undefined
           ? {}
           : { pendingOutputBytes: decoded.pendingOutputBytes }),
@@ -191,7 +206,7 @@ export function applyAcpAgentTerminalUpdate(
     const { pendingOutputBytes: _pendingOutputBytes, ...withoutPendingOutputBytes } = next;
     next = {
       ...withoutPendingOutputBytes,
-      output: truncateTerminalOutput(`${next.output}${pendingText}`),
+      ...appendTerminalOutput(next.output, next.outputBytes, pendingText),
       exitStatus: update.exitStatus,
     };
   }
@@ -205,7 +220,7 @@ export type AcpPlanUpdate =
       readonly explanation?: string | null;
       readonly plan: ReadonlyArray<{
         readonly step: string;
-        readonly status: "pending" | "inProgress" | "completed";
+        readonly status: "pending" | "inProgress" | "completed" | "cancelled";
       }>;
     }
   | { readonly nativePlanId: string; readonly kind: "markdown"; readonly markdown: string }
@@ -272,6 +287,13 @@ export type AcpParsedSessionEvent =
   | {
       readonly _tag: "SessionInfoUpdated";
       readonly metadata: OrchestrationV2ProviderThreadNativeMetadata;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "NoticeReceived";
+      readonly severity: string;
+      readonly title: string;
+      readonly description?: string;
       readonly rawPayload: unknown;
     }
   | {
@@ -379,15 +401,23 @@ type AcpToolCallUpdate = Extract<
   { readonly sessionUpdate: "tool_call" | "tool_call_update" }
 >;
 
+type AcpSelectConfigOption = Extract<
+  EffectAcpSchema.SessionConfigOption,
+  { readonly type: "select" }
+>;
+
+// ACP resolves options in the same category by array order.
+export function findModelConfigOption(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+): AcpSelectConfigOption | undefined {
+  return configOptions?.find(
+    (option): option is AcpSelectConfigOption =>
+      option.category === "model" && option.type === "select" && option.id.trim().length > 0,
+  );
+}
+
 export function extractModelConfigId(sessionResponse: AcpSessionSetupResponse): string | undefined {
-  const configOptions = sessionResponse.configOptions;
-  if (!configOptions) return undefined;
-  for (const opt of configOptions) {
-    if (opt.category === "model" && opt.id.trim().length > 0) {
-      return opt.id.trim();
-    }
-  }
-  return undefined;
+  return findModelConfigOption(sessionResponse.configOptions)?.id.trim();
 }
 
 export function findSessionConfigOption(
@@ -463,10 +493,14 @@ export function parseSessionModeState(
   };
 }
 
-function normalizePlanStepStatus(raw: unknown): "pending" | "inProgress" | "completed" {
+function normalizePlanStepStatus(
+  raw: unknown,
+): "pending" | "inProgress" | "completed" | "cancelled" {
   switch (raw) {
     case "completed":
       return "completed";
+    case "cancelled":
+      return "cancelled";
     case "in_progress":
     case "inProgress":
       return "inProgress";
@@ -488,6 +522,7 @@ function normalizeToolCallStatus(
     case "completed":
       return "completed";
     case "failed":
+    case "cancelled":
       return "failed";
     default:
       return fallback;
@@ -540,8 +575,7 @@ function extractToolCallCommand(
       return executable;
     }
   }
-  // Titles like `Read \`src/a.ts\`` are not commands. Only execute tools
-  // fall back to a backtick or bare title.
+  // Only execute tools may treat titles as commands.
   if (kind !== "execute") {
     return undefined;
   }
@@ -610,11 +644,7 @@ function locationsFromToolCallInput(input: {
   return locations.length > 0 ? locations : undefined;
 }
 
-// Some ACP agents (observed with Grok's CLI) resend the ENTIRE accumulated tool-call
-// output on every `tool_call_update` notification instead of a delta, so a redrawing
-// terminal progress bar can balloon a single tool call to hundreds of KB per update at
-// several updates per second. Cap what we retain/emit to a bounded tail so one busy tool
-// call cannot flood runtime event ingestion.
+// Agents resend cumulative output; bound it to avoid flooding event ingestion.
 const TOOL_CALL_CONTENT_MAX_CHARS = 8_000;
 const TOOL_CALL_CONTENT_TRUNCATION_MARKER = "[Earlier output truncated]\n\n";
 
@@ -628,10 +658,7 @@ function boundToolCallOutputText(text: string): string {
 
 const RAW_OUTPUT_TEXT_FIELDS = ["content", "stdout", "stderr", "output"] as const;
 
-// `rawOutput` is provider-defined and, for terminal-shaped tools, mirrors the same
-// cumulative text-growth problem as `content` (see the comment above). Bound its known
-// text-bearing fields the same way so a chatty provider cannot smuggle unbounded output
-// through this field instead.
+// rawOutput can duplicate cumulative output and bypass content limits.
 function boundToolCallRawOutput(rawOutput: unknown): unknown {
   if (!isRecord(rawOutput)) {
     return rawOutput;
@@ -766,7 +793,7 @@ function normalizeToolKind(kind: unknown): string | undefined {
   return typeof kind === "string" && kind.trim().length > 0 ? kind.trim() : undefined;
 }
 
-export function canonicalItemTypeFromAcpToolKind(kind: string | undefined): ToolLifecycleItemType {
+function canonicalItemTypeFromAcpToolKind(kind: string | undefined): ToolLifecycleItemType {
   switch (kind) {
     case "read":
       return "dynamic_tool_call";
@@ -787,6 +814,7 @@ export function canonicalItemTypeFromAcpToolKind(kind: string | undefined): Tool
 function makeToolCallState(
   input: {
     readonly toolCallId: string;
+    readonly name?: string | null | undefined;
     readonly title?: string | null | undefined;
     readonly kind?: EffectAcpSchema.ToolKind | null | undefined;
     readonly status?: EffectAcpSchema.ToolCallStatus | null | undefined;
@@ -814,13 +842,12 @@ function makeToolCallState(
       ? title
       : undefined;
   const data: Record<string, unknown> = { toolCallId };
+  if (input.name != null) data.name = input.name;
   if (kind) {
     data.kind = kind;
   }
   if (title) {
-    // The agent's verbatim title. Presentation summarizes `title` on the
-    // state (e.g. a command line becomes "Ran command"), so identity checks
-    // such as MCP-fallback detection need the raw value preserved here.
+    // Identity checks need the verbatim title; presentation summarizes the state title.
     data.title = title;
   }
   if (command) {
@@ -830,8 +857,7 @@ function makeToolCallState(
     data.rawInput = input.rawInput;
   }
   if (isRecord(input._meta)) {
-    // Some agents identify MCP calls only here (goose `goose.toolCall`,
-    // qwen `toolName`/`serverId`, claude-acp `claudeCode.toolName`).
+    // goose, qwen, and claude-acp may identify MCP calls only in metadata.
     data.meta = input._meta;
   }
   if (input.rawOutput !== undefined) {
@@ -884,6 +910,7 @@ function parseTypedToolCallState(
   return makeToolCallState(
     {
       toolCallId: event.toolCallId,
+      name: event.name,
       title: event.title,
       kind: event.kind,
       status: event.status,
@@ -919,9 +946,7 @@ export function mergeToolCallState(
   };
 }
 
-// Even with bounded content (see TOOL_CALL_CONTENT_MAX_CHARS above), a redrawing terminal
-// can still shift its bounded tail window on nearly every notification, which would emit
-// a runtime event per redraw.
+// Bounded terminal tails still shift on each redraw; coalesce those updates.
 const TOOL_CALL_UPDATE_MIN_DETAIL_GROWTH_CHARS = 256;
 const TOOL_CALL_UPDATE_COALESCE_LIMIT = 10;
 
@@ -943,9 +968,7 @@ function toolCallOutputUnchanged(previous: AcpToolCallState, next: AcpToolCallSt
   );
 }
 
-// Command tools keep `detail` equal to the command, so live stdout lives on
-// `data.content` / `data.rawOutput`. Measure that too, otherwise coalescing never
-// sees growth and in-progress output is held until completed/failed.
+// Command detail is static; measure stdout in content/rawOutput to detect progress.
 export function toolCallProgressLength(state: AcpToolCallState): number {
   let contentChars = 0;
   const content = state.data.content;
@@ -1038,45 +1061,27 @@ function acpMcpFallbackInput(value: string | undefined): Record<string, unknown>
       const unwrapped = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
       if (isRecord(unwrapped)) return unwrapped;
     } catch {
-      // ACP agents choose their own shell quoting. An unrecognized form keeps
-      // the MCP identity but leaves the input empty instead of misreporting it.
+      // Unknown shell quoting retains MCP identity but omits unparseable input.
     }
   }
   return undefined;
 }
 
-/**
- * T3 always injects its server as "t3-code", and matches are additionally gated on the known T3
- * tool inventory, so the separator match can stay loose.
- */
+// Known T3 inventory gates matches, so server-name separators can stay loose.
 const T3_MCP_TITLE_CALL =
   /^(?:mcp[-_]{1,2})?t3[-_ ]?code[-_.:/ ]{1,3}(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*)(?::.*)?$/i;
 
-/**
- * Gemini CLI titles injected MCP calls "<tool> (<server> MCP Server)" and
- * qwen-code appends ": <args json>" to the same template; Auggie namespaces
- * tool-first as "<tool>_t3-code".
- */
 const T3_MCP_TITLE_SUFFIX_CALL =
   /^(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*?)(?: \(t3[-_ ]?code MCP Server\)(?::|$)|[-_.]t3[-_ ]?code$)/i;
 
 /**
- * glm-acp-agent and Kimi CLI register injected MCP tools under their bare
- * names; Kimi additionally appends ": <raw args json>". The T3 inventory gate
- * alone is not enough: an agent can have its own tool of the same name (Hermes
- * has a built-in `delegate_task`) and title it "<tool>: <description>", so only
- * a bare name or a JSON object after the colon counts. The match stops at the
- * opening brace because Kimi retitles on every streamed args chunk, so the
- * JSON is often still incomplete.
+ * glm and Kimi use bare names; Antigravity uses "Running <tool>". Kimi appends
+ * streamed JSON arguments. Require a name or JSON opening brace so built-ins
+ * titled "<tool>: <description>" cannot impersonate an inventory entry.
  */
-const T3_MCP_BARE_TITLE_CALL = /^(?<tool>[A-Za-z0-9_]+)(?::\s*\{|$)/;
+const T3_MCP_BARE_TITLE_CALL = /^(?:Running )?(?<tool>[A-Za-z0-9_]+)(?::\s*\{|$)/;
 
-/**
- * ACP has no typed MCP tool-call item, so agents surface MCP calls in agent-specific shapes:
- * codex-acp tags execute calls with `rawInput.server`/`rawInput.tool`, while agents on T3's
- * terminal fallback run the `acp-mcp-call <tool>` CLI through their command or an embedded client
- * terminal.
- */
+/** ACP lacks typed MCP calls; recognize provider metadata and terminal fallback commands. */
 export function extractMcpToolCallIdentity(
   toolCall: AcpToolCallState,
   options?: {
@@ -1116,9 +1121,7 @@ export function extractMcpToolCallIdentity(
   const assertsForeignOrigin =
     (metaServerId.length > 0 && !/^t3[-_ ]?code$/i.test(metaServerId)) ||
     (gooseExtension.length > 0 && !/^t3[-_ ]?code$/i.test(gooseExtension));
-  // qwen's serverId marks a real MCP server, but goose reports its built-in
-  // extensions (developer__shell, edits) the same way as user MCP servers, so
-  // goose stays unclassified and keeps its command and file-change projections.
+  // goose metadata also tags built-ins; retain their command/file projections instead of classifying as MCP.
   if (assertsForeignOrigin) {
     if (metaServerId.length === 0 || metaToolName.length === 0) return undefined;
     const prefix = [`mcp__${metaServerId}__`, `mcp::${metaServerId}::`].find((prefix) =>
@@ -1163,11 +1166,7 @@ export function extractMcpToolCallIdentity(
   return undefined;
 }
 
-/**
- * Terminal ids embedded in a raw tool_call update, captured before
- * {@link resolveEmbeddedTerminalContent} rewrites them into plain text, so the
- * projection can still resolve the terminal's command line.
- */
+/** Capture IDs before resolveEmbeddedTerminalContent replaces them with text, to recover commands later. */
 export function embeddedTerminalIdsFromSessionUpdate(
   notification: EffectAcpSchema.SessionNotification,
 ): { readonly toolCallId: string; readonly terminalIds: ReadonlyArray<string> } | undefined {
@@ -1179,6 +1178,29 @@ export function embeddedTerminalIdsFromSessionUpdate(
     .filter((entry) => entry.type === "terminal")
     .map((entry) => entry.terminalId);
   return terminalIds.length === 0 ? undefined : { toolCallId: update.toolCallId, terminalIds };
+}
+
+/** ACP lets a permission request name its tool call by ID only; omitted (not null) fields come from the tracked call. */
+export function withTrackedPermissionToolCall(
+  params: EffectAcpSchema.RequestPermissionRequest,
+  tracked: AcpToolCallState | undefined,
+): EffectAcpSchema.RequestPermissionRequest {
+  if (tracked === undefined) return params;
+  const { title, kind, rawInput } = params.toolCall;
+  return {
+    ...params,
+    toolCall: {
+      ...params.toolCall,
+      ...(title === undefined && typeof tracked.data.title === "string"
+        ? { title: tracked.data.title }
+        : {}),
+      // Unrecognised kinds map to command approvals, so only a tracked execute kind may grant execution.
+      ...(kind === undefined && tracked.kind === "execute" ? { kind: "execute" as const } : {}),
+      ...(rawInput === undefined && tracked.data.rawInput !== undefined
+        ? { rawInput: tracked.data.rawInput }
+        : {}),
+    },
+  };
 }
 
 export function parsePermissionRequest(
@@ -1260,27 +1282,24 @@ export interface SessionLoadGate {
   readonly candidateConfigOptions?: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
 }
 
-export const waitForSessionLoadReplayIdle = (input: {
+export const waitForSessionLoadReplayIdle = Effect.fn(
+  "AcpRuntimeModel.waitForSessionLoadReplayIdle",
+)(function* (input: {
   readonly gateRef: Ref.Ref<Option.Option<SessionLoadGate>>;
-}): Effect.Effect<EffectAcpSchema.LoadSessionResponse, never> =>
-  Effect.gen(function* () {
-    const pollInterval = Duration.millis(25);
-    while (true) {
-      const gate = yield* Ref.get(input.gateRef);
-      if (
-        Option.isSome(gate) &&
-        gate.value.active &&
-        gate.value.lastActivityAtMillis !== undefined
-      ) {
-        const idleGapMillis = Duration.toMillis(gate.value.idleGap);
-        const nowMillis = yield* Clock.currentTimeMillis;
-        if (nowMillis - gate.value.lastActivityAtMillis >= idleGapMillis) {
-          return syntheticLoadSessionResponseFromInitialize(gate.value.initializeResult);
-        }
+}): Effect.fn.Return<EffectAcpSchema.LoadSessionResponse, never> {
+  const pollInterval = Duration.millis(25);
+  while (true) {
+    const gate = yield* Ref.get(input.gateRef);
+    if (Option.isSome(gate) && gate.value.active && gate.value.lastActivityAtMillis !== undefined) {
+      const idleGapMillis = Duration.toMillis(gate.value.idleGap);
+      const nowMillis = yield* Clock.currentTimeMillis;
+      if (nowMillis - gate.value.lastActivityAtMillis >= idleGapMillis) {
+        return syntheticLoadSessionResponseFromInitialize(gate.value.initializeResult);
       }
-      yield* Effect.sleep(pollInterval);
     }
-  });
+    yield* Effect.sleep(pollInterval);
+  }
+});
 
 export function sessionModelStateFromInitialize(
   initializeResult: EffectAcpSchema.InitializeResponse,
@@ -1306,11 +1325,7 @@ export function syntheticLoadSessionResponseFromInitialize(
   };
 }
 
-// The parsed AcpToolCallState already carries bounded content (see makeToolCallState /
-// extractTextContentFromToolCallContent above), but the raw JSON-RPC notification is also
-// threaded through as `rawPayload` for logging/debugging and ends up persisted on the
-// runtime event. Substitute the same bounded `content`/`rawOutput` there so an oversized
-// cumulative update cannot smuggle the unbounded buffer back in through the raw payload.
+// Persisted rawPayload must not bypass cumulative output limits.
 function boundToolCallRawPayload(
   params: EffectAcpSchema.SessionNotification,
   update: AcpToolCallUpdate,
@@ -1378,17 +1393,15 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
         step: entry.content.trim().length > 0 ? entry.content.trim() : `Step ${index + 1}`,
         status: normalizePlanStepStatus(entry.status),
       }));
-      if (plan.length > 0) {
-        events.push({
-          _tag: "PlanUpdated",
-          payload: {
-            nativePlanId: "legacy",
-            kind: "items",
-            plan,
-          },
-          rawPayload: params,
-        });
-      }
+      events.push({
+        _tag: "PlanUpdated",
+        payload: {
+          nativePlanId: "legacy",
+          kind: "items",
+          plan,
+        },
+        rawPayload: params,
+      });
       break;
     }
     case "plan_update": {
@@ -1540,16 +1553,6 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       }
       break;
     }
-    case "state_update": {
-      if (upd.state === "idle" && upd.usage !== undefined && upd.usage !== null) {
-        events.push({
-          _tag: "UsageUpdated",
-          usage: { usedTokens: upd.usage.totalTokens },
-          rawPayload: params,
-        });
-      }
-      break;
-    }
     case "usage_update": {
       const currency = upd.cost?.currency.trim().slice(0, 32);
       events.push({
@@ -1572,6 +1575,19 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
           ...(upd.title === null ? { title: null } : title ? { title } : {}),
           ...(upd.updatedAt === null ? { updatedAt: null } : updatedAt ? { updatedAt } : {}),
         },
+        rawPayload: params,
+      });
+      break;
+    }
+    case "notice": {
+      const title = upd.title.trim().slice(0, 1_024);
+      const description = upd.description?.trim().slice(0, 4_096);
+      if (title.length === 0) break;
+      events.push({
+        _tag: "NoticeReceived",
+        severity: boundedContentMetadata(upd.severity, 64) || "info",
+        title,
+        ...(description ? { description } : {}),
         rawPayload: params,
       });
       break;
