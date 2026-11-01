@@ -178,15 +178,21 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     const files = markdownWithFileEmbeds(content, fileEmbedLabel);
     return { ...files, markdown: markdownWithTableBreaks(files.markdown) };
   }, [props.markdown, fileEmbedLabel]);
-  const [parsedLinkUrls, setParsedLinkUrls] = useState<ReadonlyArray<string>>([]);
+  const [parsedLinks, setParsedLinks] = useState<ReadonlyArray<MarkdownLinkOccurrence>>([]);
   const onLinksChange = (links: MarkdownLinkOccurrence[]) => {
-    const urls = [...new Set(links.map((link) => link.url))];
-    setParsedLinkUrls((previous) =>
-      previous.length === urls.length && previous.every((url, index) => url === urls[index])
+    setParsedLinks((previous) =>
+      previous.length === links.length &&
+      previous.every(
+        (link, index) => link.url === links[index]!.url && link.label === links[index]!.label,
+      )
         ? previous
-        : urls,
+        : links,
     );
   };
+  const parsedLinkUrls = useMemo(
+    () => [...new Set(parsedLinks.map((link) => link.url))],
+    [parsedLinks],
+  );
   const skillRegex = useMemo(() => enrichedSkillLinkRegex(props.skills), [props.skills]);
   // Skill links come from linkRecognition, which runs as the text is drawn, so
   // onLinksChange never reports them. Joined so a streaming tick keeps the value.
@@ -200,7 +206,12 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const linkUrls = skillLinkKey
     ? [...new Set([...parsedLinkUrls, ...skillLinkKey.split("\n")])]
     : parsedLinkUrls;
-  const { linkVariants, linkPillContent } = useEnrichedLinkVariants(linkUrls, props, fileHrefs);
+  const { linkVariants, linkPillContent } = useEnrichedLinkVariants(
+    linkUrls,
+    props,
+    fileHrefs,
+    parsedLinks,
+  );
   const linkRecognition = useMemo(() => ({ text: skillRegex ?? undefined }), [skillRegex]);
   const [activeMenu, setActiveMenu] = useState<{
     url: string;
