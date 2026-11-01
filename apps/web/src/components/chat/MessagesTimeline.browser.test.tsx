@@ -348,11 +348,9 @@ describe("MessagesTimeline following", () => {
     await act(() => vi.advanceTimersByTime(2_500));
 
     // The whole answer arrives in one update while the turn works, so the list glides to it.
-    const answer = message(
-      Array.from({ length: 200 }, (_, index) => `${index + 1}. ${"fact ".repeat(30)}`).join("\n"),
-      { role: "assistant" },
-      "answer",
-    );
+    const answerText = (lines: number) =>
+      Array.from({ length: lines }, (_, index) => `${index + 1}. ${"fact ".repeat(30)}`).join("\n");
+    const answer = message(answerText(200), { role: "assistant" }, "answer");
     const scrollBeforeAnswer = viewport().scrollTop;
     await screen.rerender(<FollowingTimeline props={props} entries={[...history, answer]} />);
     await vi.waitFor(() => {
@@ -360,12 +358,13 @@ describe("MessagesTimeline following", () => {
       expect(distanceFromEnd()).toBeGreaterThan(viewport().clientHeight * 2);
     });
 
-    // Mid-glide the turn ends and a row above shrinks; keeping it in place is an instant
-    // scroll, which stops the glide.
+    // Mid-glide the turn ends: rows above shrink while the answer grows by less. Keeping the
+    // rows in place is an instant scroll, which stops the glide.
     const finished = [
-      ...history.slice(0, -1),
-      message("Reply 29", { role: "assistant" }, "reply-29"),
-      answer,
+      ...history.map((entry, index) =>
+        index < 20 ? entry : message(`Reply ${index}`, { role: "assistant" }, `reply-${index}`),
+      ),
+      message(answerText(210), { role: "assistant" }, "answer"),
     ];
     await screen.rerender(
       <FollowingTimeline props={{ ...props, isWorking: false }} entries={finished} />,

@@ -6,7 +6,11 @@ import {
   TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
 } from "./composerFocusRedirect";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
-import { createUpwardScrollDetector, isTimelineScrollTarget } from "./timelineScrollTarget";
+import {
+  createUpwardScrollDetector,
+  isTimelineScrollTarget,
+  type TimelineScrollAdjustment,
+} from "./timelineScrollTarget";
 
 /**
  * Which thread the mounted timeline list opened on. LegendList's
@@ -60,6 +64,12 @@ export interface TimelineViewport {
   readonly onFollowReleased: (listener: () => void) => () => void;
 }
 
+export interface AttachedTimelineViewport extends TimelineViewport {
+  /** LegendList scrolled itself to keep visible content in place (its onScrollAdjust). */
+  readonly scrollAdjusted: (adjustment: TimelineScrollAdjustment) => void;
+  readonly dispose: () => void;
+}
+
 const UP_KEYS = new Set(["PageUp", "Home", "ArrowUp"]);
 const DOWN_KEYS = new Set(["PageDown", "End", "ArrowDown", " "]);
 
@@ -67,9 +77,7 @@ const DOWN_KEYS = new Set(["PageDown", "End", "ArrowDown", " "]);
  * Owns the timeline scroll node's input listeners for as long as the node is
  * mounted, and turns them into one navigation signal.
  */
-export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewport & {
-  readonly dispose: () => void;
-} {
+export function attachTimelineViewport(scrollNode: HTMLElement): AttachedTimelineViewport {
   const listeners = new Set<(navigation: TimelineNavigation) => void>();
   const followReleasedListeners = new Set<() => void>();
   let programmaticHolds = 0;
@@ -113,17 +121,14 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
   };
   // Input inside an embedded frame reaches none of the listeners above, but
   // its scroll still chains out to the timeline.
-  const scrolledUp = createUpwardScrollDetector({
-    top: scrollNode.scrollTop,
-    height: scrollNode.scrollHeight,
+  const scrollPosition = () => ({
+    offset: scrollNode.scrollTop,
+    maxOffset: scrollNode.scrollHeight - scrollNode.clientHeight,
   });
+  const upwardScroll = createUpwardScrollDetector(scrollPosition());
   const handleScroll = () => {
     if (
-      scrolledUp({
-        top: scrollNode.scrollTop,
-        height: scrollNode.scrollHeight,
-        programmatic: programmaticHolds > 0,
-      }) &&
+      upwardScroll.scrolled(scrollPosition(), programmaticHolds > 0) &&
       // LegendList updates its scroll state on the next animation frame.
       resolveTimelineIsAtEnd({
         contentLength: scrollNode.scrollHeight,
@@ -146,6 +151,7 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
       return () => listeners.delete(listener);
     },
     navigate: ({ releasesFollow }) => emit({ source: "command", releasesFollow }),
+    scrollAdjusted: (adjustment) => upwardScroll.adjusted(adjustment, programmaticHolds > 0),
     holdProgrammaticScroll: () => {
       programmaticHolds += 1;
       let released = false;
