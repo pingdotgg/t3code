@@ -132,6 +132,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -2771,7 +2772,13 @@ export default function ChatView(props: ChatViewProps) {
           document.querySelector('[role="dialog"]')
         )
           return false;
-        if (!event.repeat) chatHeaderRef.current?.startRename();
+        if (event.repeat) return;
+        if (activeThreadRef && rightPanelMaximized) {
+          flushSync(() => {
+            useRightPanelStore.getState().setMaximized(activeThreadRef, false);
+          });
+        }
+        chatHeaderRef.current?.startRename();
       },
       "thread.regenerateTitle": ({ event }) => {
         if (
@@ -2781,7 +2788,7 @@ export default function ChatView(props: ChatViewProps) {
           document.querySelector('[role="dialog"]')
         )
           return false;
-        if (event.repeat) return;
+        if (event.repeat || activeThreadShell?.titleRegeneration != null) return;
         void updateThreadMetadata({
           environmentId,
           input: { threadId: activeThreadId, regenerateTitle: true },
