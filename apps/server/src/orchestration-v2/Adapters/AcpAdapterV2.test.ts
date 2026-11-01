@@ -99,6 +99,11 @@ import {
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 const DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "factory-droid" });
+const OMP_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({
+  source: "local",
+  commandPath: "/usr/local/bin/omp",
+  commandArgs: ["acp"],
+});
 
 const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
 
@@ -1407,6 +1412,67 @@ describe("AcpAdapterV2", () => {
 
   // regression: #20417 Droid AskUser answers were sent as a cancel
   it.live.each([
+    ...[
+      { scenario: "OMP selected option", answers: { q0: "Approve" }, content: { q0: "Approve" } },
+      {
+        scenario: "OMP custom answer",
+        answers: { q0: "Please wait" },
+        content: { q0__other: "Please wait" },
+      },
+      { scenario: "OMP cancellation", answers: undefined, content: undefined },
+      {
+        scenario: "OMP missing header",
+        answers: { q0: "Hold" },
+        content: { q0: "Hold" },
+        withoutHeader: true,
+      },
+      {
+        scenario: "OMP selected label with attachment references",
+        answers: { q0: 'Approve\n\nAttached file "notes.txt": "/server/notes.txt"' },
+        content: { q0__other: 'Approve\n\nAttached file "notes.txt": "/server/notes.txt"' },
+      },
+    ].map((fixture) => ({
+      ...fixture,
+      settings: OMP_SETTINGS,
+      schema: {
+        type: "object",
+        properties: {
+          q0: {
+            type: "string",
+            title: "Approve this exact code-only commit?",
+            ...("withoutHeader" in fixture ? {} : { description: "Safety-hook false positive" }),
+            oneOf: [
+              { const: "Approve", title: "Approve", description: "Commit the verified fix." },
+              { const: "Hold", title: "Hold" },
+            ],
+            default: "Approve",
+          },
+          q0__other: { type: "string", title: "Other (type your own)" },
+        },
+      },
+      questions: [
+        {
+          id: "q0",
+          header: "withoutHeader" in fixture ? "Question 1" : "Safety-hook false positive",
+          question: "Approve this exact code-only commit?",
+          options: [
+            { label: "Approve", value: "Approve", description: "Commit the verified fix." },
+            { label: "Hold", value: "Hold", description: "Hold" },
+          ],
+        },
+      ],
+      result: fixture.content
+        ? { action: "accept", content: fixture.content }
+        : { action: "cancel" },
+    })),
+    {
+      scenario: "OMP unrelated form uses generic mapping",
+      settings: OMP_SETTINGS,
+      schema: { type: "object", properties: { name: { type: "string" } } },
+      questions: [{ id: "name", header: "Question 1", question: "Your answer?", options: [] }],
+      answers: { name: "Ada" },
+      result: { action: "accept", content: { name: "Ada" } },
+    },
     {
       scenario: "preserves selected IDs and encodes custom answers",
       schema: droidSchema,
@@ -1450,8 +1516,10 @@ describe("AcpAdapterV2", () => {
       answers: { name: "Ada" },
       result: { action: "accept", content: { name: "Ada" } },
     },
-  ])("Droid elicitation $scenario", ({ schema, questions, answers, result, withAttachments }) =>
+  ])("Registry elicitation $scenario", (fixture) =>
     Effect.gen(function* () {
+      const { schema, questions, answers, result, settings } = fixture;
+      const withAttachments = "withAttachments" in fixture && fixture.withAttachments;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-droid-form-" });
@@ -1558,7 +1626,7 @@ describe("AcpAdapterV2", () => {
       const adapter = yield* makeAcpRegistryAdapterV2({
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
-        settings: DROID_SETTINGS,
+        settings: settings ?? DROID_SETTINGS,
         environment: {},
         makeRuntime: makeAcpReplayRuntime({
           transcript,
