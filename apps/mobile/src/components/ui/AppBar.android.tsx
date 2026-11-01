@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Keyboard, Pressable, TextInput, type TextInputInstance, View } from "react-native";
 import { useHardwareBack } from "../../lib/backHandler";
 import { useToolbarLayout } from "./useToolbarLayout";
@@ -23,11 +23,11 @@ export function AppBar(props: AppBarProps) {
   const [searchOpen, setSearchOpen] = useState(false);
   const searching = search !== undefined && (searchOpen || search.value.length > 0);
   const onSearchChange = search?.onChangeText;
-  const closeSearch = useCallback(() => {
+  const closeSearch = () => {
     onSearchChange?.("");
     setSearchOpen(false);
     Keyboard.dismiss();
-  }, [onSearchChange]);
+  };
   useHardwareBack(searching && search?.mode !== "inline", () => {
     closeSearch();
     return true;
