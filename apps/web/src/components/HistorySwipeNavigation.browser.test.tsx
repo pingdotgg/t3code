@@ -5,7 +5,8 @@ import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 
 type Scroller = "shadow" | "light" | "none" | "shadow-dialog";
 type Step = readonly [
-  event: number | "begin" | "end" | "zoom",
+  // "stale": a 1px wheel created before the last end, delivered after its IPC.
+  event: number | "begin" | "end" | "zoom" | "stale",
   after?: number | "remount" | "remove" | "close-dialog",
 ];
 
@@ -60,6 +61,20 @@ describe("HistorySwipeNavigation", () => {
       "forward",
     ],
     [
+      "a history gesture after a stale wheel reaches a scroller",
+      "shadow",
+      400,
+      [["begin"], [130], ["end"], ["stale", "remove"], ["begin"], [-130]],
+      "back",
+    ],
+    [
+      "a scroll begin arriving after the next gesture's first wheel and scroller removal",
+      "shadow",
+      400,
+      [["begin"], [130], ["end"], [1, "remove"], ["begin"], [130]],
+      null,
+    ],
+    [
       "a history gesture after zero-delta contact on a scroller",
       "shadow",
       400,
@@ -103,15 +118,15 @@ describe("HistorySwipeNavigation", () => {
     let { viewport, content } = mountPanel(screen.container, scroller, scrollLeft);
 
     for (const [event, after] of [...steps, [0] as const]) {
-      if (typeof event === "number" || event === "zoom") {
-        content.dispatchEvent(
-          new WheelEvent("wheel", {
-            deltaX: typeof event === "number" ? event : 0,
-            ctrlKey: event === "zoom",
-            bubbles: true,
-            composed: true,
-          }),
-        );
+      if (event !== "begin" && event !== "end") {
+        const wheel = new WheelEvent("wheel", {
+          deltaX: typeof event === "number" ? event : event === "stale" ? 1 : 0,
+          ctrlKey: event === "zoom",
+          bubbles: true,
+          composed: true,
+        });
+        if (event === "stale") Object.defineProperty(wheel, "timeStamp", { value: 0 });
+        content.dispatchEvent(wheel);
       } else {
         for (const listener of listeners[event]) listener();
       }

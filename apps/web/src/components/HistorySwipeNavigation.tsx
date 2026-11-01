@@ -91,6 +91,7 @@ export function HistorySwipeNavigation() {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window wheel and desktop gesture listeners track trackpad swipes
   useEffect(() => {
     let gesture: SwipeGesture | null = null;
+    let endedAt = Number.NEGATIVE_INFINITY;
     const hideIndicator = () =>
       setSwipe((current) => (current === null ? null : { ...current, tracking: false }));
     // The fingers lifted: navigate if the swipe went far enough, then ignore its momentum.
@@ -108,8 +109,11 @@ export function HistorySwipeNavigation() {
     const unsubscribeScrollEnd = window.desktopBridge?.onTrackpadScrollEnd(() => {
       if (gesture?.kind === "tracking") release();
       gesture = null;
+      endedAt = performance.now();
     });
     const onWheel = (event: WheelEvent) => {
+      // End IPC can overtake its gesture's last wheels; their OS timestamps predate its arrival.
+      if (event.timeStamp < endedAt) return;
       if (gesture === null) {
         gesture =
           event.ctrlKey || event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL
