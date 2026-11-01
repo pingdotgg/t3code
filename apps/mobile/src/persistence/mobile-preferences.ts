@@ -454,7 +454,7 @@ const make = Effect.fn("MobilePreferencesStore.make")(function* () {
           ),
         ),
       );
-  });
+  }, Effect.uninterruptible);
 
   const loadUnlocked = Effect.gen(function* () {
     const databaseResult = yield* Effect.result(database.loadPreferencesJson);

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "@effect/vitest";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -17,7 +16,9 @@ const FALLBACK_KEY = "t3code.preferences.fallback";
 function makeStorage() {
   let databaseLoads = 0;
   let failDatabaseLoad = false;
-  let afterDatabaseSave: Effect.Effect<void> = Effect.void;
+  let pendingSave:
+    | { started: PromiseWithResolvers<void>; finish: PromiseWithResolvers<void> }
+    | undefined;
   let stored: Option.Option<MobileDatabase.StoredPreferencesJson> = Option.none();
   const secure = new Map<string, string>();
 
@@ -39,9 +40,14 @@ function makeStorage() {
         : Effect.succeed(stored);
     }),
     savePreferencesJson: (payload, updatedAt) =>
-      Effect.suspend(() => {
+      Effect.promise(async () => {
+        const pending = pendingSave;
+        pendingSave = undefined;
+        if (pending) {
+          pending.started.resolve();
+          await pending.finish.promise;
+        }
         stored = Option.some({ payload, updatedAt });
-        return afterDatabaseSave;
       }),
   });
   const secureStorage = MobileSecureStorage.MobileSecureStorage.of({
@@ -65,8 +71,11 @@ function makeStorage() {
     failDatabaseLoad: (fail: boolean) => {
       failDatabaseLoad = fail;
     },
-    afterDatabaseSave: (effect: Effect.Effect<void>) => {
-      afterDatabaseSave = effect;
+    delayNextSave: () => {
+      const started = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      pendingSave = { started, finish };
+      return { started: Effect.promise(() => started.promise), finish: () => finish.resolve() };
     },
     stored: () => Option.map(stored, ({ payload }) => JSON.parse(payload) as unknown),
     setStored: (preferences: MobilePreferences.Preferences, updatedAt: number) => {
@@ -100,27 +109,57 @@ describe("MobilePreferencesStore", () => {
     }).pipe(Effect.provide(storage.layer));
   });
 
-  it.effect("rereads storage after an update is interrupted mid-save", () => {
-    const storage = makeStorage();
-    return Effect.gen(function* () {
-      const store = yield* MobilePreferences.MobilePreferencesStore;
-      yield* store.savePatch({ planModeEnabled: true });
+  it.effect.each(["update", "fallback", "legacy"] as const)(
+    "waits for an interrupted %s write before the next update",
+    (path) => {
+      const storage = makeStorage();
+      return Effect.gen(function* () {
+        const store = yield* MobilePreferences.MobilePreferencesStore;
+        const preferences = { planModeEnabled: true, workingShelfEnabled: true };
+        if (path === "update") {
+          yield* store.savePatch({ planModeEnabled: true });
+        } else if (path === "fallback") {
+          storage.secure.set(
+            FALLBACK_KEY,
+            JSON.stringify({ payload: JSON.stringify(preferences), updatedAt: 100 }),
+          );
+        } else {
+          storage.secure.set("t3code.preferences", JSON.stringify(preferences));
+        }
 
-      const saved = yield* Deferred.make<void>();
-      storage.afterDatabaseSave(
-        Deferred.succeed(saved, undefined).pipe(Effect.andThen(Effect.never)),
-      );
-      const interrupted = yield* Effect.forkChild(store.savePatch({ workingShelfEnabled: true }));
-      yield* Deferred.await(saved);
-      yield* Fiber.interrupt(interrupted);
+        const pending = storage.delayNextSave();
+        const order: string[] = [];
+        const write: Effect.Effect<
+          MobilePreferences.Preferences,
+          | MobilePreferences.MobilePreferencesSaveError
+          | MobilePreferences.MobilePreferencesLoadError
+        > = path === "update" ? store.savePatch({ workingShelfEnabled: true }) : store.load;
+        const interrupted = yield* Effect.forkChild(
+          write.pipe(Effect.onExit(() => Effect.sync(() => void order.push("write exited")))),
+        );
+        yield* pending.started;
+        const interruption = yield* Effect.forkChild(Fiber.interrupt(interrupted), {
+          startImmediately: true,
+        });
+        const next = yield* Effect.forkChild(
+          store
+            .savePatch({ codeWordBreak: true })
+            .pipe(Effect.onExit(() => Effect.sync(() => void order.push("next exited")))),
+          { startImmediately: true },
+        );
+        order.push("native write released");
+        pending.finish();
+        yield* Fiber.join(interruption);
+        yield* Fiber.join(next);
+        yield* store.savePatch({ collapsedProjectGroups: ["a"] });
 
-      storage.afterDatabaseSave(Effect.void);
-      yield* store.savePatch({ codeWordBreak: true });
-      expect(storage.stored()).toEqual(
-        Option.some({ planModeEnabled: true, workingShelfEnabled: true, codeWordBreak: true }),
-      );
-    }).pipe(Effect.provide(storage.layer));
-  });
+        expect(storage.stored()).toEqual(
+          Option.some({ ...preferences, codeWordBreak: true, collapsedProjectGroups: ["a"] }),
+        );
+        expect(order).toEqual(["native write released", "write exited", "next exited"]);
+      }).pipe(Effect.provide(storage.layer));
+    },
+  );
 
   it.effect("does not reuse a load that could not read the database", () => {
     const storage = makeStorage();
