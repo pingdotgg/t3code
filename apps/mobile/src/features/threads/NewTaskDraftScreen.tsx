@@ -781,7 +781,7 @@ export function NewTaskDraftScreen(props: {
   );
   // The nested hero scroll view does not receive UIKit's automatic navigation inset in split columns.
   const heroViewport = (headerInset: number, bottomInset: number, availableHeight: number) =>
-    availableHeight < 180 ? null : (
+    availableHeight < 156 ? null : (
       <NativeScrollEdgeEffectsContext
         value={{ top: "hidden", bottom: "hidden", left: "hidden", right: "hidden" }}
       >
