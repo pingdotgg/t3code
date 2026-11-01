@@ -1,6 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -3408,6 +3410,39 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         // Still inside the refresh interval, so this read reuses the last fetch.
         yield* driver.statusDetailsRemote(cwd);
         assert.equal(yield* driver.statusUpstreamFetchCount(cwd), afterFetch);
+      }),
+    );
+
+    it.effect("does not count a status fetch that is still running after its wait times out", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const control = yield* makeTmpDir("git-vcs-driver-control-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+
+        const started = NodePath.join(control, "started");
+        const release = NodePath.join(control, "release");
+        NodeChildProcess.execFileSync("mkfifo", [started, release]);
+        const uploadPack = NodePath.join(control, "upload-pack.sh");
+        NodeFS.writeFileSync(
+          uploadPack,
+          `#!/bin/sh\necho started > "${started}"\ncat "${release}" > /dev/null\nexec git-upload-pack "$@"\n`,
+          { mode: 0o755 },
+        );
+        yield* git(cwd, ["config", "remote.origin.uploadpack", uploadPack]);
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const initial = yield* driver.statusUpstreamFetchCount(cwd);
+        const status = yield* driver.statusDetailsRemote(cwd).pipe(Effect.forkScoped);
+        yield* Effect.promise(() => NodeFS.promises.readFile(started));
+        yield* TestClock.adjust("6 seconds");
+        yield* Fiber.join(status);
+
+        assert.equal(yield* driver.statusUpstreamFetchCount(cwd), initial);
+        yield* Effect.promise(() => NodeFS.promises.writeFile(release, "go"));
       }),
     );
 
