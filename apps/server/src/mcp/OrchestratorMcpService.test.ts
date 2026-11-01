@@ -2385,7 +2385,15 @@ describe("OrchestratorMcpService provider resolution", () => {
       upserted: Ref.Ref<number>,
       saved: ScheduledTask = tasks[0]!,
     ) =>
-      layerOrchestratorService.pipe(
+      OrchestratorMcpService.layer.pipe(
+        Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+        Layer.provide(
+          Layer.mock(GitVcsDriver.GitVcsDriver)({
+            resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+            resolveDefaultBranchName: () => Effect.succeed("main"),
+            resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
+          }),
+        ),
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,
@@ -2400,7 +2408,11 @@ describe("OrchestratorMcpService provider resolution", () => {
             }),
             Layer.mock(ProjectService.ProjectService)({
               getById: (id) =>
-                Effect.succeedSome({ id, defaultModelSelection: saved.modelSelection } as Project),
+                Effect.succeedSome({
+                  id,
+                  workspaceRoot: "/repo/scheduled",
+                  defaultModelSelection: saved.modelSelection,
+                } as Project),
             }),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
