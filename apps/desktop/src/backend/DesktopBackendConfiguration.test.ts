@@ -384,7 +384,6 @@ describe("DesktopBackendConfiguration", () => {
       runtimeId: string;
       sha256: string;
     }> = [];
-    const observedProbeRoots: string[] = [];
     let legacyCleanupCount = 0;
     const linuxAppRoot = "/home/test/.t3/wsl-runtime/1.2.3-x64";
     const resolvedPath = "/home/test/.local/bin:/usr/bin:/bin";
@@ -403,11 +402,7 @@ describe("DesktopBackendConfiguration", () => {
               runtimeId: archive.runtimeId,
               sha256: archive.sha256,
             });
-            return { ok: true, linuxAppRoot };
-          },
-          probeRuntime: (_distro, root) => {
-            observedProbeRoots.push(root);
-            return { ok: true, resolvedPath };
+            return { ok: true, linuxAppRoot, resolvedPath };
           },
           ensureNodePty: () => {
             throw new Error("the staged runtime must not probe for node-pty");
@@ -427,7 +422,6 @@ describe("DesktopBackendConfiguration", () => {
               sha256: archiveHash,
             },
           ]);
-          assert.deepEqual(observedProbeRoots, [linuxAppRoot]);
           assert.equal(
             config.entryPath,
             path.join(baseDir, "server.asar/apps/server/dist/bin.mjs"),
@@ -460,7 +454,11 @@ describe("DesktopBackendConfiguration", () => {
         wsl: () => ({
           prepareRuntime: (_distro, archive) => {
             observedRuntimeIds.push(archive.runtimeId);
-            return { ok: true, linuxAppRoot: `/runtime/${archive.runtimeId}` };
+            return {
+              ok: true,
+              linuxAppRoot: `/runtime/${archive.runtimeId}`,
+              resolvedPath: "/usr/bin:/bin",
+            };
           },
           ensureNodePty: () => ({
             ok: true,
@@ -498,7 +496,6 @@ describe("DesktopBackendConfiguration", () => {
         archiveHash: "b".repeat(64),
         wsl: () => ({
           prepareRuntime: () => ({ ok: false, reason: "archive is corrupt" }),
-          invalidateRuntime: () => Effect.die("failed staging must not invalidate a runtime"),
           ensureNodePty: (_distro, root) => {
             observedNodePtyRoots.push(root);
             return { ok: true, nodePath: "/usr/bin/node", resolvedPath: "/usr/bin:/bin" };
@@ -520,62 +517,40 @@ describe("DesktopBackendConfiguration", () => {
     );
   });
 
-  it.effect("resolveWsl retires a staged runtime whose executable does not start", () => {
-    const archiveHash = "c".repeat(64);
-    const stagedAppRoot = `/home/test/.t3/wsl-runtime/sha256-${archiveHash}`;
-    const observedProbeRoots: string[] = [];
-    const observedNodePtyRoots: string[] = [];
-    const invalidatedRuntimeIds: string[] = [];
+  it.effect("resolveWsl reports runtime validation failure when the mounted tree fails too", () => {
     return withPackagedWslHarness(
       {
-        archiveHash,
+        archiveHash: "d".repeat(64),
         wsl: () => ({
-          prepareRuntime: () => ({ ok: true, linuxAppRoot: stagedAppRoot }),
-          invalidateRuntime: (_distro, runtimeId) =>
-            Effect.sync(() => {
-              invalidatedRuntimeIds.push(runtimeId);
-            }),
-          probeRuntime: (_distro, root) => {
-            observedProbeRoots.push(root);
-            return { ok: false, reason: `${root}/t3 --version failed (exit 127)` };
-          },
-          ensureNodePty: (_distro, root) => {
-            observedNodePtyRoots.push(root);
-            return { ok: true, nodePath: "/usr/bin/node", resolvedPath: "/usr/bin:/bin" };
-          },
+          prepareRuntime: () => ({
+            ok: false,
+            reason: "unsupported CPU architecture or incompatible system libraries",
+          }),
+          ensureNodePty: () => ({
+            ok: false,
+            reason: "mounted tree is broken in some other way",
+            fatal: true,
+          }),
         }),
       },
-      ({ mountedAppRoot, mountedEntryPath }) =>
+      () =>
         Effect.gen(function* () {
           const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
           const config = yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+          const failure = Option.getOrThrow(config.preflightFailure);
 
-          assert.deepEqual(observedProbeRoots, [stagedAppRoot]);
-          assert.deepEqual(observedNodePtyRoots, [mountedAppRoot]);
-          assert.include(config.args, "/usr/bin/node");
-          assert.include(config.args, `${mountedAppRoot}/apps/server/dist/bin.mjs`);
-          assert.notInclude(config.args, `${stagedAppRoot}/t3`);
-          assert.equal(config.entryPath, mountedEntryPath);
-          assert.isUndefined(config.wslRuntimeId);
-          assert.isTrue(Option.isNone(config.preflightFailure));
-          assert.deepEqual(invalidatedRuntimeIds, [`sha256-${archiveHash}`]);
+          assert.isTrue(failure.fatal);
+          assert.include(failure.reason, "unsupported CPU architecture");
         }),
     );
   });
 
   it.effect("resolveWsl keeps WSL retryable when the mounted fallback fails transiently", () => {
-    const stagedAppRoot = "/home/test/.t3/wsl-runtime/cache";
-    const invalidatedRuntimeIds: string[] = [];
     return withPackagedWslHarness(
       {
         archiveHash: "f".repeat(64),
         wsl: () => ({
-          prepareRuntime: () => ({ ok: true, linuxAppRoot: stagedAppRoot }),
-          invalidateRuntime: (_distro, runtimeId) =>
-            Effect.sync(() => {
-              invalidatedRuntimeIds.push(runtimeId);
-            }),
-          probeRuntime: () => ({ ok: false, reason: "t3 --version failed (exit 1)" }),
+          prepareRuntime: () => ({ ok: false, reason: "t3 --help failed (exit 1)" }),
           ensureNodePty: () => ({
             ok: false,
             reason: "WSL backend preflight timed out while probing for Node.js.",
@@ -592,7 +567,6 @@ describe("DesktopBackendConfiguration", () => {
           assert.isFalse(failure.fatal);
           assert.equal(failure.retryLimit, 12);
           assert.include(failure.reason, "timed out");
-          assert.deepEqual(invalidatedRuntimeIds, []);
         }),
     );
   });

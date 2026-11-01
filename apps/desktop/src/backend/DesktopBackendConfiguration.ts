@@ -378,7 +378,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
       : ({ ok: true, windowsEntryPath, linuxAppRoot: mountedAppRoot.value } as const);
   });
 
-  let stagedFailure: { readonly runtimeId?: string; readonly reason: string } | undefined;
+  let stagedFailure: { readonly reason: string } | undefined;
   const failedStaged = (failure: { readonly reason: string }) =>
     ({
       _tag: "Failed",
@@ -389,24 +389,15 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
   if (input.runtimeArchive !== null) {
     const runtime = yield* wslEnv.prepareRuntime(runningDistro, input.runtimeArchive);
     if (runtime.ok) {
-      // Staged runtimes bundle Node and node-pty; provider PATH discovery must not require them.
-      const stagedProbe = yield* wslEnv.probeRuntime(runningDistro, runtime.linuxAppRoot);
-      if (stagedProbe.ok) {
-        yield* wslServerTree.cleanupLegacy;
-        return {
-          _tag: "Ready",
-          runningDistro,
-          windowsEntryPath: environment.backendEntryPath,
-          runtime: { kind: "executable", entryPath: `${runtime.linuxAppRoot}/t3` },
-          resolvedPath: stagedProbe.resolvedPath,
-          runtimeId: input.runtimeArchive.runtimeId,
-        } as const;
-      }
-      yield* Effect.logWarning(
-        "The staged WSL runtime did not start; retrying from the mounted server tree.",
-        { reason: stagedProbe.reason },
-      );
-      stagedFailure = { runtimeId: input.runtimeArchive.runtimeId, reason: stagedProbe.reason };
+      yield* wslServerTree.cleanupLegacy;
+      return {
+        _tag: "Ready",
+        runningDistro,
+        windowsEntryPath: environment.backendEntryPath,
+        runtime: { kind: "executable", entryPath: `${runtime.linuxAppRoot}/t3` },
+        resolvedPath: runtime.resolvedPath,
+        runtimeId: input.runtimeArchive.runtimeId,
+      } as const;
     } else {
       stagedFailure = { reason: runtime.reason };
       yield* Effect.logWarning(
@@ -433,10 +424,6 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     return stagedFailure && nodePtyResult.fatal
       ? failedStaged(stagedFailure)
       : failedNodePty(nodePtyResult);
-  }
-
-  if (stagedFailure?.runtimeId) {
-    yield* wslEnv.invalidateRuntime(runningDistro, stagedFailure.runtimeId);
   }
 
   return {
