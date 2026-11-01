@@ -874,9 +874,9 @@ it.effect("admits provider and OAuth client credentials and points only clients 
         ),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
-            resolve: (token) =>
+            resolve: (token, discoveryOnly) =>
               Effect.succeed(
-                token === providerToken
+                token === providerToken || (token === "pendingProvider" && discoveryOnly === true)
                   ? (providerScope as McpInvocationContext.McpThreadInvocationScope)
                   : undefined,
               ),
@@ -942,6 +942,10 @@ it.effect("admits provider and OAuth client credentials and points only clients 
       const deadProvider = yield* call("deadProviderToken");
       expect(deadProvider.status).toBe(401);
       expect(deadProvider.headers["www-authenticate"]).toBe('Bearer error="invalid_token"');
+      // Discovery can initialize the native MCP client before a T3 thread exists.
+      // Even a read-only tool stays unavailable until the credential is bound.
+      expect((yield* call("pendingProvider")).status).toBe(401);
+      expect(seen).toHaveLength(2);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

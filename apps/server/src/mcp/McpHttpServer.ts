@@ -209,6 +209,33 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         : "";
     const invocation =
       (yield* registry.resolve(token)) ??
+      (yield* Effect.gen(function* () {
+        // Pending native spares may discover tools, but cannot invoke a tool,
+        // read a resource, or authenticate a persistent GET stream.
+        if (request.method !== "POST" || !looksLikeProviderToken(token)) return undefined;
+        const body = yield* request.json.pipe(Effect.option);
+        if (
+          Option.isNone(body) ||
+          typeof body.value !== "object" ||
+          body.value === null ||
+          !("method" in body.value)
+        )
+          return undefined;
+        const method = body.value.method;
+        if (
+          typeof method !== "string" ||
+          ![
+            "initialize",
+            "notifications/initialized",
+            "tools/list",
+            "resources/list",
+            "resources/templates/list",
+            "prompts/list",
+          ].includes(method)
+        )
+          return undefined;
+        return yield* registry.resolve(token, true);
+      })) ??
       (Option.isSome(clients) && token.length > 0
         ? yield* clients.value.authenticate(request)
         : undefined);

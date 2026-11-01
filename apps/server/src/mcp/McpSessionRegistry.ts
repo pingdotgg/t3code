@@ -13,6 +13,8 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 
 export interface McpCredentialRequest {
+  /** Discovery is allowed while the native spare has no submitted T3 thread. */
+  readonly pending?: boolean;
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
   /** False omits the preview capability wherever the token is honored. Defaults to full access. */
@@ -29,7 +31,9 @@ export interface McpSessionRegistryShape {
   readonly issue: (request: McpCredentialRequest) => Effect.Effect<McpIssuedCredential>;
   readonly resolve: (
     rawToken: string,
+    discoveryOnly?: boolean,
   ) => Effect.Effect<McpInvocationContext.McpThreadInvocationScope | undefined>;
+  readonly bind: (providerSessionId: string, threadId: ThreadId) => Effect.Effect<boolean>;
   readonly touch: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
   readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
@@ -42,6 +46,7 @@ export class McpSessionRegistry extends Context.Service<
 >()("t3/mcp/McpSessionRegistry") {}
 
 interface CredentialRecord {
+  readonly pending: boolean;
   readonly tokenHash: string;
   readonly scope: McpInvocationContext.McpThreadInvocationScope;
   readonly lastAliveAt: number;
@@ -119,7 +124,12 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
         const next = new Map(records);
-        next.set(tokenHash, { tokenHash, scope, lastAliveAt: issuedAt });
+        next.set(tokenHash, {
+          tokenHash,
+          scope,
+          lastAliveAt: issuedAt,
+          pending: request.pending === true,
+        });
         return { records: next };
       });
       return {
@@ -138,13 +148,17 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   );
 
   const resolve: McpSessionRegistryShape["resolve"] = Effect.fn("McpSessionRegistry.resolve")(
-    function* (rawToken) {
+    function* (rawToken, discoveryOnly = false) {
       if (rawToken.length === 0) return undefined;
       const tokenHash = yield* hashToken(rawToken);
       const timestamp = yield* currentTimeMillis;
       return yield* SynchronizedRef.modify(state, ({ records }) => {
         const record = records.get(tokenHash);
-        if (!record || timestamp - record.lastAliveAt > livenessWindowMs) {
+        if (
+          !record ||
+          (record.pending && !discoveryOnly) ||
+          timestamp - record.lastAliveAt > livenessWindowMs
+        ) {
           return [undefined, { records }] as const;
         }
         const next = new Map(records);
@@ -177,6 +191,22 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   return McpSessionRegistry.of({
     issue,
     resolve,
+    bind: Effect.fn("McpSessionRegistry.bind")(function* (providerSessionId, threadId) {
+      return yield* SynchronizedRef.modify(state, ({ records }) => {
+        const entry = [...records].find(
+          ([, record]) =>
+            record.pending && record.scope.thread.providerSessionId === providerSessionId,
+        );
+        if (entry === undefined) return [false, { records }] as const;
+        const [hash, record] = entry;
+        const next = new Map(records).set(hash, {
+          ...record,
+          pending: false,
+          scope: { ...record.scope, thread: { ...record.scope.thread, threadId } },
+        });
+        return [true, { records: next }] as const;
+      });
+    }),
     touch,
     revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
       function* (providerSessionId) {
