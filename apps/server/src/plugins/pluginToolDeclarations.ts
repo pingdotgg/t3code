@@ -211,14 +211,13 @@ const compile = (root: JsonObject, work: { remaining: number }): Compiled => {
         throw new SchemaProblem(
           `${path}/$ref: only "#/$defs/<name>" references to root definitions are supported.`,
         );
-      const target = Schema.suspend(() => definition(name, depth + 1) as Schema.Codec<unknown>);
+      const target = definition(name, depth + 1) as Schema.Codec<unknown>;
       const decode = SchemaParser.decodeUnknownEffect(target);
       return Schema.declareConstructor<unknown>()(
         [],
         () => (input, _ast, options) =>
           Effect.suspend(() => {
-            if (--work.remaining < 0)
-              return Effect.fail(validationLimitIssue());
+            if (--work.remaining < 0) return Effect.fail(validationLimitIssue());
             return decode(input, options);
           }),
       );
