@@ -2,6 +2,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Random from "effect/Random";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
@@ -90,24 +91,44 @@ export const renderCliShim = (input: {
     // Extract-and-run would make the runtime start the app instead of mounting it.
     "unset APPIMAGE_EXTRACT_AND_RUN",
     // The runtime stays mounted until killed; traps unmount it because background jobs ignore Ctrl-C.
-    "work=$(mktemp -d) || exit 1",
+    // `command -p` finds helpers on the system PATH: in npm scripts, PATH starts with a project's
+    // node_modules/.bin, and the CLI below still gets the user's PATH.
+    "work=$(command -p mktemp -d) || exit 1",
     '"$app" --appimage-mount >"$work/mount" 2>/dev/null &',
     "mounter=$!",
-    `trap 'kill "$mounter" 2>/dev/null; rm -rf "$work"' EXIT`,
+    `trap 'kill "$mounter" 2>/dev/null; wait "$mounter" 2>/dev/null; command -p rm -rf "$work"' EXIT`,
     "trap 'exit 130' INT TERM",
     "mount=",
     'while kill -0 "$mounter" 2>/dev/null; do',
-    '  mount=$(head -n 1 "$work/mount")',
+    // The mounter may not have created the file yet; the loop just tries again.
+    '  mount=$(command -p head -n 1 "$work/mount" 2>/dev/null)',
     '  [ -d "$mount" ] && break',
     "  mount=",
-    "  sleep 0.05",
+    "  command -p sleep 0.05",
     "done",
     // Without FUSE the runtime cannot mount (it prints why and exits); extracting the image still works.
     'if [ -z "$mount" ]; then',
     '  (cd "$work" && "$app" --appimage-extract >/dev/null) || { echo "Could not open $app." >&2; exit 1; }',
     '  mount="$work/squashfs-root"',
     "fi",
-    run("$mount"),
+    // The shell must outlive the CLI to unmount, so it forwards TERM and HUP; the terminal sends
+    // Ctrl-C to the CLI directly. A background child would read /dev/null, so pass stdin on fd 3.
+    // With stdin closed, `exec 3<&0` would end the shell; `command` makes it a normal error.
+    "{ command exec 3<&0; } 2>/dev/null || exec 3</dev/null",
+    `${run("$mount")} <&3 3<&- &`,
+    "cli=$!",
+    "exec 3<&-",
+    `trap 'kill -TERM "$cli" 2>/dev/null' TERM`,
+    `trap 'kill -HUP "$cli" 2>/dev/null' HUP`,
+    "trap '' INT",
+    "status=0",
+    'wait "$cli" || status=$?',
+    // A trapped signal interrupts wait; wait again for the CLI's own exit status.
+    'while kill -0 "$cli" 2>/dev/null; do',
+    "  status=0",
+    '  wait "$cli" || status=$?',
+    "done",
+    'exit "$status"',
     "",
   ].join("\n");
 };
@@ -147,7 +168,8 @@ export const install = Effect.gen(function* () {
     }
     if (Option.getOrUndefined(existing) !== content) {
       yield* fs.makeDirectory(path.dirname(shimPath), { recursive: true });
-      const staging = `${shimPath}.${process.pid}.tmp`;
+      // Unique per call: backend startup and the first-launch command install can race here.
+      const staging = `${shimPath}.${process.pid}.${yield* Random.nextIntBetween(0, 0xffffff)}.tmp`;
       yield* fs.writeFileString(staging, content, { mode: 0o755 });
       yield* fs.rename(staging, shimPath);
       yield* logInfo("installed t3 launcher", { shimPath });

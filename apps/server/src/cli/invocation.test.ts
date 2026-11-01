@@ -109,6 +109,19 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
         }),
       ).toBe("sudo /opt/t3/t3 browser setup");
 
+      // npx's own cache `.bin` is on PATH only while npx runs; the user's next shell lacks it.
+      const npxBin = path.join(home, "_npx/abc/node_modules/.bin");
+      yield* fs.makeDirectory(npxBin, { recursive: true });
+      yield* fs.writeFileString(path.join(npxBin, "t3"), "#!/bin/sh\n", { mode: 0o755 });
+      expect(
+        yield* rootCommand({
+          node: "/opt/t3/t3",
+          entry: "/opt/t3/t3",
+          executable: true,
+          path: npxBin,
+        }),
+      ).toBe("sudo /opt/t3/t3 browser setup");
+
       expect(
         yield* rootCommand({ ...desktop, env: { T3CODE_CLI_PATH: path.join(home, "gone") } }),
       ).toBe('sudo env "PATH=$PATH" t3 browser setup');

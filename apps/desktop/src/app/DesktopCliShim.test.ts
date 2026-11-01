@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Runs the rendered launcher in a real shell.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -64,10 +65,60 @@ const fakeAppImage = (canMount = true) => {
 };
 
 describe("renderCliShim", () => {
+  it("passes stdin, the exit status, and SIGTERM through to the AppImage's CLI", async () => {
+    const { root, image, shim } = fakeAppImage();
+    writeExecutable(
+      NodePath.join(image, "t3code"),
+      [
+        "#!/bin/sh",
+        `trap 'touch "${root}/cli-got-term"; exit 143' TERM`,
+        'read -r line && echo "read: $line"',
+        '[ "$2" = wait ] || exit 4',
+        "echo ready",
+        "while :; do sleep 0.05; done",
+        "",
+      ].join("\n"),
+    );
+    const piped = NodeChildProcess.spawnSync(shim, ["once"], {
+      encoding: "utf8",
+      input: "hello\n",
+    });
+    const closed = NodeChildProcess.spawnSync("sh", ["-c", `"$0" once <&-`, shim], {
+      encoding: "utf8",
+    });
+    expect(closed.status).toBe(4);
+    expect(closed.stderr).toBe("");
+    expect(piped.stdout).toBe("read: hello\n");
+    expect(piped.status).toBe(4);
+
+    const running = NodeChildProcess.spawn(shim, ["wait"], { stdio: ["pipe", "pipe", "inherit"] });
+    running.stdin.end("hi\n");
+    await new Promise<void>((resolve) =>
+      running.stdout.on("data", (chunk: Buffer) => chunk.includes("ready") && resolve()),
+    );
+    const exited = NodeEvents.EventEmitter.once(running, "exit");
+    running.kill("SIGTERM");
+    expect((await exited)[0]).toBe(143);
+    expect(NodeFS.existsSync(NodePath.join(root, "cli-got-term"))).toBe(true);
+    expect(NodeFS.existsSync(NodePath.join(root, "unmounted"))).toBe(true);
+  });
+
   it("extracts the AppImage where it cannot be mounted", () => {
-    const { shim } = fakeAppImage(false);
-    const result = run(shim, ["--version"], { APPIMAGE_EXTRACT_AND_RUN: "1" });
+    const { root, shim } = fakeAppImage(false);
+    // In npm scripts a project's node_modules/.bin comes first on PATH; the shim's helpers skip it.
+    const projectBin = NodePath.join(root, "project-bin");
+    for (const helper of ["mktemp", "head", "sleep", "rm"]) {
+      writeExecutable(
+        NodePath.join(projectBin, helper),
+        `#!/bin/sh\ntouch "${root}/ran-${helper}"\n`,
+      );
+    }
+    const result = run(shim, ["--version"], {
+      APPIMAGE_EXTRACT_AND_RUN: "1",
+      PATH: `${projectBin}:${process.env.PATH}`,
+    });
     expect(result.status).toBe(3);
+    expect(NodeFS.readdirSync(root).filter((name) => name.startsWith("ran-"))).toEqual([]);
     expect(result.stdout).toMatch(
       /squashfs-root\/resources\/app\.asar\/apps\/server\/dist\/bin\.mjs/,
     );
@@ -89,7 +140,7 @@ describe("renderCliShim", () => {
 
   it("runs an installed app's server directly", () => {
     const root = tempRoot();
-    const executable = NodePath.join(root, "opt", "T3 Code", "t3code");
+    const executable = NodePath.join(root, "opt", "T3 Code's", "t3code");
     writeExecutable(executable, REPORTER);
     const shim = writeShim(root, {
       kind: "direct",

@@ -80,6 +80,180 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chan
   });
 });
 
+/** Runs an installer for a version that is already unpacked, so only the t3 command step runs. */
+async function installOver(input: {
+  readonly script: "install.sh" | "install.ps1";
+  readonly home: string;
+  readonly binDir: string;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly cwd?: string;
+}) {
+  const target = NodePath.join(input.home, "runtime", "versions", "1.2.3");
+  await NodeFSP.mkdir(target, { recursive: true });
+  await NodeFSP.writeFile(NodePath.join(target, ".install-complete"), "1.2.3\n");
+  const installer = NodePath.resolve(import.meta.dirname, input.script);
+  const [command, args] =
+    input.script === "install.sh"
+      ? ["sh", [installer]]
+      : ["powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", installer]];
+  const result = NodeChildProcess.spawnSync(command, args, {
+    encoding: "utf8",
+    ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+    env: {
+      ...process.env,
+      T3CODE_CHANNEL: "",
+      T3CODE_VERSION: "1.2.3",
+      T3CODE_HOME: input.home,
+      T3CODE_INSTALL_BIN_DIR: input.binDir,
+      T3CODE_RELEASE_BASE_URL: "http://127.0.0.1:9",
+      ...input.env,
+    },
+  });
+  return { code: result.status, output: `${result.stdout}${result.stderr}`, target };
+}
+
+describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 command", () => {
+  it("replaces only this home's own links and prints a PATH command", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-link-"));
+    try {
+      const home = NodePath.join(root, "home");
+      const binDir = NodePath.join(root, "bin");
+      const link = NodePath.join(binDir, "t3");
+      await NodeFSP.mkdir(binDir, { recursive: true });
+
+      await NodeFSP.writeFile(link, "#!/bin/sh\necho mine\n");
+      const foreign = await installOver({ script: "install.sh", home, binDir });
+      expect(foreign.code).not.toBe(0);
+      expect(foreign.output).toContain(`another t3 is already at ${link}`);
+      expect(await NodeFSP.readFile(link, "utf8")).toBe("#!/bin/sh\necho mine\n");
+      // Not even from inside the versions folder, where `.` would resolve into it.
+      const fromVersions = await installOver({
+        script: "install.sh",
+        home,
+        binDir,
+        cwd: foreign.target,
+      });
+      expect(fromVersions.code).not.toBe(0);
+      expect(await NodeFSP.readFile(link, "utf8")).toBe("#!/bin/sh\necho mine\n");
+
+      // A link that only looks like it points into versions (join() would normalize the ..).
+      await NodeFSP.rm(link);
+      await NodeFSP.mkdir(NodePath.join(home, "other"), { recursive: true });
+      await NodeFSP.writeFile(NodePath.join(home, "other/t3"), "#!/bin/sh\n");
+      await NodeFSP.symlink(`${home}/runtime/versions/../../other/t3`, link);
+      const climbing = await installOver({ script: "install.sh", home, binDir });
+      expect(climbing.code).not.toBe(0);
+      expect(await NodeFSP.readlink(link)).toBe(`${home}/runtime/versions/../../other/t3`);
+
+      // Only `<version>/t3` counts, not another program inside a version.
+      await NodeFSP.rm(link);
+      await NodeFSP.symlink(NodePath.join(home, "runtime/versions/1.0.0/helper"), link);
+      const sibling = await installOver({ script: "install.sh", home, binDir });
+      expect(sibling.code).not.toBe(0);
+      expect(await NodeFSP.readlink(link)).toBe(
+        NodePath.join(home, "runtime/versions/1.0.0/helper"),
+      );
+
+      // An upgrade over an older version's link, written through a symlinked T3 home.
+      await NodeFSP.rm(link);
+      await NodeFSP.symlink(NodePath.join(home, "runtime/versions/1.0.0/t3"), link);
+      await NodeFSP.symlink(home, NodePath.join(root, "alias"));
+      const upgrade = await installOver({
+        script: "install.sh",
+        home: NodePath.join(root, "alias"),
+        binDir,
+        env: { HOME: root, SHELL: "/bin/zsh", PATH: "/usr/bin:/bin" },
+      });
+      expect(upgrade.code, upgrade.output).toBe(0);
+      expect(await NodeFSP.readlink(link)).toBe(
+        NodePath.join(root, "alias/runtime/versions/1.2.3/t3"),
+      );
+      expect(upgrade.output).toContain(
+        `printf '\\n%s\\n' 'export PATH="$PATH:$HOME/bin"' >> ~/.zshrc`,
+      );
+
+      // Containers and CI often have no SHELL; `set -u` must not stop the installer there.
+      const noShell = await installOver({
+        script: "install.sh",
+        home,
+        binDir,
+        env: { HOME: root, SHELL: undefined, PATH: "/usr/bin:/bin" },
+      });
+      expect(noShell.code, noShell.output).toBe(0);
+      expect(noShell.output).toContain(`Add ${binDir} to your PATH`);
+
+      // A relative folder is made absolute, so the PATH command never follows the working directory.
+      const relative = await installOver({
+        script: "install.sh",
+        home,
+        binDir: "bin",
+        cwd: root,
+        env: { HOME: root, SHELL: "/bin/zsh", PATH: "/usr/bin:/bin" },
+      });
+      expect(relative.code, relative.output).toBe(0);
+      expect(relative.output).toContain(`'export PATH="$PATH:$HOME/bin"'`);
+
+      await NodeFSP.rm(link);
+      await NodeFSP.symlink(NodePath.join(home, "bin/t3"), link);
+      const overDesktop = await installOver({
+        script: "install.sh",
+        home: `${home}//`,
+        binDir: `${binDir}/`,
+      });
+      expect(overDesktop.code, overDesktop.output).toBe(0);
+      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/versions/1.2.3/t3"));
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("install.ps1 t3 command", () => {
+  it("replaces only its own t3.cmd, also in non-ASCII and bracketed paths", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-ps1-"));
+    try {
+      // Windows PowerShell 5.1 reads files as ANSI by default and expands wildcards in paths.
+      const home = NodePath.join(root, "José", ".t3");
+      const binDir = NodePath.join(root, "bin[t3]");
+      const shim = NodePath.join(binDir, "t3.cmd");
+      await NodeFSP.mkdir(binDir, { recursive: true });
+
+      const desktopShim = '@echo off\r\n"C:\\Program Files\\T3 Code\\T3 Code.exe" "x" %*\r\n';
+      await NodeFSP.writeFile(shim, desktopShim);
+      const foreign = await installOver({ script: "install.ps1", home, binDir });
+      expect(foreign.code).not.toBe(0);
+      expect(foreign.output).toContain("another t3 is already at");
+      expect(await NodeFSP.readFile(shim, "utf8")).toBe(desktopShim);
+
+      // A hand-edited wrapper may set its own environment; replacing it would drop that.
+      const edited = `@echo off\r\nset "T3CODE_HOME=D:\\other"\r\n"${NodePath.join(home, "runtime", "versions", "1.0.0", "t3.exe")}" %*`;
+      await NodeFSP.writeFile(shim, edited, "utf8");
+      const wrapper = await installOver({ script: "install.ps1", home, binDir });
+      expect(wrapper.code).not.toBe(0);
+      expect(await NodeFSP.readFile(shim, "utf8")).toBe(edited);
+
+      const climbing = `@echo off\r\n"${NodePath.join(home, "runtime", "versions")}\\..\\other\\t3.exe" %*`;
+      await NodeFSP.writeFile(shim, climbing, "utf8");
+      const outside = await installOver({ script: "install.ps1", home, binDir });
+      expect(outside.code).not.toBe(0);
+      expect(await NodeFSP.readFile(shim, "utf8")).toBe(climbing);
+
+      const older = NodePath.join(home, "runtime", "versions", "1.0.0", "t3.exe");
+      await NodeFSP.writeFile(shim, `@echo off\r\n"${older}" %*`, "utf8");
+      const upgrade = await installOver({ script: "install.ps1", home, binDir });
+      expect(upgrade.code, upgrade.output).toBe(0);
+      expect(await NodeFSP.readFile(shim, "utf8")).toContain(
+        NodePath.join(upgrade.target, "t3.exe"),
+      );
+
+      const again = await installOver({ script: "install.ps1", home, binDir });
+      expect(again.code, again.output).toBe(0);
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer checksum", () => {
   it.each(
     ["home\\data", "home\ndata"].flatMap((homeName) =>
