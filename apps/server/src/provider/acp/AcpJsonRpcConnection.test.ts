@@ -14,9 +14,11 @@ import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
 import { describe, expect } from "vite-plus/test";
 
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -193,10 +195,38 @@ describe("AcpSessionRuntime", () => {
 
   it.effect("reports an idle child exit and rejects later prompts", () =>
     Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime.make(mockRuntimeOptions);
+      const stopped = yield* Deferred.make<string>();
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const runtime = yield* AcpSessionRuntime.make(mockRuntimeOptions).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) =>
+            spawner.spawn(command).pipe(
+              Effect.map((child) =>
+                ChildProcessSpawner.makeHandle({
+                  ...child,
+                  // Model an inherited pipe held open until detached work is stopped.
+                  stdout: Stream.concat(
+                    child.stdout,
+                    Stream.fromEffect(Deferred.await(stopped)).pipe(Stream.drain),
+                  ),
+                }),
+              ),
+            ),
+          ),
+        ),
+        Effect.provideService(AgentScope, {
+          ...AgentScope.defaultValue(),
+          wrap: ({ command, args }) =>
+            Effect.succeed({ command, args, unit: "t3code-acp-test.scope" }),
+          stop: (unit) => Deferred.succeed(stopped, unit).pipe(Effect.asVoid),
+        }),
+      );
       yield* runtime.start();
+      expect(yield* Deferred.isDone(stopped)).toBe(false);
       yield* runtime.notify("_test/exit", {});
       const events = yield* runtime.getEvents().pipe(Stream.take(1), Stream.runCollect);
+      expect(yield* Deferred.await(stopped)).toBe("t3code-acp-test.scope");
       const event = events[0];
       expect(event).toMatchObject({ _tag: "ConnectionTerminated", error: { code: 19 } });
       if (event?._tag !== "ConnectionTerminated") return;

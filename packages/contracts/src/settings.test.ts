@@ -2,26 +2,42 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import { type CommandId, ProjectId } from "./baseSchemas.ts";
-import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceEnvironment,
+  ProviderInstanceId,
+} from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
+  globalIdleCompaction,
+  idleCompactionPatch,
   requiredScopesForProjectMutation,
   resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
+  withIdleCompaction,
 } from "./settings.ts";
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
 const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
+const encodeProviderInstanceEnvironment = Schema.encodeSync(ProviderInstanceEnvironment);
+const decodeProviderInstanceEnvironment = Schema.decodeSync(ProviderInstanceEnvironment);
+// The environment variable shape builds released before secret references decode.
+const decodeStringOnlyEnvironment = Schema.decodeUnknownSync(
+  Schema.Array(
+    Schema.Struct({ name: Schema.String, value: Schema.String, sensitive: Schema.Boolean }),
+  ),
+);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
 describe("storage cleanup settings", () => {
@@ -112,6 +128,86 @@ describe("ServerSettings usage price overrides", () => {
   });
 });
 
+describe("ServerSettings secret providers", () => {
+  const onePassword = (account: string) => ({
+    kind: "one_password",
+    label: "Personal",
+    config: { account },
+  });
+
+  it("keeps an unknown kind or a longer label from invalidating the rest of the settings", () => {
+    const openbao = { kind: "openbao", label: "V".repeat(65), config: { address: "https://x" } };
+    const decoded = decodeServerSettings({
+      worktreesDirectory: "/work",
+      secretProviders: { vault: openbao, personal: onePassword("my.1password.com") },
+    });
+    expect(decoded.worktreesDirectory).toBe("/work");
+    expect(encodeServerSettings(decoded).secretProviders).toEqual({
+      vault: openbao,
+      personal: onePassword("my.1password.com"),
+    });
+  });
+
+  it("accepts slug ids and null removals but no id that is not a slug", () => {
+    expect(
+      decodeServerSettingsPatch({
+        secretProviders: { "1password": onePassword("my.1password.com"), work: null },
+      }).secretProviders,
+    ).toEqual({ "1password": onePassword("my.1password.com"), work: null });
+    for (const id of ["", "My Vault", "a/b", "-vault"]) {
+      expect(() =>
+        decodeServerSettingsPatch({ secretProviders: { [id]: onePassword("my.1password.com") } }),
+      ).toThrow();
+    }
+    expect(() =>
+      decodeServerSettingsPatch({
+        secretProviders: { work: { ...onePassword("my.1password.com"), label: "V".repeat(65) } },
+      }),
+    ).toThrow();
+  });
+
+  it("stores a provider environment secret reference in a layout older builds still decode", () => {
+    const providerInstances = (secret: unknown) => ({
+      codex: {
+        driver: "codex",
+        environment: [
+          { name: "OPENAI_API_KEY", sensitive: true, value: "", secret },
+          { name: "BASE_URL", value: "https://example.test" },
+        ],
+      },
+    });
+    const secret = { provider: "personal", reference: "op://Private/OpenAI/credential" };
+    const environment = decodeServerSettings({ providerInstances: providerInstances(secret) })
+      .providerInstances[ProviderInstanceId.make("codex")]?.environment;
+    expect(environment).toEqual([
+      { name: "OPENAI_API_KEY", value: secret, sensitive: true },
+      { name: "BASE_URL", value: "https://example.test", sensitive: false },
+    ]);
+
+    const encoded = encodeProviderInstanceEnvironment(environment ?? []);
+    expect(encoded).toEqual([
+      { name: "OPENAI_API_KEY", value: "", sensitive: true, secret },
+      { name: "BASE_URL", value: "https://example.test", sensitive: false },
+    ]);
+    expect(decodeProviderInstanceEnvironment(encoded)).toEqual(environment);
+    expect(decodeStringOnlyEnvironment(encoded)).toEqual([
+      { name: "OPENAI_API_KEY", value: "", sensitive: true },
+      { name: "BASE_URL", value: "https://example.test", sensitive: false },
+    ]);
+
+    for (const invalid of [
+      { provider: "My Vault", reference: "op://a/b/c" },
+      { provider: "personal", reference: " " },
+      { provider: "personal", reference: "op://Private/OpenAI\n/credential" },
+      { provider: "personal", reference: "x".repeat(1025) },
+    ]) {
+      expect(() =>
+        decodeServerSettings({ providerInstances: providerInstances(invalid) }),
+      ).toThrow();
+    }
+  });
+});
+
 describe("custom model settings", () => {
   const capabilities = {
     optionDescriptors: [
@@ -138,7 +234,7 @@ describe("custom model settings", () => {
 describe("resolveIdleCompaction", () => {
   it("lets a Claude instance override the global default", () => {
     const settings = decodeServerSettings({
-      compactIdleThreads: "off",
+      idleCompaction: "off",
       providerInstances: {
         claude_work: { driver: "claudeAgent", config: { idleCompaction: "onReturn" } },
         claude_personal: { driver: "claudeAgent" },
@@ -151,11 +247,38 @@ describe("resolveIdleCompaction", () => {
     expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claudeAgent"))).toBe("off");
   });
 
-  it("keeps the legacy beta switch's behavior", () => {
-    expect(decodeServerSettings({ compactIdleThreads: true }).compactIdleThreads).toBe(
+  it("reads the mode from the legacy switch, in either form servers saved it", () => {
+    expect(globalIdleCompaction(decodeServerSettings({ compactIdleThreads: true }))).toBe(
       "beforeCacheExpires",
     );
-    expect(decodeServerSettings({}).compactIdleThreads).toBe("onReturn");
+    expect(globalIdleCompaction(decodeServerSettings({ compactIdleThreads: "off" }))).toBe("off");
+    expect(globalIdleCompaction(decodeServerSettings({}))).toBe("onReturn");
+  });
+
+  it("keeps the legacy switch a boolean, as shipped clients decode it", () => {
+    const encode = Schema.encodeSync(Schema.toCodecJson(ServerSettings));
+    for (const mode of ["onReturn", "beforeCacheExpires", "off"] as const) {
+      const encoded = encode(withIdleCompaction(DEFAULT_SERVER_SETTINGS, mode)) as {
+        readonly compactIdleThreads: unknown;
+        readonly idleCompaction: unknown;
+      };
+      expect(encoded.compactIdleThreads).toBe(mode === "beforeCacheExpires");
+      expect(encoded.idleCompaction).toBe(mode);
+    }
+  });
+
+  it("patches the field the server reads", () => {
+    expect(
+      idleCompactionPatch({ compactIdleThreads: false, idleCompaction: "onReturn" }, "off"),
+    ).toEqual({
+      idleCompaction: "off",
+    });
+    expect(idleCompactionPatch({ compactIdleThreads: "onReturn" }, "off")).toEqual({
+      compactIdleThreads: "off",
+    });
+    expect(idleCompactionPatch({ compactIdleThreads: false }, "beforeCacheExpires")).toEqual({
+      compactIdleThreads: true,
+    });
   });
 });
 
@@ -291,6 +414,27 @@ it("validates remote device hosts and rejects ambiguous host ids", () => {
     decodeDeviceHostSettings({ deviceHosts: [{ ...host, target: "-oProxyCommand=bad" }] }),
   ).toThrow();
   expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, port: 0 }] })).toThrow();
+});
+
+describe("ServerSettings project overrides across versions", () => {
+  it("sends back an override key from a newer server when an older client edits the entry", () => {
+    const projectId = ProjectId.make("project-a");
+    // As an older client reads a newer server's settings, with one key it does not know.
+    const entry = decodeServerSettings({
+      projectSettingsOverrides: {
+        [projectId]: { defaultAutoPull: true, addedByNewerServer: { mode: "kept" } },
+      },
+    }).projectSettingsOverrides[projectId];
+
+    const sent = encodeServerSettingsPatch({
+      projectSettingsOverrides: { [projectId]: { ...entry, defaultAutoPull: false } },
+    });
+
+    expect(decodeServerSettingsPatch(sent).projectSettingsOverrides?.[projectId]).toEqual({
+      defaultAutoPull: false,
+      addedByNewerServer: { mode: "kept" },
+    });
+  });
 });
 
 describe("resolveProjectProviderInstanceEnabled", () => {

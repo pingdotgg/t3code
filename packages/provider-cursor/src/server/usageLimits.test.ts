@@ -71,49 +71,47 @@ describe("Cursor usage limits", () => {
   });
 
   it.effect("reads the instance's credentials and endpoint even when usage enabled is false", () =>
-    Effect.gen(function* () {
-      yield* withNodeServices(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const directory = yield* fs.makeTempDirectoryScoped();
-          yield* fs.makeDirectory(path.join(directory, "cursor"));
-          yield* fs.writeFileString(
-            path.join(directory, "cursor", "auth.json"),
-            '{"accessToken":"instance-token"}',
+    withNodeServices(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        yield* fs.makeDirectory(path.join(directory, "cursor"));
+        yield* fs.writeFileString(
+          path.join(directory, "cursor", "auth.json"),
+          '{"accessToken":"instance-token"}',
+        );
+        const client = HttpClient.make((request) => {
+          expect(request.url).toBe(
+            "https://cursor.example/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
           );
-          const client = HttpClient.make((request) => {
-            expect(request.url).toBe(
-              "https://cursor.example/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
-            );
-            expect(request.method).toBe("POST");
-            expect(request.headers.authorization).toBe("Bearer instance-token");
-            expect(request.headers["connect-protocol-version"]).toBe("1");
-            return Effect.succeed(
-              HttpClientResponse.fromWeb(
-                request,
-                Response.json({ enabled: false, planUsage: { totalPercentUsed: 42 } }),
-              ),
-            );
-          });
-          yield* fs.makeDirectory(path.join(directory, ".cursor"));
-          yield* fs.writeFileString(
-            path.join(directory, ".cursor", "auth.json"),
-            '{"accessToken":"instance-token"}',
+          expect(request.method).toBe("POST");
+          expect(request.headers.authorization).toBe("Bearer instance-token");
+          expect(request.headers["connect-protocol-version"]).toBe("1");
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({ enabled: false, planUsage: { totalPercentUsed: 42 } }),
+            ),
           );
-          for (const platform of ["linux", "darwin"] as const) {
-            const limits = yield* readCursorUsageLimits(
-              { apiEndpoint: "https://cursor.example/" },
-              { XDG_CONFIG_HOME: directory, HOME: directory, AGENT_CLI_CREDENTIAL_STORE: "file" },
-            ).pipe(
-              Effect.provideService(HostProcess.Platform, platform),
-              Effect.provideService(HttpClient.HttpClient, client),
-            );
-            expect(limits.windows[0]?.usedPercent).toBe(42);
-          }
-        }).pipe(Effect.scoped),
-      );
-    }),
+        });
+        yield* fs.makeDirectory(path.join(directory, ".cursor"));
+        yield* fs.writeFileString(
+          path.join(directory, ".cursor", "auth.json"),
+          '{"accessToken":"instance-token"}',
+        );
+        for (const platform of ["linux", "darwin"] as const) {
+          const limits = yield* readCursorUsageLimits(
+            { apiEndpoint: "https://cursor.example/" },
+            { XDG_CONFIG_HOME: directory, HOME: directory, AGENT_CLI_CREDENTIAL_STORE: "file" },
+          ).pipe(
+            Effect.provideService(HostProcess.Platform, platform),
+            Effect.provideService(HttpClient.HttpClient, client),
+          );
+          expect(limits.windows[0]?.usedPercent).toBe(42);
+        }
+      }).pipe(Effect.scoped),
+    ),
   );
 
   it.effect(

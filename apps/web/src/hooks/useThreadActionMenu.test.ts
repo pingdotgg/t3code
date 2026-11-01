@@ -47,11 +47,8 @@ vi.mock("../state/session", () => ({
     scope === AuthOrchestrationOperateScope && state.granted.has(environmentId),
 }));
 vi.mock("../state/entities", () => ({
+  readEnvironmentServerConfigLoaded: () => true,
   readEnvironmentSupportsAutoSettleOptOut: () => true,
-  readEnvironmentSupportsPinning: () => true,
-  readEnvironmentSupportsSettlement: () => true,
-  readEnvironmentSupportsSnooze: () => true,
-  readEnvironmentSupportsTitleRegeneration: () => true,
   readThreadShell: () => ({
     id: "thread",
     environmentId: "secondary",
@@ -83,7 +80,7 @@ vi.mock("../localApi", () => ({
     },
   }),
 }));
-vi.mock("../logicalProject", () => ({
+vi.mock("@t3tools/client-runtime/state/project-grouping", () => ({
   deriveLogicalProjectKeyFromSettings: () => "project",
   derivePhysicalProjectKey: () => "project",
   selectProjectGroupingSettings: () => ({}),
@@ -122,6 +119,7 @@ vi.mock("./useSettings", () => ({
     }),
 }));
 vi.mock("./useThreadActions", () => ({
+  canTurnThreadIntoProject: () => false,
   useThreadActions: () =>
     Object.fromEntries(
       [
@@ -151,11 +149,13 @@ const target = {
   threadId: ThreadId.make("thread"),
 };
 const position = { x: 10, y: 20 };
-const createMenu = () =>
+const createMenu = (options: { readonly onFind?: (threadRef: typeof target) => void } = {}) =>
   useThreadActionMenu({
     threadRef: target,
     projectCwd: "/project",
     onStartRename: () => recordEffect("rename"),
+    onFind: options.onFind,
+    canShareWithGuest: false,
   });
 
 beforeEach(() => {
@@ -179,4 +179,18 @@ describe("thread menu permissions", () => {
       expect(state.effects).toEqual([]);
     },
   );
+
+  it("offers find only to a header that can open it, without task permission", async () => {
+    createMenu().openMenu(position);
+    expect(state.show.mock.calls[0]![0].some((item) => item.id === "find")).toBe(false);
+    state.show.mockResolvedValue("find");
+    const onFind = vi.fn(() => recordEffect("find"));
+    createMenu({ onFind }).openMenu(position);
+    await state.completed.promise;
+    const items = state.show.mock.calls[1]![0];
+    expect(items[0]).toMatchObject({ id: "find", label: "Find in thread" });
+    expect(items[0]?.disabled).not.toBe(true);
+    expect(state.effects).toEqual(["find"]);
+    expect(onFind).toHaveBeenCalledExactlyOnceWith(target);
+  });
 });

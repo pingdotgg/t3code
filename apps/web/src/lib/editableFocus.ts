@@ -8,10 +8,7 @@ const EDITABLE_SELECTOR = [
   '[role="textbox"]',
 ].join(",");
 
-/**
- * Focus inside an open shadow root counts: a key event's target is retargeted
- * to the shadow host, so the host's focused descendant is what is typed into.
- */
+/** Includes focused descendants of open shadow roots, whose key events target the host. */
 export function isEditableFocused(target: EventTarget | null = document.activeElement): boolean {
   let element = target instanceof Element ? target : null;
   while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
