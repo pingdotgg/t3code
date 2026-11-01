@@ -150,13 +150,12 @@ function PreviewPanelShellFrame(
       data-preview-panel-maximized={maximized ? "true" : "false"}
     >
       {isInline && !maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
-      {/* Content stays pinned to the right edge, so closing uncovers the chat
-          instead of sliding the tab bar under the title bar controls. */}
+      {/* A row narrower than the panel's minimum clips the left edge, keeping its controls visible. */}
       <div
         className={cn(
           "h-full min-h-0 w-full",
-          collapsible && "overflow-clip",
-          collapsible && !maximized && "flex justify-end",
+          collapsible && "relative overflow-clip",
+          collapsible && !maximized && "flex max-[360px]:justify-end",
         )}
       >
         <div
