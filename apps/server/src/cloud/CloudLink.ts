@@ -330,7 +330,17 @@ export function consumeCloudReplayGuards(input: {
         ),
       ),
     { concurrency: input.names.length },
-  ).pipe(Effect.map((created) => created.every(Boolean)));
+  ).pipe(
+    Effect.flatMap((created) =>
+      created.every(Boolean)
+        ? Effect.succeed(true)
+        : Effect.forEach(
+            input.names.filter((_, index) => created[index]),
+            (name) => input.secrets.remove(name),
+            { discard: true },
+          ).pipe(Effect.as(false)),
+    ),
+  );
 }
 
 function validateCloudMintPublicKey(
