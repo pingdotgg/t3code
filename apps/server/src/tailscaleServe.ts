@@ -25,6 +25,11 @@ const retrySchedule = Schedule.min([
   Schedule.exponential("1 second"),
   Schedule.spaced("30 seconds"),
 ]);
+// A leftover waits on a Tailscale that may be gone for good, so it backs off further.
+const leftoverSchedule = Schedule.min([
+  Schedule.exponential("1 second"),
+  Schedule.spaced("10 minutes"),
+]);
 
 const remedyFor = (cause: ClaimError, manualCommand: string) => {
   if (cause._tag === "TailscaleServeOccupiedError") {
@@ -153,16 +158,21 @@ export const layer = (options: {
       }).pipe(
         Effect.uninterruptible,
         Effect.tap(() => Effect.logInfo("Tailscale Serve configured", logContext)),
-        Effect.tapError((cause) => {
-          const key = failureKey(cause);
-          const repeated = key === lastFailure;
-          lastFailure = key;
-          const log = repeated ? Effect.logDebug : Effect.logWarning;
-          return log(
-            `Failed to configure Tailscale Serve. ${remedyFor(cause, manualCommand)} Retrying in the background.`,
-            { cause, ...logContext },
-          );
-        }),
+        Effect.tapError((cause) =>
+          Effect.gen(function* () {
+            const key = failureKey(cause);
+            const repeated = key === lastFailure;
+            lastFailure = key;
+            const log = repeated ? Effect.logDebug : Effect.logWarning;
+            const pending = yield* Ref.get(previous);
+            yield* log(
+              Option.isSome(pending)
+                ? `Could not remove the Tailscale Serve mapping an earlier run left on port ${pending.value.servePort}, so Serve waits. Retrying in the background.`
+                : `Failed to configure Tailscale Serve. ${remedyFor(cause, manualCommand)} Retrying in the background.`,
+              { cause, ...logContext },
+            );
+          }),
+        ),
         Effect.ensuring(Deferred.succeed(options.settled, undefined)),
       );
 
@@ -198,7 +208,7 @@ export const layerReleaseLeftover = (options: { readonly stateDir: string }) =>
           cause,
         }),
       ),
-      Effect.retry(retrySchedule),
+      Effect.retry(leftoverSchedule),
       Effect.tap((released) =>
         released
           ? Effect.logInfo("Removed the Tailscale Serve mapping left from when Serve was on")

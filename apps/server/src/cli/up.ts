@@ -630,7 +630,7 @@ const setUp = Effect.fn("cli.up")(function* (
     );
     if (handStarted) {
       return yield* Console.log(
-        "T3 Code is running here outside the background service, with the access it started with. Stop it to end that access.",
+        "T3 Code is running here outside the background service, with the access it started with. In the desktop app, turn access off in Settings → Sharing & access. Otherwise, stop the server.",
       );
     }
     // Nothing runs here to remove a Serve mapping a stopped server left, so do it now.
@@ -696,13 +696,13 @@ const setUp = Effect.fn("cli.up")(function* (
   // A stopped service of this version is not current, so reconcile starts it;
   // a newer one is left alone and needs this restart to start.
   const stopped = before.service.problems?.includes("service-stopped") === true;
+  const changed =
+    !sameSettings(before.settings, serviceSettings(planned, true)) ||
+    (routes.connect && !current.connect);
   const restart =
     before.service.installed &&
     (before.service.current || newer) &&
-    (!sameSettings(before.settings, serviceSettings(planned, true)) ||
-      (routes.connect && !current.connect) ||
-      pinsOff ||
-      stopped);
+    (changed || pinsOff || stopped);
   // An older or broken service is reinstalled, which restarts it too.
   const update = before.service.installed && !before.service.current && !newer && !stopped;
   if ((restart || update) && interactive && !stopped) {
@@ -710,7 +710,9 @@ const setUp = Effect.fn("cli.up")(function* (
       Prompt.Confirm({
         message: update
           ? "Update and restart T3 Code? Running agent turns will stop."
-          : "Apply changes and restart? Running agent turns will stop.",
+          : changed
+            ? "Apply changes and restart? Running agent turns will stop."
+            : "Write Tailscale off, so the service cannot inherit it, and restart? Running agent turns will stop.",
         initial: true,
       }),
     ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) }));

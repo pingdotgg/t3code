@@ -260,10 +260,10 @@ device connected to that machine, and **Block** it under **Tailscale devices on
 <machine>**. Its sessions there end now, and **Unblock** undoes it. A device that
 rejoins Tailscale gets a new ID, so block it again or remove it from your tailnet.
 
-To turn Tailscale sign-in off, run `t3 up --no-tailscale` or turn it off in
-**Settings → Sharing & access**. The background service or the desktop app
-restarts and ends every Tailscale session and unused Tailscale sign-in code. A
-server you started by hand keeps its access until you stop it.
+To turn Tailscale sign-in off, run `t3 up --no-tailscale` for the background
+service, or turn it off in **Settings → Sharing & access** in the desktop app.
+Either restarts and ends every Tailscale session and unused Tailscale sign-in
+code. A server you started by hand keeps its access until you stop it.
 
 On an untagged machine the owner is its own Tailscale user. On a tagged machine,
 `t3 up` asks for the owner's login, or takes `--owner <login>`; with
