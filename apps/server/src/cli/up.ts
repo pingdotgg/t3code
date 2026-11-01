@@ -276,10 +276,8 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       headless: flags.headless,
       installRelayClient: true,
     });
-    if (linked === null) return;
-    yield* Console.log(
-      `✓ Signed in to T3 Connect${linked.identity ? ` as ${linked.identity}` : ""}`,
-    );
+    if (!linked) return;
+    yield* Console.log("✓ Signed in to T3 Connect");
   }
   // A running server unlinks live; when that fails, only a restart stops its tunnel.
   const unlinkFailed =

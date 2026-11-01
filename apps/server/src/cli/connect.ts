@@ -106,7 +106,7 @@ const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
   if (!useOutOfBandOAuth) {
     const authorization = yield* tokens.get;
     if (authorization._tag === "Authorized") {
-      return authorization.token.identity ?? null;
+      return;
     }
   }
   const existing = yield* tokens.getExisting.pipe(
@@ -116,11 +116,9 @@ const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
     }),
   );
   if (Option.isSome(existing)) {
-    return existing.value.identity ?? null;
+    return;
   }
-  const { token, identity } = yield* CliTokenManager.deviceAuthorizationLogin(
-    showDeviceAuthorizationPrompt,
-  ).pipe(
+  const token = yield* CliTokenManager.deviceAuthorizationLogin(showDeviceAuthorizationPrompt).pipe(
     Effect.mapError((cause) =>
       isCloudCliTokenManagerError(cause)
         ? cause
@@ -128,7 +126,6 @@ const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
     ),
   );
   yield* tokens.store(token);
-  return identity;
 });
 
 function bytesToString(value: Uint8Array): string {
@@ -549,8 +546,6 @@ export const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function
   return yield* run.pipe(Effect.provide(layerRuntime));
 });
 
-const connectedAs = (identity: string | null): string => (identity ? ` as ${identity}` : "");
-
 function formatRelayClientReady(version: string): string {
   return `✓ Relay client ready · cloudflared ${version}`;
 }
@@ -576,14 +571,14 @@ const linkEnvironmentForConnect = Effect.fn("cloud.cli.link_environment")(functi
     );
     if (Option.isNone(installed)) {
       yield* Console.log("T3 Connect setup cancelled. The relay client was not installed.");
-      return null;
+      return false;
     }
     if (options.installRelayClient !== true) {
       yield* Console.log(formatRelayClientReady(installed.value.version));
     }
   }
 
-  const identity = yield* authorizeCli(options);
+  yield* authorizeCli(options);
   yield* CliState.setCliDesiredCloudLink(true, publishOnly ? "publish_only" : "managed");
   if (yield* CliState.dropRevokedCloudLink) {
     yield* Console.log("Replacing the link T3 Connect revoked.");
@@ -592,7 +587,7 @@ const linkEnvironmentForConnect = Effect.fn("cloud.cli.link_environment")(functi
     const secrets = yield* ServerSecretStore.ServerSecretStore;
     yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, stringToBytes("true"));
   }
-  return { identity } as const;
+  return true;
 });
 export { linkEnvironmentForConnect };
 
@@ -606,8 +601,8 @@ const connectLoginCommand = Command.make("login", {
       flags,
       Effect.gen(function* () {
         yield* Console.log("T3 Connect\n");
-        const identity = yield* authorizeCli(flags);
-        yield* Console.log(`✓ Signed in${connectedAs(identity)}`);
+        yield* authorizeCli(flags);
+        yield* Console.log("✓ Signed in");
       }),
     ),
   ),
@@ -634,8 +629,8 @@ const connectLinkCommand = Command.make("link", {
           const serveCommand = yield* resolveCliCommand("serve");
           yield* Console.log(
             flags.publishOnly
-              ? `✓ Authorized${connectedAs(linked.identity)}\n\nNext\n  Start T3 to publish agent activity (no managed tunnel).`
-              : `✓ Authorized${connectedAs(linked.identity)}\n\nNext\n  Start the server with \`${serveCommand}\` to make this machine reachable.`,
+              ? `✓ Authorized\n\nNext\n  Start T3 to publish agent activity (no managed tunnel).`
+              : `✓ Authorized\n\nNext\n  Start the server with \`${serveCommand}\` to make this machine reachable.`,
           );
         }
       }),
