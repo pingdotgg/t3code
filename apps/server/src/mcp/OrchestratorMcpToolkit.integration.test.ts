@@ -671,13 +671,47 @@ describe("orchestrator MCP toolkit", () => {
               ?.completionDelivery?.state,
           ).toBe("claimed");
 
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make("watch-before-result-read"),
+            threadId: localChild(delegated.childThreadId),
+            host: "github.com",
+            repository: "acme/app",
+            number: 124,
+            watching: true,
+            link: { url: "https://github.com/acme/app/pull/124", source: "agent" },
+          });
+          const watchingRead = yield* invoke("t3_thread_read", {
+            threadId: delegated.childThreadId,
+            limit: 100,
+          });
+          expect(watchingRead.isError).not.toBe(true);
+          const afterWatchingRead = yield* orchestrator.getThreadProjection(parentThreadId);
+          expect(
+            afterWatchingRead.subagents.find((task) => task.id === queuedFollowup.taskId)
+              ?.completionDelivery?.state,
+          ).toBe("claimed");
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make("unwatch-before-result-read"),
+            threadId: localChild(delegated.childThreadId),
+            host: "github.com",
+            repository: "acme/app",
+            number: 124,
+            watching: false,
+          });
+          const unwatchedParentlessRead = yield* invoke(
+            "t3_thread_read",
+            { threadId: delegated.childThreadId, limit: 100 },
+            { ...invocation, thread: undefined },
+          );
           const read = yield* invoke("t3_thread_read", {
             threadId: delegated.childThreadId,
             limit: 100,
           }).pipe(Effect.withTracer(tracer));
           expect(read.isError).not.toBe(true);
           expect(transferReads.length).toBeGreaterThan(0);
-          expect(read.structuredContent).toEqual(parentlessRead.structuredContent);
+          expect(read.structuredContent).toEqual(unwatchedParentlessRead.structuredContent);
           const afterRead = yield* orchestrator.getThreadProjection(parentThreadId);
           expect(
             afterRead.subagents.find((task) => task.id === queuedFollowup.taskId)

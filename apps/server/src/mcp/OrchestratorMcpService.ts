@@ -2999,6 +2999,8 @@ const make = Effect.gen(function* () {
         parent !== undefined &&
         scope.thread !== undefined &&
         tasks.length > 0 &&
+        // Timeline messages omit the watch notice, so keep its separate delivery pending.
+        !shell.pullRequests?.some((link) => link.watch !== undefined) &&
         (input.textOffset ?? 0) === 0
       ) {
         for (const task of tasks) {
