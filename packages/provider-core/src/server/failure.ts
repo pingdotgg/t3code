@@ -197,7 +197,7 @@ export function redactSecretAssignments(value: string): string {
       "$1[REDACTED]$2",
     )
     .replace(
-      /((?<![\w-])[\w-]*(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)\b\s*[:=]\s*)(?:(?:Bearer|Basic|Token)\s+)?(?:"(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?|[^\s,;]+)/giu,
+      /((?<![\w-])[\w-]*(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)\b\s*[:=]\s*)(?:(?:Bearer|Basic|Token)\s+)?(?:"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|"(?:\\.|[^"\\\n])*|'(?:\\.|[^'\\\n])*|[^\s,;]+)/giu,
       "$1[REDACTED]",
     );
 }

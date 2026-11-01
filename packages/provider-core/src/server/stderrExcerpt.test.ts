@@ -171,4 +171,10 @@ describe("stderrExcerpt", () => {
       ].join("\n"),
     );
   });
+
+  it("redacts a closed quoted secret that spans lines", () => {
+    expect(
+      sanitizeStderrExcerpt('PASSWORD="first\nsecond-secret"\nError: boom', "/Users/ada", {}),
+    ).toBe("PASSWORD=[REDACTED]\nError: boom");
+  });
 });
