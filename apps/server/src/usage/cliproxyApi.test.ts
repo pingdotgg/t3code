@@ -4,6 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
+import { collectLimitPools } from "@t3tools/shared/usageLimits";
+import { grokUsageResponseToLimits } from "@t3tools/provider-grok/server/usageLimits";
 
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 
@@ -390,7 +392,7 @@ describe("CLIProxyAPI built-in management API", () => {
         usageLimits: {
           windows: [
             {
-              id: kind,
+              id: "subscription",
               kind,
               label,
               usedPercent: 37,
@@ -401,6 +403,33 @@ describe("CLIProxyAPI built-in management API", () => {
       });
       expect(result[0]?.usageLimits.resetCredits).toBeUndefined();
       expect(test.requests).toHaveLength(3);
+      const checkedAt = result[0]!.usageLimits.checkedAt;
+      const native = grokUsageResponseToLimits(
+        {
+          config: {
+            creditUsagePercent: 63,
+            currentPeriod: { type: `USAGE_PERIOD_TYPE_${period}` },
+          },
+        },
+        checkedAt,
+      );
+      const [pool] = collectLimitPools(
+        [result[0]!.usageLimits, native].map((limits, index) => ({
+          key: String(index),
+          driver: result[0]!.driver,
+          displayName: null,
+          email: undefined,
+          plan: undefined,
+          accentColor: undefined,
+          environments: [],
+          sourceLabel: null,
+          redeem: null,
+          limits,
+        })),
+        Date.parse(checkedAt),
+      );
+      expect(pool?.windows).toHaveLength(1);
+      expect(pool?.windows[0]?.members).toHaveLength(2);
     }),
   );
 
@@ -434,10 +463,10 @@ describe("CLIProxyAPI built-in management API", () => {
           ]),
         ).toEqual(
           samePeriod
-            ? [["weekly", "weekly", 25]]
+            ? [["subscription", "weekly", 25]]
             : [
-                ["weekly", "weekly", 25],
-                ["monthly", "monthly", 60],
+                ["subscription", "weekly", 25],
+                ["subscription", "monthly", 60],
               ],
         );
       }

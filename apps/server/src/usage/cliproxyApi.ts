@@ -318,10 +318,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
           ...base,
           usageLimits: {
             checkedAt,
-            windows: uniqueWindows.map((window) => ({
-              ...window,
-              id: window.kind,
-            })),
+            windows: uniqueWindows,
           },
         };
       }
