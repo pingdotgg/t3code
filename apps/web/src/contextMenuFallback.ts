@@ -186,6 +186,7 @@ function createIconElement(name: string, tone: "neutral" | "destructive"): SVGSV
       ? "size-4.5 shrink-0 sm:size-4"
       : "size-4.5 shrink-0 text-muted-foreground sm:size-4",
   );
+  svg.setAttribute("aria-hidden", "true");
   for (const node of paths) {
     const child = document.createElementNS(SVG_NS, node.tag);
     for (const [key, value] of Object.entries(node.attrs)) {
@@ -245,6 +246,8 @@ export function showContextMenuFallback<T extends string>(
 ): Promise<T | null> {
   dismissContextMenu();
   return new Promise<T | null>((resolve) => {
+    // Restore the old invoker before capturing focus for a replacement menu.
+    activeContextMenuDismiss?.();
     let focusedElement = document.activeElement;
     while (focusedElement?.shadowRoot?.activeElement) {
       focusedElement = focusedElement.shadowRoot.activeElement;
@@ -252,6 +255,22 @@ export function showContextMenuFallback<T extends string>(
     const previouslyFocusedElement = focusedElement instanceof HTMLElement ? focusedElement : null;
     const menuStack: HTMLDivElement[] = [];
     const submenuTriggerStack: Array<HTMLButtonElement | undefined> = [];
+    // Unfocused windows can skip focus events, so navigation also refreshes highlights.
+    const highlightUpdaters = new Map<HTMLDivElement, Array<() => void>>();
+    const refreshHighlights = () => {
+      for (const updates of highlightUpdaters.values()) {
+        for (const update of updates) update();
+      }
+    };
+    // Scrolling under a stationary pointer must not override keyboard focus.
+    let isKeyboardDriven = false;
+    let lastPointer: { x: number; y: number } | null = null;
+    const onMouseMove = (event: MouseEvent) => {
+      if (lastPointer?.x !== event.clientX || lastPointer?.y !== event.clientY) {
+        isKeyboardDriven = false;
+      }
+      lastPointer = { x: event.clientX, y: event.clientY };
+    };
     let isDisposed = false;
     let canDismissFromPointer = false;
 
@@ -266,6 +285,7 @@ export function showContextMenuFallback<T extends string>(
         activeContextMenuDismiss = null;
       }
       document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("mousemove", onMouseMove, true);
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("contextmenu", onContextMenu, true);
       document.removeEventListener("focusin", onFocusIn);
@@ -275,78 +295,80 @@ export function showContextMenuFallback<T extends string>(
       for (const menu of menuStack) {
         menu.remove();
       }
+      highlightUpdaters.clear();
       if (shouldRestoreFocus && previouslyFocusedElement?.isConnected) {
         previouslyFocusedElement.focus({ preventScroll: true });
       }
       resolve(result);
     };
 
+    const enabledItems = (menu: HTMLDivElement) =>
+      [...menu.querySelectorAll<HTMLButtonElement>("button")].filter((item) => !item.disabled);
+
     const onKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.defaultPrevented ||
-        event.isComposing ||
-        event.altKey ||
-        event.ctrlKey ||
-        event.metaKey
-      )
-        return;
       const level = menuStack.findIndex((menu) =>
         isNodeWithinMenuStack(document.activeElement, [menu]),
       );
-      if (level < 0) return;
-      const menu = menuStack[level]!;
-      const buttons = [...menu.querySelectorAll<HTMLButtonElement>("button")].filter(
-        (button) => !button.disabled,
-      );
-      const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-      let target: HTMLButtonElement | undefined;
+      const menu = menuStack[level];
+      if (!menu) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          cleanup(null);
+        }
+        return;
+      }
+      const items = enabledItems(menu);
+      const focusedIndex = items.findIndex((item) => item === document.activeElement);
+      const focusItem = (index: number) => {
+        closeMenusFromLevel(level + 1);
+        const item = items.length > 0 ? items[(index + items.length) % items.length] : undefined;
+        item?.focus({ preventScroll: true });
+        item?.scrollIntoView({ block: "nearest" });
+      };
       switch (event.key) {
         case "ArrowDown":
-          target = buttons[(index + 1) % buttons.length];
+          focusItem(focusedIndex + 1);
           break;
         case "ArrowUp":
-          target =
-            buttons[(index < 0 ? buttons.length - 1 : index - 1 + buttons.length) % buttons.length];
+          focusItem(focusedIndex === -1 ? -1 : focusedIndex - 1);
           break;
         case "Home":
-          target = buttons[0];
+          focusItem(0);
           break;
         case "End":
-          target = buttons.at(-1);
+          focusItem(-1);
           break;
         case "ArrowRight":
-          if (buttons[index]?.getAttribute("aria-haspopup") !== "menu") return;
-          buttons[index]?.click();
-          break;
-        case " ":
-        case "Enter":
-          // Keyboard activation must not depend on the opening pointer gesture's frame.
-          canDismissFromPointer = true;
-          buttons[index]?.click();
+          if (items[focusedIndex]?.getAttribute("aria-haspopup") !== "menu") return;
+          items[focusedIndex]?.click();
           break;
         case "ArrowLeft":
           if (level === 0) return;
-        // Fall through to cancel this submenu only.
-        case "Escape": {
-          const parent = submenuTriggerStack[level];
-          if (parent) {
-            parent.focus({ preventScroll: true });
-            closeMenusFromLevel(level);
-          } else cleanup(null);
+          closeMenusFromLevel(level);
           break;
-        }
+        case "Escape":
+          if (level === 0) {
+            cleanup(null);
+          } else {
+            closeMenusFromLevel(level);
+          }
+          break;
         case "Tab":
-          // Tab closes the menu and continues from the element that opened it.
+          // Let the browser continue Tab traversal from the invoker.
           cleanup(null);
           return;
+        case "Enter":
+        case " ":
+          // Keyboard activation must not depend on the opening pointer gesture's frame.
+          canDismissFromPointer = true;
+          items[focusedIndex]?.click();
+          break;
         default:
           return;
       }
       event.preventDefault();
-      event.stopPropagation();
-      if (target && target !== submenuTriggerStack[level + 1]) closeMenusFromLevel(level + 1);
-      target?.focus({ preventScroll: true });
-      target?.scrollIntoView({ block: "nearest" });
+      isKeyboardDriven = true;
+      refreshHighlights();
     };
 
     const onFocusIn = (event: FocusEvent) => {
@@ -370,10 +392,18 @@ export function showContextMenuFallback<T extends string>(
     };
 
     const closeMenusFromLevel = (level: number) => {
+      const trigger = submenuTriggerStack[level];
+      const hadFocus = isNodeWithinMenuStack(document.activeElement, menuStack.slice(level));
       while (menuStack.length > level) {
         submenuTriggerStack.pop()?.setAttribute("aria-expanded", "false");
-        menuStack.pop()?.remove();
+        const menu = menuStack.pop();
+        if (menu) {
+          highlightUpdaters.delete(menu);
+          menu.remove();
+        }
       }
+      if (hadFocus) trigger?.focus({ preventScroll: true });
+      refreshHighlights();
     };
 
     const openMenu = (
@@ -395,8 +425,12 @@ export function showContextMenuFallback<T extends string>(
       menu.dataset.level = String(level);
       menu.dataset.contextMenu = "true";
       menu.setAttribute("role", "menu");
-      menu.setAttribute("aria-label", parentTrigger?.textContent ?? "Context menu");
+      if (parentTrigger?.dataset.label) {
+        menu.setAttribute("aria-label", parentTrigger.dataset.label);
+      }
       menu.tabIndex = -1;
+      const menuHighlightUpdaters: Array<() => void> = [];
+      highlightUpdaters.set(menu, menuHighlightUpdaters);
 
       const inner = document.createElement("div");
       inner.className =
@@ -429,13 +463,16 @@ export function showContextMenuFallback<T extends string>(
 
         const button = document.createElement("button");
         button.type = "button";
+        button.setAttribute("role", "menuitem");
+        button.tabIndex = -1;
+        button.dataset.label = item.label;
         const isDisabled = item.disabled === true;
         button.disabled = isDisabled;
         button.tabIndex = -1;
         button.setAttribute("role", "menuitem");
         button.setAttribute("aria-disabled", String(isDisabled));
         const rowBase =
-          "flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-left outline-none transition-colors sm:min-h-7 sm:text-sm min-h-8 text-base";
+          "flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-left outline-none sm:min-h-7 sm:text-sm min-h-8 text-base";
         button.className = isDisabled
           ? `${rowBase} pointer-events-none cursor-not-allowed text-muted-foreground opacity-64`
           : isLeafDestructive
@@ -493,10 +530,9 @@ export function showContextMenuFallback<T extends string>(
         }
 
         if (!isDisabled) {
-          let isHovered = false;
-          let isFocused = false;
           const updateHighlight = () => {
-            const isHighlighted = isHovered || isFocused;
+            const isHighlighted =
+              document.activeElement === button || button.getAttribute("aria-expanded") === "true";
             button.style.background = isHighlighted
               ? isLeafDestructive
                 ? "color-mix(in srgb, var(--destructive) 10%, transparent)"
@@ -510,23 +546,16 @@ export function showContextMenuFallback<T extends string>(
                 ? "var(--destructive-foreground)"
                 : "var(--contrast-foreground)";
           };
-          button.addEventListener("mouseenter", () => {
+          const focusFromPointer = () => {
+            if (isKeyboardDriven || document.activeElement === button) return;
             button.focus({ preventScroll: true });
-            isHovered = true;
-            updateHighlight();
-          });
-          button.addEventListener("mouseleave", () => {
-            isHovered = false;
-            updateHighlight();
-          });
-          button.addEventListener("focus", () => {
-            isFocused = true;
-            updateHighlight();
-          });
-          button.addEventListener("blur", () => {
-            isFocused = false;
-            updateHighlight();
-          });
+            refreshHighlights();
+          };
+          button.addEventListener("mouseenter", focusFromPointer);
+          button.addEventListener("mousemove", focusFromPointer);
+          button.addEventListener("focus", updateHighlight);
+          button.addEventListener("blur", updateHighlight);
+          menuHighlightUpdaters.push(updateHighlight);
 
           if (hasChildren) {
             const openSubmenu = (focusFirstItem = false) => {
@@ -535,6 +564,7 @@ export function showContextMenuFallback<T extends string>(
               const nextTop = rect.top;
               openMenu(item.children!, nextLeft, nextTop, level + 1, button);
               button.setAttribute("aria-expanded", "true");
+              updateHighlight();
 
               const childMenu = menuStack[level + 1];
               if (!childMenu) {
@@ -545,22 +575,27 @@ export function showContextMenuFallback<T extends string>(
                 clampMenuPosition(childMenu, rect.left - childRect.width - 4, rect.top);
               }
               if (focusFirstItem) {
-                [...childMenu.querySelectorAll<HTMLButtonElement>("button")]
-                  .find((childButton) => !childButton.disabled)
-                  ?.focus();
+                (enabledItems(childMenu)[0] ?? childMenu).focus({ preventScroll: true });
+                refreshHighlights();
               }
             };
-            button.addEventListener("mouseenter", () => {
-              openSubmenu();
-            });
+            const openFromPointer = () => {
+              if (!isKeyboardDriven && button.getAttribute("aria-expanded") !== "true") {
+                openSubmenu();
+              }
+            };
+            button.addEventListener("mouseenter", openFromPointer);
+            button.addEventListener("mousemove", openFromPointer);
             button.addEventListener("click", (event) => {
               event.preventDefault();
               openSubmenu(true);
             });
           } else {
-            button.addEventListener("mouseenter", () => {
-              closeMenusFromLevel(level + 1);
-            });
+            const closeFromPointer = () => {
+              if (!isKeyboardDriven) closeMenusFromLevel(level + 1);
+            };
+            button.addEventListener("mouseenter", closeFromPointer);
+            button.addEventListener("mousemove", closeFromPointer);
             button.addEventListener("click", () => {
               if (canDismissFromPointer) cleanup(item.id);
             });
@@ -573,7 +608,7 @@ export function showContextMenuFallback<T extends string>(
       menu.appendChild(inner);
 
       menu.addEventListener("mouseenter", () => {
-        closeMenusFromLevel(level + 1);
+        if (!isKeyboardDriven) closeMenusFromLevel(level + 1);
       });
 
       document.body.appendChild(menu);
@@ -586,6 +621,7 @@ export function showContextMenuFallback<T extends string>(
     };
 
     document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("mousemove", onMouseMove, true);
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("contextmenu", onContextMenu, true);
     openMenu(items, position?.x ?? 0, position?.y ?? 0, 0);
@@ -595,9 +631,10 @@ export function showContextMenuFallback<T extends string>(
     const firstAction =
       previouslyFocusedElement?.matches(":focus-visible") &&
       !previouslyFocusedElement.matches('input, textarea, select, [contenteditable="true"]')
-        ? menuStack[0]?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+        ? menuStack[0] && enabledItems(menuStack[0])[0]
         : null;
     (firstAction ?? menuStack[0])?.focus({ preventScroll: true });
+    refreshHighlights();
     document.addEventListener("focusin", onFocusIn);
     window.addEventListener("blur", onWindowBlur);
 
