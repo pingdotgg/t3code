@@ -220,6 +220,26 @@ it("keeps unknown dollar names editable when restoring and pasting a draft", asy
   expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
 });
 
+it.each(["x\r\n\r\ny", "x\r\ry"])(
+  "pastes %j with the same blank line as x\\n\\ny",
+  async (text) => {
+    await using screen = await mountEditor("");
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.focus("end");
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", text);
+      editor.view.dom.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, cancelable: true }),
+      );
+    });
+    const paragraphs: string[] = [];
+    editor.state.doc.forEach((node) => paragraphs.push(node.textContent));
+    expect(paragraphs).toEqual(["x", "", "y"]);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("x\n\ny");
+  },
+);
+
 it("keeps the caret inside unknown dollar text across rich and plain remounts", async () => {
   const value = "echo $HOME now";
   await using screen = await mountEditor(value);
