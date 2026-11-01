@@ -206,6 +206,8 @@ const withoutTreeDataPayloads = (tree: string) =>
 // The broker waits 15s for the host; a snapshot, retry included, answers well before.
 const SNAPSHOT_TIMEOUT_MS = 10_000;
 const FRAME_ANSWER_MS = 1_000;
+// Far above any frame or ordinary long task, so only a page that is already hung pays it.
+const SCRIPT_PROBE_MS = 1_000;
 
 // Include password and CSS-masked text in open shadow roots, normalized like accessible text.
 const DOTTED_SCRIPT = `(() => {
@@ -806,32 +808,46 @@ export const scroll = async (page: Page, input: PreviewAutomationScrollInput) =>
   await locator.evaluate((element, [x, y]) => element.scrollBy(x, y), delta);
 };
 
+/** Resolves `null` and terminates the page's script when it has not answered within `timeoutMs`. */
+const evaluateOrTerminate = async (
+  cdp: CDPSession,
+  params: { expression: string; awaitPromise?: boolean; returnByValue?: boolean },
+  timeoutMs: number,
+) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<null>((resolve) => {
+    timer = setTimeout(() => {
+      // Stops a busy script; an awaited promise is abandoned and settles unread.
+      void cdp.send("Runtime.terminateExecution").catch(constVoid);
+      resolve(null);
+    }, timeoutMs);
+  });
+  const evaluation = cdp.send("Runtime.evaluate", params);
+  void evaluation.catch(constVoid);
+  return Promise.race([evaluation, expired]).finally(() => clearTimeout(timer));
+};
+
 /** Terminate expired page scripts so a hung expression cannot block the tab's control queue. */
 export const evaluate = async (
   cdp: CDPSession,
   input: PreviewAutomationEvaluateInput,
   timeoutMs: number,
 ) => {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const expired = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      // Stops a busy script; an awaited promise is abandoned and settles unread.
-      void cdp.send("Runtime.terminateExecution").catch(constVoid);
-      reject(
-        new ServerBrowserOperationError(
-          "PreviewAutomationTimeoutError",
-          `Evaluation did not finish within ${timeoutMs}ms and was stopped.`,
-        ),
-      );
-    }, timeoutMs);
-  });
-  const evaluation = cdp.send("Runtime.evaluate", {
-    expression: input.expression,
-    awaitPromise: input.awaitPromise ?? true,
-    returnByValue: input.returnByValue ?? true,
-  });
-  void evaluation.catch(constVoid);
-  const result = await Promise.race([evaluation, expired]).finally(() => clearTimeout(timer));
+  const result = await evaluateOrTerminate(
+    cdp,
+    {
+      expression: input.expression,
+      awaitPromise: input.awaitPromise ?? true,
+      returnByValue: input.returnByValue ?? true,
+    },
+    timeoutMs,
+  );
+  if (result === null) {
+    throw new ServerBrowserOperationError(
+      "PreviewAutomationTimeoutError",
+      `Evaluation did not finish within ${timeoutMs}ms and was stopped.`,
+    );
+  }
   if (result.exceptionDetails) {
     throw new ServerBrowserOperationError(
       "PreviewAutomationExecutionError",
@@ -850,6 +866,16 @@ export const evaluate = async (
   }
   return value;
 };
+
+/**
+ * A same-site navigation cannot commit while the page's script never yields. Terminate only after a
+ * probe goes unanswered: on an idle renderer V8 terminates the next script, possibly the new page's.
+ */
+export const stopUnresponsiveScript = (cdp: CDPSession, budgetMs = SCRIPT_PROBE_MS) =>
+  evaluateOrTerminate(cdp, { expression: "0" }, Math.min(SCRIPT_PROBE_MS, budgetMs)).then(
+    constVoid,
+    constVoid,
+  );
 
 export const waitFor = async (page: Page, input: PreviewAutomationWaitForInput) => {
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
