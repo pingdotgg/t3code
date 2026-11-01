@@ -1,6 +1,8 @@
 import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
 import {
   REMOTE_CAPABLE_EDITOR_IDS,
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
+  WSL_REMOTE_EDITOR_IDS,
   type EditorId,
   type EnvironmentId,
   type RemoteOpenTarget,
@@ -10,7 +12,8 @@ import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 import { useAtomValue } from "@effect/atom-react";
 
-import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
+import { desktopLocalBackendId, isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
+import { desktopLocalBootstrapsAtom } from "~/connection/useDesktopLocalBootstraps";
 import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { environmentPresentations } from "~/state/presentation";
@@ -24,6 +27,7 @@ export interface RemoteOpenHost {
 export type RemoteOpenState =
   | { readonly mode: "local-exec" }
   | { readonly mode: "remote-links"; readonly host: RemoteOpenHost }
+  | { readonly mode: "wsl-links"; readonly distro: string }
   | { readonly mode: "remote-unavailable" };
 
 export type RemoteOpenMode = RemoteOpenState["mode"];
@@ -53,6 +57,7 @@ export function resolveRemoteOpenState(input: {
   readonly sshTarget: { readonly alias: string; readonly username: string | null } | null;
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
+  readonly wslDistro?: string | null;
 }): RemoteOpenState {
   const { target } = input;
   if (target === null) {
@@ -61,6 +66,7 @@ export function resolveRemoteOpenState(input: {
   if (target._tag === "PrimaryConnectionTarget") {
     // Desktop owns its primary even at a non-loopback WSL2 NAT address.
     if (input.isDesktopRenderer) {
+      if (input.wslDistro) return { mode: "wsl-links", distro: input.wslDistro };
       return LOCAL_EXEC;
     }
     const hostname = parseHostname(target.httpBaseUrl);
@@ -68,6 +74,9 @@ export function resolveRemoteOpenState(input: {
       return LOCAL_EXEC;
     }
   } else if (isDesktopLocalConnectionTarget(target)) {
+    if (desktopLocalBackendId(target)?.startsWith("wsl:") && input.wslDistro) {
+      return { mode: "wsl-links", distro: input.wslDistro };
+    }
     return LOCAL_EXEC;
   }
 
@@ -96,6 +105,9 @@ export function resolveRemoteOpenState(input: {
 
 function remoteOpenStatesEqual(previous: RemoteOpenState, next: RemoteOpenState): boolean {
   if (previous.mode !== next.mode) return false;
+  if (previous.mode === "wsl-links" && next.mode === "wsl-links") {
+    return previous.distro === next.distro;
+  }
   if (previous.mode !== "remote-links" || next.mode !== "remote-links") return true;
   return (
     previous.host.kind === next.host.kind &&
@@ -113,13 +125,25 @@ const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
       return UNRESOLVED_REMOTE_OPEN;
     }
     const profile = Option.getOrNull(entry.profile);
+    const isDesktopRenderer = window.desktopBridge !== undefined;
+    const backendId =
+      entry.target._tag === "PrimaryConnectionTarget"
+        ? PRIMARY_LOCAL_ENVIRONMENT_ID
+        : desktopLocalBackendId(entry.target);
+    const bootstraps =
+      isDesktopRenderer && backendId !== null ? get(desktopLocalBootstrapsAtom) : [];
+    const wslDistro =
+      backendId !== null
+        ? (bootstraps.find((bootstrap) => bootstrap.id === backendId)?.runningDistro ?? null)
+        : null;
     const next: RemoteOpenResolution = {
       state: resolveRemoteOpenState({
         target: entry.target,
         sshTarget:
           profile !== null && profile._tag === "SshConnectionProfile" ? profile.target : null,
         remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
-        isDesktopRenderer: window.desktopBridge !== undefined,
+        isDesktopRenderer,
+        wslDistro,
       }),
       isResolved: true,
     };
@@ -158,6 +182,11 @@ const remoteCapableEditorsAtom = Atom.make((get): ReadonlyArray<EditorId> => {
   );
   return REMOTE_FALLBACK_EDITORS;
 }).pipe(Atom.keepAlive, Atom.withLabel("remote-capable-editors"));
+
+export function wslCapableEditors(editors: ReadonlyArray<EditorId>): ReadonlyArray<EditorId> {
+  const supported = editors.filter((editor) => WSL_REMOTE_EDITOR_IDS.some((id) => id === editor));
+  return supported.length > 0 ? supported : REMOTE_FALLBACK_EDITORS;
+}
 
 export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
   return useAtomValue(remoteCapableEditorsAtom);

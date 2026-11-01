@@ -142,13 +142,13 @@ async function setup() {
     return event;
   }
 
-  function FavoriteEditorFallback() {
+  function FavoriteEditorFallback({ openInCwd = "/work/project" }: { openInCwd?: string }) {
     useOpenFavoriteEditorShortcut({
       enabled: true,
       environmentId: selected,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       availableEditors: editors,
-      openInCwd: "/work/project",
+      openInCwd,
     });
     return null;
   }
@@ -198,6 +198,46 @@ describe("remote editor links", () => {
 
     expect((await pressOpenFavorite()).defaultPrevented).toBe(true);
     expect(state.openUrl).toHaveBeenCalledWith(expect.stringContaining("ssh-remote+sol"));
+    expect(state.run).not.toHaveBeenCalled();
+  });
+
+  it("opens a WSL workspace through VS Code Remote - WSL and offers only VS Code variants", async () => {
+    await using fixture = await setup();
+    const { renderPicker, byLabel, menuItems, click, primaryButton } = fixture;
+    state.remote = { mode: "wsl-links", distro: "Ubuntu" };
+    state.clientEditors = ["cursor", "vscode-insiders", "vscode"];
+
+    await renderPicker(["vscode", "cursor"], false, {
+      openInCwd: "/home/theo/My Project",
+    });
+    await click(byLabel("Choose editor"));
+    const labels = menuItems().map(
+      (item) => item.querySelector('[data-slot="menu-item-label"]')?.textContent,
+    );
+    expect(labels).toContain("VS Code");
+    expect(labels).toContain("VS Code Insiders");
+    expect(labels).not.toContain("Cursor");
+
+    await click(primaryButton());
+    expect(state.openUrl).toHaveBeenCalledWith(
+      "vscode://vscode-remote/wsl+Ubuntu/home/theo/My%20Project",
+    );
+    expect(state.run).not.toHaveBeenCalled();
+  });
+
+  it("opens the WSL workspace from the favorite-editor shortcut", async () => {
+    await using fixture = await setup();
+    const { screen, pressOpenFavorite, FavoriteEditorFallback } = fixture;
+    state.remote = { mode: "wsl-links", distro: "Debian" };
+    state.clientEditors = ["vscode"];
+    await act(async () =>
+      screen.rerender(<FavoriteEditorFallback openInCwd="/home/theo/workspace" />),
+    );
+
+    expect((await pressOpenFavorite()).defaultPrevented).toBe(true);
+    expect(state.openUrl).toHaveBeenCalledWith(
+      "vscode://vscode-remote/wsl+Debian/home/theo/workspace",
+    );
     expect(state.run).not.toHaveBeenCalled();
   });
 });

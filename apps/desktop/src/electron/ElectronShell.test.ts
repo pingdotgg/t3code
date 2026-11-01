@@ -40,6 +40,25 @@ describe("ElectronShell", () => {
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
+  it.effect("opens VS Code Remote - WSL URLs", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const urls = [
+        "vscode://vscode-remote/wsl+Ubuntu/home/user/My%20Project",
+        "vscode-insiders://vscode-remote/wsl+Debian/home/user/project",
+      ];
+      const results = yield* Effect.forEach(urls, (url) => electronShell.openExternal(url));
+
+      assert.deepEqual(results, [true, true]);
+      assert.deepEqual(
+        openExternalMock.mock.calls,
+        urls.map((url) => [url]),
+      );
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
   it.effect("opens the JetBrains Toolbox ssh deep link", () =>
     Effect.gen(function* () {
       openExternalMock.mockResolvedValue(undefined);
@@ -62,12 +81,28 @@ describe("ElectronShell", () => {
       const results = yield* Effect.all([
         electronShell.openExternal("zed://extension/attacker"),
         electronShell.openExternal("vscode://ssh/example.com/home/user/project"),
+        electronShell.openExternal("vscode://vscode-remote/wsl+bad!distro/home/user/project"),
+        electronShell.openExternal("cursor://vscode-remote/wsl+Ubuntu/home/user/project"),
+        electronShell.openExternal("vscode://vscode-remote/wsl+Ubuntu"),
+        electronShell.openExternal("vscode://vscode-remote/wsl+Ubuntu/home/%2Fetc"),
+        electronShell.openExternal("vscode://vscode-remote/wsl+Ubuntu/home/user/project?x=1"),
         electronShell.openExternal("jetbrains://idea/navigate/reference?project=x&path=y"),
         electronShell.openExternal("jetbrains://gateway/ssh/environment?launchIde=true"),
         electronShell.openExternal("jetbrains://gateway/com.example.provider/connect?h=x"),
       ]);
 
-      assert.deepEqual(results, [false, false, false, false, false]);
+      assert.deepEqual(results, [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+      ]);
       assert.equal(openExternalMock.mock.calls.length, 0);
     }).pipe(Effect.provide(ElectronShell.layer)),
   );

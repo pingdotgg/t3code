@@ -1,4 +1,8 @@
-import { buildFileLinkParentSuffixByPath, fileLinkLabel } from "@t3tools/shared/fileLinks";
+import {
+  buildFileLinkParentSuffixByPath,
+  fileLinkLabel,
+  resolvePathLinkTarget,
+} from "@t3tools/shared/fileLinks";
 import {
   isWindowsDrivePathHref,
   normalizeMarkdownLinkDestination,
@@ -142,6 +146,7 @@ import {
 } from "../markdown-links";
 import {
   markdownFileCopyPaths,
+  buildWslMarkdownFileUrl,
   markdownFileEditorTarget,
   resolveMarkdownFileHostPath,
 } from "../markdownFileHostPath";
@@ -149,7 +154,13 @@ import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
-import { resolveRemoteOpenState, useRemoteOpenResolution } from "../remoteOpen";
+import {
+  openRemoteEditorUrl,
+  resolveRemoteOpenState,
+  useRemoteCapableEditors,
+  useRemoteOpenResolution,
+  wslCapableEditors,
+} from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
@@ -630,6 +641,8 @@ function useChatMarkdownState({
     markdownServerConfigFieldsAtom(environmentId),
   );
   const projects = useProjects();
+  const remoteEditors = useRemoteCapableEditors();
+  const [wslEditor] = usePreferredEditor(wslCapableEditors(remoteEditors));
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
   const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
@@ -857,12 +870,45 @@ function useChatMarkdownState({
         theme={resolvedTheme}
         threadRef={threadRef}
         onOpen={
-          canUseShellActions
-            ? async () =>
-                openInPreferredEditor(
-                  markdownFileEditorTarget(fileLinkMeta, await resolveHostPath()),
-                )
-            : undefined
+          remoteOpen.state.mode === "wsl-links" && canOperateHost && wslEditor
+            ? async () => {
+                if (
+                  environmentId === null ||
+                  !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+                ) {
+                  throw new Error("This connection cannot open an editor on this environment.");
+                }
+                let path = (await resolveHostPath()).absolutePath;
+                const absolutePath = cwd ? resolvePathLinkTarget(path, cwd) : path;
+                if (absolutePath.split("/").includes("..")) {
+                  const metadata = await getFilesystemMetadata({
+                    environmentId,
+                    input: { paths: [absolutePath], resolveRealPath: true },
+                  });
+                  const realPath =
+                    metadata._tag === "Success" ? metadata.value.entries[0]?.realPath : undefined;
+                  if (!realPath)
+                    throw new Error("Could not resolve the file path on the WSL environment.");
+                  path = realPath;
+                }
+                const url = buildWslMarkdownFileUrl({
+                  editor: wslEditor,
+                  distro: remoteOpen.state.mode === "wsl-links" ? remoteOpen.state.distro : "",
+                  path,
+                  cwd,
+                  line: fileLinkMeta.line,
+                  column: fileLinkMeta.column,
+                });
+                if (!url || !(await openRemoteEditorUrl(url)))
+                  throw new Error("Could not open the file in VS Code.");
+                return AsyncResult.success(undefined);
+              }
+            : canUseShellActions
+              ? async () =>
+                  openInPreferredEditor(
+                    markdownFileEditorTarget(fileLinkMeta, await resolveHostPath()),
+                  )
+              : undefined
         }
         resolveCopyPaths={async () =>
           markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(), cwd)
@@ -873,7 +919,11 @@ function useChatMarkdownState({
             ? () => openMarkdownMedia(mediaPath, fileLinkMeta.filePath)
             : undefined
         }
-        openInEditorMenuLabel={preferredEditorMenuLabel}
+        openInEditorMenuLabel={
+          remoteOpen.state.mode === "wsl-links"
+            ? openInEditorMenuLabel(wslEditor)
+            : preferredEditorMenuLabel
+        }
         onReveal={
           canUseShellActions && revealInFileManagerLabel !== undefined
             ? async () => revealFileInFileManager((await resolveHostPath()).absolutePath)

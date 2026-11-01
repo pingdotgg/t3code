@@ -169,9 +169,39 @@ export const REMOTE_CAPABLE_EDITOR_IDS: ReadonlyArray<EditorId> = EDITORS.flatMa
   remoteSchemeOf(editor) !== undefined ? [editor.id] : [],
 );
 
+export const WSL_REMOTE_EDITOR_IDS = [
+  "vscode",
+  "vscode-insiders",
+] as const satisfies ReadonlyArray<EditorId>;
+
 export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
   const editor = EDITORS.find((candidate) => candidate.id === id);
   return editor === undefined ? undefined : remoteSchemeOf(editor);
+};
+
+export const buildWslOpenUrl = (input: {
+  readonly editor: EditorId;
+  readonly distro: string;
+  readonly absolutePath: string;
+  readonly isFile?: boolean;
+  readonly line?: number;
+  readonly column?: number;
+}): string | undefined => {
+  if (
+    !WSL_REMOTE_EDITOR_IDS.some((editor) => editor === input.editor) ||
+    !/^[A-Za-z0-9._-]+$/.test(input.distro) ||
+    !input.absolutePath.startsWith("/") ||
+    input.absolutePath.includes("\\") ||
+    input.absolutePath.split("/").some((segment) => segment === "." || segment === "..")
+  ) {
+    return undefined;
+  }
+  const scheme = remoteSchemeForEditor(input.editor);
+  if (scheme === undefined) {
+    return undefined;
+  }
+  const encodedPath = input.absolutePath.split("/").map(encodeURIComponent).join("/");
+  return `${scheme}://vscode-remote/wsl+${input.distro}${encodedPath}${input.isFile ? `:${input.line ?? 1}:${input.column ?? 1}` : ""}`;
 };
 
 export const buildRemoteOpenUrl = (input: {
