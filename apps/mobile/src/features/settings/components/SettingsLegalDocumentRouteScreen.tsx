@@ -117,6 +117,7 @@ export function SettingsLegalDocumentRouteScreen({
       <WebView
         key={reloadKey}
         source={{ uri: documentUrl }}
+        contentInsetAdjustmentBehavior="automatic"
         originWhitelist={["http://*", "https://*", "mailto:*"]}
         cacheEnabled={false}
         cacheMode="LOAD_NO_CACHE"
