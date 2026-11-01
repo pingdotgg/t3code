@@ -59,11 +59,13 @@ export function LinkedEnvironmentsSettings({
   readonly isSearchTarget: boolean;
 }) {
   const links = useEnvironmentQuery(peerLinkEnvironment.list({ environmentId, input: {} }));
-  const reloadLoadedLinks = useEffectEvent(() => {
-    if (links.data !== null) links.refresh();
+  const askAgain = useEffectEvent(() => {
+    if (!links.isPending) links.refresh();
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the CLI, agents and other devices link machines too, and an open composer keeps the shared list loaded past its stale time, so opening the panel asks again
-  useEffect(() => reloadLoadedLinks(), []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- links change outside this client, and the shared list only revalidates when built
+  useEffect(() => {
+    askAgain();
+  }, []);
   const canLink = useAtomValue(peerLinkEnvironment.link.permissionAtom(environmentId));
   const search = searchableSetting("linked-environments");
   return (

@@ -22,17 +22,19 @@ const vmLink: PeerLinkSummary = {
 };
 
 // What the host's `peerLinks.list` answers. The CLI and agents link machines without this client.
-const server = vi.hoisted(() => ({ links: [] as Array<unknown> }));
-// Shaped like the real list query: stale-while-revalidate, revalidating only when it is built.
-const listAtom = vi.hoisted(() => ({ current: null as unknown }));
+const server = vi.hoisted(() => ({ links: [] as Array<PeerLinkSummary> }));
+const listAtom = vi.hoisted(() => ({
+  current: null as Atom.Atom<AsyncResult.AsyncResult<unknown, unknown>> | null,
+}));
 
 vi.mock(import("~/state/peerLinks"), async (original) => {
   const actual = await original();
   const { Atom: AtomModule } = await import("effect/reactivity");
   const EffectModule = await import("effect/Effect");
-  const list = AtomModule.make(
-    EffectModule.sync(() => ({ links: [...server.links] as Array<PeerLinkSummary> })),
-  ).pipe(AtomModule.swr({ staleTime: 10_000, revalidateOnMount: true }));
+  // The real list query's options: stale-while-revalidate, revalidating only when it is built.
+  const list = AtomModule.make(EffectModule.sync(() => ({ links: [...server.links] }))).pipe(
+    AtomModule.swr({ staleTime: 10_000, revalidateOnMount: true }),
+  );
   listAtom.current = list;
   const denied = AtomModule.make(false);
   return {
@@ -48,9 +50,7 @@ vi.mock(import("~/state/peerLinks"), async (original) => {
 
 /** Stands in for the chat composer, which reads the same list while a thread is open. */
 function ComposerReader() {
-  const result = useAtomValue(
-    listAtom.current as Atom.Atom<AsyncResult.AsyncResult<unknown, unknown>>,
-  );
+  const result = useAtomValue(listAtom.current!);
   return AsyncResult.isSuccess(result) ? <p>Composer loaded</p> : null;
 }
 
