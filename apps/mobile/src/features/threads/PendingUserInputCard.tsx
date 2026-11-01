@@ -18,6 +18,11 @@ import { Button } from "../../components/ui/Button";
 import { QuestionAttachments } from "./QuestionAttachments";
 import type { EnvironmentId, ThreadId, RuntimeRequestId } from "@t3tools/contracts";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  markdownProseDirection,
+  textDirection,
+  type TextDirection,
+} from "@t3tools/shared/textDirection";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
@@ -78,12 +83,30 @@ export interface PendingUserInputCardProps {
 /** Android cannot hit-test overlays beyond their parent's bounds; render its expanded card in-flow. */
 const EXPANDED_CARD_IS_OVERLAY = Platform.OS === "ios";
 
+function proseDirectionStyle(text: string, setDirection: TextDirection | undefined) {
+  const direction = textDirection(text);
+  return {
+    ...(direction ? { direction, writingDirection: direction } : null),
+    textAlign: (direction === "rtl") === (setDirection === "rtl") ? "left" : "right",
+  } as const;
+}
+
 function QuestionText(
-  props: SelectableMarkdownTextProps & { readonly environmentId: EnvironmentId },
+  props: SelectableMarkdownTextProps & {
+    readonly environmentId: EnvironmentId;
+    readonly setDirection: TextDirection | undefined;
+  },
 ) {
-  const { environmentId, ...markdownProps } = props;
+  const { environmentId, setDirection, ...markdownProps } = props;
   const markdown = useLiveThreadLinkLabels(props.markdown, environmentId);
-  return <SelectableMarkdownText {...markdownProps} markdown={markdown} />;
+  return (
+    <SelectableMarkdownText
+      {...markdownProps}
+      markdown={markdown}
+      writingDirection={markdownProseDirection(markdown)}
+      textAlign={Platform.OS === "android" ? undefined : setDirection === "rtl" ? "right" : "left"}
+    />
+  );
 }
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
@@ -183,6 +206,15 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
   const isResponding = props.respondingUserInputId === props.pendingUserInput.requestId;
   const responseDisabled = !canRespond || isResponding;
+  const setDirection = markdownProseDirection(
+    props.pendingUserInput.questions
+      .flatMap((question) => [
+        question.header,
+        question.question,
+        ...question.options.flatMap((option) => [option.label, option.description ?? ""]),
+      ])
+      .join(" "),
+  );
 
   const cardCoverage = props.cardCoverage;
   const barHeightRef = useRef(0);
@@ -326,6 +358,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 accessibilityLabel={
                   spokenFallback ? `${question.header}. ${spokenFallback}` : undefined
                 }
+                style={proseDirectionStyle(question.header, setDirection)}
               >
                 {question.header}
               </Text>
@@ -334,6 +367,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 {...markdownProps}
                 markdown={question.question}
                 textStyle={textStyles.question}
+                setDirection={setDirection}
               />
               <View className="gap-2">
                 {question.options.map((option) => {
@@ -345,6 +379,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                     <PendingUserInputOption
                       key={JSON.stringify([optionValue, option.label, description])}
                       option={option}
+                      setDirection={setDirection}
                       multiSelect={question.multiSelect}
                       selected={selected}
                       disabled={responseDisabled}
@@ -427,6 +462,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
 
 function PendingUserInputOption(props: {
   readonly option: ThreadUserInputQuestion["options"][number];
+  readonly setDirection: TextDirection | undefined;
   readonly multiSelect: boolean;
   readonly selected: boolean;
   readonly disabled: boolean;
@@ -482,12 +518,24 @@ function PendingUserInputOption(props: {
           {...props.markdownProps}
           markdown={props.option.label}
           textStyle={props.labelTextStyle}
+          writingDirection={markdownProseDirection(props.option.label)}
+          textAlign={
+            Platform.OS === "android" ? undefined : props.setDirection === "rtl" ? "right" : "left"
+          }
         />
         {description ? (
           <SelectableMarkdownText
             {...props.markdownProps}
             markdown={description}
             textStyle={props.descriptionTextStyle}
+            writingDirection={markdownProseDirection(description)}
+            textAlign={
+              Platform.OS === "android"
+                ? undefined
+                : props.setDirection === "rtl"
+                  ? "right"
+                  : "left"
+            }
           />
         ) : null}
       </View>

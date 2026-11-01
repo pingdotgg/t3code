@@ -195,6 +195,7 @@ import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
 import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
+import { ThreadSideChatsRow } from "./ThreadSideChatsRow";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
@@ -345,6 +346,9 @@ const COMPOSER_HEIGHT_SETTLE_MS = 220;
 const NO_RUN_STOP_ATOM = Atom.make<RunStopPresentation | null>(null).pipe(
   Atom.withLabel("mobile-thread-run-stop:empty"),
 );
+
+// Connection failures survive retries and app suspension.
+const RECONNECT_ERROR_DELAY_MS = 5_000;
 
 // Anchors, the submitted message, follow state and pending scrolls belong to
 // one thread, so the body remounts when the thread changes.
@@ -527,6 +531,14 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     }
   })();
   const threadSyncLabel = useDelayedStatus(selectedThreadKey, realThreadSyncLabel);
+  const connectionRetrying =
+    props.connectionStateLabel === "connecting" || props.connectionStateLabel === "reconnecting";
+  const retryError = connectionRetrying ? props.connectionError : null;
+  const retryConnectionError = useDelayedStatus(
+    `${props.environmentId}:${retryError !== null}`,
+    retryError,
+    RECONNECT_ERROR_DELAY_MS,
+  );
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
@@ -661,7 +673,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   );
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus({
-      connectionError: props.connectionError,
+      connectionError: connectionRetrying ? retryConnectionError : props.connectionError,
       connectionState: props.connectionStateLabel,
       environmentLabel: props.environmentLabel,
       onReconnect: props.onReconnectEnvironment,
@@ -1520,6 +1532,12 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                     threadRef={props.selectedThreadDetailRef}
                     canOperateThread={props.canOperateThread}
                   />
+                  {props.draftMode ? null : (
+                    <ThreadSideChatsRow
+                      environmentId={props.environmentId}
+                      threadId={props.selectedThread.id}
+                    />
+                  )}
                   {props.feedbackSubmissions.map((submission) => (
                     <ComposerFeedback
                       key={submission.id}
