@@ -5,6 +5,7 @@ import {
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   type Project,
+  type RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -12,7 +13,12 @@ import {
   type RelayAgentActivityPublishProofPayload,
   type RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
-import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
+import {
+  type PendingSubagentRequest,
+  type SubagentRequestAwareness,
+  projectThreadAwarenessV2,
+  subagentPendingRequest,
+} from "@t3tools/shared/agentAwareness";
 import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
@@ -156,12 +162,19 @@ export const makeAgentAwarenessPublishWorker = Effect.fnUntraced(function* <R>(
   return { enqueue, drain: worker.drain };
 });
 
-function agentAwarenessPublishIdentity(state: RelayAgentActivityState | null): string {
+function agentAwarenessPublishIdentity(
+  state: RelayAgentActivityState | null,
+  subagentRequest: SubagentRequestAwareness | null = null,
+): string {
   if (state === null) {
     return "null";
   }
   const { updatedAt: _updatedAt, ...meaningfulState } = state;
-  return JSON.stringify(meaningfulState);
+  // A child's next request reads the same as its last one, but it is a new
+  // wait and must reach the phone.
+  return JSON.stringify(
+    subagentRequest === null ? meaningfulState : [meaningfulState, subagentRequest.requestId],
+  );
 }
 
 function resolveAgentActivityPublishingStartupState(input: {
@@ -288,19 +301,30 @@ function describeThreadShellForAwareness(
   };
 }
 
+interface SubagentRequest {
+  readonly topLevelThreadId: ThreadId;
+  readonly request: PendingSubagentRequest;
+  readonly requestId: RuntimeRequestId;
+  readonly changeOrder: number;
+}
+
 function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly environmentId: EnvironmentId;
   readonly thread: Option.Option<OrchestrationV2ThreadShell>;
   readonly project: Option.Option<Project>;
+  readonly pendingSubagentRequest: SubagentRequestAwareness | null;
 }): {
   readonly projectId: string | null;
   readonly state: RelayAgentActivityState | null;
+  /** The child request behind the state's wait, when the parent isn't waiting itself. */
+  readonly subagentWait: SubagentRequestAwareness | null;
   readonly reason: "snapshot" | "thread-not-found" | "project-not-found";
 } {
   if (Option.isNone(input.thread)) {
     return {
       projectId: null,
       state: null,
+      subagentWait: null,
       reason: "thread-not-found",
     };
   }
@@ -308,18 +332,26 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
     return {
       projectId: input.thread.value.projectId,
       state: null,
+      subagentWait: null,
       reason: "project-not-found",
     };
   }
+  const awarenessInput = {
+    environmentId: input.environmentId,
+    project: input.project.value,
+    thread: input.thread.value,
+  };
+  const state = projectThreadAwarenessV2({
+    ...awarenessInput,
+    pendingSubagentRequest: input.pendingSubagentRequest,
+  });
+  const childDrivesWait =
+    input.pendingSubagentRequest !== null &&
+    state?.phase !== projectThreadAwarenessV2(awarenessInput)?.phase;
   return {
     projectId: input.thread.value.projectId,
-    state: sanitizeRelayAgentActivityState(
-      projectThreadAwarenessV2({
-        environmentId: input.environmentId,
-        project: input.project.value,
-        thread: input.thread.value,
-      }),
-    ),
+    state: sanitizeRelayAgentActivityState(state),
+    subagentWait: childDrivesWait ? input.pendingSubagentRequest : null,
     reason: "snapshot",
   };
 }
@@ -340,6 +372,8 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
   const projectById = new Map(input.projects.map((project) => [project.id, project]));
   return input.threads
     .filter((thread) => {
+      // Publishing a waiting subagent republishes its top-level thread.
+      if (subagentPendingRequest(thread) !== null) return true;
       const project = projectById.get(thread.projectId);
       if (!project) {
         return false;
@@ -371,6 +405,21 @@ export const make = Effect.gen(function* () {
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const catchUpRequests = yield* Queue.dropping<void>(1);
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
+  // Android keys alerts by phase and time, so a child's wait must never reuse an
+  // earlier alert time. Kept across clears, tombstones and relinks for that reason.
+  const latestAlertAtByThread = new Map<ThreadId, DateTime.Utc>();
+  const recordAlertAt = (threadId: ThreadId, updatedAt: string) => {
+    const next = DateTime.makeUnsafe(updatedAt);
+    latestAlertAtByThread.set(
+      threadId,
+      DateTime.max(latestAlertAtByThread.get(threadId) ?? next, next),
+    );
+  };
+  const subagentRequests = new Map<ThreadId, SubagentRequest>();
+  let subagentRequestChangeOrder = 0;
+  // Environments that never publish skip the extra shell read while paused.
+  // Set by the first publish or by a startup snapshot, even an empty one.
+  let hasPublished = false;
 
   const readSecretString = (name: string) =>
     secrets
@@ -426,6 +475,7 @@ export const make = Effect.gen(function* () {
     Effect.forEach([...publishRetries.keys()], cancelPublishRetry, { discard: true }),
   );
   let schedulePublishRetry: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
+  let enqueueTopLevelPublish: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   const resetPublishedConnection = Effect.gen(function* () {
     publishedRelayConfig = undefined;
     cachedRelayClient = undefined;
@@ -439,6 +489,7 @@ export const make = Effect.gen(function* () {
     if (!publishAgentActivity) {
       yield* cancelPublishRetries;
       yield* resetPublishedConnection;
+      yield* trackSubagentWhilePaused(threadId);
       yield* Effect.logDebug("agent activity publish skipped; publication disabled", {
         threadId,
       });
@@ -448,6 +499,7 @@ export const make = Effect.gen(function* () {
     if (!relayConfig) {
       yield* cancelPublishRetries;
       yield* resetPublishedConnection;
+      yield* trackSubagentWhilePaused(threadId);
       yield* Effect.logDebug("agent activity publish skipped; relay link credentials unavailable", {
         threadId,
       });
@@ -513,6 +565,7 @@ export const make = Effect.gen(function* () {
 
     // Read only this thread; full shell reads would make each activity event scale with all threads.
     const threadShell = yield* threads.getThreadShell(threadId);
+    yield* trackSubagentRequest(threadId, threadShell);
     if (
       threadShell !== null &&
       !isListedThreadLineage(threadShell.lineage) &&
@@ -532,8 +585,9 @@ export const make = Effect.gen(function* () {
       environmentId,
       thread,
       project,
+      pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
     });
-    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
+    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
@@ -597,6 +651,7 @@ export const make = Effect.gen(function* () {
               environmentId,
               thread: Option.some({ ...thread.value, settledOverride: null }),
               project,
+              pendingSubagentRequest: null,
             })
           : null;
       if (unsettled?.state?.phase === "completed") {
@@ -606,6 +661,8 @@ export const make = Effect.gen(function* () {
           state: completion,
           reason: unsettled.reason,
         }).pipe(withRelayClientTracing);
+        hasPublished = true;
+        recordAlertAt(threadId, completion.updatedAt);
         heldCompletions.delete(threadId);
         publishConfirmDeadlines.set(threadId, nowMs + 5_000);
         yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
@@ -632,11 +689,29 @@ export const make = Effect.gen(function* () {
       });
     }
 
+    // A newer parent can mask several child requests, so advance their alert
+    // time past every earlier one. Only successful publishes move it, so
+    // retries stay identical.
+    const latestAlertAt = latestAlertAtByThread.get(threadId);
+    const state =
+      snapshot.state !== null && snapshot.subagentWait !== null && latestAlertAt !== undefined
+        ? {
+            ...snapshot.state,
+            updatedAt: DateTime.formatIso(
+              DateTime.max(
+                DateTime.makeUnsafe(snapshot.state.updatedAt),
+                DateTime.add(latestAlertAt, { milliseconds: 1 }),
+              ),
+            ),
+          }
+        : snapshot.state;
     yield* publishState({
       projectId: snapshot.projectId,
-      state: snapshot.state,
+      state,
       reason: snapshot.reason,
     }).pipe(withRelayClientTracing);
+    hasPublished = true;
+    if (state !== null) recordAlertAt(threadId, state.updatedAt);
     publishConfirmDeadlines.delete(threadId);
     heldCompletions.delete(threadId);
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) => {
@@ -648,6 +723,100 @@ export const make = Effect.gen(function* () {
       }
       return nextPublishedStates;
     });
+  });
+
+  // The subagent helpers below are untraced: they run per event inside
+  // publishThreadUnsafe, whose span already covers them.
+  const findTopLevelThreadId = Effect.fnUntraced(function* (child: OrchestrationV2ThreadShell) {
+    const seen = new Set<ThreadId>([child.id]);
+    let current: OrchestrationV2ThreadShell | null = child;
+    while (
+      current?.lineage.relationshipToParent === "subagent" ||
+      current?.lineage.sideChat === true
+    ) {
+      const parentId: ThreadId | null = current.lineage.parentThreadId;
+      if (parentId === null || seen.has(parentId)) return null;
+      seen.add(parentId);
+      current = yield* threads.getThreadShell(parentId);
+    }
+    return current?.id ?? null;
+  });
+
+  const trackSubagentRequest = Effect.fnUntraced(function* (
+    threadId: ThreadId,
+    threadShell: OrchestrationV2ThreadShell | null,
+  ) {
+    const request =
+      threadShell === null || threadShell.archivedAt !== null
+        ? null
+        : subagentPendingRequest(threadShell);
+    const previous = subagentRequests.get(threadId);
+    const requestId = request === null ? undefined : threadShell?.pendingRuntimeRequest?.id;
+    if (previous?.request === (request ?? undefined) && previous?.requestId === requestId) return;
+    if (request === null || threadShell === null || requestId === undefined) {
+      if (previous === undefined) return;
+      subagentRequests.delete(threadId);
+      yield* enqueueTopLevelPublish(previous.topLevelThreadId);
+      return;
+    }
+    const topLevelThreadId =
+      previous?.topLevelThreadId ?? (yield* findTopLevelThreadId(threadShell));
+    if (topLevelThreadId === null) return;
+    subagentRequests.set(threadId, {
+      topLevelThreadId,
+      request,
+      requestId,
+      changeOrder: ++subagentRequestChangeOrder,
+    });
+    yield* enqueueTopLevelPublish(topLevelThreadId);
+  });
+
+  const trackSubagentWhilePaused = Effect.fnUntraced(function* (threadId: ThreadId) {
+    if (!hasPublished) return;
+    yield* trackSubagentRequest(threadId, yield* threads.getThreadShell(threadId));
+  });
+
+  // The map can miss a child's update while publishing is off or the relay is
+  // unlinked, so each waiting child is re-read before its parent is published.
+  const currentSubagentRequestFor = Effect.fnUntraced(function* (topLevelThreadId: ThreadId) {
+    let pending: SubagentRequestAwareness | null = null;
+    let pendingChangeOrder = 0;
+    for (const [childId, entry] of subagentRequests) {
+      if (entry.topLevelThreadId !== topLevelThreadId) continue;
+      const child = yield* threads.getThreadShell(childId);
+      const request =
+        child === null || child.archivedAt !== null ? null : subagentPendingRequest(child);
+      const pendingRequest = child?.pendingRuntimeRequest;
+      if (child === null || request === null || pendingRequest == null) {
+        subagentRequests.delete(childId);
+        continue;
+      }
+      let changeOrder = entry.changeOrder;
+      if (request !== entry.request || pendingRequest.id !== entry.requestId) {
+        changeOrder = ++subagentRequestChangeOrder;
+        subagentRequests.set(childId, {
+          ...entry,
+          request,
+          requestId: pendingRequest.id,
+          changeOrder,
+        });
+      }
+      const current = { kind: request, requestId: pendingRequest.id, updatedAt: child.updatedAt };
+      // Approval outranks input; within a kind the newest wait is the one to
+      // announce. Request-change order breaks ties within one millisecond.
+      if (
+        pending === null ||
+        (current.kind === "approval" && pending.kind !== "approval") ||
+        (current.kind === pending.kind &&
+          (DateTime.isGreaterThan(current.updatedAt, pending.updatedAt) ||
+            (current.updatedAt.epochMilliseconds === pending.updatedAt.epochMilliseconds &&
+              changeOrder > pendingChangeOrder)))
+      ) {
+        pending = current;
+        pendingChangeOrder = changeOrder;
+      }
+    }
+    return pending;
   });
 
   const processThreadPublish = Effect.fnUntraced(function* (threadId: ThreadId) {
@@ -673,6 +842,7 @@ export const make = Effect.gen(function* () {
   const worker = yield* makeAgentAwarenessPublishWorker(processThreadPublish);
   const enqueueThreadPublish = (threadId: ThreadId) =>
     cancelPublishRetry(threadId).pipe(Effect.andThen(worker.enqueue(threadId)));
+  enqueueTopLevelPublish = enqueueThreadPublish;
   const publishThread: AgentAwarenessRelay["Service"]["publishThread"] = (threadId) =>
     enqueueThreadPublish(threadId).pipe(Effect.andThen(worker.drain));
 
@@ -728,13 +898,16 @@ export const make = Effect.gen(function* () {
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
     const projectSnapshot = yield* projects.snapshot;
-    // Subagents and side chats never publish awareness, and subagents are most threads.
-    const topLevelThreadIds = (yield* threads.listActiveShellIndex()).flatMap((thread) =>
-      isListedThreadLineage(thread.lineage) ? [thread.id] : [],
+    // Hydrate only live children; their requests can make a top-level thread wait.
+    const awarenessThreadIds = (yield* threads.listActiveShellIndex()).flatMap((thread) =>
+      isListedThreadLineage(thread.lineage) ||
+      (thread.lineage.relationshipToParent === "subagent" && thread.mayBeLive)
+        ? [thread.id]
+        : [],
     );
     const shellSnapshot = yield* threads.getShellSnapshot({
       location: "active",
-      threadIds: topLevelThreadIds,
+      threadIds: awarenessThreadIds,
     });
     const activeThreadIds = resolveAgentAwarenessRelayActiveThreadIds({
       environmentId,
@@ -767,6 +940,7 @@ export const make = Effect.gen(function* () {
         Effect.orElseSucceed(() => "failed" as const),
       );
       if (result === "published") {
+        hasPublished = true;
         if (logEnabledWhenReady) {
           const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
           yield* Effect.logInfo("agent activity publishing enabled after link reconciliation", {
