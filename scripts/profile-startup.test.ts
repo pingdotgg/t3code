@@ -66,7 +66,7 @@ it("attributes ESM and CommonJS imports without changing module execution", () =
       [
         "--no-node-snapshot",
         "--import",
-        NodePath.join(import.meta.dirname, "profile-startup.mjs"),
+        NodeURL.pathToFileURL(NodePath.join(import.meta.dirname, "profile-startup.mjs")).href,
         "--input-type=module",
         "-e",
         `await import(${JSON.stringify(root)})`,
