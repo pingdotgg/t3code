@@ -4200,7 +4200,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         },
       );
     if (options?.worktreeFast === true && hostPlatform === "darwin") {
-      const resolvedWorktreePath = path.resolve(input.cwd, worktreePath);
+      // Concatenated rather than resolved so `..` keeps following symlinks, as Git does.
+      const resolvedWorktreePath = path.isAbsolute(worktreePath)
+        ? worktreePath
+        : `${input.cwd}${path.sep}${worktreePath}`;
       // git-worktree-fast hands a missing parent folder to Git's slow checkout.
       yield* fileSystem
         .makeDirectory(path.dirname(resolvedWorktreePath), { recursive: true })
