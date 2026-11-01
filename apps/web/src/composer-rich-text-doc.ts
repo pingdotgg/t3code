@@ -38,6 +38,7 @@ import {
   TextSelection,
   type Transaction,
 } from "@tiptap/pm/state";
+import { ReplaceStep } from "@tiptap/pm/transform";
 
 import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
 import { nextOrderedMarkerText } from "~/composer-list-continuation";
@@ -80,7 +81,7 @@ function codePairCaretPlugin(type: MarkType) {
           const to = tr.mapping.mapResult(pair.to, -1);
           return from.deleted || to.deleted ? [] : [{ from: from.pos, to: to.pos }];
         });
-        const typed = tr.getMeta(codePairKey) as CodePair | undefined;
+        const typed = (tr.getMeta(codePairKey) as CodePair | undefined) ?? composedCodePair(tr);
         return typed ? [...mapped, typed] : mapped;
       },
     },
@@ -90,7 +91,7 @@ function codePairCaretPlugin(type: MarkType) {
         const $from = view.state.doc.resolve(from);
         if (!$from.parent.isTextblock || $from.parent.type.spec.code) return false;
         const before = $from.nodeBefore?.text ?? "";
-        if (/(^|[^`])`$/.test(before)) {
+        if (closesBacktickPair($from)) {
           view.dispatch(insert().setMeta(codePairKey, { from: from - 1, to: from + 1 }));
           return true;
         }
@@ -152,6 +153,45 @@ function codePairCaretPlugin(type: MarkType) {
 }
 
 /**
+ * Whether a backtick typed at `$pos` would complete an empty `` pair. The
+ * backtick before `$pos` only opens one when earlier backticks are all paired.
+ */
+function closesBacktickPair($pos: ResolvedPos): boolean {
+  return (
+    $pos.parent.isTextblock &&
+    !$pos.parent.type.spec.code &&
+    /(^|[^`])`$/.test($pos.nodeBefore?.text ?? "") &&
+    literalBackticksBefore($pos) % 2 === 1
+  );
+}
+
+/**
+ * Layouts where backtick is a dead key type it through composition, and the
+ * pair handler above skips composing input. Read the pair
+ * from the composed insert instead; dispatching mid-composition would break it.
+ */
+function composedCodePair(tr: Transaction): CodePair | undefined {
+  if (tr.getMeta("composition") === undefined || tr.steps.length !== 1) {
+    return undefined;
+  }
+
+  const step = tr.steps[0];
+  if (!(step instanceof ReplaceStep) || step.from !== step.to || step.slice.size !== 1) {
+    return undefined;
+  }
+
+  if (step.slice.content.firstChild?.text !== "`") {
+    return undefined;
+  }
+
+  if (!closesBacktickPair(tr.before.resolve(step.from))) {
+    return undefined;
+  }
+
+  return { from: step.from - 1, to: step.from + 1 };
+}
+
+/**
  * Tiptap's code mark excludes every other mark, which rejects the `bold+code`
  * spans markdown like `**\`x\`**` parses into and drops the whole insert.
  */
@@ -168,7 +208,43 @@ export const ComposerCodeExtension = Code.extend({
   addProseMirrorPlugins() {
     return [...(this.parent?.() ?? []), codePairCaretPlugin(this.type)];
   },
+  // Tiptap's rule reads back from the caret, so after a literal `enabled` the
+  // next typed backtick would reuse its closing backtick and wrap ` and ` in
+  // code. Backticks pair left to right, so skip an opener that closes a pair.
+  addInputRules() {
+    return (this.parent?.() ?? []).map(
+      (rule) =>
+        new InputRule({
+          find: rule.find,
+          undoable: rule.undoable,
+          handler: (props) => {
+            if (literalBackticksBefore(props.state.doc.resolve(props.range.from)) % 2 === 1) {
+              return null;
+            }
+
+            return rule.handler(props);
+          },
+        }),
+    );
+  },
 });
+
+/** Counts backticks typed as plain text before `$pos` in its textblock; code text never pairs. */
+function literalBackticksBefore($pos: ResolvedPos): number {
+  let count = 0;
+  $pos.parent.forEach((node, offset) => {
+    if (offset >= $pos.parentOffset) return;
+    if (!node.isText) {
+      count = 0;
+      return;
+    }
+    if (node.marks.some((mark) => mark.type.spec.code)) return;
+
+    const text = node.text!.slice(0, $pos.parentOffset - offset);
+    count += [...text.matchAll(/(?<!`)`(?!`)/g)].length;
+  });
+  return count;
+}
 
 // Code permits nested emphasis, so Tiptap's exclusion check cannot protect literal delimiters.
 function markInputRuleOutsideCode(find: RegExp, type: MarkType) {
