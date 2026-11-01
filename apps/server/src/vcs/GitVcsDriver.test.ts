@@ -1162,6 +1162,31 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("GitVcsDriver fails repository probes when git cannot read the repository config", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-bad-config-" });
+    yield* runGit(cwd, ["init"]);
+    yield* fileSystem.writeFileString(path.join(cwd, ".git", "config"), "invalid config\n");
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/bad-config/0");
+
+    const outcomes = {
+      isInsideWorkTree: Exit.isFailure(yield* Effect.exit(driver.isInsideWorkTree(cwd))),
+      detectRepository: Exit.isFailure(yield* Effect.exit(driver.detectRepository(cwd))),
+      hasCheckpointRef: Exit.isFailure(
+        yield* Effect.exit(driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef })),
+      ),
+    };
+    assert.deepStrictEqual(
+      outcomes,
+      { isInsideWorkTree: true, detectRepository: true, hasCheckpointRef: true },
+      "a bad .git/config is an operational failure, not an absent repository or ref",
+    );
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 const gitCommandCount = (operation: string, outcome: string) =>
   Metric.value(
     Metric.withAttributes(gitCommandsTotal, [
