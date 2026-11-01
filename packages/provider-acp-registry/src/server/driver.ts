@@ -302,13 +302,34 @@ export function applyAcpRegistryLiveConfiguration(
         : [[model.slug, model.capabilities.optionDescriptors ?? []] as const],
     ),
   );
+  // session/load may omit models; preserve the probed list and its default.
+  const probedModels = provider.models.filter((model) => !model.isCustom);
+  const latest = configuration.latest;
+  const discovery =
+    latest.models.length > 0
+      ? latest
+      : {
+          ...latest,
+          models: probedModels.map((model) => ({
+            id: model.slug,
+            name: model.name,
+            description: null,
+          })),
+          currentModelId: probedModels.find((model) => model.isDefault)?.slug ?? null,
+        };
   return {
     ...snapshot,
     status: provider.enabled ? "ready" : provider.status,
-    models: withModelOptions(
-      modelsFromDiscovery(configuration.latest, customModels),
-      new Map([...knownOptions, ...configuration.modelOptions]),
-    ),
+    models:
+      latest.models.length === 0 && latest.configOptions.length === 0
+        ? provider.models
+        : withModelOptions(
+            modelsFromDiscovery(discovery, customModels),
+            new Map([
+              ...knownOptions,
+              ...recordAcpRegistryModelOptions(configuration.modelOptions, discovery),
+            ]),
+          ),
   };
 }
 

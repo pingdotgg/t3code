@@ -7,13 +7,16 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 
+import { useClientSettings } from "../../hooks/useSettings";
 import {
+  defaultModelSelectionsAreMixed,
   getCustomModelOptionsByInstance,
   resolveEffectiveDefaultModelSelection,
 } from "../../modelSelection";
 import {
   providerInstanceEntriesFor,
   resolveDefaultProviderModelSelection,
+  resolveProjectDefaultProviderModelSelection,
 } from "../../providerInstances";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
@@ -48,8 +51,9 @@ function isWorktreeSubmodules(value: string | null): value is WorktreeSubmodules
 }
 
 export function ProjectDefaultsSettings({ category }: { category: ProjectSettingsCategory }) {
-  const { scope, target, connectedEnvironments } = useSettingsScope();
+  const { scope, target, targets, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
+  const clientSettings = useClientSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
   const { environments } = useEnvironments();
@@ -61,10 +65,10 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     (representative?.serverConfig
       ? providersByEnvironment.get(representative.environmentId)
       : undefined) ?? EMPTY_SERVER_PROVIDERS;
-  const storedSelection = resolveDefaultProviderModelSelection(
-    providers,
-    settings.defaultModelSelection,
-  );
+  const storedSelection =
+    settings.defaultModelSelection === null
+      ? resolveProjectDefaultProviderModelSelection(providers, settings, target?.projectId ?? null)
+      : resolveDefaultProviderModelSelection(providers, settings.defaultModelSelection);
   const selection = storedSelection
     ? resolveEffectiveDefaultModelSelection(settings, providers, storedSelection)
     : null;
@@ -76,9 +80,20 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     selection?.model,
   );
   const activeEntry = entries.find((entry) => entry.instanceId === selection?.instanceId);
-  const mixedModel = useScopedSettingsMixed(["defaultModelSelection"]);
+  const mixedModel = defaultModelSelectionsAreMixed(
+    clientSettings,
+    targets.map((candidate) => ({
+      projectId: candidate.projectId,
+      settings: candidate.settings,
+      providers: providersByEnvironment.get(candidate.environmentId) ?? EMPTY_SERVER_PROVIDERS,
+    })),
+  );
+  const automaticModel =
+    targets.length > 0 &&
+    targets.every((candidate) => candidate.settings.defaultModelSelection === null);
   const mixedFallback = useScopedSettingsMixed(["fallbackModelSelection"]);
   const fallbackSelection = settings.fallbackModelSelection ?? selection;
+  const fallbackEntry = entries.find((entry) => entry.instanceId === fallbackSelection?.instanceId);
   const fallbackModelOptions = getCustomModelOptionsByInstance(
     settings,
     providers,
@@ -99,6 +114,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     : null;
 
   const modelDisabledReason = useScopedModelDisabledReason(settings, entries);
+  const effortDisabledReason = selection
+    ? modelDisabledReason(selection.instanceId, selection.model)
+    : null;
 
   const setModel = (value: ModelSelection | null) => {
     const reason = value ? modelDisabledReason(value.instanceId, value.model) : null;
@@ -119,12 +137,14 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       description={
         isProjectScope
           ? "Model for new threads in this project."
-          : !unavailable &&
-              !mixedModel &&
-              modelSource !== "project" &&
-              settings.defaultModelSelection === null
+          : !unavailable && modelSource !== "project" && automaticModel
             ? "Default model for new threads, selected automatically. Projects can override it."
             : "Default model for new threads. Projects can override it."
+      }
+      status={
+        mixedModel
+          ? `${automaticModel ? "Automatic defaults differ." : "Defaults differ."} Select one environment or choose a shared model to edit effort.`
+          : effortDisabledReason
       }
       resetAction={
         settings.defaultModelSelection !== null ? (
@@ -142,7 +162,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               instanceEntries={entries}
               modelOptionsByInstance={modelOptions}
               triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-              {...(mixedModel ? { triggerLabel: "Mixed" } : {})}
+              {...(mixedModel
+                ? { triggerLabel: automaticModel ? "Automatic (mixed)" : "Mixed" }
+                : {})}
               getModelDisabledReason={modelDisabledReason}
               onOpenProviderSetup={(instanceId) => {
                 if (representative)
@@ -155,7 +177,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 setModel(createModelSelection(instanceId, model))
               }
             />
-            {!mixedModel ? (
+            {!mixedModel && !effortDisabledReason ? (
               <TraitsPicker
                 provider={activeEntry.driverKind}
                 models={activeEntry.models}
@@ -171,7 +193,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             ) : null}
           </div>
         ) : (
-          <span className="text-sm text-muted-foreground">No providers available</span>
+          <span className="text-sm text-muted-foreground">
+            {mixedModel ? "Mixed" : "No providers available"}
+          </span>
         )
       }
     />
@@ -229,8 +253,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       serverScoped
       settingKeys={["fallbackModelSelection"]}
       mixed={mixedFallback}
-      id="fallback-model"
-      title="Fallback model"
+      {...searchableSetting("fallback-model")}
       description="Used for new threads when the default model's provider is out of usage."
       resetAction={
         mixedFallback || settings.fallbackModelSelection !== null ? (
@@ -242,34 +265,56 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       }
       control={
         fallbackSelection ? (
-          <ProviderModelPicker
-            environmentId={representative?.environmentId ?? null}
-            activeInstanceId={fallbackSelection.instanceId}
-            model={fallbackSelection.model}
-            lockedProvider={null}
-            instanceEntries={entries}
-            modelOptionsByInstance={fallbackModelOptions}
-            triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-            triggerAriaLabel="Fallback model"
-            {...(mixedFallback
-              ? { triggerLabel: "Mixed" }
-              : settings.fallbackModelSelection === null
-                ? { triggerLabel: "None" }
-                : {})}
-            getModelDisabledReason={modelDisabledReason}
-            onInstanceModelChange={(instanceId, model) => {
-              const reason = modelDisabledReason(instanceId, model);
-              if (reason) {
-                toastManager.add({
-                  type: "error",
-                  title: "Fallback model not saved",
-                  description: reason,
-                });
-                return;
-              }
-              updateSettings({ fallbackModelSelection: createModelSelection(instanceId, model) });
-            }}
-          />
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+            <ProviderModelPicker
+              environmentId={representative?.environmentId ?? null}
+              activeInstanceId={fallbackSelection.instanceId}
+              model={fallbackSelection.model}
+              lockedProvider={null}
+              instanceEntries={entries}
+              modelOptionsByInstance={fallbackModelOptions}
+              triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+              triggerAriaLabel="Fallback model"
+              {...(mixedFallback
+                ? { triggerLabel: "Mixed" }
+                : settings.fallbackModelSelection === null
+                  ? { triggerLabel: "None" }
+                  : {})}
+              getModelDisabledReason={modelDisabledReason}
+              onInstanceModelChange={(instanceId, model) => {
+                const reason = modelDisabledReason(instanceId, model);
+                if (reason) {
+                  toastManager.add({
+                    type: "error",
+                    title: "Fallback model not saved",
+                    description: reason,
+                  });
+                  return;
+                }
+                updateSettings({ fallbackModelSelection: createModelSelection(instanceId, model) });
+              }}
+            />
+            {settings.fallbackModelSelection !== null && fallbackEntry && !mixedFallback ? (
+              <TraitsPicker
+                provider={fallbackEntry.driverKind}
+                models={fallbackEntry.models}
+                model={fallbackSelection.model}
+                modelOptions={fallbackSelection.options ?? []}
+                allowPromptInjectedEffort={false}
+                planModeEnabled={settings.planModeEnabled}
+                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                onModelOptionsChange={(options) =>
+                  updateSettings({
+                    fallbackModelSelection: createModelSelection(
+                      fallbackSelection.instanceId,
+                      fallbackSelection.model,
+                      options,
+                    ),
+                  })
+                }
+              />
+            ) : null}
+          </div>
         ) : (
           <span className="text-sm text-muted-foreground">No providers available</span>
         )
