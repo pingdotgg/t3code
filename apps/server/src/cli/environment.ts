@@ -117,7 +117,9 @@ const environmentLinkCommand = Command.make("link", {
 );
 
 const environmentListCommand = Command.make("list", { ...authLocationFlags, json: jsonFlag }).pipe(
-  Command.withDescription("List linked environments and whether each answers now."),
+  Command.withDescription(
+    "List linked environments with their last recorded call outcomes and current expiry, without probing peers. Calling a non-expired peer retries it and updates its stored outcome.",
+  ),
   Command.withHandler((flags) =>
     runWithPeerLinks(
       flags,
