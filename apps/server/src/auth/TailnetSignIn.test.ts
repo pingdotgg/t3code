@@ -1127,22 +1127,58 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 
-    it.effect("a grant the session recheck sees turns the owner rule off", () => {
-      const tailnet = withLaptop();
-      return Effect.gen(function* () {
-        // The laptop signs in by the owner rule, then gets a grant the recheck reads.
-        const session = yield* signInLaptop(makeDpopKey());
-        tailnet.devices = {
-          [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
-        };
-        yield* TestClock.adjust("30 seconds");
-        expect(yield* revoked(session.access_token)).toBe(true);
-        // Once the laptop cannot be read, the older "no grants" does not let the phone in.
-        tailnet.devices = { [LAPTOP_ADDRESS]: { node: null } };
-        yield* TestClock.adjust("31 seconds");
-        expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("no_grant");
-      }).pipe(Effect.provide(layerTest(tailnet)));
-    });
+    // A grant that names no usable scope still names the device in the policy.
+    it.effect.each([{ scope: "read" }, { scope: "raed" }])(
+      "a grant the session recheck sees ($scope) turns the owner rule off",
+      ({ scope }) => {
+        const tailnet = withLaptop();
+        return Effect.gen(function* () {
+          // The laptop signs in by the owner rule, then gets a grant the recheck reads.
+          const session = yield* signInLaptop(makeDpopKey());
+          tailnet.devices = {
+            [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: [scope] }) },
+          };
+          yield* TestClock.adjust("30 seconds");
+          expect(yield* revoked(session.access_token)).toBe(true);
+          // Once the laptop cannot be read, the older "no grants" does not let the phone in.
+          tailnet.devices = { [LAPTOP_ADDRESS]: { node: null } };
+          yield* TestClock.adjust("31 seconds");
+          expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("no_grant");
+        }).pipe(Effect.provide(layerTest(tailnet)));
+      },
+    );
+
+    it.effect(
+      "a grant the recheck reads after a profile switch is not counted for the old one",
+      () => {
+        const atWork = hostStatus({
+          Peer: peers,
+          Self: { ...hostStatus().Self, ID: "nBoxAtWork" },
+        });
+        const tailnet: Tailnet = { ...withLaptop(), status: atWork };
+        return Effect.gen(function* () {
+          const service = yield* TailnetSignIn.TailnetSignIn;
+          // On this profile nothing is granted; the laptop signs in by the owner rule.
+          yield* signInLaptop(makeDpopKey());
+          const started = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          tailnet.hold = { address: LAPTOP_ADDRESS, started, release, late: true };
+          const recheck = yield* service.recheckSessions.pipe(Effect.forkChild);
+          yield* Deferred.await(started);
+          // The recheck's lookup answers on another profile of the same tailnet, which grants it.
+          tailnet.status = hostStatus({ Peer: peers });
+          tailnet.devices = {
+            [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
+          };
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(recheck);
+          // Back on this profile, still granting nothing, the owner's phone signs in.
+          tailnet.status = atWork;
+          tailnet.devices = { [LAPTOP_ADDRESS]: { node: laptop } };
+          yield* signIn(makeDpopKey());
+        }).pipe(Effect.provide(layerTest(tailnet)));
+      },
+    );
 
     it.effect("a grant sign-in on another account does not lock the owner out here", () => {
       const tailnet = withLaptop();

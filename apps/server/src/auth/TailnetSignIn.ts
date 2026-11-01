@@ -549,12 +549,20 @@ export const make = Effect.gen(function* () {
     const node = lookup.value;
     knownUsers.set(stableNodeId, node.loginName ?? node.userId);
     const decision = yield* decide(node, status);
-    // A grant the recheck sees turns the owner rule off here, as a grant sign-in does, until a
-    // full scan clears it.
-    if (decision._tag === "Allowed" && decision.via === "grant") {
-      yield* Ref.update(grantSignIns, (counts) =>
-        new Map(counts).set(status.selfNodeId, (counts.get(status.selfNodeId) ?? 0) + 1),
-      );
+    // A grant the recheck sees, usable or not, turns the owner rule off here as a grant
+    // sign-in does, once a status read shows the host still on this account. A switch means
+    // the grant may be either account's, so no "no grants" stands until a full scan.
+    if (
+      tailnetGrantScopes(node.capabilities) !== null &&
+      (yield* grantSignInsOn(status.selfNodeId)) === 0
+    ) {
+      const now = yield* host.freshStatus.pipe(Effect.option);
+      if (Option.isSome(now) && now.value.selfNodeId === status.selfNodeId) {
+        yield* Ref.update(grantSignIns, (counts) => new Map(counts).set(status.selfNodeId, 1));
+      } else {
+        yield* Ref.update(lastCleanScan, (last) => (last?.granted === false ? null : last));
+        yield* rescanPolicy;
+      }
     }
     if (decision._tag === "Refused") return { end: decision.reason, node } as const;
     if (yield* blocks.isBlocked({ stableNodeId })) return { end: "blocked", node } as const;
