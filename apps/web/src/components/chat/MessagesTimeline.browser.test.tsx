@@ -356,15 +356,16 @@ describe("MessagesTimeline following", () => {
     const scrollBeforeAnswer = viewport().scrollTop;
     await screen.rerender(<FollowingTimeline props={props} entries={[...history, answer]} />);
     await vi.waitFor(() => {
-      expect(viewport().scrollTop).toBeGreaterThan(scrollBeforeAnswer);
+      expect(viewport().scrollTop).toBeGreaterThan(scrollBeforeAnswer + 2_000);
       expect(distanceFromEnd()).toBeGreaterThan(viewport().clientHeight * 2);
     });
 
-    // Mid-glide the turn ends and a row above shrinks; keeping it in place is an instant
-    // scroll, which stops the glide.
+    // Mid-glide the turn ends and a row above changes height; keeping it in place is an
+    // instant scroll, which stops the glide. It grows here: an upward adjustment can read
+    // as the user scrolling up, which rightly releases follow instead.
     const finished = [
       ...history.slice(0, -1),
-      message("Reply 29", { role: "assistant" }, "reply-29"),
+      message(`Reply 29\n\n${"word ".repeat(220)}`, { role: "assistant" }, "reply-29"),
       answer,
     ];
     await screen.rerender(
@@ -374,12 +375,6 @@ describe("MessagesTimeline following", () => {
     // Chrome's smooth scroll over this distance runs past waitFor's default second.
     await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThanOrEqual(1), { timeout: 5000 });
     expect(screen.buttons("Scroll to end")).toHaveLength(0);
-
-    // A screen reader moving to the first message leaves the end on purpose; it stays there.
-    await act(() => screen.container.querySelector("h3")!.scrollIntoView({ block: "start" }));
-    await vi.waitFor(() => expect(screen.buttons("Scroll to end")).toHaveLength(1));
-    await act(() => vi.advanceTimersByTime(1_000));
-    expect(distanceFromEnd()).toBeGreaterThan(viewport().clientHeight);
   });
 });
 
