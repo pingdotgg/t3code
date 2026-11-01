@@ -18,7 +18,7 @@ import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { Button } from "../../components/ui/Button";
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { relativeTime } from "../../lib/time";
+import { compareTimestamps, relativeTime } from "../../lib/time";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../state/query";
@@ -130,7 +130,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
     ...new Map(
       [...extra, ...(thread?.comments ?? [])].map((comment) => [comment.id, comment]),
     ).values(),
-  ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  ].sort((left, right) => compareTimestamps(left.createdAt, right.createdAt));
   const canReply = permissions.canReply && Boolean(thread);
   const resolveLabel = thread?.isResolved ? "Unresolve" : "Resolve";
   return (
