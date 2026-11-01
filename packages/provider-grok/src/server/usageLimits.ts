@@ -67,13 +67,11 @@ export function grokUsageResponseToLimits(
   const period = response.config?.currentPeriod;
   const periodType = period?.type?.replace(/^USAGE_PERIOD_TYPE_/, "");
   const kind = periodType === "WEEKLY" ? "weekly" : periodType === "MONTHLY" ? "monthly" : "other";
+  const start = typeof period?.start === "string" ? parsePeriodBoundary(period.start) : NaN;
+  const end = parsePeriodBoundary(period?.end);
+  const windowDurationMins = Math.round((end - start) / 60_000);
   let usedPercent = response.config?.creditUsagePercent;
-  if (
-    usedPercent === undefined &&
-    (kind === "weekly" || kind === "monthly") &&
-    typeof period?.start === "string" &&
-    parsePeriodBoundary(period?.start) < parsePeriodBoundary(period?.end)
-  ) {
+  if (usedPercent === undefined && (kind === "weekly" || kind === "monthly") && start < end) {
     // Grok omits a zero percentage while retaining the complete subscription period.
     usedPercent = 0;
   }
@@ -87,6 +85,7 @@ export function grokUsageResponseToLimits(
     label: kind === "weekly" ? "Weekly" : kind === "monthly" ? "Monthly" : "Subscription",
     usedPercent: clampPercent(usedPercent),
     ...(Option.isSome(reset) ? { resetsAt: DateTime.formatIso(reset.value) } : {}),
+    ...(windowDurationMins > 0 ? { windowDurationMins } : {}),
   };
   return makeUsageLimits({ checkedAt, windows: [window] });
 }
