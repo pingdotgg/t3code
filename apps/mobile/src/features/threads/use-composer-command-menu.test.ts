@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { ProviderDriverKind } from "@t3tools/contracts";
+import {
+  PluginActionId,
+  ProjectId,
+  ProviderDriverKind,
+  ThreadId,
+  type PluginAction,
+} from "@t3tools/contracts";
 
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 
@@ -19,9 +25,15 @@ vi.mock("../../state/server", () => ({
     refreshProviders: Symbol("refreshProviders"),
   },
 }));
+vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock("../../state/plugin-actions", () => ({
+  usePluginActions: () => [],
+  runPluginAction: vi.fn(),
+}));
 
 import {
   buildComposerSlashCommandItems,
+  buildPluginActionSlashItems,
   resolveComposerCommandSelection,
   resolveComposerMenuSelection,
 } from "./use-composer-command-menu";
@@ -124,5 +136,44 @@ describe("mobile slash commands", () => {
         allowInteractionMode: false,
       }),
     ).toEqual({ text: "/plan ", cursor: 6, interactionMode: null });
+  });
+});
+describe("mobile plugin action slash entries", () => {
+  const action = (name: string, title: string, target: PluginAction["target"]) =>
+    ({
+      id: PluginActionId.make(`installation-1:1:${name}`),
+      pluginId: "acme.deploy",
+      pluginName: "Deploy",
+      name,
+      title,
+      target,
+      placements: ["composer-slash"],
+    }) satisfies PluginAction;
+  const actions = [
+    action("deploy", "Deploy this branch", "thread"),
+    action("open-dashboard", "Open dashboard", "project"),
+  ];
+  const threadId = ThreadId.make("thread-1");
+  const projectId = ProjectId.make("project-1");
+
+  it("match by name or title and run on the thread they were picked on", () => {
+    expect(
+      buildPluginActionSlashItems(actions, "branch", { threadId, projectId }).map((item) =>
+        item.type === "plugin-action" ? [item.label, item.target] : null,
+      ),
+    ).toEqual([["/deploy", { _tag: "thread", threadId }]]);
+    expect(
+      buildPluginActionSlashItems(actions, "dash", { threadId, projectId }).map(
+        (item) => item.label,
+      ),
+    ).toEqual(["/open-dashboard"]);
+  });
+
+  it("leave out actions whose target the composer cannot supply", () => {
+    expect(
+      buildPluginActionSlashItems(actions, "", { threadId: null, projectId }).map(
+        (item) => item.label,
+      ),
+    ).toEqual(["/open-dashboard"]);
   });
 });

@@ -12,7 +12,8 @@ import { page } from "vite-plus/test/browser";
 import { useEffect } from "react";
 
 import { act, render } from "../../test/render";
-import { DevicePanel } from "../components/device/DevicePanel";
+import DeviceSidePanel from "../panels/device/DeviceSidePanel";
+import { PanelHostContext } from "../panels/panelHost";
 import {
   startAgentOpenedPreviews,
   resetDeviceSessionBaselinesForTests,
@@ -164,16 +165,26 @@ it("reports a failed first device load and retries it", async () => {
   using _subscription = vi.spyOn(deviceEnvironment, "state").mockReturnValue(stateAtom);
   await using screen = await render(
     <RegistryContext.Provider value={registry}>
-      <DevicePanel
-        mode="embedded"
-        threadRef={{
-          environmentId: EnvironmentId.make("device-load-failure"),
-          threadId: ThreadId.make("thread"),
+      <PanelHostContext.Provider
+        value={{
+          threadRef: {
+            environmentId: EnvironmentId.make("device-load-failure"),
+            threadId: ThreadId.make("thread"),
+          },
+          visible: true,
+          composerDraftTarget: {
+            environmentId: EnvironmentId.make("device-load-failure"),
+            threadId: ThreadId.make("thread"),
+          },
+          workspaceMutationId: null,
+          sendAnnotation: () => undefined,
         }}
-        surface={{ id: "device", kind: "device" }}
-        visible
-        onDismissSetup={() => undefined}
-      />
+      >
+        <DeviceSidePanel
+          surface={{ id: "device", kind: "device" }}
+          onDismissSetup={() => undefined}
+        />
+      </PanelHostContext.Provider>
     </RegistryContext.Provider>,
   );
 

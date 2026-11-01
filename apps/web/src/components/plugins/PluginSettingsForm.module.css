@@ -1,0 +1,7 @@
+.secret {
+  -webkit-text-security: disc;
+}
+
+.secret textarea::placeholder {
+  -webkit-text-security: none;
+}
