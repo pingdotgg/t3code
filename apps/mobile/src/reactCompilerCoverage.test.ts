@@ -200,6 +200,16 @@ describe("React Compiler coverage", () => {
     ).toEqual([true]);
   });
 
+  // Uncached project scopes hand the thread list new project refs, rebuilding it every render.
+  it("caches the sidebar project scopes", () => {
+    expect(
+      compilerCachedCalls(
+        "src/features/threads/ThreadNavigationSidebar.tsx",
+        "buildHomeProjectScopes",
+      ),
+    ).toEqual([true]);
+  });
+
   it("lists only files that exist", () => {
     expect(Object.keys(KNOWN_BAILOUTS).filter((file) => !sourceFiles.includes(file))).toEqual([]);
   });
