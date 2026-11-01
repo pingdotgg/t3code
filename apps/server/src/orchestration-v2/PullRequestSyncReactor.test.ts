@@ -1157,11 +1157,7 @@ describe("PullRequestSyncReactor", () => {
           number: 9,
           url: "https://github.com/owner/repository/stack/9",
           base: "main",
-          layers: layers.map((number) => ({
-            number,
-            headBranch: `layer-${number}`,
-            state: "open" as const,
-          })),
+          layers: layers.map(stackLayer),
         });
         // #50 is merged and not due until #1's stack read shows it a different layer list.
         const merged = makeLink(
@@ -1174,9 +1170,13 @@ describe("PullRequestSyncReactor", () => {
         const synced1 = yield* Deferred.make<void>();
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([
-            ...Array.from({ length: 25 }, (_, index) =>
-              makeThread(`thread-${index + 1}`, { pullRequests: [makeLink(index + 1)] }),
+            // Another host takes 24 of the 25 shared slots and #1 the last one.
+            ...Array.from({ length: 24 }, (_, index) =>
+              makeThread(`thread-${index + 2}`, {
+                pullRequests: [makeLink(index + 2, null, { host: "gitlab.example.com" })],
+              }),
             ),
+            makeThread("thread-1", { pullRequests: [makeLink(1)] }),
             makeThread("thread-50", { pullRequests: [merged] }),
           ]),
           batchesReads: () => false,

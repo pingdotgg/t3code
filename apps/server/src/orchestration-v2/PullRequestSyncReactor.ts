@@ -586,24 +586,26 @@ export const make = Effect.gen(function* () {
       // One read per pull request, often a CLI process, so these keep the narrower width.
       unbatched: { width: 25, reads: yield* Semaphore.make(25) },
     };
+    const isPaused = (pauseKey: string, atMs: number) => (pausedUntil.get(pauseKey) ?? 0) > atMs;
+    // Judged once a slot is free, so a stack retry a sibling flags meanwhile still counts, and
+    // pauses set during the sweep apply at once.
     const readIfDue = (
       key: string,
       entries: ReadonlyArray<LinkEntry>,
+      pauseKey: string,
       reads: Semaphore.Semaphore,
-    ) => {
-      if (!isDue(key, entries, nowMs)) return Effect.void;
-      const pauseKey = pauseKeyOf(entries[0]!);
-      // Check pauses at each read so changes during the sweep apply immediately.
-      return reads.withPermits(1)(
-        Clock.currentTimeMillis.pipe(
-          Effect.flatMap((startedAtMs) =>
-            (pausedUntil.get(pauseKey) ?? 0) > startedAtMs
-              ? Effect.void
-              : readGroup(key, entries, pauseKey),
-          ),
+    ) =>
+      reads.withPermits(1)(
+        Effect.suspend(() =>
+          isDue(key, entries, nowMs)
+            ? Clock.currentTimeMillis.pipe(
+                Effect.flatMap((startedAtMs) =>
+                  isPaused(pauseKey, startedAtMs) ? Effect.void : readGroup(key, entries, pauseKey),
+                ),
+              )
+            : Effect.void,
         ),
       );
-    };
     const groupsByHost = Map.groupBy(
       Array.from(groups).filter(([key]) => scope === "all" || requested.has(key)),
       ([, entries]) => pauseKeyOf(entries[0]!),
@@ -611,10 +613,10 @@ export const make = Effect.gen(function* () {
     yield* Effect.forEach(
       groupsByHost,
       ([pauseKey, hostGroups]) => {
-        // Stack retries only flag groups on the flagging group's own host, so a host with
-        // nothing due now reads nothing this sweep.
+        // A host paused or with nothing due skips the lookup. Stack retries only flag groups on
+        // the flagging group's own host, so nothing on it becomes due this sweep.
         if (
-          (pausedUntil.get(pauseKey) ?? 0) > nowMs ||
+          isPaused(pauseKey, nowMs) ||
           !hostGroups.some(([key, entries]) => isDue(key, entries, nowMs))
         ) {
           return Effect.void;
@@ -622,10 +624,14 @@ export const make = Effect.gen(function* () {
         return pullRequests.batchesReads(referenceOf(hostGroups[0]![1][0]!)).pipe(
           Effect.flatMap((batches) => {
             const { width, reads } = batches ? pools.batched : pools.unbatched;
-            return Effect.forEach(hostGroups, ([key, entries]) => readIfDue(key, entries, reads), {
-              concurrency: width,
-              discard: true,
-            });
+            return Effect.forEach(
+              hostGroups,
+              ([key, entries]) => readIfDue(key, entries, pauseKey, reads),
+              {
+                concurrency: width,
+                discard: true,
+              },
+            );
           }),
         );
       },
