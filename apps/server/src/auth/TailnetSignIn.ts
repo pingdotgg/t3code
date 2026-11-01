@@ -608,7 +608,7 @@ export const make = Effect.gen(function* () {
           readonly id: string;
           readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
         }>;
-        /** The sign-in label, "name" or "name (login)", for logs once Tailscale forgets the device. */
+        /** The sign-in label, a code's before a session's, for logs once Tailscale forgets it. */
         label: string | null;
       }
     >();
