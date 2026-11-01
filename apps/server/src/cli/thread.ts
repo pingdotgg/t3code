@@ -669,15 +669,30 @@ const threadStartCommand = Command.make("start", {
   ),
 );
 
+const SENT_LINES = {
+  started: "Sent.",
+  queued: "Queued.",
+  steered: "Steered.",
+  restarted: "Restarted.",
+} as const satisfies Record<OrchestratorMcpThreadSendResult["delivery"], string>;
+
+const sendModeFlag = Flag.Literals("mode", ["queue", "auto", "steer", "restart"]).pipe(
+  Flag.withDescription(
+    "How a busy thread gets the message: queue as its next turn, steer the running turn, or restart it. auto steers a running turn and otherwise queues.",
+  ),
+  Flag.withDefault("queue"),
+);
+
 const threadSendCommand = Command.make("send", {
   ...projectLocationFlags,
   thread: threadArgument,
   message: messageArgument,
+  mode: sendModeFlag,
   wait: waitFlag,
   json: jsonFlag,
 }).pipe(
   Command.withDescription(
-    "Send a message to a thread. A busy thread gets it as its next turn; nothing is interrupted.",
+    "Send a message to a thread. By default a busy thread gets it as its next turn; nothing is interrupted.",
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
@@ -688,15 +703,13 @@ const threadSendCommand = Command.make("send", {
         Effect.fn("cli.thread.send")(function* (tools) {
           const sent = yield* tools.call(
             "t3_thread_send",
-            { threadId, message, mode: "queue" },
+            { threadId, message, mode: flags.mode },
             OrchestratorMcpThreadSendResult,
           );
           if (flags.wait) {
             return yield* finishRun(tools, { threadId, runId: sent.runId, json: flags.json });
           }
-          yield* flags.json
-            ? printJson(sent)
-            : Console.log(sent.delivery === "queued" ? "Queued." : "Sent.");
+          yield* flags.json ? printJson(sent) : Console.log(SENT_LINES[sent.delivery]);
         }),
       );
     }).pipe(reportThreadErrors),
