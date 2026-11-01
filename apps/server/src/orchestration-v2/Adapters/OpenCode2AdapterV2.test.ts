@@ -314,12 +314,19 @@ const resumed = (
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
     readonly onPrompt?: (input: unknown) => void;
+    readonly models?: ReadonlyArray<unknown>;
   },
 ) =>
   Effect.gen(function* () {
     const runtime = yield* openCode2ReplayRuntime(
       withInstructions([
-        ...opening,
+        ...(options?.models === undefined
+          ? opening
+          : [
+              out("event.subscribe"),
+              out("model.list", "<any>"),
+              reply("model.list", { ...modelCatalog, data: options.models }),
+            ]),
         out("session.get", { sessionID: SESSION }),
         replyData("session.get", sessionInfo()),
         ...noOpenRequests,
@@ -415,6 +422,300 @@ const history = {
 };
 
 it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
+  it.effect.each([
+    {
+      providerID: "opencode-go",
+      id: "deepseek-v4.1-flash",
+      variants: ["low", "high", "max"],
+      selected: "medium",
+      expected: "max",
+    },
+    {
+      providerID: "opencode-go",
+      id: "glm-5.3-flash",
+      variants: ["low", "high", "max"],
+      selected: "xhigh",
+      expected: "max",
+    },
+    {
+      providerID: "opencode-go",
+      id: "deepseek-v4.1-flash",
+      variants: ["low", "high", "max"],
+      selected: undefined,
+      expected: "max",
+    },
+    {
+      providerID: "opencode-go",
+      id: "deepseek-v4.1-flash",
+      variants: ["low", "high", "max"],
+      selected: "low",
+      expected: "low",
+    },
+    {
+      providerID: "opencode-go",
+      id: "deepseek-v4.1-flash",
+      variants: ["low", "high", "max"],
+      selected: "high",
+      expected: "high",
+    },
+    {
+      providerID: "opencode-go",
+      id: "deepseek-v4.1-flash",
+      variants: ["low", "high", "max"],
+      selected: "max",
+      expected: "max",
+    },
+    {
+      providerID: "opencode-go",
+      id: "muse-spark-1.3-contributor",
+      variants: ["minimal", "low", "medium", "high", "xhigh"],
+      selected: "medium",
+      expected: "medium",
+    },
+    {
+      providerID: "opencode-go",
+      id: "muse-spark-1.3-contributor",
+      variants: ["minimal", "low", "medium", "high", "xhigh"],
+      selected: "xhigh",
+      expected: "xhigh",
+    },
+    {
+      providerID: "custom",
+      id: "reasoning",
+      variants: ["low", "high"],
+      selected: "medium",
+      expected: undefined,
+    },
+    {
+      providerID: "custom",
+      id: "no-reasoning",
+      variants: [],
+      selected: "xhigh",
+      expected: undefined,
+    },
+    {
+      providerID: "custom",
+      id: "not-in-catalog",
+      variants: undefined,
+      selected: "xhigh",
+      expected: "xhigh",
+    },
+  ])(
+    "validates saved variant $selected against $providerID/$id before switching models",
+    ({ providerID, id, variants, selected, expected }) =>
+      Effect.gen(function* () {
+        const { runtime, thread } = yield* resumed(
+          [
+            out("session.switchModel", {
+              sessionID: SESSION,
+              model: { providerID, id, variant: expected },
+            }),
+            reply("session.switchModel", null),
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+            event("session.execution.succeeded", { sessionID: SESSION }),
+          ],
+          {
+            models:
+              variants === undefined
+                ? []
+                : [
+                    {
+                      ...modelCatalog.data[0]!,
+                      providerID,
+                      id,
+                      variants: variants.map((id) => ({ id, settings: {} })),
+                    },
+                  ],
+          },
+        );
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(
+          turnInput(thread, {
+            instanceId,
+            model: `${providerID}/${id}`,
+            ...(selected === undefined ? {} : { options: [{ id: "variant", value: selected }] }),
+          }),
+        );
+        assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      }).pipe(Effect.scoped),
+  );
+  it.effect("validates an inherited OpenCode Go variant before creating a worker session", () =>
+    Effect.gen(function* () {
+      const directory = "/work/worker";
+      const model = { providerID: "opencode-go", id: "glm-5.3-flash", variant: "high" };
+      const { runtime } = yield* resumed(
+        [
+          out("model.list", { "location[directory]": directory }),
+          reply("model.list", {
+            ...modelCatalog,
+            location: { directory },
+            data: [
+              {
+                ...modelCatalog.data[0]!,
+                ...model,
+                variants: ["low", "high"].map((id) => ({ id, settings: {} })),
+              },
+            ],
+          }),
+          out("session.create", { model, location: { directory }, permissions: t3Rules }),
+          replyData("session.create", sessionInfo({ model, location: { directory } })),
+        ],
+        {
+          models: [
+            {
+              ...modelCatalog.data[0]!,
+              ...model,
+              variants: ["low", "high", "max"].map((id) => ({ id, settings: {} })),
+            },
+          ],
+        },
+      );
+      const thread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: {
+          instanceId,
+          model: "opencode-go/glm-5.3-flash",
+          options: [{ id: "variant", value: "medium" }],
+        },
+        runtimePolicy: { ...policy(), cwd: directory },
+      });
+      assert.deepEqual(thread.nativeMetadata?.modelSelection, {
+        instanceId,
+        model: "opencode-go/glm-5.3-flash",
+        options: [{ id: "variant", value: "high" }],
+      });
+    }).pipe(Effect.scoped),
+  );
+  it.effect("waits for a directory's model read already in flight before creating a session", () =>
+    Effect.gen(function* () {
+      const directory = "/work/worker";
+      const model = { providerID: "opencode-go", id: "glm-5.3-flash", variant: "high" };
+      const { runtime } = yield* resumed([
+        out("model.list", { "location[directory]": directory }),
+        reply("model.list", {
+          ...modelCatalog,
+          location: { directory },
+          data: [
+            {
+              ...modelCatalog.data[0]!,
+              ...model,
+              variants: ["low", "high"].map((id) => ({ id, settings: {} })),
+            },
+          ],
+        }),
+        out("session.create", { model, location: { directory }, permissions: "<any>" }),
+        replyData("session.create", sessionInfo({ model, location: { directory } })),
+      ]);
+      const ensure = (id: ThreadId, model: string) =>
+        runtime.ensureThread({
+          threadId: id,
+          modelSelection: { instanceId, model, options: [{ id: "variant", value: "medium" }] },
+          runtimePolicy: { ...policy(), cwd: directory },
+        });
+      // The malformed model starts the directory's read and then fails without another request.
+      const [first, second] = yield* Effect.all(
+        [
+          Effect.exit(ensure(threadId, "malformed")),
+          ensure(ThreadId.make("thread:opencode2-adapter:second"), "opencode-go/glm-5.3-flash"),
+        ],
+        { concurrency: "unbounded" },
+      );
+      assert.isTrue(Exit.isFailure(first));
+      assert.deepEqual(second.nativeMetadata?.modelSelection?.options, [
+        { id: "variant", value: "high" },
+      ]);
+    }).pipe(Effect.scoped),
+  );
+  it.effect("reads a directory's models again after a failed read", () =>
+    Effect.gen(function* () {
+      const directory = "/work/worker";
+      const model = { providerID: "opencode-go", id: "glm-5.3-flash" };
+      const created = (variant: string) => [
+        out("session.create", {
+          model: { ...model, variant },
+          location: { directory },
+          permissions: "<any>",
+        }),
+        replyData("session.create", sessionInfo({ model: { ...model, variant } })),
+      ];
+      const { runtime } = yield* resumed([
+        out("model.list", { "location[directory]": directory }),
+        reply("model.list", { status: 500, body: { message: "Catalog unavailable" } }),
+        // Without a catalog the saved variant is kept.
+        ...created("medium"),
+        out("model.list", { "location[directory]": directory }),
+        reply("model.list", {
+          ...modelCatalog,
+          location: { directory },
+          data: [
+            {
+              ...modelCatalog.data[0]!,
+              ...model,
+              variants: ["low", "high"].map((id) => ({ id, settings: {} })),
+            },
+          ],
+        }),
+        ...created("high"),
+      ]);
+      for (const id of [threadId, ThreadId.make("thread:opencode2-adapter:second")]) {
+        yield* runtime.ensureThread({
+          threadId: id,
+          modelSelection: {
+            instanceId,
+            model: "opencode-go/glm-5.3-flash",
+            options: [{ id: "variant", value: "medium" }],
+          },
+          runtimePolicy: { ...policy(), cwd: directory },
+        });
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("validates a saved variant after resuming without a runtime policy", () =>
+    Effect.gen(function* () {
+      const directory = "/work/restored";
+      const model = { providerID: "opencode-go", id: "glm-5.3-flash", variant: "high" };
+      const runtime = yield* openCode2ReplayRuntime(
+        withInstructions([
+          ...opening,
+          out("session.get", { sessionID: SESSION }),
+          replyData("session.get", sessionInfo({ location: { directory } })),
+          ...noOpenRequests,
+          out("model.list", { "location[directory]": directory }),
+          reply("model.list", {
+            ...modelCatalog,
+            location: { directory },
+            data: [
+              {
+                ...modelCatalog.data[0]!,
+                ...model,
+                variants: ["low", "high"].map((id) => ({ id, settings: {} })),
+              },
+            ],
+          }),
+          out("session.switchModel", { sessionID: SESSION, model }),
+          reply("session.switchModel", null),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ]),
+      );
+      const thread = yield* runtime.resumeThread({
+        providerThread: providerThread(yield* DateTime.now),
+      });
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(
+        turnInput(thread, {
+          instanceId,
+          model: " opencode-go/glm-5.3-flash ",
+          options: [{ id: "variant", value: "medium" }],
+        }),
+      );
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("switches the session's model and variant before a turn that changed them", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
