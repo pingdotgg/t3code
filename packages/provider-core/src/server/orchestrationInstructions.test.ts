@@ -21,7 +21,11 @@ describe("T3 review delegation instructions", () => {
   it("resume an interrupted unfinished delegated task in its own child thread", () => {
     assert.include(
       T3_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "Told to continue an interrupted or paused unfinished delegated task: resume that same child with `t3_thread_send` on its `childThreadId`",
+      "Told to continue an interrupted unfinished delegated task that has no pending question or approval: resume that same child with `t3_thread_send` on its `childThreadId`",
+    );
+    assert.include(
+      T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "A waiting task with `hasPendingQuestion` or `pendingApproval`: answer via `t3_pending_request`",
     );
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "a `delegate_task` starts that work over");
   });
