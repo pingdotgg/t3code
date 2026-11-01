@@ -716,7 +716,7 @@ describe("mobile composer drafts", () => {
     },
   );
 
-  it("rejects attachments atomically when no context slots remain", async () => {
+  it("rejects files but keeps images when no context slots remain", async () => {
     const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
     onTestFinished(() => outboxLoad.mockRestore());
     const cleanup = Promise.withResolvers<void>();
@@ -759,6 +759,55 @@ describe("mobile composer drafts", () => {
     ).toBe(1);
     expect(getComposerDraftSnapshot(key)).toEqual(before);
     await cleanup.promise;
+    const image = {
+      id: "photo",
+      type: "image" as const,
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 4,
+      previewUri: "file:///photo.png",
+    };
+    const video = {
+      id: "video",
+      type: "file" as const,
+      name: "clip.mp4",
+      mimeType: "video/mp4",
+      sizeBytes: 4,
+      fileUri: "file:///clip.mp4",
+    };
+    expect(appendComposerDraftAttachments(key, [image, video], { appendReference: true })).toBe(1);
+    expect(getComposerDraftSnapshot(key)).toEqual({ ...before, attachments: [image] });
+  });
+
+  it("fills images only into slots left after file chips replace the selection", () => {
+    const key = "environment-1:replace-at-limit";
+    const file = (id: string) => ({
+      id,
+      type: "file" as const,
+      name: `${id}.txt`,
+      mimeType: "text/plain",
+      sizeBytes: 4,
+      fileUri: `file:///${id}.txt`,
+    });
+    const image = {
+      id: "photo",
+      type: "image" as const,
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 4,
+      previewUri: "file:///photo.png",
+    };
+    appendComposerDraftAttachments(key, [file("old")], { appendReference: true });
+    const { text } = getComposerDraftSnapshot(key);
+    const insertion = captureComposerDraftInsertion(key, { start: 0, end: text.length });
+    expect(
+      appendComposerDraftAttachments(key, [image, file("new")], {
+        appendReference: true,
+        insertion,
+        maxAttachments: 1,
+      }),
+    ).toBe(1);
+    expect(getComposerDraftSnapshot(key).attachments).toEqual([file("new")]);
   });
   it.each(["environment-1:thread", "environment-1:new-task:draft"])(
     "preserves the captured paste selection across async writes in %s",
