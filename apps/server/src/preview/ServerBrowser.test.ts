@@ -926,6 +926,40 @@ it.live("reports a pending dialog without evaluating the page and resolves it ex
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a dialog the desktop closes without Playwright stops blocking the tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      const tabId = PreviewTabId.make(opened.tabId);
+      yield* browser.attachViewer(viewerInput(tabId, false));
+      const { page, sessions } = desktopConnections[0]!.context;
+      expect(sessions[0]!.send).toHaveBeenCalledWith("Page.enable");
+      // Electron cancels a beforeunload as soon as it opens; only CDP reports the close.
+      page.emit("dialog", {
+        type: () => "beforeunload",
+        message: () => "",
+        defaultValue: () => "",
+      });
+      sessions[0]!.emit("Page.javascriptDialogClosed");
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.dialog).toBeNull();
+      expect(
+        yield* broker.invoke({ scope, tabId, operation: "evaluate", input: { expression: "1" } }),
+      ).toBe("evaluated");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a tab opened to a file the browser cannot show reports the file to download", () =>
   Effect.scoped(
     Effect.gen(function* () {

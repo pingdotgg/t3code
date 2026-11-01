@@ -812,7 +812,9 @@ const make = Effect.gen(function* () {
     // The desktop's page is already a normal browser. A popup's first request
     // went out before it became a tab; everything after presents as Chrome.
     if (!desktop) await presentAsChrome(cdp, host);
+    // Dialog close events need this session's Page domain, which recordCopies turns on.
     if (!desktop) await recordCopies(cdp);
+    else await cdp.send("Page.enable");
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     const control = new SessionControl(snapshot.automationOwner ?? null, () =>
@@ -970,6 +972,14 @@ const make = Effect.gen(function* () {
     });
     page.on("dialog", (dialog) => {
       tab.dialog = dialog;
+      broadcastControl(tab);
+    });
+    // Playwright misses dialogs that close without it. Electron cancels
+    // beforeunload itself, and a person can answer one in the desktop view.
+    cdp.on("Page.javascriptDialogClosed", () => {
+      if (!tab.dialog) return;
+      tab.dialog = null;
+      ServerBrowserPage.invalidateRefs(page);
       broadcastControl(tab);
     });
     page.on("download", (download) => void saveDownload(tab, download));
