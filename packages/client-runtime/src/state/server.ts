@@ -1180,6 +1180,16 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverRunStorageCleanup,
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
+    bundledSkills: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:bundled-skills",
+      tag: WS_METHODS.serverGetBundledSkills,
+      staleTimeMs: 0,
+    }),
+    manageBundledSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:manage-bundled-skill",
+      tag: WS_METHODS.serverManageBundledSkill,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
     prepareTriage: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:prepare-triage",
       tag: WS_METHODS.serverPrepareTriage,

@@ -58,6 +58,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverRunStorageCleanup]: "server",
   [WS_METHODS.serverGetStorageCleanupReport]: "server",
   [WS_METHODS.serverGetDatabaseStorage]: "server",
+  [WS_METHODS.serverGetBundledSkills]: "server",
+  [WS_METHODS.serverManageBundledSkill]: "server",
   [WS_METHODS.peerLinksList]: "peerLinks",
   [WS_METHODS.peerLinksLink]: "peerLinks",
   [WS_METHODS.peerLinksUnlink]: "peerLinks",

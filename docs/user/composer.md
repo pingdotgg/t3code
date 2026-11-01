@@ -252,6 +252,50 @@ and appears once the provider reports usage. Open it for usage details and
 Claude instances can also compact idle threads for you. See
 [compact long conversations](./providers-claude.md#compact-long-conversations).
 
+### T3 Code skills
+
+Open **Settings → Skills**, choose the environment and provider, then install
+the skills you need. The manager supports Codex and Claude,
+including their configured skill directories. Installation applies to every
+project using that provider on the selected environment. Restart the agent
+session afterward so it loads the new skills.
+
+New skill versions ship with the T3 Code server. After updating that environment,
+use **Check for updates** and update any outdated copies. You can also remove
+managed copies here. Locally edited skills and copies installed outside T3 Code
+are preserved; move them before installing the bundled version.
+
+Other providers can copy the skill folders into their own skill directories.
+
+Use `$t3code-threads` to hand work to an independent thread or move the current
+conversation into a managed worktree. Use `$t3code-orchestration` to coordinate
+background delegates, including their child threads, results, and blockers.
+For example: “Use `$t3code-orchestration` to delegate API research and test
+research in parallel, then combine their findings.” These skills require the
+agent's T3 Code MCP connection; installing them in a standalone CLI does not
+connect it to T3 Code. They use your existing providers and permissions.
+
+The bundled catalog covers these workflows:
+
+| Skill                    | Workflow and prerequisites                                                                                                                                                                     |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `t3code-threads`         | Independent threads and managed worktrees through T3's MCP tools.                                                                                                                              |
+| `t3code-orchestration`   | Supervised background delegates through T3's MCP tools.                                                                                                                                        |
+| `t3code-browser`         | T3's built-in browser, with browser agent access enabled on the environment.                                                                                                                   |
+| `t3code-computer-use`    | Native desktop apps through external desktop-control tools connected to the provider. T3 does not include that controller.                                                                     |
+| `t3code-linear`          | Issue context and verified PR updates through a provider-connected [Linear MCP server](https://linear.app/docs/mcp).                                                                           |
+| `t3code-jira`            | Issue context and valid transitions through a provider-connected Jira MCP server, such as [Atlassian's Cloud service](https://developer.atlassian.com/cloud/rovo-mcp/guides/getting-started/). |
+| `t3code-ios`             | iOS Simulator through the Device panel; needs device agent access and a compatible host. Local simulators require macOS and Xcode.                                                             |
+| `t3code-android`         | Android devices through the Device panel; needs device agent access, SDK tools, and an emulator or connected device.                                                                           |
+| `t3code-workspace-setup` | Reproducible worktree initialization with configured project actions imported from `t3.json` and isolated state.                                                                               |
+
+Each catalog entry explains its prerequisites before installation. Installing a
+skill supplies instructions; it does not install SDKs/controllers, authenticate
+Linear/Jira, or enable agent access. **Up to date** describes the instruction
+files, not the availability of those external connections.
+
+Worktree setup covers local initialization only.
+
 ## Goals
 
 With Codex and Claude, send `/goal` followed by what "done" means, for example

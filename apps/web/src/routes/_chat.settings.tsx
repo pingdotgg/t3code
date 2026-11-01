@@ -111,7 +111,9 @@ function SettingsContentLayout() {
   const location = useLocation();
   const { search, environment } = useSettingsScope();
   const contentScopeKey =
-    location.pathname === "/settings/diagnostics" || location.pathname === "/settings/providers"
+    location.pathname === "/settings/diagnostics" ||
+    location.pathname === "/settings/providers" ||
+    location.pathname === "/settings/skills"
       ? environment?.environmentId
       : JSON.stringify(search);
   const [restoreSignal, setRestoreSignal] = useState(0);
@@ -149,8 +151,10 @@ function SettingsRouteLayout() {
   const pathname = useLocation({ select: (location) => location.pathname });
   return (
     <SettingsScopeProvider
-      search={rawSearch}
-      singleEnvironment={pathname === "/settings/providers" || pathname === "/settings/secrets"}
+      search={pathname === "/settings/skills" ? { machine: rawSearch.machine } : rawSearch}
+      singleEnvironment={["/settings/providers", "/settings/skills", "/settings/secrets"].includes(
+        pathname,
+      )}
       onChange={(next) => {
         // Send every axis so retain middleware recognizes "all" as an explicit target.
         void navigate({
