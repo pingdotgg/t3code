@@ -62,7 +62,7 @@ rl.on("line", (line) => {
       id,
       result: {
         userAgent: "t3-collab-mock/0.0.0",
-        codexHome: "/tmp",
+        codexHome: script.codexHome ?? "/tmp",
         platformFamily: "unix",
         platformOs: "linux",
       },
@@ -72,12 +72,23 @@ rl.on("line", (line) => {
   if (method === "account/read") {
     write({
       id,
-      result: { account: script.account ?? { type: "apiKey" }, requiresOpenaiAuth: false },
+      result: {
+        account: "account" in script ? script.account : { type: "apiKey" },
+        requiresOpenaiAuth: false,
+      },
     });
     return;
   }
   if (method === "account/rateLimits/read" && script.failRateLimitsRead) {
     write({ id, error: { code: -32000, message: "usage unavailable" } });
+    return;
+  }
+  if (method === "account/rateLimits/read" && script.rateLimits) {
+    write({ id, result: script.rateLimits });
+    return;
+  }
+  if (method === "config/read" && script.config) {
+    write({ id, result: { config: script.config, origins: {} } });
     return;
   }
   if (method === "account/rateLimitResetCredit/consume" && script.resetCreditOutcome) {
