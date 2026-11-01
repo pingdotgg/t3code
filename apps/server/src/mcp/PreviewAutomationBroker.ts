@@ -29,6 +29,7 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -42,6 +43,11 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
 const HOST_RESPONSE_GRACE_MS = 1_000;
+/**
+ * A host evicted for a slow response is still running and re-registers within
+ * about a second. Its tabs survive, so its agents keep their current tab.
+ */
+const EVICTED_LEASE_GRACE_MS = 5_000;
 
 export interface PreviewAutomationInvokeInput {
   readonly scope: McpInvocationContext.McpThreadInvocationScope;
@@ -93,13 +99,23 @@ interface PendingRequest {
   readonly context: PreviewAutomationRequestErrorContext;
 }
 
-/** A lease belongs to this exact connectionId/queue; replacing the host invalidates it. */
+/**
+ * A lease lives as long as the connection it names; a host evicted for a timeout
+ * hands its leases to its own re-registration (see `EVICTED_LEASE_GRACE_MS`).
+ */
 interface HostAssignment {
   readonly clientId: ClientConnection["clientId"];
   readonly connectionId: ClientConnection["connectionId"];
   readonly queue: ClientConnection["queue"];
   readonly tabId?: PreviewTabId;
   readonly tabSequence?: number;
+}
+
+interface ReleasedLease {
+  readonly clientId: ClientConnection["clientId"];
+  readonly tabId?: PreviewTabId;
+  readonly tabSequence?: number;
+  readonly releasedAt: number;
 }
 
 interface PreviewAutomationRequestErrorContext {
@@ -120,6 +136,8 @@ interface PreviewAutomationRequestErrorContext {
 interface BrokerState {
   readonly clients: ReadonlyMap<string, ClientConnection>;
   readonly assignments: ReadonlyMap<string, HostAssignment>;
+  /** Leases of hosts evicted for a timeout, kept until they re-register or the grace ends. */
+  readonly released: ReadonlyMap<string, ReleasedLease>;
   readonly pending: ReadonlyMap<string, PendingRequest>;
   readonly requestSequence: number;
   readonly focusSequence: number;
@@ -129,14 +147,24 @@ const removeConnectionFromState = (
   current: BrokerState,
   clientId: string,
   queue: ClientConnection["queue"],
+  releasedAt?: number,
 ): { readonly state: BrokerState; readonly disconnected: ReadonlyArray<PendingRequest> } => {
   const clients = new Map(current.clients);
   const assignments = new Map(current.assignments);
+  const released = new Map(current.released);
   const pending = new Map(current.pending);
   const disconnected: PendingRequest[] = [];
   if (current.clients.get(clientId)?.queue === queue) clients.delete(clientId);
   for (const [assignmentKey, assignment] of assignments) {
-    if (assignment.queue === queue) assignments.delete(assignmentKey);
+    if (assignment.queue !== queue) continue;
+    assignments.delete(assignmentKey);
+    if (releasedAt === undefined) continue;
+    released.set(assignmentKey, {
+      clientId: assignment.clientId,
+      ...(assignment.tabId === undefined ? {} : { tabId: assignment.tabId }),
+      ...(assignment.tabSequence === undefined ? {} : { tabSequence: assignment.tabSequence }),
+      releasedAt,
+    });
   }
   for (const [requestId, entry] of pending) {
     if (entry.queue !== queue) continue;
@@ -144,7 +172,7 @@ const removeConnectionFromState = (
     disconnected.push(entry);
   }
   return {
-    state: { ...current, clients, assignments, pending },
+    state: { ...current, clients, assignments, released, pending },
     disconnected,
   };
 };
@@ -351,6 +379,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   const state = yield* SynchronizedRef.make<BrokerState>({
     clients: new Map(),
     assignments: new Map(),
+    released: new Map(),
     pending: new Map(),
     requestSequence: 0,
     focusSequence: 0,
@@ -382,11 +411,14 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     queue: ClientConnection["queue"],
     completeStream = false,
   ) {
+    // Only a timeout keeps the host's leases: a closed or replaced stream may
+    // belong to a runtime whose tabs are gone.
+    const releasedAt = completeStream ? yield* Clock.currentTimeMillis : undefined;
     yield* SynchronizedRef.modifyEffect(state, (current) => {
       if (current.clients.get(clientId)?.queue !== queue) {
         return Effect.succeed([undefined, current] as const);
       }
-      const removed = removeConnectionFromState(current, clientId, queue);
+      const removed = removeConnectionFromState(current, clientId, queue, releasedAt);
       return closeConnection(queue, removed.disconnected, completeStream).pipe(
         Effect.as([undefined, removed.state] as const),
       );
@@ -412,12 +444,28 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       focusOrder: 0,
       queue,
     };
+    const now = yield* Clock.currentTimeMillis;
     const registration = yield* SynchronizedRef.modify(state, (current) => {
       const previousConnection = current.clients.get(clientId);
       const removed = previousConnection
         ? removeConnectionFromState(current, clientId, previousConnection.queue)
         : { state: current, disconnected: [] };
       const clients = new Map(removed.state.clients);
+      const assignments = new Map(removed.state.assignments);
+      const released = new Map(removed.state.released);
+      for (const [assignmentKey, lease] of released) {
+        const expired = now - lease.releasedAt > EVICTED_LEASE_GRACE_MS;
+        if (!expired && lease.clientId !== clientId) continue;
+        released.delete(assignmentKey);
+        if (expired || assignments.has(assignmentKey)) continue;
+        assignments.set(assignmentKey, {
+          clientId,
+          connectionId,
+          queue,
+          ...(lease.tabId === undefined ? {} : { tabId: lease.tabId }),
+          ...(lease.tabSequence === undefined ? {} : { tabSequence: lease.tabSequence }),
+        });
+      }
       const focusSequence = removed.state.focusSequence + 1;
       const registeredConnection = { ...connection, focusOrder: focusSequence };
       clients.set(clientId, registeredConnection);
@@ -427,7 +475,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
           disconnected: removed.disconnected,
           registeredConnection,
         },
-        { ...removed.state, clients, focusSequence },
+        { ...removed.state, clients, assignments, released, focusSequence },
       ] as const;
     });
     if (registration.previousConnection) {

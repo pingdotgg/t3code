@@ -84,6 +84,7 @@ import * as ServerBrowserPage from "./ServerBrowserPage.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import { presentAsChrome, ServerBrowserContexts } from "./ServerBrowserContexts.ts";
+import { CaptureLock } from "./CaptureLock.ts";
 import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
 import { installPdfDocumentNavigation, isPdfAssetUrl } from "./PdfDocumentNavigation.ts";
 
@@ -95,6 +96,8 @@ const SCREENCAST_SETTLE_MS = 200;
 const SCREENCAST_MOTION_FRAMES = 4;
 const SCREENCAST_MOTION_WINDOW_MS = 300;
 const SCREENCAST_MOTION_QUALITY = 50;
+// A still is a nicety; a guest that is hidden mid-transition may never paint it.
+const VIEWER_STILL_TIMEOUT_MS = 1_000;
 const HOST_RECONNECT_DELAY = "1 second";
 const DESKTOP_ATTACH_TIMEOUT = "10 seconds";
 const VIEWER_OUTPUT_LIMIT = 64;
@@ -331,7 +334,7 @@ interface ServerTab {
   } | null;
 
   recordingStart: Promise<Recording> | null;
-  captureLock: Promise<void>;
+  captureLock: CaptureLock;
   capturing: number;
 }
 
@@ -859,7 +862,7 @@ const make = Effect.gen(function* () {
       initialNavigation: null,
       navigationGeneration: 0,
       abortedNavigation: null,
-      captureLock: Promise.resolve(),
+      captureLock: new CaptureLock(),
       capturing: 0,
     };
     if (!desktop) {
@@ -1659,13 +1662,27 @@ const make = Effect.gen(function* () {
     });
   };
 
-  const withCaptureLock = <A>(tab: ServerTab, operation: () => Promise<A>): Promise<A> => {
-    const run = tab.captureLock.then(() => {
-      if (tab.closing) throw new Error("The preview tab closed.");
-      return operation();
-    });
-    tab.captureLock = run.then(constVoid, constVoid);
-    return run;
+  // A capture with a deadline gives up the lock when it passes, so one that
+  // never gets a frame cannot stall the rest until the broker evicts the host.
+  const withCaptureLock = <A>(
+    tab: ServerTab,
+    operation: () => Promise<A>,
+    deadlineMs?: number,
+  ): Promise<A> => {
+    const remainingMs = deadlineMs === undefined ? undefined : deadlineMs - performance.now();
+    if (remainingMs !== undefined && remainingMs <= 0) {
+      return Promise.reject(ServerBrowserPage.tooBusy());
+    }
+    const signal =
+      remainingMs === undefined ? undefined : AbortSignal.timeout(Math.round(remainingMs));
+    return tab.captureLock
+      .run(() => {
+        if (tab.closing) throw new Error("The preview tab closed.");
+        return operation();
+      }, signal)
+      .catch((cause: unknown) => {
+        throw signal?.aborted && cause === signal.reason ? ServerBrowserPage.tooBusy() : cause;
+      });
   };
 
   const startRecording = (tab: ServerTab): Promise<Recording> => {
@@ -1730,27 +1747,37 @@ const make = Effect.gen(function* () {
     return started;
   };
 
-  const withScreencastsPaused = <A>(tab: ServerTab, capture: () => Promise<A>): Promise<A> =>
-    withCaptureLock(tab, async () => {
-      tab.capturing += 1;
-      const recording = tab.recording;
-      try {
-        await Promise.all([
-          ...[...tab.viewers].map((viewer) => viewer.pause()),
-          recording?.session.send("Page.stopScreencast").catch(constVoid),
-        ]);
-        return await capture();
-      } finally {
-        tab.capturing -= 1;
+  const withScreencastsPaused = <A>(
+    tab: ServerTab,
+    capture: () => Promise<A>,
+    deadlineMs?: number,
+  ): Promise<A> =>
+    withCaptureLock(
+      tab,
+      async () => {
+        tab.capturing += 1;
+        const recording = tab.recording;
+        try {
+          await Promise.all([
+            ...[...tab.viewers].map((viewer) => viewer.pause()),
+            recording?.session.send("Page.stopScreencast").catch(constVoid),
+          ]);
+          return await capture();
+        } finally {
+          tab.capturing -= 1;
 
-        await Promise.all([
-          ...[...tab.viewers].map((viewer) => viewer.resume()),
-          recording && tab.recording === recording
-            ? recording.session.send("Page.startScreencast", RECORDING_SCREENCAST).catch(constVoid)
-            : undefined,
-        ]);
-      }
-    });
+          await Promise.all([
+            ...[...tab.viewers].map((viewer) => viewer.resume()),
+            recording && tab.recording === recording && tab.capturing === 0
+              ? recording.session
+                  .send("Page.startScreencast", RECORDING_SCREENCAST)
+                  .catch(constVoid)
+              : undefined,
+          ]);
+        }
+      },
+      deadlineMs,
+    );
 
   const stopRecording = (tab: ServerTab) =>
     withCaptureLock(tab, async () => {
@@ -2099,7 +2126,7 @@ const make = Effect.gen(function* () {
             "A browser dialog is pending. Read preview_status.",
             "dialogPending",
           );
-        return executeTabOperation(tab, request);
+        return executeTabOperation(tab, request, deadlineMs);
       });
     }
     return tab.control.agent(
@@ -2114,7 +2141,7 @@ const make = Effect.gen(function* () {
         tab.agentOperating = !READ_OPERATIONS.has(request.operation);
         updateFileChooserInterception(tab);
         try {
-          return await executeTabOperation(tab, request);
+          return await executeTabOperation(tab, request, deadlineMs);
         } finally {
           tab.agentOperating = false;
           updateFileChooserInterception(tab);
@@ -2125,7 +2152,11 @@ const make = Effect.gen(function* () {
     );
   };
 
-  const executeTabOperation = async (tab: ServerTab, request: PreviewAutomationRequest) => {
+  const executeTabOperation = async (
+    tab: ServerTab,
+    request: PreviewAutomationRequest,
+    deadlineMs: number,
+  ) => {
     const input = request.input;
     switch (request.operation) {
       case "navigate": {
@@ -2161,11 +2192,15 @@ const make = Effect.gen(function* () {
         return { tabId: tab.tabId, colorScheme };
       }
       case "snapshot": {
-        return withScreencastsPaused(tab, () =>
-          ServerBrowserPage.snapshot({
-            ...tab,
-            renderScale: tab.desktop ? "display" : RENDER_SCALE,
-          }),
+        return withScreencastsPaused(
+          tab,
+          () =>
+            ServerBrowserPage.snapshot({
+              ...tab,
+              deadlineMs,
+              renderScale: tab.desktop ? "display" : RENDER_SCALE,
+            }),
+          deadlineMs,
         );
       }
       case "click": {
@@ -2545,8 +2580,10 @@ const make = Effect.gen(function* () {
     broadcastControl(tab);
     pushFileChooser(tab);
     const pushStill = async () => {
-      const data = await withCaptureLock(tab, () =>
-        ServerBrowserPage.captureViewport(session, { format: "jpeg", quality }),
+      const data = await withCaptureLock(
+        tab,
+        () => ServerBrowserPage.captureViewport(session, { format: "jpeg", quality }),
+        performance.now() + VIEWER_STILL_TIMEOUT_MS,
       ).catch(() => null);
       if (data) viewer.push({ _tag: "frame", data: Buffer.from(data, "base64"), ack: Effect.void });
     };

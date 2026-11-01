@@ -232,7 +232,7 @@ const pageChanged = () =>
     "The page changed while capturing its snapshot. Take another snapshot.",
   );
 
-const tooBusy = () =>
+export const tooBusy = () =>
   new ServerBrowserOperationError(
     "PreviewAutomationTimeoutError",
     "The page was too busy to capture a snapshot in time. Wait for it to settle and take another snapshot.",
@@ -495,6 +495,7 @@ const shrinkPng = async (cdp: CDPSession, png: string, scale: number) => {
 };
 
 type SnapshotInput = {
+  readonly deadlineMs?: number;
   readonly page: Page;
   readonly cdp: CDPSession;
   /** Headless pages render at the scale the server set; a desktop page at its display's. */
@@ -527,7 +528,7 @@ const capture = async (
 ): Promise<PreviewAutomationSnapshot> => {
   const { renderScale, viewport } = await renderingOf(input);
   // A late metrics reply must not begin a capture after viewers have resumed.
-  if (Date.now() >= deadline) throw tooBusy();
+  if (performance.now() >= deadline) throw tooBusy();
   const scale = Math.min(1, MAX_SCREENSHOT_WIDTH / (viewport.width * renderScale));
   const state = refsFor(input.page);
   invalidateRefs(input.page);
@@ -551,7 +552,7 @@ const capture = async (
   const tree = await input.page.ariaSnapshot({
     mode: "ai",
     boxes: true,
-    timeout: Math.max(1, deadline - Date.now() - 2_000),
+    timeout: Math.max(1, deadline - performance.now() - 2_000),
   });
   const after = await read(before);
   // A value that changed meanwhile may be in the tree under neither reading.
@@ -602,16 +603,18 @@ const capture = async (
 const snapshotTurns = new WeakMap<Page, number>();
 
 export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationSnapshot> => {
-  const deadline = Date.now() + SNAPSHOT_TIMEOUT_MS;
+  const deadline = Math.min(performance.now() + SNAPSHOT_TIMEOUT_MS, input.deadlineMs ?? Infinity);
+  const remainingMs = deadline - performance.now();
+  if (remainingMs <= 0) throw tooBusy();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(tooBusy()), SNAPSHOT_TIMEOUT_MS);
+    timer = setTimeout(() => reject(tooBusy()), remainingMs);
   });
   const turn = (snapshotTurns.get(input.page) ?? 0) + 1;
   snapshotTurns.set(input.page, turn);
   // Retry only before the deadline and the next snapshot, whose refs a later retry would revoke.
   const captured = capture(input, deadline).catch((cause: unknown) =>
-    Date.now() < deadline &&
+    performance.now() < deadline &&
     snapshotTurns.get(input.page) === turn &&
     !(cause instanceof Error && cause.message === VALUE_TOO_LONG)
       ? capture(input, deadline)

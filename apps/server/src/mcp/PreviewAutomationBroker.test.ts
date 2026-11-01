@@ -18,6 +18,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { PreviewBrowserRootError } from "../preview/PreviewBrowserHost.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -937,6 +938,61 @@ it.effect("does not carry a tab id across a replacement automation stream", () =
       expect(routedRequests.at(-1)?.tabId).toBeUndefined();
     }),
   ),
+);
+
+it.effect.each([
+  { reconnectAfter: "4 seconds", carried: true },
+  { reconnectAfter: "6 seconds", carried: false },
+] as const)(
+  "keeps the current tab when a timed-out host re-registers within the grace period (%o)",
+  ({ reconnectAfter, carried }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* makeBroker;
+        const openedTabId = PreviewTabId.make("tab-before-timeout");
+        const firstRequests = requestsFrom(yield* broker.connect(makeHost()));
+        yield* Stream.runForEach(firstRequests, (request) =>
+          // The host stalls on the snapshot, as when a capture never gets a frame.
+          request.operation === "snapshot"
+            ? Effect.void
+            : broker.respond({
+                clientId: "client-1",
+                connectionId: request.connectionId,
+                requestId: request.requestId,
+                ok: true,
+                result: { tabId: openedTabId },
+              }),
+        ).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+
+        yield* broker.invoke({ scope, operation: "open", input: {} });
+        const stalled = yield* broker
+          .invoke<void>({ scope, operation: "snapshot", input: {} })
+          .pipe(Effect.flip, Effect.forkScoped);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("16 seconds");
+        expect((yield* Fiber.join(stalled))._tag).toBe("PreviewAutomationTimeoutError");
+
+        yield* TestClock.adjust(reconnectAfter);
+        const routedRequests: RoutedRequest[] = [];
+        const replacementRequests = requestsFrom(yield* broker.connect(makeHost()));
+        yield* Stream.runForEach(replacementRequests, (request) => {
+          routedRequests.push(request);
+          return broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: {},
+          });
+        }).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+
+        yield* broker.invoke({ scope, operation: "status", input: {} });
+        expect(routedRequests.at(-1)?.tabId).toBe(carried ? openedTabId : undefined);
+        expect(routedRequests.at(-1)?.tabIdExplicit).toBe(false);
+      }),
+    ),
 );
 
 it.effect("fails requests assigned to the stream that is replaced", () =>
