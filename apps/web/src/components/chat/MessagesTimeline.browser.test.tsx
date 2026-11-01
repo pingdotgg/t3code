@@ -430,6 +430,60 @@ describe("MessagesTimeline messages", () => {
     expectItemOrder();
   });
 
+  it("restores a saved offset whose row is gone after switching from a shorter thread", async () => {
+    setup();
+    const thread = (name: string, length: number) =>
+      Array.from({ length }, (_, index) =>
+        message(
+          `${name} turn ${index}:\n\n${"line\n\n".repeat(8)}`,
+          { role: "assistant" },
+          `${name}-${index}`,
+        ),
+      );
+    const props = baseProps();
+    const other = `${props.routeThreadKey}-long`;
+    const savedOffset = 10_000;
+    rememberTimelinePosition(
+      other,
+      { rowId: "entry-removed", offsetWithinRow: 0, scrollOffset: savedOffset, atEnd: false },
+      false,
+    );
+    await using screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={thread("A", 20)} />,
+    );
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    await vi.waitFor(() => {
+      expect(viewport.scrollTop).toBeGreaterThan(0);
+      expect(viewport.scrollTop).toBeGreaterThanOrEqual(
+        viewport.scrollHeight - viewport.clientHeight - 1,
+      );
+    });
+
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        routeThreadKey={other}
+        timelineEntries={thread("B", 200)}
+        liveFollowEnabled={false}
+      />,
+    );
+    await vi.waitFor(() => {
+      const target = Math.min(savedOffset, viewport.scrollHeight - viewport.clientHeight);
+      expect(Math.abs(viewport.scrollTop - target)).toBeLessThanOrEqual(2);
+      expect(
+        Math.abs(props.listRef.current!.getState().scroll - viewport.scrollTop),
+      ).toBeLessThanOrEqual(2);
+      const view = viewport.getBoundingClientRect();
+      const visible = [
+        ...screen.container.querySelectorAll<HTMLElement>("[data-timeline-row-id]"),
+      ].filter((row) => {
+        const bounds = row.getBoundingClientRect();
+        return bounds.bottom > view.top && bounds.top < view.bottom;
+      });
+      expect(visible.length).toBeGreaterThan(0);
+    });
+  });
+
   it("puts rows back in item order soon after a continuous scroll stops", async () => {
     setup();
     const props = baseProps();
