@@ -115,6 +115,18 @@ describe("thread links", () => {
     );
   });
 
+  it("relabels a link whose destination is in angle brackets as it does a bare one", () => {
+    const links = ["See [the fix](<t3-thread://v2/local/t1>).", "[x](<t3-thread://v1/t1>)"];
+    expect(links.map((link) => relabelThreadLinks(link, local, () => "Fix title"))).toEqual([
+      "See [Fix title](t3-thread://v2/local/t1).",
+      "[Fix title](t3-thread://v1/t1)",
+    ]);
+    expect(links.map((link) => relabelThreadLinks(link, local, () => undefined))).toEqual([
+      "See the fix.",
+      "[x](<t3-thread://v1/t1>)",
+    ]);
+  });
+
   it("leaves links inside code spans and fences as written", () => {
     const markdown = [
       "Live [old](t3-thread://v1/t1), literal `[old](t3-thread://v1/t1)`.",
