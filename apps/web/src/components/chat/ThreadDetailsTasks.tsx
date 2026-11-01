@@ -1,5 +1,6 @@
 import type { OrchestrationV2PlanStep } from "@t3tools/contracts";
-import { CheckIcon, CircleDotIcon, CircleIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, CircleDotIcon, CircleIcon } from "lucide-react";
+import { useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { formatDuration, type TaskListPlan } from "../../session-logic";
@@ -11,7 +12,7 @@ const STATUS_LABEL = {
   completed: "Completed",
 } satisfies Record<OrchestrationV2PlanStep["status"], string>;
 
-/** The agent's latest task list; a short card keeps only the current step. */
+/** The agent's latest task list; collapsed, or in a short card, it keeps only the current step. */
 export function ThreadDetailsTasks({
   plan,
   compact,
@@ -19,6 +20,7 @@ export function ThreadDetailsTasks({
   readonly plan: TaskListPlan;
   readonly compact: boolean;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const done = plan.steps.filter((step) => step.status === "completed").length;
   const current =
     plan.steps.find((step) => step.status === "running") ??
@@ -53,9 +55,30 @@ export function ThreadDetailsTasks({
   }
 
   return (
-    <ThreadDetailsSection headingId="thread-details-tasks-heading" title="Tasks" actions={count}>
+    <ThreadDetailsSection
+      headingId="thread-details-tasks-heading"
+      title="Tasks"
+      actions={
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-label={`${expanded ? "Collapse" : "Expand"} tasks`}
+          className="flex cursor-pointer items-center gap-1.5 rounded-sm text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:ring-inset focus-visible:outline-none"
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {count}
+          <ChevronDownIcon
+            aria-hidden
+            className={cn("size-3 shrink-0 transition-transform", !expanded && "-rotate-90")}
+          />
+        </button>
+      }
+    >
       <ul className="flex max-h-48 flex-col overflow-y-auto text-xs">
-        {plan.steps.map((step) => (
+        {!expanded && !current ? (
+          <li className="px-2.5 py-1 text-muted-foreground/60">All done</li>
+        ) : null}
+        {(expanded ? plan.steps : current ? [current] : []).map((step) => (
           <li key={step.id} className="flex min-w-0 items-start gap-2 px-2.5 py-1">
             <span
               aria-hidden
