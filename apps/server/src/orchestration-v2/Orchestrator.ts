@@ -23,6 +23,7 @@ import {
   type ChatAttachment,
   CommandId,
   type GuestMessageId,
+  isNativeMaintenanceCommand,
   isCompactionCommandMessage,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
@@ -59,6 +60,7 @@ import {
   latestProviderTurnForAttempt,
   parseGoalCommand,
   orchestrationV2RunWorkStartedAt,
+  orchestrationV2SteerRejectionReason,
   orchestrationV2WorktreePending,
   ProviderInstanceId,
   ProviderInteractionMode,
@@ -101,7 +103,6 @@ import {
   CommandPolicyV2,
   goalCommandStopsActiveRun,
   isActiveRun,
-  isNativeMaintenanceCommand,
   resolveMessageDispatchIntent,
 } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
@@ -4583,22 +4584,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Target run ${input.targetRunId} was not found.`,
       });
     }
-    if (isNativeMaintenanceCommand(input)) {
+    const steerRejectionReason = orchestrationV2SteerRejectionReason(input);
+    if (steerRejectionReason !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: input.command.commandId,
         commandType: input.command.type,
-        cause:
-          input.text.trim().toLowerCase() === "/compact"
-            ? "Context compaction must run as a separate turn. Queue it or wait for the active turn to finish."
-            : "Signing out must run as a separate turn. Queue it or wait for the active turn to finish.",
-      });
-    }
-    if (parseGoalCommand(input) !== null) {
-      return yield* new OrchestratorDispatchError({
-        commandId: input.command.commandId,
-        commandType: input.command.type,
-        cause:
-          "Goal commands must run as a separate turn. Queue it or wait for the active turn to finish.",
+        cause: `${steerRejectionReason} Queue it or wait for the active turn to finish.`,
       });
     }
     const targetMessage = input.projection.messages.find(

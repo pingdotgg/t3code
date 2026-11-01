@@ -17,11 +17,13 @@ export function resolveThreadQueueRowControls(input: {
   readonly busy: boolean;
   readonly canPromoteToSteer: boolean;
   readonly canSendNow: boolean;
+  readonly promoteSkipsCompaction?: boolean;
   /** Something else holds the composer, such as an open question. */
   readonly editBlocked?: boolean;
   readonly isEditing?: boolean;
   /** A guest's message keeps the guest's words; the owner can cancel it, not rewrite it. */
   readonly isGuestMessage?: boolean;
+  readonly steerRejectionReason: string | null;
   readonly text: string;
 }): ThreadQueueRowControls {
   const mutationEnabled = !input.busy;
@@ -33,7 +35,12 @@ export function resolveThreadQueueRowControls(input: {
     // away whatever has been typed since.
     canEdit:
       mutationEnabled && !isEditing && input.isGuestMessage !== true && input.editBlocked !== true,
-    canSend: mutationEnabled && (input.canPromoteToSteer || input.canSendNow) && !isEditing,
+    canSend:
+      mutationEnabled &&
+      !isEditing &&
+      (input.canSendNow ||
+        (input.canPromoteToSteer &&
+          (input.promoteSkipsCompaction === true || input.steerRejectionReason === null))),
     dismissAccessibilityLabel: REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
     // Editing and sending keep the original text so quoted citations stay linked.
     displayText: isAttachmentOnlyBootstrapPrompt(input.text)
