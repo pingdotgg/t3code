@@ -222,6 +222,35 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
+  it.effect("sends skill directives as byte-bounded application context", () =>
+    Effect.gen(function* () {
+      const text = `<t3_skill_variants>\n${"🧭".repeat(1_200)}\n</t3_skill_variants>`;
+      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+        nativeThreadId: "native-skill-directives",
+        codexInput: [{ type: "text", text: "test" }],
+        runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+        },
+        hasT3Mcp: true,
+        appContext: [{ key: "mcp_app_context", text: "app context" }],
+        skillDirectives: { text, hash: "directive-hash" },
+      });
+
+      assert.equal(Object.keys(params.additionalContext ?? {})[0], "t3_skill_variants");
+      const chunks = Object.entries(params.additionalContext ?? {})
+        .filter(([key]) => key.startsWith("t3_skill_variants"))
+        .toSorted(([left], [right]) => left.localeCompare(right));
+      assert.isAbove(chunks.length, 1);
+      for (const [, chunk] of chunks) {
+        assert.equal(chunk.kind, "application");
+        assert.isAtMost(Buffer.byteLength(chunk.value, "utf8"), 4_000);
+      }
+      assert.equal(chunks.map(([, chunk]) => chunk.value).join(""), text);
+    }),
+  );
+
   it.effect("sends MCP app model context as untrusted Codex context", () =>
     Effect.gen(function* () {
       const policy = { runtimeMode: "full-access", interactionMode: "default", cwd: null } as const;

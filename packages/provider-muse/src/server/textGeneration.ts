@@ -22,6 +22,7 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildSkillTrialJudgePrompt,
   buildThreadTitlePrompt,
 } from "@t3tools/provider-core/server/textGenerationPrompts";
 import {
@@ -342,11 +343,22 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
   });
   const generateReviewGuide: ProviderTextGeneration["generateReviewGuide"] = () =>
     Effect.fail(investigationUnsupported("generateReviewGuide", "Muse Code"));
+  const judgeSkillTrial: ProviderTextGeneration["judgeSkillTrial"] = Effect.fn(
+    "MuseTextGeneration.judgeSkillTrial",
+  )(function* (input) {
+    const generated = yield* runMuseJson({
+      operation: "judgeSkillTrial",
+      ...buildSkillTrialJudgePrompt(input),
+      modelSelection: input.modelSelection,
+    });
+    return { ...generated, rationale: generated.rationale.trim().slice(0, 2_000) };
+  });
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateReviewGuide,
+    judgeSkillTrial,
   } satisfies ProviderTextGeneration;
 });

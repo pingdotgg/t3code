@@ -264,6 +264,7 @@ export function makeTurnInput(input: {
   readonly messageCreatedBy?: "user" | "agent";
   readonly messageCreationSource?: "web" | "mobile" | "mcp" | "provider" | "server";
   readonly messageText?: string;
+  readonly skillDirectives?: ProviderAdapter.ProviderAdapterV2TurnInput["skillDirectives"];
 }): ProviderAdapter.ProviderAdapterV2TurnInput {
   const ordinal = input.ordinal ?? 1;
   const suffix = `${input.threadId}:${ordinal}`;
@@ -313,5 +314,6 @@ export function makeTurnInput(input: {
     },
     modelSelection,
     runtimePolicy: input.runtimePolicy,
+    ...(input.skillDirectives === undefined ? {} : { skillDirectives: input.skillDirectives }),
   };
 }

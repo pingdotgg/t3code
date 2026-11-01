@@ -25,6 +25,7 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/snap-shot"
   | "/settings/providers"
+  | "/settings/skills"
   | "/settings/threads"
   | "/settings/browser"
   | "/settings/devices"
@@ -70,6 +71,7 @@ export interface SettingsSearchItem {
   readonly peerLinksOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
+  readonly skillsOnly?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -81,6 +83,7 @@ export interface SettingsSearchAvailability {
   readonly canManageLocalBackend: boolean;
   readonly isWslSettingsRowVisible: boolean;
   readonly hasThreadAutoSettlement: boolean;
+  readonly hasSkills: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
 }
@@ -95,6 +98,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
+  "/settings/skills": "Skills",
   "/settings/threads": "Threads",
   "/settings/browser": "Browser",
   "/settings/devices": "Devices",
@@ -130,6 +134,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     heading: "Agents",
     paths: [
       "/settings/providers",
+      "/settings/skills",
       "/settings/threads",
       "/settings/browser",
       "/settings/devices",
@@ -800,6 +805,17 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "skills",
+    title: "Skills",
+    to: "/settings/skills",
+    searchTerms: [
+      "agents instructions model variants evaluation eval tasks experiments verdict evidence turn off fork revisions",
+    ],
+    environmentOnly: true,
+    scope: "environment",
+    skillsOnly: true,
+  },
+  {
     id: "usage-providers",
     title: "Usage providers",
     to: "/settings/providers",
@@ -1189,6 +1205,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/snap-shot": null,
   "/settings/keybindings": null,
   "/settings/providers": null,
+  "/settings/skills": "environment",
   "/settings/threads": null,
   "/settings/browser": null,
   "/settings/devices": null,
@@ -1325,6 +1342,7 @@ export function filterAvailableSettingsSearchItems(
       (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
+      (!item.skillsOnly || availability.hasSkills) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true),
   );

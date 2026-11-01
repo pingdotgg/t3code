@@ -75,6 +75,8 @@ const CURSOR_DRIVER_KIND = CursorAgentSdk.CURSOR_PROVIDER;
 export const CURSOR_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CURSOR_DRIVER_KIND);
 
 export const CursorProviderCapabilitiesV2 = {
+  skillVariantDelivery: "turn-prompt",
+  skillGating: "instruction",
   sessions: {
     supportsMultipleProviderThreadsPerSession: false,
     supportsModelSwitchInSession: true,
@@ -2291,16 +2293,20 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 .map((skill) => skill.name),
             );
           }
+          const messageText = yield* providerMessageTextWithAttachmentPaths({
+            text:
+              cursorSkillNames === undefined
+                ? rawText
+                : rewriteCursorSkillMentions(rawText, cursorSkillNames),
+            attachments: turnInput.message.attachments,
+            resolveAttachmentPath: host.resolveAttachmentPath,
+            resolveExtractedTextPath: host.resolveExtractedTextPath,
+          });
           const userText = t3OrchestrationPrompt({
-            prompt: yield* providerMessageTextWithAttachmentPaths({
-              text:
-                cursorSkillNames === undefined
-                  ? rawText
-                  : rewriteCursorSkillMentions(rawText, cursorSkillNames),
-              attachments: turnInput.message.attachments,
-              resolveAttachmentPath: host.resolveAttachmentPath,
-              resolveExtractedTextPath: host.resolveExtractedTextPath,
-            }),
+            prompt:
+              turnInput.skillDirectives === undefined
+                ? messageText
+                : `${turnInput.skillDirectives.text}\n\n${messageText}`,
             hasT3Mcp: mcpServers !== undefined,
             hasDeviceTools,
             orchestrationDelivered: delivered.orchestration,

@@ -41,6 +41,11 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     ) === true;
   const hasThreadAutoSettlement =
     getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0;
+  const hasSkills = environments.some(
+    (environment) =>
+      (scopeSearch.machine === undefined || environment.environmentId === scopeSearch.machine) &&
+      environment.serverConfig?.environment.capabilities.skills === true,
+  );
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canMaintain = useEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope);
   const hasPeerLinkHost = usePeerLinkHosts().length > 0;
@@ -67,6 +72,7 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     canManageLocalBackend,
     isWslSettingsRowVisible: wslSettingsRowVisible,
     hasThreadAutoSettlement,
+    hasSkills,
     managedTunnelActive,
     hasPeerLinkHost,
   });

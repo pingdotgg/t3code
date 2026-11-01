@@ -139,6 +139,10 @@
       "types": "./src/server/selectionTransition.ts",
       "import": "./src/server/selectionTransition.ts"
     },
+    "./server/skillDirectives": {
+      "types": "./src/server/skillDirectives.ts",
+      "import": "./src/server/skillDirectives.ts"
+    },
     "./server/snapshot": {
       "types": "./src/server/snapshot.ts",
       "import": "./src/server/snapshot.ts"

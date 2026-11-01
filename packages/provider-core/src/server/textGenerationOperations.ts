@@ -11,6 +11,7 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildReviewGuidePrompt,
+  buildSkillTrialJudgePrompt,
   buildThreadTitlePrompt,
 } from "./textGenerationPrompts.ts";
 import {
@@ -167,11 +168,24 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     });
   });
 
+  const judgeSkillTrial: ProviderTextGeneration["judgeSkillTrial"] = Effect.fn(
+    `${name}.judgeSkillTrial`,
+  )(function* (input) {
+    const generated = yield* run({
+      operation: "judgeSkillTrial",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      ...buildSkillTrialJudgePrompt(input),
+    });
+    return { ...generated, rationale: generated.rationale.trim().slice(0, 2_000) };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateReviewGuide,
+    judgeSkillTrial,
   } satisfies ProviderTextGeneration;
 }

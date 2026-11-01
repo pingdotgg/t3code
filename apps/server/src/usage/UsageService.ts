@@ -40,7 +40,14 @@ import type {
   UsageRecord,
 } from "@t3tools/provider-core/server/usage";
 import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
-import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
+import {
+  createOverrideRateTable,
+  parseRateTable,
+  priceUsage,
+  type PricedRecord,
+  type PricedUsage,
+  type RateTable,
+} from "./usagePricing.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
@@ -143,6 +150,7 @@ export class UsageService extends Context.Service<
   UsageService,
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
+    readonly priceRecord: (record: PricedRecord) => Effect.Effect<PricedUsage, UsageReadError>;
     readonly refreshRates: Effect.Effect<UsagePricing>;
   }
 >()("t3/usage/UsageService") {}
@@ -927,7 +935,19 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  return { readSummary, refreshRates, awaitPersisted } as const;
+  const priceRecord = Effect.fn("UsageService.priceRecord")(function* (record: PricedRecord) {
+    const settings = yield* readSettings;
+    yield* ensureRates(false);
+    const alias = resolveModelAliases(settings.usageModelAliases).get(record.model);
+    const pricedRecord = (() => {
+      if (alias === undefined) return record;
+      const { rateModel: _rateModel, ...rest } = record;
+      return { ...rest, model: alias };
+    })();
+    return priceUsage(rates, pricedRecord, createOverrideRateTable(settings.usagePriceOverrides));
+  });
+
+  return { readSummary, priceRecord, refreshRates, awaitPersisted } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);

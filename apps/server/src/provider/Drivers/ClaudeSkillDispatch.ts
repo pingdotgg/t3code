@@ -1,3 +1,4 @@
+import { claudeSkillVariantQualifiedName } from "@t3tools/provider-core/server/skillDirectives";
 import type { ServerProviderSkill } from "@t3tools/contracts";
 
 /**
@@ -19,19 +20,36 @@ export interface ClaudeSkillDispatch {
   readonly commandText: string;
 }
 
+export interface ClaudeSkillDispatchPolicyEntry {
+  readonly skillName: string;
+  readonly mode: "variant" | "off";
+}
+
 export function planClaudeSkillDispatch(
   prompt: string,
   skills: ReadonlyMap<string, ClaudeSkillTarget>,
+  skillPolicy: ReadonlyArray<ClaudeSkillDispatchPolicyEntry> = [],
 ): ClaudeSkillDispatch | undefined {
+  const policyByName = new Map(skillPolicy.map((entry) => [entry.skillName, entry.mode]));
   const mentions = [...prompt.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => {
     const name = match[2] ?? "";
     const skill = skills.get(name);
     if (!skill) return [];
     const start = (match.index ?? 0) + (match[1]?.length ?? 0);
-    return [{ name, skill, start, end: (match.index ?? 0) + match[0].length }];
+    const mode = policyByName.get(name);
+    return [
+      {
+        name,
+        skill,
+        start,
+        end: (match.index ?? 0) + match[0].length,
+        nativeName:
+          mode === "off" ? null : mode === "variant" ? claudeSkillVariantQualifiedName(name) : name,
+      },
+    ];
   });
-  const last = mentions.at(-1);
-  if (!last) {
+  const last = mentions.findLast((mention) => mention.nativeName !== null);
+  if (last?.nativeName == null) {
     return undefined;
   }
 
@@ -41,8 +59,16 @@ export function planClaudeSkillDispatch(
   let promptWithInlineSlashes = "";
   let cursor = 0;
   for (const mention of mentions) {
-    promptWithInlineSlashes += `${prompt.slice(cursor, mention.start)}/${mention.name}`;
-    if (mention.skill.userInvocationOnly === true && !annotated.has(mention.name)) {
+    const replacement =
+      mention.nativeName === null
+        ? prompt.slice(mention.start, mention.end)
+        : `/${mention.nativeName}`;
+    promptWithInlineSlashes += `${prompt.slice(cursor, mention.start)}${replacement}`;
+    if (
+      mention.nativeName === mention.name &&
+      mention.skill.userInvocationOnly === true &&
+      !annotated.has(mention.name)
+    ) {
       promptWithInlineSlashes += ` [The user invoked this skill. Follow the instructions at: ${mention.skill.path}]`;
       annotated.add(mention.name);
     }
@@ -53,6 +79,6 @@ export function planClaudeSkillDispatch(
   return {
     leadingText:
       prompt.slice(0, last.start).trim().length > 0 ? promptWithInlineSlashes : undefined,
-    commandText: `/${last.name}${prompt.slice(last.end)}`.trimEnd(),
+    commandText: `/${last.nativeName}${prompt.slice(last.end)}`.trimEnd(),
   };
 }

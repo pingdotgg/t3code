@@ -23,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
@@ -30,6 +31,8 @@ import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as SkillVariantService from "../skills/SkillVariantService.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -72,6 +75,7 @@ interface RestartAdapterState {
     readonly model: string;
     readonly cwd: string | null;
     readonly attemptId: string;
+    readonly skillDirectives?: ProviderAdapter.ProviderAdapterV2TurnInput["skillDirectives"];
   }>;
   readonly closedSessionCount: number;
   readonly failedReplacementOpen: boolean;
@@ -218,6 +222,9 @@ function makeRestartAdapter(
                     model: input.modelSelection.model,
                     cwd: input.runtimePolicy.cwd,
                     attemptId: input.attemptId,
+                    ...(input.skillDirectives === undefined
+                      ? {}
+                      : { skillDirectives: input.skillDirectives }),
                   },
                 ],
               }));
@@ -278,6 +285,111 @@ function makeRestartAdapter(
       }),
   };
 }
+
+it.live("resolves model-specific skill directives and records the root provider turn", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const name = "skill-directive-turn-start";
+      const cwd = yield* checkpointWorkspace(name);
+      const threadId = ThreadId.make(`thread:${name}`);
+      const selection = {
+        instanceId: providerInstanceId,
+        model: "skill-model",
+      } satisfies ModelSelection;
+      const state = yield* Ref.make<RestartAdapterState>({
+        activeTurn: null,
+        opened: [],
+        started: [],
+        closedSessionCount: 0,
+        failedReplacementOpen: true,
+      });
+      const database = SqlitePersistence.layerMemory;
+      const layerRegistry = ProviderAdapterRegistry.layerSingle(makeRestartAdapter(state));
+
+      const result = yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const variants = yield* SkillVariantService.SkillVariantService;
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* variants.mutate({
+          action: "create",
+          skillName: "review",
+          driver,
+          model: selection.model,
+          body: "# Review\n\nUse the model-specific review process.",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${name}:create`),
+          threadId,
+          projectId: ProjectId.make(`project:${name}`),
+          title: "Skill directive turn start",
+          modelSelection: selection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        const completed = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) => event.type === "run.updated" && event.payload.status === "completed",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${name}:turn`),
+          threadId,
+          messageId: MessageId.make(`${name}:turn`),
+          text: "Review this change.",
+          attachments: [],
+          modelSelection: selection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* worker.drain();
+        yield* Fiber.join(completed);
+        yield* worker.drain();
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const runId = projection.runs[0]?.id;
+        if (runId === undefined) assert.fail("expected completed run");
+        const rows = yield* sql<{
+          readonly run_id: string;
+          readonly resolution_json: string;
+        }>`
+          SELECT run_id, resolution_json
+          FROM skill_turns
+          WHERE run_id = ${runId}
+        `;
+        return { captured: yield* Ref.get(state), rows };
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry, {
+              databaseLayer: database,
+            }),
+            database,
+          ),
+        ),
+      );
+
+      const directive = result.captured.started[0]?.skillDirectives?.text;
+      if (directive === undefined) assert.fail("expected skill directives on the provider turn");
+      const variantPath = /use (.+?) instead of its own SKILL\.md/.exec(directive)?.[1];
+      if (variantPath === undefined) assert.fail("expected a materialized variant path");
+      assert.include(directive, `Skill "review"`);
+      assert.lengthOf(result.rows, 1);
+      assert.include(result.rows[0]!.resolution_json, variantPath);
+    }),
+  ),
+);
 
 it.live("retries a failed selection restart session open before completing", () =>
   Effect.scoped(

@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
+import * as SkillUsage from "../skills/SkillUsageService.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -37,6 +38,13 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
               checkpoints: [],
             }),
         }),
+        Layer.mock(SkillUsage.SkillUsageService)({
+          finalizeRun: () =>
+            Effect.sync(() => {
+              captured.push("skills");
+              return true;
+            }),
+        }),
         Layer.succeed(RunFinalization.RunFinalizationObserver, {
           refresh: () =>
             Effect.gen(function* () {
@@ -54,7 +62,7 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
   return Effect.gen(function* () {
     const service = yield* RunFinalization.RunFinalizationService;
     yield* service.finalize({ threadId, runId, scopeId });
-    assert.deepEqual(captured, ["checkpoint", "refresh"]);
+    assert.deepEqual(captured, ["checkpoint", "skills", "refresh"]);
   }).pipe(Effect.provide(layer));
 });
 

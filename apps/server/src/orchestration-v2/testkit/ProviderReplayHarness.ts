@@ -41,6 +41,7 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import * as ProviderContinuationService from "../ProviderContinuationService.ts";
 import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
 import * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import * as CommandOutputRecorder from "./CommandOutputRecorder.ts";
@@ -58,6 +59,9 @@ import * as TurnItemPositionStore from "../TurnItemPositionStore.ts";
 import * as RuntimeRequestService from "../RuntimeRequestService.ts";
 import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
 import * as ThreadForkService from "../ThreadForkService.ts";
+import * as SkillTurnPreparation from "../../skills/SkillTurnPreparation.ts";
+import * as SkillUsageService from "../../skills/SkillUsageService.ts";
+import * as SkillVariantService from "../../skills/SkillVariantService.ts";
 import {
   runOrchestratorV2Scenario,
   type OrchestratorV2ScenarioStepError,
@@ -278,7 +282,9 @@ export function layerWithRegistry<Error>(
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
   | ProviderSessionManager.ProviderSessionManagerV2
-  | CommandOutputRecorder.CommandOutputRecorder,
+  | CommandOutputRecorder.CommandOutputRecorder
+  | SkillUsageService.SkillUsageService
+  | SkillVariantService.SkillVariantService,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const layerServerConfig = Layer.effect(
@@ -292,6 +298,23 @@ export function layerWithRegistry<Error>(
           Layer.provide(RuntimePolicy.layer),
         );
   const layerDatabase = options.databaseLayer ?? SqlitePersistence.layerMemory;
+  const layerSkillUsageService = SkillUsageService.layer.pipe(Layer.provide(layerDatabase));
+  const layerSkillVariantService = SkillVariantService.layer.pipe(
+    Layer.provide(layerDatabase),
+    Layer.provide(layerServerConfig),
+    Layer.provide(NodeServices.layer),
+  );
+  const layerSkillTurnPreparation = SkillTurnPreparation.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        layerDatabase,
+        layerSkillUsageService,
+        layerSkillVariantService,
+        NodeServices.layer,
+      ),
+    ),
+  );
   // Share one continuation queue across adapters, orchestrator, and worker through layer memoization.
   const layerContinuationRequests =
     options.runContinuationWorker === true ? ProviderContinuationRequests.layer : Layer.empty;
@@ -378,7 +401,9 @@ export function layerWithRegistry<Error>(
     ),
   );
   const layerProviderSwitchServiceProvided = ProviderSwitchService.layer.pipe(
-    Layer.provide(layerProvidedRegistry),
+    Layer.provide(
+      Layer.mergeAll(layerProvidedRegistry, layerSkillUsageService, layerSkillVariantService),
+    ),
   );
   const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
     Layer.provide(
@@ -390,6 +415,7 @@ export function layerWithRegistry<Error>(
         IdAllocator.layer,
         layerProviderEventIngestorProvided,
         layerServerSettings,
+        layerSkillTurnPreparation,
         layerStores,
       ),
     ),
@@ -444,7 +470,9 @@ export function layerWithRegistry<Error>(
     ),
   );
   const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
-    Layer.provide(Layer.merge(layerCheckpointCaptureServiceProvided, layerStores)),
+    Layer.provide(
+      Layer.mergeAll(layerCheckpointCaptureServiceProvided, layerSkillUsageService, layerStores),
+    ),
   );
   const layerThreadTitleRegenerationTest = Layer.succeed(
     ThreadTitleRegenerationService.ThreadTitleRegenerationService,
@@ -521,6 +549,8 @@ export function layerWithRegistry<Error>(
     layerEventSinkProvided,
     layerContinuationWorkerProvided,
     layerCommandOutputHubProvided,
+    layerSkillUsageService,
+    layerSkillVariantService,
   ).pipe(Layer.provide(ProviderTurnStartServiceTestkit.layer), Layer.provide(NodeServices.layer));
 
   if (options.runEffectWorker === false) {

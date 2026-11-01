@@ -109,6 +109,8 @@ const makeOpenCodeMessageId = Effect.fnUntraced(function* (
 
 // OpenCode has no turn object; correlate by initiating user message and settle on session idle.
 const OpenCodeProviderCapabilitiesV2 = {
+  skillVariantDelivery: "system-prompt",
+  skillGating: "native",
   sessions: {
     // The directory-bound client/server is not safe for cross-thread pooling.
     supportsMultipleProviderThreadsPerSession: false,
@@ -379,6 +381,8 @@ interface OpenCodeThreadState {
   nextChildTurnOrdinal: number;
   nextAdmissionGeneration: number;
   permission: PermissionRuleset;
+  skillPolicy: OpenCodeSkillPolicy;
+  skillPolicyHash: string | null;
   /** Parent rules last written into this child's `permission`; empty for root sessions. */
   inheritedPermission: PermissionRuleset;
 }
@@ -592,9 +596,42 @@ const OPENCODE_RESTRICTED_PERMISSIONS = [
   "doom_loop",
 ] as const;
 
+type OpenCodeSkillPolicy = ProviderAdapter.ProviderAdapterV2TurnInput["skillPolicy"];
+
+function variantDirectory(variantPath: string): string | null {
+  const separator = Math.max(variantPath.lastIndexOf("/"), variantPath.lastIndexOf("\\"));
+  return separator <= 0 ? null : variantPath.slice(0, separator);
+}
+
+function openCodeSkillPermissionRules(skillPolicy: OpenCodeSkillPolicy): PermissionRuleset {
+  if (skillPolicy === undefined) return [];
+  const directories = new Set(
+    skillPolicy.entries.flatMap((entry) => {
+      const directory =
+        entry.mode === "variant" && entry.variantPath !== null
+          ? variantDirectory(entry.variantPath)
+          : null;
+      return directory === null ? [] : [directory];
+    }),
+  );
+  return [
+    ...[...directories].toSorted().map((directory) => ({
+      permission: "external_directory",
+      pattern: `${directory.replace(/[\\/]$/, "")}/*`,
+      action: "allow" as const,
+    })),
+    ...skillPolicy.entries.map((entry) => ({
+      permission: "skill",
+      pattern: entry.skillName,
+      action: "deny" as const,
+    })),
+  ];
+}
+
 /** OpenCode has no OS sandbox; permission rules must enforce non-interactive policies too. */
 export function openCodePermissionRules(
   runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+  skillPolicy?: OpenCodeSkillPolicy,
 ): PermissionRuleset {
   const sandboxPolicy = recordValue(runtimePolicy, "sandboxPolicy");
   const sandboxType = recordString(sandboxPolicy, "type");
@@ -611,7 +648,10 @@ export function openCodePermissionRules(
     sandboxType === undefined && runtimePolicy.runtimeMode === "full-access";
 
   if (!requiresApproval && (externallySandboxed || dangerFullAccess || implicitFullAccess)) {
-    return [{ permission: "*", pattern: "*", action: "allow" }];
+    return [
+      { permission: "*", pattern: "*", action: "allow" },
+      ...openCodeSkillPermissionRules(skillPolicy),
+    ];
   }
 
   // Children initially inherit only denies; seed them before overrides to protect the policy-install gap.
@@ -680,7 +720,7 @@ export function openCodePermissionRules(
     }
   }
 
-  return rules;
+  return [...rules, ...openCodeSkillPermissionRules(skillPolicy)];
 }
 
 function permissionRuleEquals(
@@ -702,8 +742,9 @@ export function openCodeChildPermissionRules(
   runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   childRules: PermissionRuleset,
   previousParentRules: PermissionRuleset = [],
+  skillPolicy?: OpenCodeSkillPolicy,
 ): PermissionRuleset {
-  const parentRules = openCodePermissionRules(runtimePolicy);
+  const parentRules = openCodePermissionRules(runtimePolicy, skillPolicy);
   const inheritedRules = [
     ...parentRules.filter(
       (rule) => rule.permission === "external_directory" || rule.action === "deny",
@@ -714,7 +755,16 @@ export function openCodeChildPermissionRules(
     (childRule) =>
       !inheritedRules.some((inheritedRule) => permissionRuleEquals(childRule, inheritedRule)),
   );
-  return [...parentRules, ...childSpecificRules];
+  const policySkillRules = openCodeSkillPermissionRules(skillPolicy).filter(
+    (rule) => rule.permission === "skill",
+  );
+  return [
+    ...parentRules.filter(
+      (rule) => !policySkillRules.some((policyRule) => permissionRuleEquals(rule, policyRule)),
+    ),
+    ...childSpecificRules,
+    ...policySkillRules,
+  ];
 }
 
 /** Boundaries are exclusive: use the next user message, or omit at head to retain the selected turn. */
@@ -1392,9 +1442,15 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               () => client.session.get({ sessionID: childSessionId }),
             );
             const nativeChildSession = unwrapData("session.get", childSessionResponse);
+            const parentPermission = openCodePermissionRules(
+              turn.runtimePolicy,
+              context.parentState.skillPolicy,
+            );
             const childPermission = openCodeChildPermissionRules(
               turn.runtimePolicy,
               nativeChildSession.permission ?? [],
+              parentPermission,
+              context.parentState.skillPolicy,
             );
             yield* sdkCall(
               "session.update",
@@ -1418,7 +1474,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               nextChildTurnOrdinal: 1,
               nextAdmissionGeneration: 1,
               permission: childPermission,
-              inheritedPermission: openCodePermissionRules(turn.runtimePolicy),
+              skillPolicy: context.parentState.skillPolicy,
+              skillPolicyHash: context.parentState.skillPolicyHash,
+              inheritedPermission: parentPermission,
             });
             yield* emitProviderEvent({
               type: "app_thread.created",
@@ -2817,6 +2875,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             nextChildTurnOrdinal: 1,
             nextAdmissionGeneration: 1,
             permission: nativeSession.permission ?? [],
+            skillPolicy: undefined,
+            skillPolicyHash: null,
             inheritedPermission: parentSubagent?.parentState.permission ?? [],
           };
           threads.set(nativeSession.id, state);
@@ -2827,16 +2887,24 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         const applyPermissionRules = Effect.fnUntraced(function* (
           state: OpenCodeThreadState,
           policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+          skillPolicy?: OpenCodeSkillPolicy,
         ) {
-          const parentRules = openCodePermissionRules(policy);
+          const parentRules = openCodePermissionRules(policy, skillPolicy);
+          const skillPolicyHash = skillPolicy?.hash ?? null;
           const pending = [state];
           for (let target = pending.pop(); target !== undefined; target = pending.pop()) {
             const previous = target.permission;
             const permission =
               target.parentSubagent === null
                 ? parentRules
-                : openCodeChildPermissionRules(policy, previous, target.inheritedPermission);
+                : openCodeChildPermissionRules(
+                    policy,
+                    previous,
+                    target.inheritedPermission,
+                    skillPolicy,
+                  );
             if (
+              target.skillPolicyHash !== skillPolicyHash ||
               permission.length !== previous.length ||
               !permission.every((rule, index) => permissionRuleEquals(rule, previous[index]!))
             ) {
@@ -2845,6 +2913,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 client.session.update({ sessionID, permission }),
               );
               target.permission = permission;
+              target.skillPolicy = skillPolicy;
+              target.skillPolicyHash = skillPolicyHash;
             }
             if (target.parentSubagent !== null) target.inheritedPermission = parentRules;
             for (const child of threads.values()) {
@@ -3154,7 +3224,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   `OpenCode model '${turnInput.modelSelection.model}' must use provider/model format`,
                 );
               }
-              yield* applyPermissionRules(state, turnInput.runtimePolicy);
+              yield* applyPermissionRules(state, turnInput.runtimePolicy, turnInput.skillPolicy);
               const isCompaction =
                 turnInput.message.text.trim() === "/compact" &&
                 turnInput.message.attachments.length === 0;
@@ -3271,6 +3341,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   harness: "OpenCode",
                   model: turnInput.modelSelection.model,
                 }),
+                turnInput.skillDirectives?.text,
               ]
                 .filter(Boolean)
                 .join("\n\n");

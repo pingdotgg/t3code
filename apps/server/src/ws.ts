@@ -122,6 +122,7 @@ import * as DocumentText from "./provider/DocumentText.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
+import * as SkillReviewService from "./skills/SkillReviewService.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import {
   bufferShellLiveStream,
@@ -1299,6 +1300,7 @@ export const layerWsRpc = (
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const skillReviews = yield* SkillReviewService.SkillReviewService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
       const pullRequests = yield* PullRequestService.PullRequestService;
@@ -2166,6 +2168,12 @@ export const layerWsRpc = (
               Effect.as(commandOutputHub.subscribe(input)),
             ),
           ),
+        [WS_METHODS.skillsReviewList]: (input) => skillReviews.list(input),
+        [WS_METHODS.skillsReviewGet]: (input) => skillReviews.get(input.skillName, input.models),
+        [WS_METHODS.skillsVariantMutate]: (input) => skillReviews.mutateVariant(input),
+        [WS_METHODS.skillsEvalTaskMutate]: (input) => skillReviews.mutateTask(input),
+        [WS_METHODS.skillsEvalRunControl]: (input) => skillReviews.controlRun(input),
+        [WS_METHODS.skillsEvalRunGet]: (input) => skillReviews.getRun(input.evalRunId),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),

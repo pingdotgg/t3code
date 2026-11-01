@@ -113,6 +113,7 @@ describe("searchSettings", () => {
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
+      hasSkills: false,
     });
 
     const gatedIds = new Set<string>([
@@ -134,6 +135,7 @@ describe("searchSettings", () => {
       "auto-settle-merged-threads",
       "days-before-auto-settle",
       "linked-environments",
+      "skills",
     ]);
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
   });
@@ -148,6 +150,7 @@ describe("searchSettings", () => {
       localEnvironmentDisabled: true,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
+      hasSkills: false,
     };
     const results = (hasPeerLinkHost: boolean) =>
       searchSettings(
@@ -239,6 +242,7 @@ describe("auto-settlement search availability", () => {
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: availability.eligibleEnvironmentIds.length > 0,
+      hasSkills: false,
     });
     expect(searchSettings("auto-settle", items).map((item) => item.id)).toEqual([
       "auto-settle-inactive-threads",

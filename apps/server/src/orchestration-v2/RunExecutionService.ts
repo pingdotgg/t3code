@@ -32,6 +32,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -41,6 +42,7 @@ import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as SkillTurnPreparation from "../skills/SkillTurnPreparation.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -613,6 +615,9 @@ export const layer: Layer.Layer<
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
     const previewAgentActivity = yield* PreviewAgentActivity.PreviewAgentActivity;
+    const skillTurnPreparation = yield* Effect.serviceOption(
+      SkillTurnPreparation.SkillTurnPreparation,
+    );
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
 
@@ -912,7 +917,7 @@ export const layer: Layer.Layer<
           failure,
           threadDisposition: "reusable",
         });
-        const responseStreamingMode = yield* Effect.gen(function* () {
+        const startupPreparation = yield* Effect.gen(function* () {
           const responseStreamingMode = yield* serverSettings.getSettings.pipe(
             Effect.map(
               (settings) =>
@@ -944,7 +949,15 @@ export const layer: Layer.Layer<
           ) {
             return null;
           }
-          return responseStreamingMode;
+          const preparedSkills = Option.isNone(skillTurnPreparation)
+            ? undefined
+            : yield* skillTurnPreparation.value.prepare({
+                run: input.run,
+                session: input.session,
+                modelSelection: input.modelSelection,
+                cwd: input.runtimePolicy.cwd,
+              });
+          return { responseStreamingMode, preparedSkills };
         }).pipe(
           Effect.catchCause((cause) =>
             Effect.gen(function* () {
@@ -988,9 +1001,10 @@ export const layer: Layer.Layer<
               }),
           ),
         );
-        if (responseStreamingMode === null) {
+        if (startupPreparation === null) {
           return;
         }
+        const { responseStreamingMode, preparedSkills } = startupPreparation;
         const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
         const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
         const latestProviderThread = yield* Ref.make(input.providerThread);
@@ -1653,6 +1667,16 @@ export const layer: Layer.Layer<
           key: `mcp_app_${entry.itemId.replace(/[^\w.-]/g, "_")}`,
           text: entry.text,
         }));
+        // Check after the context read: ingestion can settle the run while it awaits.
+        // A failed ownership read fails the start below.
+        const shouldStart =
+          input.shouldStartProviderTurn === undefined
+            ? Exit.succeed(true)
+            : yield* Effect.exit(input.shouldStartProviderTurn());
+        if (Exit.isSuccess(shouldStart) && !shouldStart.value) {
+          yield* Fiber.interrupt(providerEventFiber);
+          return;
+        }
         const turnInput = {
           appThread: input.appThread,
           threadId: input.run.threadId,
@@ -1674,17 +1698,8 @@ export const layer: Layer.Layer<
           modelSelection: input.modelSelection,
           runtimePolicy: input.runtimePolicy,
           ...(appContext.length === 0 ? {} : { appContext }),
+          ...preparedSkills,
         };
-        // Check after the context read: ingestion can settle the run while
-        // it awaits. A failed ownership read fails the start below.
-        const shouldStart =
-          input.shouldStartProviderTurn === undefined
-            ? Exit.succeed(true)
-            : yield* Effect.exit(input.shouldStartProviderTurn());
-        if (Exit.isSuccess(shouldStart) && !shouldStart.value) {
-          yield* Fiber.interrupt(providerEventFiber);
-          return;
-        }
 
         const compact =
           input.message.attachments.length === 0 &&

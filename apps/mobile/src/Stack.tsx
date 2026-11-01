@@ -129,6 +129,8 @@ import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsAboutRouteScreen } from "./features/settings/SettingsAboutRouteScreen";
 import { SettingsNotificationsRouteScreen } from "./features/settings/SettingsNotificationsRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
+import { SettingsSkillsRouteScreen } from "./features/settings/SettingsSkillsRouteScreen";
+import { SettingsSkillDetailRouteScreen } from "./features/settings/SettingsSkillDetailRouteScreen";
 import { SettingsLabsRouteScreen } from "./features/settings/ThreadSettingsSections";
 import { SettingsEnvironmentFilterProvider } from "./features/settings/settings-environment-filter";
 import { openSettings, settingsOpenIn } from "./features/settings/settings-navigation";
@@ -286,6 +288,15 @@ const SETTINGS_SCREENS = {
     screen: SettingsProviderAccountsRouteScreen,
     linking: "settings/provider-accounts",
     options: { ...SETTINGS_PAGE_OPTIONS, title: "Providers" },
+  }),
+  SettingsSkills: createNativeStackScreen({
+    screen: SettingsSkillsRouteScreen,
+    linking: "settings/skills",
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Skills" },
+  }),
+  SettingsSkillDetail: createNativeStackScreen({
+    screen: SettingsSkillDetailRouteScreen,
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Skill" },
   }),
   SettingsEnvironmentMaintenance: createNativeStackScreen({
     screen: SettingsEnvironmentMaintenanceRouteScreen,

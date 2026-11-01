@@ -31,6 +31,8 @@ export type {
   PrContentGenerationResult,
   ReviewGuideGenerationInput,
   ReviewGuideGenerationResult,
+  SkillTrialJudgeInput,
+  SkillTrialJudgeResult,
   ThreadTitleGenerationInput,
   ThreadTitleGenerationResult,
 } from "@t3tools/provider-core/server/textGeneration";
@@ -44,7 +46,8 @@ type TextGenerationOp =
   | "generatePrContent"
   | "generateBranchName"
   | "generateThreadTitle"
-  | "generateReviewGuide";
+  | "generateReviewGuide"
+  | "judgeSkillTrial";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -92,6 +95,13 @@ export const make = Effect.gen(function* () {
       selection.model,
     );
     if (limited) {
+      if (operation === "judgeSkillTrial") {
+        return yield* new TextGenerationError({
+          operation,
+          detail:
+            "The selected skill-evaluation judge is usage-limited. Select another eligible Claude Fable or gpt-5.6-sol model.",
+        });
+      }
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(
           (cause) =>
@@ -102,25 +112,25 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-      selection =
-        fallbackTextGenerationModelSelection(
-          settings.providerInstances,
-          (instanceId, driver) => {
-            const provider = snapshots.find((candidate) => candidate.instanceId === instanceId);
-            return (
-              instanceId !== selection.instanceId &&
-              provider?.enabled === true &&
-              resolveProjectProviderInstanceEnabled(settings, null, instanceId) &&
-              provider.installed &&
-              provider.auth.status !== "unauthenticated" &&
-              isProviderAvailable(provider) &&
-              isProviderTextGenerationCapable(provider) &&
-              (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(driver)) &&
-              !exhaustedUsageWindow(provider, now, defaultTextGenerationModel(driver))
-            );
-          },
-          { includeConfiguredInstances: true },
-        ) ?? selection;
+      const fallback = fallbackTextGenerationModelSelection(
+        settings.providerInstances,
+        (instanceId, driver) => {
+          const provider = snapshots.find((candidate) => candidate.instanceId === instanceId);
+          return (
+            instanceId !== selection.instanceId &&
+            provider?.enabled === true &&
+            resolveProjectProviderInstanceEnabled(settings, null, instanceId) &&
+            provider.installed &&
+            provider.auth.status !== "unauthenticated" &&
+            isProviderAvailable(provider) &&
+            isProviderTextGenerationCapable(provider) &&
+            (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(driver)) &&
+            !exhaustedUsageWindow(provider, now, defaultTextGenerationModel(driver))
+          );
+        },
+        { includeConfiguredInstances: true },
+      );
+      selection = fallback ?? selection;
     }
     return yield* resolveInstance(registry, operation, selection.instanceId).pipe(
       Effect.flatMap((service) => invoke(service, selection)),
@@ -145,6 +155,11 @@ export const make = Effect.gen(function* () {
     generateReviewGuide: Effect.fn("TextGeneration.generateReviewGuide")(function (input) {
       return generate("generateReviewGuide", input.modelSelection, (service, modelSelection) =>
         service.generateReviewGuide({ ...input, modelSelection }),
+      );
+    }),
+    judgeSkillTrial: Effect.fn("TextGeneration.judgeSkillTrial")(function (input) {
+      return generate("judgeSkillTrial", input.modelSelection, (service, modelSelection) =>
+        service.judgeSkillTrial({ ...input, modelSelection }),
       );
     }),
     generateThreadTitle: Effect.fn("TextGeneration.generateThreadTitle")(function (input) {
