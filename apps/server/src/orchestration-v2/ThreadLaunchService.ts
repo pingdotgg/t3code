@@ -1150,40 +1150,53 @@ const make = Effect.gen(function* () {
             (yield* ids.allocate
               .message({ threadId, ordinal: 1 })
               .pipe(Effect.mapError(mapError(input, "dispatch-message", threadId))));
-          const dispatched = yield* threads
-            .dispatch({
-              type: "message.dispatch",
-              commandId: messageCommandId,
-              threadId,
-              messageId,
-              text: input.initialMessage.text,
-              ...(input.initialMessage.scheduledTaskId === undefined
-                ? {}
-                : { scheduledTaskId: input.initialMessage.scheduledTaskId }),
-              ...(input.initialMessage.senderThreadId === undefined
-                ? {}
-                : { senderThreadId: input.initialMessage.senderThreadId }),
-              attachments: input.initialMessage.attachments,
-              ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
-              ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
-              modelSelection: input.modelSelection,
-              dispatchMode: { type: "defer_start", workspaceStrategy },
-              createdBy: input.createdBy,
-              creationSource: input.creationSource,
-            })
-            .pipe(
-              // An agent's launch can land on a thread that a replay, or a concurrent
-              // launch with the same key, created with broader modes. The orchestrator
-              // refuses the message under the thread's lock; the user's own clients
-              // launch into their own drafts, whatever modes those hold.
-              input.createdBy === "agent"
-                ? Effect.provideService(DispatchModeLimit, {
-                    runtimeMode: request.runtimeMode,
-                    interactionMode: request.interactionMode,
-                  })
-                : (effect) => effect,
-              Effect.mapError(mapError(input, "dispatch-message", threadId)),
-            );
+          const starterMessage = {
+            messageId,
+            text: input.initialMessage.text,
+            attachments: input.initialMessage.attachments,
+            modelSelection: input.modelSelection,
+            dispatchMode: { type: "defer_start" as const, workspaceStrategy },
+            createdBy: input.createdBy,
+            creationSource: input.creationSource,
+          };
+          const dispatchCommand =
+            initialization === undefined
+              ? {
+                  type: "message.dispatch" as const,
+                  commandId: messageCommandId,
+                  threadId,
+                  ...starterMessage,
+                  ...(input.initialMessage.scheduledTaskId === undefined
+                    ? {}
+                    : { scheduledTaskId: input.initialMessage.scheduledTaskId }),
+                  ...(input.initialMessage.senderThreadId === undefined
+                    ? {}
+                    : { senderThreadId: input.initialMessage.senderThreadId }),
+                  ...(input.initialMessage.context
+                    ? { context: input.initialMessage.context }
+                    : {}),
+                  ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
+                }
+              : {
+                  type: "task-initialization.start" as const,
+                  commandId: messageCommandId,
+                  threadId,
+                  expectedAttemptId: initialization.attemptId,
+                  message: starterMessage,
+                };
+          const dispatched = yield* threads.dispatch(dispatchCommand).pipe(
+            // An agent's launch can land on a thread that a replay, or a concurrent
+            // launch with the same key, created with broader modes. The orchestrator
+            // refuses the message under the thread's lock; the user's own clients
+            // launch into their own drafts, whatever modes those hold.
+            input.createdBy === "agent"
+              ? Effect.provideService(DispatchModeLimit, {
+                  runtimeMode: request.runtimeMode,
+                  interactionMode: request.interactionMode,
+                })
+              : (effect) => effect,
+            Effect.mapError(mapError(input, "dispatch-message", threadId)),
+          );
           // A concurrent retry can read no receipt and still replay the dispatch.
           messageWasAlreadyAccepted ||= dispatched.replayed === true;
           messageSequence = dispatched.sequence;

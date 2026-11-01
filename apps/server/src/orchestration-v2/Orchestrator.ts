@@ -480,6 +480,7 @@ export function threadHasUnfinishedWork(records: {
 
 function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
   switch (command.type) {
+    case "task-initialization.start":
     case "task-initialization.reconcile":
     case "task-initialization.report":
     case "task-initialization.retry":
@@ -12662,6 +12663,42 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
   });
 
+  const dispatchMessageCommand = Effect.fnUntraced(function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    // Providers own native subagent conversations; messages cannot target them, and adapters ask questions on the parent.
+    const thread = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    if (isProviderNativeSubagentThread(thread)) {
+      return yield* new OrchestratorSubagentThreadReadOnlyError({
+        commandId: command.commandId,
+        threadId: command.threadId,
+      });
+    }
+    const guestSend =
+      command.guestMessageId === undefined
+        ? undefined
+        : yield* emitGuestMessageSent(command, command.guestMessageId, thread, events);
+    const dispatched =
+      guestSend === undefined
+        ? withoutGuestAttribution(command)
+        : {
+            ...command,
+            text: guestSend.text,
+            context: { version: 1 as const, records: [], guest: guestSend.guest },
+          };
+    const cancelUnsettledEffects = yield* dispatchMessage(dispatched, events, effects);
+    yield* recordSubagentFollowup(dispatched, events).pipe(mapDispatchError(command));
+    return cancelUnsettledEffects;
+  });
+
   const dispatchOnce = Effect.fn("orchestrationV2.dispatch.once")(function* (
     command: OrchestrationV2ServerCommand,
   ): Effect.fn.Return<
@@ -12698,6 +12735,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "task-initialization.retry":
         yield* dispatchTaskInitialization(command, events);
         break;
+      case "task-initialization.start": {
+        const thread = yield* projectionStore
+          .getThread(command.threadId)
+          .pipe(mapDispatchError(command));
+        if (
+          thread.taskInitialization?.attemptId !== command.expectedAttemptId ||
+          thread.taskInitialization.messageId !== command.message.messageId
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Task initialization attempt changed before its starter was dispatched.",
+          });
+        }
+        const message = {
+          ...command.message,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          type: "message.dispatch" as const,
+        } satisfies Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>;
+        cancelUnsettledEffects = yield* dispatchMessageCommand(message, events, effects);
+        break;
+      }
       case "thread.create":
         yield* dispatchThreadCreate(command, events);
         break;
@@ -12804,34 +12864,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchThreadProjectAdoptFolder(command, events);
         break;
       case "message.dispatch": {
-        // Providers own native subagent conversations; messages cannot target them, and adapters ask questions on the parent.
-        const thread = yield* projectionStore
-          .getThread(command.threadId)
-          .pipe(
-            Effect.mapError(
-              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-            ),
-          );
-        if (isProviderNativeSubagentThread(thread)) {
-          return yield* new OrchestratorSubagentThreadReadOnlyError({
-            commandId: command.commandId,
-            threadId: command.threadId,
-          });
-        }
-        const guestSend =
-          command.guestMessageId === undefined
-            ? undefined
-            : yield* emitGuestMessageSent(command, command.guestMessageId, thread, events);
-        const dispatched =
-          guestSend === undefined
-            ? withoutGuestAttribution(command)
-            : {
-                ...command,
-                text: guestSend.text,
-                context: { version: 1 as const, records: [], guest: guestSend.guest },
-              };
-        cancelUnsettledEffects = yield* dispatchMessage(dispatched, events, effects);
-        yield* recordSubagentFollowup(dispatched, events).pipe(mapDispatchError(command));
+        cancelUnsettledEffects = yield* dispatchMessageCommand(command, events, effects);
         break;
       }
       case "notification.delivery.accept":

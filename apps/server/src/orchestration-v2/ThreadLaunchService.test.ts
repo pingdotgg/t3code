@@ -36,6 +36,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -539,6 +540,80 @@ it.effect("freezes task launch retries and keeps membership independent of nativ
     }).pipe(Effect.provide(harness.layer));
   }),
 );
+
+it.effect("rejects a stale task starter when retry replaces its attempt before dispatch", () => {
+  const taskDocumentId = TaskDocumentId.make("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+  const harness = makeHarness({
+    openTask: () =>
+      Effect.succeed({
+        summary: {
+          taskDocumentId,
+          canonicalPath: "/tasks/context.md",
+          locatorVersion: 0,
+          observedFileId: null,
+          registered: true,
+          title: "Task",
+          state: null,
+          pinned: false,
+          availability: "available" as const,
+          revision: "a".repeat(64),
+        },
+        contents: "Synthetic task contents",
+        revision: "a".repeat(64),
+      }),
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const attemptA = launchInput({ command: "task:attempt-a", thread: "task:overlap" });
+    const firstStarterDispatch = yield* Deferred.make<void>();
+    const resumeFirstStarter = yield* Deferred.make<void>();
+    const dispatch = threads.dispatch;
+    const dispatchSpy = vi
+      .spyOn(threads, "dispatch")
+      .mockImplementation((command) =>
+        command.commandId === CommandId.make("task:attempt-a:initial-message")
+          ? Deferred.succeed(firstStarterDispatch, undefined).pipe(
+              Effect.andThen(Deferred.await(resumeFirstStarter)),
+              Effect.andThen(dispatch(command)),
+            )
+          : dispatch(command),
+      );
+    const firstLaunch = yield* launches
+      .launch({
+        ...attemptA,
+        task: { taskDocumentId, updateInstructionsPath: "/tasks/update.md" },
+      })
+      .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+
+    const retry = yield* Effect.gen(function* () {
+      yield* Deferred.await(firstStarterDispatch);
+      return yield* launches.launch({
+        ...attemptA,
+        commandId: CommandId.make("task:attempt-b"),
+        retryTaskInitialization: true,
+        task: { taskDocumentId, updateInstructionsPath: "/tasks/update.md" },
+      });
+    }).pipe(Effect.ensuring(Deferred.succeed(resumeFirstStarter, undefined)));
+
+    const firstResult = yield* Fiber.join(firstLaunch).pipe(
+      Effect.ensuring(Effect.sync(() => dispatchSpy.mockRestore())),
+    );
+    assert.equal(retry.projection.thread.taskInitialization?.attemptId, "task:attempt-b");
+    assert.isTrue(Exit.isFailure(firstResult));
+    const projection = yield* threads.getThreadProjection(attemptA.threadId);
+    const initialization = projection.thread.taskInitialization;
+    assert.equal(initialization?.attemptId, "task:attempt-b");
+    assert.deepEqual(
+      projection.messages.map((message) => message.id),
+      [initialization?.messageId],
+    );
+    assert.deepEqual(
+      projection.runs.map((run) => run.userMessageId),
+      [initialization?.messageId],
+    );
+  }).pipe(Effect.provide(harness.layer));
+});
 
 it.effect(
   "retries an initialization whose starter was never accepted using the thread's modes",

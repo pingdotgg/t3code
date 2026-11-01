@@ -3386,6 +3386,23 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
   Schema.Struct({
+    type: Schema.Literal("task-initialization.start"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    expectedAttemptId: CommandId,
+    message: Schema.Struct({
+      ...OrchestrationV2CreationFields,
+      messageId: MessageId,
+      text: Schema.String,
+      attachments: Schema.Array(ChatAttachment),
+      modelSelection: ModelSelection,
+      dispatchMode: Schema.Struct({
+        type: Schema.Literal("defer_start"),
+        workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+      }),
+    }),
+  }),
+  Schema.Struct({
     type: Schema.Literal("task-initialization.reconcile"),
     commandId: CommandId,
     threadId: ThreadId,
