@@ -193,6 +193,15 @@ such as another drive, set **Settings → Worktrees → Worktree location** to a
 `D:\worktrees` or `~/worktrees`. The setting is per machine. Existing worktrees stay where they
 are, and cleanup covers both the default folder and the custom one.
 
+## Faster worktree checkouts on macOS
+
+On a Mac, [git-worktree-fast](https://github.com/mweinbach/worktree-fast) can clone a commit you
+prepared earlier instead of checking out every file. Install it, prepare commits with
+`git worktree-fast prepare` or `git worktree-fast auto enable` in the repository, then turn on
+**Settings → Worktrees → Use git-worktree-fast** under Advanced. The setting is per machine. Commits
+you have not prepared, and any failure, use Git's normal checkout, and the worktrees it makes are
+ordinary Git worktrees.
+
 ## Storage cleanup
 
 Open **Settings → Worktrees → Cleanup** to enable automatic cleanup on one machine or all connected

@@ -4158,35 +4158,66 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "git worktree add failed",
       );
     }
-    const args = ["worktree", "add", "--", worktreePath, input.newRefName ?? input.refName];
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
 
     const checkoutWorkers = (yield* readConfigValue(input.cwd, "checkout.workers")) ?? "0";
-    yield* executeGitWithStableDiagnostics(
-      "GitVcsDriver.createWorktree",
-      input.cwd,
-      ["-c", `checkout.workers=${checkoutWorkers}`, ...args],
-      {
-        fallbackErrorDetail: "git worktree add failed",
-        // Large checkouts and post-checkout hooks can legitimately run for many
-        // minutes; a fixed deadline kills them and leaves an orphaned worktree.
-        timeoutMs: null,
-        ...(onCheckoutProgress
-          ? {
-              // Git only prints checkout progress when stderr is a tty or the
-              // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
-              env: { GIT_PROGRESS_DELAY: "0" },
-              progress: {
-                onStderrLine: (line) => {
-                  const parsed = parseGitCheckoutProgressLine(line);
-                  return parsed ? onCheckoutProgress(parsed) : Effect.void;
+    const addWorktree = (subcommand: "worktree" | "worktree-fast") =>
+      executeGitWithStableDiagnostics(
+        "GitVcsDriver.createWorktree",
+        input.cwd,
+        [
+          "-c",
+          `checkout.workers=${checkoutWorkers}`,
+          subcommand,
+          "add",
+          "--",
+          worktreePath,
+          input.newRefName ?? input.refName,
+        ],
+        {
+          fallbackErrorDetail: "git worktree add failed",
+          // Large checkouts and post-checkout hooks can legitimately run for many
+          // minutes; a fixed deadline kills them and leaves an orphaned worktree.
+          timeoutMs: null,
+          ...(onCheckoutProgress
+            ? {
+                // Git only prints checkout progress when stderr is a tty or the
+                // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
+                env: { GIT_PROGRESS_DELAY: "0" },
+                progress: {
+                  onStderrLine: (line) => {
+                    const parsed = parseGitCheckoutProgressLine(line);
+                    return parsed ? onCheckoutProgress(parsed) : Effect.void;
+                  },
                 },
-              },
+              }
+            : {}),
+        },
+      );
+    if (options?.worktreeFast === true && hostPlatform === "darwin") {
+      // git-worktree-fast hands a missing parent folder to Git's slow checkout.
+      yield* fileSystem
+        .makeDirectory(path.dirname(worktreePath), { recursive: true })
+        .pipe(Effect.ignore);
+      yield* addWorktree("worktree-fast").pipe(
+        Effect.catch((error) =>
+          Effect.gen(function* () {
+            // A worktree left behind by the failed add would make Git's retry fail for the wrong reason.
+            if (yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true))) {
+              return yield* error;
             }
-          : {}),
-      },
-    );
+            yield* Effect.logWarning(
+              "git worktree-fast add failed; creating the worktree with git worktree add",
+              { worktreePath, cause: error },
+            );
+            yield* addWorktree("worktree");
+          }),
+        ),
+      );
+    } else {
+      yield* addWorktree("worktree");
+    }
 
     if (progress?.onWorktreeClaimed) {
       yield* progress.onWorktreeClaimed(worktreePath);

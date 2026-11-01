@@ -250,6 +250,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["worktree location folder directory path drive external disk"],
   },
   {
+    id: "worktree-fast",
+    title: "Use git-worktree-fast",
+    to: "/settings/worktrees",
+    scope: "environment-defaults",
+    searchTerms: ["git-worktree-fast fast worktree checkout apfs clone cache macos speed"],
+  },
+  {
     id: "storage-artifacts",
     title: "Artifacts and logs",
     to: "/settings/maintenance",

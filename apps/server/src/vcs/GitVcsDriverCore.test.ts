@@ -4264,6 +4264,65 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect.each([
+      { platform: "darwin", enabled: true, outcome: "succeeds", ran: ["worktree-fast"] },
+      { platform: "darwin", enabled: true, outcome: "fails", ran: ["worktree-fast", "worktree"] },
+      { platform: "darwin", enabled: true, outcome: "leaves a folder", ran: ["worktree-fast"] },
+      { platform: "darwin", enabled: false, outcome: "succeeds", ran: ["worktree"] },
+      { platform: "linux", enabled: true, outcome: "succeeds", ran: ["worktree"] },
+    ] as const)(
+      "on $platform with worktree-fast enabled=$enabled, runs $ran when it $outcome",
+      ({ platform, enabled, outcome, ran }) =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const worktreePath = pathService.join(yield* makeTmpDir(), "repo", "feature-fast");
+          const subcommands: string[] = [];
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const spawner = ChildProcessSpawner.make((command) => {
+            if (!ChildProcess.isStandardCommand(command)) return delegate.spawn(command);
+            const index = command.args.findIndex(
+              (arg) => arg === "worktree" || arg === "worktree-fast",
+            );
+            if (index === -1 || command.args[index + 1] !== "add") return delegate.spawn(command);
+            subcommands.push(command.args[index]!);
+            if (command.args[index] === "worktree") return delegate.spawn(command);
+            if (outcome === "succeeds") {
+              const args = command.args.map((arg, position) =>
+                position === index ? "worktree" : arg,
+              );
+              return delegate.spawn(ChildProcess.make(command.command, args, command.options));
+            }
+            const failure = makeFailedHandle("git: 'worktree-fast' is not a git command.");
+            return outcome === "fails"
+              ? Effect.succeed(failure)
+              : fileSystem
+                  .makeDirectory(pathService.join(worktreePath, "partial"), { recursive: true })
+                  .pipe(Effect.orDie, Effect.as(failure));
+          });
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(HostProcess.Platform, platform),
+            Effect.provide(layerServerConfig),
+          );
+
+          const created = yield* driver
+            .createWorktree(
+              { cwd, path: worktreePath, refName: initialBranch, newRefName: "feature/fast" },
+              { worktreeFast: enabled },
+            )
+            .pipe(Effect.exit);
+
+          assert.deepEqual(subcommands, [...ran]);
+          assert.equal(Exit.isSuccess(created), outcome !== "leaves a folder");
+          if (Exit.isSuccess(created)) {
+            assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), "feature/fast");
+          }
+        }),
+    );
+
     it.effect("keeps generated worktree folders short without changing long branch names", () =>
       Effect.gen(function* () {
         const pathService = yield* Path.Path;

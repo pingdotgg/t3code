@@ -6,6 +6,9 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -265,5 +268,54 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         expect(disabled.capabilities.agentActivityPublishing).toBe(false);
       }).pipe(Effect.provide(layerTest));
     }),
+  );
+
+  it.effect.each([
+    { platform: "darwin", exitCode: 0, worktreeFast: { installed: true } },
+    { platform: "darwin", exitCode: 1, worktreeFast: { installed: false } },
+    { platform: "linux", exitCode: 0, worktreeFast: undefined },
+  ] as const)(
+    "offers git-worktree-fast on $platform when its version probe exits $exitCode",
+    ({ platform, exitCode, worktreeFast }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-server-environment-worktree-fast-test-",
+        });
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Effect.succeed(
+                ChildProcessSpawner.ExitCode(
+                  ChildProcess.isStandardCommand(command) && command.args[0] === "worktree-fast"
+                    ? exitCode
+                    : 1,
+                ),
+              ),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          ),
+        );
+
+        const descriptor = yield* Effect.gen(function* () {
+          const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+          return yield* serverEnvironment.getDescriptor;
+        }).pipe(
+          Effect.provide(layerServerEnvironment(baseDir)),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(HostProcess.Platform, platform),
+        );
+
+        expect(descriptor.capabilities.worktreeFast).toEqual(worktreeFast);
+      }),
   );
 });
