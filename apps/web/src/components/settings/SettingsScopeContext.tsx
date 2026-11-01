@@ -77,10 +77,14 @@ function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironm
   const pendingWrites = useAtomValue(pendingScopedWritesAtom);
   const selected = selectScopedSettingsEnvironments(
     scope,
-    applyPendingScopedWrites(availableEnvironments, pendingWrites),
+    availableEnvironments,
     primaryEnvironmentId,
   );
-  const targets = resolveScopedSettingsTargets(scope, selected.connectedEnvironments, projectFiles);
+  const targets = resolveScopedSettingsTargets(
+    scope,
+    applyPendingScopedWrites(selected.connectedEnvironments, pendingWrites),
+    projectFiles,
+  );
   const target =
     targets.find((candidate) => candidate.environmentId === selected.environment?.environmentId) ??
     targets[0] ??
