@@ -2261,7 +2261,31 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       yield* insert("pending:", 1, "pending", null);
       yield* insert("running:", 1, "running", null);
 
-      assert.equal(yield* outbox.pruneSettled, 1_203);
+      let pruneStatement: readonly [string, ReadonlyArray<unknown>] | undefined;
+      const capturePrune: Statement.Transformer = (statement) => {
+        const compiled = statement.compile();
+        if (compiled[0].includes("DELETE FROM orchestration_v2_effect_outbox")) {
+          pruneStatement ??= compiled;
+        }
+        return Effect.succeed(statement);
+      };
+      assert.equal(
+        yield* outbox.pruneSettled.pipe(
+          Effect.provideService(Statement.CurrentTransformer, capturePrune),
+        ),
+        1_203,
+      );
+      assert.isDefined(pruneStatement);
+      const plan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${pruneStatement[0]}`,
+        pruneStatement[1],
+      );
+      assert.isTrue(
+        plan.some((row) =>
+          row.detail.includes("orchestration_v2_effect_outbox_settled_completed_idx"),
+        ),
+        plan.map((row) => row.detail).join("\n"),
+      );
 
       const remaining = yield* sql<{ readonly effect_id: string }>`
         SELECT effect_id FROM orchestration_v2_effect_outbox ORDER BY effect_id
