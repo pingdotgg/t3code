@@ -224,8 +224,8 @@ describe("presentConnectionDiagnosis", () => {
       headline: "Mac mini blocked this device",
       steps: [
         "Unblock this device in Settings > Sharing & access on Mac mini, or in Settings > Environments on another device that can manage access there.",
-        "A device can manage access when it has access:write and orchestration:read on Mac mini. Devices paired with a default t3 pair code have them, as do devices granted admin, and yours while nothing is granted.",
-        "Or run `t3 pair --scope orchestration:read --scope access:write` on Mac mini, pair this device with the code, and unblock it. Then revoke that pairing in Settings > Sharing & access on Mac mini so this device signs in through Tailscale again. On a headless host, run `t3 auth session list` and `t3 auth session revoke <id>` there, then restart T3 Code on this device.",
+        "A device can manage access when it has access:write and orchestration:read on Mac mini. Devices paired with a default t3 pair code have them, as do devices granted admin, and yours while nothing is granted and grants are not required.",
+        "Or run `t3 pair --scope orchestration:read --scope access:write` on Mac mini, pair this device with the link it prints, and unblock it. Then revoke that pairing in Settings > Sharing & access on Mac mini so this device signs in through Tailscale again. On a headless host, run `t3 auth session list` and `t3 auth session revoke <id>` there, then restart T3 Code on this device.",
       ],
       moreInfoUrl: expect.stringMatching(/#tailscale-troubleshooting$/),
     });

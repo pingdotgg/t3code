@@ -270,12 +270,15 @@ device that can manage access there, and **Block** it under **Tailscale devices
 on <machine>**. On that machine itself, the list is in **Settings → Sharing &
 access**. A device can manage access when its scopes include `access:write` and
 `orchestration:read`: one paired with a default `t3 pair` code, one whose grant
-includes `admin`, or your own devices while your policy grants none.
+includes `admin`, or your own devices while your policy grants none and
+`--require-grant` is off.
 
-A blocked device's sessions on that machine end now, and **Unblock** undoes it.
-A browser preview or device screen it already has open keeps working, clicks and
-typing included, until it closes. A device that rejoins Tailscale gets a new ID,
-so block it again or remove it from your tailnet.
+A blocked device's Tailscale sessions on that machine end now, and **Unblock**
+undoes it. Sessions it made with a pairing code stay until you revoke them in
+**Settings → Sharing & access** there. A browser preview or device screen it
+already has open keeps working, clicks and typing included, until it closes. A
+device that rejoins Tailscale gets a new ID, so block it again or remove it from
+your tailnet.
 
 To turn Tailscale sign-in off, run `t3 up --no-tailscale` for the background
 service, or turn it off in **Settings → Sharing & access** in the desktop app.

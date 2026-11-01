@@ -71,7 +71,7 @@ export function TailnetDevicesSection(props: {
     }
     Dialog.confirm({
       title: `Block ${name}?`,
-      message: `${device.current ? `This is the device you are using, so it loses access to ${props.environmentLabel} until another device unblocks it. ` : ""}Its sessions on ${props.environmentLabel} end now, and it cannot sign in through Tailscale until you unblock it. A device that rejoins Tailscale gets a new ID, so block it again or remove it from your tailnet.`,
+      message: `${device.current ? `This is the device you are using, so it loses access to ${props.environmentLabel} until another device unblocks it. ` : ""}Its Tailscale sessions on ${props.environmentLabel} end now, and it cannot sign in through Tailscale until you unblock it. Sessions it made with a pairing code stay until you revoke them. A device that rejoins Tailscale gets a new ID, so block it again or remove it from your tailnet.`,
       confirmText: "Block",
       destructive: true,
       onConfirm: () => void apply(device),
