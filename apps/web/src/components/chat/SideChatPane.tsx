@@ -18,7 +18,7 @@ import { ComposerHandleContext } from "../../composerHandleContext";
 import { useClientSettings } from "../../hooks/useSettings";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
 import { readLocalApi } from "../../localApi";
-import { hostRightPanel, useRightPanelStore } from "../../rightPanelStore";
+import { hostRightPanel, rightPanelHostRef, useRightPanelStore } from "../../rightPanelStore";
 import { useQuietThreadProjection, useQuietThreadShell } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
 import { useEnvironmentShellHasSnapshot } from "../../state/shell";
@@ -46,7 +46,10 @@ export default function SideChatPane(props: {
     const unhost = hostRightPanel(ref, parentRef);
     return () => {
       unhost();
-      closeThreadFindIn(scopedThreadKey(ref));
+      // Crossing the sheet breakpoint remounts the pane in the same commit, which re-hosts it.
+      queueMicrotask(() => {
+        if (rightPanelHostRef(ref) === ref) closeThreadFindIn(scopedThreadKey(ref));
+      });
     };
   }, [parentRef, threadId]);
   const shell = useQuietThreadShell(threadRef);
