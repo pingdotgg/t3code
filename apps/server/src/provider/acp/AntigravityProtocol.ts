@@ -42,7 +42,28 @@ const decodeToolCallContent = Schema.decodeUnknownOption(AcpWireSchema.ToolCallC
 export function isAntigravityUserInputRequest(
   request: EffectAcpSchema.RequestPermissionRequest,
 ): boolean {
-  return request.toolCall.toolCallId.startsWith("interaction_");
+  if (!request.toolCall.toolCallId.startsWith("interaction_")) return false;
+  // Keep native choices when approval decisions cannot represent every option.
+  if (request.toolCall.kind === "switch_mode") return !hasAntigravityApprovalOptions(request);
+  return true;
+}
+
+function hasAntigravityApprovalOptions(request: EffectAcpSchema.RequestPermissionRequest): boolean {
+  const kinds = new Set(request.options.map((option) => option.kind));
+  return (
+    kinds.size === request.options.length &&
+    (kinds.has("allow_once") || kinds.has("allow_always")) &&
+    request.options.every(
+      (option) =>
+        (option.kind === "allow_once" ||
+          option.kind === "allow_always" ||
+          option.kind === "reject_once") &&
+        option.optionId.trim().length > 0 &&
+        // The approval response sends the trimmed id, so a padded id would come
+        // back to the agent as an option it never offered.
+        option.optionId === option.optionId.trim(),
+    )
+  );
 }
 
 /** Copy truncated text so V8 cannot retain the original large string. */
