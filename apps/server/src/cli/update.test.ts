@@ -94,6 +94,34 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       });
       assert.isTrue(Option.isNone(viaAlias));
       assert.equal(yield* fs.readLink(commandLink), newerExe);
+      // In the command link's own folder, `T3` is the command link on a case-insensitive disk, so
+      // it only switches that link, never becomes a link to it; any other name there is refused.
+      const upper = path.join(path.dirname(commandLink), "T3");
+      const other = path.join(path.dirname(commandLink), "other");
+      yield* fs.symlink(oldExe, upper);
+      yield* fs.symlink(oldExe, other);
+      const viaUpper = yield* repointLauncher({
+        launchedAs: upper,
+        versionsDir: path.join(root, "runtime/versions"),
+        targetEntryPath: newExe,
+      });
+      assert.equal(Option.getOrUndefined(viaUpper), upper);
+      assert.equal(yield* fs.readLink(commandLink), newExe);
+      assert.equal(yield* fs.readLink(upper), oldExe);
+      const viaOther = yield* repointLauncher({
+        launchedAs: other,
+        versionsDir: path.join(root, "runtime/versions"),
+        targetEntryPath: newerExe,
+      });
+      assert.isTrue(Option.isNone(viaOther));
+      assert.equal(yield* fs.readLink(commandLink), newExe);
+      yield* fs.remove(upper);
+      yield* fs.remove(other);
+      yield* repointLauncher({
+        launchedAs: launcher,
+        versionsDir: path.join(root, "runtime/versions"),
+        targetEntryPath: newerExe,
+      });
       // A launcher removed while update ran stays removed.
       let removed = false;
       const vanishing = FileSystem.FileSystem.of({

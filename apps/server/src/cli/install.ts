@@ -86,15 +86,17 @@ const classifyCommandLink = Effect.fn("cli.install.classify_command_link")(funct
     );
   const linkFolder = yield* folderId(link);
   if (
-    path.basename(link) === path.basename(commandLink) &&
     Option.isSome(linkFolder) &&
     Option.getOrUndefined(yield* folderId(commandLink)) === linkFolder.value
   ) {
-    // Only through its real folder: a folder that is a link (a bin folder aliasing it) or a bind
-    // mount may be shared with other programs.
+    // In the command link's own folder, `t3` in any case is the command link itself (one entry on
+    // a case-insensitive disk), and nothing else there is a launcher, so nothing there can be made
+    // a link to itself. Only through its real folder: a folder that is a link (a bin folder
+    // aliasing it) or a bind mount may be shared with other programs.
     if (
+      path.basename(link).toLowerCase() !== path.basename(commandLink) ||
       Option.isSome(yield* fs.readLink(path.dirname(link)).pipe(Effect.option)) ||
-      (yield* real(link)) !== realCommandLink
+      (yield* real(path.dirname(link))) !== (yield* real(path.dirname(commandLink)))
     ) {
       return "foreign";
     }

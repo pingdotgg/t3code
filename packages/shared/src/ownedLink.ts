@@ -91,7 +91,7 @@ export const replaceOwnedLink = Effect.fn("ownedLink.replace")(function* <E, R>(
               Effect.catch((error) =>
                 Effect.gen(function* () {
                   // Another install made the same link a moment ago: that is done, not failed.
-                  const now = yield* fs.readLink(input.link).pipe(Effect.option);
+                  const now = yield* readLinkText(input.link);
                   if (Option.getOrUndefined(now) === input.target) return;
                   yield* putBack.pipe(Effect.andThen(discard.pipe(Effect.ignore)));
                   return yield* error;
