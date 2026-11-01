@@ -95,10 +95,12 @@ export const make = Effect.gen(function* () {
     }
   >();
 
+  let configRevision = 0;
   const readSource = Effect.fn("UsageLimitSources.readSource")(function* (
     id: UsageLimitSourceId,
     config: UsageLimitSourceConfig,
   ) {
+    const revision = configRevision;
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const base = { id, kind: config.kind, label: sourceLabel(id, config), checkedAt } as const;
     const cached = cache.get(id);
@@ -146,7 +148,7 @@ export const make = Effect.gen(function* () {
         }),
       };
     }
-    cache.set(id, { config: { ...config }, snapshot });
+    if (revision === configRevision) cache.set(id, { config: { ...config }, snapshot });
     return snapshot;
   });
 
@@ -200,7 +202,16 @@ export const make = Effect.gen(function* () {
   yield* settingsService.streamChanges.pipe(
     Stream.map((settings) => settings.usageLimitSources),
     Stream.changes,
-    Stream.runForEach(() => refresh),
+    Stream.runForEach((configs) =>
+      Effect.gen(function* () {
+        configRevision++;
+        for (const [id, cached] of cache) {
+          const config = configs[id];
+          if (!config?.enabled || !sameSourceConfig(cached.config, config)) cache.delete(id);
+        }
+        yield* refresh.pipe(Effect.forkScoped);
+      }),
+    ),
     Effect.forkScoped,
   );
 

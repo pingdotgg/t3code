@@ -227,10 +227,10 @@ describe("pools", () => {
     expect(shown[0]?.limits.resetCredits).toBeUndefined();
     expect(collectLimitPools(shown, now)[0]?.windows[0]?.remainingPercent).toBe(60);
     expect(collectLimitNotices(input)).toEqual([
-      "hub · a.json: The hub could not read this account's usage. Showing last known limits from " +
+      "hub: The hub could not read this account's usage. Last known limits from " +
         checkedAt +
         " (stale).",
-      "hub · b.json: The hub could not read this account's usage.",
+      "hub: The hub could not read this account's usage.",
     ]);
     const selected = provider({ driver: claude });
     const report = collectProviderUsageLimits(
@@ -302,7 +302,8 @@ describe("pools", () => {
     expect(shown).toHaveLength(1);
     expect(shown[0]?.limits.windows[0]?.usedPercent).toBe(40);
     expect(shown[0]?.limits.unavailable).toBeUndefined();
-    expect(collectLimitNotices(input)[0]).toContain("same@example.com");
+    expect(collectLimitNotices(input)[0]).not.toContain("same@example.com");
+    expect(collectLimitNotices(input)[0]).toContain("hub:");
   });
 
   it("merges one account reported natively on two environments and by a hub into one entry", () => {

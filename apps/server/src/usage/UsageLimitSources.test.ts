@@ -5,6 +5,8 @@ import {
   ServerSettingsError,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -115,7 +117,10 @@ const decodeProbe = Schema.decodeUnknownSync(
 const encodeBody = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const makeHubTest = Effect.fn("test.makeHubTest")(function* (failed: string[] = []) {
   const settings = yield* ServerSettings.ServerSettingsService;
+  const readStarted = yield* Deferred.make<void>();
+  const releaseRead = yield* Deferred.make<void>();
   const mode = yield* Ref.make({
+    blocked: false,
     listFailed: false,
     failed,
     files: hubFiles,
@@ -140,6 +145,10 @@ const makeHubTest = Effect.fn("test.makeHubTest")(function* (failed: string[] = 
         HttpClient.make((request) =>
           Effect.gen(function* () {
             const current = yield* Ref.get(mode);
+            if (current.blocked) {
+              yield* Deferred.succeed(readStarted, undefined);
+              yield* Deferred.await(releaseRead);
+            }
             if (new URL(request.url).pathname.endsWith("/auth-files"))
               return HttpClientResponse.fromWeb(
                 request,
@@ -187,7 +196,7 @@ const makeHubTest = Effect.fn("test.makeHubTest")(function* (failed: string[] = 
     Stream.filter((snapshots) => snapshots.length === 1),
     Stream.runHead,
   );
-  return { sources, settings, mode };
+  return { sources, settings, mode, readStarted, releaseRead };
 });
 const provideHubTest = <A, E>(
   effect: Effect.Effect<A, E, ServerSettings.ServerSettingsService | import("effect/Scope").Scope>,
@@ -312,6 +321,28 @@ it.effect.each([
       expect((yield* sources.current)[0]?.accounts).toEqual([]);
     }),
   ),
+);
+
+it.effect(
+  "invalidates cached accounts when a source is disabled and restored during a refresh",
+  () =>
+    provideHubTest(
+      Effect.gen(function* () {
+        const { sources, settings, mode, readStarted, releaseRead } = yield* makeHubTest();
+        yield* Ref.update(mode, (m) => ({ ...m, blocked: true, listFailed: true }));
+        const pending = yield* sources.refresh.pipe(Effect.forkChild);
+        yield* Deferred.await(readStarted);
+        yield* settings.updateSettings({
+          usageLimitSources: { [hubId]: { ...hubConfig, enabled: false } },
+        });
+        yield* settings.updateSettings({ usageLimitSources: { [hubId]: hubConfig } });
+        yield* Ref.update(mode, (m) => ({ ...m, blocked: false }));
+        yield* Deferred.succeed(releaseRead, undefined);
+        yield* Fiber.join(pending);
+        yield* sources.refresh;
+        expect((yield* sources.current)[0]?.accounts).toEqual([]);
+      }),
+    ),
 );
 
 it.effect("retains known windows when routing-disabled accounts fail a read-only probe", () =>

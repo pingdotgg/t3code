@@ -414,10 +414,7 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
       for (const account of source.accounts) {
         if (account.usageLimits.unavailable?.reason === "unsupported") continue;
         const notice = limitsNotice(account.usageLimits);
-        if (notice)
-          notices.push(
-            `${label(environmentLabel, `${source.label} · ${account.email ?? account.id}`)}: ${notice}`,
-          );
+        if (notice) notices.push(`${label(environmentLabel, source.label)}: ${notice}`);
       }
     }
   }
@@ -633,7 +630,7 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   if (limits.unavailable?.reason === "probeFailed") {
     const failure = limits.unavailable.message ?? "Could not read limits.";
     return limits.windows.length > 0
-      ? `${failure} Showing last known limits from ${limits.checkedAt} (stale).`
+      ? `${failure} Last known limits from ${limits.checkedAt} (stale).`
       : failure;
   }
   return limits.windows.length === 0 ? "No limits reported." : null;
