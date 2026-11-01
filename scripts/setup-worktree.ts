@@ -99,7 +99,8 @@ if (
   );
 }
 
-// Worktrees link main-checkout env files; replace only symlinks so real files always survive.
+// Worktrees link main-checkout env files, or copy them where Windows denies symlinks.
+// Only symlinks are replaced, so real files always survive.
 for (const file of ENV_FILES) {
   const source = NodePath.join(projectRoot, file);
   const sourceStat = NodeFS.lstatSync(source, { throwIfNoEntry: false });
@@ -115,11 +116,10 @@ for (const file of ENV_FILES) {
   try {
     NodeFS.symlinkSync(source, target);
   } catch (error) {
-    // Windows denies symlinks without Developer Mode or admin rights.
     if (!(error instanceof Error && "code" in error && error.code === "EPERM")) throw error;
-    NodeFS.copyFileSync(source, target);
+    NodeFS.copyFileSync(source, target, NodeFS.constants.COPYFILE_EXCL);
     process.stderr.write(
-      `Copied ${file} because symlinks are not allowed here. The copy will not follow later changes to ${source}.\n`,
+      `Copied ${file}: symlinks are not allowed here. Delete it and rerun setup to pick up later changes to ${source}.\n`,
     );
   }
 }

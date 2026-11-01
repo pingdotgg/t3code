@@ -168,8 +168,9 @@ T3CODE_DEV_AUTH_TOKEN=<the value generated above>
 ```
 
 The `t3.json` Setup Worktree action links that file to each worktree's `.env`. Where symlinks are
-not allowed, such as Windows without Developer Mode, it copies the file instead, and that copy does
-not pick up later changes. The dev runner reads repository env files at startup. `.env.local` and inherited process
+not allowed, such as Windows without Developer Mode, it copies the file instead. A copy does not pick
+up later changes; delete it and rerun setup to refresh it.
+The dev runner reads repository env files at startup. `.env.local` and inherited process
 environment values override `.env`, so no per-worktree export is needed after setup.
 
 For a manual worktree or launcher without that link, export the same fixed value instead:
