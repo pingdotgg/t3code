@@ -50,15 +50,26 @@ function replaceProjectionArrayItem<T>(
   return next;
 }
 
-function upsertEntity<T extends { readonly id: unknown }>(
+function upsertEntityAt<T extends { readonly id: unknown }>(
   items: ReadonlyArray<T>,
+  index: number,
   item: T,
 ): ReadonlyArray<T> {
-  const index = items.findIndex((candidate) => candidate.id === item.id);
   if (index === -1) return [...items, item];
   const next = [...items];
   next[index] = item;
   return next;
+}
+
+function upsertEntity<T extends { readonly id: unknown }>(
+  items: ReadonlyArray<T>,
+  item: T,
+): ReadonlyArray<T> {
+  return upsertEntityAt(
+    items,
+    items.findIndex((candidate) => candidate.id === item.id),
+    item,
+  );
 }
 
 // A deduped item repeats a record the stream just sent, so search newest first.
@@ -321,17 +332,18 @@ export function applyOrchestrationV2ProjectionEvent(
     }
     case "node.updated":
       return { ...base, nodes: upsertEntity(base.nodes, event.payload) };
-    case "subagent.updated":
+    case "subagent.updated": {
+      const index = base.subagents.findIndex((subagent) => subagent.id === event.payload.id);
+      const previous = index === -1 ? undefined : base.subagents[index];
       return {
         ...base,
-        subagents: upsertEntity(
+        subagents: upsertEntityAt(
           base.subagents,
-          restoreSubagentBodies(
-            event.payload,
-            base.subagents.find((subagent) => subagent.id === event.payload.id),
-          ),
+          index,
+          restoreSubagentBodies(event.payload, previous),
         ),
       };
+    }
     case "provider-session.attached":
     case "provider-session.updated":
       return {
@@ -347,22 +359,18 @@ export function applyOrchestrationV2ProjectionEvent(
       };
     case "provider-thread.updated":
       return { ...base, providerThreads: upsertEntity(base.providerThreads, event.payload) };
-    case "provider-turn.updated":
+    case "provider-turn.updated": {
+      const index = base.providerTurns.findIndex((turn) => turn.id === event.payload.id);
+      const previous = index === -1 ? undefined : base.providerTurns[index];
+      const tokenUsage = event.payload.tokenUsage ?? previous?.tokenUsage;
       return {
         ...base,
-        providerTurns: upsertEntity(base.providerTurns, {
+        providerTurns: upsertEntityAt(base.providerTurns, index, {
           ...event.payload,
-          ...((event.payload.tokenUsage ??
-            base.providerTurns.find((turn) => turn.id === event.payload.id)?.tokenUsage) ===
-          undefined
-            ? {}
-            : {
-                tokenUsage:
-                  event.payload.tokenUsage ??
-                  base.providerTurns.find((turn) => turn.id === event.payload.id)?.tokenUsage,
-              }),
+          ...(tokenUsage === undefined ? {} : { tokenUsage }),
         }),
       };
+    }
     case "runtime-request.updated":
       return { ...base, runtimeRequests: upsertEntity(base.runtimeRequests, event.payload) };
     case "message.updated":
