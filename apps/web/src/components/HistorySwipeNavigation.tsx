@@ -103,7 +103,11 @@ export function HistorySwipeNavigation() {
       setSwipe((current) => (current === null ? null : { ...current, tracking: false }));
     // The fingers lifted: navigate if the swipe went far enough, then ignore its momentum.
     const release = () => {
-      if (gesture?.kind === "tracking" && gesture.distance >= SWIPE_TRIGGER_DISTANCE) {
+      if (
+        gesture?.kind === "tracking" &&
+        gesture.travelX >= gesture.travelY &&
+        gesture.distance >= SWIPE_TRIGGER_DISTANCE
+      ) {
         navigateHistory(gesture.direction);
       }
       gesture = { kind: "ignored" };
@@ -136,14 +140,11 @@ export function HistorySwipeNavigation() {
         if (event.deltaX === 0 && event.deltaY === 0) return release();
         gesture.travelX += Math.abs(event.deltaX);
         gesture.travelY += Math.abs(event.deltaY);
-        // A scroll that locked on a diagonal start can turn out to be vertical.
-        if (gesture.travelY > gesture.travelX) {
-          gesture = { kind: "ignored" };
-          return hideIndicator();
-        }
         gesture.deltas = [...gesture.deltas.slice(1 - MOMENTUM_SAMPLE_SIZE), delta];
         if (isMomentumTail(gesture.deltas)) return release();
         gesture.distance = Math.max(0, gesture.distance + delta);
+        // A scroll that locked on a diagonal start can turn out to be vertical.
+        if (gesture.travelY > gesture.travelX) return hideIndicator();
       }
       setSwipe({
         direction: gesture.direction,

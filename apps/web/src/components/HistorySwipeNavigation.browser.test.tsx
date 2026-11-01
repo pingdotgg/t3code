@@ -72,4 +72,19 @@ describe("HistorySwipeNavigation", () => {
 
     expect(navigateHistory).not.toHaveBeenCalled();
   });
+
+  it("a swipe that wobbles vertically at the start still navigates", async () => {
+    navigateHistory.mockReset();
+    await using screen = await render(<HistorySwipeNavigation />);
+    const content = screen.container.appendChild(document.createElement("div"));
+    const wheel = (deltaX: number, deltaY: number) =>
+      content.dispatchEvent(new WheelEvent("wheel", { deltaX, deltaY, bubbles: true }));
+
+    wheel(-5, -4);
+    wheel(0, -2);
+    for (let index = 0; index < 4; index++) wheel(-40, 0);
+    wheel(0, 0);
+
+    expect(navigateHistory).toHaveBeenCalledWith("back");
+  });
 });
