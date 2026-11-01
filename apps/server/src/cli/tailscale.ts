@@ -119,7 +119,7 @@ const readPolicyGrantedPeers = Effect.gen(function* () {
   if (lateBlocker !== null) return { granted: [], unreadable: [], ...facts, blocker: lateBlocker };
   return scan.granted.length === 0 && peersJoined(status, after)
     ? ("changed" as const)
-    : { ...scan, ...facts };
+    : { ...scan, ...facts, tagged: after.selfTags.length > 0 };
 });
 
 /** Whether this tagged host has an owner, from `t3 up --owner` or this shell's environment. */
@@ -217,8 +217,8 @@ const requireGrantCommand = Command.make("require-grant", {
                 "Devices with a grant get the scopes it names: read, standard, admin, or single scopes.",
                 ...(since === null
                   ? [
-                      "This is this shell's scan. The server notices a first grant within a minute,",
-                      "and the last grant's removal within five minutes.",
+                      "This is this shell's scan. The server notices a first grant within a minute",
+                      "(five if it cannot read that device), and the last grant's removal within five.",
                     ]
                   : []),
               ]
