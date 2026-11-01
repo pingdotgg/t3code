@@ -23,11 +23,14 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.KeyEvent
 import android.view.ViewGroup
+import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
 import android.view.inputmethod.InputMethodManager
+import android.view.inputmethod.TextAttribute
 import android.widget.EditText
+import androidx.annotation.RequiresApi
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
@@ -667,8 +670,57 @@ internal class SelectionAwareEditText(
         afterLength: Int
       ): Boolean = deleteAdjacentChip(beforeLength, afterLength) ||
         super.deleteSurroundingTextInCodePoints(beforeLength, afterLength)
+      override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean =
+        commitUnlessPasted(text) { super.commitText(text, newCursorPosition) }
+
+      // InputConnectionWrapper sends this overload straight to its target, not through the
+      // two-argument commitText.
+      @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+      override fun commitText(
+        text: CharSequence,
+        newCursorPosition: Int,
+        textAttribute: TextAttribute?
+      ): Boolean = commitUnlessPasted(text) {
+        super.commitText(text, newCursorPosition, textAttribute)
+      }
+
+      private fun commitUnlessPasted(text: CharSequence?, commit: () -> Boolean): Boolean =
+        if (interceptKeyboardPaste(text)) {
+          // The keyboard now treats its composing text as replaced; a span left behind would
+          // let its next word overwrite text the paste did not remove.
+          finishComposingText()
+          true
+        } else {
+          commit()
+        }
     }
   }
+
+  // IME clipboard inserts replace the composing range, just like native commitText.
+  private fun interceptKeyboardPaste(text: CharSequence?): Boolean {
+    if (readOnly || textPasteThresholdBytes <= 0 || text == null) return false
+    val value = text.toString()
+    val composingStart = BaseInputConnection.getComposingSpanStart(editableText)
+    val composingEnd = BaseInputConnection.getComposingSpanEnd(editableText)
+    return when {
+      Character.codePointCount(text, 0, text.length) < 2 -> false
+      composingStart < 0 -> interceptPaste(value)
+      else -> {
+        val continuesWord = value.startsWith(editableText.subSequence(composingStart, composingEnd))
+        val exceedsInputLimit =
+          length().toLong() - (composingEnd - composingStart) + value.length > maxInputChars
+        val keepTyping = if (continuesWord && exceedsInputLimit && !shouldFoldText(value)) {
+          val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+          // commitText has no paste flag; inspect the clipboard only for ambiguous overflow commits.
+          clipboard?.primaryClip?.plainText() != value
+        } else {
+          false
+        }
+        !keepTyping && interceptPaste(value, start = composingStart, end = composingEnd)
+      }
+    }
+  }
+
   override fun onSelectionChanged(selStart: Int, selEnd: Int) {
     super.onSelectionChanged(selStart, selEnd)
     selectionListener?.invoke(selStart, selEnd)
@@ -767,13 +819,17 @@ internal class SelectionAwareEditText(
   private fun pasteInterceptedText(clip: ClipData?, foldLargeText: Boolean = true): Boolean {
     val text = if (textPasteThresholdBytes > 0) clip?.plainText() else null
     if (text.isNullOrEmpty()) return false
-    val start = minOf(selectionStart, selectionEnd).coerceIn(0, length())
-    val end = maxOf(selectionStart, selectionEnd).coerceIn(start, length())
+    return interceptPaste(text, foldLargeText)
+  }
+
+  private fun interceptPaste(
+    text: String,
+    foldLargeText: Boolean = true,
+    start: Int = minOf(selectionStart, selectionEnd).coerceIn(0, length()),
+    end: Int = maxOf(selectionStart, selectionEnd).coerceIn(start, length())
+  ): Boolean {
     val exceedsInputLimit = length().toLong() - (end - start) + text.length > maxInputChars
-    val shouldFold = foldLargeText && (
-      text.length >= textPasteThresholdBytes ||
-        text.toByteArray(Charsets.UTF_8).size >= textPasteThresholdBytes
-      )
+    val shouldFold = foldLargeText && shouldFoldText(text)
     val shouldIntercept = exceedsInputLimit || shouldFold
     if (shouldIntercept) {
       pasteTextListener?.invoke(text, start, end)
@@ -781,6 +837,10 @@ internal class SelectionAwareEditText(
     // Let EditText perform ordinary pastes, retaining its native undo history.
     return shouldIntercept
   }
+
+  private fun shouldFoldText(text: String): Boolean =
+    text.length >= textPasteThresholdBytes ||
+      text.toByteArray(Charsets.UTF_8).size >= textPasteThresholdBytes
 
   // Match native paste's newlines, including empty items.
   // URI-backed clips stay native: coerceToText can read a provider synchronously.
