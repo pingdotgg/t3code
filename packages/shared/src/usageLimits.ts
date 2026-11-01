@@ -36,6 +36,8 @@ export function exhaustedUsageWindow(
   if (model === undefined) return exhausted[0];
   switch (provider?.driver) {
     case "cursor": {
+      const spend = exhausted.find((window) => window.id === "spendLimit");
+      if (spend) return spend;
       const api = exhausted.find((window) => window.id === "apiPercentUsed");
       const auto = exhausted.find((window) => window.id === "autoPercentUsed");
       return /^(auto|default|grok|composer)/.test(model) ? auto && api : api;
@@ -128,6 +130,11 @@ export const CURSOR_USAGE_WINDOWS = [
     id: "apiPercentUsed",
     label: "Other Models",
     description: "Claude, GPT, and Gemini use this pool. Grok and Composer fall back here.",
+  },
+  {
+    id: "spendLimit",
+    label: "Spend",
+    description: "Spending this billing cycle against your Cursor spend limit.",
   },
 ] as const;
 

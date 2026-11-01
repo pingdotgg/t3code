@@ -127,6 +127,7 @@ describe("new thread model fallback", () => {
     ["cursor", ["autoPercentUsed"], "claude-opus-5-5", false],
     ["cursor", ["autoPercentUsed"], "composer-2.5", false],
     ["cursor", ["autoPercentUsed", "apiPercentUsed"], "composer-2.5", true],
+    ["cursor", ["spendLimit"], "composer-2.5", true],
     ["antigravity", ["gemini-weekly"], "claude-opus-5-5", false],
     ["antigravity", ["3p-weekly"], "claude-opus-5-5", true],
     ["antigravity", ["gemini-weekly"], "antigravity-default", true],
@@ -1415,6 +1416,14 @@ describe("external usage settings", () => {
     ]);
     expect(collectLimitAccounts(presentations)).toEqual([]);
     expect(collectLimitNotices(presentations)).toEqual([]);
+    expect(withUsageLimitsCommands([managed], [])[0]!.slashCommands).toContainEqual(
+      expect.objectContaining({ name: "usage-limits" }),
+    );
+    expect(
+      collectProviderUsageLimits(managed.instanceId, [managed], [], now)?.accounts.map(
+        (account) => account.limits,
+      ),
+    ).toEqual([managed.usageLimits]);
   });
 });
 
