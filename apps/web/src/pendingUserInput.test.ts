@@ -94,6 +94,13 @@ describe("pending user input question progress", () => {
 
   it("derives the active question and advancement state", () => {
     expect(
+      derivePendingUserInputProgress([{ ...singleSelectQuestion, required: false }], {}, 0),
+    ).toMatchObject({
+      resolvedAnswer: null,
+      canAdvance: true,
+      isComplete: true,
+    });
+    expect(
       derivePendingUserInputProgress(
         questions,
         {

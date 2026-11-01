@@ -6322,6 +6322,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               const requestedSchema = unknownRecord(params.requestedSchema);
               const properties = unknownRecord(requestedSchema?.properties) ?? {};
+              // JSON Schema fields are optional unless listed in required.
+              const requiredFields = new Set(
+                Array.isArray(requestedSchema?.required)
+                  ? requestedSchema.required.filter(
+                      (field): field is string => typeof field === "string",
+                    )
+                  : [],
+              );
               const nativeForm = flavor.extractElicitationForm?.(params);
               const elicitationScopeId =
                 "sessionId" in params ? params.sessionId : `request:${params.requestId}`;
@@ -6347,6 +6355,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       header: nonEmptyText(record?.title, `Question ${index + 1}`),
                       question: nonEmptyText(record?.description, params.message),
                       options,
+                      ...(requiredFields.has(id) ? {} : { required: false }),
                     };
                   },
                 );

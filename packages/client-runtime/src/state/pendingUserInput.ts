@@ -4,6 +4,7 @@ export interface PendingUserInputQuestion {
   readonly options: ReadonlyArray<{ readonly label: string; readonly value?: string | undefined }>;
   readonly multiSelect?: boolean | undefined;
   readonly allowCustomAnswer?: boolean | undefined;
+  readonly required?: boolean | undefined;
   readonly initialAnswer?: string | undefined;
 }
 
@@ -157,7 +158,14 @@ export function togglePendingUserInputOptionSelection(
   };
 }
 
-/** Every question's answer keyed by question id, or null while any is unanswered. */
+export function canSkipPendingUserInputQuestion(
+  question: PendingUserInputQuestion,
+  draft: PendingUserInputDraftAnswer | undefined,
+): boolean {
+  return question.required === false && !draft?.attachmentsBlocked;
+}
+
+/** Answered questions keyed by id, or null while a required answer or attachment is pending. */
 export function buildPendingUserInputAnswers(
   questions: ReadonlyArray<PendingUserInputQuestion>,
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,
@@ -165,8 +173,10 @@ export function buildPendingUserInputAnswers(
   const answers: Record<string, PendingUserInputAnswer> = {};
 
   for (const question of questions) {
-    const answer = resolvePendingUserInputAnswer(question, draftAnswers[question.id]);
+    const draft = draftAnswers[question.id];
+    const answer = resolvePendingUserInputAnswer(question, draft);
     if (answer === null) {
+      if (canSkipPendingUserInputQuestion(question, draft)) continue;
       return null;
     }
     answers[question.id] = answer;

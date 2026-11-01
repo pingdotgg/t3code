@@ -1446,7 +1446,15 @@ describe("AcpAdapterV2", () => {
     {
       scenario: "falls back for an unrelated form",
       schema: { type: "object", properties: { name: { type: "string" } } },
-      questions: [{ id: "name", header: "Question 1", question: "Your answer?", options: [] }],
+      questions: [
+        {
+          id: "name",
+          header: "Question 1",
+          question: "Your answer?",
+          options: [],
+          required: false,
+        },
+      ],
       answers: { name: "Ada" },
       result: { action: "accept", content: { name: "Ada" } },
     },
@@ -5453,6 +5461,106 @@ describe("AcpAdapterV2", () => {
       yield* Fiber.join(responseFiber);
       yield* Fiber.join(interruptFiber);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live.each([
+    {
+      schema: "with a required list",
+      environment: { T3_ACP_EMIT_OPTIONAL_FIELD_ELICITATION: "1" },
+      expected: [
+        ["color", undefined],
+        ["note", false],
+      ],
+      answers: { color: "blue" },
+    },
+    {
+      schema: "without a required list",
+      environment: { T3_ACP_EMIT_OPTIONAL_FIELD_ELICITATION: "optional-only" },
+      expected: [
+        ["color", false],
+        ["note", false],
+      ],
+      answers: {},
+    },
+  ])(
+    "marks non-required elicitation fields as optional ($schema)",
+    ({ environment, expected, answers }) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const instanceId = ProviderInstanceId.make("acp-test-optional-field-elicitation");
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              environment,
+            }),
+          },
+          selfInvocation,
+        });
+        const threadId = ThreadId.make("thread-acp-optional-field-elicitation");
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-acp-optional-field-elicitation",
+          ),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        );
+        const requestEvent = Option.getOrThrow(
+          yield* runtime.events.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+            ),
+            Stream.runHead,
+          ),
+        );
+        if (
+          requestEvent.type !== "turn_item.updated" ||
+          requestEvent.turnItem.type !== "user_input_request"
+        ) {
+          return yield* Effect.die("Expected a user input request");
+        }
+        const requestItem = requestEvent.turnItem;
+
+        assert.deepStrictEqual(
+          requestItem.questions.map((question) => [question.id, question.required]),
+          expected,
+        );
+        yield* runtime.respondToRuntimeRequest({
+          requestId: requestItem.requestId,
+          answers,
+        });
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live("auto-approves tagged MCP elicitations under full-access policy", () =>
