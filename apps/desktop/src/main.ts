@@ -14,6 +14,7 @@ import * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 
 import * as Electron from "electron";
 
@@ -119,8 +120,10 @@ const resolveDesktopSshCliRunner = (
 const layerDesktopSshEnvironment = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const { quitting } = yield* DesktopState.DesktopState;
     return DesktopSshEnvironment.layer({
       resolveCliRunner: Effect.succeed(resolveDesktopSshCliRunner(environment)),
+      acceptsNewTunnels: Ref.get(quitting).pipe(Effect.map((isQuitting) => !isQuitting)),
     });
   }),
 );
