@@ -41,6 +41,12 @@ Claude Code's verbose mode can stay enabled when you use Claude for text generat
 thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,
 T3 Code uses the Claude configuration on the connected server.
 
+## Model downgrades
+
+Claude may switch to a fallback model when it flags a request. T3 Code
+updates the thread's model selection to match, and later messages keep using that
+model. You can choose another model in the same thread.
+
 ## Compact long conversations
 
 Set **Auto-compact after** in the Claude provider settings to an integer between

@@ -434,6 +434,192 @@ it.effect("records accepted billed turn usage once without billing the context w
   }).pipe(Effect.provide(layerTest.pipe(Layer.provide(layerAnalytics))));
 });
 
+it.effect.each([
+  { label: "current selection", changedSelection: false, changedThread: false, follows: true },
+  { label: "new manual selection", changedSelection: true, changedThread: false, follows: false },
+  {
+    label: "different provider thread",
+    changedSelection: false,
+    changedThread: true,
+    follows: false,
+  },
+])("follows a model downgrade only for the $label", (testCase) =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const sink = yield* EventSink.EventSinkV2;
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+    const ids = yield* IdAllocator.IdAllocatorV2;
+    const created = yield* threadCreatedEvent(now);
+    if (created.type !== "thread.created") throw new Error("Expected a thread.");
+    const original = created.payload;
+    const manual = { ...modelSelection, model: "another-model" };
+    const next = { ...modelSelection, model: "fallback-model" };
+    yield* sink.write({
+      events: [
+        {
+          ...created,
+          payload: {
+            ...original,
+            modelSelection: testCase.changedSelection ? manual : modelSelection,
+            activeProviderThreadId: testCase.changedThread ? null : original.activeProviderThreadId,
+          },
+        },
+      ],
+    });
+    const providerSessionId = yield* ids.allocate.providerSession({
+      providerInstanceId: modelSelection.instanceId,
+      threadId: original.id,
+    });
+    const providerThread: OrchestrationV2ProviderThread = {
+      id: original.activeProviderThreadId!,
+      driver: CODEX_DRIVER,
+      providerInstanceId: modelSelection.instanceId,
+      providerSessionId,
+      appThreadId: original.id,
+      ownerNodeId: null,
+      nativeThreadRef: { driver: CODEX_DRIVER, nativeId: "native-thread", strength: "strong" },
+      nativeConversationHeadRef: null,
+      status: "active",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      pendingBackgroundTasks: [],
+      contextUsage: null,
+      nativeMetadata: { modelSelection: next },
+      goal: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const events = yield* ingestor.ingestNormalized({
+      providerSessionId,
+      providerInstanceId: modelSelection.instanceId,
+      threadId: original.id,
+      event: {
+        type: "provider_thread.updated",
+        driver: CODEX_DRIVER,
+        providerThread,
+        modelSelectionChange: { expected: modelSelection, next },
+      },
+    });
+    const stored = yield* store.getThread(original.id);
+    assert.deepEqual(
+      stored.modelSelection,
+      testCase.follows ? next : testCase.changedSelection ? manual : modelSelection,
+    );
+    assert.deepEqual(
+      events.map((stored) => stored.event.type),
+      testCase.follows
+        ? ["provider-thread.updated", "thread.model-selection-updated"]
+        : ["provider-thread.updated"],
+    );
+    const projection = yield* store.getThreadProjection(original.id);
+    assert.deepEqual(projection.providerThreads[0]?.nativeMetadata?.modelSelection, next);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("preserves a concurrent thread edit after a downgrade is normalized", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const sink = yield* EventSink.EventSinkV2;
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const ids = yield* IdAllocator.IdAllocatorV2;
+    const commands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    const created = yield* threadCreatedEvent(now);
+    if (created.type !== "thread.created") throw new Error("Expected a thread.");
+    const original = created.payload;
+    yield* sink.write({ events: [created] });
+    const next = { ...modelSelection, model: "fallback-model" };
+    const manual = { ...modelSelection, model: "manually-selected-model" };
+    const providerSessionId = yield* ids.allocate.providerSession({
+      providerInstanceId: modelSelection.instanceId,
+      threadId: original.id,
+    });
+    const normalized = yield* Deferred.make<
+      void,
+      ProviderEventIngestor.ProviderEventIngestorV2Error
+    >();
+    const allowCommit = yield* Deferred.make<void>();
+    const gatedSink = EventSink.EventSinkV2.of({
+      ...sink,
+      write: (input) =>
+        Effect.gen(function* () {
+          assert.include(yield* commands.activeKeys, original.id);
+          yield* Deferred.succeed(normalized, undefined);
+          yield* Deferred.await(allowCommit);
+          return yield* sink.write(input);
+        }),
+    });
+    const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2.pipe(
+      Effect.provide(Layer.fresh(ProviderEventIngestor.layer)),
+      Effect.provideService(EventSink.EventSinkV2, gatedSink),
+    );
+    const input: ProviderEventIngestor.ProviderEventIngestInput = {
+      providerSessionId,
+      providerInstanceId: modelSelection.instanceId,
+      threadId: yield* ids.allocate.thread({ fixtureName: "downgrade-route" }),
+      event: {
+        type: "provider_thread.updated",
+        driver: CODEX_DRIVER,
+        providerThread: {
+          id: original.activeProviderThreadId!,
+          driver: CODEX_DRIVER,
+          providerInstanceId: modelSelection.instanceId,
+          providerSessionId,
+          appThreadId: original.id,
+          ownerNodeId: null,
+          nativeThreadRef: { driver: CODEX_DRIVER, nativeId: "native-thread", strength: "strong" },
+          nativeConversationHeadRef: null,
+          status: "active",
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          nativeMetadata: { modelSelection: next },
+          createdAt: now,
+          updatedAt: now,
+        },
+        modelSelectionChange: { expected: modelSelection, next },
+      },
+    };
+    const downgrade = yield* ingestor.ingestNormalized(input).pipe(
+      Effect.tapCause((cause) => Deferred.failCause(normalized, cause)),
+      Effect.forkScoped,
+    );
+    yield* Deferred.await(normalized);
+    const editRequested = yield* Deferred.make<void>();
+    const edit = yield* Deferred.succeed(editRequested, undefined).pipe(
+      Effect.andThen(
+        commands.withLock(
+          original.id,
+          Effect.gen(function* () {
+            const current = yield* store.getThread(original.id);
+            yield* sink.write({
+              events: [
+                {
+                  ...created,
+                  id: yield* ids.allocate.event({ threadId: original.id }),
+                  type: "thread.metadata-updated",
+                  payload: { ...current, title: "Manual title", modelSelection: manual },
+                },
+              ],
+            });
+          }),
+        ),
+      ),
+      Effect.forkScoped,
+    );
+    yield* Deferred.await(editRequested);
+    yield* Deferred.succeed(allowCommit, undefined);
+    assert.lengthOf(yield* Fiber.join(downgrade), 2);
+    yield* Fiber.join(edit);
+    const updated = yield* store.getThread(original.id);
+    assert.equal(updated.title, "Manual title");
+    assert.deepEqual(updated.modelSelection, manual);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 layer("ProviderEventIngestorV2", (it) => {
   it.effect("normalizes provider events through the real event log and projection store", () =>
     Effect.gen(function* () {

@@ -2767,11 +2767,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     uuid: "00000000-0000-4000-8000-000000000101",
     session_id: WAKE_NATIVE_SESSION,
   });
-  const makeAssistantTextFrame = (input: { readonly uuid: string; readonly text: string }) =>
+  const makeAssistantTextFrame = (input: {
+    readonly uuid: string;
+    readonly text: string;
+    readonly model?: string;
+  }) =>
     claudeSdkFrame({
       type: "assistant",
       message: {
-        model: "claude-sonnet-4-6",
+        model: input.model ?? "claude-sonnet-4-6",
         id: `msg_${input.uuid}`,
         type: "message",
         role: "assistant",
@@ -3187,6 +3191,519 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  describe("Claude model downgrade", () => {
+    const selected = {
+      ...CLAUDE_TEST_MODEL_SELECTION,
+      model: "claude-opus-5-5",
+      options: [{ id: "effort", value: "high" }],
+    } satisfies ModelSelection;
+    const modelTestLayer = Layer.mergeAll(
+      IdAllocator.layer,
+      McpProviderSessions.layer,
+      NodeServices.layer,
+    );
+    const makeModelTurn = Effect.fn("ClaudeAdapterV2.test.makeModelTurn")(function* (
+      thread: Pick<ProviderAdapter.ProviderAdapterV2TurnInput, "threadId" | "providerThread">,
+      id: string,
+      overrides: Partial<Parameters<typeof makeClaudeTestTurnInput>[0]> = {},
+    ) {
+      return makeClaudeTestTurnInput({
+        threadId: thread.threadId,
+        providerThread: thread.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make(id),
+        text: "Continue.",
+        attachments: [],
+        modelSelection: selected,
+        ...overrides,
+      });
+    });
+    const nextModelTurn = (
+      previous: ProviderAdapter.ProviderAdapterV2TurnInput,
+      id: string,
+      overrides: Partial<ProviderAdapter.ProviderAdapterV2TurnInput> = {},
+    ): ProviderAdapter.ProviderAdapterV2TurnInput => ({
+      ...previous,
+      providerTurnOrdinal: previous.providerTurnOrdinal + 1,
+      attemptId: RunAttemptId.make(id),
+      runId: RunId.make(id),
+      rootNodeId: NodeId.make(id),
+      ...overrides,
+      message: {
+        ...previous.message,
+        ...overrides.message,
+        messageId: MessageId.make(id),
+      },
+    });
+    const latestProviderThreadUpdate = (
+      events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+    ) => {
+      const event = events.findLast((event) => event.type === "provider_thread.updated");
+      if (event === undefined) throw new Error("Expected provider-thread update.");
+      return event;
+    };
+    const fallbackFrame = () =>
+      claudeSdkFrame({
+        type: "system",
+        subtype: "model_refusal_fallback",
+        uuid: "00000000-0000-4000-8000-000000000701",
+        session_id: WAKE_NATIVE_SESSION,
+        content: "Switched to Opus 5.",
+        original_model: selected.model,
+        fallback_model: "claude-opus-5",
+        request_id: null,
+        trigger: "refusal",
+        direction: "retry",
+        scope: "session",
+      } satisfies SDKMessage);
+
+    it.effect.each([null, selected.model, "claude-sonnet-4-6"])(
+      "follows the downgrade and honors the next manual selection %s",
+      (manualModel) =>
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const first = yield* makeModelTurn(harness, "fallback-first", {
+            text: "First message.",
+          });
+          yield* harness.runtime.startTurn(first);
+          yield* harness.offerAndWait(fallbackFrame());
+          yield* Queue.take(harness.systemNoticeReceipts);
+          const reported = latestProviderThreadUpdate(harness.events);
+          const fallbackSelection = { ...first.modelSelection, model: "claude-opus-5" };
+          assert.deepEqual(
+            reported.providerThread.nativeMetadata?.modelSelection,
+            fallbackSelection,
+          );
+          assert.deepEqual(reported.modelSelectionChange, {
+            expected: first.modelSelection,
+            next: fallbackSelection,
+          });
+          assert.isEmpty(harness.liveSelectionChanges);
+          yield* harness.offerAndWait(
+            makeAssistantTextFrame({
+              uuid: "fallback-answer",
+              text: "Done.",
+              model: "claude-opus-5",
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeResultFrame({ uuid: "fallback-result", result: "Done." }),
+          );
+          yield* Queue.take(harness.terminalReceipts);
+          const completed = latestProviderThreadUpdate(harness.events);
+          assert.deepEqual(
+            completed.providerThread.nativeMetadata?.modelSelection,
+            fallbackSelection,
+          );
+
+          const selection =
+            manualModel !== null ? { ...selected, model: manualModel } : fallbackSelection;
+          yield* harness.runtime.startTurn(
+            nextModelTurn(first, "fallback-next", {
+              appThread: { ...first.appThread, modelSelection: selection },
+              providerThread: completed.providerThread,
+              modelSelection: selection,
+              message: { ...first.message, text: "Next." },
+            }),
+          );
+          assert.deepEqual(
+            harness.liveSelectionChanges.filter(
+              (change) => typeof change === "object" && change !== null && "model" in change,
+            ),
+            manualModel === null ? [] : [{ model: selection.model }],
+          );
+          assert.lengthOf(harness.offeredMessages, 2);
+          yield* harness.offerAndWait(
+            makeAssistantTextFrame({
+              uuid: "next-answer",
+              text: "Done.",
+              model: selection.model,
+            }),
+          );
+          yield* harness.offerAndWait(makeResultFrame({ uuid: "next-result", result: "Done." }));
+          yield* Queue.take(harness.terminalReceipts);
+          const completedNext = latestProviderThreadUpdate(harness.events);
+          assert.deepEqual(completedNext.providerThread.nativeMetadata?.modelSelection, selection);
+        }).pipe(Effect.provide(modelTestLayer)),
+    );
+
+    it.effect("follows a repeated downgrade immediately after manually restoring the model", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const first = yield* makeModelTurn(harness, "repeated-fallback-first", {
+          text: "First message.",
+        });
+        yield* harness.runtime.startTurn(first);
+        yield* harness.offerAndWait(fallbackFrame());
+        yield* Queue.take(harness.systemNoticeReceipts);
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({
+            uuid: "repeated-fallback-answer",
+            text: "Done.",
+            model: "claude-opus-5",
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "repeated-fallback-result", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const completed = latestProviderThreadUpdate(harness.events);
+        yield* harness.runtime.startTurn(
+          nextModelTurn(first, "repeated-fallback-next", {
+            appThread: { ...first.appThread, modelSelection: selected },
+            providerThread: completed.providerThread,
+          }),
+        );
+        assert.deepEqual(harness.liveSelectionChanges[0], { model: selected.model });
+        const frame = fallbackFrame();
+        if (frame.type !== "system" || frame.subtype !== "model_refusal_fallback")
+          throw new Error("Expected fallback.");
+        yield* harness.offerAndWait({
+          ...frame,
+          uuid: "00000000-0000-4000-8000-000000000703",
+        });
+        yield* Queue.take(harness.systemNoticeReceipts);
+        const selectionChanges = () =>
+          harness.events.flatMap((event) =>
+            event.type === "provider_thread.updated" && event.modelSelectionChange !== undefined
+              ? [event.modelSelectionChange]
+              : [],
+          );
+        const expected = { expected: selected, next: { ...selected, model: frame.fallback_model } };
+        assert.deepEqual(selectionChanges(), [expected, expected]);
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({
+            uuid: "repeated-fallback-next-answer",
+            text: "Done again.",
+            model: frame.fallback_model,
+          }),
+        );
+        assert.deepEqual(selectionChanges(), [expected, expected]);
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "repeated-fallback-next-result", result: "Done again." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+      }).pipe(Effect.provide(modelTestLayer)),
+    );
+
+    it.effect.each(["claude-opus-5", selected.model])(
+      "resumes a downgraded session with the selected model %s",
+      (model) =>
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          yield* harness.runtime.startTurn(
+            yield* makeModelTurn(harness, "fallback-resume", {
+              providerThread: {
+                ...harness.providerThread,
+                nativeMetadata: {
+                  modelSelection: { ...selected, model: "claude-opus-5" },
+                },
+              },
+              modelSelection: { ...selected, model },
+              nativeThreadHasTurns: true,
+              text: "Continue on the selected model.",
+            }),
+          );
+          if (model === "claude-opus-5") {
+            assert.isEmpty(harness.liveSelectionChanges);
+          } else {
+            assert.deepEqual(harness.liveSelectionChanges[0], { model });
+          }
+          assert.lengthOf(harness.offeredMessages, 1);
+        }).pipe(Effect.provide(modelTestLayer)),
+    );
+
+    it.effect("leaves a local fallback out of the main thread's model state", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(yield* makeModelTurn(harness, "fallback-local"));
+        const frame = fallbackFrame();
+        if (frame.type !== "system" || frame.subtype !== "model_refusal_fallback")
+          throw new Error("Expected fallback.");
+        yield* harness.offerAndWait({ ...frame, scope: "local" as const });
+        yield* Queue.take(harness.systemNoticeReceipts);
+        assert.isEmpty(
+          harness.events.filter(
+            (event) =>
+              event.type === "provider_thread.updated" && event.modelSelectionChange !== undefined,
+          ),
+        );
+        assert.isUndefined(
+          latestProviderThreadUpdate(harness.events).providerThread.nativeMetadata?.modelSelection,
+        );
+        assert.isEmpty(harness.liveSelectionChanges);
+      }).pipe(Effect.provide(modelTestLayer)),
+    );
+
+    it.effect("does not switch the model while draining a native background continuation", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const first = yield* makeModelTurn(harness, "fallback-background", {
+          text: "Run a background task.",
+        });
+        yield* harness.runtime.startTurn(first);
+        yield* harness.offerAndWait(fallbackFrame());
+        yield* Queue.take(harness.systemNoticeReceipts);
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.offerAndWait(wakeNotification);
+        yield* harness.offerAndWait(wakeTurnInit);
+        yield* Queue.take(harness.continuationReceipts);
+        const latest = latestProviderThreadUpdate(harness.events);
+        yield* harness.runtime.startTurn(
+          nextModelTurn(first, "fallback-background-continuation", {
+            providerThread: latest.providerThread,
+            message: { ...first.message, createdBy: "agent", creationSource: "provider" },
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({
+            uuid: "fallback-wake-answer",
+            text: WAKE_ASSISTANT_TEXT,
+            model: "claude-opus-5",
+          }),
+        );
+        yield* harness.offerAndWait(wakeResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isEmpty(harness.liveSelectionChanges);
+        assert.lengthOf(harness.offeredMessages, 1);
+      }).pipe(Effect.provide(modelTestLayer)),
+    );
+
+    it.effect.each([false, true])(
+      "replays a model downgrade before continuation attachment with fallback before wake init %s",
+      (beforeWakeInit) =>
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const first = yield* makeModelTurn(harness, "buffered-fallback-first", {
+            text: "Run a background task.",
+          });
+          yield* harness.runtime.startTurn(first);
+          yield* harness.offerAndWait(wakeTaskStarted);
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+          yield* harness.offerAndWait(wakeNotification);
+          assert.isEmpty(harness.continuationRequests);
+          if (beforeWakeInit) {
+            yield* harness.offerAndWait(fallbackFrame());
+            assert.isEmpty(harness.continuationRequests);
+          }
+          yield* harness.offerAndWait(wakeTurnInit);
+          yield* Queue.take(harness.continuationReceipts);
+          if (!beforeWakeInit) yield* harness.offerAndWait(fallbackFrame());
+          assert.lengthOf(harness.continuationRequests, 1);
+          const latest = latestProviderThreadUpdate(harness.events);
+          yield* harness.runtime.startTurn(
+            nextModelTurn(first, "buffered-fallback-continuation", {
+              providerThread: latest.providerThread,
+              message: { ...first.message, createdBy: "agent", creationSource: "provider" },
+            }),
+          );
+          yield* harness.offerAndWait(wakeResult);
+          yield* Queue.take(harness.terminalReceipts);
+          const next = { ...selected, model: "claude-opus-5" };
+          const changes = harness.events.flatMap((event) =>
+            event.type === "provider_thread.updated" && event.modelSelectionChange !== undefined
+              ? [event.modelSelectionChange]
+              : [],
+          );
+          assert.deepEqual(changes, [{ expected: selected, next }]);
+          const completed = latestProviderThreadUpdate(harness.events);
+          assert.deepEqual(completed.providerThread.nativeMetadata?.modelSelection, next);
+          assert.isEmpty(harness.liveSelectionChanges);
+          assert.lengthOf(harness.offeredMessages, 1);
+          yield* harness.runtime.startTurn(
+            nextModelTurn(first, "buffered-fallback-reselect", {
+              providerThread: completed.providerThread,
+              providerTurnOrdinal: 3,
+            }),
+          );
+          assert.deepEqual(harness.liveSelectionChanges[0], { model: selected.model });
+        }).pipe(Effect.provide(modelTestLayer)),
+    );
+
+    it.effect.each([false, true])(
+      "preserves a newer manual selection during a background fallback after prior fallback %s",
+      (priorFallback) =>
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const first = yield* makeModelTurn(harness, "fallback-manual-background", {
+            text: "Run a background task.",
+          });
+          yield* harness.runtime.startTurn(first);
+          if (priorFallback) {
+            yield* harness.offerAndWait(fallbackFrame());
+            yield* Queue.take(harness.systemNoticeReceipts);
+          }
+          yield* harness.offerAndWait(wakeTaskStarted);
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+          yield* harness.offerAndWait(wakeNotification);
+          yield* harness.offerAndWait(wakeTurnInit);
+          yield* Queue.take(harness.continuationReceipts);
+          const latest = latestProviderThreadUpdate(harness.events);
+          const manual = { ...selected, model: "claude-haiku-4-5-20251001" };
+          yield* harness.runtime.startTurn(
+            nextModelTurn(first, "fallback-manual-continuation", {
+              appThread: { ...first.appThread, modelSelection: manual },
+              providerThread: latest.providerThread,
+              message: { ...first.message, createdBy: "agent", creationSource: "provider" },
+            }),
+          );
+          const frame = fallbackFrame();
+          if (frame.type !== "system" || frame.subtype !== "model_refusal_fallback")
+            throw new Error("Expected fallback.");
+          const model = priorFallback ? "claude-sonnet-4-6" : frame.fallback_model;
+          yield* harness.offerAndWait({ ...frame, fallback_model: model });
+          yield* Queue.take(harness.systemNoticeReceipts);
+          const reported = latestProviderThreadUpdate(harness.events);
+          assert.deepEqual(reported.modelSelectionChange, {
+            expected: priorFallback ? { ...selected, model: frame.fallback_model } : selected,
+            next: { ...selected, model },
+          });
+          assert.isEmpty(harness.liveSelectionChanges);
+          assert.lengthOf(harness.offeredMessages, 1);
+          yield* harness.offerAndWait(wakeResult);
+          yield* Queue.take(harness.terminalReceipts);
+        }).pipe(Effect.provide(modelTestLayer)),
+    );
+
+    it.effect.each([false, true])(
+      "preserves a manual gateway alias after a downgrade with resumed session %s",
+      (resumed) =>
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const first = yield* makeModelTurn(harness, "fallback-gateway-first");
+          let providerThread: OrchestrationV2ProviderThread = {
+            ...harness.providerThread,
+            nativeMetadata: {
+              modelSelection: { ...selected, model: "claude-opus-5" },
+            },
+          };
+          if (!resumed) {
+            yield* harness.runtime.startTurn(first);
+            yield* harness.offerAndWait(fallbackFrame());
+            yield* Queue.take(harness.systemNoticeReceipts);
+            yield* harness.offerAndWait(
+              makeResultFrame({ uuid: "fallback-gateway-first-result", result: "Done." }),
+            );
+            yield* Queue.take(harness.terminalReceipts);
+            const latest = latestProviderThreadUpdate(harness.events);
+            providerThread = latest.providerThread;
+          }
+          const gateway = { ...selected, model: "gateway-opus" };
+          const next = nextModelTurn(first, "fallback-gateway-next", {
+            appThread: { ...first.appThread, modelSelection: gateway },
+            providerThread,
+            modelSelection: gateway,
+            nativeThreadHasTurns: true,
+          });
+          yield* harness.runtime.startTurn(next);
+          assert.deepEqual(harness.liveSelectionChanges[0], { model: gateway.model });
+          yield* harness.offerAndWait(
+            makeAssistantTextFrame({
+              uuid: "fallback-gateway-answer",
+              text: "Done.",
+              model: selected.model,
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeResultFrame({ uuid: "fallback-gateway-result", result: "Done." }),
+          );
+          yield* Queue.take(harness.terminalReceipts);
+          const selectionChanges = harness.events.flatMap((event) =>
+            event.type === "provider_thread.updated" && event.modelSelectionChange !== undefined
+              ? [event.modelSelectionChange]
+              : [],
+          );
+          assert.deepEqual(
+            selectionChanges,
+            resumed ? [] : [{ expected: selected, next: { ...selected, model: "claude-opus-5" } }],
+          );
+          const completed = latestProviderThreadUpdate(harness.events);
+          assert.deepEqual(completed.providerThread.nativeMetadata?.modelSelection, gateway);
+          const changesBeforeNext = harness.liveSelectionChanges.length;
+          yield* harness.runtime.startTurn(
+            nextModelTurn(next, "fallback-gateway-third", {
+              providerThread: completed.providerThread,
+            }),
+          );
+          assert.lengthOf(harness.liveSelectionChanges, changesBeforeNext);
+        }).pipe(Effect.provide(modelTestLayer)),
+    );
+
+    it.effect("does not mistake a gateway's canonical model name for a downgrade", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          yield* makeModelTurn(harness, "fallback-gateway", {
+            modelSelection: { ...selected, model: "gateway-opus" },
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({ uuid: "gateway-answer", text: "Done.", model: selected.model }),
+        );
+        yield* harness.offerAndWait(makeResultFrame({ uuid: "gateway-result", result: "Done." }));
+        yield* Queue.take(harness.terminalReceipts);
+        const latest = latestProviderThreadUpdate(harness.events);
+        assert.isUndefined(latest.providerThread.nativeMetadata?.modelSelection);
+        assert.isEmpty(harness.liveSelectionChanges);
+      }).pipe(Effect.provide(modelTestLayer)),
+    );
+
+    it.effect.each([
+      { selection: selected, apiModelId: selected.model },
+      {
+        selection: {
+          ...selected,
+          model: "claude-opus-4-6",
+          options: [...selected.options, { id: "contextWindow", value: "1m" }],
+        },
+        apiModelId: "claude-opus-4-6[1m]",
+      },
+    ])(
+      "follows a provider revert to $apiModelId after a downgrade within the same turn",
+      ({ selection, apiModelId }) =>
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const first = yield* makeModelTurn(harness, "fallback-revert", {
+            modelSelection: selection,
+          });
+          yield* harness.runtime.startTurn(first);
+          const frame = fallbackFrame();
+          if (frame.type !== "system" || frame.subtype !== "model_refusal_fallback")
+            throw new Error("Expected fallback.");
+          yield* harness.offerAndWait({ ...frame, original_model: apiModelId });
+          yield* Queue.take(harness.systemNoticeReceipts);
+          yield* harness.offerAndWait({
+            ...frame,
+            uuid: "00000000-0000-4000-8000-000000000702",
+            original_model: apiModelId,
+            direction: "revert" as const,
+          });
+          yield* Queue.take(harness.systemNoticeReceipts);
+          const latest = latestProviderThreadUpdate(harness.events);
+          assert.deepEqual(latest.modelSelectionChange, {
+            expected: { ...selection, model: "claude-opus-5" },
+            next: selection,
+          });
+          assert.deepEqual(latest.providerThread.nativeMetadata?.modelSelection, selection);
+          yield* harness.offerAndWait(
+            makeAssistantTextFrame({ uuid: "revert-answer", text: "Done.", model: apiModelId }),
+          );
+          yield* harness.offerAndWait(makeResultFrame({ uuid: "revert-result", result: "Done." }));
+          yield* Queue.take(harness.terminalReceipts);
+          yield* harness.runtime.startTurn(
+            nextModelTurn(first, "revert-next", {
+              providerThread: latestProviderThreadUpdate(harness.events).providerThread,
+            }),
+          );
+          assert.isEmpty(harness.liveSelectionChanges);
+        }).pipe(Effect.provide(modelTestLayer)),
+    );
+  });
 
   it.effect.each(["release-after", "cancel-after", "release-before", "resume-pending"] as const)(
     "keeps attachment reservations across compaction: %s boundary",

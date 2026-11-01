@@ -92,6 +92,9 @@ export const ProviderAdapterV2Event = Schema.Union([
     driver: ProviderDriverKind,
     providerThread: OrchestrationV2ProviderThread,
     retainedNativeTurnIds: Schema.optional(Schema.Array(Schema.String)),
+    modelSelectionChange: Schema.optional(
+      Schema.Struct({ expected: ModelSelection, next: ModelSelection }),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("provider_turn.updated"),

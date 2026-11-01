@@ -591,10 +591,34 @@ export const layer: Layer.Layer<
                 threadId,
                 payload: input.event.providerThread,
               });
+              const events = [updated];
+              const change = input.event.modelSelectionChange;
+              if (change !== undefined) {
+                const thread = yield* projections.getThread(threadId);
+                if (
+                  thread.activeProviderThreadId === input.event.providerThread.id &&
+                  thread.providerInstanceId === input.event.providerThread.providerInstanceId &&
+                  change.next.instanceId === thread.providerInstanceId &&
+                  modelSelectionsEqual(thread.modelSelection, change.expected) &&
+                  !modelSelectionsEqual(thread.modelSelection, change.next)
+                ) {
+                  events.push(
+                    yield* makeDomainEvent(input, {
+                      type: "thread.model-selection-updated",
+                      threadId,
+                      payload: {
+                        ...thread,
+                        modelSelection: change.next,
+                        updatedAt: updated.occurredAt,
+                      },
+                    }),
+                  );
+                }
+              }
               return input.event.retainedNativeTurnIds === undefined
-                ? [updated]
+                ? events
                 : [
-                    updated,
+                    ...events,
                     ...(yield* rollBackRewoundRuns(input, {
                       threadId,
                       providerThreadId: input.event.providerThread.id,
@@ -902,10 +926,16 @@ export const layer: Layer.Layer<
                   );
                 }),
               ),
-              (effect) =>
-                input.event.type === "app_thread.created"
-                  ? threadCommands.withLock(input.event.appThread.id, effect)
-                  : effect,
+              (effect) => {
+                const threadId =
+                  input.event.type === "app_thread.created"
+                    ? input.event.appThread.id
+                    : input.event.type === "provider_thread.updated" &&
+                        input.event.modelSelectionChange !== undefined
+                      ? (input.event.providerThread.appThreadId ?? input.threadId)
+                      : null;
+                return threadId === null ? effect : threadCommands.withLock(threadId, effect);
+              },
             ),
         ),
     });
