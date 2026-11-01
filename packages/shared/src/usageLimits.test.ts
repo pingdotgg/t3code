@@ -129,6 +129,7 @@ describe("new thread model fallback", () => {
     ["cursor", ["autoPercentUsed"], "claude-opus-5-5", false, undefined, undefined],
     ["cursor", ["autoPercentUsed"], "composer-2.5", false, undefined, undefined],
     ["cursor", ["autoPercentUsed", "apiPercentUsed"], "composer-2.5", true, undefined, undefined],
+    ["cursor", ["spendLimit"], "composer-2.5", true, undefined, undefined],
     ["antigravity", ["gemini-weekly"], "claude-opus-5-5", false, undefined, undefined],
     ["antigravity", ["3p-weekly"], "claude-opus-5-5", true, undefined, undefined],
     ["antigravity", ["gemini-weekly"], "antigravity-default", true, undefined, undefined],

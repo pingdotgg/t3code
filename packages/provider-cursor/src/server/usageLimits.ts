@@ -16,15 +16,25 @@ import {
 import { DEFAULT_CURSOR_API_ENDPOINT, exchangeCursorApiKey } from "./apiKey.ts";
 
 const NO_LIMITS_MESSAGE =
-  "Cursor doesn't report usage limits for this account. Open Cursor's dashboard with the same account to see its usage.";
+  "Cursor doesn't report a personal spend limit for this account. Open Cursor's dashboard with the same account to see its usage.";
+const CursorInt64 = Schema.Union([Schema.String, Schema.Number]);
 const CursorUsageResponse = Schema.Struct({
-  billingCycleStart: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
-  billingCycleEnd: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
+  billingCycleStart: Schema.optional(CursorInt64),
+  billingCycleEnd: Schema.optional(CursorInt64),
   planUsage: Schema.optional(
     Schema.Struct({
+      limit: Schema.optional(CursorInt64),
       totalPercentUsed: Schema.optional(Schema.Number),
       autoPercentUsed: Schema.optional(Schema.Number),
       apiPercentUsed: Schema.optional(Schema.Number),
+    }),
+  ),
+  spendLimitUsage: Schema.optional(
+    Schema.Struct({
+      overallLimit: Schema.optional(CursorInt64),
+      overallUsed: Schema.optional(CursorInt64),
+      individualLimit: Schema.optional(CursorInt64),
+      individualUsed: Schema.optional(CursorInt64),
     }),
   ),
 });
@@ -34,20 +44,29 @@ export function cursorUsageResponseToLimits(
   response: typeof CursorUsageResponse.Type,
   checkedAt: string,
 ) {
-  const reset = DateTime.make(Number(response.billingCycleEnd));
+  const end = Number(response.billingCycleEnd);
+  const cycleStart = Number(response.billingCycleStart);
+  const reset = DateTime.make(end);
+  // Without includePooledUsage, Cursor reports start = end = now instead of the cycle.
   const resetsAt =
-    Number(response.billingCycleEnd) > 0 && Option.isSome(reset)
+    end > 0 && !(cycleStart >= end) && Option.isSome(reset)
       ? DateTime.formatIso(reset.value)
       : undefined;
-  const cycleStart = Number(response.billingCycleStart);
+  const { planUsage, spendLimitUsage: spend } = response;
+  // Usage-based plans such as Enterprise send zeroed percentages without an allowance.
+  const usageBased =
+    spend !== undefined &&
+    planUsage?.limit === undefined &&
+    !planUsage?.totalPercentUsed &&
+    !planUsage?.autoPercentUsed &&
+    !planUsage?.apiPercentUsed;
   const windowDurationMins =
-    resetsAt && cycleStart > 0
-      ? Math.round((Number(response.billingCycleEnd) - cycleStart) / 60_000)
-      : 0;
+    resetsAt && cycleStart > 0 ? Math.round((end - cycleStart) / 60_000) : 0;
   const windows: ServerProviderUsageWindow[] = [];
-  if (response.planUsage) {
+  if (planUsage && !usageBased) {
     for (const { id, label } of CURSOR_USAGE_WINDOWS) {
-      const usedPercent = response.planUsage[id];
+      if (id === "spendLimit") continue;
+      const usedPercent = planUsage[id];
       if (usedPercent === undefined || !Number.isFinite(usedPercent)) continue;
       windows.push({
         id,
@@ -59,8 +78,18 @@ export function cursorUsageResponseToLimits(
       });
     }
   }
+  const spendLimit = Number(spend?.overallLimit ?? spend?.individualLimit);
+  const spent = Number(spend?.overallUsed ?? spend?.individualUsed ?? 0);
+  if (windows.length === 0 && spendLimit > 0 && Number.isFinite(spent)) {
+    windows.push({
+      id: "spendLimit",
+      kind: "monthly",
+      label: "Spend",
+      usedPercent: clampPercent((spent / spendLimit) * 100),
+      ...(resetsAt ? { resetsAt } : {}),
+    });
+  }
   if (windows.length > 0) return makeUsageLimits({ checkedAt, windows });
-  // Usage-based plans such as Enterprise report no percentages; Cursor's CLI shows only spend.
   return {
     ...makeUnavailableUsageLimits({ checkedAt, reason: "unsupported", message: NO_LIMITS_MESSAGE }),
     externalUsage: { label: "Cursor usage", url: "https://cursor.com/dashboard?tab=usage" },
@@ -99,7 +128,7 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
           "connect-protocol-version": "1",
           "x-cursor-client-type": "cli",
         }),
-        HttpClientRequest.bodyJsonUnsafe({}),
+        HttpClientRequest.bodyJsonUnsafe({ includePooledUsage: true }),
       ),
     );
     const body = yield* HttpClientResponse.schemaBodyJson(CursorUsageResponse)(
