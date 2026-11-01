@@ -185,7 +185,8 @@ export function QueuedRunsControl({
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued[0];
-      if (!next || !canSend) return false;
+      // Like its Send now button, a message open in the composer waits for Save or Cancel.
+      if (!next || !canSend || next.run.id === props.editingRunId) return false;
       if (!repeat && busyRunId === null) void sendQueuedMessage(next.run.id);
       return true;
     },

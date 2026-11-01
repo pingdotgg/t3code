@@ -100,9 +100,11 @@ export function usageLimitRunPresentedAsLatest(
 export function latestUnheldRun(
   runs: ReadonlyArray<OrchestrationV2Run>,
 ): OrchestrationV2Run | null {
+  // An open edit holds its run and the ones behind it; any ahead of it start at once.
+  const editing = runs.some((run) => run.status === "queued" && run.editing === true);
   let latest: OrchestrationV2Run | null = null;
   for (const run of runs) {
-    if (run.status === "queued" && run.queueHeld === true) continue;
+    if (run.status === "queued" && (run.queueHeld === true || editing)) continue;
     if (latest === null || run.ordinal > latest.ordinal) latest = run;
   }
   return latest;

@@ -221,8 +221,9 @@ The pencil on a queued message opens it in the composer for editing. The origina
 stays in the queue until you save, and it is highlighted while you edit. The message's
 attachments appear above the text with a remove control, and new images can be added the usual way.
 The checkmark saves the queued message in place; **Cancel** next to it leaves it unchanged. Whatever
-you had typed in the composer before starting the edit is restored afterwards. If the queued
-message starts or is removed while you are editing, the edit ends: changed content moves into the
+you had typed in the composer before starting the edit is restored afterwards. The message and the
+ones behind it wait while you edit, even if the current turn finishes. If the queued message is
+sent or removed elsewhere while you are editing, the edit ends: changed content moves into the
 composer when it is empty, and is discarded otherwise.
 
 ## Commands and skills
