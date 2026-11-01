@@ -226,6 +226,29 @@ describe("workspace area focus", () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(composer.button));
   });
 
+  it("keeps focus on the control a panel tab switch came from", () => {
+    using fixture = setup();
+    const panel = fixture.area("panel", 3);
+    const content = document.createElement("div");
+    content.setAttribute("data-right-panel-surface-content", "");
+    const row = (name: string) => {
+      const button = document.createElement("button");
+      button.textContent = name;
+      content.append(button);
+      return button;
+    };
+    const earlierRow = row("reference-analysis.md");
+    const clickedRow = row("print-guide.md");
+    panel.element.append(content);
+    panel.element.dataset.workspaceFocusKey = "panel:file:print-guide.md";
+    earlierRow.focus();
+    panel.element.dataset.workspaceFocusKey = "panel:file:reference-analysis.md";
+    clickedRow.focus();
+    panel.element.dataset.workspaceFocusKey = "panel:file:print-guide.md";
+    expect(fixture.controller.focus("panel")).toBe(true);
+    expect(document.activeElement).toBe(clickedRow);
+  });
+
   it("waits for a requested area to mount", async () => {
     using fixture = setup();
     fixture.area("composer", 2);

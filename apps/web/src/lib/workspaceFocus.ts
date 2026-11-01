@@ -186,6 +186,7 @@ export function createWorkspaceFocusController(doc: Document) {
     // A lazy surface's Suspense fallback is empty. Wait for its content instead
     // of claiming focus on the tab strip before the useful controls mount.
     if (surface && !surface.hasChildNodes()) return false;
+    if (!selector && surface?.contains(doc.activeElement)) return true;
     if (selector) {
       const target = area.querySelector<HTMLElement>(selector);
       if (!target || !isWorkspaceElementVisible(target)) return false;
