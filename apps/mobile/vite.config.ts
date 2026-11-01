@@ -38,6 +38,7 @@ const reactTests = [
   "src/features/threads/use-thread-list-now.test.tsx",
   "src/features/home/home-list-options.test.tsx",
   "src/features/workspace/useSearchScrollRestoration.test.tsx",
+  "src/features/connection/useRetryEnvironment.test.tsx",
   "src/features/connection/ConnectionsNewRouteScreen.test.tsx",
 ];
 
