@@ -35,6 +35,7 @@ describe("buildThreadActionMenuItems", () => {
         isPinned: reversed,
         isSettled: reversed,
         isSnoozed: reversed,
+        projectFilter: { label: "Example project", isActive: reversed },
       });
       const expected = reversed
         ? [
@@ -58,6 +59,7 @@ describe("buildThreadActionMenuItems", () => {
             "delete",
           ];
       expect(items.filter((item) => item.disabled).map((item) => item.id)).toEqual(expected);
+      expect(items.map((item) => item.id)).toContain("filter-by-project");
       expect(
         items.find((item) => item.id === "snooze")?.children?.every((child) => child.disabled) ??
           true,

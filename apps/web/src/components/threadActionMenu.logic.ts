@@ -102,6 +102,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
   return ![
     "find",
     "new-thread-on-branch",
+    "filter-by-project",
     "project-settings",
     "mark-unread",
     "share-guest",
