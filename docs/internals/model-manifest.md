@@ -34,3 +34,8 @@ models.
 Model data is schema-validated configuration. Tests should cover resolver, cache,
 and adapter semantics with synthetic model names, so adding a model never requires
 tests that repeat the configuration.
+
+Refresh third-party scores with `vp run benchmarks:refresh`, then format and
+review the diff. Slopalytics has no JSON endpoint, so the script reads its JS
+bundle; bundle changes can break parsing. Keep the benchmarks section last
+because the script rewrites it in place.

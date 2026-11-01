@@ -114,6 +114,31 @@ export type CustomModelEntry = typeof CustomModelEntry.Type;
 export const CustomModelSetting = Schema.Union([Schema.String, CustomModelEntry]);
 export type CustomModelSetting = typeof CustomModelSetting.Type;
 
+/** Benchmark family IDs replace model slug dots with dashes; effort may be `default`. */
+export const ModelBenchmarkVariant = Schema.Struct({
+  model: TrimmedNonEmptyString,
+  effort: TrimmedNonEmptyString,
+  intelligence: Schema.Finite,
+  /** USD per benchmark task at API list prices. */
+  costPerTask: Schema.Finite,
+});
+export type ModelBenchmarkVariant = typeof ModelBenchmarkVariant.Type;
+
+export const ModelBenchmarks = Schema.Struct({
+  source: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  updatedAt: TrimmedNonEmptyString,
+  variants: Schema.Array(ModelBenchmarkVariant),
+});
+export type ModelBenchmarks = typeof ModelBenchmarks.Type;
+
+// Malformed or newer-shaped scores must not reject the manifest or config payload.
+export const OptionalModelBenchmarks = Schema.optional(
+  Schema.UndefinedOr(ModelBenchmarks).pipe(
+    Schema.catchDecoding(() => Effect.succeedSome(undefined)),
+  ),
+);
+
 const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");

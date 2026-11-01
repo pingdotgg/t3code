@@ -1793,6 +1793,8 @@ export const layerWsRpc = (
           directEndpoints: directEndpoints.resolve(),
         });
 
+        const { benchmarks } = yield* modelManifest.current;
+
         return {
           environment,
           auth,
@@ -1845,6 +1847,7 @@ export const layerWsRpc = (
             onSome: (root) => ({ scratchWorkspaceRoot: root }),
           }),
           newProjectsRoot: managedFolders.namedProjectsRoot,
+          ...(benchmarks ? { modelBenchmarks: benchmarks } : {}),
           ...(lastEventLoopStall === undefined ? {} : { lastEventLoopStall }),
         };
       });
