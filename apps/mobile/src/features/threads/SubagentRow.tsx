@@ -4,7 +4,10 @@ import {
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
-import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
+import {
+  resolveSubagentMetadata,
+  resolveSubagentModelTraits,
+} from "@t3tools/client-runtime/state/subagent-display";
 import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { View } from "react-native";
@@ -14,6 +17,8 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import { useEnvironmentServerConfig, useProject, useThreadShell } from "../../state/entities";
+import { useEnvironmentQuery } from "../../state/query";
+import { threadFamilies } from "../../state/threads";
 import { subagentCardDetail } from "./subagent-card-presentation";
 import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
 import { resolveSubagentRowPresentation } from "./threadAgentsPresentation";
@@ -23,6 +28,8 @@ type SubagentRowSubagent = Pick<
   | "threadId"
   | "childThreadId"
   | "model"
+  | "modelSelection"
+  | "origin"
   | "driver"
   | "providerInstanceId"
   | "title"
@@ -125,9 +132,27 @@ function SubagentMetadata(props: {
   );
   const showBadge = provider !== undefined && shouldShowInstanceBadge(provider, providers);
   const parent = useThreadShell(scopeThreadRef(environmentId, subagent.threadId))?.source;
-  const child = useThreadShell(
-    subagent.childThreadId === null ? null : scopeThreadRef(environmentId, subagent.childThreadId),
-  )?.source;
+  const childRef =
+    subagent.childThreadId !== null
+      ? scopeThreadRef(environmentId, subagent.childThreadId)
+      : subagent.remoteChild
+        ? scopeThreadRef(subagent.remoteChild.environmentId, subagent.remoteChild.threadId)
+        : null;
+  const childShell = useThreadShell(childRef)?.source;
+  const family = useEnvironmentQuery(
+    childRef !== null &&
+      childShell === undefined &&
+      subagent.origin === "app_owned" &&
+      subagent.modelSelection === undefined
+      ? threadFamilies.familyAtom(
+          childRef.environmentId,
+          subagent.childThreadId !== null ? subagent.threadId : childRef.threadId,
+        )
+      : null,
+  );
+  const selectionChild =
+    childShell ?? family.data?.threads.find((row) => row.id === childRef?.threadId);
+  const child = subagent.childThreadId === null ? undefined : childShell;
   const parentProject = useProject(
     parent ? scopeProjectRef(environmentId, parent.projectId) : null,
   );
@@ -140,6 +165,18 @@ function SubagentMetadata(props: {
     parentProject,
     childProject,
   });
+  const { effortLabel, speed } = resolveSubagentModelTraits({
+    model: subagent.model,
+    providerInstanceId: subagent.providerInstanceId,
+    origin: subagent.origin,
+    modelSelection: subagent.modelSelection,
+    childThread: selectionChild,
+    provider,
+  });
+  const traits = [
+    effortLabel,
+    speed === "ultrafast" ? "Ultrafast" : speed === "fast" ? "Fast" : null,
+  ].filter((trait) => trait !== null);
   return (
     <View className="min-w-0 flex-row items-center gap-1.5">
       {showBadge ? (
@@ -160,7 +197,7 @@ function SubagentMetadata(props: {
       )}
       <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
         {provider ? `${resolveProviderInstanceDisplayName(provider)} · ` : ""}
-        {modelLabel}
+        {[modelLabel, ...traits].join(" · ")}
       </Text>
       {workspace.map(({ label, value }) => (
         // Preserve the label against flattening without making it a separate accessibility stop.

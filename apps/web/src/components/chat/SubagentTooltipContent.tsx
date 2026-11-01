@@ -9,11 +9,10 @@ import type {
 } from "@t3tools/contracts";
 import {
   resolveSubagentMetadata,
+  resolveSubagentModelTraits,
   subagentDetailPreview,
 } from "@t3tools/client-runtime/state/subagent-display";
-import { REASONING_EFFORT_OPTION_IDS } from "@t3tools/client-runtime/state/thread-execution";
-import { getModelSelectionStringOptionValue, resolveSelectableModel } from "@t3tools/shared/model";
-import { getTraitsSpeedDisplay, TraitsSpeedIcon } from "./TraitsSpeed";
+import { TraitsSpeedIcon } from "./TraitsSpeed";
 import type { ReactNode } from "react";
 import {
   BotIcon,
@@ -52,59 +51,8 @@ export function SubagentTooltipContent(props: {
 }) {
   const { modelLabel, workspace: metadata } = resolveSubagentMetadata(props);
   const preview = subagentDetailPreview(props);
-  const model = props.model?.trim();
-  const modelSlug = props.provider
-    ? resolveSelectableModel(props.provider.driver, model, props.provider.models)
-    : model;
-  const providerModel = props.provider?.models.find((candidate) => candidate.slug === modelSlug);
-  const childSelection =
-    props.modelSelection ??
-    (props.origin === "app_owned" ? props.childThread?.modelSelection : undefined);
-  const childModel = props.provider
-    ? (resolveSelectableModel(
-        props.provider.driver,
-        childSelection?.model,
-        props.provider.models,
-      ) ?? childSelection?.model.trim())
-    : childSelection?.model.trim();
+  const { effortLabel: effort, speed } = resolveSubagentModelTraits(props);
   const provider = props.provider;
-  const matchingSelection =
-    childModel === (modelSlug ?? model) && childSelection?.instanceId === props.providerInstanceId
-      ? childSelection
-      : undefined;
-  const effort = REASONING_EFFORT_OPTION_IDS.map((id) =>
-    getModelSelectionStringOptionValue(matchingSelection, id),
-  ).find(Boolean);
-  const speed = provider
-    ? providerModel?.capabilities?.optionDescriptors
-        ?.map((descriptor) => {
-          const saved = matchingSelection?.options?.find((option) => option.id === descriptor.id);
-          if (
-            descriptor.id === "fastMode" &&
-            descriptor.type === "boolean" &&
-            typeof saved?.value === "boolean"
-          ) {
-            return getTraitsSpeedDisplay(provider.driver, {
-              ...descriptor,
-              currentValue: saved.value,
-            });
-          }
-          if (
-            provider.driver === "codex" &&
-            descriptor.id === "serviceTier" &&
-            descriptor.type === "select" &&
-            typeof saved?.value === "string" &&
-            descriptor.options.some((option) => option.id === saved.value)
-          ) {
-            return getTraitsSpeedDisplay(provider.driver, {
-              ...descriptor,
-              currentValue: saved.value,
-            });
-          }
-          return null;
-        })
-        .find(Boolean)
-    : undefined;
   const driver = props.provider?.driver ?? props.driver;
   const entries = deriveProviderInstanceEntries(props.providers ?? []);
   const entry = entries.find((candidate) => candidate.instanceId === props.provider?.instanceId);
@@ -139,11 +87,11 @@ export function SubagentTooltipContent(props: {
           <span className="min-w-0 truncate">
             {showInstanceBadge ? `${modelLabel} · ${entry.displayName}` : modelLabel}
           </span>
-          {effort || speed?.speedIcon ? (
+          {effort || speed ? (
             <span className="inline-flex shrink-0 items-center gap-1">
               {effort ? " · " : null}
-              {speed?.speedIcon && provider ? (
-                <TraitsSpeedIcon provider={provider.driver} speedIcon={speed.speedIcon} size="xs" />
+              {speed && provider ? (
+                <TraitsSpeedIcon provider={provider.driver} speedIcon={speed} size="xs" />
               ) : null}
               {effort}
             </span>

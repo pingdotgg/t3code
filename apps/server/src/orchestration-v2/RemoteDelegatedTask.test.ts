@@ -215,6 +215,7 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
       const projection = yield* orchestrator.getThreadProjection(parent.threadId);
       assert.equal(projection.subagents.length, 1);
       const [task] = projection.subagents;
+      assert.deepEqual(task?.modelSelection, modelSelection);
       assert.equal(task?.childThreadId, null);
       assert.deepEqual(task?.remoteChild, remoteChild);
       assert.equal(task?.status, "running");

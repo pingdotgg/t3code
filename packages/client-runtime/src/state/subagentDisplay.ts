@@ -1,12 +1,21 @@
 import type {
+  ModelSelection,
+  OrchestrationV2Subagent,
   OrchestrationV2TurnItemStatus,
   OrchestrationV2ThreadShell,
   OrchestrationProjectShell,
+  ProviderInstanceId,
   ServerProvider,
 } from "@t3tools/contracts";
-import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
+import {
+  formatModelSlugName,
+  getModelSelectionBooleanOptionValue,
+  getModelSelectionStringOptionValue,
+  resolveSelectableModel,
+} from "@t3tools/shared/model";
 import { fileBasename } from "@t3tools/shared/path";
 import { resolveModelShortName } from "../providerClients.ts";
+import { REASONING_EFFORT_OPTION_IDS } from "./threadExecution.ts";
 import { isTerminalSubagentStatus } from "./subagentRuntime.ts";
 
 export function subagentGroupSummary(
@@ -109,6 +118,74 @@ export function resolveSubagentMetadata(input: {
       : []),
   ];
   return { modelLabel, workspace };
+}
+
+/**
+ * The reasoning effort and speed a subagent runs at, named as the composer
+ * names them. Only a selection for the model the subagent reported counts,
+ * since another model's options say nothing about this one. Normal speed is
+ * null: only a faster mode is worth calling out.
+ */
+export function resolveSubagentModelTraits(input: {
+  readonly model: string | null;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly origin: OrchestrationV2Subagent["origin"];
+  readonly modelSelection?: ModelSelection | undefined;
+  /**
+   * Older app-owned records carry no selection; their child thread's stands
+   * in. A provider-native child's selection is inherited, not reported, so it
+   * says nothing about how the provider ran it.
+   */
+  readonly childThread?: Pick<OrchestrationV2ThreadShell, "modelSelection"> | null | undefined;
+  readonly provider?: Pick<ServerProvider, "driver" | "models"> | null | undefined;
+}): { readonly effortLabel: string | null; readonly speed: "fast" | "ultrafast" | null } {
+  const { provider } = input;
+  const resolve = (model: string | undefined) =>
+    (provider ? resolveSelectableModel(provider.driver, model, provider.models) : null) ??
+    model?.trim();
+  const selection =
+    input.modelSelection ??
+    (input.origin === "app_owned" ? input.childThread?.modelSelection : undefined);
+  const modelSlug = resolve(input.model ?? undefined);
+  if (
+    selection === undefined ||
+    modelSlug === undefined ||
+    selection.instanceId !== input.providerInstanceId ||
+    resolve(selection.model) !== modelSlug
+  ) {
+    return { effortLabel: null, speed: null };
+  }
+  const descriptors =
+    provider?.models.find((candidate) => candidate.slug === modelSlug)?.capabilities
+      ?.optionDescriptors ?? [];
+  // Claude native selections can contain inherited effort instead of the agent definition's value.
+  const effortLabel =
+    input.origin === "provider_native" && (provider == null || provider.driver === "claudeAgent")
+      ? null
+      : (REASONING_EFFORT_OPTION_IDS.map((id) => {
+          const value = getModelSelectionStringOptionValue(selection, id);
+          if (value === undefined) return undefined;
+          const descriptor = descriptors.find((candidate) => candidate.id === id);
+          return descriptor?.type === "select"
+            ? (descriptor.options.find((option) => option.id === value)?.label ?? value)
+            : value;
+        }).find(Boolean) ?? null);
+  const fastMode =
+    descriptors.some(({ id, type }) => id === "fastMode" && type === "boolean") &&
+    getModelSelectionBooleanOptionValue(selection, "fastMode") === true;
+  // A duplicated tier id does not identify which speed was selected.
+  const tierDescriptor = descriptors.find(({ id }) => id === "serviceTier");
+  const tier =
+    provider?.driver === "codex"
+      ? getModelSelectionStringOptionValue(selection, "serviceTier")
+      : undefined;
+  const tiers =
+    tierDescriptor?.type === "select"
+      ? tierDescriptor.options.filter((option) => option.id === tier)
+      : [];
+  const onTier = (label: string) => tiers.length === 1 && tiers[0]?.label === label;
+  const speed = onTier("Ultrafast") ? "ultrafast" : fastMode || onTier("Fast") ? "fast" : null;
+  return { effortLabel, speed };
 }
 
 export function subagentDetailPreview(input: {

@@ -210,7 +210,7 @@ async function click(element: HTMLElement) {
 }
 
 function setup({ scheduledTasks = [] as ReadonlyArray<{ id: string; title: string }> } = {}) {
-  environmentQuery.data = { tasks: scheduledTasks };
+  environmentQuery.data = { tasks: scheduledTasks, threads: [] };
 }
 
 const TASK_ID = ScheduledTaskId.make("task-1");
