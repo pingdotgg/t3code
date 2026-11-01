@@ -7,7 +7,7 @@ import {
   type ConnectionCatalogEntry,
   type ConnectionRoute,
 } from "./catalog.ts";
-import { gitHubRoutingConnectionKey } from "./githubRoutingPermissions.ts";
+import { pullRequestRoutingConnectionKey } from "./pullRequestRoutingPermissions.ts";
 import { BearerConnectionTarget, RelayConnectionTarget } from "./model.ts";
 import {
   connectionRouteId,
@@ -17,6 +17,7 @@ import {
   insertRoute,
   entryWithRoutes,
   mergeLearnedRoutes,
+  pendingRouteOrder,
   removedWithRelay,
   routesAfterRemoving,
   sendsTokenInClear,
@@ -86,6 +87,14 @@ describe("connection routes", () => {
   it("keeps a user's order when a saved route is replaced", () => {
     const repaired = direct("lan", "http://192.168.1.11:3773/");
     expect(upsertRoute([RELAY, LAN], repaired)).toEqual([RELAY, repaired]);
+  });
+
+  it("shows a dragged order only until the saved routes catch up or change", () => {
+    const dragged = ["tailnet", "lan"];
+    expect(pendingRouteOrder(dragged, ["lan", "tailnet"])).toBe(dragged);
+    expect(pendingRouteOrder(dragged, ["tailnet", "lan"])).toBeNull();
+    expect(pendingRouteOrder(dragged, ["lan", "public"])).toBeNull();
+    expect(pendingRouteOrder(dragged, ["lan", "tailnet", "public"])).toBeNull();
   });
 });
 
@@ -347,7 +356,7 @@ describe("learned routes", () => {
     expect(removedWithRelay(entryWithRoutes(relayOnly, [LAN, RELAY]))).toBe(false);
   });
 
-  it("keeps GitHub routing trust when a route is learned", () => {
+  it("keeps pull request routing trust when a route is learned", () => {
     const learned = mergeLearnedRoutes({
       entry: relayOnly,
       activeRoute: RELAY,
@@ -360,7 +369,9 @@ describe("learned routes", () => {
       profile: learned[0]!.profile,
       alternateRoutes: learned.slice(1),
     };
-    expect(gitHubRoutingConnectionKey(withLearned)).toBe(gitHubRoutingConnectionKey(relayOnly));
+    expect(pullRequestRoutingConnectionKey(withLearned)).toBe(
+      pullRequestRoutingConnectionKey(relayOnly),
+    );
   });
 
   it("keeps the T3 Connect credential when learning over a learned T3 Connect route", () => {

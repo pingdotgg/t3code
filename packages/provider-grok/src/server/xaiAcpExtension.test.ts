@@ -341,9 +341,7 @@ describe("XAiAcpExtension", () => {
   });
 
   it("keeps Monitor ticks running while Grok reports them in progress", () => {
-    // Recorded from Grok 1.0.41: every tick is an in_progress update whose
-    // Bash-shaped rawOutput already carries exit_code 0. The monitor ends only
-    // through `_x.ai/task_completed`, never through a completed status.
+    // Grok 1.0.41 ticks report in_progress with exit_code 0; only _x.ai/task_completed ends the monitor.
     const command = "for i in 1 2 3; do sleep 8; echo tick $i; done";
     const started = parseRecordedToolCallUpdate({
       sessionUpdate: "tool_call_update",
@@ -484,12 +482,74 @@ describe("XAiAcpExtension", () => {
     expect(normalized.status).toBe("inProgress");
   });
 
+  it("completes structured command TaskOutput ids without treating them as subagents", () => {
+    // Oracle: BackgroundTaskStarted and TaskOutput from the Grok hang incident.
+    const toolCall: AcpToolCallState = {
+      toolCallId: "call-poll",
+      title: "get_command_or_subagent_output",
+      status: "completed",
+      data: {
+        rawInput: {
+          variant: "TaskOutput",
+          task_ids: ["call-7c835a60-7bf5-4284-a5c7-cf42a4212ece-29"],
+        },
+        rawOutput: {
+          type: "TaskOutput",
+          Result: {
+            task_id: "call-7c835a60-7bf5-4284-a5c7-cf42a4212ece-29",
+            status: "completed",
+            exit_code: 0,
+            output: "done",
+          },
+        },
+      },
+    };
+    expect(extractXAiBackgroundTaskCompletion(toolCall)).toEqual([
+      {
+        taskId: "call-7c835a60-7bf5-4284-a5c7-cf42a4212ece-29",
+        status: "completed",
+        appendOutput: "done",
+      },
+    ]);
+    expect(extractXAiAcpSubagentUpdate(toolCall)).toBeUndefined();
+  });
+
+  it("keeps the normal tool frame for a command result from a mixed-ID poll", () => {
+    // Oracle: review 4325739061 requires the result ID to override requested subagent IDs.
+    const toolCall: AcpToolCallState = {
+      toolCallId: "call-mixed-poll",
+      title: "get_command_or_subagent_output",
+      status: "completed",
+      data: {
+        rawInput: {
+          variant: "TaskOutput",
+          task_ids: [
+            "019f44a6-4820-7402-925d-bc862ee711dd",
+            "call-7c835a60-7bf5-4284-a5c7-cf42a4212ece-29",
+          ],
+        },
+        rawOutput: {
+          type: "TaskOutput",
+          Result: {
+            task_id: "call-7c835a60-7bf5-4284-a5c7-cf42a4212ece-29",
+            status: "completed",
+            exit_code: 0,
+            output: "done",
+          },
+        },
+      },
+    };
+    expect(extractXAiAcpSubagentUpdate(toolCall)).toBeUndefined();
+    expect(extractXAiBackgroundTaskCompletion(toolCall)).toEqual([
+      {
+        taskId: "call-7c835a60-7bf5-4284-a5c7-cf42a4212ece-29",
+        status: "completed",
+        appendOutput: "done",
+      },
+    ]);
+  });
+
   it("hydrates monitor completion from a standalone TaskOutput frame without rawInput", () => {
-    // Post-settle shape observed live (2026-07-12): the final
-    // get_command_or_subagent_output update carries only rawOutput; the frame
-    // is parsed in isolation (no in-turn merge), and this completion is the
-    // ONLY end signal when the agent consumed the output itself (no "Monitor
-    // ended" reminder follows).
     expect(
       extractXAiBackgroundTaskCompletion({
         toolCallId: "call-c29e64dd-ce5d-4eac-a6ca-c20513fefac3-1",
@@ -614,6 +674,87 @@ describe("XAiAcpExtension", () => {
       },
     ]);
   });
+
+  // KillTask replies can report killed and already_exited outcomes.
+  it.each([
+    { rawInput: { task_id: "call-bg-1" }, rawOutput: { type: "KillTask" } },
+    { rawInput: { task_id: "call-bg-1" }, rawOutput: { type: "KillTask", outcome: "killed" } },
+    { rawInput: { variant: "KillTask", task_id: "call-bg-1" } },
+    {
+      rawInput: { variant: "KillTask", task_id: "call-bg-1" },
+      rawOutput: { type: "KillTask", outcome: "already_exited" },
+    },
+  ])("closes a background command from structured KillTask fields: %j", (data) => {
+    expect(
+      extractXAiKilledBackgroundTasks({
+        toolCallId: "call-kill",
+        title: "kill call-bg-1 (killed)",
+        status: "completed",
+        data,
+      }),
+    ).toEqual([{ taskId: "call-bg-1", status: "completed", appendOutput: "" }]);
+    expect(
+      extractXAiAcpSubagentUpdate({
+        toolCallId: "call-kill",
+        title: "kill call-bg-1 (killed)",
+        status: "completed",
+        data,
+      }),
+    ).toBeUndefined();
+  });
+
+  // Native child status still comes from its lifecycle/result path, not the kill RPC.
+  it.each(["Kill", "KillTask"])(
+    "keeps %s aimed at a native child out of child result parsing",
+    (variant) => {
+      expect(
+        extractXAiAcpSubagentUpdate({
+          toolCallId: "call-kill-child",
+          title: "kill 019f44b8-8e98-7c80-a40e-df1e26a5f9e3 (killed)",
+          status: "completed",
+          data: {
+            rawInput: { variant, task_id: "019f44b8-8e98-7c80-a40e-df1e26a5f9e3" },
+            rawOutput: { type: "KillTask", outcome: "killed" },
+          },
+        }),
+      ).toBeUndefined();
+    },
+  );
+
+  // A successful RPC is not proof of a successful kill when its outcome says otherwise.
+  it.each([
+    { type: "KillTask", outcome: "failed" },
+    { type: "KillTask", Result: { task_id: "call-bg-1", outcome: "error" } },
+  ])("ignores a KillTask whose outcome is not a kill: %j", (rawOutput) => {
+    expect(
+      extractXAiKilledBackgroundTasks({
+        toolCallId: "call-kill",
+        title: "kill call-bg-1 (failed)",
+        status: "completed",
+        data: {
+          rawInput: { variant: "KillTask", task_id: "call-bg-1" },
+          rawOutput,
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it.each(["failed", "inProgress"] as const)(
+    "does not close the target of a %s KillTask call",
+    (status) => {
+      expect(
+        extractXAiKilledBackgroundTasks({
+          toolCallId: "call-kill",
+          title: "kill call-bg-1 (killed)",
+          status,
+          data: {
+            rawInput: { variant: "KillTask", task_id: "call-bg-1" },
+            rawOutput: { type: "KillTask", outcome: "killed" },
+          },
+        }),
+      ).toEqual([]);
+    },
+  );
 
   it("tombstones confirmed kills and ignores failed kill calls", () => {
     expect(
@@ -1109,8 +1250,6 @@ describe("XAiAcpExtension", () => {
   );
 
   it("maps subagent_finished to a notice only for statuses Grok defines", () => {
-    // Recorded from Grok 1.0.41 (ids normalized); statuses per grok-build
-    // xai-grok-tools/.../task/types.rs `status()`.
     const finished = (update: Record<string, unknown>) =>
       xAiSubagentFinishedNotice({
         sessionId: "root-session",

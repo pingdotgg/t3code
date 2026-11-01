@@ -9,7 +9,11 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
 
-import { GitCommandError, SourceControlProviderError } from "@t3tools/contracts";
+import {
+  GitCommandError,
+  SourceControlProviderError,
+  type SourceControlCloneRepositoryInput,
+} from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -96,6 +100,51 @@ function layer(input: {
       )
     : layerService.pipe(Layer.provideMerge(NodeServices.layer));
 }
+
+const lookupFailingWith = (cause: unknown, detail: string) =>
+  Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    return yield* service
+      .lookupRepository({ provider: SourceControlProviderKind.make("bitbucket"), repository: "x" })
+      .pipe(Effect.flip);
+  }).pipe(
+    Effect.provide(
+      layer({
+        provider: makeProvider({
+          getRepositoryCloneUrls: (input) =>
+            Effect.fail(
+              new SourceControlProviderError({
+                provider: SourceControlProviderKind.make("bitbucket"),
+                operation: "getRepositoryCloneUrls",
+                cwd: input.cwd,
+                detail,
+                cause,
+              }),
+            ),
+        }),
+      }),
+    ),
+  );
+
+it.effect("tells the user a host's fixed explanation of a failed repository lookup", () =>
+  Effect.gen(function* () {
+    const error = yield* lookupFailingWith(
+      { userFacingDetail: "Repositories are named workspace/repository." },
+      "Repositories are named workspace/repository.",
+    );
+    assert.strictEqual(error.detail, "Repositories are named workspace/repository.");
+  }),
+);
+
+it.effect("keeps a host's raw response text out of a failed repository lookup", () =>
+  Effect.gen(function* () {
+    const error = yield* lookupFailingWith(
+      new Error("upstream"),
+      "<html>internal token=abc</html>",
+    );
+    assert.strictEqual(error.detail, "The source control operation could not be completed.");
+  }),
+);
 
 it.effect("clones a looked-up repository after creating missing parent directories", () =>
   Effect.gen(function* () {
@@ -240,6 +289,154 @@ it.effect("reports clone progress from git's stderr and keeps its error text on 
       "fatal: early EOF fatal: unable to access 'https://github.com/octocat/t3code.git/': could not resolve host",
     );
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+function rejectingSsh(
+  urls: Array<string>,
+  httpsFails: boolean,
+  reason: GitCommandError["reason"] = "authentication_failed",
+) {
+  return {
+    execute: (input: GitVcsDriver.ExecuteGitInput) =>
+      Effect.gen(function* () {
+        const url = input.args.at(-2)!;
+        urls.push(url);
+        if (url.startsWith("https://") && !httpsFails) return processOutput();
+        yield* (
+          input.progress?.onStderrLine?.(
+            url.startsWith("https://")
+              ? "fatal: could not read Username for 'https://github.com': terminal prompts disabled"
+              : "git@github.com: Permission denied (publickey).",
+          ) ?? Effect.void
+        );
+        return yield* new GitCommandError({
+          operation: input.operation,
+          command: "git",
+          cwd: input.cwd,
+          reason,
+          detail: "Git command exited with a non-zero status.",
+        });
+      }),
+  } satisfies Partial<GitVcsDriver.GitVcsDriver["Service"]>;
+}
+
+const cloneInTemporaryDirectory = (
+  git: Partial<GitVcsDriver.GitVcsDriver["Service"]>,
+  input: Omit<SourceControlCloneRepositoryInput, "destinationPath">,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs
+      .makeTempDirectoryScoped({ prefix: "t3-clone-fallback-" })
+      .pipe(Effect.orDie);
+    return yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      return yield* service.cloneRepository({
+        ...input,
+        destinationPath: path.join(parent, "t3code"),
+      });
+    }).pipe(Effect.provide(layer({ git }).pipe(Layer.orDie)));
+  }).pipe(Effect.provide(NodeServices.layer));
+
+it.effect("retries a clone over HTTPS when the SSH login is refused", () =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    const result = yield* cloneInTemporaryDirectory(rejectingSsh(urls, false), {
+      remoteUrl: CLONE_URLS.sshUrl,
+    });
+
+    assert.deepStrictEqual(urls, [CLONE_URLS.sshUrl, "https://github.com/octocat/t3code.git"]);
+    assert.strictEqual(result.remoteUrl, "https://github.com/octocat/t3code.git");
+  }),
+);
+
+it.effect("reports both failures when the HTTPS retry fails too", () =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    const error = yield* Effect.flip(
+      cloneInTemporaryDirectory(rejectingSsh(urls, true), { remoteUrl: CLONE_URLS.sshUrl }),
+    );
+
+    assert.strictEqual(urls.length, 2);
+    assert.strictEqual(
+      error.detail,
+      "git@github.com: Permission denied (publickey). Cloning over HTTPS instead also failed: fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+    );
+  }),
+);
+
+it.effect.each([
+  ["the caller asked for SSH", "ssh", "authentication_failed"],
+  ["git failed for another reason", undefined, "remote_unreachable"],
+] as const)("does not retry over HTTPS when %s", ([, protocol, reason]) =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    yield* Effect.flip(
+      cloneInTemporaryDirectory(rejectingSsh(urls, false, reason), {
+        remoteUrl: CLONE_URLS.sshUrl,
+        ...(protocol === undefined ? {} : { protocol }),
+      }),
+    );
+
+    assert.deepStrictEqual(urls, [CLONE_URLS.sshUrl]);
+  }),
+);
+
+it.effect.each([
+  ["a plain token", "s3cret"],
+  ["a token with an apostrophe", "s3'cret"],
+  ["a token with a double quote", 's3"cret'],
+  ["a host-only token with an at sign", "abc@secret"],
+  ["an unquoted token with an apostrophe", "s3'cret", true],
+  ["an unquoted token with a double quote", 's3"cret', true],
+  ["an unquoted URL with an apostrophe in its path", "path-token", true],
+] as const)("keeps %s in the query out of a failed clone's error text", ([, token, unquoted]) =>
+  Effect.gen(function* () {
+    const remote =
+      token === "abc@secret"
+        ? "https://github.com"
+        : token === "path-token"
+          ? "https://github.com/octocat/t3code's.git"
+          : "https://github.com/octocat/t3code.git";
+    const error = yield* Effect.flip(
+      cloneInTemporaryDirectory(
+        {
+          execute: (input) =>
+            Effect.gen(function* () {
+              const cloneUrl = input.args.at(-2)!;
+              // Git treats @ in a pathless URL's query as userinfo, losing the query delimiter.
+              const diagnosticUrl =
+                cloneUrl === "https://github.com?access_token=abc@secret"
+                  ? "https://secret"
+                  : cloneUrl;
+              yield* (
+                input.progress?.onStderrLine?.(
+                  unquoted
+                    ? `fatal: ${diagnosticUrl}/info/refs not valid: is this a git repository?`
+                    : `fatal: unable to access '${diagnosticUrl}/': Could not resolve host: github.com`,
+                ) ?? Effect.void
+              );
+              return yield* new GitCommandError({
+                operation: input.operation,
+                command: "git",
+                cwd: input.cwd,
+                detail: "Git command exited with a non-zero status.",
+                exitCode: 128,
+              });
+            }),
+        },
+        { remoteUrl: `${remote}?access_token=${token}` },
+      ),
+    );
+
+    assert.strictEqual(
+      error.detail,
+      unquoted
+        ? `fatal: ${remote} not valid: is this a git repository?`
+        : `fatal: unable to access '${remote}${token === "abc@secret" ? "/" : ""}': Could not resolve host: github.com`,
+    );
+  }),
 );
 
 it.effect("strips embedded credentials from the remote URL it reports", () =>
