@@ -1332,6 +1332,13 @@ describe("ThreadSettlementServiceV2 terminals", () => {
     occurredAt: DateTime.makeUnsafe(NOW),
     payload: thread,
   });
+  const deletedEvent = (thread: OrchestrationV2AppThread): OrchestrationV2DomainEvent => ({
+    type: "thread.deleted",
+    id: EventId.make(`event:deleted:${thread.id}`),
+    threadId: thread.id,
+    occurredAt: DateTime.makeUnsafe(NOW),
+    payload: { ...thread, deletedAt: DateTime.makeUnsafe(NOW) },
+  });
 
   it.effect("keeps the terminals of a thread re-engaged before the event ran", () =>
     Effect.scoped(
@@ -1409,10 +1416,11 @@ describe("ThreadSettlementServiceV2 terminals", () => {
     ),
   );
 
-  it.effect("runs the settle script once when a settlement is re-emitted", () =>
+  it.effect("runs the settle script once per settlement until the thread is deleted", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const repeated = appThread("repeated-thread", "settled", "/worktrees/repeated");
+        const other = appThread("other-thread", "settled", "/worktrees/other");
         const marker = appThread("marker-thread", "settled", "/worktrees/marker");
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([]),
@@ -1425,7 +1433,13 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
           yield* fixture.publishEvent(settledEvent(repeated));
           yield* fixture.publishEvent(settledEvent(repeated));
+          yield* fixture.publishEvent(deletedEvent(other));
+          yield* fixture.publishEvent(settledEvent(repeated));
+          // A deleted thread cannot settle again; replaying its settlement shows the record is gone.
+          yield* fixture.publishEvent(deletedEvent(repeated));
+          yield* fixture.publishEvent(settledEvent(repeated));
           yield* fixture.publishEvent(settledEvent(marker));
+          assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, repeated.id);
           assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, repeated.id);
           assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, marker.id);
         }).pipe(Effect.provide(fixture.layer));
