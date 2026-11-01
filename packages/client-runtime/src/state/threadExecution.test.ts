@@ -26,6 +26,7 @@ import {
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadRuntime,
+  isBackgroundWorkStopPending,
   presentPendingBackgroundWork,
   presentProviderGoal,
   presentRunStop,
@@ -469,6 +470,35 @@ describe("provider-reported model selection", () => {
         ],
       }),
     ).toBeNull();
+  });
+});
+
+describe("isBackgroundWorkStopPending", () => {
+  const tasks = [{ taskId: "dev-server" }];
+  const sent = { threadKey: "env:thread", taskIds: ["dev-server"], retryAt: null };
+  const accepted = { ...sent, retryAt: 10_000 };
+
+  it("stays pending after acceptance while a stopped task is still listed", () => {
+    expect(isBackgroundWorkStopPending(sent, "env:thread", tasks, false)).toBe(true);
+    expect(isBackgroundWorkStopPending(accepted, "env:thread", tasks, false)).toBe(true);
+  });
+
+  it("ends once the stopped tasks leave, even if new work starts", () => {
+    expect(isBackgroundWorkStopPending(accepted, "env:thread", [], false)).toBe(false);
+    expect(isBackgroundWorkStopPending(accepted, "env:thread", [{ taskId: "next" }], false)).toBe(
+      false,
+    );
+  });
+
+  it("allows retry at the deadline even if a stopped task remains", () => {
+    const request = { ...accepted, retryAt: 10_000 };
+    expect(isBackgroundWorkStopPending(request, "env:thread", tasks, false)).toBe(true);
+    expect(isBackgroundWorkStopPending(request, "env:thread", tasks, true)).toBe(false);
+  });
+
+  it("only applies to the thread that sent the Stop", () => {
+    expect(isBackgroundWorkStopPending(null, "env:thread", tasks, false)).toBe(false);
+    expect(isBackgroundWorkStopPending(sent, "env:other", tasks, false)).toBe(false);
   });
 });
 
