@@ -12383,12 +12383,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     "synthetic-after",
     "inherit",
     "unknown",
+    "requested-parent",
+    "configured-default",
+    "configured-extended",
   ] as const)(
     "records the subagent model from %s without inheriting the parent override",
     (source) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const harness = yield* makeWakeHarness;
+          const harness = yield* makeWakeHarnessWithOptions({
+            environment:
+              source === "configured-default"
+                ? { CLAUDE_CODE_SUBAGENT_MODEL: "claude-opus-4-6" }
+                : source === "configured-extended"
+                  ? { CLAUDE_CODE_SUBAGENT_MODEL: "claude-opus-4-6[1m]" }
+                  : {},
+          });
           const now = yield* DateTime.now;
           const toolUseId = "toolu-subagent-model";
           const parentModel = "claude-opus-4-6";
@@ -12403,7 +12413,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               attemptId: RunAttemptId.make("attempt-subagent-model"),
               text: "Spawn a Haiku subagent.",
               attachments: [],
-              modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, model: parentModel },
+              modelSelection: {
+                ...CLAUDE_TEST_MODEL_SELECTION,
+                model: parentModel,
+                options: [
+                  ...CLAUDE_TEST_MODEL_SELECTION.options,
+                  { id: "contextWindow", value: "1m" },
+                ],
+              },
             }),
           );
           const observed = claudeSdkFrame({
@@ -12438,9 +12455,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     input: {
                       description: "Haiku puzzle",
                       subagent_type: "general-purpose",
-                      ...(source === "unknown"
+                      ...(source === "unknown" || source.startsWith("configured-")
                         ? {}
-                        : { model: source === "inherit" ? "inherit" : "haiku" }),
+                        : {
+                            model:
+                              source === "inherit"
+                                ? "inherit"
+                                : source === "requested-parent"
+                                  ? parentModel
+                                  : "haiku",
+                          }),
                       prompt: "Solve the puzzle.",
                     },
                   },
@@ -12479,18 +12503,31 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const initialModel =
             source === "observed-before"
               ? observedSlug
-              : source === "inherit"
-                ? parentModel
-                : source === "unknown"
-                  ? null
-                  : "claude-haiku-5-5";
+              : source === "configured-extended"
+                ? `${parentModel}[1m]`
+                : source === "inherit" ||
+                    source === "requested-parent" ||
+                    source === "configured-default"
+                  ? parentModel
+                  : source === "unknown"
+                    ? null
+                    : "claude-haiku-5-5";
           assert.equal(subagents[0]?.subagent.model, initialModel);
           assert.equal(
             subagents.at(-1)?.subagent.model,
             source.startsWith("observed") ? observedSlug : initialModel,
           );
           const child = harness.events.find((event) => event.type === "app_thread.created");
-          assert.equal(child?.appThread.modelSelection?.model, initialModel ?? parentModel);
+          assert.equal(
+            child?.appThread.modelSelection?.model,
+            source === "configured-extended" ? parentModel : (initialModel ?? parentModel),
+          );
+          assert.equal(
+            getModelSelectionStringOptionValue(child?.appThread.modelSelection, "contextWindow"),
+            source === "inherit" || source === "unknown" || source === "configured-extended"
+              ? "1m"
+              : undefined,
+          );
         }).pipe(
           Effect.provide(
             Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -12678,7 +12715,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("gives a nested subagent its own effort, else the one its owner runs at", () =>
+  it.effect("keeps nested subagent context while allowing their own effort", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const OUTER_TOOL_USE_ID = "toolu-effort-outer";
@@ -12689,7 +12726,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const parentSelection = {
           instanceId: CLAUDE_TEST_MODEL_SELECTION.instanceId,
           model: "claude-opus-4-6",
-          options: [{ id: "effort", value: "high" }],
+          options: [
+            { id: "contextWindow", value: "1m" },
+            { id: "effort", value: "high" },
+          ],
         } satisfies ModelSelection;
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -12789,6 +12829,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             : [],
         );
         assert.deepEqual(childEfforts, ["low", "low", "max"]);
+        const childContexts = harness.events.flatMap((event) =>
+          event.type === "app_thread.created" && event.appThread.id !== harness.threadId
+            ? [getModelSelectionStringOptionValue(event.appThread.modelSelection, "contextWindow")]
+            : [],
+        );
+        assert.deepEqual(childContexts, ["1m", "1m", "1m"]);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
