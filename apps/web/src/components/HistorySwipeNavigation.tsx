@@ -21,7 +21,7 @@ type SwipeGesture =
       bounds: SwipeBounds;
     }
   // Not a swipe, or one already decided: the rest of its events are ignored.
-  | { kind: "ignored" };
+  | { kind: "ignored"; scrollerOwned?: true };
 type SwipeIndicatorState = {
   direction: HistoryDirection;
   progress: number;
@@ -101,9 +101,9 @@ export function HistorySwipeNavigation() {
       gesture = { kind: "ignored" };
       hideIndicator();
     };
-    // Chromium brackets each trackpad scroll, momentum included, with these.
+    // Scroll-begin IPC can arrive after the first wheel already gave ownership to content.
     const unsubscribeScrollBegin = window.desktopBridge?.onTrackpadScrollBegin(() => {
-      if (gesture?.kind === "ignored") gesture = null;
+      if (gesture?.kind === "ignored" && !gesture.scrollerOwned) gesture = null;
     });
     const unsubscribeScrollEnd = window.desktopBridge?.onTrackpadScrollEnd(() => {
       if (gesture?.kind === "tracking") release();
@@ -121,7 +121,7 @@ export function HistorySwipeNavigation() {
         const path = event.composedPath();
         // Claim content scrolling while its layout still exists, before a possible remount.
         if (isInHorizontalScroller(path)) {
-          gesture = { kind: "ignored" };
+          gesture = { kind: "ignored", scrollerOwned: true };
           return;
         }
         gesture.sumX += event.deltaX;

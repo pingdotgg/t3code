@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../test/render";
+import { render, stubGlobal } from "../../test/render";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 
 type Scroller = "shadow" | "light" | "none" | "shadow-dialog";
-// Each step is one wheel event, optionally followed by the scroll it caused or a remount.
-type Step = readonly [deltaX: number, after?: number | "remount" | "remove"];
+type Step = readonly [
+  event: number | "begin" | "end" | "zoom",
+  after?: number | "remount" | "remove",
+];
 
 function mountPanel(container: HTMLElement, scroller: Scroller, scrollLeft: number) {
   const panel = container.appendChild(document.createElement("div"));
@@ -43,10 +45,42 @@ describe("HistorySwipeNavigation", () => {
       null,
     ],
     ["a scroller removed after a small first event", "shadow", 400, [[1, "remove"], [130]], null],
+    [
+      "a scroll begin arriving after the first wheel and scroller removal",
+      "shadow",
+      400,
+      [[1, "remove"], ["begin"], [130]],
+      null,
+    ],
+    [
+      "a new history gesture after a content scroll ends",
+      "shadow",
+      400,
+      [[1, "remove"], ["end"], ["begin"], [130]],
+      "forward",
+    ],
+    [
+      "a scroll begin after an ignored zoom wheel",
+      "none",
+      0,
+      [["zoom"], ["begin"], [130]],
+      "forward",
+    ],
     ["swiping inside a dialog in a shadow root", "shadow-dialog", 0, [[-130]], null],
     ["swiping left over content without overflow", "none", 0, [[-130]], "back"],
     ["swiping right over content without overflow", "none", 0, [[130]], "forward"],
   ])("%s", async (_name, scroller, scrollLeft, steps, navigates) => {
+    const listeners = { begin: new Set<() => void>(), end: new Set<() => void>() };
+    using _bridge = stubGlobal("desktopBridge", {
+      onTrackpadScrollBegin: (listener: () => void) => {
+        listeners.begin.add(listener);
+        return () => listeners.begin.delete(listener);
+      },
+      onTrackpadScrollEnd: (listener: () => void) => {
+        listeners.end.add(listener);
+        return () => listeners.end.delete(listener);
+      },
+    });
     await using screen = await render(<HistorySwipeNavigation />);
     using back = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
     using forward = vi.spyOn(window.history, "forward").mockImplementation(() => undefined);
@@ -54,8 +88,19 @@ describe("HistorySwipeNavigation", () => {
     using _canGoForward = vi.spyOn(window.navigation, "canGoForward", "get").mockReturnValue(true);
     let { viewport, content } = mountPanel(screen.container, scroller, scrollLeft);
 
-    for (const [deltaX, after] of [...steps, [0] as const]) {
-      content.dispatchEvent(new WheelEvent("wheel", { deltaX, bubbles: true, composed: true }));
+    for (const [event, after] of [...steps, [0] as const]) {
+      if (typeof event === "number" || event === "zoom") {
+        content.dispatchEvent(
+          new WheelEvent("wheel", {
+            deltaX: typeof event === "number" ? event : 0,
+            ctrlKey: event === "zoom",
+            bubbles: true,
+            composed: true,
+          }),
+        );
+      } else {
+        for (const listener of listeners[event]) listener();
+      }
       if (after === "remount") {
         const replacement = viewport.cloneNode(true) as HTMLDivElement;
         const { scrollLeft: previous } = viewport;
