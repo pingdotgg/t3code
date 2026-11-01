@@ -1513,6 +1513,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       "status=private-secret",
       "prefix-status-private-secret",
       "Bearer token=private-secret",
+      "private-secret\ncontinued",
     ])("does not retain git argument %s in command failures", (secret) =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -1539,7 +1540,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.include(error.detail, "unknown option");
         assert.include(error.detail, "[redacted]");
         assert.notInclude(error.detail, secret);
-        assert.notInclude(error.message, secret.split("=").at(-1)!);
+        assert.notInclude(error.message, secret.split("=").at(-1)!.split("\n")[0]!);
         assert.notInclude(error.message, secret);
         assert.notProperty(error, "args");
         assert.notProperty(error, "stderr");

@@ -573,18 +573,19 @@ function gitFailureExcerpt(
   stdout: string,
   args: readonly string[],
 ): string | undefined {
-  const diagnosticLines = stderr
+  const safeStderr = redactGitFailureText(stderr, args);
+  const diagnosticLines = safeStderr
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
     .filter((line) => GIT_DIAGNOSTIC_LINE_PATTERN.test(line));
   const raw =
     diagnosticLines.length > 0
       ? diagnosticLines.join("\n")
-      : stderr.trim().length > 0
-        ? stderr.trim()
-        : stdout.trim();
+      : safeStderr.trim().length > 0
+        ? safeStderr.trim()
+        : redactGitFailureText(stdout, args).trim();
   if (raw.length === 0) return undefined;
-  const redacted = redactGitFailureText(raw, args).replace(/\s+\n/g, "\n").trim();
+  const redacted = raw.replace(/\s+\n/g, "\n").trim();
   if (redacted.length === 0) return undefined;
   if (redacted.length <= GIT_FAILURE_EXCERPT_MAX_CHARS) return redacted;
   return `${redacted.slice(0, GIT_FAILURE_EXCERPT_MAX_CHARS - 1)}…`;
