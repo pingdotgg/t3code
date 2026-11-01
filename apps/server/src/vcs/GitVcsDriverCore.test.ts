@@ -4315,6 +4315,21 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* fileSystem.readFileString(pathService.join(projectFolder, "taken", "notes.txt")),
           "keep\n",
         );
+
+        const failed = yield* driver
+          .createWorktree(
+            { cwd: one.cwd, path: null, refName: one.initialBranch, newRefName: "feature/foo" },
+            { worktreesDirectory },
+          )
+          .pipe(Effect.flip);
+        assert.equal(failed.reason, "branch_already_exists");
+        assert.deepEqual((yield* fileSystem.readDirectory(projectFolder)).toSorted(), [
+          "feature-foo",
+          "feature-foo-2",
+          "feature-foo-3",
+          "taken",
+          "taken-2",
+        ]);
       }),
     );
 
