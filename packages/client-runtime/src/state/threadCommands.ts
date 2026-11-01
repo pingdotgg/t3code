@@ -27,6 +27,7 @@ import {
   deleteThread,
   editQueuedRun,
   interruptThreadTurn,
+  forkSideChat,
   forkThreadFromRun,
   markThreadUnread,
   mergeThreadBack,
@@ -64,6 +65,7 @@ import * as ThreadHistoryController from "./threadHistoryController.ts";
 export type LoadEarlierThreadHistoryInput = {
   readonly threadId: ThreadId;
   readonly throughEntryId?: string;
+  readonly workAnchorId?: string;
 };
 
 export function createThreadEnvironmentAtoms<R, E>(
@@ -90,6 +92,7 @@ export function createThreadEnvironmentAtoms<R, E>(
       supervisor.target.environmentId,
       input.threadId,
       input.throughEntryId,
+      input.workAnchorId,
     );
   });
 
@@ -299,6 +302,15 @@ export function createThreadEnvironmentAtoms<R, E>(
     forkFromRun: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:fork-from-run",
       execute: forkThreadFromRun,
+      scheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.sourceThreadId]),
+      },
+    }),
+    forkSideChat: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:fork-side-chat",
+      execute: forkSideChat,
       scheduler,
       concurrency: {
         mode: "serial",
