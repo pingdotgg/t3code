@@ -69,6 +69,8 @@ export interface ContextHandoffServiceV2Shape {
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
   readonly prepareProviderHandoff: (input: {
     readonly threadId: ThreadId;
+    /** Thread whose items are covered, when it differs from the handoff's target thread. */
+    readonly sourceThreadId?: ThreadId;
     readonly targetRunId: RunId;
     readonly transferId: OrchestrationV2ContextHandoff["transferId"];
     readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
@@ -483,23 +485,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
 
     const prepareProviderHandoff = Effect.fn(
       "orchestrationV2.contextHandoff.prepareProviderHandoff",
-    )(function* (input: {
-      readonly threadId: ThreadId;
-      readonly targetRunId: RunId;
-      readonly transferId: OrchestrationV2ContextHandoff["transferId"];
-      readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
-      readonly toProviderThreadId: ProviderThreadId;
-      readonly fromProviderInstanceId: ProviderInstanceId;
-      readonly toProviderInstanceId: ProviderInstanceId;
-      readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
-      readonly runs?: ReadonlyArray<OrchestrationV2Run>;
-      readonly strategy: Extract<
-        OrchestrationV2ContextHandoff["strategy"],
-        "delta_since_target_last_seen" | "full_thread_summary"
-      >;
-      readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
-      readonly createdAt: DateTime.Utc;
-    }) {
+    )(function* (input: Parameters<ContextHandoffServiceV2Shape["prepareProviderHandoff"]>[0]) {
       const handoffId = yield* idAllocator.allocate
         .contextHandoff({
           threadId: input.threadId,
@@ -519,7 +505,11 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           ),
         );
       const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
-      const coverage = handoffCoverage(input);
+      const coverage = handoffCoverage({
+        threadId: input.sourceThreadId ?? input.threadId,
+        coveredRunOrdinals: input.coveredRunOrdinals,
+        items: input.items,
+      });
       const selected = selectHistory({
         messages: input.items.flatMap((item) => {
           const message = historicalMessage(item);

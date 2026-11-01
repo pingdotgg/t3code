@@ -3113,7 +3113,7 @@ export default function ChatView(props: ChatViewProps) {
               environmentId={environmentId}
               endpoints={pendingHandoff}
               providers={providerStatuses}
-              pending
+              label="Context handoff pending"
             />
           </div>
         )}

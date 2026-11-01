@@ -81,6 +81,7 @@ export function V2LifecycleRow(props: {
       <EnvironmentHandoffRow
         environmentId={props.environmentId}
         endpoints={resolveHandoffEndpoints(item, props.runs)}
+        label={item.title ?? "Context handoff"}
         failed={item.status === "failed"}
       />
     );
@@ -582,6 +583,7 @@ function EnvironmentHandoffRow({
 }: {
   readonly environmentId: EnvironmentId;
   readonly endpoints: HandoffEndpoints;
+  readonly label: string;
   readonly failed: boolean;
 }) {
   const providers =
@@ -593,7 +595,7 @@ export function HandoffRow(props: {
   readonly environmentId: EnvironmentId;
   readonly endpoints: HandoffEndpoints;
   readonly providers: ReadonlyArray<ServerProvider>;
-  readonly pending?: boolean;
+  readonly label: string;
   readonly failed?: boolean;
 }) {
   const { from: fromEndpoints, to } = props.endpoints;
@@ -602,7 +604,7 @@ export function HandoffRow(props: {
   const entries = settings ? applyProviderInstanceSettings(derived, settings, null) : derived;
   return (
     <TimelineSystemDivider
-      label={props.pending ? "Context handoff pending" : "Context handoff"}
+      label={props.label}
       icon={ArrowRightLeftIcon}
       showDetailSeparator={false}
       tone={props.failed ? "danger" : "neutral"}

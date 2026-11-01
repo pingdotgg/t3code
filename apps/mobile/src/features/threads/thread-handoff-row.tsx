@@ -65,7 +65,7 @@ export function ThreadHandoffRow(props: {
       endpoints={endpoints}
       iconColor={color}
       surfaceColor={props.surfaceColor}
-      label="Context handoff"
+      label={item.title ?? "Context handoff"}
       failed={item.status === "failed"}
     />
   );
