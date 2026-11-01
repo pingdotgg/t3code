@@ -107,6 +107,45 @@ describe("claudeUsageResponseToLimits", () => {
     ]);
   });
 
+  it("gives an unstarted session the weekly reset while the weekly limit is spent", () => {
+    const windows = (fiveHourUtilization: number) =>
+      claudeUsageResponseToLimits({
+        checkedAt,
+        response: {
+          rate_limits_available: true,
+          rate_limits: {
+            five_hour: { utilization: fiveHourUtilization, resets_at: null },
+            seven_day: { utilization: 100, resets_at: "2026-07-24T08:59:00Z" },
+          },
+        },
+      }).limits.windows;
+
+    expect(windows(0)[0]).toEqual({
+      id: "five_hour",
+      kind: "session",
+      label: "Session",
+      usedPercent: 0,
+      windowDurationMins: 300,
+      resetsAt: "2026-07-24T08:59:00.000Z",
+    });
+    expect(windows(12)[0]).not.toHaveProperty("resetsAt");
+  });
+
+  it("leaves an unstarted session without a reset while weekly usage remains", () => {
+    expect(
+      claudeUsageResponseToLimits({
+        checkedAt,
+        response: {
+          rate_limits_available: true,
+          rate_limits: {
+            five_hour: { utilization: 0, resets_at: null },
+            seven_day: { utilization: 99, resets_at: "2026-07-24T08:59:00Z" },
+          },
+        },
+      }).limits.windows[0],
+    ).not.toHaveProperty("resetsAt");
+  });
+
   const enterpriseResponse = {
     rate_limits_available: true,
     rate_limits: {
