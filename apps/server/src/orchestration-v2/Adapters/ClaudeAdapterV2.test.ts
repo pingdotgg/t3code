@@ -5777,6 +5777,81 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // regression: #24171
+  it.effect.each([
+    {
+      name: "drops the CLI's API error frame when the failure repeats it",
+      text: "API Error: Claude Opus 5.5's safeguards flagged this message (https://www.anthropic.com/legal/aup).",
+      apiErrorStatus: 400,
+      shown: false,
+    },
+    {
+      name: "drops the CLI's API error frame when the repeated failure is truncated",
+      text: `API Error: ${"safeguard detail ".repeat(40)}`.trim(),
+      apiErrorStatus: 400,
+      shown: false,
+    },
+    {
+      name: "keeps the CLI's API error frame when the failure says something else",
+      text: "API Error: 429 Specific rate limit detail.",
+      apiErrorStatus: 429,
+      shown: true,
+    },
+    {
+      name: "keeps the CLI's API error frame when the turn is interrupted",
+      text: "API Error: rejected",
+      apiErrorStatus: 400,
+      terminalReason: "aborted_streaming" as const,
+      shown: true,
+    },
+  ])("$name", (input) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-api-error-frame"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offerAll(harness.sdkMessages, [
+        makeAssistantErrorFrame({
+          uuid: "00000000-0000-4000-8000-000000000610",
+          error: "invalid_request",
+          text: input.text,
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000611",
+          result: input.text,
+          isError: true,
+          apiErrorStatus: input.apiErrorStatus,
+          terminalReason: "terminalReason" in input ? input.terminalReason : "api_error",
+        }),
+      ]);
+
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "terminalReason" in input ? "interrupted" : "failed");
+      if (terminal.status === "failed") {
+        assert.equal(terminal.failure.message === input.text.slice(0, 500).trim(), !input.shown);
+      } else {
+        assert.equal(terminal.failure, null);
+      }
+      const assistantTexts = harness.events.flatMap((event) =>
+        event.type === "message.updated" && event.message.role === "assistant"
+          ? [event.message.text]
+          : [],
+      );
+      assert.deepEqual(assistantTexts, input.shown ? [input.text] : []);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   const lastProviderTurn = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) => {
     const event = events.findLast((candidate) => candidate.type === "provider_turn.updated");
     if (event?.type !== "provider_turn.updated") {
