@@ -2,7 +2,6 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { FileFinder } from "@ff-labs/fff-node";
-import * as NodeFSP from "node:fs/promises";
 import { it, afterEach, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -819,6 +818,32 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
             { name: "ordinary", fullPath: path.join(cwd, "ordinary") },
           ]);
         }),
+    );
+
+    it.effect("does not read a directory selected through a network link", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const cwd = yield* fs.realPath(yield* makeTempDir({ prefix: "t3code-picker-selected-" }));
+        const target = yield* makeTempDir({ prefix: "t3code-picker-local-" });
+        const link = path.join(cwd, "network");
+        yield* Effect.tryPromise(() => NodeFSP.symlink(target, link, "junction"));
+        const originalReadlink = NodeFSP.readlink;
+        using _readlink = vi
+          .spyOn(NodeFSP, "readlink")
+          .mockImplementation((file, options) =>
+            String(file) === link
+              ? Promise.resolve(String.raw`\\host\share`)
+              : originalReadlink(file, options),
+          );
+        using readdir = vi.spyOn(NodeFSP, "readdir");
+        const result = yield* workspaceEntries.browse({
+          partialPath: yield* appendSeparator(link),
+        });
+        expect(result).toEqual({ parentPath: link, entries: [] });
+        expect(readdir).not.toHaveBeenCalled();
+      }),
     );
 
     it.effect("omits direct and chained network links without statting their targets", () =>

@@ -245,8 +245,14 @@ export const make = Effect.gen(function* () {
       const parentPath = endsWithSeparator ? resolvedInputPath : path.dirname(resolvedInputPath);
       const prefix = endsWithSeparator ? "" : path.basename(resolvedInputPath);
 
+      // A directly typed network path stays browsable; only links must not redirect to one.
+      const readPath = isNetworkPath(parentPath)
+        ? parentPath
+        : yield* resolveBrowseLink(parentPath).pipe(Effect.orElseSucceed(() => parentPath));
+      if (readPath === undefined) return { parentPath, entries: [] };
+
       const dirents = yield* Effect.tryPromise({
-        try: () => NodeFSP.readdir(parentPath, { withFileTypes: true }),
+        try: () => NodeFSP.readdir(readPath, { withFileTypes: true }),
         catch: (cause) =>
           new WorkspaceEntriesReadDirectoryError({
             cwd: input.cwd,
