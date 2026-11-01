@@ -202,7 +202,7 @@ export function inlineCodeFilePathCandidate(codeText: string, cwd?: string): str
     candidate.startsWith("/") &&
     !isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(candidate)) &&
     !POSIX_FILE_ROOT_PREFIXES.some((prefix) => candidate.startsWith(prefix)) &&
-    workspaceRelativeFilePath(candidate, cwd) === null
+    workspaceRelativeFilePath(safeDecodeURIComponent(candidate), cwd) === null
   ) {
     return null;
   }

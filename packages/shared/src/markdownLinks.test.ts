@@ -44,6 +44,9 @@ describe("inlineCodeFilePathCandidate", () => {
       "/code/app/src/index.ts",
     );
     expect(inlineCodeFilePathCandidate("/images/logo.png", "/code/app")).toBeNull();
+    expect(inlineCodeFilePathCandidate("/code/my%20app/src/main.ts", "/code/my app")).toBe(
+      "/code/my%20app/src/main.ts",
+    );
   });
 });
 
