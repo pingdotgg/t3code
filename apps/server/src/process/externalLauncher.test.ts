@@ -664,8 +664,8 @@ it.effect.each<{
     scripts: ({ home }) => ({
       idea: `#!/bin/sh\nexec "$HOME/apps/removed/bin/idea" "$@"\n`,
       idea1: `#!/bin/sh\nJAVA_HOME="${home}"\ncd "${home}"\nexec "$HOME/apps/removed/bin/idea" "$@"\n`,
-      idea10: `#!/bin/sh\nexec "$HOME/apps/IDE with spaces/bin/idea" "$@"\n`,
-      idea2: `#!/bin/sh\nexec "$HOME/apps/IDE with spaces/bin/idea" "$@"\n`,
+      idea10: `#!/bin/sh\nexec "$HOME/apps/idea/bin/idea" "$@"\n`,
+      idea2: `#!/bin/sh\nexec "$HOME/apps/idea/bin/idea" "$@"\n`,
     }),
   },
   {
@@ -675,7 +675,7 @@ it.effect.each<{
     scripts: () => ({
       idea: `#!/bin/sh\nopen -na "\${HOME}/apps/removed/bin/idea" --args "$@"\n`,
       idea1: `#!/bin/sh\nopen -na "\${HOME}/apps/removed/bin/idea" --args "$@"\n`,
-      idea2: `#!/bin/sh\nopen -na "\${HOME}/apps/IDE with spaces/bin/idea" --args "$@"\n`,
+      idea2: `#!/bin/sh\nopen -na "\${HOME}/apps/idea/bin/idea" --args "$@"\n`,
     }),
   },
   {
@@ -685,6 +685,15 @@ it.effect.each<{
     scripts: ({ ide, removed }) => ({
       idea: `#!/bin/sh\n${removed} --version\nIDE_HOME="${ide}"\nexec env "$IDE_HOME" "$@"\n`,
       idea1: `#!/bin/sh\nexec "${ide}" "$@"\n`,
+    }),
+  },
+  {
+    case: "a tilde path",
+    platform: "linux",
+    expected: "idea",
+    scripts: ({ removed }) => ({
+      idea: `#!/bin/sh\n${removed} --version\nexec ~/apps/idea/bin/idea "$@"\n`,
+      idea1: `#!/bin/sh\nexec "$HOME/apps/idea/bin/idea" "$@"\n`,
     }),
   },
   {
@@ -722,7 +731,7 @@ it.effect.each<{
       const path = yield* Path.Path;
       const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-toolbox-home with spaces-" });
       const dir = path.join(home, toolboxScriptsPath[platform]);
-      const ide = path.join(home, "apps/IDE with spaces/bin/idea");
+      const ide = path.join(home, "apps/idea/bin/idea");
       yield* fs.makeDirectory(dir, { recursive: true });
       yield* fs.makeDirectory(path.dirname(ide), { recursive: true });
       yield* fs.writeFileString(ide, "");
