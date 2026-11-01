@@ -134,7 +134,7 @@ it.live(
         expect(state.reads).toBe(0);
       }),
     ),
-  { exclusive: true },
+  { tags: ["unit", "local"], exclusive: true },
 );
 
 it.live(
@@ -147,7 +147,7 @@ it.live(
         expect(state.reads).toBe(1);
       }),
     ),
-  { exclusive: true },
+  { tags: ["unit", "local"], exclusive: true },
 );
 
 it.live(
@@ -167,7 +167,7 @@ it.live(
         expect(error.message).toContain("Alchemy.remote()");
       }),
     ),
-  { exclusive: true },
+  { tags: ["unit", "local"], exclusive: true },
 );
 
 it.live(
@@ -184,7 +184,7 @@ it.live(
         expect(state.reads).toBe(0);
       }),
     ),
-  { exclusive: true },
+  { tags: ["unit", "local"], exclusive: true },
 );
 
 it.live(
@@ -204,7 +204,7 @@ it.live(
       }),
       { ALCHEMY_PROFILE: "ghost" },
     ),
-  { exclusive: true },
+  { tags: ["unit", "local"], exclusive: true },
 );
 
 it.live(
@@ -224,5 +224,5 @@ it.live(
       }),
       { [ENV_PROBE_TOKEN]: "token" },
     ),
-  { exclusive: true },
+  { tags: ["unit", "local"], exclusive: true },
 );

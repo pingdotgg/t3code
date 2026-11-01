@@ -1,7 +1,9 @@
+import type { PreviewCard as PreviewCardPrimitive } from "@base-ui/react/preview-card";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
 import {
   cloneElement,
+  useRef,
   useState,
   type ComponentPropsWithoutRef,
   type MouseEvent,
@@ -9,12 +11,13 @@ import {
   type ReactNode,
 } from "react";
 
-import { formatRelativeTimeLabel } from "~/timestampFormat";
+import { RelativeTime } from "~/components/RelativeTime";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useEnvironmentQuery } from "~/state/query";
 
 import { PreviewCard, PreviewCardPopup, PreviewCardTrigger } from "../ui/preview-card";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestActorAvatar, resolvePullRequestState } from "./pullRequestPresentation";
 
 interface PullRequestLinkPreviewTarget {
@@ -44,10 +47,11 @@ export function PullRequestLinkPreview({
   fallback?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const previewActionsRef = useRef<PreviewCardPrimitive.Root.Actions | null>(null);
   const [resolvingClick, setResolvingClick] = useState(false);
-  const detailQuery = useEnvironmentQuery(
+  const previewQuery = useEnvironmentQuery(
     open
-      ? pullRequestEnvironment.detail({
+      ? pullRequestEnvironment.previewCard({
           environmentId: target.environmentId,
           input: target.input,
         })
@@ -80,35 +84,45 @@ export function PullRequestLinkPreview({
           },
         })
       : link;
-  const detail = detailQuery.data;
+  const preview = previewQuery.data;
+  const showCard = preview !== null || (previewQuery.error !== null && fallback !== undefined);
+  const showUrlTooltip = open && previewQuery.error !== null && !showCard;
   const state =
-    detail === null
+    preview === null
       ? null
-      : resolvePullRequestState({ state: detail.state, isDraft: detail.isDraft });
+      : resolvePullRequestState({ state: preview.state, isDraft: preview.isDraft });
   const authorLabel =
-    detail?.author === null
+    preview?.author === null
       ? "ghost"
-      : detail?.author.name && detail.author.name !== detail.author.login
-        ? `${detail.author.name} (@${detail.author.login})`
-        : (detail?.author.login ?? null);
+      : preview?.author.name && preview.author.name !== preview.author.login
+        ? `${preview.author.name} (@${preview.author.login})`
+        : (preview?.author.login ?? null);
 
   return (
-    <PreviewCard open={open} onOpenChange={setOpen}>
-      <PreviewCardTrigger render={trigger} delay={350} closeDelay={120} />
-      {detail !== null || detailQuery.error !== null ? (
+    <PreviewCard open={open} onOpenChange={setOpen} actionsRef={previewActionsRef}>
+      <Tooltip
+        open={showUrlTooltip}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && !showCard) previewActionsRef.current?.close();
+        }}
+      >
+        <PreviewCardTrigger
+          render={<TooltipTrigger render={trigger} />}
+          delay={350}
+          closeDelay={120}
+        />
+        <TooltipPopup side="top">{originalUrl}</TooltipPopup>
+      </Tooltip>
+      {showCard ? (
         <PreviewCardPopup align="center" className="w-80 max-w-[calc(100vw-2rem)]">
           <div className="p-3">
-            {detail === null ? (
-              (fallback ?? (
-                <p className="text-xs leading-relaxed text-muted-foreground wrap-anywhere">
-                  {originalUrl}
-                </p>
-              ))
+            {preview === null ? (
+              fallback
             ) : (
               <div className="min-w-0">
                 <div className="flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
-                  <span className="min-w-0 truncate">{detail.repository}</span>
-                  <span className="shrink-0">#{detail.number}</span>
+                  <span className="min-w-0 truncate">{preview.repository}</span>
+                  <span className="shrink-0">#{preview.number}</span>
                   <span aria-hidden>·</span>
                   {state === null ? null : (
                     <span className="inline-flex shrink-0 items-center gap-1">
@@ -118,14 +132,14 @@ export function PullRequestLinkPreview({
                   )}
                 </div>
                 <p className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty">
-                  {detail.title}
+                  {preview.title}
                 </p>
                 <div className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                  <PullRequestActorAvatar actor={detail.author} className="size-4" />
+                  <PullRequestActorAvatar actor={preview.author} className="size-4" />
                   <span className="min-w-0 truncate">{authorLabel}</span>
                   <span aria-hidden>·</span>
                   <span className="shrink-0">
-                    opened {formatRelativeTimeLabel(detail.createdAt)}
+                    opened <RelativeTime timestamp={preview.createdAt} />
                   </span>
                 </div>
               </div>

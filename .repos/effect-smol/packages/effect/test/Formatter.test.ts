@@ -344,6 +344,35 @@ describe("Formatter", () => {
       strictEqual(formatJson([1n, 2n]), `["1n","2n"]`)
     })
 
+    it("should serialize Error objects with name, message, and enumerable fields", () => {
+      strictEqual(formatJson(new Error("boom")), `{"name":"Error","message":"boom"}`)
+      strictEqual(formatJson({ error: new Error("boom") }), `{"error":{"name":"Error","message":"boom"}}`)
+
+      const nodeErr = Object.assign(new Error("ENOENT: no such file or directory"), {
+        errno: -2,
+        code: "ENOENT",
+        syscall: "open",
+        path: "/tmp/foo"
+      })
+      strictEqual(
+        formatJson(nodeErr),
+        `{"errno":-2,"code":"ENOENT","syscall":"open","path":"/tmp/foo","name":"Error","message":"ENOENT: no such file or directory"}`
+      )
+
+      const circularErr = new Error("boom")
+      ;(circularErr as any).self = circularErr
+      strictEqual(formatJson(circularErr), `{"name":"Error","message":"boom"}`)
+    })
+
+    it("should keep structured serialization for Errors that define toJSON", () => {
+      class Tagged extends Error {
+        toJSON() {
+          return { _tag: "Tagged", message: "boom" }
+        }
+      }
+      strictEqual(formatJson(new Tagged("boom")), `{"_tag":"Tagged","message":"boom"}`)
+    })
+
     it("should redact sensitive data", () => {
       const date = Object.assign(new Date(0), {
         [Redactable.symbolRedactable]: () => "[REDACTED]"
@@ -598,13 +627,14 @@ describe("Formatter", () => {
     it.effect("distinguishes present undefined from absent input in forbidden", () =>
       Effect.gen(function*() {
         const getter = SchemaGetter.forbidden<never, undefined>(() => "not allowed")
-        const present = yield* getter.run(Option.some(undefined), { reportInput: true }).pipe(Effect.flip)
+        assertTrue(getter._tag === "TransformOptionalEffect")
+        const present = yield* getter.transform(Option.some(undefined), { reportInput: true }).pipe(Effect.flip)
         assertTrue(present._tag === "Forbidden")
         assertTrue(SchemaIssue.hasInput(present))
         strictEqual(present.input, undefined)
         strictEqual(formatIssue(present), "not allowed")
 
-        const absent = yield* getter.run(Option.none(), { reportInput: true }).pipe(Effect.flip)
+        const absent = yield* getter.transform(Option.none(), { reportInput: true }).pipe(Effect.flip)
         assertTrue(absent._tag === "Forbidden")
         assertFalse(SchemaIssue.hasInput(absent))
       }))

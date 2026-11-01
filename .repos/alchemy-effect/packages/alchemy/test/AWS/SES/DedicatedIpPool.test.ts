@@ -58,7 +58,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertPoolDeleted(pool.poolName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );
 
 // Switching a pool to MANAGED enables managed dedicated IPs, which bill
@@ -101,7 +101,7 @@ test.provider.skipIf(!process.env.AWS_TEST_SES_DEDICATED_IP)(
       yield* stack.destroy();
       yield* assertPoolDeleted(pool.poolName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );
 
 // MANAGED -> STANDARD is not supported by AWS in place, so it replaces the
@@ -131,7 +131,7 @@ test.provider.skipIf(!process.env.AWS_TEST_SES_DEDICATED_IP)(
       yield* stack.destroy();
       yield* assertPoolDeleted(second.poolName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );
 
 // A pool the account already pays for must not be silently taken over just
@@ -177,7 +177,7 @@ test.provider(
       yield* deletePoolIfExists(FOREIGN_POOL);
       yield* assertPoolDeleted(FOREIGN_POOL);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -232,7 +232,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertPoolDeleted(FOREIGN_POOL);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );
 
 // A STANDARD pool holding no dedicated IPs is free, so the rename path runs
@@ -267,5 +267,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertPoolDeleted("alchemy-test-pool-b");
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );

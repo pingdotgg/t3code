@@ -48,7 +48,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
-  { timeout: 30_000 },
+  { tags: ["provider:aws", "provider:aws:chatbot", "live"], timeout: 30_000 },
 );
 
 test.provider(
@@ -134,7 +134,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertActionDeleted(action.customActionArn);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:chatbot", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -174,5 +174,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertActionDeleted(second.customActionArn);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:chatbot", "live"], timeout: 120_000 },
 );

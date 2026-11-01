@@ -1,6 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import * as Effect from "effect/Effect";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { RELOAD_CONTAINER_PORT, ReloadContainer } from "./container.ts";
 
 /** Durable Object fronting {@link ReloadContainer}; proxies `path` into it. */

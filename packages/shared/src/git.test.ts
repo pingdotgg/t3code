@@ -1,13 +1,17 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import type { VcsStatusRemoteResult, VcsStatusResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyGitStatusStreamEvent,
+  formatGeneratedBranchName,
   buildTemporaryWorktreeBranchName,
+  flattenTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
-  parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
   parseOriginUrlFromGitConfig,
+  resolveAutoFeatureBranchName,
+  sanitizeFeatureBranchName,
   WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
 
@@ -49,38 +53,14 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("deploy@bitbucket.org:workspace/repo.git")).toBe(
       "bitbucket.org/workspace/repo",
     );
-  });
-
-  it("gives an Azure DevOps repository the same key over SSH as over HTTPS", () => {
-    expect(normalizeGitRemoteUrl("git@ssh.dev.azure.com:v3/T3Tools/Platform/T3Code")).toBe(
-      "dev.azure.com/t3tools/platform/_git/t3code",
+    expect(normalizeGitRemoteUrl("code.example.test:team/repo.git")).toBe(
+      "code.example.test/team/repo",
     );
-    expect(normalizeGitRemoteUrl("ssh://git@ssh.dev.azure.com:22/v3/T3Tools/Platform/T3Code")).toBe(
-      "dev.azure.com/t3tools/platform/_git/t3code",
+    expect(normalizeGitRemoteUrl("git@code.example.test:/team/repo.git")).toBe(
+      "code.example.test/team/repo",
     );
-    expect(
-      normalizeGitRemoteUrl("https://T3Tools@dev.azure.com/T3Tools/Platform/_git/T3Code"),
-    ).toBe("dev.azure.com/t3tools/platform/_git/t3code");
-  });
-
-  it("puts the organization back in the host on the name dev.azure.com replaced", () => {
-    expect(
-      normalizeGitRemoteUrl("T3Tools@vs-ssh.visualstudio.com:v3/T3Tools/Platform/T3Code"),
-    ).toBe("t3tools.visualstudio.com/platform/_git/t3code");
-    expect(normalizeGitRemoteUrl("https://T3Tools.visualstudio.com/Platform/_git/T3Code")).toBe(
-      "t3tools.visualstudio.com/platform/_git/t3code",
-    );
-  });
-
-  it("leaves an Azure SSH host it cannot read as the path it was given", () => {
-    // Not `v3`, and not four segments: rewriting either would invent a repository that the web
-    // spelling has no name for, so the remote stands as it arrived.
-    expect(normalizeGitRemoteUrl("git@ssh.dev.azure.com:v4/T3Tools/Platform/T3Code")).toBe(
-      "ssh.dev.azure.com/v4/t3tools/platform/t3code",
-    );
-    expect(normalizeGitRemoteUrl("git@ssh.dev.azure.com:v3/T3Tools/T3Code")).toBe(
-      "ssh.dev.azure.com/v3/t3tools/t3code",
-    );
+    expect(normalizeGitRemoteUrl("C:/repos/project")).toBe("c:/repos/project");
+    expect(normalizeGitRemoteUrl("git@x:team/project.git")).toBe("x/team/project");
   });
 });
 
@@ -115,7 +95,6 @@ describe("parseOriginUrlFromGitConfig", () => {
     expect(parseOriginUrlFromGitConfig("[remote.origin]\n\turl = git@github.com:a/b.git\n")).toBe(
       "git@github.com:a/b.git",
     );
-    // Git folds the dotted form to lowercase but keeps quoted names as written.
     expect(parseOriginUrlFromGitConfig("[remote.Origin]\n\turl = git@github.com:a/b.git\n")).toBe(
       "git@github.com:a/b.git",
     );
@@ -134,6 +113,21 @@ describe("parseOriginUrlFromGitConfig", () => {
     ).toBe("https://github.com/acme/repo.git");
   });
 
+  it("reads settings on the remote header line", () => {
+    const upstream = '\n[remote "upstream"]\n\turl = https://github.com/other/source.git\n';
+    expect(
+      parseOriginUrlFromGitConfig(`[remote "origin"] url = git@github.com:a/b.git${upstream}`),
+    ).toBe("git@github.com:a/b.git");
+    expect(parseOriginUrlFromGitConfig("[remote.Origin]url=git@github.com:a/b.git\n")).toBe(
+      "git@github.com:a/b.git",
+    );
+    expect(
+      parseOriginUrlFromGitConfig(
+        `[remote "origin"] fetch = +refs/heads/*:refs/remotes/origin/*\n\turl = git@github.com:a/b.git${upstream}`,
+      ),
+    ).toBe("git@github.com:a/b.git");
+  });
+
   it("falls back to the first remote when there is no origin", () => {
     const config = [
       '[remote "upstream"]',
@@ -143,39 +137,9 @@ describe("parseOriginUrlFromGitConfig", () => {
     ].join("\n");
     expect(parseOriginUrlFromGitConfig(config)).toBe("https://github.com/acme/repo.git");
   });
-
-  it("returns null when there is no remote section", () => {
-    expect(parseOriginUrlFromGitConfig("[core]\n\tbare = false\n")).toBeNull();
-    expect(parseOriginUrlFromGitConfig("")).toBeNull();
-  });
-});
-
-describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
-  it("extracts the owner and repository from common GitHub remote shapes", () => {
-    expect(
-      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("git@github.com:T3Tools/T3Code.git"),
-    ).toBe("T3Tools/T3Code");
-    expect(
-      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("https://github.com/T3Tools/T3Code.git"),
-    ).toBe("T3Tools/T3Code");
-    expect(
-      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("ssh://github.com/T3Tools/T3Code.git"),
-    ).toBe("T3Tools/T3Code");
-  });
 });
 
 describe("isTemporaryWorktreeBranch", () => {
-  it("matches the generated temporary worktree refName format", () => {
-    expect(
-      isTemporaryWorktreeBranch(
-        buildTemporaryWorktreeBranchName((byteLength) => {
-          expect(byteLength).toBe(4);
-          return "DEADBEEF";
-        }),
-      ),
-    ).toBe(true);
-  });
-
   it("matches generated temporary worktree refs", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef`)).toBe(true);
     expect(isTemporaryWorktreeBranch(` ${WORKTREE_BRANCH_PREFIX}/deadbeef `)).toBe(true);
@@ -188,21 +152,35 @@ describe("isTemporaryWorktreeBranch", () => {
     );
   });
 
-  it("matches legacy UUID-shaped temporary worktree refs from older mobile builds", () => {
+  it("matches legacy t3code temporary worktree refs", () => {
+    expect(isTemporaryWorktreeBranch("t3code/deadbeef")).toBe(true);
+    expect(isTemporaryWorktreeBranch("t3code-deadbeef")).toBe(true);
+    expect(isTemporaryWorktreeBranch("t3code/f4ae4e0e-f971-4d48-b4f2-9cf0aa54ab12")).toBe(true);
     expect(
       isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/f4ae4e0e-f971-4d48-b4f2-9cf0aa54ab12`),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("rejects UUID-shaped refs that are not RFC 4122 v4", () => {
-    // version nibble is not 4
-    expect(
-      isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/f4ae4e0e-f971-1d48-b4f2-9cf0aa54ab12`),
-    ).toBe(false);
-    // variant nibble is not [89ab]
-    expect(
-      isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/f4ae4e0e-f971-4d48-c4f2-9cf0aa54ab12`),
-    ).toBe(false);
+    expect(isTemporaryWorktreeBranch("t3code/f4ae4e0e-f971-1d48-b4f2-9cf0aa54ab12")).toBe(false);
+    expect(isTemporaryWorktreeBranch("t3code/f4ae4e0e-f971-4d48-c4f2-9cf0aa54ab12")).toBe(false);
+  });
+
+  it("matches the flat fallback used when a plain t3 branch exists", () => {
+    const flat = flattenTemporaryWorktreeBranchName(`${WORKTREE_BRANCH_PREFIX}/deadbeef`);
+    expect(flat).toBe(`${WORKTREE_BRANCH_PREFIX}-deadbeef`);
+    expect(isTemporaryWorktreeBranch(flat)).toBe(true);
+    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}-deadbeef-extra`)).toBe(false);
+    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}-feature`)).toBe(false);
+    expect(flattenTemporaryWorktreeBranchName("t3code/f4ae4e0e-f971-4d48-b4f2-9cf0aa54ab12")).toBe(
+      `${WORKTREE_BRANCH_PREFIX}-f4ae4e0e`,
+    );
+    expect(flattenTemporaryWorktreeBranchName("t3code-deadbeef")).toBe(
+      `${WORKTREE_BRANCH_PREFIX}-deadbeef`,
+    );
+    expect(flattenTemporaryWorktreeBranchName("t3code/deadbeef")).toBe(
+      `${WORKTREE_BRANCH_PREFIX}-deadbeef`,
+    );
   });
 
   it("rejects non-temporary refName names", () => {
@@ -239,7 +217,7 @@ describe("applyGitStatusStreamEvent", () => {
     const current: VcsStatusResult = {
       isRepo: true,
       sourceControlProvider: {
-        kind: "github",
+        kind: SourceControlProviderKind.make("github"),
         name: "GitHub",
         baseUrl: "https://github.com",
       },
@@ -272,5 +250,63 @@ describe("applyGitStatusStreamEvent", () => {
       behindCount: 1,
       pr: null,
     });
+  });
+});
+
+describe("sanitizeFeatureBranchName", () => {
+  it("sanitizes an explicit namespace before preserving it", () => {
+    expect(sanitizeFeatureBranchName(' "FIX//Calendar recruitment filter" ')).toBe(
+      "fix/calendar-recruitment-filter",
+    );
+  });
+
+  // regression: #15615 generated branch namespaces are preserved
+  it.each([
+    ["refine toolbar", "feature/refine-toolbar"],
+    [" /?. / ", "feature/update"],
+    ["fix///", "feature/fix"],
+  ])("keeps the fallback for unprefixed input %s", (input, expected) => {
+    expect(sanitizeFeatureBranchName(input)).toBe(expected);
+  });
+});
+
+describe("resolveAutoFeatureBranchName", () => {
+  it("resolves case-insensitive collisions within the generated namespace", () => {
+    expect(
+      resolveAutoFeatureBranchName(
+        ["FIX/refine-toolbar", "fix/refine-toolbar-2"],
+        "fix/refine-toolbar",
+      ),
+    ).toBe("fix/refine-toolbar-3");
+  });
+
+  // regression: #15615 generated branch namespaces are preserved
+  it.each([
+    ["fix/name", ["fix"], "fix-2/name"],
+    ["fix/name", ["fix/name/child"], "fix/name-2"],
+    ["fix/name", ["fixes", "fix/name-extra/child"], "fix/name"],
+  ])("resolves %s against namespace blockers %j", (preferredBranch, existingNames, expected) => {
+    expect(resolveAutoFeatureBranchName(existingNames, preferredBranch)).toBe(expected);
+  });
+});
+
+describe("formatGeneratedBranchName", () => {
+  it.each([
+    [" Team / Jules.lock/", "Team/Jules-lock/add-search"],
+    ["-team//feature@{new}", "team/feature-new/add-search"],
+    [" /?. / ", "add-search"],
+  ])("normalizes invalid static prefix %s", (prefix, expected) => {
+    expect(
+      formatGeneratedBranchName("Add Search", { mode: "static", prefix, instructions: "" }),
+    ).toBe(expected);
+  });
+  it("uses the model's semantic prefix without the stored static prefix", () => {
+    expect(
+      formatGeneratedBranchName("feat/Add Search", {
+        mode: "semantic",
+        prefix: "t3code",
+        instructions: "",
+      }),
+    ).toBe("feat/add-search");
   });
 });

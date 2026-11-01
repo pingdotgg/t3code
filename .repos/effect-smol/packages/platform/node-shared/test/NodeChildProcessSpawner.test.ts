@@ -3,16 +3,16 @@ import * as NodeChildProcessSpawner from "@effect/platform-node-shared/NodeChild
 import * as NodeFileSystem from "@effect/platform-node-shared/NodeFileSystem"
 import * as NodePath from "@effect/platform-node-shared/NodePath"
 import { assert, describe, it } from "@effect/vitest"
-import * as ChildProcessSpawnerTest from "effect-test/unstable/process/ChildProcessSpawnerTest"
+import * as ChildProcessSpawnerTest from "effect-test/process/ChildProcessSpawnerTest"
 import * as ByteSize from "effect/ByteSize"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as FileSystem from "effect/FileSystem"
 import * as Layer from "effect/Layer"
+import * as ChildProcess from "effect/process/ChildProcess"
 import * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
-import * as ChildProcess from "effect/unstable/process/ChildProcess"
 import { join } from "node:path"
 
 const NodeServices = NodeChildProcessSpawner.layer.pipe(
@@ -80,12 +80,28 @@ it.live("kills every process in a pipeline", () =>
     const childHeartbeat = `${directory}/child-heartbeat`
     const handle = yield* ChildProcess.make(
       "sh",
-      ["-c", "while :; do printf x >> \"$1\"; sleep 0.01; done", "pipeline-root", rootHeartbeat]
+      [
+        "-c",
+        "printf x >> \"$1\"; printf 'ROOT_READY\\n'; while :; do printf x >> \"$1\"; sleep 0.01; done",
+        "pipeline-root",
+        rootHeartbeat
+      ]
     ).pipe(ChildProcess.pipeTo(ChildProcess.make(
       "sh",
-      ["-c", "while :; do printf x >> \"$1\"; sleep 0.01; done", "pipeline-child", childHeartbeat]
+      [
+        "-c",
+        "printf x >> \"$1\"; printf 'CHILD_READY\\n'; read -r ready; printf '%s\\n' \"$ready\"; while :; do printf x >> \"$1\"; sleep 0.01; done",
+        "pipeline-child",
+        childHeartbeat
+      ]
     )))
-    yield* Effect.sleep("100 millis")
+    const readyLines = yield* handle.stdout.pipe(
+      Stream.decodeText,
+      Stream.splitLines,
+      Stream.take(2),
+      Stream.runCollect
+    )
+    assert.deepStrictEqual(readyLines, ["CHILD_READY", "ROOT_READY"])
     yield* handle.kill({ killSignal: "SIGKILL" })
     const rootSizeAfterKill = (yield* fs.stat(rootHeartbeat)).size
     const childSizeAfterKill = (yield* fs.stat(childHeartbeat)).size
@@ -114,7 +130,7 @@ const startProcessGroup = (mode: "exit-on-signal" | "ignore-signal", options?: C
     const fs = yield* FileSystem.FileSystem
     const directory = yield* fs.makeTempDirectoryScoped()
     const marker = `${directory}/marker`
-    const scope = yield* Scope.make()
+    const scope = yield* Scope.fork(yield* Effect.scope)
     const handle = yield* Scope.provide(scope)(ChildProcess.make(
       process.execPath,
       [processGroupFixture, "leader", mode, marker],
@@ -157,6 +173,55 @@ const timed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   })
 
 describe.skipIf(process.platform === "win32")("process group cleanup", () => {
+  it.live("scope release cleans descendants after the leader exits successfully", () =>
+    Effect.gen(function*() {
+      const fs = yield* FileSystem.FileSystem
+      const { descendantPid, handle, marker, scope } = yield* startProcessGroup("exit-on-signal", { stdin: "pipe" })
+      yield* Effect.addFinalizer(() => killDescendant(descendantPid))
+
+      yield* Stream.run(Stream.make(new TextEncoder().encode("exit\n")), handle.stdin)
+      assert.strictEqual(yield* handle.exitCode, 0)
+      assert.doesNotThrow(() => process.kill(descendantPid, 0), "descendant must still be alive after the leader exits")
+      assert.isFalse(yield* fs.exists(marker))
+
+      yield* Scope.close(scope, Exit.void)
+
+      assert.strictEqual(yield* fs.readFileString(marker), "exited")
+    }).pipe(Effect.scoped, Effect.provide(NodeServices)))
+
+  it.live("scope release force kills descendants after the leader exits with a non-zero code", () =>
+    Effect.gen(function*() {
+      const { descendantPid, handle, marker, scope } = yield* startProcessGroup("ignore-signal", {
+        stdin: "pipe",
+        forceKillAfter: "200 millis"
+      })
+      yield* Effect.addFinalizer(() => killDescendant(descendantPid))
+
+      yield* Stream.run(Stream.make(new TextEncoder().encode("exit 1\n")), handle.stdin)
+      assert.strictEqual(yield* handle.exitCode, 1)
+
+      yield* Scope.close(scope, Exit.void).pipe(liveTimeout(2_000))
+
+      yield* assertHeartbeatStopped(marker)
+    }).pipe(Effect.scoped, Effect.provide(NodeServices)))
+
+  it.live("scope release cleans descendants after the leader is killed externally", () =>
+    Effect.gen(function*() {
+      const fs = yield* FileSystem.FileSystem
+      const { descendantPid, handle, marker, scope } = yield* startProcessGroup("exit-on-signal")
+      yield* Effect.addFinalizer(() => killDescendant(descendantPid))
+
+      process.kill(handle.pid, "SIGKILL")
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(handle.exitCode)))
+      assert.doesNotThrow(() => process.kill(descendantPid, 0), "descendant must survive the leader's SIGKILL")
+      assert.isFalse(yield* fs.exists(marker))
+
+      yield* Scope.close(scope, Exit.void)
+
+      assert.isTrue(yield* fs.exists(marker), "scope release must wait for the descendant's exit marker")
+      assert.strictEqual(yield* fs.readFileString(marker), "exited")
+    }).pipe(Effect.scoped, Effect.provide(NodeServices)))
+
   it.live("scope release waits for descendants that outlive the leader", () =>
     Effect.gen(function*() {
       const fs = yield* FileSystem.FileSystem

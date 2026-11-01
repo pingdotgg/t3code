@@ -14,6 +14,7 @@ import type {
   NotificationsProps,
 } from "../S3/BucketNotifications.ts";
 import type { S3EventType } from "../S3/S3Event.ts";
+import { normalizeBucketNotification } from "../S3/normalizeBucketNotification.ts";
 import * as Lambda from "./Function.ts";
 import { Permission as LambdaPermission } from "./Permission.ts";
 
@@ -115,14 +116,8 @@ export const BucketEventSource = Layer.effect(
               );
               if (events.length > 0) {
                 return process(
-                  Stream.fromArray(
-                    events.map((record: lambda.S3EventRecord) => ({
-                      type: record.eventName as S3EventType,
-                      bucket: record.s3.bucket.name,
-                      key: record.s3.object.key,
-                      size: record.s3.object.size,
-                      eTag: record.s3.object.eTag,
-                    })),
+                  Stream.fromArray(events).pipe(
+                    Stream.mapEffect(normalizeBucketNotification),
                   ),
                   // TODO(sam): don't die?
                 ).pipe(Effect.orDie);

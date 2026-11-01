@@ -23,8 +23,8 @@ union is open: a kind this build does not know decodes to `UnknownContextRecord`
 `payload` preserved, and known kinds are excluded from that member so a malformed image record
 fails its own schema rather than sliding through unchecked. `OrchestrationMessageContext` wraps
 the records with `ForwardCompatibleArray`, so one undecodable record is dropped instead of failing
-the whole message. The field is optional on `OrchestrationMessage`, both turn-start commands, and
-`ThreadMessageSentPayload`. The decider and projector carry it through untouched.
+the whole message. The field is optional on the V2 conversation message and the commands that
+start or queue a turn; the orchestrator carries it through untouched.
 
 ## Identity namespaces
 
@@ -91,8 +91,9 @@ transcript renderer moves to records.
 
 ## Editor model (web and desktop)
 
-`ComposerContextReferenceNode` (`apps/web/src/components/ComposerContextReferenceNode.tsx`) is
-the one inline Lexical node for every context kind. It stores `kind`, `contextId`, `label`, and a
+`ComposerContextReferenceExtension` in
+[`ComposerPromptEditorTiptap.tsx`](../../apps/web/src/components/ComposerPromptEditorTiptap.tsx) is
+the inline Tiptap node for every context kind. It stores `kind`, `contextId`, `label`, and a
 per-occurrence `referenceId`, and its text content is the canonical link. The prompt string carries
 payload identity and position, so rebuilding the editor restores equivalent chips; it does not
 preserve the editor-local occurrence ids. Old drafts that used the U+FFFC ordinal placeholder
@@ -123,7 +124,7 @@ trailing `<terminal_context>` form is parsed only when reading messages sent by 
 The composer sends `message.text` as canonical prose with reference links and
 `message.context.records` built from the draft (`buildMessageContext` in
 `apps/web/src/lib/composerContextRecords.ts`). Expired terminal excerpts are dropped from both.
-The server projects provider text at turn start (`ProviderCommandReactor`), so the persisted
+The server projects provider text at turn start (`projectComposerContextForProvider`), so the persisted
 message stays readable and the provider receives markers plus one envelope.
 
 Review comments and preview annotations enter the draft through store mutators. A mounted composer

@@ -30,8 +30,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
-import { FetchHttpClient } from "effect/unstable/http";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import { FetchHttpClient } from "effect/http";
+import type * as HttpClient from "effect/http/HttpClient";
 
 import { fromChain } from "@distilled.cloud/aws/Credentials";
 import { Region } from "@distilled.cloud/aws/Region";

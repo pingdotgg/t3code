@@ -61,6 +61,7 @@ export type View = Resource<
  * ```
  *
  * @resource
+ * @product Dashboard
  */
 export const View = Resource<View>("Axiom.View");
 

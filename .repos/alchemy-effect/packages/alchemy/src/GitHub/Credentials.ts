@@ -4,7 +4,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { AuthError } from "../Auth/AuthProvider.ts";
-import { resolveProviderConfig } from "../Auth/Resolve.ts";
+import {
+  deferUntilFirstUse,
+  orDieCredentialsUnavailable,
+  resolveProviderConfig,
+} from "../Auth/Resolve.ts";
 import {
   GITHUB_AUTH_PROVIDER_NAME,
   type GitHubAuthConfig,
@@ -114,25 +118,34 @@ export const fromAuthProvider = (options?: { readonly baseUrl?: string }) =>
         options?.baseUrl !== undefined
           ? { baseUrl: yield* normalizeGitHubBaseUrl(options.baseUrl) }
           : undefined;
-      const { profileName, resolve } = yield* resolveProviderConfig<
+      // Defer profile lookup and credential resolution until first use, so
+      // building the provider layers never requires a configured profile.
+      const resolve = yield* resolveProviderConfig<
         GitHubAuthConfig,
         GitHubResolvedCredentials
-      >(GITHUB_AUTH_PROVIDER_NAME);
-
-      return yield* resolve.pipe(
-        Effect.map((creds) =>
-          make(
-            creds.token,
-            fixedBaseUrl !== undefined ? fixedBaseUrl.baseUrl : creds.baseUrl,
+      >(GITHUB_AUTH_PROVIDER_NAME).pipe(
+        Effect.flatMap(({ profileName, resolve }) =>
+          resolve.pipe(
+            Effect.map((creds) =>
+              make(
+                creds.token,
+                fixedBaseUrl !== undefined
+                  ? fixedBaseUrl.baseUrl
+                  : creds.baseUrl,
+              ),
+            ),
+            Effect.mapError(
+              (e) =>
+                new AuthError({
+                  message: `Failed to resolve GitHub credentials from ${profileName === undefined ? "the CI environment" : `profile '${profileName}'`}: ${(e as { message?: string }).message ?? String(e)}`,
+                }),
+            ),
           ),
         ),
-        Effect.mapError(
-          (e) =>
-            new AuthError({
-              message: `Failed to resolve GitHub credentials from ${profileName === undefined ? "the CI environment" : `profile '${profileName}'`}: ${(e as { message?: string }).message ?? String(e)}`,
-            }),
-        ),
-        Effect.orDie,
+        deferUntilFirstUse,
+      );
+      return yield* resolve.pipe(
+        orDieCredentialsUnavailable(GITHUB_AUTH_PROVIDER_NAME),
         Effect.cached,
       );
     }).pipe(Effect.orDie),

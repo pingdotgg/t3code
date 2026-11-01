@@ -1,0 +1,4 @@
+node_modules/
+.alchemy/
+dist/
+*.tsbuildinfo

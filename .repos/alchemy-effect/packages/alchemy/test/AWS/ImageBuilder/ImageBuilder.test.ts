@@ -33,6 +33,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:imagebuilder", "live"] },
 );
 
 // Ungated typed-error probe: the Smithy model omits ResourceNotFoundException
@@ -54,6 +55,7 @@ test.provider(
       );
       expect(deleteError._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:imagebuilder", "live"] },
 );
 
 const componentData = (marker: string) =>
@@ -325,5 +327,13 @@ test.provider(
         }),
       );
     }),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:iam",
+      "provider:aws:imagebuilder",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );

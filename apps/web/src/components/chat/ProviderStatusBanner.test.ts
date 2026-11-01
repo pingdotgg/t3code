@@ -56,17 +56,57 @@ describe("compatibility banners", () => {
     ).toBeNull();
   });
 
-  it("keeps authentication failures ahead of compatibility warnings even without a probe message", () => {
-    const unauthenticated: ServerProvider = {
+  it("shows downgrade guidance instead of a broken OpenCode inventory timeout", () => {
+    const message = "This provider version is known to be incompatible. Use 1.14.19.";
+    const broken: ServerProvider = {
       ...provider,
+      driver: ProviderDriverKind.make("opencode"),
+      version: "2.0.3",
       status: "error",
-      auth: { status: "unauthenticated" },
+      auth: { status: "unknown" },
+      message: "Failed to load OpenCode provider inventory: Timed out waiting for server start.",
+      compatibilityAdvisory: {
+        status: "broken",
+        message,
+        recommendedVersion: "1.14.19",
+        recommendedRange: ">=1.14.19 <2.0.0",
+      },
     };
-    expect(getProviderStatusMessage(unauthenticated)).toBe(
-      "Sign in via the CLI to authenticate again.",
+    expect(shouldShowProviderStatusBanner(broken, null)).toBe(true);
+    const timeoutOnly: ServerProvider = {
+      ...broken,
+      compatibilityAdvisory: {
+        ...broken.compatibilityAdvisory!,
+        status: "supported",
+        message: null,
+      },
+    };
+    expect(shouldShowProviderStatusBanner(broken, getProviderStatusBannerKey(timeoutOnly))).toBe(
+      true,
     );
-    expect(getProviderStatusMessage({ ...unauthenticated, message: "Credentials expired" })).toBe(
-      "Credentials expired",
+    expect(shouldShowProviderStatusBanner(broken, getProviderStatusBannerKey(broken))).toBe(false);
+    expect(
+      shouldShowProviderStatusBanner(
+        {
+          ...broken,
+          compatibilityAdvisory: { ...broken.compatibilityAdvisory!, message: "Use 1.14.20." },
+        },
+        getProviderStatusBannerKey(broken),
+      ),
+    ).toBe(true);
+    expect(getProviderStatusMessage(broken)).toBe(message);
+    expect(
+      getProviderStatusMessage({
+        ...broken,
+        compatibilityAdvisory: {
+          ...broken.compatibilityAdvisory!,
+          status: "supported",
+          message: null,
+        },
+      }),
+    ).toBe(broken.message);
+    expect(getProviderStatusMessage({ ...broken, auth: { status: "unauthenticated" } })).toBe(
+      broken.message,
     );
   });
 });

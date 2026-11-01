@@ -1,7 +1,7 @@
 import * as Cloudflare from "@/Cloudflare/index.ts";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * Durable Object journal for `WaitUntil.test.ts`.
@@ -16,12 +16,32 @@ export class Journal extends Cloudflare.DurableObject<Journal>()(
   Effect.gen(function* () {
     const state = yield* Cloudflare.DurableObjectState;
     return Effect.gen(function* () {
-      const append = Effect.fn(function* (entry: string) {
-        const entries = (yield* state.storage.get<string[]>("entries")) ?? [];
-        yield* state.storage.put("entries", [...entries, entry]);
-      });
+      const append = (entry: string) =>
+        state.storage
+          .transaction(
+            Effect.gen(function* () {
+              const entries =
+                (yield* state.storage.get<string[]>("entries")) ?? [];
+              yield* state.storage.put("entries", [...entries, entry]);
+            }),
+          )
+          .pipe(Effect.orDie);
       return {
         record: append,
+        recordManyLater: Effect.fn(function* () {
+          yield* state.waitUntil(
+            Effect.sleep("100 millis").pipe(
+              Effect.andThen(
+                Effect.forEach(
+                  Array.from({ length: 40 }, (_, i) => `parallel-${i}`),
+                  append,
+                  { concurrency: "unbounded" },
+                ),
+              ),
+            ),
+          );
+          return "scheduled" as const;
+        }),
         recordLater: Effect.fn(function* (entry: string) {
           yield* state.waitUntil(
             Effect.sleep("100 millis").pipe(Effect.andThen(append(entry))),
@@ -88,6 +108,17 @@ export default class WaitUntilWorker extends Cloudflare.Worker<WaitUntilWorker>(
         const url = new URL(request.url, "http://x");
         const journal = journals.getByName("default");
 
+        if (url.pathname === "/bg-many") {
+          const journal = journals.getByName("parallel");
+          return HttpServerResponse.text(
+            `bg-many-${yield* journal.recordManyLater()}`,
+          );
+        }
+        if (url.pathname === "/entries-many") {
+          return yield* HttpServerResponse.json(
+            yield* journals.getByName("parallel").snapshot(),
+          );
+        }
         if (url.pathname === "/bg") {
           yield* exec.waitUntil(
             Effect.sleep("100 millis").pipe(

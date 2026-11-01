@@ -1,0 +1,17 @@
+node_modules
+.alchemy/
+dist/
+dist-static/
+build/
+.output/
+.next/
+.nuxt/
+.svelte-kit/
+.astro/
+.vocs/
+.waku/
+*.tsbuildinfo
+src/routeTree.gen.ts
+serve-neon.mjs
+neon-node-adapter.mjs
+next-env.d.ts

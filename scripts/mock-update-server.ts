@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 interface MockUpdateServerConfig {
   readonly port: number;
@@ -32,32 +32,32 @@ const resolveMockUpdateServerConfig = Effect.gen(function* () {
   } satisfies MockUpdateServerConfig;
 });
 
-const isOutsideRoot = (rootRealPath: string, filePath: string) =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const relativePath = path.relative(rootRealPath, filePath);
-    return (
-      relativePath === ".." || relativePath.startsWith("../") || relativePath.startsWith("..\\")
-    );
-  });
+const isOutsideRoot = Effect.fn("mock-update-server.isOutsideRoot")(function* (
+  rootRealPath: string,
+  filePath: string,
+) {
+  const path = yield* Path.Path;
+  const relativePath = path.relative(rootRealPath, filePath);
+  return relativePath === ".." || relativePath.startsWith("../") || relativePath.startsWith("..\\");
+});
 
-const isWithinRoot = (rootRealPath: string, filePath: string) =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const resolvedFilePath = yield* fileSystem.realPath(filePath).pipe(
-      Effect.match({
-        onFailure: () => undefined,
-        onSuccess: (resolvedPath) => resolvedPath,
-      }),
-    );
+const isWithinRoot = Effect.fn("mock-update-server.isWithinRoot")(function* (
+  rootRealPath: string,
+  filePath: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const resolvedFilePath = yield* fileSystem.realPath(filePath).pipe(
+    Effect.match({
+      onFailure: () => undefined,
+      onSuccess: (resolvedPath) => resolvedPath,
+    }),
+  );
 
-    return (
-      resolvedFilePath !== undefined && !(yield* isOutsideRoot(rootRealPath, resolvedFilePath))
-    );
-  });
+  return resolvedFilePath !== undefined && !(yield* isOutsideRoot(rootRealPath, resolvedFilePath));
+});
 
-const resolveRequestedFilePath = (rootRealPath: string, requestUrl: string | undefined) =>
-  Effect.gen(function* () {
+const resolveRequestedFilePath = Effect.fn("mock-update-server.resolveRequestedFilePath")(
+  function* (rootRealPath: string, requestUrl: string | undefined) {
     const path = yield* Path.Path;
     const rawPath = (requestUrl ?? "/").split("?", 1)[0] ?? "/";
     const decodedPath = yield* Effect.try({
@@ -84,24 +84,27 @@ const resolveRequestedFilePath = (rootRealPath: string, requestUrl: string | und
     );
 
     return (yield* isOutsideRoot(rootRealPath, filePath)) ? undefined : filePath;
-  });
+  },
+);
 
-const isServableFile = (rootRealPath: string, filePath: string) =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const stat = yield* fileSystem.stat(filePath).pipe(
-      Effect.match({
-        onFailure: () => undefined,
-        onSuccess: (info) => info,
-      }),
-    );
+const isServableFile = Effect.fn("mock-update-server.isServableFile")(function* (
+  rootRealPath: string,
+  filePath: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const stat = yield* fileSystem.stat(filePath).pipe(
+    Effect.match({
+      onFailure: () => undefined,
+      onSuccess: (info) => info,
+    }),
+  );
 
-    if (stat?.type !== "File") {
-      return false;
-    }
+  if (stat?.type !== "File") {
+    return false;
+  }
 
-    return yield* isWithinRoot(rootRealPath, filePath);
-  });
+  return yield* isWithinRoot(rootRealPath, filePath);
+});
 
 export const makeMockUpdateRouteLayer = (rootRealPath: string) => {
   return HttpRouter.add(

@@ -251,7 +251,7 @@ test.provider(
       Effect.tap(() => stack.destroy()),
       Effect.onError(() => stack.destroy().pipe(Effect.ignore)),
     ),
-  { timeout: 360_000 },
+  { tags: ["provider:aws", "provider:aws:lambda", "live"], timeout: 360_000 },
 );
 
 const numberedVersions = Effect.fn(function* (functionName: string) {

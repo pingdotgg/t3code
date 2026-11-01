@@ -144,6 +144,7 @@ export interface Webhook extends Resource<
  * ```
  *
  * @resource
+ * @product Webhook
  */
 export const Webhook = Resource<Webhook>("GitHub.Webhook");
 

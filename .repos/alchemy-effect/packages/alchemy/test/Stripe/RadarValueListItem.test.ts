@@ -52,7 +52,15 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 60_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:radarvaluelist",
+      "provider:stripe:radarvaluelistitem",
+      "live",
+    ],
+    timeout: 60_000,
+  },
 );
 
 test.provider(
@@ -113,7 +121,15 @@ test.provider(
       const gone = yield* waitUntilGone(created.item.id);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:radarvaluelist",
+      "provider:stripe:radarvaluelistitem",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -153,7 +169,15 @@ test.provider(
         after.find((item) => item.id === deployed.item.id),
       ).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:radarvaluelist",
+      "provider:stripe:radarvaluelistitem",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -209,5 +233,13 @@ test.provider(
       const gone = yield* waitUntilGone(replaced.item.id);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:radarvaluelist",
+      "provider:stripe:radarvaluelistitem",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

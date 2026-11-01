@@ -1,7 +1,16 @@
-import { type FilesystemBrowseEntry, WS_METHODS } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import {
+  AuthFilesystemReadScope,
+  type FilesystemBrowseEntry,
+  WS_METHODS,
+  sessionGrantsScope,
+  type SessionGrantInput,
+} from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 
-import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
+import type {
+  EnvironmentConnectionPhase,
+  EnvironmentConnectionPresentation,
+} from "../connection/presentation.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   canNavigateUp,
@@ -12,6 +21,36 @@ import {
   isFilesystemBrowseQuery,
 } from "./projects.ts";
 import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+
+export function resolveFilesystemReadAccess(input: {
+  readonly isCatalogReady: boolean;
+  readonly connection: Pick<EnvironmentConnectionPresentation, "phase" | "error"> | null;
+  readonly session: SessionGrantInput | null;
+  readonly sessionError: string | null;
+}) {
+  if (input.sessionError !== null) {
+    return { canReadFiles: false, isPending: false, error: input.sessionError };
+  }
+  if (input.session === null) {
+    // Wait for the catalog before interpreting a missing presentation as offline.
+    // Once ready, an offline environment cannot finish its session check.
+    const isPending =
+      !input.isCatalogReady ||
+      input.connection?.phase === "connected" ||
+      input.connection?.phase === "connecting" ||
+      input.connection?.phase === "reconnecting";
+    return {
+      canReadFiles: false,
+      isPending,
+      error: isPending ? null : (input.connection?.error ?? "This environment is not connected."),
+    };
+  }
+  return {
+    canReadFiles: sessionGrantsScope(input.session, AuthFilesystemReadScope),
+    isPending: false,
+    error: null,
+  };
+}
 
 export function getFilesystemBrowsePath(query: string, platform = "", enabled = true) {
   const isBrowsing = enabled && isFilesystemBrowseQuery(query, platform);
@@ -75,6 +114,10 @@ export function createFilesystemEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
+    getMetadata: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:filesystem:get-metadata",
+      tag: WS_METHODS.filesystemGetMetadata,
+    }),
     browse: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:filesystem:browse",
       tag: WS_METHODS.filesystemBrowse,

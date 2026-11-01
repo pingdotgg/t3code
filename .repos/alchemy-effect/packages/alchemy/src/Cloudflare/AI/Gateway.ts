@@ -310,7 +310,7 @@ export const isAiGateway = (value: unknown): value is Gateway =>
  *
  * AI Gateway gives your application a stable gateway ID and account-scoped
  * endpoint that can route model requests through Cloudflare. Once bound to a
- * Worker, `aiGateway.model({...})` returns an `effect/unstable/ai`
+ * Worker, `aiGateway.model({...})` returns an `effect/ai`
  * `LanguageModel` Layer so you use the standard `generateText` / `streamText`
  * APIs — provider-agnostic, with caching, rate limiting, retries, and a
  * unified request log handled by the gateway.
@@ -389,8 +389,8 @@ export const isAiGateway = (value: unknown): value is Gateway =>
  * `AiError` to a defect (a 500); use `Effect.catchTag("AiError", …)` for typed
  * handling instead.
  * ```typescript
- * import { LanguageModel } from "effect/unstable/ai";
- * import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+ * import { LanguageModel } from "effect/ai";
+ * import * as HttpServerResponse from "effect/http/HttpServerResponse";
  *
  * fetch: Effect.gen(function* () {
  *   const response = yield* LanguageModel.generateText({
@@ -412,10 +412,10 @@ export const isAiGateway = (value: unknown): value is Gateway =>
  * `Stream.provide(languageModel)` keeps the model available for the whole
  * stream lifetime; pipe through `Sse.encode` for an SSE response.
  * ```typescript
- * import { LanguageModel } from "effect/unstable/ai";
+ * import { LanguageModel } from "effect/ai";
  * import * as Stream from "effect/Stream";
- * import * as Sse from "effect/unstable/encoding/Sse";
- * import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+ * import * as Sse from "effect/encoding/Sse";
+ * import * as HttpServerResponse from "effect/http/HttpServerResponse";
  *
  * const stream = LanguageModel.streamText({ prompt }).pipe(
  *   Stream.provide(languageModel),

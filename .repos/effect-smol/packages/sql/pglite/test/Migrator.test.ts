@@ -1,7 +1,7 @@
 import { PgliteClient, PgliteMigrator } from "@effect/sql-pglite"
 import { assert, describe, layer } from "@effect/vitest"
 import { Effect, Layer } from "effect"
-import { SqlClient } from "effect/unstable/sql/SqlClient"
+import { SqlClient } from "effect/sql/SqlClient"
 
 const ClientLayer = PgliteClient.layer({})
 

@@ -9,7 +9,7 @@ import type { ResourceBinding } from "../../Resource.ts";
 import * as RpcProvider from "../../Local/RpcProvider.ts";
 import { sha256Object } from "../../Util/sha256.ts";
 import { normalizeNulls } from "../../Util/stable.ts";
-import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
+import { localAccountId } from "../LocalAccount.ts";
 import { generateLocalId, LOCAL_PROVIDERS_URL } from "../LocalRuntime.ts";
 import type {
   AnyContainerApplicationProps,
@@ -213,7 +213,7 @@ export const LocalContainerProvider = () =>
         bindings: ResourceBinding<ContainerApplication["Binding"]>[];
         output: ContainerApplication["Attributes"] | undefined;
       }) {
-        const { accountId } = yield* yield* CloudflareEnvironment;
+        const accountId = yield* localAccountId;
         const env = makeContainerEnv(news, accountId, bindings);
         const { dev, hash } = yield* prepareImage(id, news);
         return {

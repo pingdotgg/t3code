@@ -7,13 +7,10 @@ import {
   buildProviderOptionSelectionsFromDescriptors,
   createModelCapabilities,
   createModelSelection,
-  getModelSelectionBooleanOptionValue,
-  getModelSelectionStringOptionValue,
+  getProviderOptionCurrentLabel,
   getProviderOptionDescriptors,
   readCustomModelEntries,
-  toCustomModelSetting,
-  getProviderOptionBooleanSelectionValue,
-  getProviderOptionStringSelectionValue,
+  modelSelectionsEqual,
 } from "./model.ts";
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
@@ -36,84 +33,7 @@ const codexCaps: ModelCapabilities = createModelCapabilities({
   ],
 });
 
-const claudeCaps: ModelCapabilities = createModelCapabilities({
-  optionDescriptors: [
-    {
-      id: "effort",
-      label: "Reasoning",
-      type: "select",
-      options: [
-        { id: "medium", label: "Medium" },
-        { id: "high", label: "High", isDefault: true },
-        { id: "ultrathink", label: "Ultrathink" },
-      ],
-      currentValue: "high",
-      promptInjectedValues: ["ultrathink"],
-    },
-    {
-      id: "contextWindow",
-      label: "Context Window",
-      type: "select",
-      options: [
-        { id: "200k", label: "200k" },
-        { id: "1m", label: "1M", isDefault: true },
-      ],
-      currentValue: "1m",
-    },
-  ],
-});
-
 describe("descriptor helpers", () => {
-  it("applies selection values to capability descriptors", () => {
-    expect(
-      getProviderOptionDescriptors({
-        caps: claudeCaps,
-        selections: [
-          { id: "effort", value: "medium" },
-          { id: "contextWindow", value: "200k" },
-        ],
-      }),
-    ).toEqual([
-      {
-        id: "effort",
-        label: "Reasoning",
-        type: "select",
-        options: [
-          { id: "medium", label: "Medium" },
-          { id: "high", label: "High", isDefault: true },
-          { id: "ultrathink", label: "Ultrathink" },
-        ],
-        currentValue: "medium",
-        promptInjectedValues: ["ultrathink"],
-      },
-      {
-        id: "contextWindow",
-        label: "Context Window",
-        type: "select",
-        options: [
-          { id: "200k", label: "200k" },
-          { id: "1m", label: "1M", isDefault: true },
-        ],
-        currentValue: "200k",
-      },
-    ]);
-  });
-
-  it("builds wire-format option selections from descriptors", () => {
-    const descriptors = getProviderOptionDescriptors({
-      caps: codexCaps,
-      selections: [
-        { id: "reasoningEffort", value: "high" },
-        { id: "fastMode", value: true },
-      ],
-    });
-
-    expect(buildProviderOptionSelectionsFromDescriptors(descriptors)).toEqual([
-      { id: "reasoningEffort", value: "high" },
-      { id: "fastMode", value: true },
-    ]);
-  });
-
   it("builds dispatch options only from explicit selections", () => {
     const descriptors = getProviderOptionDescriptors({
       caps: codexCaps,
@@ -130,38 +50,27 @@ describe("descriptor helpers", () => {
     ).toEqual([{ id: "fastMode", value: true }]);
   });
 
-  it("stores option selection arrays in model selections", () => {
-    expect(
-      createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
-        { id: "reasoningEffort", value: "high" },
-        { id: "fastMode", value: true },
-      ]),
-    ).toEqual({
-      instanceId: "codex",
-      model: "gpt-5.4",
-      options: [
-        { id: "reasoningEffort", value: "high" },
-        { id: "fastMode", value: true },
-      ],
-    });
-  });
-
-  it("reads typed option selection values", () => {
-    const selection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
+  it("compares complete model selections independent of option ordering", () => {
+    const left = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
       { id: "reasoningEffort", value: "high" },
       { id: "fastMode", value: true },
     ]);
+    const reordered = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
+      { id: "fastMode", value: true },
+      { id: "reasoningEffort", value: "high" },
+    ]);
 
-    expect(getProviderOptionStringSelectionValue(selection.options, "reasoningEffort")).toBe(
-      "high",
-    );
-    expect(getProviderOptionStringSelectionValue(selection.options, "fastMode")).toBeUndefined();
-    expect(getProviderOptionBooleanSelectionValue(selection.options, "fastMode")).toBe(true);
+    expect(modelSelectionsEqual(left, reordered)).toBe(true);
     expect(
-      getProviderOptionBooleanSelectionValue(selection.options, "reasoningEffort"),
-    ).toBeUndefined();
-    expect(getModelSelectionStringOptionValue(selection, "reasoningEffort")).toBe("high");
-    expect(getModelSelectionBooleanOptionValue(selection, "fastMode")).toBe(true);
+      modelSelectionsEqual(left, {
+        ...reordered,
+        options: [
+          { id: "fastMode", value: true },
+          { id: "reasoningEffort", value: "medium" },
+        ],
+      }),
+    ).toBe(false);
+    expect(modelSelectionsEqual(left, { ...reordered, model: "gpt-5.5" })).toBe(false);
   });
 });
 
@@ -231,16 +140,64 @@ describe("readCustomModelEntries", () => {
     ).toEqual([{ slug: "x", name: "x", capabilities: null }]);
     expect(readCustomModelEntries("not a list")).toEqual([]);
   });
+});
 
-  it("writes the compact stored shape back", () => {
-    expect(toCustomModelSetting({ slug: "x", name: "x", capabilities: null })).toBe("x");
+describe("provider-reported option display", () => {
+  const selection = createModelSelection(ProviderInstanceId.make("opencode"), "ling");
+  const reported = { ...selection, options: [{ id: "variant", value: "default" }] };
+  const descriptor = {
+    id: "variant",
+    label: "Reasoning",
+    type: "select" as const,
+    options: [
+      { id: "none", label: "None" },
+      { id: "thinking", label: "Thinking" },
+    ],
+  };
+
+  it("shows explicit reports without adding a choice or a dispatch option", () => {
+    expect(getProviderOptionCurrentLabel(descriptor, selection, reported)).toBe("Default");
     expect(
-      toCustomModelSetting({ slug: "x", name: "x", capabilities: { optionDescriptors: [] } }),
-    ).toBe("x");
-    expect(toCustomModelSetting({ slug: "x", name: "X", capabilities })).toEqual({
-      slug: "x",
-      name: "X",
-      capabilities,
-    });
+      getProviderOptionCurrentLabel(descriptor, selection, {
+        ...reported,
+        options: [{ id: "variant", value: "thinking" }],
+      }),
+    ).toBe("Thinking");
+    expect(
+      getProviderOptionCurrentLabel(
+        { ...descriptor, currentValue: "none" },
+        { ...selection, options: [{ id: "variant", value: "none" }] },
+        reported,
+      ),
+    ).toBe("None");
+    expect(descriptor.options.map((option) => option.id)).toEqual(["none", "thinking"]);
+    expect(buildProviderOptionSelectionsFromDescriptors([descriptor])).toBeUndefined();
+    expect(getProviderOptionCurrentLabel(descriptor, selection)).toBe("Unknown");
+    const effortDescriptor = { ...descriptor, id: "effort", currentValue: "default" };
+    expect(getProviderOptionCurrentLabel(effortDescriptor, selection)).toBeUndefined();
+    expect(
+      getProviderOptionCurrentLabel(effortDescriptor, selection, {
+        ...reported,
+        model: "other",
+        options: [{ id: "effort", value: "default" }],
+      }),
+    ).toBeUndefined();
+    expect(
+      getProviderOptionCurrentLabel(effortDescriptor, selection, {
+        ...reported,
+        options: [{ id: "effort", value: "default" }],
+      }),
+    ).toBe("Default");
+    expect(
+      getProviderOptionCurrentLabel({ ...descriptor, currentValue: "thinking" }, selection),
+    ).toBe("Unknown");
+  });
+
+  it.each([
+    { ...selection, model: "other" },
+    { ...selection, instanceId: ProviderInstanceId.make("other") },
+    { ...selection, options: [{ id: "variant", value: "none" }] },
+  ])("ignores reports after changing the model, instance, or option: %j", (selected) => {
+    expect(getProviderOptionCurrentLabel(descriptor, selected, reported)).toBe("Unknown");
   });
 });

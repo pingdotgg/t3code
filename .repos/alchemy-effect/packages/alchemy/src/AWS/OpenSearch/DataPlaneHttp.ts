@@ -13,7 +13,7 @@
  */
 import * as Credentials from "@distilled.cloud/aws/Credentials";
 import * as Region from "@distilled.cloud/aws/Region";
-import { AwsV4Signer } from "aws4fetch";
+import * as SigV4 from "@distilled.cloud/aws/SigV4";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Binding from "../../Binding.ts";
@@ -57,7 +57,7 @@ export type OpenSearchSend = (
   request: OpenSearchHttpRequest,
 ) => Effect.Effect<
   { status: number; body: unknown },
-  OpenSearchApiError | Credentials.CredentialsError
+  OpenSearchApiError | Credentials.CredentialsError | SigV4.SigningError
 >;
 
 const refreshParam = (
@@ -152,21 +152,18 @@ export const makeOpenSearchDataPlaneBinding = <Client>(options: {
           return { credentials, region };
         }).pipe(Effect.provideContext(services));
 
-        const signer = new AwsV4Signer({
+        const signed = yield* SigV4.sign({
           method: request.method,
           url: url.toString(),
           headers,
           body,
           accessKeyId: Redacted.value(credentials.accessKeyId),
-          secretAccessKey: Redacted.value(credentials.secretAccessKey),
-          sessionToken: credentials.sessionToken
-            ? Redacted.value(credentials.sessionToken)
-            : undefined,
+          secretAccessKey: credentials.secretAccessKey,
+          sessionToken: credentials.sessionToken,
           service: "es",
           region,
           allHeaders: true,
         });
-        const signed = yield* Effect.promise(() => signer.sign());
 
         const toError = (status: number) => (cause: unknown) =>
           new OpenSearchApiError({
@@ -178,10 +175,10 @@ export const makeOpenSearchDataPlaneBinding = <Client>(options: {
 
         const response = yield* Effect.tryPromise({
           try: () =>
-            fetch(signed.url.toString(), {
+            fetch(signed.url, {
               method: signed.method,
               headers: signed.headers,
-              body: signed.body as BodyInit | undefined,
+              body,
             }),
           catch: toError(0),
         });

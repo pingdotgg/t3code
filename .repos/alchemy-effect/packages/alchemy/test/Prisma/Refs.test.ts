@@ -7,7 +7,7 @@ import {
 } from "@/Prisma/Refs";
 import { describe, expect, it } from "alchemy-test";
 
-describe("Prisma Refs", () => {
+describe("Prisma Refs", { tags: ["unit", "provider:prisma", "local"] }, () => {
   it("treats missing unresolved references as unknown", () => {
     expect(unresolvedProjectIdOf(undefined)).toBeUndefined();
     expect(unresolvedDatabaseIdOf(undefined)).toBeUndefined();

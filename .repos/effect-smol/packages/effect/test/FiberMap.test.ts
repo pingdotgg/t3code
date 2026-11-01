@@ -18,6 +18,23 @@ const makeWorker = Effect.gen(function*() {
 })
 
 describe("FiberMap", () => {
+  it.effect("run defers startup", () =>
+    Effect.gen(function*() {
+      const container = yield* FiberMap.make<string>()
+      let started = false
+      const fiber = yield* FiberMap.run(
+        container,
+        "key",
+        Effect.sync(() => {
+          started = true
+        }),
+        { startImmediately: false }
+      )
+      assert.isFalse(started)
+      yield* Fiber.join(fiber)
+      assert.isTrue(started)
+    }))
+
   it.effect("retains ownership of replacements made by a synchronous finalizer", () =>
     Effect.gen(function*() {
       const scope = yield* Scope.make()

@@ -12,7 +12,6 @@ export interface PreviewMiniPlayerSize {
   readonly height: number;
 }
 
-/** What the floating player mirrors: a browser tab or a device stream. */
 export type PreviewMiniPlayerSource =
   | { readonly kind: "browser"; readonly tabId: string }
   | {
@@ -26,8 +25,8 @@ export type PreviewMiniPlayerSource =
 export interface PreviewMiniPlayerState {
   readonly source: PreviewMiniPlayerSource;
   readonly position: PreviewMiniPlayerPosition | null;
-  /** Height always follows the mirrored source's aspect ratio. */
   readonly width: number | null;
+  readonly lastInteraction: "drag" | "resize";
 }
 
 interface PreviewMiniPlayerStoreState {
@@ -40,7 +39,12 @@ interface PreviewMiniPlayerStoreState {
     sourceKey: string,
     position: PreviewMiniPlayerPosition,
   ) => void;
-  readonly resize: (ref: ScopedThreadRef, sourceKey: string, width: number) => void;
+  readonly resize: (
+    ref: ScopedThreadRef,
+    sourceKey: string,
+    width: number,
+    position?: PreviewMiniPlayerPosition,
+  ) => void;
   readonly removeThread: (ref: ScopedThreadRef) => void;
 }
 
@@ -74,6 +78,7 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
             source,
             position: current?.position ?? null,
             width: current?.width ?? null,
+            lastInteraction: current?.lastInteraction ?? "drag",
           },
         },
       };
@@ -90,29 +95,41 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
       const threadKey = scopedThreadKey(ref);
       const current = state.byThreadKey[threadKey];
       if (!current || previewMiniPlayerSourceKey(current.source) !== sourceKey) return state;
-      if (current.position?.x === position.x && current.position.y === position.y) return state;
+      if (
+        current.position?.x === position.x &&
+        current.position.y === position.y &&
+        current.lastInteraction === "drag"
+      )
+        return state;
       return {
         byThreadKey: {
           ...state.byThreadKey,
-          [threadKey]: { ...current, position },
+          [threadKey]: { ...current, position, lastInteraction: "drag" },
         },
       };
     }),
-  resize: (ref, sourceKey, width) =>
+  resize: (ref, sourceKey, width, position) =>
     set((state) => {
       const threadKey = scopedThreadKey(ref);
       const current = state.byThreadKey[threadKey];
       if (
         !current ||
         previewMiniPlayerSourceKey(current.source) !== sourceKey ||
-        current.width === width
+        (current.width === width &&
+          current.lastInteraction === "resize" &&
+          (!position || (current.position?.x === position.x && current.position.y === position.y)))
       ) {
         return state;
       }
       return {
         byThreadKey: {
           ...state.byThreadKey,
-          [threadKey]: { ...current, width },
+          [threadKey]: {
+            ...current,
+            width,
+            position: position ?? current.position,
+            lastInteraction: "resize",
+          },
         },
       };
     }),
@@ -133,7 +150,6 @@ export function selectThreadPreviewMiniPlayer(
   return byThreadKey[scopedThreadKey(ref)] ?? null;
 }
 
-/** The floating browser tab, or null when nothing floats or a device does. */
 export function selectThreadPreviewMiniPlayerTabId(
   byThreadKey: Record<string, PreviewMiniPlayerState>,
   ref: ScopedThreadRef | null | undefined,

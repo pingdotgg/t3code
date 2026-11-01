@@ -21,6 +21,7 @@ export interface RetrievePlanRequest extends Omit<GetPlanRequest, "plan"> {}
  * ```
  *
  * @binding
+ * @product Product
  */
 export interface RetrievePlan extends Binding.Service<
   RetrievePlan,

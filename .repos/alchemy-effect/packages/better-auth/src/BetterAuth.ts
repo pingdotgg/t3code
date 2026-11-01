@@ -6,8 +6,8 @@ import { betterAuth, type Auth, type BetterAuthOptions } from "better-auth";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { makeApiProxy, type BetterAuthApi } from "./ApiProxy.ts";
 import { Database } from "./Database.ts";
 import type { BetterAuthApiError } from "./Errors.ts";
@@ -41,7 +41,7 @@ export interface BetterAuthProps extends Omit<
    * Deploy-time automatic schema migration. Runs as an internal alchemy
    * Action during `alchemy deploy` (never at plan, never inside the
    * deployed runtime) and re-runs only when the auth schema (plugins,
-   * additional fields) or the target database changes.
+   * additional fields, indexes) or the target database changes.
    *
    * `false` opts out. `true` on a Database layer without migration support
    * (Memory, Drizzle) fails the deploy with a descriptive error.

@@ -1,7 +1,7 @@
 import * as machines from "@distilled.cloud/fly-io/machines";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { CredentialsFromAmbientOrEnv } from "./Credentials.ts";
 import type { Secret } from "./Secret.ts";
 import {
@@ -26,6 +26,7 @@ import { WriteSecret, type WriteSecretClient } from "./WriteSecret.ts";
  * ```
  *
  * @layer
+ * @product Secret
  * @provides Fly.WriteSecret
  */
 export const WriteSecretHttp = Layer.effect(

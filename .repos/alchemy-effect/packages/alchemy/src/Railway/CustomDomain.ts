@@ -3,7 +3,11 @@ import {
   waitUntilDeleted,
   projectServices as fetchProjectServices,
 } from "./GraphQL.ts";
-import * as railway from "@distilled.cloud/railway";
+import { Query, type UnwrapPlan } from "@distilled.cloud/core/query";
+import {
+  Railway,
+  type CustomDomain as RailwayCustomDomain,
+} from "@distilled.cloud/railway";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
@@ -14,32 +18,54 @@ import { matchesAlchemyPhysicalName } from "./Metadata.ts";
 import { ownedProjects, projectEnvironmentIds } from "./Project.ts";
 import type { Providers } from "./Providers.ts";
 
-const selection = {
-  id: true,
-  domain: true,
-  serviceId: true,
-  environmentId: true,
-  projectId: true,
-  targetPort: true,
-  deletedAt: true,
-  syncStatus: true,
+const domainFields = <E>(domain: Query<RailwayCustomDomain, E>) => ({
+  id: domain.id,
+  domain: domain.domain,
+  serviceId: domain.serviceId,
+  environmentId: domain.environmentId,
+  projectId: domain.projectId,
+  targetPort: domain.targetPort,
+  deletedAt: domain.deletedAt,
+  syncStatus: domain.syncStatus,
   status: {
-    verified: true,
-    certificateStatus: true,
-    certificateErrorMessage: true,
-    verificationDnsHost: true,
-    verificationToken: true,
+    verified: domain.status.verified,
+    certificateStatus: domain.status.certificateStatus,
+    certificateErrorMessage: domain.status.certificateErrorMessage,
+    verificationDnsHost: domain.status.verificationDnsHost,
+    verificationToken: domain.status.verificationToken,
   },
-} as const satisfies railway.Selection<"CustomDomain">;
-type CreateCustomDomainResponse = railway.Result<
-  "CustomDomain!",
-  typeof selection
->;
-type CustomDomainResponse = railway.Result<"CustomDomain!", typeof selection>;
-type DomainsResponseCustomDomainsItem = railway.Result<
-  "CustomDomain!",
-  typeof selection
->;
+});
+type CloudDomain = UnwrapPlan<ReturnType<typeof domainFields>>;
+
+const readCustomDomain = Query.fn((id: string, projectId: string) =>
+  domainFields(Railway.customDomain({ id, projectId })),
+);
+
+const readCustomDomains = Query.fn(
+  (projectId: string, environmentId: string, serviceId: string) =>
+    Railway.domains({ environmentId, projectId, serviceId }).customDomains.pipe(
+      Query.map(domainFields),
+    ),
+);
+
+const customDomainCreate = Query.fn(
+  (input: {
+    domain: string;
+    environmentId: string;
+    projectId: string;
+    serviceId: string;
+    targetPort?: number;
+  }) => domainFields(Railway.customDomainCreate({ input })),
+);
+
+const customDomainUpdate = Query.fn(
+  (input: { environmentId: string; id: string; targetPort: number }) =>
+    Railway.customDomainUpdate(input),
+);
+
+const customDomainDelete = Query.fn((id: string) =>
+  Railway.customDomainDelete({ id }),
+);
 
 /**
  * A resource-valued prop: the resource itself, or an Effect that produces
@@ -190,6 +216,7 @@ export type CustomDomain = Resource<
  * ```
  *
  * @resource
+ * @product Networking
  */
 export const CustomDomain = Resource<CustomDomain>("Railway.CustomDomain");
 
@@ -205,11 +232,6 @@ export class CustomDomainServiceMissing extends Data.TaggedError(
 )<{
   domain: string;
 }> {}
-
-type CloudDomain =
-  | CustomDomainResponse
-  | CreateCustomDomainResponse
-  | DomainsResponseCustomDomainsItem;
 
 const serviceIdOf = (value: unknown): string | undefined => {
   if (value === null || typeof value !== "object") return undefined;
@@ -247,7 +269,7 @@ const toAttrs = (
   domain: CloudDomain,
   fallback?: { projectId?: string; environmentId?: string },
 ): CustomDomain["Attributes"] => {
-  const status = "status" in domain ? domain.status : undefined;
+  const status = domain.status;
   const name = domain.domain;
   return {
     customDomainId: domain.id,
@@ -256,20 +278,20 @@ const toAttrs = (
     projectId: domain.projectId ?? fallback?.projectId ?? "",
     environmentId: domain.environmentId || fallback?.environmentId || "",
     targetPort: domain.targetPort ?? undefined,
-    verified: status?.verified,
-    certificateStatus: status?.certificateStatus,
-    certificateErrorMessage: status?.certificateErrorMessage ?? undefined,
-    verificationDnsHost: status?.verificationDnsHost ?? undefined,
-    verificationToken: status?.verificationToken ?? undefined,
+    verified: status.verified,
+    certificateStatus: status.certificateStatus,
+    certificateErrorMessage: status.certificateErrorMessage ?? undefined,
+    verificationDnsHost: status.verificationDnsHost ?? undefined,
+    verificationToken: status.verificationToken ?? undefined,
     syncStatus: domain.syncStatus,
     url: `https://${name}`,
   };
 };
 
 const getById = (customDomainId: string, projectId: string) =>
-  railway.customDomain({ id: customDomainId, projectId }, selection).pipe(
+  readCustomDomain(customDomainId, projectId).pipe(
     Effect.map((domain) => (isGone(domain) ? undefined : domain)),
-    railway.catchTags(["RailwayNotFound"], () => Effect.succeed(undefined)),
+    Effect.catchTag("RailwayNotFound", () => Effect.succeed(undefined)),
   );
 
 const listServiceDomains = (
@@ -277,19 +299,14 @@ const listServiceDomains = (
   environmentId: string,
   serviceId: string,
 ) =>
-  railway
-    .domains(
-      { environmentId, projectId, serviceId },
-      { customDomains: selection },
-    )
-    .pipe(
-      Effect.map((result) =>
-        result.customDomains.filter((domain) => !isGone(domain)),
-      ),
-      railway.catchTags(["RailwayNotFound"], () =>
-        Effect.succeed([] as DomainsResponseCustomDomainsItem[]),
-      ),
-    );
+  readCustomDomains(projectId, environmentId, serviceId).pipe(
+    Effect.map((customDomains) =>
+      customDomains.filter((domain) => !isGone(domain)),
+    ),
+    Effect.catchTag("RailwayNotFound", () =>
+      Effect.succeed([] as ReadonlyArray<CloudDomain>),
+    ),
+  );
 
 const findByDomain = (
   projectId: string,
@@ -358,14 +375,15 @@ export const CustomDomainProvider = () =>
       const projects = yield* ownedProjects();
       const rows = yield* Effect.forEach(projects, (project) =>
         Effect.gen(function* () {
-          const live = yield* fetchProjectServices(project.projectId, {
-            id: true,
-            name: true,
-            deletedAt: true,
-          }).pipe(
-            railway.catchTags(["RailwayNotFound"], () =>
-              Effect.succeed(undefined),
-            ),
+          const live = yield* fetchProjectServices(
+            project.projectId,
+            (service) => ({
+              id: service.id,
+              name: service.name,
+              deletedAt: service.deletedAt,
+            }),
+          ).pipe(
+            Effect.catchTag("RailwayNotFound", () => Effect.succeed(undefined)),
           );
           const services = (live ?? []).filter(
             (service) =>
@@ -496,42 +514,34 @@ export const CustomDomainProvider = () =>
             domain,
           });
           if (observed !== undefined) return observed;
-          return yield* railway
-            .createCustomDomain(
-              {
-                input: {
-                  domain,
-                  environmentId,
-                  projectId,
-                  serviceId,
-                  ...(props.targetPort !== undefined
-                    ? { targetPort: props.targetPort }
-                    : {}),
-                },
-              },
-              selection,
-            )
-            .pipe(
-              railway.catchTags(
-                ["RailwayCustomDomainCreateFailed", "RailwayValidationError"],
-                (_issue, failure) =>
-                  observe({ projectId, environmentId, serviceId, domain }).pipe(
-                    Effect.flatMap((found) =>
-                      found !== undefined
-                        ? Effect.succeed(found)
-                        : Effect.fail(failure),
-                    ),
+          return yield* customDomainCreate({
+            domain,
+            environmentId,
+            projectId,
+            serviceId,
+            ...(props.targetPort !== undefined
+              ? { targetPort: props.targetPort }
+              : {}),
+          }).pipe(
+            Effect.catchTag(
+              ["RailwayCustomDomainCreateFailed", "RailwayValidationError"],
+              (failure) =>
+                observe({ projectId, environmentId, serviceId, domain }).pipe(
+                  Effect.flatMap((found) =>
+                    found !== undefined
+                      ? Effect.succeed(found)
+                      : Effect.fail(failure),
                   ),
-              ),
-            );
+                ),
+            ),
+          );
         });
         current = yield* withEnvironmentConfigLock(
           environmentId,
           ensureDomain,
         ).pipe(
           Effect.retry({
-            while: (error) =>
-              railway.isErrorTag(error, "RailwayCustomDomainCreateFailed"),
+            while: (error) => error._tag === "RailwayCustomDomainCreateFailed",
             times: 8,
             schedule: Schedule.spaced("2 seconds"),
           }),
@@ -545,7 +555,7 @@ export const CustomDomainProvider = () =>
       const observedPort = current.targetPort ?? undefined;
       const desiredPort = props.targetPort;
       if (desiredPort !== undefined && desiredPort !== observedPort) {
-        yield* railway.updateCustomDomain({
+        yield* customDomainUpdate({
           environmentId: current.environmentId,
           id: current.id,
           targetPort: desiredPort,
@@ -562,9 +572,9 @@ export const CustomDomainProvider = () =>
       const customDomainId = output.customDomainId;
       const projectId = output.projectId;
       if (customDomainId.length === 0) return;
-      yield* railway
-        .deleteCustomDomain({ id: customDomainId })
-        .pipe(railway.catchTags(["RailwayNotFound"], () => Effect.void));
+      yield* customDomainDelete(customDomainId).pipe(
+        Effect.catchTag("RailwayNotFound", () => Effect.void),
+      );
       if (projectId.length > 0) {
         yield* waitUntilGone(customDomainId, projectId);
       }

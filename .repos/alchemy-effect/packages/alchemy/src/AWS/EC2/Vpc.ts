@@ -568,15 +568,8 @@ export const VpcProvider = () =>
                       e.message?.includes("DependencyViolation"))
                   );
                 },
-                // Use fixed 5s delay instead of exponential to avoid very long waits
-                schedule: Schedule.max([
-                  Schedule.fixed(5000),
-                  // A dependency that has not drained within ~50s is a real
-                  // cleanup defect. Preserve state and fail promptly so a
-                  // subsequent destroy/nuke can retry after fixing the child,
-                  // rather than hanging this resource for five minutes.
-                  Schedule.recurs(10),
-                ]).pipe(
+                schedule: Schedule.fixed(5000).pipe(
+                  Schedule.upTo({ duration: "5 minutes" }),
                   Schedule.tap(({ attempt }) =>
                     session.note(
                       `Waiting for dependencies to clear... (attempt ${attempt})`,
@@ -608,7 +601,12 @@ class VpcPending extends Data.TaggedError("VpcPending")<{
 // Retryable error: VPC still exists during deletion
 class VpcStillExists extends Data.TaggedError("VpcStillExists")<{
   vpcId: string;
-}> {}
+  state: string | undefined;
+}> {
+  get message() {
+    return `VPC ${this.vpcId} is still ${this.state ?? "present"} after deletion`;
+  }
+}
 
 /**
  * Wait for VPC to be in available state
@@ -664,11 +662,12 @@ const waitForVpcDeleted = (vpcId: string, session: ScopedPlanStatusSession) =>
     }
 
     // Still exists - this is the only retryable case
-    return yield* new VpcStillExists({ vpcId });
+    return yield* new VpcStillExists({ vpcId, state: result.Vpcs[0]?.State });
   }).pipe(
     Effect.retry({
       while: (e) => e instanceof VpcStillExists,
-      schedule: Schedule.max([Schedule.fixed(2000), Schedule.recurs(15)]).pipe(
+      schedule: Schedule.fixed(2000).pipe(
+        Schedule.upTo({ duration: "5 minutes" }),
         Schedule.tap(({ attempt }) =>
           session.note(`Waiting for VPC deletion... (${attempt * 2}s)`),
         ),

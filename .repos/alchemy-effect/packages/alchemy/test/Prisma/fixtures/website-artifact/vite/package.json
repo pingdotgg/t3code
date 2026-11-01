@@ -1,0 +1,5 @@
+{
+  "name": "prisma-website-artifact-vite",
+  "private": true,
+  "type": "module"
+}

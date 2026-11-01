@@ -94,7 +94,15 @@ test.provider(
       );
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:customer",
+      "provider:stripe:customertaxid",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -139,7 +147,15 @@ test.provider(
         after.find((taxId) => taxId.id === deployed.taxId.id),
       ).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:customer",
+      "provider:stripe:customertaxid",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -204,5 +220,13 @@ test.provider(
       );
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:customer",
+      "provider:stripe:customertaxid",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

@@ -1,15 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { resolveLegacyPlanModeEnabled } from "../../state/legacy-plan-mode";
 
-/**
- * Mobile preferences are device-local, matching the desktop client setting.
- * Keep the legacy composer mode hidden until the preference has loaded and is
- * explicitly enabled.
- */
-export function useLegacyPlanModeState(): { readonly enabled: boolean; readonly loaded: boolean } {
+export function useLegacyPlanModeState(): { readonly enabled: boolean } {
   const preferences = useAtomValue(mobilePreferencesAtom);
   const loaded = AsyncResult.isSuccess(preferences);
   return {
@@ -17,6 +12,5 @@ export function useLegacyPlanModeState(): { readonly enabled: boolean; readonly 
       loaded,
       preference: loaded ? preferences.value.planModeEnabled : undefined,
     }),
-    loaded,
   };
 }

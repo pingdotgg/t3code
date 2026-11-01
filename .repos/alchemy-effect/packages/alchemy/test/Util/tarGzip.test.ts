@@ -6,7 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as zlib from "node:zlib";
 
-describe("tarGzipDirectory", () => {
+describe("tarGzipDirectory", { tags: ["unit", "local"] }, () => {
   it.effect("packs a Dockerfile and nested files into a gzipped ustar", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

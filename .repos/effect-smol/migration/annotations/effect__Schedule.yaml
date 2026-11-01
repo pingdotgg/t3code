@@ -136,9 +136,6 @@
 "effect/Schedule#modifyDelayEffect":
   replacement: "Schedule.modifyDelay"
   note: "The v4 delay modifier is effectful by default and receives full Schedule.Metadata."
-"effect/Schedule#once":
-  replacement: "Schedule.duration(Duration.zero)"
-  note: "A zero-duration schedule recurs once and then completes; map its Duration output to void if needed."
 "effect/Schedule#onDecision":
   replacement: "Schedule.tap"
   note: "Use Schedule.tap for effects on recurrence metadata. To also observe final completion, wrap Schedule.toStep with Pull.matchEffect in Schedule.fromStep."

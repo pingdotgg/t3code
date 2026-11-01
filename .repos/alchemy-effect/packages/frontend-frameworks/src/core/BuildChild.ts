@@ -31,7 +31,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcess from "effect/process/ChildProcess";
 import { fileURLToPath } from "node:url";
 import { readBuildOutput } from "./BuildOutput.ts";
 import type { BuildOutput } from "./BuildOutput.ts";
@@ -57,6 +57,8 @@ export interface BuildChildPayload {
   readonly config: unknown;
   /** Where the runner persists the resulting `BuildOutput` (build.json). */
   readonly outputPath: string;
+  /** Where the runner persists the failure message when the build fails. */
+  readonly errorPath: string;
 }
 
 /**
@@ -133,6 +135,7 @@ export const runBuildChild = (
           ),
         );
       const outputPath = path.join(outputDir, "build.json");
+      const errorPath = path.join(outputDir, "error.txt");
 
       // The runner entry lives beside this module's core/ directory in both
       // layouts (src/{fw}/source.ts → src/core/BuildChildRunner.ts,
@@ -154,6 +157,7 @@ export const runBuildChild = (
         module: options.module,
         config: options.config,
         outputPath,
+        errorPath,
       };
       const args = [
         ...(isBun
@@ -215,9 +219,15 @@ export const runBuildChild = (
       }).pipe(Effect.provide(spawnerLayer));
 
       if (exitCode !== 0) {
+        // The child's own failure message (e.g. a framework config the target
+        // rejects) beats the bare exit code; its stack already went to stderr.
+        const reason = yield* fs
+          .readFileString(errorPath)
+          .pipe(Effect.orElseSucceed(() => undefined));
         return yield* Effect.fail(
           fail(
-            `The ${options.framework} build child exited with code ${exitCode}`,
+            reason ??
+              `The ${options.framework} build child exited with code ${exitCode}`,
           )(undefined),
         );
       }

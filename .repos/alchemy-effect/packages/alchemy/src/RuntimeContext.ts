@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import type { HttpEffect } from "./Http.ts";
+import type { CallbackFactory } from "./Callback.ts";
 import type { Output } from "./Output.ts";
 
 export interface BaseRuntimeContext {
@@ -21,6 +22,8 @@ export interface BaseRuntimeContext {
    */
   set(id: string, output: Output): Effect.Effect<string>;
   exports?: Effect.Effect<Record<string, any>>;
+  /** Register a durable callback in the current host instance, when supported. */
+  makeCallback?: CallbackFactory;
   serve?<Req = never>(
     handler: HttpEffect<Req>,
     options?: { shape?: Record<string, unknown> },
@@ -36,6 +39,18 @@ export interface BaseRuntimeContext {
    */
   telemetry?: Layer.Layer<never, any, any>;
 }
+
+/**
+ * Keys a Platform's Init captured through {@link BaseRuntimeContext.set}
+ * (`yield* Config.x(...)`, `yield* output`). `Platform.make` attaches the
+ * runtime context to the resource and merges these values into its
+ * `props.env`.
+ */
+export const capturedEnvKeys = (resource: unknown): string[] => {
+  const ctx = (resource as { RuntimeContext?: Partial<BaseRuntimeContext> })
+    ?.RuntimeContext;
+  return ctx?.env ? Object.keys(ctx.env) : [];
+};
 
 /**
  * Canonicalize a logical key into a key that is safe to use as the name of an

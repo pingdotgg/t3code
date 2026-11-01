@@ -20,6 +20,7 @@ test.provider(
       );
       expect(error._tag).toBe("ClusterParameterGroupNotFoundFault");
     }),
+  { tags: ["provider:aws", "provider:aws:redshift", "live"] },
 );
 
 // Read the user-sourced parameter overrides out-of-band.
@@ -114,7 +115,7 @@ test.provider(
       );
       expect(error._tag).toBe("ClusterParameterGroupNotFoundFault");
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:redshift", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -171,5 +172,5 @@ test.provider(
       );
       expect(error._tag).toBe("ClusterParameterGroupNotFoundFault");
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:redshift", "live"], timeout: 120_000 },
 );

@@ -1,6 +1,6 @@
+import * as Arbitrary from "effect/Arbitrary"
 import * as Result from "effect/Result"
 import * as Schema from "effect/Schema"
-import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 
 const integers = Arbitrary.schema(Schema.Int)
 

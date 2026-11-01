@@ -1,23 +1,32 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useRoute, type RouteProp } from "@react-navigation/native";
-import { useMemo, useRef, useState } from "react";
+import { useState } from "react";
 import {
   EnvironmentId,
-  type OrchestrationThread,
   ThreadId,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
   type ScopedProjectRef,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import {
+  presentThreadShell,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
+import {
+  deriveLatestThreadRun,
+  deriveThreadRuntime,
+} from "@t3tools/client-runtime/state/thread-execution";
 import * as Option from "effect/Option";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
-import { useProject, useThreadShell } from "../state/entities";
+import { useProject, useQuietThreadShell } from "../state/entities";
 import { useEnvironmentThread } from "../state/threads";
 import {
   resolvePendingThreadCreation,
   pendingThreadCreationOutcomesAtom,
   pendingThreadCreationShell,
+  selectThreadCreationDetail,
   type PendingThreadCreation,
 } from "./pending-thread-creation";
 import {
@@ -31,16 +40,15 @@ type ThreadSelectionRouteParams = {
 };
 
 function firstRouteParam(value: string | string[] | undefined): string | null {
-  if (Array.isArray(value)) {
-    return value[0] ?? null;
-  }
-
-  return value ?? null;
+  const first = Array.isArray(value) ? value[0] : value;
+  return first === undefined || first.trim().length === 0 ? null : first;
 }
 
-function latestUserMessageAt(thread: OrchestrationThread): OrchestrationThread["updatedAt"] | null {
-  for (let index = thread.messages.length - 1; index >= 0; index -= 1) {
-    const message = thread.messages[index];
+function latestUserMessageAt(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestrationV2ThreadShell["latestUserMessageAt"] {
+  for (let index = projection.messages.length - 1; index >= 0; index -= 1) {
+    const message = projection.messages[index];
     if (message?.role === "user") {
       return message.createdAt;
     }
@@ -51,13 +59,18 @@ function latestUserMessageAt(thread: OrchestrationThread): OrchestrationThread["
 
 function threadDetailToShell(
   environmentId: EnvironmentId,
-  thread: OrchestrationThread,
+  projection: OrchestrationV2ThreadProjection,
 ): EnvironmentThreadShell {
-  return {
-    environmentId,
+  const thread = projection.thread;
+  const latestRun = deriveLatestThreadRun(projection);
+  const runtime = deriveThreadRuntime(projection);
+  const pendingRequest =
+    projection.runtimeRequests.find((request) => request.status === "pending") ?? null;
+  return presentThreadShell(environmentId, {
     id: thread.id,
     projectId: thread.projectId,
     title: thread.title,
+    providerInstanceId: thread.providerInstanceId,
     modelSelection: thread.modelSelection,
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode,
@@ -66,7 +79,23 @@ function threadDetailToShell(
     linkedPullRequest: thread.linkedPullRequest ?? null,
     pullRequests: thread.pullRequests,
     branchPullRequest: thread.branchPullRequest ?? null,
-    latestTurn: thread.latestTurn,
+    activeProviderThreadId: thread.activeProviderThreadId,
+    lineage: thread.lineage,
+    forkedFrom: thread.forkedFrom,
+    createdBy: thread.createdBy,
+    creationSource: thread.creationSource,
+    latestRunId: latestRun?.runId ?? null,
+    activeRunId: runtime?.activeRunId ?? null,
+    status: runtime?.status ?? "idle",
+    pendingRuntimeRequest:
+      pendingRequest === null
+        ? null
+        : { id: pendingRequest.id, kind: pendingRequest.kind, createdAt: pendingRequest.createdAt },
+    latestVisibleMessage: null,
+    latestUserMessageAt: latestUserMessageAt(projection),
+    hasActionableProposedPlan: false,
+    itemCount: projection.turnItems.length,
+    visibleItemCount: projection.visibleTurnItems.length,
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
     archivedAt: thread.archivedAt,
@@ -79,121 +108,103 @@ function threadDetailToShell(
     pinOrderKey: thread.pinOrderKey,
     snoozedUntil: thread.snoozedUntil ?? null,
     snoozedAt: thread.snoozedAt ?? null,
-    session: thread.session,
-    latestUserMessageAt: latestUserMessageAt(thread),
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
-  };
+    deletedAt: thread.deletedAt,
+  });
 }
 
 function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefined) {
   const routeParams = params ?? {};
-  const routeThreadRef = useMemo<ScopedThreadRef | null>(() => {
-    const environmentId = firstRouteParam(routeParams.environmentId);
-    const threadId = firstRouteParam(routeParams.threadId);
-    if (!environmentId || !threadId) {
-      return null;
-    }
-
-    return {
-      environmentId: EnvironmentId.make(environmentId),
-      threadId: ThreadId.make(threadId),
-    };
-  }, [routeParams.environmentId, routeParams.threadId]);
-  const lastRouteThreadRef = useRef<ScopedThreadRef | null>(null);
-  if (routeThreadRef !== null) {
-    lastRouteThreadRef.current = routeThreadRef;
+  const routeEnvironmentId = firstRouteParam(routeParams.environmentId);
+  const routeThreadId = firstRouteParam(routeParams.threadId);
+  // Retain the last complete thread ref while closing routes drop params.
+  const [lastRouteThreadRef, setLastRouteThreadRef] = useState<ScopedThreadRef | null>(null);
+  if (
+    routeEnvironmentId !== null &&
+    routeThreadId !== null &&
+    (lastRouteThreadRef?.environmentId !== routeEnvironmentId ||
+      lastRouteThreadRef.threadId !== routeThreadId)
+  ) {
+    setLastRouteThreadRef({
+      environmentId: EnvironmentId.make(routeEnvironmentId),
+      threadId: ThreadId.make(routeThreadId),
+    });
   }
-  const selectedThreadRef = routeThreadRef ?? lastRouteThreadRef.current;
-  const selectedThreadShell = useThreadShell(selectedThreadRef);
+  const selectedThreadRef =
+    routeEnvironmentId !== null && routeThreadId !== null
+      ? lastRouteThreadRef?.environmentId === routeEnvironmentId &&
+        lastRouteThreadRef.threadId === routeThreadId
+        ? lastRouteThreadRef
+        : {
+            environmentId: EnvironmentId.make(routeEnvironmentId),
+            threadId: ThreadId.make(routeThreadId),
+          }
+      : lastRouteThreadRef;
+  const selectedThreadShell = useQuietThreadShell(selectedThreadRef);
   const selectedThreadKey =
     selectedThreadRef === null
       ? null
       : scopedThreadKey(selectedThreadRef.environmentId, selectedThreadRef.threadId);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const creationOutcome = useAtomValue(pendingThreadCreationOutcomesAtom);
-  // A creation the outbox still holds or just delivered: the thread screen
-  // opened before the server made the thread, so present a stand-in shell.
-  const pendingCreation = useMemo<PendingThreadCreation | null>(() => {
-    if (selectedThreadKey === null) {
-      return null;
-    }
-    const queued = queuedMessagesByThreadKey[selectedThreadKey]?.find(
-      (message) => message.creation !== undefined,
-    );
-    const outcome = creationOutcome[selectedThreadKey] ?? null;
-    const message = queued ?? outcome?.message ?? null;
-    return message === null ? null : { message, outcome };
-  }, [creationOutcome, queuedMessagesByThreadKey, selectedThreadKey]);
-  // Until the creation is delivered the server has no thread to subscribe
-  // to; subscribing anyway would retry "not found" for the whole setup.
-  const selectedThreadDetailRef =
-    selectedThreadShell !== null ||
-    pendingCreation === null ||
-    pendingCreation.outcome?.kind === "delivered"
-      ? selectedThreadRef
-      : null;
+  const { pendingCreation, detailRef: selectedThreadDetailRef } = selectThreadCreationDetail({
+    threadRef: selectedThreadRef,
+    threadKey: selectedThreadKey,
+    queuedMessagesByThreadKey,
+    outcomes: creationOutcome,
+  });
+  const [previousCreation, setPreviousCreation] = useState<PendingThreadCreation | null>(null);
+  const needsDetail =
+    selectedThreadShell === null || pendingCreation !== null || previousCreation !== null;
   const selectedThreadDetailState = useEnvironmentThread(
-    selectedThreadDetailRef?.environmentId ?? null,
-    selectedThreadDetailRef?.threadId ?? null,
+    needsDetail ? (selectedThreadDetailRef?.environmentId ?? null) : null,
+    needsDetail ? (selectedThreadDetailRef?.threadId ?? null) : null,
   );
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
-  const selectedThread = useMemo(
-    () =>
-      selectedThreadShell ??
-      (selectedThreadRef !== null && selectedThreadDetail !== null
-        ? threadDetailToShell(selectedThreadRef.environmentId, selectedThreadDetail)
-        : pendingCreation !== null
-          ? pendingThreadCreationShell(pendingCreation.message)
-          : null),
-    [pendingCreation, selectedThreadDetail, selectedThreadRef, selectedThreadShell],
-  );
-  const [previousCreation, setPreviousCreation] = useState<PendingThreadCreation | null>(null);
-  const selectedThreadCreation = resolvePendingThreadCreation({
+  const selectedThread =
+    selectedThreadShell ??
+    (selectedThreadRef !== null && selectedThreadDetail !== null
+      ? threadDetailToShell(selectedThreadRef.environmentId, selectedThreadDetail)
+      : pendingCreation !== null
+        ? pendingThreadCreationShell(pendingCreation.message)
+        : null);
+  const resolvedCreation = resolvePendingThreadCreation({
     threadKey: selectedThreadKey,
     pending: pendingCreation,
     previous: previousCreation,
     detail: selectedThreadDetail,
   });
-  if (previousCreation !== selectedThreadCreation) {
-    setPreviousCreation(selectedThreadCreation);
+  // Compare pendingCreation contents; new render-time objects would otherwise continually set state.
+  const creationUnchanged =
+    resolvedCreation === previousCreation ||
+    (resolvedCreation !== null &&
+      previousCreation !== null &&
+      resolvedCreation.message === previousCreation.message &&
+      resolvedCreation.outcome === previousCreation.outcome);
+  if (!creationUnchanged) {
+    setPreviousCreation(resolvedCreation);
   }
-  const selectedProjectRef = useMemo<ScopedProjectRef | null>(
-    () =>
-      selectedThread === null
-        ? null
-        : {
-            environmentId: selectedThread.environmentId,
-            projectId: selectedThread.projectId,
-          },
-    [selectedThread],
-  );
+  const selectedThreadCreation = creationUnchanged ? previousCreation : resolvedCreation;
+  const selectedProjectRef: ScopedProjectRef | null =
+    selectedThread === null
+      ? null
+      : {
+          environmentId: selectedThread.environmentId,
+          projectId: selectedThread.projectId,
+        };
   const selectedThreadProject = useProject(selectedProjectRef);
   const selectedEnvironmentId = selectedThread?.environmentId ?? null;
   const selectedEnvironmentConnection = useSavedRemoteConnection(selectedEnvironmentId);
   const selectedEnvironmentRuntime = useRemoteEnvironmentRuntime(selectedEnvironmentId);
 
-  return useMemo(
-    () => ({
-      selectedThreadRef,
-      selectedThread,
-      selectedThreadCreation,
-      selectedThreadDetailState,
-      selectedThreadProject,
-      selectedEnvironmentConnection,
-      selectedEnvironmentRuntime,
-    }),
-    [
-      selectedEnvironmentConnection,
-      selectedEnvironmentRuntime,
-      selectedThread,
-      selectedThreadCreation,
-      selectedThreadDetailState,
-      selectedThreadProject,
-      selectedThreadRef,
-    ],
-  );
+  return {
+    selectedThreadRef,
+    selectedThread,
+    selectedThreadCreation,
+    selectedThreadDetailRef,
+    selectedThreadProject,
+    selectedEnvironmentConnection,
+    selectedEnvironmentRuntime,
+  };
 }
 
 type ThreadSelectionState = ReturnType<typeof useResolvedThreadSelection>;

@@ -243,7 +243,21 @@ test.provider.skipIf(!dockerAvailable)(
       });
       expect(topicAfter.status).toBe(404); // NotFoundException
     }),
-  { timeout: 300_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:dynamodb",
+      "provider:aws:eventbridge",
+      "provider:aws:iam",
+      "provider:aws:s3",
+      "provider:aws:secretsmanager",
+      "provider:aws:sns",
+      "provider:aws:sqs",
+      "provider:aws:ssm",
+      "local",
+    ],
+    timeout: 300_000,
+  },
 );
 
 /**
@@ -301,5 +315,5 @@ test.provider.skipIf(!dockerAvailable)(
       );
       expect(gone).toBe(true);
     }),
-  { timeout: 300_000 },
+  { tags: ["provider:aws", "provider:aws:ssm", "live"], timeout: 300_000 },
 );

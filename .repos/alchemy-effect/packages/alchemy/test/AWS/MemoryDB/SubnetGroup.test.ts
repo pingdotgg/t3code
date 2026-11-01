@@ -100,5 +100,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertGone(group.subnetGroupName);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:ec2", "provider:aws:memorydb", "live"],
+    timeout: 240_000,
+  },
 );

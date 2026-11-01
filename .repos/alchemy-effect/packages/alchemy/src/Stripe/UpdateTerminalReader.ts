@@ -24,6 +24,7 @@ export interface UpdateTerminalReaderRequest extends Omit<
  * ```
  *
  * @binding
+ * @product Terminal
  */
 export interface UpdateTerminalReader extends Binding.Service<
   UpdateTerminalReader,

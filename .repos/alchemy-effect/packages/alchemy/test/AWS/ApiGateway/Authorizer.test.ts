@@ -64,6 +64,7 @@ test.provider.skipIf(!!process.env.FAST || !authorizerUri)(
       yield* stack.destroy();
       yield* assertRestApiDeleted(api.restApiId);
     }),
+  { tags: ["provider:aws", "provider:aws:apigateway", "live"] },
 );
 
 test.provider.skipIf(!!process.env.FAST)(
@@ -107,5 +108,13 @@ test.provider.skipIf(!!process.env.FAST)(
       yield* stack.destroy();
       yield* assertRestApiDeleted(authorizer.restApiId);
     }),
-  { timeout: 300_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:apigateway",
+      "provider:aws:lambda",
+      "live",
+    ],
+    timeout: 300_000,
+  },
 );

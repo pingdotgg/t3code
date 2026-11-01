@@ -210,6 +210,7 @@ export interface Label extends Resource<
  * ```
  *
  * @resource
+ * @product Issue
  */
 export const Label = Resource<Label>("GitHub.Label");
 

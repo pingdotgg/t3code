@@ -1,6 +1,3 @@
-"@effect/platform/Error#isPlatformError":
-  replacement: "value instanceof PlatformError.PlatformError"
-  note: "PlatformError is a class in v4; use an instanceof check or match its PlatformError tag."
 "@effect/platform/Error#Module":
   replacement: "string"
   note: "The closed module-name Schema was removed; PlatformError reason records accept any module string."

@@ -1,7 +1,7 @@
 import type { Credentials } from "@distilled.cloud/aws/Credentials";
 import { Region as AwsRegion } from "@distilled.cloud/aws/Region";
 import * as Effect from "effect/Effect";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 import * as Binding from "../../Binding.ts";
 import { isBindingHost } from "../Lambda/Function.ts";
 import type { Certificate } from "./Certificate.ts";

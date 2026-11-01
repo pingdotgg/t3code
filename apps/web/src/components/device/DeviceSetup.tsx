@@ -1,38 +1,108 @@
 import { DeviceHostUpdates } from "./DeviceHostUpdates";
 import type { DevicePlatform, DeviceServiceState, EnvironmentId } from "@t3tools/contracts";
-import { Check, CircleAlert } from "lucide-react";
+import { Check } from "lucide-react";
+import { Check as CheckGlyph, CircleAlert } from "lucide";
+import { AuthSettingsWriteScope } from "@t3tools/contracts";
+import { useAtomMount } from "@effect/atom-react";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { DialogClose } from "~/components/ui/dialog";
+import { MorphIcon } from "~/components/MorphIcon";
 import { WizardHeader, WizardPanel, WizardSteps, WizardFooter } from "~/components/ui/wizard";
 import { Spinner } from "~/components/ui/spinner";
 import { Switch } from "~/components/ui/switch";
-import { deviceEnvironment } from "~/state/device";
+import { deviceEnvironment, deviceHostProbeAtom, NO_DEVICE_PROBE_ATOM } from "~/state/device";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { cn } from "~/lib/utils";
 
 const platformName = (platform: DevicePlatform) => (platform === "ios" ? "iOS" : "Android");
 
-export const deviceHubDescription =
+const deviceHubDescription =
   "Enable this environment to open simulators and emulators, whether they run here or on a remote device host.";
-export const agentDeviceDescription =
+const agentDeviceDescription =
   "Allow new agent sessions in this environment to start and control local and remote devices, with required tools set up automatically.";
 
+export const isAndroidDiscoveryUncertain = (state: DeviceServiceState) =>
+  Object.values(state.hostStatuses).some(
+    (status) => status.status === "ready" && status.androidDiscoveryIncomplete,
+  );
+
+/**
+ * `hostStatus` only tracks this machine. A machine without simulator tooling never
+ * starts its own hub, so setup and the panel must also count remote device hosts.
+ */
+export function deviceHubReadiness(state: DeviceServiceState) {
+  const statuses = Object.values(state.hostStatuses).map((host) => host.status);
+  const ready = state.hostStatus === "ready" || statuses.includes("ready");
+  const busy =
+    !ready &&
+    [state.hostStatus, ...statuses].some(
+      (status) => status === "installing" || status === "starting",
+    );
+  return { ready, busy };
+}
+
+/** A ready host keeps its devices usable but may still carry a discovery warning. */
+function deviceHostDiagnostics(
+  hosts: ReadonlyArray<Pick<DeviceServiceState["hosts"][number], "id" | "label">>,
+  hostStatuses: DeviceServiceState["hostStatuses"],
+) {
+  return hosts.flatMap((host) => {
+    const status = hostStatuses[host.id];
+    return status?.status === "ready" && status.detail
+      ? [{ hostId: host.id, label: host.label, detail: status.detail }]
+      : [];
+  });
+}
+
+function DeviceHostDiagnostics(props: {
+  readonly hosts: ReadonlyArray<Pick<DeviceServiceState["hosts"][number], "id" | "label">>;
+  readonly hostStatuses: DeviceServiceState["hostStatuses"];
+  readonly className?: string;
+}) {
+  const diagnostics = deviceHostDiagnostics(props.hosts, props.hostStatuses);
+  if (diagnostics.length === 0) return null;
+  return (
+    <div role="status" className={cn("space-y-1 text-xs text-muted-foreground", props.className)}>
+      {diagnostics.map(({ hostId, label, detail }) => (
+        <p key={hostId} className="whitespace-pre-line break-words">
+          {label}: {detail}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 export function platformSetupStatus(state: DeviceServiceState, platform: DevicePlatform) {
-  const availability = state.hosts
-    .flatMap((host) => host.platforms)
-    .find((candidate) => candidate.platform === platform);
-  if (!availability?.available) {
+  const hasDevices = state.devices.some((device) => device.platform === platform);
+  if (platform === "android" && !hasDevices && isAndroidDiscoveryUncertain(state)) {
     return {
       ready: false,
-      message: availability?.reason ?? `${platformName(platform)} support was not detected.`,
+      message: "The Android device list may be incomplete. Check the device host and try again.",
     };
   }
-  if (
-    state.hostStatus === "ready" &&
-    !state.devices.some((device) => device.platform === platform)
-  ) {
+  const availabilities = state.hosts.flatMap((host) =>
+    host.platforms
+      .filter((candidate) => candidate.platform === platform)
+      .map((candidate) => ({ ...candidate, host })),
+  );
+  const supportingHosts = availabilities
+    .filter((candidate) => candidate.available)
+    .map((candidate) => candidate.host);
+  if (supportingHosts.length === 0) {
+    return {
+      ready: false,
+      message: availabilities[0]?.reason ?? `${platformName(platform)} support was not detected.`,
+    };
+  }
+  const readyHosts = supportingHosts.filter(
+    (host) =>
+      state.hostStatuses[host.id]?.status === "ready" ||
+      (host.kind === "local" && state.hostStatus === "ready"),
+  );
+  if (readyHosts.length > 0 && !hasDevices) {
     return {
       ready: false,
       message:
@@ -41,12 +111,18 @@ export function platformSetupStatus(state: DeviceServiceState, platform: DeviceP
           : "The Android SDK is installed, but no virtual device exists. Create one in Android Studio → Device Manager.",
     };
   }
+  const remoteHost = supportingHosts.every((host) => host.kind !== "local")
+    ? supportingHosts[0]
+    : undefined;
+  const location = remoteHost ? ` on ${remoteHost.label}` : "";
   return {
     ready: true,
     message:
-      platform === "ios"
-        ? "Xcode and iOS Simulator are available."
-        : "The Android SDK and Emulator are available.",
+      remoteHost?.kind === "eas"
+        ? `${remoteHost.label} starts ${platform === "ios" ? "iOS Simulators" : "Android emulators"} in the cloud with EAS Simulator.`
+        : platform === "ios"
+          ? `Xcode and iOS Simulator are available${location}.`
+          : `The Android SDK and Emulator are available${location}.`,
   };
 }
 
@@ -55,24 +131,28 @@ export function DeviceSetup(props: {
   readonly state: DeviceServiceState;
   readonly onComplete?: () => void;
 }) {
+  const canConfigure = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const configure = useAtomCommand(deviceEnvironment.configure);
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const [pending, setPending] = useState<"hub" | "check" | "agent" | "complete" | null>(null);
   const [step, setStep] = useState(0);
   const enabled = props.state.hostStatus !== "disabled";
-  const busy = props.state.hostStatus === "installing" || props.state.hostStatus === "starting";
+  const { ready, busy } = deviceHubReadiness(props.state);
+  const localPlatformsUnavailable = props.state.hosts.some(
+    (host) => host.kind === "local" && !host.platforms.some((platform) => platform.available),
+  );
+
+  useAtomMount(enabled ? deviceHostProbeAtom(props.environmentId) : NO_DEVICE_PROBE_ATOM);
 
   const update = async (
     kind: NonNullable<typeof pending>,
     input: { enabled?: boolean; agentAccessEnabled?: boolean; onboardingCompleted?: boolean },
   ) => {
+    if (!readEnvironmentScope(props.environmentId, AuthSettingsWriteScope)) return;
     setPending(kind);
-    try {
-      const result = await configure({ environmentId: props.environmentId, input });
-      if (kind === "complete" && result._tag === "Success") props.onComplete?.();
-    } finally {
-      setPending(null);
-    }
+    const result = await configure({ environmentId: props.environmentId, input });
+    setPending(null);
+    if (kind === "complete" && result._tag === "Success") props.onComplete?.();
   };
 
   return (
@@ -98,7 +178,7 @@ export function DeviceSetup(props: {
               <p className="text-muted-foreground">{deviceHubDescription}</p>
               <Switch
                 checked={enabled}
-                disabled={busy || pending !== null}
+                disabled={!canConfigure || busy || pending !== null}
                 aria-label="Enable device hub"
                 onCheckedChange={(checked) =>
                   void update("hub", {
@@ -115,8 +195,8 @@ export function DeviceSetup(props: {
           </section>
         ) : null}
 
-        {step === 1 ? (
-          <section className="space-y-3 text-sm">
+        {step === 1 || (step === 0 && enabled && localPlatformsUnavailable) ? (
+          <section className={cn("space-y-3 text-sm", step === 0 && "mt-4")}>
             <h3 className="font-medium">Check simulator support</h3>
             <DevicePlatformSetup
               state={props.state}
@@ -139,7 +219,7 @@ export function DeviceSetup(props: {
               <p className="text-muted-foreground">{agentDeviceDescription}</p>
               <Switch
                 checked={props.state.agentAccessEnabled}
-                disabled={!enabled || busy || pending !== null}
+                disabled={!canConfigure || !enabled || busy || pending !== null}
                 aria-label="Allow agents to control devices"
                 onCheckedChange={(checked) =>
                   void update("agent", { agentAccessEnabled: Boolean(checked) })
@@ -172,15 +252,12 @@ export function DeviceSetup(props: {
           </Button>
         )}
         {step < 2 ? (
-          <Button
-            disabled={props.state.hostStatus !== "ready" || pending !== null}
-            onClick={() => setStep(step + 1)}
-          >
+          <Button disabled={!ready || pending !== null} onClick={() => setStep(step + 1)}>
             Continue
           </Button>
         ) : (
           <Button
-            disabled={props.state.hostStatus !== "ready" || pending !== null}
+            disabled={!canConfigure || !ready || pending !== null}
             onClick={() => void update("complete", { onboardingCompleted: true })}
           >
             {pending === "complete" ? "Saving…" : "Done"}
@@ -200,7 +277,7 @@ export function DeviceHubSetupStatus({
   readonly pending: boolean;
   readonly compact?: boolean;
 }) {
-  if (!pending && state.hostStatus !== "ready") return null;
+  if (!pending && !deviceHubReadiness(state).ready) return null;
   return (
     <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
       {pending ? <Spinner size="xs" /> : <Check className="size-3 text-success" />}
@@ -231,6 +308,7 @@ function DevicePlatformSetup(props: {
     <div className="space-y-3">
       <PlatformStatus platform="iOS" status={platformSetupStatus(props.state, "ios")} />
       <PlatformStatus platform="Android" status={platformSetupStatus(props.state, "android")} />
+      <DeviceHostDiagnostics hosts={props.state.hosts} hostStatuses={props.state.hostStatuses} />
       <p className="text-xs text-muted-foreground">
         You can use either platform. Fixing a missing platform does not block the other one.
       </p>
@@ -269,7 +347,7 @@ export function AgentDeviceSetupStatus(props: {
   }
   if (
     props.state.agentAccessEnabled &&
-    props.state.hostStatus === "ready" &&
+    deviceHubReadiness(props.state).ready &&
     props.state.hosts.some((host) => host.agentDeviceInstalled)
   ) {
     return (
@@ -282,21 +360,21 @@ export function AgentDeviceSetupStatus(props: {
   return null;
 }
 
-export function PlatformStatus(props: {
+function PlatformStatus(props: {
   readonly platform: string;
   readonly status: { readonly ready: boolean; readonly message: string };
   readonly compact?: boolean;
 }) {
-  const Icon = props.status.ready ? Check : CircleAlert;
   return (
     <div
       className={cn("flex gap-2", !props.compact && "rounded-md border border-border/60 px-3 py-2")}
     >
-      <Icon
+      <MorphIcon
         className={cn(
           "mt-0.5 size-4 shrink-0",
           props.status.ready ? "text-success" : "text-muted-foreground",
         )}
+        icon={props.status.ready ? CheckGlyph : CircleAlert}
       />
       <div className={cn(props.compact && props.status.ready && "flex items-center gap-2")}>
         <p className="font-medium">{props.platform}</p>

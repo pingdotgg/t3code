@@ -1,14 +1,16 @@
+import { AuthDiagnosticsReadScope } from "@t3tools/contracts";
+import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   ResourceTelemetryHistoryInput,
   ResourceTelemetrySnapshot,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { useCallback } from "react";
 
 import { usePrimaryEnvironment } from "../state/environments";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
+import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 
 export interface ResourceTelemetryState {
@@ -27,24 +29,32 @@ export function useResourceTelemetry(
     targetEnvironmentId === undefined
       ? (primaryEnvironment?.environmentId ?? null)
       : targetEnvironmentId;
+  const canReadDiagnostics = useEnvironmentScope(environmentId, AuthDiagnosticsReadScope);
   const query = useEnvironmentQuery(
-    environmentId === null
+    environmentId === null || !canReadDiagnostics
       ? null
       : serverEnvironment.resourceTelemetry({ environmentId, input: {} }),
   );
   const retryCommand = useAtomCommand(serverEnvironment.retryResourceTelemetry, {
     reportFailure: false,
   });
-  const retry = useCallback(async () => {
+  const retry = async () => {
     if (environmentId === null) {
       throw new Error("No environment is selected.");
+    }
+    if (
+      !readEnvironmentScope(environmentId, AuthEnvironmentMaintainScope) ||
+      !readEnvironmentScope(environmentId, AuthDiagnosticsReadScope)
+    ) {
+      throw new Error("This connection cannot restart the resource monitor.");
     }
     const result = await retryCommand({ environmentId, input: {} });
     if (result._tag === "Failure") {
       throw Cause.squash(result.cause);
     }
+    query.refresh();
     return result.value.snapshot;
-  }, [environmentId, retryCommand]);
+  };
 
   return { ...query, retry };
 }
@@ -58,8 +68,9 @@ export function useResourceTelemetryHistory(
     targetEnvironmentId === undefined
       ? (primaryEnvironment?.environmentId ?? null)
       : targetEnvironmentId;
+  const canReadDiagnostics = useEnvironmentScope(environmentId, AuthDiagnosticsReadScope);
   return useEnvironmentQuery(
-    environmentId === null
+    environmentId === null || !canReadDiagnostics
       ? null
       : serverEnvironment.resourceTelemetryHistory({ environmentId, input }),
   );

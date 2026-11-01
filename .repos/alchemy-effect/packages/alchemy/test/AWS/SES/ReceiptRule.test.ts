@@ -118,7 +118,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertRuleDeleted(ruleSet.ruleSetName, rule.ruleName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -159,7 +159,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertRuleDeleted(second.ruleSetName, "alchemy-test-rule-b");
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -198,7 +198,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertRuleDeleted(ruleSetName, "alchemy-test-order-first");
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );
 
 // Ungated probe: SES validates a BounceAction's Sender against the account's
@@ -245,5 +245,5 @@ test.provider(
           .pipe(Effect.ignore),
       ),
     ),
-  { timeout: 60_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 60_000 },
 );

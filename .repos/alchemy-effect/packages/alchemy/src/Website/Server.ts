@@ -327,6 +327,25 @@ export const ServerProviderLive = () =>
           ),
         );
 
+      const hashOutput = (props: ServerProps, distDir: string) =>
+        hashDirectory({
+          cwd: distDir,
+          memo: {
+            // Next.js serves from its project root, not a dedicated output directory.
+            exclude:
+              path.resolve(distDir) ===
+              path.resolve(initialCwd, props.root ?? ".")
+                ? [
+                    "**/node_modules/**",
+                    "**/.git/**",
+                    "**/.alchemy/**",
+                    ".next/cache/**",
+                  ]
+                : [],
+            lockfile: false,
+          },
+        });
+
       const makeOutput = Effect.fn(function* (
         props: ServerProps,
         built: FrameworkBuildOutputSlice,
@@ -359,10 +378,7 @@ export const ServerProviderLive = () =>
               : yield* Effect.all(
                   {
                     input: hashInput(props, root),
-                    output: hashDirectory({
-                      cwd: distDir,
-                      memo: { exclude: [], lockfile: false },
-                    }),
+                    output: hashOutput(props, distDir),
                   },
                   { concurrency: "unbounded" },
                 ),
@@ -384,10 +400,7 @@ export const ServerProviderLive = () =>
           if (output.distDir === undefined) return { action: "update" };
           const distDir = path.resolve(initialCwd, output.distDir);
           if (!(yield* fs.exists(distDir))) return { action: "update" };
-          const outHash = yield* hashDirectory({
-            cwd: distDir,
-            memo: { exclude: [], lockfile: false },
-          });
+          const outHash = yield* hashOutput(news, distDir);
           return {
             action: Equal.equals(outHash, output.hash.output)
               ? "noop"

@@ -45,7 +45,10 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 240_000,
+  },
 );
 
 /**
@@ -94,7 +97,10 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 240_000,
+  },
 );
 
 const zoneName =
@@ -126,5 +132,8 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 240_000,
+  },
 );

@@ -8,7 +8,7 @@ import { describe, expect, test } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 
-describe("YAML property display", () => {
+describe("YAML property display", { tags: ["unit", "local"] }, () => {
   test("preserves nested create properties", () => {
     expect(
       formatDeclaredPropertyYaml(

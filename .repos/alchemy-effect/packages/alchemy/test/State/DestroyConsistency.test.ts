@@ -151,6 +151,7 @@ test(
       yield* inner.get({ stack: stackName, stage: STAGE, fqn: "A" }),
     ).toBeUndefined();
   }),
+  { tags: ["unit", "local"] },
 );
 
 test(
@@ -183,5 +184,5 @@ test(
     yield* writer.deleteStack({ stack: stackName });
   }),
   // mutates process-global cwd
-  { exclusive: true },
+  { tags: ["unit", "local"], exclusive: true },
 );

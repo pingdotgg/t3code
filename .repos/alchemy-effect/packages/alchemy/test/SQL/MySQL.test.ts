@@ -30,35 +30,59 @@ const TEST_TIMEOUT = 120_000;
  * forbids runtime code generation) — since every route would fail without
  * them.
  */
-describe.skipIf(!process.env.PLANETSCALE_TEST)("SQL.MySQL", () => {
-  const stack = beforeAll(deploy(Stack), { timeout: HOOK_TIMEOUT });
-  afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), {
-    timeout: HOOK_TIMEOUT,
-  });
+describe.skipIf(!process.env.PLANETSCALE_TEST)(
+  "SQL.MySQL",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:hyperdrive",
+      "provider:cloudflare:worker",
+      "provider:planetscale",
+      "provider:planetscale:mysql",
+      "live",
+    ],
+  },
+  () => {
+    const stack = beforeAll(deploy(Stack), { timeout: HOOK_TIMEOUT });
+    afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), {
+      timeout: HOOK_TIMEOUT,
+    });
 
-  test(
-    "SQL.MySQL exercises the full client surface over a deployed Worker",
-    Effect.gen(function* () {
-      const { url } = yield* stack;
-      yield* exerciseSqlSurface(url);
+    test(
+      "SQL.MySQL exercises the full client surface over a deployed Worker",
+      Effect.gen(function* () {
+        const { url } = yield* stack;
+        yield* exerciseSqlSurface(url);
 
-      // withTransaction — both inserts commit atomically.
-      const dave: UserRow = { id: 10, name: "dave", email: "dave@example.com" };
-      const erin: UserRow = { id: 11, name: "erin", email: "erin@example.com" };
-      const committed = (yield* postJson(`${url}/tx/commit`, [dave, erin])) as {
-        rows: UserRow[];
-      };
-      expect(committed.rows).toEqual([dave, erin]);
+        // withTransaction — both inserts commit atomically.
+        const dave: UserRow = {
+          id: 10,
+          name: "dave",
+          email: "dave@example.com",
+        };
+        const erin: UserRow = {
+          id: 11,
+          name: "erin",
+          email: "erin@example.com",
+        };
+        const committed = (yield* postJson(`${url}/tx/commit`, [
+          dave,
+          erin,
+        ])) as {
+          rows: UserRow[];
+        };
+        expect(committed.rows).toEqual([dave, erin]);
 
-      // withTransaction — a failing effect rolls the insert back.
-      const rolledBack = (yield* postJson(`${url}/tx/rollback`, {
-        id: 12,
-        name: "frank",
-        email: "frank@example.com",
-      })) as { error: string; rows: unknown[] };
-      expect(rolledBack.error).toBe("Rollback");
-      expect(rolledBack.rows).toEqual([]);
-    }),
-    { timeout: TEST_TIMEOUT },
-  );
-});
+        // withTransaction — a failing effect rolls the insert back.
+        const rolledBack = (yield* postJson(`${url}/tx/rollback`, {
+          id: 12,
+          name: "frank",
+          email: "frank@example.com",
+        })) as { error: string; rows: unknown[] };
+        expect(rolledBack.error).toBe("Rollback");
+        expect(rolledBack.rows).toEqual([]);
+      }),
+      { timeout: TEST_TIMEOUT },
+    );
+  },
+);

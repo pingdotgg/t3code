@@ -1,0 +1,96 @@
+---
+title: Octane
+description: Package Octane rendering and server routes as a Neon Function Fetch artifact.
+sidebar:
+  order: 10
+---
+
+`Neon.Website.Octane` packages Octane's handler and client assets for Node 24 Fetch
+on Neon Functions. The deployed wrapper does not start a listening Bun server;
+there is no container or S3 hosting layer.
+
+## Prepare the app
+
+Use an existing Octane app or the
+[runnable Octane example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon-website-octane).
+Configure [deployment credentials](/neon/setup), then install in the app directory:
+
+Install [Alchemy and its matching Effect dependencies](/getting-started) first;
+use Node 24 for this build toolchain.
+
+```sh
+pnpm add -D @alchemy.run/frontend-frameworks @vercel/nft
+```
+
+## Select the build adapter
+
+Octane requires the integration's Node adapter in `octane.config.ts`. Import it
+alongside your existing configuration imports:
+
+```diff lang="typescript"
++import { node } from "@alchemy.run/frontend-frameworks/octane/node-adapter";
+```
+
+This adapter emits the portable handler used by the Neon target.
+
+## Configure the adapter
+
+```diff lang="typescript"
+export default defineConfig({
++  adapter: node(),
+```
+
+Set this instead of a different platform adapter; leave your router configuration
+in place. `RenderRoute` and `ServerRoute` declarations stay in `octane.config.ts`.
+
+## Define the stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Neon from "alchemy/Neon";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "NeonOctane",
+  { providers: Neon.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const site = yield* Neon.Website.Octane("Web", {
+      rootDir: ".",
+    });
+    return { url: site.url };
+  }),
+);
+```
+
+The Function serves built client files and forwards application requests to the
+Octane handler. Server routes can read `process.env`; public Vite variables are
+embedded into browser assets, so do not put privileged credentials in them.
+
+## Develop and deploy
+
+```sh
+pnpm exec alchemy dev
+pnpm exec alchemy deploy
+pnpm exec alchemy destroy
+```
+
+Run separately, destroying when finished. Dev uses Octane's native Vite server
+and HMR, returns a local URL, and creates no implicit Project or Function. Append
+`.pipe(Alchemy.remote())` to the Website Effect to use live deployment during dev.
+
+Omitting scope creates an Ohio Project on deploy. Supply either `project` or
+`branch` to reuse a backend; choose Ohio when adding storage. See
+[scope and credentials](/neon/frontend/vite#scope-and-credentials).
+
+:::caution[Deployment limits]
+Complete live framework acceptance remains unverified. Neon probes have served
+old code/env after successful deployment metadata updates. There is no added CDN
+or durable application cache, and domain registration does not validate TLS.
+See the [shared deployment limits](/neon/frontend/vite#environment-and-deployment-limits).
+:::
+
+## Reference
+
+- [Octane API](/providers/neon/website/octane)
+- [Runnable Octane example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon-website-octane)

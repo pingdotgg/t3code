@@ -1,0 +1,54 @@
+import {
+  alchemyLabelKeys,
+  createInternalLabels,
+  hasAlchemyLabels,
+} from "../Labels.ts";
+
+export { createInternalLabels, hasAlchemyLabels };
+
+/**
+ * Stamp Alchemy ownership into a description. Used by Network Security
+ * resources that have no labels field (UrlList, TlsInspectionPolicy).
+ */
+export const encodeDescription = (
+  labels: Record<string, string>,
+  description: string | undefined,
+): string => {
+  const marker = `[alchemy ${alchemyLabelKeys.stack}=${labels[alchemyLabelKeys.stack]} ${alchemyLabelKeys.stage}=${labels[alchemyLabelKeys.stage]} ${alchemyLabelKeys.id}=${labels[alchemyLabelKeys.id]}]`;
+  return description ? `${marker}\n${description}` : marker;
+};
+
+export const parseDescription = (
+  description: string | undefined,
+): {
+  labels: Record<string, string>;
+  description: string | undefined;
+} => {
+  if (!description?.startsWith("[alchemy ")) {
+    return { labels: {}, description };
+  }
+  const end = description.indexOf("]");
+  if (end < 0) return { labels: {}, description };
+  const labels: Record<string, string> = {};
+  for (const part of description.slice("[alchemy ".length, end).split(/\s+/)) {
+    const eq = part.indexOf("=");
+    if (eq > 0) {
+      labels[part.slice(0, eq)] = part.slice(eq + 1);
+    }
+  }
+  const rest = description.slice(end + 1).replace(/^\n/, "");
+  return { labels, description: rest.length > 0 ? rest : undefined };
+};
+
+export const hasOwnershipMarker = (description: string | undefined) =>
+  Object.keys(parseDescription(description).labels).some((key) =>
+    key.startsWith("alchemy-"),
+  );
+
+export const sameJson = (left: unknown, right: unknown) =>
+  JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+
+export const sameStringList = (
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined,
+) => JSON.stringify([...(left ?? [])]) === JSON.stringify([...(right ?? [])]);

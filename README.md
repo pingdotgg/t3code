@@ -48,6 +48,12 @@ Install the latest version of the desktop app from [GitHub Releases](https://git
 winget install T3Tools.T3Code
 ```
 
+#### Windows (`scoop`)
+
+```bash
+scoop install extras/t3code
+```
+
 #### macOS (Homebrew)
 
 ```bash
@@ -78,6 +84,16 @@ yay -S t3code-nightly-bin
 
 The AUR packaging is maintained in this repository under [`packaging/aur`](./packaging/aur).
 
+#### Nix (nixpkgs)
+
+```bash
+nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code
+```
+
+The package is maintained in [nixpkgs](https://github.com/NixOS/nixpkgs/tree/nixos-unstable/pkgs/by-name/t3/t3code)
+and includes the desktop app (`t3code-desktop`) and the `t3` command.
+See [Nix installation](./docs/user/install.md#nix-nixpkgs) for NixOS configuration and updates.
+
 ## Some notes
 
 We are very very early in this project. Expect bugs.
@@ -88,11 +104,14 @@ We are (mostly) not accepting contributions yet. Small fixes may be considered. 
 
 Full docs live in [docs/](./docs). There's no docs site yet.
 
+- [FAQ](./docs/user/faq.md)
 - [Install and first run](./docs/user/install.md)
 - [Permission modes](./docs/user/permission-modes.md)
 - [Keyboard shortcuts](./docs/user/keybindings.md)
 - [Project settings](./docs/user/project-settings.md)
+- [Appearance preferences](./docs/user/appearance.md)
 - [Remote access from a phone or another machine](./docs/user/remote-access.md)
+- [Connect Claude Code, Codex, ChatGPT and other agents over MCP](./docs/user/outside-agents.md)
 - [Keeping app and server in sync](./docs/user/updating.md)
 - [Source control integrations](./docs/user/source-control.md)
 - Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)

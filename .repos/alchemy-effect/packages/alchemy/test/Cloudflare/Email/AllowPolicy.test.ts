@@ -85,7 +85,10 @@ test.provider.skipIf(entitled || !reachable)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:email", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Read-only list assertion that runs on every account. On unentitled
@@ -105,7 +108,10 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:email", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Requires the Email Security (Area 1) enterprise add-on — unentitled accounts fail
@@ -134,7 +140,10 @@ test.provider.skipIf(!entitled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:email", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Requires the Email Security (Area 1) enterprise add-on — unentitled accounts fail
@@ -201,5 +210,8 @@ test.provider.skipIf(!entitled)(
       );
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:email", "live"],
+    timeout: 120_000,
+  },
 );

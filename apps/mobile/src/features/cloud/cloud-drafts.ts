@@ -1,4 +1,4 @@
-import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
+import { EnvironmentRegistry, removedWithRelay } from "@t3tools/client-runtime/connection";
 import { createRuntimeCommand } from "@t3tools/client-runtime/state/runtime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -23,15 +23,12 @@ export class CloudDraftArchiveError extends Schema.TaggedError<CloudDraftArchive
 export const removeCloudEnvironments = createRuntimeCommand(connectionAtomRuntime, {
   label: "cloud:preserve-drafts-and-remove-environments",
   execute: Effect.fn("removeCloudEnvironments")(function* (accountId: string | null) {
-    const registry = yield* EnvironmentRegistry;
+    const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
     const entries = yield* SubscriptionRef.get(registry.entries);
     const environmentIds = new Set(
-      [...entries.values()]
-        .filter((entry) => entry.target._tag === "RelayConnectionTarget")
-        .map((entry) => entry.target.environmentId),
+      [...entries.values()].filter(removedWithRelay).map((entry) => entry.target.environmentId),
     );
-    // Credentials are already revoked. A failed backup must leave the local
-    // owners intact so a later sign-in can retry without losing their files.
+    // Backup failure must retain local file owners so a later sign-in can retry.
     yield* Effect.tryPromise({
       try: () => archiveCloudComposerDrafts(accountId, environmentIds),
       catch: (cause) =>

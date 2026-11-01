@@ -1,69 +1,59 @@
-import {
-  BearerConnectionTarget,
-  PrimaryConnectionTarget,
-} from "@t3tools/client-runtime/connection";
-import { EnvironmentId, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
+import { type DesktopEnvironmentBootstrap, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  createDesktopSecondaryBootstrapsReader,
-  desktopLocalBackendId,
-  desktopLocalConnectionId,
-  isDesktopLocalConnectionTarget,
-  isWslConnectionTarget,
-} from "./desktopLocal";
-
-describe("desktop local connection identity", () => {
-  it("preserves the desktop backend instance id", () => {
-    const target = new BearerConnectionTarget({
-      connectionId: desktopLocalConnectionId("wsl:Ubuntu"),
-      environmentId: EnvironmentId.make("environment-wsl"),
-      label: "WSL (Ubuntu)",
-    });
-
-    expect(isDesktopLocalConnectionTarget(target)).toBe(true);
-    expect(desktopLocalBackendId(target)).toBe("wsl:Ubuntu");
-    expect(isWslConnectionTarget(target)).toBe(true);
-  });
-
-  it("does not infer WSL for another desktop-local backend", () => {
-    const target = new BearerConnectionTarget({
-      connectionId: desktopLocalConnectionId("native-linux"),
-      environmentId: EnvironmentId.make("environment-native-linux"),
-      label: "Linux",
-    });
-
-    expect(isDesktopLocalConnectionTarget(target)).toBe(true);
-    expect(isWslConnectionTarget(target)).toBe(false);
-  });
-
-  it("does not classify the primary environment as desktop-local", () => {
-    const target = new PrimaryConnectionTarget({
-      environmentId: EnvironmentId.make("environment-primary"),
-      httpBaseUrl: "http://127.0.0.1:3773",
-      label: "This device",
-      wsBaseUrl: "ws://127.0.0.1:3773",
-    });
-
-    expect(isDesktopLocalConnectionTarget(target)).toBe(false);
-    expect(desktopLocalBackendId(target)).toBeNull();
-  });
-});
+import { createDesktopSecondaryBootstrapsReader } from "./desktopLocal";
 
 describe("desktop local topology reads", () => {
-  it("distinguishes a successful empty topology from a read failure", () => {
-    let readBootstraps = () => [];
+  it("reuses snapshots when polling returns fresh objects for the same topology", () => {
+    const secondary: DesktopEnvironmentBootstrap = {
+      id: "wsl:default",
+      label: "WSL",
+      runningDistro: "Ubuntu",
+      httpBaseUrl: "http://127.0.0.1:4000",
+      wsBaseUrl: "ws://127.0.0.1:4000",
+      bootstrapToken: "bootstrap-1",
+    };
+    let entries = [secondary];
     const reader = createDesktopSecondaryBootstrapsReader(() => ({
-      getLocalEnvironmentBootstraps: () => readBootstraps(),
+      getLocalEnvironmentBootstraps: () => entries.map((entry) => ({ ...entry })),
     }));
 
-    expect(reader.readResult()).toEqual({ _tag: "Success", bootstraps: [] });
+    const connected = reader.readSnapshot();
+    expect(reader.readSnapshot()).toBe(connected);
+    expect(reader.readResult()).toEqual({ _tag: "Success", bootstraps: connected });
+    expect(reader.readSnapshot()).toBe(connected);
 
-    const cause = new Error("IPC unavailable");
-    readBootstraps = () => {
-      throw cause;
+    entries = [];
+    const empty = reader.readSnapshot();
+    expect(empty).toEqual([]);
+    expect(reader.readSnapshot()).toBe(empty);
+  });
+
+  it.each<Partial<DesktopEnvironmentBootstrap>>([
+    { id: "wsl:Debian" },
+    { label: "Renamed backend" },
+    { runningDistro: "Debian" },
+    { httpBaseUrl: "http://127.0.0.1:4001" },
+    { wsBaseUrl: "ws://127.0.0.1:4001" },
+    { bootstrapToken: "bootstrap-2" },
+  ])("publishes bootstrap changes: %j", (change) => {
+    let secondary: DesktopEnvironmentBootstrap = {
+      id: "wsl:default",
+      label: "WSL",
+      runningDistro: "Ubuntu",
+      httpBaseUrl: "http://127.0.0.1:4000",
+      wsBaseUrl: "ws://127.0.0.1:4000",
+      bootstrapToken: "bootstrap-1",
     };
-    expect(reader.readResult()).toEqual({ _tag: "Failure", cause });
+    const reader = createDesktopSecondaryBootstrapsReader(() => ({
+      getLocalEnvironmentBootstraps: () => [{ ...secondary }],
+    }));
+    const before = reader.readSnapshot();
+    secondary = { ...secondary, ...change };
+    const after = reader.readSnapshot();
+    expect(after).not.toBe(before);
+    expect(after).toEqual([secondary]);
+    expect(reader.readSnapshot()).toBe(after);
   });
 
   it("filters the primary bootstrap from successful topology reads", () => {

@@ -5,19 +5,24 @@ import type * as Stream from "effect/Stream";
 export type ConnectionWakeup =
   | "application-active"
   | "application-active-probe"
-  | "application-active-reconnect"
-  | "credentials-changed";
+  | "application-active-long"
+  | "credentials-changed"
+  | "network-changed";
 
-export function isApplicationActiveWakeup(reason: ConnectionWakeup): boolean {
+function isApplicationActiveWakeup(reason: ConnectionWakeup): boolean {
   return (
     reason === "application-active" ||
     reason === "application-active-probe" ||
-    reason === "application-active-reconnect"
+    reason === "application-active-long"
   );
 }
 
+export function resetsRetryBackoff(reason: ConnectionWakeup): boolean {
+  return isApplicationActiveWakeup(reason) || reason === "network-changed";
+}
+
 export function shouldResubscribeAfterWakeup(reason: ConnectionWakeup): boolean {
-  return reason === "application-active" || reason === "application-active-probe";
+  return isApplicationActiveWakeup(reason);
 }
 
 export class ConnectionWakeups extends Context.Service<

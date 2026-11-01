@@ -1,7 +1,6 @@
-"use client";
-
 import { Dialog as CommandDialogPrimitive } from "@base-ui/react/dialog";
 import { SearchIcon } from "lucide-react";
+import { useRef } from "react";
 import type * as React from "react";
 import { cn } from "~/lib/utils";
 import {
@@ -12,6 +11,8 @@ import {
   AutocompleteInput,
   AutocompleteItem,
   AutocompleteList,
+  AutocompleteListHeading,
+  AutocompleteListVirtualized,
 } from "~/components/ui/autocomplete";
 import { DIALOG_BACKDROP_CLASS, DIALOG_POPUP_CLASS } from "~/components/ui/dialog-styles";
 import { Button } from "~/components/ui/button";
@@ -55,11 +56,15 @@ function CommandDialogPopup({
 }: CommandDialogPrimitive.Popup.Props & {
   onBackdropPointerDown?: React.PointerEventHandler<HTMLDivElement>;
 }) {
+  const popupRef = useRef<HTMLDivElement>(null);
   return (
     <CommandDialogPortal>
       <CommandDialogBackdrop onPointerDown={onBackdropPointerDown} />
       <CommandDialogViewport>
         <CommandDialogPrimitive.Popup
+          // The first tabbable can be an input addon, such as a submenu's Back button.
+          initialFocus={() => popupRef.current?.querySelector("input") ?? true}
+          ref={popupRef}
           className={cn(
             DIALOG_POPUP_CLASS,
             "pointer-events-auto max-h-105 max-w-xl text-foreground",
@@ -123,6 +128,28 @@ function CommandList({ className, ...props }: React.ComponentProps<typeof Autoco
   );
 }
 
+function CommandListVirtualized({
+  className,
+  ...props
+}: React.ComponentProps<typeof AutocompleteListVirtualized>) {
+  return (
+    <AutocompleteListVirtualized
+      className={cn("flex max-h-[inherit] min-h-0 flex-col", className)}
+      data-slot="command-list"
+      {...props}
+    />
+  );
+}
+
+function CommandListHeading({
+  className,
+  ...props
+}: React.ComponentProps<typeof AutocompleteListHeading>) {
+  return (
+    <AutocompleteListHeading className={className} data-slot="command-group-label" {...props} />
+  );
+}
+
 function CommandPanel({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -152,9 +179,7 @@ function CommandCollection({ ...props }: React.ComponentProps<typeof Autocomplet
   return <AutocompleteCollection data-slot="command-collection" {...props} />;
 }
 
-// Pass `active` when the palette tracks the highlighted row itself; the
-// primitive's hover and keyboard highlight are then ignored so the two never
-// disagree, and the row shows the active surface instead.
+// Pass active to override primitive hover/keyboard highlights when the palette tracks its own row.
 function CommandItem({
   className,
   active,
@@ -193,7 +218,7 @@ function CommandFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "relative flex items-center justify-between gap-2 rounded-b-[calc(var(--radius-2xl)-1px)] bg-foreground/[0.025] px-[var(--command-content-inset)] py-2.5 font-medium text-sm text-muted-foreground [&_[data-slot=kbd-group]]:font-sans [&_[data-slot=kbd]]:bg-foreground/[0.08] [&_[data-slot=kbd]]:text-foreground [&_[data-slot=kbd]]:ring-0",
+        "relative flex items-center justify-between gap-2 rounded-b-[calc(var(--radius-2xl)-1px)] border-t border-foreground/[0.07] bg-foreground/[0.025] px-[var(--command-content-inset)] py-2.5 font-medium text-sm text-muted-foreground [&_[data-slot=kbd-group]]:font-sans [&_[data-slot=kbd]]:bg-foreground/[0.08] [&_[data-slot=kbd]]:text-foreground [&_[data-slot=kbd]]:ring-0",
         className,
       )}
       data-slot="command-footer"
@@ -229,6 +254,8 @@ export {
   CommandInput,
   CommandItem,
   CommandList,
+  CommandListHeading,
+  CommandListVirtualized,
   CommandPanel,
   CommandShortcut,
 };

@@ -68,5 +68,15 @@ test(
     });
     expect(me.email).toBe(email);
   }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:hyperdrive",
+      "provider:cloudflare:worker",
+      "provider:neon",
+      "provider:neon:project",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

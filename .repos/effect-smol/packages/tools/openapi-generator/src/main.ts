@@ -8,13 +8,13 @@
  *
  * @since 4.0.0
  */
+import * as CliError from "effect/cli/CliError"
+import * as Command from "effect/cli/Command"
+import * as Flag from "effect/cli/Flag"
 import * as Console from "effect/Console"
 import * as Effect from "effect/Effect"
+import type { OpenAPISpec } from "effect/http-api/OpenApi"
 import type * as Schema from "effect/Schema"
-import * as CliError from "effect/unstable/cli/CliError"
-import * as Command from "effect/unstable/cli/Command"
-import * as Flag from "effect/unstable/cli/Flag"
-import type { OpenAPISpec } from "effect/unstable/httpapi/OpenApi"
 import * as OpenApiGenerator from "./OpenApiGenerator.ts"
 import * as OpenApiPatch from "./OpenApiPatch.ts"
 

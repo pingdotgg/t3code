@@ -1,9 +1,10 @@
+import { pipe } from "effect/Function";
 import type { AssistantCitation } from "@t3tools/contracts";
 import {
   formatAssistantCitationHref,
   parseAssistantCitationHref,
 } from "@t3tools/shared/assistantCitations";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 
 import { randomUUID } from "./utils";
@@ -18,7 +19,7 @@ const CITATION_HASH_PREFIX = "assistant-citation=";
 
 /** Base64url keeps router hash normalization from decoding quote whitespace or source IDs. */
 export function assistantCitationHash(citation: AssistantCitation) {
-  return `${CITATION_HASH_PREFIX}${Encoding.encodeBase64Url(formatAssistantCitationHref(citation))}`;
+  return `${CITATION_HASH_PREFIX}${Base64Url.encode(formatAssistantCitationHref(citation))}`;
 }
 
 export function assistantCitationFromLocation(href: string) {
@@ -27,8 +28,11 @@ export function assistantCitationFromLocation(href: string) {
   const hash = href.slice(hashIndex + 1);
   if (!hash.startsWith(CITATION_HASH_PREFIX) || hash.length > 140_000) return null;
   try {
-    return parseAssistantCitationHref(
-      Result.getOrThrow(Encoding.decodeBase64UrlString(hash.slice(CITATION_HASH_PREFIX.length))),
+    return pipe(
+      hash.slice(CITATION_HASH_PREFIX.length),
+      Base64Url.decodeString,
+      Result.getOrThrow,
+      parseAssistantCitationHref,
     );
   } catch {
     return null;

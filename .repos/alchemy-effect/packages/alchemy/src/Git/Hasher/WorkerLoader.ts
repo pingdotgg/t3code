@@ -27,7 +27,7 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { WorkerLoader } from "../../Cloudflare/Workers/WorkerLoader.ts";
 import type {
   Worker,

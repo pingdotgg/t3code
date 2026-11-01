@@ -1,7 +1,7 @@
+import * as loadBalancers from "@distilled.cloud/hetzner/load_balancers";
 import * as Hetzner from "@/Hetzner";
 import * as Provider from "@/Provider";
 import * as Test from "@/Test/Alchemy";
-import { Services } from "@distilled.cloud/hetzner";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
@@ -17,7 +17,7 @@ const logLevel = Effect.provideService(
 const hasHetznerCreds = !!process.env.HCLOUD_TOKEN;
 
 const waitUntilGone = (id: number) =>
-  Services.loadBalancers.getLoadBalancer({ id }).pipe(
+  loadBalancers.getLoadBalancer({ id }).pipe(
     Effect.as("found" as const),
     Effect.catchTag("NotFound", () => Effect.succeed("gone" as const)),
     Effect.repeat({
@@ -114,7 +114,7 @@ test.provider.skipIf(!hasHetznerCreds)(
         ]),
       );
 
-      const fetched = yield* Services.loadBalancers.getLoadBalancer({
+      const fetched = yield* loadBalancers.getLoadBalancer({
         id: created.lb.id,
       });
       expect(fetched.load_balancer.id).toEqual(created.lb.id);
@@ -190,7 +190,7 @@ test.provider.skipIf(!hasHetznerCreds)(
         ]),
       );
 
-      const refetched = yield* Services.loadBalancers.getLoadBalancer({
+      const refetched = yield* loadBalancers.getLoadBalancer({
         id: updated.id,
       });
       expect(refetched.load_balancer.algorithm.type).toEqual(
@@ -221,7 +221,17 @@ test.provider.skipIf(!hasHetznerCreds)(
       const gone = yield* waitUntilGone(created.lb.id);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:hetzner",
+      "provider:hetzner:loadbalancer",
+      "provider:hetzner:network",
+      "provider:hetzner:server",
+      "provider:hetzner:service",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 test.provider.skipIf(!hasHetznerCreds)(
@@ -255,7 +265,7 @@ test.provider.skipIf(!hasHetznerCreds)(
       expect(replaced.id).not.toEqual(created.id);
       expect(replaced.location).toEqual("fsn1");
 
-      const fetched = yield* Services.loadBalancers.getLoadBalancer({
+      const fetched = yield* loadBalancers.getLoadBalancer({
         id: replaced.id,
       });
       expect(fetched.load_balancer.location.name).toEqual("fsn1");
@@ -268,5 +278,13 @@ test.provider.skipIf(!hasHetznerCreds)(
       const gone = yield* waitUntilGone(replaced.id);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:hetzner",
+      "provider:hetzner:loadbalancer",
+      "provider:hetzner:service",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );

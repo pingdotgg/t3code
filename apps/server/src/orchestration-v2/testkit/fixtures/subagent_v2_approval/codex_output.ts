@@ -1,0 +1,95 @@
+import { assert } from "@effect/vitest";
+import type { ProviderReplayTranscript } from "@t3tools/contracts";
+
+import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
+import {
+  assertBaseProjection,
+  assertSemanticProjectionIntegrity,
+  assertUserMessagesInclude,
+  projectionFor,
+  SUBAGENT_V2_APPROVAL_PROMPT,
+} from "../shared.ts";
+import { SUBAGENT_APPROVAL_PENDING_SHELL_KEY } from "./input.ts";
+
+/** Codex v2 children inherit approvals and request on their own native turns; surface requests under
+ * the subagent on the parent because native child threads are hidden. */
+export function assertSubagentV2ApprovalOutput(
+  result: OrchestratorV2ScenarioResult,
+  transcript: ProviderReplayTranscript,
+) {
+  assertBaseProjection({ result, transcript, runCount: 1, runStatuses: ["completed"] });
+
+  const projection = projectionFor(result, transcript.scenario);
+  assertSemanticProjectionIntegrity(projection);
+  assertUserMessagesInclude(projection, [SUBAGENT_V2_APPROVAL_PROMPT]);
+  const run = projection.runs[0]!;
+
+  assert.lengthOf(projection.subagents, 1);
+  const subagent = projection.subagents[0]!;
+  assert.equal(subagent.origin, "provider_native");
+  assert.equal(subagent.status, "completed");
+  assert.equal(subagent.result, "Written.");
+  assert.isNotNull(subagent.childThreadId);
+
+  const requests = projection.runtimeRequests;
+  assert.lengthOf(requests, 1);
+  const request = requests[0]!;
+  assert.equal(request.kind, "command");
+  assert.equal(request.status, "resolved");
+  assert.equal(request.decision, "accept");
+  assert.equal(
+    projection.providerTurns.find((turn) => turn.id === request.providerTurnId)?.runAttemptId,
+    run.activeAttemptId,
+    "the request belongs to the parent's root provider turn",
+  );
+
+  const node = projection.nodes.find((candidate) => candidate.id === request.nodeId);
+  assert.isDefined(node);
+  assert.equal(node.kind, "approval_request");
+  assert.equal(node.runId, run.id);
+  assert.equal(node.parentNodeId, subagent.id, "the approval hangs off the subagent that asked");
+  assert.equal(node.status, "completed");
+
+  const approvalItems = projection.turnItems.filter((item) => item.type === "approval_request");
+  assert.lengthOf(approvalItems, 1);
+  const approval = approvalItems[0]!;
+  assert.equal(approval.runId, run.id);
+  assert.equal(approval.status, "completed");
+  const pendingRequestIndex = result.domainEvents.findIndex(
+    (event) =>
+      event.type === "runtime-request.updated" &&
+      event.payload.id === request.id &&
+      event.payload.status === "pending",
+  );
+  const waitingItemIndex = result.domainEvents.findIndex(
+    (event) =>
+      event.type === "turn-item.updated" &&
+      event.payload.id === approval.id &&
+      event.payload.status === "waiting",
+  );
+  assert.isAtLeast(waitingItemIndex, 0);
+  assert.isAbove(pendingRequestIndex, waitingItemIndex);
+  if (approval.type !== "approval_request") throw new Error("expected an approval item");
+  assert.equal(approval.requestId, request.id);
+  assert.include(approval.prompt ?? "", "subagent-approval.txt");
+
+  const pendingShell = result.capturedShellSnapshots.get(SUBAGENT_APPROVAL_PENDING_SHELL_KEY);
+  assert.isDefined(pendingShell);
+  const parentShell = pendingShell.threads.find((thread) => thread.id === projection.thread.id);
+  assert.equal(parentShell?.pendingRuntimeRequest?.id, request.id);
+  const childShell = pendingShell.threads.find((thread) => thread.id === subagent.childThreadId);
+  assert.isDefined(childShell, "the child thread exists while its approval is pending");
+  assert.isNull(childShell.pendingRuntimeRequest);
+
+  const child = result.projections.get(subagent.childThreadId!);
+  assert.isDefined(child);
+  assert.lengthOf(child.runtimeRequests, 0);
+  assert.isFalse(child.turnItems.some((item) => item.type === "approval_request"));
+  const command = child.turnItems.find((item) => item.type === "command_execution");
+  assert.equal(command?.status, "completed");
+  assert.isTrue(
+    child.turnItems.some(
+      (item) => item.type === "assistant_message" && item.text.includes("Written."),
+    ),
+  );
+}

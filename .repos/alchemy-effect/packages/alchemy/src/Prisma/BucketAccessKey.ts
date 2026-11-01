@@ -125,6 +125,7 @@ export interface BucketAccessKey extends Resource<
  * ```
  *
  * @resource
+ * @product Bucket
  */
 export const BucketAccessKey = Resource<BucketAccessKey>(
   "Prisma.BucketAccessKey",

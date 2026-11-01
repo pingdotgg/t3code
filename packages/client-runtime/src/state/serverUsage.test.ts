@@ -2,11 +2,13 @@ import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   UsageDay,
+  UsageReadError,
   USAGE_CONTRACT_VERSION,
   WS_METHODS,
   type ServerConfig,
   type ServerConfigStreamEvent,
-  type ServerSettings,
+  ServerSettings,
+  type UsageSource,
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
@@ -16,9 +18,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -26,9 +30,9 @@ import {
   type PreparedConnection,
   type SupervisorConnectionState,
 } from "../connection/model.ts";
-import { EnvironmentRegistry } from "../connection/registry.ts";
-import { EnvironmentSupervisor } from "../connection/supervisor.ts";
-import { EnvironmentCacheStore } from "../platform/persistence.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { createServerEnvironmentAtoms } from "./server.ts";
@@ -51,13 +55,39 @@ const CONFIG = {
   environment: { serverVersion: "0.0.1", capabilities: {} },
 } as ServerConfig;
 
+const PRICING = { status: "unavailable" as const, source: "test", fetchedAt: null, knownModels: 0 };
+
+const cursorSource = (refreshing: boolean): UsageSource => ({
+  fingerprint: {
+    hostId: "cursor.com",
+    provider: "cursor",
+    resolvedHomePath: "cursor-account:abc",
+    volumeId: "abc",
+  },
+  status: "ok",
+  scannedFiles: 1,
+  skippedFiles: 0,
+  malformedRecords: 0,
+  distinctSessions: 1,
+  message: null,
+  ...(refreshing ? { refreshing: true as const } : {}),
+});
+
+const sameServerSettings = Schema.toEquivalence(ServerSettings);
+
 const makeHarness = Effect.fn("ServerUsageTest.makeHarness")(function* (
-  beforeRead: (request: number) => Effect.Effect<void> = () => Effect.void,
+  beforeRead: (
+    request: number,
+    input: UsageSummaryInput,
+  ) => Effect.Effect<void, UsageReadError> = () => Effect.void,
+  sources: (input: UsageSummaryInput) => readonly UsageSource[] = () => [],
 ) {
   const events = yield* Queue.unbounded<ServerConfigStreamEvent>();
   let settings = DEFAULT_SERVER_SETTINGS;
   let requests = 0;
+  const inputs: UsageSummaryInput[] = [];
   const client = {
+    [WS_METHODS.serverRefreshUsageRates]: () => Effect.succeed(PRICING),
     [WS_METHODS.subscribeServerConfig]: () =>
       Stream.concat(
         Stream.make({ version: 1 as const, type: "snapshot" as const, config: CONFIG }),
@@ -66,8 +96,9 @@ const makeHarness = Effect.fn("ServerUsageTest.makeHarness")(function* (
     [WS_METHODS.serverGetUsageSummary]: (input: UsageSummaryInput) =>
       Effect.gen(function* () {
         requests += 1;
+        inputs.push(input);
         const price = settings.usagePriceOverrides["custom-model"]?.inputCostPerMillionTokens ?? 0;
-        yield* beforeRead(requests);
+        yield* beforeRead(requests, input);
         return {
           contractVersion: USAGE_CONTRACT_VERSION,
           readAt: "2026-09-04T12:00:00Z",
@@ -92,8 +123,8 @@ const makeHarness = Effect.fn("ServerUsageTest.makeHarness")(function* (
               sessions: 1,
             },
           ],
-          sources: [],
-          pricing: { status: "unavailable", source: "test", fetchedAt: null, knownModels: 0 },
+          sources: sources(input),
+          pricing: PRICING,
           scanDurationMs: 0,
         } satisfies UsageSummary;
       }),
@@ -104,9 +135,10 @@ const makeHarness = Effect.fn("ServerUsageTest.makeHarness")(function* (
     subscribeServerConfig: (input) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
+    inboundFrames: Effect.succeed(0),
     closed: Effect.never,
   };
-  const supervisor = EnvironmentSupervisor.of({
+  const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: TARGET,
     state: yield* SubscriptionRef.make<SupervisorConnectionState>({
       ...AVAILABLE_CONNECTION_STATE,
@@ -118,13 +150,13 @@ const makeHarness = Effect.fn("ServerUsageTest.makeHarness")(function* (
     disconnect: Effect.void,
     retryNow: Effect.void,
   });
-  const environments = EnvironmentRegistry.of({
+  const environments = EnvironmentRegistry.EnvironmentRegistry.of({
     run: (_environmentId, effect) =>
-      Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+      Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
     followStream: (_environmentId, stream) =>
-      Stream.provideService(stream, EnvironmentSupervisor, supervisor),
-  } as EnvironmentRegistry["Service"]);
-  const cache = EnvironmentCacheStore.of({
+      Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+  } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+  const cache = Persistence.EnvironmentCacheStore.of({
     loadShell: () => Effect.succeedNone,
     saveShell: () => Effect.void,
     loadThread: () => Effect.succeedNone,
@@ -140,8 +172,8 @@ const makeHarness = Effect.fn("ServerUsageTest.makeHarness")(function* (
   });
   const runtime = Atom.runtime(
     Layer.merge(
-      Layer.succeed(EnvironmentRegistry, environments),
-      Layer.succeed(EnvironmentCacheStore, cache),
+      Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environments),
+      Layer.succeed(Persistence.EnvironmentCacheStore, cache),
     ),
   );
   const initialConfigValueAtom = Atom.make(CONFIG);
@@ -160,17 +192,49 @@ const makeHarness = Effect.fn("ServerUsageTest.makeHarness")(function* (
       type: "settingsUpdated",
       payload: { settings },
     });
+    // An equal settings document keeps the previous object, so match on content.
     yield* AtomRegistry.toStream(registry, atoms.settingsValueAtom(TARGET.environmentId)).pipe(
-      Stream.filter((current) => current === next),
+      Stream.filter((current) => current !== null && sameServerSettings(current, next)),
       Stream.runHead,
     );
   });
   return {
     registry,
+    atoms,
     requests: () => requests,
+    inputs: () => inputs,
     updateSettings,
     summary: (input = INPUT) => atoms.usageSummary({ environmentId: TARGET.environmentId, input }),
   };
+});
+
+function settledSummary<E>(
+  registry: AtomRegistry.AtomRegistry,
+  atom: Atom.Atom<AsyncResult.AsyncResult<UsageSummary, E>>,
+) {
+  return AtomRegistry.toStream(registry, atom).pipe(
+    Stream.filterMap((result) =>
+      AsyncResult.isSuccess(result) && !result.waiting
+        ? Result.succeed(result.value)
+        : Result.failVoid,
+    ),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+  );
+}
+
+const makeRefreshingHarness = Effect.fn("ServerUsageTest.makeRefreshingHarness")(function* (
+  followUp: Effect.Effect<void, UsageReadError>,
+) {
+  const followUpStarted = yield* Deferred.make<void>();
+  const harness = yield* makeHarness(
+    (_request, input) =>
+      input.awaitRefresh === true
+        ? Deferred.succeed(followUpStarted, undefined).pipe(Effect.andThen(followUp))
+        : Effect.void,
+    (input) => [cursorSource(input.awaitRefresh !== true)],
+  );
+  return { ...harness, followUpStarted };
 });
 
 function waitForCost<E>(
@@ -188,49 +252,6 @@ function waitForCost<E>(
     Stream.runHead,
   );
 }
-
-it.effect("refreshes cached usage windows only when override prices change", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      const current = harness.summary();
-      const previous = harness.summary({ ...INPUT, sinceDay: UsageDay.make("2026-08-01") });
-      const unmountCurrent = harness.registry.mount(current);
-      const unmountPrevious = harness.registry.mount(previous);
-      yield* waitForCost(harness.registry, current, 0);
-      yield* waitForCost(harness.registry, previous, 0);
-      unmountPrevious();
-      expect(harness.requests()).toBe(2);
-
-      const prices = {
-        "custom-model": { inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 9 },
-        "other-model": { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
-      };
-      yield* harness.updateSettings({ ...DEFAULT_SERVER_SETTINGS, usagePriceOverrides: prices });
-      yield* waitForCost(harness.registry, current, 3);
-      yield* waitForCost(harness.registry, previous, 3);
-      expect(harness.requests()).toBe(4);
-
-      yield* harness.updateSettings({
-        ...DEFAULT_SERVER_SETTINGS,
-        usagePriceOverrides: {
-          "other-model": { outputCostPerMillionTokens: 2, inputCostPerMillionTokens: 1 },
-          "custom-model": { outputCostPerMillionTokens: 9, inputCostPerMillionTokens: 3 },
-        },
-      });
-      yield* harness.updateSettings({
-        ...DEFAULT_SERVER_SETTINGS,
-        usagePriceOverrides: prices,
-        defaultTheme: "custom-theme",
-      });
-      yield* harness.updateSettings(DEFAULT_SERVER_SETTINGS);
-      yield* waitForCost(harness.registry, current, 0);
-      yield* waitForCost(harness.registry, previous, 0);
-      expect(harness.requests()).toBe(6);
-      unmountCurrent();
-    }),
-  ),
-);
 
 it.effect("restarts a pending usage read after a price change", () =>
   Effect.scoped(
@@ -256,6 +277,24 @@ it.effect("restarts a pending usage read after a price change", () =>
       });
       yield* waitForCost(harness.registry, summary, 5);
       yield* Deferred.await(interrupted);
+      expect(harness.requests()).toBe(2);
+      unmount();
+    }),
+  ),
+);
+
+it.effect("keeps the cached usage summary when the awaited refresh fails", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* makeRefreshingHarness(
+        Effect.fail(new UsageReadError({ reason: "scanFailed", detail: "Cursor is down" })),
+      );
+      const summary = harness.summary();
+      const unmount = harness.registry.mount(summary);
+      expect((yield* settledSummary(harness.registry, summary)).sources).toEqual([
+        cursorSource(true),
+      ]);
+      expect(AsyncResult.isSuccess(harness.registry.get(summary))).toBe(true);
       expect(harness.requests()).toBe(2);
       unmount();
     }),

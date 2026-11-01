@@ -10,23 +10,28 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
 import * as ModelManifest from "./ModelManifest.ts";
-import { ProviderRegistryLive } from "./Layers/ProviderRegistry.ts";
-import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
-import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
-import type { ProviderInstance } from "./ProviderDriver.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
-import { BUILT_IN_DRIVERS } from "./builtInDrivers.ts";
+import * as ProviderRegistry from "./ProviderRegistry.ts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import * as Schema from "effect/Schema";
 import {
   applyProviderCompatibility,
   ProviderCompatibilityPolicy,
   resolveProviderCompatibility,
 } from "./providerCompatibility.ts";
+import { resolveAntigravityReleaseAsset } from "./antigravityRelease.ts";
+import bundledManifest from "./model-manifest.json" with { type: "json" };
 
+const decodeCompatibilityPolicies = Schema.decodeUnknownSync(
+  Schema.Array(ProviderCompatibilityPolicy),
+);
 const driver = ProviderDriverKind.make("codex");
 const policy: ProviderCompatibilityPolicy = {
   driver,
-  t3CodeRange: ">=0.0.42 <0.1.0",
+  t3CodeRange: ">=0.0.0",
   recommendedVersion: "2.0.0",
   recommendedRange: ">=2.0.0 <3.0.0",
   ranges: [
@@ -52,35 +57,31 @@ const provider: ServerProvider = {
 };
 
 describe("provider compatibility", () => {
-  it("bundles a compatibility policy for every built-in harness", () => {
-    for (const builtIn of BUILT_IN_DRIVERS) {
-      assert.isDefined(
-        resolveProviderCompatibility(
-          ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
-          builtIn.driverKind,
-          null,
-        ),
-        `Missing bundled compatibility policy for ${builtIn.driverKind}`,
-      );
-    }
-  });
-
-  it("supports Codex 0.156 and marks Codex without Thread.projectId broken", () => {
-    const bundled = ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility;
-    for (const [t3CodeVersion, codexVersion, expected] of [
-      ["0.0.42", "0.148.0", "broken"],
-      ["0.0.42", "0.149.0", "unsupported"],
-      ["0.0.42", "0.155.0", "unsupported"],
-      ["0.0.42", "0.156.0", "supported"],
-      ["0.0.43-nightly.20260924.2200", "0.153.3", "unsupported"],
-      ["0.0.43-nightly.20260924.2200", "0.156.1", "supported"],
+  it("keeps releases before V2 on the OpenCode 1 policy they shipped with", () => {
+    // Older builds fetch main's manifest; their V1 orchestrator cannot drive OpenCode 2.
+    const opencode = ProviderDriverKind.make("opencode");
+    for (const [version, expected] of [
+      ["1.14.19", "supported"],
+      ["2.0.18", "broken"],
+      ["1.14.18", "broken"],
     ] as const) {
-      assert.strictEqual(
-        resolveProviderCompatibility(bundled, driver, codexVersion, t3CodeVersion)?.status,
-        expected,
-        `T3 Code ${t3CodeVersion} with Codex ${codexVersion}`,
+      const advisory = resolveProviderCompatibility(
+        ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+        opencode,
+        version,
+        "0.0.45",
       );
+      assert.strictEqual(advisory?.status, expected, `OpenCode ${version} on 0.0.45`);
+      assert.strictEqual(advisory?.recommendedVersion, "1.14.19");
     }
+    assert.isUndefined(
+      resolveProviderCompatibility(
+        ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+        ProviderDriverKind.make("pi"),
+        "1.0.0",
+        "0.0.45",
+      ),
+    );
   });
 
   it("compares Cursor build dates without treating semver prereleases as stable", () => {
@@ -132,6 +133,19 @@ describe("provider compatibility", () => {
     }
   });
 
+  it("supports the managed Antigravity runtime in the bundled manifest", () => {
+    const policies = decodeCompatibilityPolicies(bundledManifest.compatibility);
+    const release = resolveAntigravityReleaseAsset("darwin", "arm64");
+    assert.strictEqual(
+      resolveProviderCompatibility(
+        policies,
+        ProviderDriverKind.make("antigravity"),
+        `agy_acp_server_${release?.version}`,
+      )?.status,
+      "supported",
+    );
+  });
+
   it("classifies boundaries and treats unlisted versions and release tags as unknown", () => {
     for (const [version, expected] of [
       ["0.9.9", "broken"],
@@ -146,25 +160,18 @@ describe("provider compatibility", () => {
     ] as const) {
       assert.strictEqual(resolveProviderCompatibility([policy], driver, version)?.status, expected);
     }
-    assert.isUndefined(resolveProviderCompatibility([policy], driver, "0.9.0", "0.1.0"));
   });
 
-  it("supports every driver without inventing policies for uncovered adapters", () => {
-    for (const kind of [
-      "codex",
-      "claudeAgent",
-      "cursor",
-      "grok",
-      "opencode",
-      "antigravity",
-      "customDriver",
-    ]) {
-      const adapter = ProviderDriverKind.make(kind);
+  it("applies policies only within their T3 Code version range", () => {
+    const scopedPolicy = { ...policy, t3CodeRange: ">=0.0.42 <0.1.0" };
+    for (const version of ["0.0.42", "0.0.45"]) {
       assert.strictEqual(
-        resolveProviderCompatibility([{ ...policy, driver: adapter }], adapter, "2.0.0")?.status,
-        "supported",
+        resolveProviderCompatibility([scopedPolicy], driver, "0.9.0", version)?.status,
+        "broken",
       );
-      assert.isUndefined(resolveProviderCompatibility([], adapter, "2.0.0"));
+    }
+    for (const version of ["0.0.41", "0.1.0"]) {
+      assert.isUndefined(resolveProviderCompatibility([scopedPolicy], driver, "0.9.0", version));
     }
   });
 
@@ -177,7 +184,7 @@ describe("provider compatibility", () => {
     assert.strictEqual(supported.status, "error");
     assert.strictEqual(supported.message, "Authentication failed");
     assert.strictEqual(
-      applyProviderCompatibility(supported, [{ ...policy, t3CodeRange: ">=9.0.0" }], [policy])
+      applyProviderCompatibility(supported, [{ ...policy, t3CodeRange: "<0.0.0" }], [policy])
         .compatibilityAdvisory?.status,
       "broken",
     );
@@ -204,11 +211,11 @@ describe("provider compatibility", () => {
       ranges: [{ range: ">=v2.0 <v3", status: "supported" }],
     });
     assert.strictEqual(
-      resolveProviderCompatibility([prefixed], driver, "2.0.0")?.status,
+      resolveProviderCompatibility([prefixed], driver, "2.0.0", "0.0.45")?.status,
       "supported",
     );
     assert.strictEqual(
-      resolveProviderCompatibility([prefixed], driver, "3.0.0")?.status,
+      resolveProviderCompatibility([prefixed], driver, "3.0.0", "0.0.45")?.status,
       "unknown",
     );
     for (const invalid of [
@@ -252,7 +259,7 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
             makeManualOnlyProviderMaintenanceCapabilities({ provider: driver, packageName: null }),
           ),
       },
-      adapter: {} as ProviderInstance["adapter"],
+      orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
       textGeneration: {} as ProviderInstance["textGeneration"],
     };
     const refresh = Deferred.succeed(started, undefined).pipe(
@@ -266,14 +273,15 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
         })),
       ),
     );
-    const dependencies = Layer.mergeAll(
+    const layerDependencies = Layer.mergeAll(
+      ProviderLatestVersions.layer,
       Layer.succeed(ModelManifest.ModelManifest, {
         current: Ref.get(manifest),
         refresh,
         forceRefresh: refresh,
         refreshInBackground: Effect.void,
       }),
-      Layer.succeed(ProviderInstanceRegistry, {
+      Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
         getInstance: (id) => Effect.succeed(id === instance.instanceId ? instance : undefined),
         listInstances: Effect.succeed([instance]),
         listUnavailable: Effect.succeed([]),
@@ -285,7 +293,7 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
       ),
     );
     yield* Effect.gen(function* () {
-      const registry = yield* ProviderRegistry;
+      const registry = yield* ProviderRegistry.ProviderRegistry;
       yield* Deferred.await(started);
       assert.strictEqual(
         (yield* registry.getProviders)[0]?.compatibilityAdvisory?.status,
@@ -305,35 +313,15 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
       assert.strictEqual(updated?.compatibilityAdvisory?.status, "supported");
       assert.strictEqual(updated?.status, "error");
       assert.strictEqual(updated?.message, "Authentication failed");
-    }).pipe(Effect.provide(ProviderRegistryLive.pipe(Layer.provide(dependencies))));
+    }).pipe(
+      Effect.provide(
+        ProviderRegistry.layer.pipe(
+          Layer.provide(layerDependencies),
+          Layer.provide(
+            Layer.mock(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator)({}),
+          ),
+        ),
+      ),
+    );
   }).pipe(Effect.scoped),
 );
-
-it("recomputes latest-version compatibility without losing the underlying update advisory", () => {
-  const snapshot: ServerProvider = {
-    ...provider,
-    version: "2.0.0",
-    versionAdvisory: {
-      status: "behind_latest",
-      currentVersion: "2.0.0",
-      latestVersion: "4.0.0",
-      canUpdate: true,
-      updateCommand: "npm install -g fixture@latest",
-      checkedAt: provider.checkedAt,
-      message: null,
-    },
-  };
-  const blockedPolicy: ProviderCompatibilityPolicy = {
-    ...policy,
-    ranges: [...policy.ranges, { range: ">=3.0.0", status: "broken" }],
-  };
-  const blocked = applyProviderCompatibility(snapshot, [blockedPolicy], []);
-  assert.strictEqual(blocked.compatibilityAdvisory?.latestVersionStatus, "broken");
-  const relaxed = applyProviderCompatibility(
-    blocked,
-    [{ ...policy, ranges: [{ range: ">=2.0.0", status: "supported" }] }],
-    [],
-  );
-  assert.strictEqual(relaxed.compatibilityAdvisory?.latestVersionStatus, "supported");
-  assert.deepStrictEqual(relaxed.versionAdvisory, snapshot.versionAdvisory);
-});

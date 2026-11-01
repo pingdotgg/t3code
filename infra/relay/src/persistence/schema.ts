@@ -5,6 +5,7 @@ import type {
   RelayManagedEndpointOrigin,
 } from "@t3tools/contracts/relay";
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -74,6 +75,7 @@ export const relayEnvironmentLinks = pgTable(
     notificationsEnabled: boolean("notifications_enabled").notNull().default(true),
     liveActivitiesEnabled: boolean("live_activities_enabled").notNull().default(true),
     managedTunnelsEnabled: boolean("managed_tunnels_enabled").notNull().default(false),
+    holdWebhooksWhileOffline: boolean("hold_webhooks_while_offline").notNull().default(false),
     createdByDeviceId: varchar("created_by_device_id", { length: 191 }),
     revokedAt: varchar("revoked_at", { length: 64 }),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
@@ -97,6 +99,7 @@ export const relayManagedEndpointAllocations = pgTable(
     readyAt: varchar("ready_at", { length: 64 }),
     recoveryEnabledAt: varchar("recovery_enabled_at", { length: 64 }),
     recoveryEnvironmentPublicKey: text("recovery_environment_public_key"),
+    tunnelReleasedAt: varchar("tunnel_released_at", { length: 64 }),
     origin: jsonb("origin").$type<RelayManagedEndpointOrigin>(),
     generation: integer("generation").notNull().default(0),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
@@ -108,6 +111,13 @@ export const relayManagedEndpointAllocations = pgTable(
     uniqueIndex("idx_relay_managed_endpoint_allocations_tunnel_name").on(table.tunnelName),
   ],
 );
+
+// One row per upstream API whose rate limit is shared by every Worker
+// isolate, so a 429 seen by one isolate pauses the rest.
+export const relayUpstreamApiPauses = pgTable("relay_upstream_api_pauses", {
+  api: varchar("api", { length: 64 }).primaryKey(),
+  pausedUntilMs: bigint("paused_until_ms", { mode: "number" }).notNull(),
+});
 
 export const relayManagedTunnelLimits = pgTable("relay_managed_tunnel_limits", {
   userId: varchar("user_id", { length: 191 }).primaryKey(),
@@ -129,7 +139,6 @@ export const relayEnvironmentCredentials = pgTable(
   },
   (table) => [
     uniqueIndex("idx_relay_environment_credentials_hash").on(table.credentialHash),
-    index("idx_relay_environment_credentials_environment").on(table.environmentId, table.revokedAt),
     index("idx_relay_environment_credentials_environment_key").on(
       table.environmentId,
       table.environmentPublicKey,
@@ -150,7 +159,6 @@ export const relayAgentActivityRows = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.environmentId, table.environmentPublicKey, table.threadId] }),
-    index("idx_relay_agent_activity_rows_updated").on(table.updatedAt),
   ],
 );
 
@@ -172,11 +180,7 @@ export const relayDeliveryAttempts = pgTable(
     transportError: text("transport_error"),
   },
   (table) => [
-    index("idx_relay_delivery_attempts_environment").on(
-      table.environmentId,
-      table.threadId,
-      table.createdAt,
-    ),
+    index("idx_relay_delivery_attempts_created").on(table.createdAt),
     uniqueIndex("idx_relay_delivery_attempts_source_job").on(table.sourceJobId),
   ],
 );

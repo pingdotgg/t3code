@@ -3,7 +3,7 @@ import * as D1Client from "@effect/sql-d1/D1Client";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Sql from "effect/unstable/sql/SqlClient";
+import * as Sql from "effect/sql/SqlClient";
 import { makeExecutionMemo } from "../Runtime/ExecutionMemo.ts";
 import { proxyChain } from "../Util/proxy-chain.ts";
 

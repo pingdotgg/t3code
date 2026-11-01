@@ -42,5 +42,5 @@ test.provider(
       yield* assertNetworkAclGone(acl.networkAclId);
       yield* assertVpcGone(vpc.vpcId);
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  { tags: ["provider:aws", "provider:aws:ec2", "live"], timeout: 180_000 },
 );

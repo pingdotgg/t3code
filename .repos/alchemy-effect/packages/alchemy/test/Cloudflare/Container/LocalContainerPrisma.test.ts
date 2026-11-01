@@ -5,12 +5,12 @@ import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { MinimumLogLevel } from "effect/References";
-import PrismaHostStack from "./fixtures/prismahost/stack.ts";
+import PrismaHostStack, { state } from "./fixtures/prismahost/stack.ts";
 import { expectDatabaseReachable } from "./fixtures/sqlreach/expect.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Layer.merge(Cloudflare.providers(), Prisma.providers()),
-  state: Cloudflare.state(),
+  state,
   dev: true,
 });
 
@@ -30,22 +30,35 @@ const TEST_TIMEOUT = 240_000;
  * bridge — a 127.0.0.1 listener times out with
  * `dial error: timeout` to `172.17.0.1`.
  */
-describe("local container reaches Prisma Postgres", () => {
-  const stack = beforeAll(deploy(PrismaHostStack), { timeout: HOOK_TIMEOUT });
-  afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(PrismaHostStack), {
-    timeout: HOOK_TIMEOUT,
-  });
+describe(
+  "local container reaches Prisma Postgres",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:container",
+      "provider:cloudflare:worker",
+      "provider:prisma",
+      "provider:prisma:connection",
+      "provider:prisma:project",
+    ],
+  },
+  () => {
+    const stack = beforeAll(deploy(PrismaHostStack), { timeout: HOOK_TIMEOUT });
+    afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(PrismaHostStack), {
+      timeout: HOOK_TIMEOUT,
+    });
 
-  test(
-    "container DATABASE_URL is rewritten once and reaches the host Prisma",
-    Effect.gen(function* () {
-      const { url } = yield* stack;
-      yield* expectDatabaseReachable(url, (hostname) => {
-        expect(hostname).not.toBe("localhost");
-        expect(hostname).not.toBe("127.0.0.1");
-        expect(hostname).toContain("localhost");
-      });
-    }).pipe(logLevel),
-    { timeout: TEST_TIMEOUT },
-  );
-});
+    test(
+      "container DATABASE_URL is rewritten once and reaches the host Prisma",
+      Effect.gen(function* () {
+        const { url } = yield* stack;
+        yield* expectDatabaseReachable(url, (hostname) => {
+          expect(hostname).not.toBe("localhost");
+          expect(hostname).not.toBe("127.0.0.1");
+          expect(hostname).toContain("localhost");
+        });
+      }).pipe(logLevel),
+      { tags: ["local"], timeout: TEST_TIMEOUT },
+    );
+  },
+);

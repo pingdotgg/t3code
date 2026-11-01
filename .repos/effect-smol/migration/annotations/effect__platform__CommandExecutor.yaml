@@ -1,6 +1,6 @@
 "@effect/platform/CommandExecutor#CommandExecutor":
   replacement: "ChildProcessSpawner.ChildProcessSpawner"
-  note: "The executor service moved to effect/unstable/process/ChildProcessSpawner and was renamed."
+  note: "The executor service moved to effect/process/ChildProcessSpawner and was renamed."
 "@effect/platform/CommandExecutor#makeExecutor":
   replacement: "ChildProcessSpawner.make"
   note: "Use the renamed constructor; it derives output helpers from a spawn implementation."

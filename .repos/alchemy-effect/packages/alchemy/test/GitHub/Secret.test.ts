@@ -83,7 +83,15 @@ test.provider.skipIf(!owner)(
       // ...and is gone after destroy.
       expect(yield* secretExists("ALCHEMY_CONFIG_SECRET")).toBe(false);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:github",
+      "provider:github:repository",
+      "provider:github:secret",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 // `list()` for GitHub.Secret is non-listable (pattern (e) in
@@ -124,5 +132,8 @@ test.provider.skipIf(!owner)(
       // ...and is gone after destroy.
       expect(yield* secretExists("ALCHEMY_LIST_TEST")).toBe(false);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:github", "provider:github:secret", "live"],
+    timeout: 120_000,
+  },
 );

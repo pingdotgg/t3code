@@ -10,6 +10,13 @@ upload, deployment, health check, and promotion — see
 
 ## Framework apps
 
+For frontend frameworks, prefer the [`Prisma.Website` family](/prisma/frontend/websites).
+It provides framework-specific builds and native dev servers with the
+same `rootDir`, `env`, `assets`, `dev`, and `domain` vocabulary as other
+providers. Its output still runs on Bun in Compute, including static
+sites. Use `Prisma.Compute` directly for custom builds, server apps,
+and the Effect-native handlers below.
+
 Point `path` at the app. With `build: "auto"`, alchemy detects the
 framework, builds it, archives the output, and deploys the correct
 server entrypoint:

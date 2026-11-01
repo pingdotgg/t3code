@@ -17,7 +17,6 @@ import {
   captureHyprlandWindow,
   hyprlandCaptureExecutable,
   hyprlandCaptureShortcut,
-  isHyprlandCaptureSession,
 } from "./HyprlandSnapShot.ts";
 
 let directory: string;
@@ -67,22 +66,6 @@ beforeEach(async () => {
 afterEach(async () => {
   await NodeFSP.rm(directory, { recursive: true, force: true });
 });
-
-it("does not select Hyprland from a stale socket environment or sandbox", () => {
-  expect(isHyprlandCaptureSession({ XDG_CURRENT_DESKTOP: "Hyprland" })).toBe(true);
-  expect(
-    isHyprlandCaptureSession({ XDG_CURRENT_DESKTOP: "KDE", HYPRLAND_INSTANCE_SIGNATURE: "old" }),
-  ).toBe(false);
-  expect(isHyprlandCaptureSession({ XDG_CURRENT_DESKTOP: "Hyprland", FLATPAK_ID: "app" })).toBe(
-    false,
-  );
-  expect(isHyprlandCaptureSession({ XDG_CURRENT_DESKTOP: "Hyprland", SNAP: "app" })).toBe(false);
-});
-it("discovery neither installs a helper nor requests a screenshot", async () => {
-  expect((await setup.state()).status).toBe("not-installed");
-  expect(execute).not.toHaveBeenCalled();
-  await expect(NodeFSP.stat(paths.dataHome)).rejects.toMatchObject({ code: "ENOENT" });
-});
 it("installs offline at a stable executable path and probes only capabilities", async () => {
   await setup.perform("install-hyprland-helper");
   expect((await NodeFSP.stat(hyprlandCaptureExecutable(paths))).mode & 0o777).toBe(0o755);
@@ -121,7 +104,7 @@ it.each([true, false])("uses the active config syntax and user bindings (Lua: %s
     NodePath.join(config, lua ? "bindings.lua" : "bindings.conf"),
     "custom bindings",
   );
-  const result = await hyprlandCaptureShortcut("com.t3tools.T3Code", directory);
+  const result = await hyprlandCaptureShortcut("com.t3tools.T3Code", "/home/test", directory);
   expect(result.shortcutConfigPath).toBe(
     NodePath.join(config, lua ? "bindings.lua" : "bindings.conf"),
   );

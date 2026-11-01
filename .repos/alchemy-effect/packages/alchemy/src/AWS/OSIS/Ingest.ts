@@ -1,4 +1,5 @@
 import type * as Credentials from "@distilled.cloud/aws/Credentials";
+import type * as SigV4 from "@distilled.cloud/aws/SigV4";
 import type * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
 import type { IngestRequest, PipelineIngestError } from "./BindingHttp.ts";
@@ -41,7 +42,10 @@ export interface Ingest extends Binding.Service<
   ) => Effect.Effect<
     (
       request: IngestRequest,
-    ) => Effect.Effect<void, PipelineIngestError | Credentials.CredentialsError>
+    ) => Effect.Effect<
+      void,
+      PipelineIngestError | Credentials.CredentialsError | SigV4.SigningError
+    >
   >
 > {}
 export const Ingest = Binding.Service<Ingest>("AWS.OSIS.Ingest");

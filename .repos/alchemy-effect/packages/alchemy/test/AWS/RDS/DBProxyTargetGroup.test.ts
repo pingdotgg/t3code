@@ -16,19 +16,22 @@ const { test } = Test.make({ providers: AWS.providers() });
 // full proxy fan-out + target-group enumeration + target hydration code and
 // asserts a well-typed `Attributes[]` (likely empty on an account with no
 // proxies).
-test.provider("list returns well-typed DBProxyTargetGroup attributes", () =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(DBProxyTargetGroup);
-    const all = yield* provider.list();
+test.provider(
+  "list returns well-typed DBProxyTargetGroup attributes",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(DBProxyTargetGroup);
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
-    for (const group of all) {
-      expect(typeof group.dbProxyName).toBe("string");
-      expect(typeof group.targetGroupName).toBe("string");
-      expect(Array.isArray(group.dbClusterIdentifiers)).toBe(true);
-      expect(Array.isArray(group.dbInstanceIdentifiers)).toBe(true);
-    }
-  }),
+      expect(Array.isArray(all)).toBe(true);
+      for (const group of all) {
+        expect(typeof group.dbProxyName).toBe("string");
+        expect(typeof group.targetGroupName).toBe("string");
+        expect(Array.isArray(group.dbClusterIdentifiers)).toBe(true);
+        expect(Array.isArray(group.dbInstanceIdentifiers)).toBe(true);
+      }
+    }),
+  { tags: ["provider:aws", "provider:aws:rds", "live"] },
 );
 
 // Deploy-backed list test. Gated behind AWS_TEST_RDS_DBPROXY=1 because a
@@ -76,4 +79,5 @@ test.provider.skipIf(!process.env.AWS_TEST_RDS_DBPROXY)(
 
       yield* stack.destroy();
     }),
+  { tags: ["provider:aws", "provider:aws:rds", "live"] },
 );

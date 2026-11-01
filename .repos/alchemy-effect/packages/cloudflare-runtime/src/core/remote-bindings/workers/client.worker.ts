@@ -13,14 +13,36 @@ export default class Client extends WorkerEntrypoint<unknown, Props> {
 
   constructor(ctx: ExecutionContext<Props>, env: unknown) {
     super(ctx, env);
-    const stub = makeRemoteProxyStub(ctx.props.binding);
+    let stub: Fetcher | undefined;
+    const getStub = () => (stub ??= makeRemoteProxyStub(ctx.props.binding));
 
     return new Proxy(this, {
       get: (target, prop) => {
         if (Reflect.has(target, prop)) {
           return Reflect.get(target, prop);
         }
-        return Reflect.get(stub, prop);
+        // Startup probes and fetch-only bindings must not open an RPC session.
+        // Cap'n Web properties support both invocation and promise resolution.
+        let rpcProperty: unknown;
+        let resolved = false;
+        const getRpcProperty = () => {
+          if (!resolved) {
+            rpcProperty = Reflect.get(getStub(), prop);
+            resolved = true;
+          }
+          return rpcProperty;
+        };
+        return new Proxy(
+          (...args: Array<unknown>) => {
+            const method = getRpcProperty() as (
+              ...args: Array<unknown>
+            ) => unknown;
+            return Reflect.apply(method, undefined, args);
+          },
+          {
+            get: (_target, key) => Reflect.get(getRpcProperty() as object, key),
+          },
+        );
       },
     });
   }

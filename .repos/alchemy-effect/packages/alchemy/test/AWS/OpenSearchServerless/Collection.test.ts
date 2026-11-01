@@ -86,6 +86,7 @@ test.provider(
       expect(batch.collectionDetails ?? []).toHaveLength(0);
       expect((batch.collectionErrorDetails ?? []).length).toBeGreaterThan(0);
     }),
+  { tags: ["provider:aws", "provider:aws:opensearchserverless", "live"] },
 );
 
 // Security and access policies are FREE (no OCU cost) and provision instantly,
@@ -204,7 +205,10 @@ test.provider(
       yield* assertPolicyGone("network", NET_POLICY);
       yield* assertAccessPolicyGone(ACC_POLICY);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:opensearchserverless", "live"],
+    timeout: 120_000,
+  },
 );
 
 // A VECTORSEARCH collection is the vector store Bedrock Knowledge Bases require.
@@ -271,7 +275,10 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       yield* stack.destroy();
       yield* assertCollectionGone(collection.collectionId);
     }),
-  { timeout: 900_000 },
+  {
+    tags: ["provider:aws", "provider:aws:opensearchserverless", "live"],
+    timeout: 900_000,
+  },
 );
 
 const assertPolicyGone = (type: "encryption" | "network", name: string) =>

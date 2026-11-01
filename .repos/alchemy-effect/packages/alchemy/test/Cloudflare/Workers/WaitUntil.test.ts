@@ -4,8 +4,9 @@ import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { expectUrlContains } from "../Utils/Http.ts";
+import { requestWorker } from "../Utils/WorkerRequest.ts";
 import Stack from "./fixtures/wait-until/stack.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -27,22 +28,56 @@ afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 // already reach the worker. Route matching uses `url.pathname`, so the
 // param is invisible to the fixture.
 let bust = 0;
-const getText = (
-  client: HttpClient.HttpClient,
-  url: string,
-): Effect.Effect<string, unknown> =>
-  client
-    .get(`${url}?cb=${Date.now()}-${bust++}`)
-    .pipe(Effect.flatMap((res) => res.text));
+const getText = Effect.fn(function* (url: string) {
+  const request = yield* Effect.sync(() =>
+    HttpClientRequest.get(`${url}?cb=${Date.now()}-${bust++}`).pipe(
+      HttpClientRequest.setHeader("cache-control", "no-cache"),
+    ),
+  );
+  const response = yield* requestWorker(request);
+  const body = yield* response.text;
+  if (response.status !== 200) {
+    return yield* Effect.fail(
+      new Error(`GET ${url}: ${response.status}: ${body}`),
+    );
+  }
+  return body;
+});
 
 describe.skipIf(!!process.env.FAST)(
   "waitUntil runs background Effects past the response (worker ctx + DO state)",
+  { tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"] },
   () => {
+    test(
+      "concurrent background journal writes retain every entry",
+      Effect.gen(function* () {
+        const { url } = yield* stack;
+        yield* expectUrlContains(`${url}/bg-many`, "bg-many-scheduled");
+        const entries = yield* Effect.gen(function* () {
+          const text = yield* getText(`${url}/entries-many`);
+          return yield* Effect.try({
+            try: () => (JSON.parse(text) as { entries: string[] }).entries,
+            catch: (cause) =>
+              new Error(`Invalid journal response: ${text}`, { cause }),
+          });
+        }).pipe(
+          Effect.repeat({
+            schedule: Schedule.spaced("500 millis"),
+            times: 8,
+            until: (entries) => entries.length === 40,
+          }),
+        );
+        expect(entries.toSorted()).toEqual(
+          Array.from({ length: 40 }, (_, i) => `parallel-${i}`).sort(),
+        );
+      }).pipe(logLevel),
+      { timeout: 60_000 },
+    );
+
     test(
       "waitUntil runs background Effects past the response (worker ctx + DO state)",
       Effect.gen(function* () {
         const { url } = yield* stack;
-        const client = yield* HttpClient.HttpClient;
 
         // Content-based readiness through workers.dev propagation (the
         // placeholder page serves 200s); also asserts the raw escape hatch is
@@ -67,7 +102,7 @@ describe.skipIf(!!process.env.FAST)(
         // The entries only appear if waitUntil kept the invocations alive until
         // the delayed writes completed.
         const entries = yield* Effect.gen(function* () {
-          const text = yield* getText(client, `${url}/entries`);
+          const text = yield* getText(`${url}/entries`);
           // The workers.dev placeholder serves HTML with a 200 during subdomain
           // propagation; a bare JSON.parse throw would be a *defect* that the
           // `Effect.catch` below can't see, so parse as a typed failure.
@@ -100,7 +135,6 @@ describe.skipIf(!!process.env.FAST)(
       "Effect.addFinalizer runs after the response (request scope + DO call scope)",
       Effect.gen(function* () {
         const { url } = yield* stack;
-        const client = yield* HttpClient.HttpClient;
 
         // Content-based readiness: a fresh workers.dev URL serves Cloudflare's
         // placeholder page (with a 200) while the subdomain propagates.
@@ -124,7 +158,7 @@ describe.skipIf(!!process.env.FAST)(
         );
 
         const entries = yield* Effect.gen(function* () {
-          const text = yield* getText(client, `${url}/entries`);
+          const text = yield* getText(`${url}/entries`);
           // The workers.dev placeholder serves HTML with a 200 during subdomain
           // propagation; a bare JSON.parse throw would be a *defect* that the
           // `Effect.catch` below can't see, so parse as a typed failure.
@@ -157,9 +191,9 @@ describe.skipIf(!!process.env.FAST)(
         // exactly one init run and zero init-finalizer runs no matter how many
         // events it has served.
         const observation = yield* Effect.gen(function* () {
-          const init = Number(yield* getText(client, `${url}/init-runs`));
+          const init = Number(yield* getText(`${url}/init-runs`));
           const finalized = Number(
-            yield* getText(client, `${url}/init-finalizer-runs`),
+            yield* getText(`${url}/init-finalizer-runs`),
           );
           return { init, finalized };
         }).pipe(

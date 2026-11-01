@@ -6,12 +6,12 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import type * as Scope from "effect/Scope";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as OtlpLogger from "effect/unstable/observability/OtlpLogger";
-import * as OtlpMetrics from "effect/unstable/observability/OtlpMetrics";
-import * as OtlpSerialization from "effect/unstable/observability/OtlpSerialization";
-import * as OtlpTracer from "effect/unstable/observability/OtlpTracer";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as OtlpLogger from "effect/observability/OtlpLogger";
+import * as OtlpMetrics from "effect/observability/OtlpMetrics";
+import * as OtlpSerialization from "effect/observability/OtlpSerialization";
+import * as OtlpTracer from "effect/observability/OtlpTracer";
 import { unpackEnvValue } from "./RuntimeContext.ts";
 import type { layer, layerOtlp } from "./Telemetry.ts";
 
@@ -242,6 +242,7 @@ const fanoutClient = (
 
 const makeExporterLayer = (options?: {
   exportInterval?: Duration.Input;
+  shutdownTimeout?: Duration.Input;
 }): TelemetryLayer =>
   Layer.unwrap(
     Effect.gen(function* () {
@@ -288,6 +289,7 @@ const makeExporterLayer = (options?: {
             url: SENTINEL.traces,
             resource,
             exportInterval: options?.exportInterval,
+            shutdownTimeout: options?.shutdownTimeout,
           }),
         );
       }
@@ -298,6 +300,7 @@ const makeExporterLayer = (options?: {
             url: SENTINEL.logs,
             resource,
             exportInterval: options?.exportInterval,
+            shutdownTimeout: options?.shutdownTimeout,
           }),
         );
       }
@@ -308,6 +311,7 @@ const makeExporterLayer = (options?: {
             url: SENTINEL.metrics,
             resource,
             exportInterval: options?.exportInterval,
+            shutdownTimeout: options?.shutdownTimeout,
           }),
         );
       }
@@ -338,12 +342,15 @@ const makeExporterLayer = (options?: {
  * interrupts the exporter's in-flight batch (already spliced out of the
  * buffer), silently dropping it. Lambda invocations regularly outlive the
  * 1-second logger interval, which is exactly how this was discovered.
+ * Final exports get the OTLP ten-second batch budget rather than the
+ * exporter's three-second shutdown default, which can cancel slow delivery.
  *
  * A malformed configuration degrades to `Layer.empty` with a warning
  * instead of failing the event.
  */
 export const fromBoundConfig: TelemetryLayer = makeExporterLayer({
   exportInterval: "1 hour",
+  shutdownTimeout: "10 seconds",
 });
 
 /**

@@ -1,8 +1,9 @@
+import * as actions from "@distilled.cloud/hetzner/actions";
 import * as Hetzner from "@/Hetzner";
 import { waitForAction } from "@/Hetzner/actions.ts";
 import * as Provider from "@/Provider";
 import * as Test from "@/Test/Alchemy";
-import { Services } from "@distilled.cloud/hetzner";
+import * as certificates from "@distilled.cloud/hetzner/certificates";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
@@ -134,7 +135,7 @@ MVO4iP/qwP+7FslwWXMKPw==
 `;
 
 const waitUntilGone = (id: number) =>
-  Services.certificates.getCertificate({ id }).pipe(
+  certificates.getCertificate({ id }).pipe(
     Effect.as("found" as const),
     Effect.catchTag("NotFound", () => Effect.succeed("gone" as const)),
     Effect.repeat({
@@ -168,7 +169,7 @@ test.provider.skipIf(!hasHetznerCreds)(
       expect(created.created).toEqual(expect.any(String));
       expect(created.labels).toMatchObject({ env: "test" });
 
-      const fetched = yield* Services.certificates.getCertificate({
+      const fetched = yield* certificates.getCertificate({
         id: created.id,
       });
       expect(fetched.certificate.id).toEqual(created.id);
@@ -193,7 +194,7 @@ test.provider.skipIf(!hasHetznerCreds)(
       expect(updated.name).toEqual(`${created.name.slice(0, 55)}-renamed`);
       expect(updated.labels).toMatchObject({ env: "prod", role: "edge" });
 
-      const refetched = yield* Services.certificates.getCertificate({
+      const refetched = yield* certificates.getCertificate({
         id: updated.id,
       });
       expect(refetched.certificate.name).toEqual(updated.name);
@@ -205,7 +206,15 @@ test.provider.skipIf(!hasHetznerCreds)(
       const gone = yield* waitUntilGone(created.id);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:hetzner",
+      "provider:hetzner:certificate",
+      "provider:hetzner:service",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!hasHetznerCreds)(
@@ -240,7 +249,7 @@ test.provider.skipIf(!hasHetznerCreds)(
       expect(replaced.fingerprint).not.toEqual(created.fingerprint);
       expect(replaced.name).toEqual(created.name);
 
-      const fetched = yield* Services.certificates.getCertificate({
+      const fetched = yield* certificates.getCertificate({
         id: replaced.id,
       });
       expect(fetched.certificate.id).toEqual(replaced.id);
@@ -254,7 +263,15 @@ test.provider.skipIf(!hasHetznerCreds)(
       const gone = yield* waitUntilGone(replaced.id);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:hetzner",
+      "provider:hetzner:certificate",
+      "provider:hetzner:service",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!hasHetznerCreds)(
@@ -285,7 +302,15 @@ test.provider.skipIf(!hasHetznerCreds)(
       const gone = yield* waitUntilGone(deployed.id);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:hetzner",
+      "provider:hetzner:certificate",
+      "provider:hetzner:service",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 const MANAGED_PROBE_NAME = "alchemy-test-managed-probe";
@@ -297,18 +322,18 @@ test.provider.skipIf(!hasHetznerCreds || managedEnabled)(
     Effect.gen(function* () {
       yield* stack.destroy();
 
-      const existing = yield* Services.certificates.listCertificates({
+      const existing = yield* certificates.listCertificates({
         name: MANAGED_PROBE_NAME,
         per_page: 50,
       });
       yield* Effect.forEach(existing.certificates, (cert) =>
-        Services.certificates
+        certificates
           .deleteCertificate({ id: cert.id })
           .pipe(Effect.catchTag("NotFound", () => Effect.void)),
       );
 
       const result = yield* Effect.result(
-        Services.certificates.createCertificate({
+        certificates.createCertificate({
           name: MANAGED_PROBE_NAME,
           type: "managed",
           domain_names: [MANAGED_PROBE_DOMAIN],
@@ -324,7 +349,7 @@ test.provider.skipIf(!hasHetznerCreds || managedEnabled)(
         const outcome = action
           ? yield* Effect.result(waitForAction(action))
           : undefined;
-        yield* Services.certificates
+        yield* certificates
           .deleteCertificate({ id: certificate.id })
           .pipe(Effect.catchTag("NotFound", () => Effect.void));
         if (outcome !== undefined && Result.isFailure(outcome)) {
@@ -340,7 +365,15 @@ test.provider.skipIf(!hasHetznerCreds || managedEnabled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:hetzner",
+      "provider:hetzner:certificate",
+      "provider:hetzner:service",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!hasHetznerCreds || !managedEnabled || !managedDomain)(
@@ -364,7 +397,7 @@ test.provider.skipIf(!hasHetznerCreds || !managedEnabled || !managedDomain)(
       expect(created.domainNames).toContain(managedDomain);
       expect(created.labels).toMatchObject({ env: "test" });
 
-      const fetched = yield* Services.certificates.getCertificate({
+      const fetched = yield* certificates.getCertificate({
         id: created.id,
       });
       expect(fetched.certificate.id).toEqual(created.id);
@@ -391,5 +424,13 @@ test.provider.skipIf(!hasHetznerCreds || !managedEnabled || !managedDomain)(
       const gone = yield* waitUntilGone(created.id);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:hetzner",
+      "provider:hetzner:certificate",
+      "provider:hetzner:service",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

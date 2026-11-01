@@ -11,7 +11,7 @@ import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { AWSEnvironment } from "./Environment.ts";
 
 /**

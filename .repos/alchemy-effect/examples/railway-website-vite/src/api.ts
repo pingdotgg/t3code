@@ -2,8 +2,8 @@ import * as Drizzle from "alchemy/Drizzle/Postgres";
 import * as Railway from "alchemy/Railway";
 import { desc, sql } from "drizzle-orm";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { ENSURE_NOTES_SQL, Notes } from "./schema.ts";
 import { Db, Site } from "./shared.ts";
 

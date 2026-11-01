@@ -1,4 +1,5 @@
 import {
+  AuthProvidersManageScope,
   type EnvironmentId,
   type ProviderConsumeResetCreditOutcome,
   ProviderConsumeResetCreditInput,
@@ -8,19 +9,22 @@ import {
   UsageProviderKind,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
-  elapsedShare,
   formatDuration,
   formatResetsIn,
   type LimitPace,
   paceOf,
+  paceRemainingPercent,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useLayoutEffect, useState } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
+import { observeResize } from "../../lib/observeResize";
 import { environmentPresentations } from "../../state/presentation";
+import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
@@ -44,14 +48,13 @@ const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof Ga
   under: { label: "Under pace: headroom left for the rest of the window", icon: TrendingDownIcon },
 };
 
-/** The series colour the cost chart uses for this driver, so the two views read as one. */
 export function barColor(driver: ServerProvider["driver"]): string {
-  const kind: UsageProviderKind | undefined =
-    driver === "codex" ? "codex" : driver === "claudeAgent" ? "claude" : undefined;
-  return kind ? PROVIDER_PRESENTATION[kind].color : "var(--foreground)";
+  const presentation = Object.values(PROVIDER_PRESENTATION).find(
+    (entry) => entry.driverKind === driver,
+  );
+  return presentation?.color ?? "var(--foreground)";
 }
 
-/** Pace as a glyph with the words on hover. */
 export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
   const Icon = PACE[pace].icon;
   return (
@@ -72,12 +75,44 @@ export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
   );
 }
 
+// The tick sits in a transparent gap cut from the bar, clamped so it stays inside at 0% and 100%.
+// The gap is a clip-path slot rather than a mask: a mask composites its layer and re-antialiases
+// the bar's rounded ends, and the polygon reaches 1px past the box so only the slot edges clip.
+function paceMarkStyles(timeLeft: number | null) {
+  if (timeLeft === null) return null;
+  const at = `clamp(3px, ${timeLeft}%, calc(100% - 3px))`;
+  const [left, right] = [`calc(${at} - 3px)`, `calc(${at} + 3px)`];
+  const [near, far] = ["-1px", "calc(100% + 1px)"];
+  return {
+    tick: { left: at },
+    gap: {
+      clipPath: `polygon(${near} ${near}, ${left} ${near}, ${left} ${far}, ${right} ${far}, ${right} ${near}, ${far} ${near}, ${far} ${far}, ${near} ${far})`,
+    },
+    // For a track painted on an element that also draws focus rings, which a clip would cut.
+    gappedTrack: {
+      backgroundColor: "transparent",
+      backgroundImage: `linear-gradient(to right, var(--color-muted) ${left}, transparent ${left}, transparent ${right}, var(--color-muted) ${right})`,
+    },
+  };
+}
+
 /**
- * One window as a full-width bar from the moment it opened to its reset.
- * The fill is the share of quota spent; the hairline is how far into the
- * window the clock is, which is also where even spending would have put the
- * fill. Hover for the exact figures and reset time.
+ * Pace mark styles for the bar given the returned ref. Below 6px there is no room for the gap
+ * and tick, so the bar draws neither, as the mobile bars do.
  */
+export function usePaceMark(timeLeft: number | null) {
+  const [bar, setBar] = useState<HTMLElement | null>(null);
+  const [roomy, setRoomy] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the bar DOM width before paint and remeasures through a ResizeObserver
+  useLayoutEffect(() => {
+    if (!bar) return;
+    const measure = () => setRoomy(bar.getBoundingClientRect().width >= 6);
+    measure();
+    return observeResize(bar, measure);
+  }, [bar]);
+  return [setBar, roomy ? paceMarkStyles(timeLeft) : null] as const;
+}
+
 function WindowBar({
   color,
   window,
@@ -89,9 +124,8 @@ function WindowBar({
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
-  const elapsed = elapsedShare(window, now);
-  // The fill is quota left, so the even-spending mark is the time left.
-  const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
+  const timeLeft = paceRemainingPercent(window, now);
+  const [barRef, paceMark] = usePaceMark(timeLeft);
   const resetsIn = formatResetsIn(window, now);
   const resetsAt = window.resetsAt
     ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
@@ -105,25 +139,29 @@ function WindowBar({
       <TooltipTrigger
         render={
           <div
+            ref={barRef}
             role="img"
             aria-label={summary}
             tabIndex={0}
-            className="relative h-6 cursor-default rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            className="relative h-6 cursor-default rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           />
         }
       >
-        <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
-        {remaining > 0 ? (
-          <div
-            className="absolute inset-y-1.5 left-0 rounded-full"
-            style={{ width: `${remaining}%`, backgroundColor: color }}
-          />
-        ) : null}
-        {timeLeft !== null ? (
+        {/* Clip both layers so the gap exposes even a translucent composer surface. */}
+        <div className="absolute inset-0" style={paceMark?.gap}>
+          <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
+          {remaining > 0 ? (
+            <div
+              className="absolute inset-y-1.5 left-0 rounded-full"
+              style={{ width: `${remaining}%`, backgroundColor: color }}
+            />
+          ) : null}
+        </div>
+        {paceMark ? (
           <span
             aria-hidden
-            className="absolute inset-y-0.5 w-px -translate-x-1/2 bg-foreground/60"
-            style={{ left: `${timeLeft}%` }}
+            className="absolute inset-y-1 w-0.5 -translate-x-1/2 rounded-full bg-foreground"
+            style={paceMark.tick}
           />
         ) : null}
       </TooltipTrigger>
@@ -147,22 +185,20 @@ function WindowBar({
   );
 }
 
-/**
- * One account's windows as rows: label and percent, bar, pace and countdown.
- * Compact rows fit the composer panel with narrower columns.
- */
 export function LimitWindows({
   driver,
+  accentColor,
   windows,
   now,
   compact = false,
 }: {
   readonly driver: ServerProvider["driver"];
+  readonly accentColor?: string | undefined;
   readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
   readonly now: number;
   readonly compact?: boolean;
 }) {
-  const color = barColor(driver);
+  const color = normalizeProviderAccentColor(accentColor) ?? barColor(driver);
   return (
     <div
       className={
@@ -201,11 +237,11 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
   alreadyRedeemed: "That credit was already redeemed.",
 };
 
-/** Everything a redeem needs: where to send it and what to say afterwards. */
 export function useResetCredit(
   environmentId: EnvironmentId,
   input: ProviderConsumeResetCreditInput,
 ) {
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, { reportFailure: false });
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -213,6 +249,7 @@ export function useResetCredit(
 
   const redeem = async () => {
     setConfirming(false);
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     setBusy(true);
     setStatus(null);
     const result = await consume({ environmentId, input });
@@ -228,23 +265,21 @@ export function useResetCredit(
     );
   };
 
-  return { confirming, setConfirming, busy, status, redeem };
+  return { canManageProviders, confirming, setConfirming, busy, status, redeem };
 }
 
-/**
- * The confirm for a redeem. Redeeming spends a credit the provider granted the
- * user, so it never fires on a bare click. Mount it outside any popover that
- * holds the button: dialogs stack under popovers, and closing the popover
- * would unmount a dialog rendered inside it.
- */
+/** Require confirmation because redemption spends credits. Mount outside popovers, which stack above
+ * dialogs and unmount on close. */
 export function ResetCreditDialog({
   open,
   onOpenChange,
   onConfirm,
+  disabled = false,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly onConfirm: () => void;
+  readonly disabled?: boolean;
 }) {
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -258,14 +293,15 @@ export function ResetCreditDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-          <Button onClick={onConfirm}>Use credit</Button>
+          <Button disabled={disabled} onClick={onConfirm}>
+            Use credit
+          </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>
   );
 }
 
-/** `2 reset credits banked · next expires in 27d 23h`, or the short form for a popover. */
 export function resetCreditsSummary(
   credits: ServerProviderResetCredits,
   now: number,
@@ -282,7 +318,6 @@ export function resetCreditsSummary(
   }`;
 }
 
-/** Banked reset credits with the redeem button and its confirm, self-contained. */
 export function ResetCredits({
   environmentId,
   input,
@@ -294,13 +329,23 @@ export function ResetCredits({
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
 }) {
-  const { confirming, setConfirming, busy, status, redeem } = useResetCredit(environmentId, input);
+  const { canManageProviders, confirming, setConfirming, busy, status, redeem } = useResetCredit(
+    environmentId,
+    input,
+  );
   if (credits.availableCount === 0 && status === null) return null;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
       <span className="tabular-nums">{resetCreditsSummary(credits, now)}</span>
       {credits.availableCount > 0 ? (
-        <Button size="xs" variant="outline" disabled={busy} onClick={() => setConfirming(true)}>
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={busy || !canManageProviders}
+          onClick={() => {
+            if (readEnvironmentScope(environmentId, AuthProvidersManageScope)) setConfirming(true);
+          }}
+        >
           {busy ? "Using…" : "Use reset"}
         </Button>
       ) : null}
@@ -309,29 +354,53 @@ export function ResetCredits({
         open={confirming}
         onOpenChange={setConfirming}
         onConfirm={() => void redeem()}
+        disabled={!canManageProviders}
       />
     </div>
   );
 }
 
-/**
- * Subscription quota across every connected environment's providers and hubs,
- * pooled per provider. The page advances `now` on explicit refresh rather than
- * ticking: a live clock would repaint the page for no decision-changing gain.
- */
+/** Advance now only on explicit refresh to avoid page repaints from ticking. */
 export function UsageLimitsSection({
   selectedEnvironmentIds,
+  hiddenProviders,
   now,
   cursorPrompt,
 }: {
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
+  readonly hiddenProviders: ReadonlySet<UsageProviderKind>;
   readonly now: number;
   readonly cursorPrompt?: ReactNode;
 }) {
-  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-  const selected =
-    selectedEnvironmentIds === null
-      ? presentations
-      : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
+  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
+  const hiddenDrivers = new Set<ServerProvider["driver"]>(
+    [...hiddenProviders].map((provider) => PROVIDER_PRESENTATION[provider].driverKind),
+  );
+  const isVisible = (driver: ServerProvider["driver"]) => !hiddenDrivers.has(driver);
+  const selected = new Map(
+    [...presentations].flatMap(([id, presentation]) => {
+      if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(id)) return [];
+      const config = presentation.serverConfig;
+      if (hiddenDrivers.size === 0 || config === null) return [[id, presentation] as const];
+      return [
+        [
+          id,
+          {
+            ...presentation,
+            serverConfig: {
+              ...config,
+              providers: config.providers.filter((provider) => isVisible(provider.driver)),
+              usageLimitSources: config.usageLimitSources?.flatMap((source) => {
+                const accounts = source.accounts.filter((account) => isVisible(account.driver));
+                return accounts.length === 0 && source.accounts.length > 0
+                  ? []
+                  : [{ ...source, accounts }];
+              }),
+            },
+          },
+        ] as const,
+      ];
+    }),
+  );
   return <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />;
 }

@@ -1,0 +1,96 @@
+---
+title: Astro
+description: Package Astro SSR or prerendered pages for Neon Functions, with native Astro development.
+sidebar:
+  order: 2
+---
+
+`Neon.Website.Astro` builds Astro's server handler and assets into a Node 24 Fetch
+artifact for a Neon Function. Static files and SSR share that Function; there is
+no container, listening server, or S3 hosting layer.
+
+## Prepare the app
+
+Use an existing Astro app or the
+[runnable Astro example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon-website-astro).
+Configure [deployment credentials](/neon/setup), then install in the app directory:
+
+Install [Alchemy and its matching Effect dependencies](/getting-started) first;
+use Node 24 for this build toolchain.
+
+```sh
+pnpm add -D @alchemy.run/frontend-frameworks @vercel/nft
+```
+
+Keep integrations in `astro.config.*`, but omit `adapter`: the build integration
+owns it. The constructor defaults to `output: "server"`, including when the
+config file requests static output. Use the resource's `astro.output` to change it.
+
+## Define the stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Neon from "alchemy/Neon";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "NeonAstro",
+  { providers: Neon.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const site = yield* Neon.Website.Astro("Web", {
+      rootDir: ".",
+    });
+    return { url: site.url };
+  }),
+);
+```
+
+Pages render on demand; pages with `export const prerender = true` become static
+assets. Serializable `astro` overrides include `site`, `base`, `srcDir`,
+`publicDir`, `outDir`, and `trailingSlash`.
+
+## Prerender the whole site
+
+```diff lang="typescript"
+    const site = yield* Neon.Website.Astro("Web", {
+      rootDir: ".",
++     astro: { output: "static" },
+    });
+```
+
+Static mode packages the built pages without an Astro request handler. They are
+still served by a Function, not a bucket. For a built `404.html`, set
+`assets.notFoundHandling` to `"404-page"`; SSR misses otherwise go to Astro.
+
+## Develop and deploy
+
+```sh
+pnpm exec alchemy dev
+pnpm exec alchemy deploy
+pnpm exec alchemy destroy
+```
+
+Run these separately: stop dev before deploying, and destroy when finished.
+Development uses Astro's native server and HMR, returns a local URL, and creates
+no implicit Neon resources. Append `.pipe(Alchemy.remote())` to the Website
+Effect to opt into live deployment during dev.
+
+Omitting scope creates an Ohio Project on live deploy. Pass either `project` or
+`branch` to use an existing backend; use Ohio when combining with storage. Read
+[scope and credential boundaries](/neon/frontend/vite#scope-and-credentials).
+Server code can read private `env` values through `process.env`; `PUBLIC_*`
+values may be embedded into browser code and must not contain secrets.
+
+:::caution[Deployment limits]
+Astro production builds and Fetch invocation have local coverage, not complete
+live lifecycle acceptance. Code/env updates have served stale runtime content
+in Neon probes. This constructor adds no CDN or image-optimization service;
+custom-domain registration is not TLS validation. See the
+[shared deployment limits](/neon/frontend/vite#environment-and-deployment-limits).
+:::
+
+## Reference
+
+- [Astro API](/providers/neon/website/astro)
+- [Runnable Astro example](https://github.com/alchemy-run/alchemy/tree/main/examples/neon-website-astro)

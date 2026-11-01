@@ -171,7 +171,10 @@ test.provider(
 
       yield* expectProjectGone(accountId, PROJECT_NAME);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:pages", "live"],
+    timeout: 120_000,
+  },
 );
 
 // `list()` fans out over `pages.listProjects` → per-project
@@ -249,5 +252,8 @@ test.provider.skipIf(!process.env.CLOUDFLARE_TEST_PAGES_LIST)(
 
       yield* expectProjectGone(accountId, LIST_PROJECT_NAME);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:pages", "live"],
+    timeout: 120_000,
+  },
 );

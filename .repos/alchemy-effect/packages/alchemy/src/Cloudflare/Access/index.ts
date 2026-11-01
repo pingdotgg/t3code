@@ -11,6 +11,7 @@ export * from "./IdentityProvider.ts";
 export * from "./InfrastructureTarget.ts";
 export * from "./KeyConfiguration.ts";
 export * from "./McpPortal.ts";
+export * from "./McpServer.ts";
 export * from "./Organization.ts";
 export * from "./Policy.ts";
 export * from "./ServiceToken.ts";

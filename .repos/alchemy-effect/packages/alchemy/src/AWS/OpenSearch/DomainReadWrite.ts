@@ -1,4 +1,5 @@
 import type * as Credentials from "@distilled.cloud/aws/Credentials";
+import type * as SigV4 from "@distilled.cloud/aws/SigV4";
 import type * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
 import type { OpenSearchApiError } from "./DataPlaneTypes.ts";
@@ -27,7 +28,10 @@ export interface ReadWriteDomainClient
       /** JSON body (sent as `application/json`). */
       body?: unknown;
     },
-  ): Effect.Effect<unknown, OpenSearchApiError | Credentials.CredentialsError>;
+  ): Effect.Effect<
+    unknown,
+    OpenSearchApiError | Credentials.CredentialsError | SigV4.SigningError
+  >;
 }
 
 /**

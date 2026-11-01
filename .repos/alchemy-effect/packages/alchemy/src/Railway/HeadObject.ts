@@ -26,6 +26,7 @@ export interface HeadObjectRequest extends Omit<
  * ```
  *
  * @binding
+ * @product Bucket
  */
 export interface HeadObject extends Binding.Service<
   HeadObject,

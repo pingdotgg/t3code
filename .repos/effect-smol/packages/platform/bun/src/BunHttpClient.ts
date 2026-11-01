@@ -6,4 +6,4 @@
  * @category re-exports
  * @since 4.0.0
  */
-export * from "effect/unstable/http/FetchHttpClient"
+export * from "effect/http/FetchHttpClient"

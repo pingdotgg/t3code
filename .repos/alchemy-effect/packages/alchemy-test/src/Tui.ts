@@ -662,6 +662,13 @@ const makeTui = async (logFile: string): Promise<Tui> => {
       dim(`  ${GLYPH.queued} ${counts.queued}`),
       ...(counts.skip > 0 ? [dim(`  ${GLYPH.skip} ${counts.skip}`)] : []),
       dim(`  │ ${elapsed}${collecting}`),
+      ...(state.summary?.plan
+        ? [
+            dim(
+              `  │ ${state.summary.plan.found} found, ${state.summary.plan.excluded} excluded by plan`,
+            ),
+          ]
+        : []),
       ...(done ? [dim("  │ DONE — press q to quit")] : []),
       dim(padLine()),
     ]);
@@ -1245,6 +1252,8 @@ const onEvent = (tui: Tui, event: TestEvent): void => {
             file: event.file,
             titlePath: ["[file]"],
             name: "[file]",
+            tags: [],
+            optInTags: [],
           },
           "fail",
           {

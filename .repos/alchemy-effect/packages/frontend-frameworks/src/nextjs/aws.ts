@@ -41,7 +41,7 @@ import * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcess from "effect/process/ChildProcess";
 import { createRequire } from "node:module";
 import type * as NodeChildProcessModule from "node:child_process";
 import type * as NodeNet from "node:net";

@@ -3,8 +3,8 @@ import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import type { ChildProcessHandle } from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import type { ChildProcessHandle } from "effect/process/ChildProcessSpawner";
 
 /**
  * Wait for the child to exit (with timeout). Uses `handle.isRunning`

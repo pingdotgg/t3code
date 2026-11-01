@@ -1,0 +1,15 @@
+{
+  "name": "service-binding-sveltekit",
+  "private": true,
+  "type": "module",
+  "dependencies": {},
+  "devDependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@sveltejs/kit": "catalog:",
+    "@sveltejs/vite-plugin-svelte": "catalog:",
+    "@types/node": "catalog:node24",
+    "svelte": "catalog:",
+    "typescript": "catalog:typescript-classic",
+    "vite": "catalog:"
+  }
+}

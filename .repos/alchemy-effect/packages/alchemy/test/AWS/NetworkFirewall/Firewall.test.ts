@@ -27,6 +27,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:networkfirewall", "live"] },
 );
 
 test.provider(
@@ -40,6 +41,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:networkfirewall", "live"] },
 );
 
 const assertFirewallGone = (name: string) =>
@@ -140,5 +142,14 @@ test.provider.skipIf(!process.env.AWS_TEST_NETWORKFIREWALL)(
       yield* assertFirewallGone(firewall.firewallName);
     }),
   // firewall create (~10 min) + delete (~10 min), one test.
-  { timeout: 2_400_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:logs",
+      "provider:aws:networkfirewall",
+      "live",
+    ],
+    timeout: 2_400_000,
+  },
 );

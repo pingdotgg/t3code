@@ -8,6 +8,7 @@ export interface MigrationAnnotation {
   readonly replacement: string
   readonly note: string
   readonly example?: string | undefined
+  readonly include?: boolean | undefined
 }
 
 const compareStrings = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0
@@ -17,14 +18,16 @@ const parseAnnotation = (id: string, value: unknown, file: string): MigrationAnn
     typeof value !== "object" || value === null ||
     typeof Reflect.get(value, "replacement") !== "string" ||
     typeof Reflect.get(value, "note") !== "string" ||
-    (Reflect.get(value, "example") !== undefined && typeof Reflect.get(value, "example") !== "string")
+    (Reflect.get(value, "example") !== undefined && typeof Reflect.get(value, "example") !== "string") ||
+    (Reflect.get(value, "include") !== undefined && typeof Reflect.get(value, "include") !== "boolean")
   ) {
     throw new Error(`Invalid annotation for ${id} in ${file}`)
   }
   return {
     replacement: Reflect.get(value, "replacement"),
     note: Reflect.get(value, "note"),
-    ...(Reflect.get(value, "example") === undefined ? {} : { example: Reflect.get(value, "example") })
+    ...(Reflect.get(value, "example") === undefined ? {} : { example: Reflect.get(value, "example") }),
+    ...(Reflect.get(value, "include") === undefined ? {} : { include: Reflect.get(value, "include") })
   }
 }
 

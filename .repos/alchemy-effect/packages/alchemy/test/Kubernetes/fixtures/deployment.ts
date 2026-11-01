@@ -1,8 +1,8 @@
 import * as AWS from "@/AWS";
 import * as Kubernetes from "@/Kubernetes";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * End-to-end fixture for `Kubernetes.Deployment` on EKS: an Effect HTTP

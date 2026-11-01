@@ -1,0 +1,148 @@
+---
+title: "Part 2: An HTTP API"
+description: Deploy an Effect-native Prisma Compute service and add an HTTP health endpoint.
+sidebar:
+  order: 2
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+Continue from [Part 1](/prisma/tutorial/part-1). The Project exists, but it
+has no public endpoint yet. Add a Compute service that runs an Effect HTTP
+handler on Prisma's Bun runtime.
+
+## Define the Compute service
+
+Create `src/Api.ts`:
+
+```typescript
+import * as Prisma from "alchemy/Prisma";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { Project } from "./Database.ts";
+
+export default class Api extends Prisma.Compute<Api>()(
+  "Api",
+  Effect.gen(function* () {
+    const project = yield* Project;
+    return {
+      project,
+      main: import.meta.filename,
+      regionId: "eu-west-3",
+      branchGitName: "main",
+      port: 3000,
+      destroyOldDeployment: true,
+    };
+  }),
+  Effect.gen(function* () {
+    return { fetch: Effect.succeed(HttpServerResponse.text("Hello from Prisma")) };
+  }),
+) {}
+```
+
+`Prisma.Compute` bundles the handler into a Bun archive and deploys it without
+a Dockerfile. `main` points to the file that default-exports this class.
+The Project already owns the `main` branch, so select it by `branchGitName`.
+
+## Register the API
+
+```diff lang="typescript"
+// alchemy.run.ts
++import Api from "./src/Api.ts";
+
+  Effect.gen(function* () {
+    const project = yield* Project;
++    const api = yield* Api;
+-    return { projectId: project.projectId };
++    return { projectId: project.projectId, apiUrl: api.url };
+  }),
+```
+
+The API depends on the same Project definition. Yielding it from both files
+still creates only one Project in this Stack.
+
+## Read the incoming request
+
+```diff lang="typescript"
+// src/Api.ts
++import { HttpServerRequest } from "effect/http/HttpServerRequest";
+
+  Effect.gen(function* () {
+-    return { fetch: Effect.succeed(HttpServerResponse.text("Hello from Prisma")) };
++    return {
++      fetch: Effect.gen(function* () {
++        const request = yield* HttpServerRequest;
++        return HttpServerResponse.text(`Requested ${request.url}`);
++      }),
++    };
+  }),
+```
+
+Each HTTP request receives its own Effect request context.
+
+## Restrict the HTTP method
+
+```diff lang="typescript"
+// src/Api.ts
+        const request = yield* HttpServerRequest;
++        if (request.method !== "GET") {
++          return HttpServerResponse.text("Method not allowed", {
++            status: 405,
++            headers: { allow: "GET" },
++          });
++        }
+        return HttpServerResponse.text(`Requested ${request.url}`);
+```
+
+This read-only API rejects writes with HTTP 405.
+
+## Add a health route
+
+```diff lang="typescript"
+// src/Api.ts
+-        return HttpServerResponse.text(`Requested ${request.url}`);
++        if (request.url === "/api/health") {
++          return yield* HttpServerResponse.json({ ok: true });
++        }
++        return HttpServerResponse.text("Not found", { status: 404 });
+```
+
+`/api/health` returns JSON; every other path returns HTTP 404.
+
+## Configure the health check
+
+```diff lang="typescript"
+// src/Api.ts
+      port: 3000,
++      healthCheck: { path: "/api/health" },
+      destroyOldDeployment: true,
+```
+
+Prisma checks this route when starting the service. It verifies that the HTTP
+process is responding, independently of the database added in Part 3.
+
+## Deploy the API
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun"><Code code="bun alchemy deploy" lang="sh" /></TabItem>
+  <TabItem label="npm" icon="npm"><Code code="npx alchemy deploy" lang="sh" /></TabItem>
+  <TabItem label="pnpm" icon="pnpm"><Code code="pnpm exec alchemy deploy" lang="sh" /></TabItem>
+  <TabItem label="yarn" icon="seti:yarn"><Code code="yarn alchemy deploy" lang="sh" /></TabItem>
+</Tabs>
+
+The deployment prints `apiUrl` for the Compute service.
+
+## Check the response
+
+```sh
+curl https://YOUR_API_HOST/api/health
+```
+
+Replace the host with `apiUrl`. The response should be `{"ok":true}`.
+Request `/missing` to check the 404 response, or use `curl -X POST` to check
+the 405 response.
+
+## Next
+
+[Part 3: Query Postgres](/prisma/tutorial/part-3) binds a database connection
+to the API and runs a real SQL query.

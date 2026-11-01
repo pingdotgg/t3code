@@ -5,6 +5,7 @@ import { Linking, Platform } from "react-native";
 interface AndroidAgentNotifications {
   configure(deviceId: string, userId: string, scheme: string, ongoingEnabled: boolean): void;
   clear(): void;
+  setThreadOnScreen?(path: string | null): void;
   openLiveUpdateSettings?(): boolean;
   showShowcaseActivity?(scheme: string, data: Record<string, string>): void;
 }
@@ -31,7 +32,6 @@ export function configureAndroidAgentNotifications(
   native?.configure?.(deviceId, userId, appScheme(), ongoingEnabled);
 }
 
-/** Posts a staged relay payload for the showcase capture; false when unsupported. */
 export function showAndroidShowcaseAgentActivity(data: Record<string, string>): boolean {
   if (!native?.showShowcaseActivity) return false;
   native.showShowcaseActivity(appScheme(), data);
@@ -40,6 +40,10 @@ export function showAndroidShowcaseAgentActivity(data: Record<string, string>): 
 
 export function clearAndroidAgentNotifications(): void {
   native?.clear?.();
+}
+
+export function setAndroidThreadOnScreen(path: string | null): void {
+  native?.setThreadOnScreen?.(path);
 }
 
 export function supportsAndroidLiveUpdateSettings(): boolean {

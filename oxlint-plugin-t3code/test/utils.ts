@@ -8,15 +8,13 @@ import * as PlatformError from "effect/PlatformError";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeModule from "node:module";
 
 // oxlint is only a transitive dependency (via vite-plus), so its bin placement
 // varies by package manager: pnpm hoists it into the virtual store, while
 // other layouts expose vite-plus's LSP-only wrapper instead. Resolve the real
 // package through vite-plus rather than hardcoding either layout, and do it at
-// module scope so a broken install fails once with a resolution error instead
-// of as an opaque defect in every test.
 const oxlintPackageJsonPath = NodeModule.createRequire(
   NodeModule.createRequire(import.meta.url).resolve("vite-plus/package.json"),
 ).resolve("oxlint/package.json");
@@ -61,7 +59,6 @@ interface RuleHarness {
 
 interface RuleHarnessOptions {
   readonly filename?: string;
-  /** Rule options, as they would appear after the severity in the lint config. */
   readonly ruleOptions?: ReadonlyArray<unknown>;
 }
 

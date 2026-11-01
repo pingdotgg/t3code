@@ -15,12 +15,11 @@ import * as Context from "effect/Context"
 import * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Reactivity from "effect/reactivity/Reactivity"
 import * as Redacted from "effect/Redacted"
 import type { Scope } from "effect/Scope"
-import * as Stream from "effect/Stream"
-import * as Reactivity from "effect/unstable/reactivity/Reactivity"
-import * as Client from "effect/unstable/sql/SqlClient"
-import type { Connection } from "effect/unstable/sql/SqlConnection"
+import * as Client from "effect/sql/SqlClient"
+import type { Connection } from "effect/sql/SqlConnection"
 import {
   AuthenticationError,
   AuthorizationError,
@@ -33,9 +32,10 @@ import {
   StatementTimeoutError,
   UniqueViolation,
   UnknownError
-} from "effect/unstable/sql/SqlError"
-import { asyncPauseResume } from "effect/unstable/sql/SqlStream"
-import * as Statement from "effect/unstable/sql/Statement"
+} from "effect/sql/SqlError"
+import { asyncPauseResume } from "effect/sql/SqlStream"
+import * as Statement from "effect/sql/Statement"
+import * as Stream from "effect/Stream"
 import * as Mysql from "mysql2"
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name"
@@ -194,6 +194,11 @@ export interface MysqlClientConfig {
   readonly maxConnections?: number | undefined
   readonly connectionTTL?: Duration.Input | undefined
 
+  /**
+   * Options passed directly to the `mysql2` connection pool.
+   *
+   * @stability unstable
+   */
   readonly poolConfig?: Mysql.PoolOptions | undefined
 
   /**
@@ -408,6 +413,7 @@ export const make = (
       yield* Client.make({
         acquirer: Effect.succeed(poolConnection),
         transactionAcquirer,
+        releaseSavepoint: (name) => `RELEASE SAVEPOINT ${name}`,
         compiler,
         spanAttributes,
         transformRows

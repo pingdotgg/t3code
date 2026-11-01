@@ -18,10 +18,6 @@ export function voiceInputBlocksSubmission(state: VoiceInputState): boolean {
   );
 }
 
-export function voiceInputFreezesEditor(state: VoiceInputState): boolean {
-  return voiceInputBlocksSubmission(state);
-}
-
 export type VoiceDraftSnapshot = {
   readonly ownerKey: string;
   readonly text: string;
@@ -121,18 +117,28 @@ export function resolveTranscriptCommit(
   };
 }
 
-let activeSession: symbol | null = null;
+type VoiceInputSession = {
+  abandoned: boolean;
+  readonly released: Promise<void>;
+  readonly release: () => void;
+};
+
+let activeSession: VoiceInputSession | null = null;
 let activeTranscriptionOperation: Promise<unknown> | null = null;
 
-function acquireSession(): symbol | null {
+function acquireSession(): VoiceInputSession | null {
   if (activeSession) return null;
-  const token = Symbol("voice-input-session");
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const token = { abandoned: false, released: promise, release: resolve };
   activeSession = token;
   return token;
 }
 
-function releaseSession(token: symbol | null): void {
-  if (token && activeSession === token) activeSession = null;
+function releaseSession(token: VoiceInputSession | null): void {
+  if (token && activeSession === token) {
+    activeSession = null;
+    token.release();
+  }
 }
 
 async function runTranscriptionOperation<T>(operation: () => Promise<T>): Promise<T> {
@@ -177,7 +183,7 @@ export class VoiceInputController {
   private readonly dependencies: VoiceInputControllerDependencies;
   private state: VoiceInputState = IDLE_STATE;
   private operationToken = 0;
-  private sessionToken: symbol | null = null;
+  private sessionToken: VoiceInputSession | null = null;
   private transcription: PreparedVoiceTranscription | null = null;
   private transcriptionAbortController: AbortController | null = null;
   private capturedDraft: VoiceDraftSnapshot | null = null;
@@ -201,19 +207,28 @@ export class VoiceInputController {
       this.setError("This draft is no longer available.", "retry");
       return;
     }
-    const sessionToken = acquireSession();
-    if (!sessionToken) {
-      this.setError("Another voice recording is already active.", "retry");
-      return;
-    }
-
-    this.sessionToken = sessionToken;
+    let sessionToken: VoiceInputSession | null = null;
     const operationToken = ++this.operationToken;
-    const abortController = new AbortController();
-    this.transcriptionAbortController = abortController;
     this.setState({ phase: "preparing", error: null, errorAction: null });
 
     try {
+      for (
+        let previousSession = activeSession;
+        previousSession?.abandoned;
+        previousSession = activeSession
+      ) {
+        await previousSession.released;
+        if (!this.isCurrent(operationToken)) return;
+      }
+      sessionToken = acquireSession();
+      if (!sessionToken) {
+        this.setError("Another voice recording is already active.", "retry");
+        return;
+      }
+      this.sessionToken = sessionToken;
+      const abortController = new AbortController();
+      this.transcriptionAbortController = abortController;
+
       const transcriber = this.dependencies.getTranscriber();
       if (!transcriber) {
         this.setError("Voice transcription is not available.", null);
@@ -260,10 +275,12 @@ export class VoiceInputController {
       if (this.isCurrent(operationToken))
         this.setError("Could not start voice recording.", "retry");
     } finally {
-      if (this.isCurrent(operationToken) && this.state.phase === "error") {
-        await this.releaseResources();
-      } else if (!this.isCurrent(operationToken) && !this.finishing) {
-        await this.releaseResources();
+      if (sessionToken && this.sessionToken === sessionToken) {
+        if (this.isCurrent(operationToken) && this.state.phase === "error") {
+          await this.releaseResources();
+        } else if (!this.isCurrent(operationToken) && !this.finishing) {
+          await this.releaseResources();
+        }
       }
     }
   }
@@ -426,9 +443,7 @@ export class VoiceInputController {
     );
     try {
       await this.dependencies.recorder.stop();
-      this.rememberRecordingUri(this.dependencies.recorder.uri);
     } catch {
-      this.rememberRecordingUri(this.dependencies.recorder.uri);
     } finally {
       await this.releaseResources();
     }
@@ -436,14 +451,14 @@ export class VoiceInputController {
 
   private async releaseResources(): Promise<void> {
     this.rememberRecordingUri(this.recordingUri);
-    this.rememberRecordingUri(this.dependencies.recorder.uri);
+    try {
+      this.rememberRecordingUri(this.dependencies.recorder.uri);
+    } catch {}
     this.recordingUri = null;
     for (const uri of this.ownedRecordingUris) {
       try {
         this.dependencies.deleteRecording(uri);
-      } catch {
-        // The cache may already have removed a failed or interrupted recording.
-      }
+      } catch {}
     }
     this.ownedRecordingUris.clear();
     await this.releaseAudioSession();
@@ -463,13 +478,12 @@ export class VoiceInputController {
     try {
       await this.dependencies.releaseRecording();
       this.recordingConfigured = false;
-    } catch {
-      // Final cleanup retries if the prompt release before transcription fails.
-    }
+    } catch {}
   }
 
   private invalidateOperation(): void {
     this.operationToken += 1;
+    if (this.sessionToken) this.sessionToken.abandoned = true;
     this.transcriptionAbortController?.abort();
   }
 

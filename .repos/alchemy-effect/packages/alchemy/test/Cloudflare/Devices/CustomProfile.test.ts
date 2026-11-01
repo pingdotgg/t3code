@@ -117,35 +117,41 @@ test.provider(
       yield* stack.destroy();
       yield* expectGone(accountId, profile.policyId);
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:devices", "live"] },
 );
 
-test.provider("list enumerates the deployed custom device profile", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates the deployed custom device profile",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const deployed = yield* stack.deploy(
-      Cloudflare.Devices.DeviceCustomProfile("ListProfile", {
-        name: "alchemy-test-custom-profile-list",
-        match: 'identity.email == "list@alchemy-test-2.us"',
-        precedence: 12011,
-        description: "Alchemy list() test profile",
-      }),
-    );
+      const deployed = yield* stack.deploy(
+        Cloudflare.Devices.DeviceCustomProfile("ListProfile", {
+          name: "alchemy-test-custom-profile-list",
+          match: 'identity.email == "list@alchemy-test-2.us"',
+          precedence: 12011,
+          description: "Alchemy list() test profile",
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(
-      Cloudflare.Devices.DeviceCustomProfile,
-    );
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Devices.DeviceCustomProfile,
+      );
+      const all = yield* provider.list();
 
-    // Exhaustively paginated account collection must contain the profile we
-    // just deployed, hydrated into the exact `read` Attributes shape.
-    const found = all.find((p) => p.policyId === deployed.policyId);
-    expect(found).toBeDefined();
-    expect(found?.name).toEqual("alchemy-test-custom-profile-list");
-    expect(found?.match).toEqual('identity.email == "list@alchemy-test-2.us"');
-    expect(found?.accountId).toEqual(deployed.accountId);
-    expect(found?.default).toEqual(false);
+      // Exhaustively paginated account collection must contain the profile we
+      // just deployed, hydrated into the exact `read` Attributes shape.
+      const found = all.find((p) => p.policyId === deployed.policyId);
+      expect(found).toBeDefined();
+      expect(found?.name).toEqual("alchemy-test-custom-profile-list");
+      expect(found?.match).toEqual(
+        'identity.email == "list@alchemy-test-2.us"',
+      );
+      expect(found?.accountId).toEqual(deployed.accountId);
+      expect(found?.default).toEqual(false);
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:devices", "live"] },
 );

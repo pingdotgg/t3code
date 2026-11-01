@@ -5,8 +5,8 @@ import { describe, expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import AgentCoreTestFunctionLive, { AgentCoreTestFunction } from "./handler";
 
 const testOptions = { providers: AWS.providers() };
@@ -54,9 +54,18 @@ const send = (request: HttpClientRequest.HttpClientRequest) =>
 // The fixture deploys an AgentCore Memory, which takes ~2.5 minutes to reach
 // ACTIVE — gate the suite behind AWS_TEST_SLOW to keep the default CI pass
 // fast. Run with AWS_TEST_SLOW=1 to exercise it.
-describe
-  .skipIf(!process.env.AWS_TEST_SLOW)
-  .sequential("BedrockAgentCore Bindings", () => {
+describe.skipIf(!process.env.AWS_TEST_SLOW).sequential(
+  "BedrockAgentCore Bindings",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:batch",
+      "provider:aws:bedrockagentcore",
+      "provider:aws:lambda",
+      "live",
+    ],
+  },
+  () => {
     beforeAll(
       Effect.gen(function* () {
         yield* Effect.logInfo("AgentCore bindings: destroying previous stack");
@@ -332,4 +341,5 @@ describe
         { timeout: 120_000 },
       );
     });
-  });
+  },
+);

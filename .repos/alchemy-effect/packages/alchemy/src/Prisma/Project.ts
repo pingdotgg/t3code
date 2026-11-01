@@ -153,6 +153,7 @@ export interface Project extends Resource<
  * ```
  *
  * @resource
+ * @product Project
  */
 export const Project = Resource<Project>("Prisma.Project");
 

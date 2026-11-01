@@ -47,4 +47,5 @@ test.provider(
 
       yield* stack.destroy();
     }),
+  { tags: ["provider:aws", "provider:aws:rds", "live"] },
 );

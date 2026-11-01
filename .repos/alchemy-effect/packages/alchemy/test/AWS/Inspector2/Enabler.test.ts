@@ -17,21 +17,24 @@ const typeStatus = (
   key: "ec2" | "ecr" | "lambda",
 ) => account?.resourceState?.[key]?.status;
 
-test.provider("account scan status is observable", () =>
-  Effect.gen(function* () {
-    const account = yield* accountStatus;
-    expect(account?.accountId).toBeTruthy();
-    expect(
-      ["ENABLED", "ENABLING", "DISABLED", "DISABLING"].includes(
-        typeStatus(account, "ec2") ?? "",
-      ),
-    ).toBe(true);
-    expect(
-      ["ENABLED", "ENABLING", "DISABLED", "DISABLING"].includes(
-        typeStatus(account, "ecr") ?? "",
-      ),
-    ).toBe(true);
-  }),
+test.provider(
+  "account scan status is observable",
+  () =>
+    Effect.gen(function* () {
+      const account = yield* accountStatus;
+      expect(account?.accountId).toBeTruthy();
+      expect(
+        ["ENABLED", "ENABLING", "DISABLED", "DISABLING"].includes(
+          typeStatus(account, "ec2") ?? "",
+        ),
+      ).toBe(true);
+      expect(
+        ["ENABLED", "ENABLING", "DISABLED", "DISABLING"].includes(
+          typeStatus(account, "ecr") ?? "",
+        ),
+      ).toBe(true);
+    }),
+  { tags: ["provider:aws", "provider:aws:inspector2", "live"] },
 );
 
 // The Inspector enabler is an account/region singleton. This test only runs
@@ -91,5 +94,8 @@ test.provider.skipIf(!process.env.INSPECTOR2_TEST_ENABLER)(
       expect(typeStatus(after, "ecr")).not.toBe("ENABLED");
       expect(typeStatus(after, "lambda")).not.toBe("ENABLED");
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:inspector2", "live"],
+    timeout: 240_000,
+  },
 );

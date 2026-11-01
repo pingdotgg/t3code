@@ -3,12 +3,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopUserData from "./DesktopUserData.ts";
 
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
@@ -18,22 +20,13 @@ const AppPackageMetadata = Schema.Struct({
 });
 const decodeAppPackageMetadata = Schema.decodeEffect(Schema.fromJsonString(AppPackageMetadata));
 
-export class DesktopUserDataPathResolutionError extends Schema.TaggedError<DesktopUserDataPathResolutionError>()(
-  "DesktopUserDataPathResolutionError",
-  {
-    legacyPath: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Failed to inspect legacy desktop user-data path at "${this.legacyPath}".`;
-  }
-}
-
 export class DesktopAppIdentity extends Context.Service<
   DesktopAppIdentity,
   {
-    readonly resolveUserDataPath: Effect.Effect<string, DesktopUserDataPathResolutionError>;
+    readonly resolveUserDataPath: Effect.Effect<
+      string,
+      DesktopUserData.DesktopUserDataInitializationError
+    >;
     readonly configure: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopAppIdentity") {}
@@ -45,33 +38,13 @@ const normalizeCommitHash = (value: string): Option.Option<string> => {
     : Option.none();
 };
 
-export const resolveUserDataPath = Effect.gen(function* () {
-  const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const legacyPath = environment.path.join(
-    environment.appDataDirectory,
-    environment.legacyUserDataDirName,
-  );
-  const legacyPathExists = yield* fileSystem.exists(legacyPath).pipe(
-    Effect.mapError(
-      (cause) =>
-        new DesktopUserDataPathResolutionError({
-          legacyPath,
-          cause,
-        }),
-    ),
-  );
-  return legacyPathExists
-    ? legacyPath
-    : environment.path.join(environment.appDataDirectory, environment.userDataDirName);
-}).pipe(Effect.withSpan("desktop.appIdentity.resolveUserDataPath"));
-
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const assets = yield* DesktopAssets.DesktopAssets;
   const electronApp = yield* ElectronApp.ElectronApp;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
+  const userDataContext = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
   const commitHashCache = yield* Ref.make<Option.Option<Option.Option<string>>>(Option.none());
 
   const resolveEmbeddedCommitHash = Effect.gen(function* () {
@@ -112,15 +85,16 @@ export const make = Effect.gen(function* () {
     return commitHash;
   });
 
-  const userDataPath = resolveUserDataPath.pipe(
-    Effect.provide(
-      yield* Effect.context<DesktopEnvironment.DesktopEnvironment | FileSystem.FileSystem>(),
-    ),
+  const userDataPath = DesktopUserData.resolveUserDataPath(environment).pipe(
+    Effect.provide(userDataContext),
   );
 
   const configure = Effect.gen(function* () {
     const commitHash = yield* resolveAboutCommitHash;
-    yield* electronApp.setName(environment.displayName);
+    // Electron strips spaces but keeps parentheses in its User-Agent token, breaking Turnstile in preview sessions.
+    yield* electronApp.setName(
+      `${environment.branding.baseName} ${environment.branding.stageLabel}`,
+    );
     yield* electronApp.setAboutPanelOptions({
       applicationName: environment.displayName,
       applicationVersion: environment.appVersion,
@@ -131,9 +105,7 @@ export const make = Effect.gen(function* () {
       yield* electronApp.setAppUserModelId(environment.appUserModelId);
     }
 
-    // Unpackaged runs only. A packaged bundle already carries its icon in
-    // Info.plist, so setting the dock tile again changes nothing except to
-    // overwrite a custom icon the user attached to the app themselves.
+    // Packaged bundles carry their icon in Info.plist; setting it again overwrites the user's custom icon.
     if (environment.platform === "darwin" && !environment.isPackaged) {
       const iconPaths = yield* assets.iconPaths;
       yield* Option.match(iconPaths.png, {

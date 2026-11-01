@@ -33,6 +33,7 @@ import {
   parseRollbackOptions,
   ROLLBACK_CACHE_KEY_PREFIX,
 } from "./lib/rollback.ts";
+import { normalizeForStorage } from "./lib/serialization.ts";
 import {
   cleanupPendingStreamOutput,
   createReplayReadableStream,
@@ -151,103 +152,6 @@ const defaultConfig: ResolvedStepConfig = {
   },
   timeout: "10 minutes",
 };
-
-/**
- * Returns a copy of `value` that is safe to persist via Durable Object SQL
- * storage without dragging unrelated bytes along with typed-array views.
- *
- * Background: workerd's `v8::ValueSerializer` writes the entire backing
- * `ArrayBuffer` for typed-array views, not just `byteLength` bytes. A view
- * sliced from a much larger buffer (`crypto.getRandomValues`, `arr.slice(...)`,
- * fetch-stream copies) blows up the wire size by a factor of
- * (backing-size / view-size) and can hit `SQLITE_TOOBIG` at view sizes well
- * below the documented 1MiB step-output limit (see issue #14101). Copying the
- * view's bytes into a tight backing buffer before persistence brings local
- * `wrangler dev` behaviour in line with production.
- *
- * The walk is recursive (cycle-safe via a `WeakMap`) so views nested inside
- * objects, arrays, Maps, and Sets are also compacted. View types are preserved
- * (`Uint8Array` stays `Uint8Array`, `Int16Array` stays `Int16Array`, etc.) so
- * the persisted shape matches the live shape — cached replays observe the
- * same constructor type the step originally returned. Class instances and
- * host objects (`Date`, `RegExp`, raw `ArrayBuffer`, streams, `Blob`, …) are
- * passed through unchanged — recursing into them would either fail to
- * reconstruct the original type or trigger their own structured-clone path.
- */
-function normalizeForStorage(
-  value: unknown,
-  seen: WeakMap<object, unknown> = new WeakMap(),
-): unknown {
-  // Primitives: nothing to do.
-  if (value === null || typeof value !== "object") {
-    return value;
-  }
-
-  // Already visited (cycle): return the previously-built copy so the result
-  // graph mirrors the original's cycle topology.
-  if (seen.has(value)) {
-    return seen.get(value);
-  }
-
-  // Typed-array views (TypedArray + DataView): copy bytes into a tight
-  // backing buffer, preserving the original view constructor.
-  if (ArrayBuffer.isView(value)) {
-    return buildCompactView(value);
-  }
-
-  if (Array.isArray(value)) {
-    const result: Array<unknown> = [];
-    seen.set(value, result);
-    for (const item of value) {
-      result.push(normalizeForStorage(item, seen));
-    }
-    return result;
-  }
-
-  if (value instanceof Map) {
-    const result = new Map();
-    seen.set(value, result);
-    for (const [k, v] of value) {
-      result.set(normalizeForStorage(k, seen), normalizeForStorage(v, seen));
-    }
-    return result;
-  }
-
-  if (value instanceof Set) {
-    const result = new Set();
-    seen.set(value, result);
-    for (const v of value) {
-      result.add(normalizeForStorage(v, seen));
-    }
-    return result;
-  }
-
-  // Plain objects (Object literals and null-prototype objects). Class
-  // instances and host objects fall through to the pass-through below.
-  const proto = Object.getPrototypeOf(value);
-  if (proto === Object.prototype || proto === null) {
-    const result: Record<string, unknown> = {};
-    seen.set(value, result);
-    for (const key of Object.keys(value)) {
-      result[key] = normalizeForStorage(
-        (value as Record<string, unknown>)[key],
-        seen,
-      );
-    }
-    return result;
-  }
-
-  return value;
-}
-
-type ViewCtor = new (buffer: ArrayBufferLike) => ArrayBufferView;
-function buildCompactView(view: ArrayBufferView): ArrayBufferView {
-  const tightBuffer = view.buffer.slice(
-    view.byteOffset,
-    view.byteOffset + view.byteLength,
-  );
-  return new (view.constructor as ViewCtor)(tightBuffer);
-}
 
 export interface UserErrorField {
   isUserError?: boolean;

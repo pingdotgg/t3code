@@ -1,10 +1,10 @@
 import * as BrowserHttpClient from "@effect/platform-browser/BrowserHttpClient"
 import { assert, describe, it } from "@effect/vitest"
 import * as Effect from "effect/Effect"
+import * as Cookies from "effect/http/Cookies"
+import * as HttpClient from "effect/http/HttpClient"
 import * as Layer from "effect/Layer"
 import * as Stream from "effect/Stream"
-import * as Cookies from "effect/unstable/http/Cookies"
-import * as HttpClient from "effect/unstable/http/HttpClient"
 import * as MXHR from "mock-xmlhttprequest"
 
 const layer = (routes: Parameters<typeof MXHR.newServer>[0], responseURL = "") =>

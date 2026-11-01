@@ -1,4 +1,3 @@
-import * as NodeCrypto from "node:crypto";
 import {
   type DeviceHostSummary,
   DevicePlatformAvailability,
@@ -9,6 +8,7 @@ import {
 import { runSshCommand, baseSshArgs, resolveSshCommand } from "@t3tools/ssh/command";
 import * as NetService from "@t3tools/shared/Net";
 import { waitForHttpReady } from "@t3tools/shared/httpReadiness";
+import * as Crypto from "effect/Crypto";
 import * as Exit from "effect/Exit";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -17,11 +17,14 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as Hex from "effect/encoding/Hex";
+import * as HttpClient from "effect/http/HttpClient";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ServerConfig from "../config.ts";
+import { releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
 import * as DeviceHost from "./DeviceHost.ts";
+import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
 
 const Probe = Schema.Struct({
@@ -79,10 +82,11 @@ const ownerFor = Effect.fn("SshDeviceHost.ownerFor")(function* (hostId: string) 
   const environmentId = yield* fs
     .readFileString(server.environmentIdPath)
     .pipe(Effect.orElseSucceed(() => server.stateDir));
-  return NodeCrypto.createHash("sha256")
-    .update(`${environmentId}\0${server.stateDir}\0${hostId}`)
-    .digest("hex")
-    .slice(0, 24);
+  const crypto = yield* Crypto.Crypto;
+  const owner = yield* crypto
+    .digest("SHA-256", new TextEncoder().encode(`${environmentId}\0${server.stateDir}\0${hostId}`))
+    .pipe(Effect.map(Hex.encode), Effect.orDie);
+  return owner.slice(0, 24);
 });
 
 export const probe = Effect.fn("SshDeviceHost.probe")(function* (
@@ -125,6 +129,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
   const net = yield* NetService.NetService;
   const http = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const crypto = yield* Crypto.Crypto;
   const parentScope = yield* Scope.Scope;
   const ssh = yield* resolveSshCommand;
   const owner = yield* ownerFor(config.id);
@@ -135,6 +140,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       | FileSystem.FileSystem
       | Path.Path
       | ChildProcessSpawner.ChildProcessSpawner
+      | Crypto.Crypto
       | ServerConfig.ServerConfig
     >,
   ) =>
@@ -143,6 +149,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       Effect.provideService(Path.Path, path),
       Effect.provideService(ServerConfig.ServerConfig, server),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(Crypto.Crypto, crypto),
     );
   const lock = yield* Semaphore.make(1);
   let stopped = false;
@@ -167,7 +174,11 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     provide(
       runSshCommand(targetFor(config), {
         preHostArgs: identityArgs(config),
-        remoteCommandArgs: commandArgs(`exec ${[command, ...args].map(quoteRemoteArg).join(" ")}`),
+        // Match the hub cwd so relative executables and PATH entries resolve identically.
+        remoteCommandArgs: commandArgs(
+          `cd "$HOME/.t3/device/hosts/${owner}" && exec ${[command, ...args].map(quoteRemoteArg).join(" ")}`,
+        ),
+        keepErrorOutputTail: true,
         ...(options?.stdin === undefined ? {} : { stdin: options.stdin }),
         ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       }),
@@ -180,6 +191,21 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
           code: "exitCode" in error ? (error.exitCode ?? 127) : 127,
         }),
       ),
+    );
+
+  const platformAvailability: DeviceHost.DeviceHost["Service"]["platformAvailability"] = (
+    platform,
+  ) =>
+    provide(probe(config, owner)).pipe(
+      Effect.map((value) => {
+        summary = { ...summary, platforms: value.platforms };
+        return value.platforms.find((p) => p.platform === platform)!;
+      }),
+      Effect.orElseSucceed(() => ({
+        platform,
+        available: false,
+        reason: "Cannot reach device host. Test its SSH connection in Settings.",
+      })),
     );
 
   const connectOnce = Effect.fn("SshDeviceHost.connectOnce")(function* (): Effect.fn.Return<
@@ -237,19 +263,32 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
             ...identityArgs(config),
             "-o",
             "ExitOnForwardFailure=yes",
+            // Multiplexed clients exit after handing forwards to the master; own this connection.
+            "-o",
+            "ControlMaster=no",
+            "-o",
+            "ControlPath=none",
+            "-o",
+            "ControlPersist=no",
             "-o",
             "ServerAliveInterval=10",
             "-o",
             "ServerAliveCountMax=3",
-            "-N",
+            "-T",
             "-L",
             `127.0.0.1:${hubPort}:127.0.0.1:${remote.hubPort}`,
             ...(remote.daemonPort === undefined
               ? []
               : ["-L", `127.0.0.1:${daemonPort}:127.0.0.1:${remote.daemonPort}`]),
             config.target,
+            // The server holds the only write end of this stdin, so when it exits for any
+            // reason the remote `cat` sees EOF and ssh exits once its forwarded connections
+            // close, instead of being orphaned.
+            "sh",
+            "-c",
+            quoteRemoteArg("exec cat >/dev/null"),
           ],
-          { stdin: "ignore", stdout: "ignore", stderr: "pipe" },
+          { stdin: "pipe", stdout: "ignore", stderr: "pipe" },
         ),
       )
       .pipe(
@@ -269,9 +308,24 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       ),
       Effect.forkIn(scope),
     );
+    const hubOrigin = `http://127.0.0.1:${hubPort}`;
     const next = {
       nodePath: remote.nodePath,
-      hub: { origin: `http://127.0.0.1:${hubPort}` },
+      hub: { origin: hubOrigin },
+      devices: makeDeviceHubOperations({
+        hostId: config.id,
+        origin: hubOrigin,
+        http,
+        run,
+        // Keep probing negative reports so an SDK installed after connecting is still found.
+        androidAvailable: Effect.suspend(() =>
+          summary.platforms.some((p) => p.platform === "android" && p.available)
+            ? Effect.succeed(true)
+            : platformAvailability("android").pipe(
+                Effect.map((availability) => availability.available),
+              ),
+        ),
+      }),
       ...(remote.daemonPort !== undefined &&
       remote.token !== undefined &&
       remote.entryPath !== undefined
@@ -303,7 +357,9 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       }).pipe(Effect.provideService(HttpClient.HttpClient, http));
     }
     if (next.agentDevice) yield* onReady({ ...next, agentDevice: next.agentDevice });
-    ready = next;
+    ready = next.agentDevice
+      ? { ...next, releaseAgentSession: releaseAgentDeviceSession(http, next.agentDevice) }
+      : next;
     yield* onStatus("ready");
     // Reconnect also repairs helpers that died while SSH itself stayed connected.
     const unhealthy = Effect.gen(function* () {
@@ -423,6 +479,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
   yield* Effect.addFinalizer(() => stop);
   return {
     id: config.id,
+    label: config.label,
     summary: Effect.sync(() => summary),
     inspect: provide(probe(config, owner)).pipe(
       Effect.tap((value) =>
@@ -458,17 +515,6 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       ),
     stopAgent: changeAgent(false).pipe(Effect.asVoid, Effect.ignore),
     stop,
-    platformAvailability: (platform) =>
-      provide(probe(config, owner)).pipe(
-        Effect.map((value) => {
-          summary = { ...summary, platforms: value.platforms };
-          return value.platforms.find((p) => p.platform === platform)!;
-        }),
-        Effect.orElseSucceed(() => ({
-          platform,
-          available: false,
-          reason: "Cannot reach device host. Test its SSH connection in Settings.",
-        })),
-      ),
+    platformAvailability,
   } satisfies DeviceHost.DeviceHost["Service"];
 });

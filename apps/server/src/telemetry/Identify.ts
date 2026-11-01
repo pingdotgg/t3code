@@ -1,24 +1,65 @@
-import * as NodeOS from "node:os";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { hashTelemetryId } from "@t3tools/shared/telemetryId";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { CLOUD_LINKED_USER_ID } from "../cloud/config.ts";
 import * as ServerConfig from "../config.ts";
 
+/**
+ * Codex writes `tokens` only for ChatGPT logins and omits the key for API-key,
+ * agent-identity, and personal-access-token logins, so its absence is a
+ * supported install and not a malformed file. `account_id` is the ChatGPT
+ * workspace, which a whole Team shares; the `id_token` names the person.
+ */
 const CodexAuthJsonSchema = Schema.Struct({
-  tokens: Schema.Struct({
-    account_id: Schema.String,
-  }),
+  tokens: Schema.optionalKey(
+    Schema.Struct({
+      account_id: Schema.String,
+      id_token: Schema.optionalKey(Schema.String),
+    }),
+  ),
 });
 
+/** `userID` is random per machine. `oauthAccount` is present only while Claude Code is logged in. */
 const ClaudeJsonSchema = Schema.Struct({
-  userID: Schema.String,
+  userID: Schema.optionalKey(Schema.String),
+  oauthAccount: Schema.optionalKey(
+    Schema.Struct({
+      accountUuid: Schema.optionalKey(Schema.String),
+    }),
+  ),
 });
+
+// `sub` names the login method (`google-oauth2|…`), so one person can have several.
+// `user_id` (`user-…`) is the OpenAI account and is the same for every login.
+const IdTokenClaims = Schema.Struct({
+  "https://api.openai.com/auth": Schema.Struct({ user_id: Schema.NonEmptyString }),
+});
+const decodeIdTokenClaims = Schema.decodeUnknownOption(Schema.fromJsonString(IdTokenClaims));
+
+/**
+ * Who an install belongs to, from strongest to weakest. `connect` is the T3
+ * Connect account. `openai` and `claude` are provider accounts. `device` is a
+ * client device that connected.
+ */
+export const TelemetryOwnerSource = Schema.Literals(["connect", "openai", "claude", "device"]);
+export type TelemetryOwnerSource = typeof TelemetryOwnerSource.Type;
+
+export interface TelemetryOwner {
+  readonly source: TelemetryOwnerSource;
+  /** `hashTelemetryId` of the source's raw id. */
+  readonly ownerId: string;
+}
 
 export const TelemetryIdentitySource = Schema.Literals(["codex", "claude", "anonymous"]);
 export type TelemetryIdentitySource = typeof TelemetryIdentitySource.Type;
@@ -75,25 +116,11 @@ export class TelemetryAnonymousIdPersistenceError extends Schema.TaggedError<Tel
   }
 }
 
-export class TelemetryIdentityHashError extends Schema.TaggedError<TelemetryIdentityHashError>()(
-  "TelemetryIdentityHashError",
-  {
-    source: TelemetryIdentitySource,
-    algorithm: Schema.Literal("SHA-256"),
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Failed to hash ${this.source} telemetry identity with ${this.algorithm}.`;
-  }
-}
-
 type TelemetryIdentityError =
   | TelemetryIdentityReadError
   | TelemetryIdentityDecodeError
   | TelemetryAnonymousIdGenerationError
-  | TelemetryAnonymousIdPersistenceError
-  | TelemetryIdentityHashError;
+  | TelemetryAnonymousIdPersistenceError;
 
 const decodeCodexAuthJson = Schema.decodeEffect(Schema.fromJsonString(CodexAuthJsonSchema));
 const decodeClaudeJson = Schema.decodeEffect(Schema.fromJsonString(ClaudeJsonSchema));
@@ -147,69 +174,47 @@ const readIdentityFile = (
     }),
   );
 
-const hash = (source: TelemetryIdentitySource, value: string) =>
-  Crypto.Crypto.pipe(
-    Effect.flatMap((crypto) => crypto.digest("SHA-256", new TextEncoder().encode(value))),
-    Effect.map(Encoding.encodeHex),
-    Effect.mapError(
-      (cause) =>
-        new TelemetryIdentityHashError({
-          source,
-          algorithm: "SHA-256",
-          cause,
-        }),
-    ),
-  );
+/**
+ * The OpenAI account id in a ChatGPT id_token, read without verifying it:
+ * analytics needs only a stable id. Codex CLI and T3's own sign-in both use it.
+ */
+export const openAiUserId = (idToken: string) => {
+  const payload = Base64Url.decodeString(idToken.split(".")[1] ?? "");
+  return Result.isSuccess(payload)
+    ? Option.map(
+        decodeIdTokenClaims(payload.success),
+        (claims) => claims["https://api.openai.com/auth"].user_id,
+      )
+    : Option.none<string>();
+};
 
-const getCodexAccountId = Effect.fn("TelemetryIdentity.getCodexAccountId")(function* (
-  homeDirectory: string,
+const readJsonIdentityFile = Effect.fn("TelemetryIdentity.readJsonIdentityFile")(function* <A>(
+  source: "codex" | "claude",
+  filePath: string,
+  decode: (encoded: string) => Effect.Effect<A, Schema.SchemaError>,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-
-  const authJsonPath = path.join(homeDirectory, ".codex", "auth.json");
-  const encoded = yield* readIdentityFile(fileSystem, "codex", authJsonPath);
+  const encoded = yield* readIdentityFile(fileSystem, source, filePath);
   if (Option.isNone(encoded)) {
-    return Option.none<string>();
+    return Option.none<A>();
   }
-  const authJson = yield* decodeCodexAuthJson(encoded.value).pipe(
-    Effect.mapError(
-      (cause) =>
-        new TelemetryIdentityDecodeError({
-          source: "codex",
-          filePath: authJsonPath,
-          cause,
-        }),
-    ),
+  return yield* decode(encoded.value).pipe(
+    Effect.asSome,
+    Effect.mapError((cause) => new TelemetryIdentityDecodeError({ source, filePath, cause })),
   );
-
-  return Option.some(authJson.tokens.account_id);
 });
 
-const getClaudeUserId = Effect.fn("TelemetryIdentity.getClaudeUserId")(function* (
-  homeDirectory: string,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-
-  const claudeJsonPath = path.join(homeDirectory, ".claude.json");
-  const encoded = yield* readIdentityFile(fileSystem, "claude", claudeJsonPath);
-  if (Option.isNone(encoded)) {
-    return Option.none<string>();
-  }
-  const claudeJson = yield* decodeClaudeJson(encoded.value).pipe(
-    Effect.mapError(
-      (cause) =>
-        new TelemetryIdentityDecodeError({
-          source: "claude",
-          filePath: claudeJsonPath,
-          cause,
-        }),
-    ),
+// A missing or unreadable file only removes that owner; it never blocks the others.
+const skipOnError = <A, R>(
+  effect: Effect.Effect<
+    Option.Option<A>,
+    TelemetryIdentityReadError | TelemetryIdentityDecodeError,
+    R
+  >,
+) =>
+  effect.pipe(
+    Effect.catch((error) => logTelemetryIdentityError(error).pipe(Effect.as(Option.none<A>()))),
   );
-
-  return Option.some(claudeJson.userID);
-});
 
 const upsertAnonymousId = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -221,7 +226,7 @@ const upsertAnonymousId = Effect.gen(function* () {
   }
 
   const anonymousId = yield* Crypto.Crypto.pipe(
-    Effect.flatMap((crypto) => crypto.randomUUIDv4),
+    Effect.flatMap((crypto) => crypto.randomUUIDv4()),
     Effect.mapError(
       (cause) =>
         new TelemetryAnonymousIdGenerationError({
@@ -231,7 +236,7 @@ const upsertAnonymousId = Effect.gen(function* () {
         }),
     ),
   );
-  yield* fileSystem.writeFileString(anonymousIdPath, anonymousId).pipe(
+  yield* writeFileStringAtomically({ filePath: anonymousIdPath, contents: anonymousId }).pipe(
     Effect.mapError(
       (cause) =>
         new TelemetryAnonymousIdPersistenceError({
@@ -245,59 +250,92 @@ const upsertAnonymousId = Effect.gen(function* () {
   return anonymousId;
 });
 
+const readProviderLogins = Effect.fn("TelemetryIdentity.readProviderLogins")(function* (
+  homeDirectory: string,
+) {
+  const path = yield* Path.Path;
+  const codexTokens = yield* readJsonIdentityFile(
+    "codex",
+    path.join(homeDirectory, ".codex", "auth.json"),
+    decodeCodexAuthJson,
+  ).pipe(
+    skipOnError,
+    Effect.map(Option.flatMap((authJson) => Option.fromUndefinedOr(authJson.tokens))),
+  );
+  const claudeJson = yield* readJsonIdentityFile(
+    "claude",
+    path.join(homeDirectory, ".claude.json"),
+    decodeClaudeJson,
+  ).pipe(skipOnError);
+  return { codexTokens, claudeJson };
+});
+
 /**
- * getTelemetryIdentifier - Users are "identified" by finding the first match of the following, then hashing the value.
- * 1. ~/.codex/auth.json tokens.account_id
- * 2. ~/.claude.json userID
- * 3. ~/.t3/telemetry/anonymous-id
+ * `distinctId` preserves legacy priority: hashed Codex account_id, Claude userID, then anonymous id.
+ * It can change on login or be shared by a Codex Team; hashed `installId` stays stable per install.
+ * A null `distinctId` disables telemetry. Missing files and API-key-only Codex auth fall through;
+ * only unreadable or malformed files warn.
  */
-export const getTelemetryIdentifierForHome = Effect.fn("getTelemetryIdentifierForHome")(
-  function* (homeDirectory: string) {
-    const codexAccountId = yield* getCodexAccountId(homeDirectory).pipe(
-      Effect.catchTags({
-        TelemetryIdentityReadError: (error) =>
-          logTelemetryIdentityError(error).pipe(Effect.as(Option.none<string>())),
-        TelemetryIdentityDecodeError: (error) =>
-          logTelemetryIdentityError(error).pipe(Effect.as(Option.none<string>())),
-      }),
-    );
-    if (Option.isSome(codexAccountId)) {
-      return yield* hash("codex", codexAccountId.value);
-    }
+export const getTelemetryIdentityForHome = Effect.fn("getTelemetryIdentityForHome")(function* (
+  homeDirectory: string,
+) {
+  const { codexTokens, claudeJson } = yield* readProviderLogins(homeDirectory);
+  const installId = yield* upsertAnonymousId.pipe(
+    Effect.map(hashTelemetryId),
+    Effect.catch((error) => logTelemetryIdentityError(error).pipe(Effect.as(null))),
+  );
+  const providerId = Option.orElse(
+    Option.map(codexTokens, (tokens) => tokens.account_id),
+    () => Option.flatMap(claudeJson, (json) => Option.fromUndefinedOr(json.userID)),
+  );
+  return {
+    distinctId: Option.isSome(providerId) ? hashTelemetryId(providerId.value) : installId,
+    installId,
+  };
+});
 
-    const claudeUserId = yield* getClaudeUserId(homeDirectory).pipe(
-      Effect.catchTags({
-        TelemetryIdentityReadError: (error) =>
-          logTelemetryIdentityError(error).pipe(Effect.as(Option.none<string>())),
-        TelemetryIdentityDecodeError: (error) =>
-          logTelemetryIdentityError(error).pipe(Effect.as(Option.none<string>())),
-      }),
-    );
-    if (Option.isSome(claudeUserId)) {
-      return yield* hash("claude", claudeUserId.value);
-    }
-
-    const anonymousId = yield* upsertAnonymousId.pipe(
-      Effect.asSome,
-      Effect.catchTags({
-        TelemetryIdentityReadError: (error) =>
-          logTelemetryIdentityError(error).pipe(Effect.as(Option.none<string>())),
-        TelemetryAnonymousIdGenerationError: (error) =>
-          logTelemetryIdentityError(error).pipe(Effect.as(Option.none<string>())),
-        TelemetryAnonymousIdPersistenceError: (error) =>
-          logTelemetryIdentityError(error).pipe(Effect.as(Option.none<string>())),
-      }),
-    );
-    if (Option.isSome(anonymousId)) {
-      return yield* hash("anonymous", anonymousId.value);
-    }
-
-    return null;
-  },
-  Effect.tapError(logTelemetryIdentityError),
-  Effect.orElseSucceed(() => null),
+export const getTelemetryIdentity = Effect.flatMap(
+  HostProcess.HomeDirectory,
+  getTelemetryIdentityForHome,
 );
 
-export const getTelemetryIdentifier = Effect.suspend(() =>
-  getTelemetryIdentifierForHome(NodeOS.homedir()),
-);
+/**
+ * Owners the server can read without a client: the linked T3 Connect account
+ * and the provider logins under `homeDirectory`. Clients add `connect` and
+ * `device` owners when they connect.
+ */
+export const getServerOwnersForHome = Effect.fn("getServerOwnersForHome")(function* (
+  homeDirectory: string,
+) {
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const connectUser = yield* secrets.get(CLOUD_LINKED_USER_ID).pipe(
+    Effect.map(Option.map((bytes) => new TextDecoder().decode(bytes))),
+    Effect.catch((cause) =>
+      Effect.logWarning("Failed to read the linked T3 Connect account for telemetry", {
+        errorTag: cause._tag,
+      }).pipe(Effect.as(Option.none<string>())),
+    ),
+  );
+  const { codexTokens, claudeJson } = yield* readProviderLogins(homeDirectory);
+
+  const raw: ReadonlyArray<readonly [TelemetryOwnerSource, Option.Option<string>]> = [
+    ["connect", connectUser],
+    [
+      "openai",
+      Option.flatMap(codexTokens, (tokens) =>
+        Option.flatMap(Option.fromUndefinedOr(tokens.id_token), openAiUserId),
+      ),
+    ],
+    [
+      "claude",
+      Option.flatMap(claudeJson, (json) => Option.fromUndefinedOr(json.oauthAccount?.accountUuid)),
+    ],
+  ];
+  return raw.flatMap(([source, value]): ReadonlyArray<TelemetryOwner> =>
+    Option.isSome(value) && value.value.trim() !== ""
+      ? [{ source, ownerId: hashTelemetryId(value.value) }]
+      : [],
+  );
+});
+
+export const getServerOwners = Effect.flatMap(HostProcess.HomeDirectory, getServerOwnersForHome);

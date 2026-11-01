@@ -27,9 +27,9 @@ interface FirstRunWorkspaceInput {
     readonly id: string;
     readonly projectId: string;
     readonly environmentId: string;
-    readonly latestTurn: unknown;
+    readonly latestRun: unknown;
     readonly latestUserMessageAt: string | null;
-    readonly session: unknown;
+    readonly runtime: unknown;
   }>;
 }
 
@@ -48,24 +48,13 @@ interface FirstRunDecisionInput {
   readonly threadCount: number;
 }
 
-interface HostedFirstRunDecisionInput {
-  readonly localEnvironmentDisabled?: boolean;
-  readonly hydrated: boolean;
-  readonly completed: boolean;
-  readonly catalogReady: boolean;
-  readonly environmentCount: number;
-}
-
 export function isFirstRunWorkspaceProvenanceAuthoritative(input: {
   readonly welcomeReceived: boolean;
   readonly bootstrapStatus: "pending" | "complete" | null;
 }): boolean {
-  // An empty catalog is not final while cwd auto-bootstrap is pending. Older
-  // servers omit bootstrapStatus, so a received welcome with null stays valid.
   return input.welcomeReceived && input.bootstrapStatus !== "pending";
 }
 
-/** Keeps the authenticated app unmounted until workspace evidence settles. */
 export function transitionFirstRunGateState(
   state: FirstRunGateState,
   event: FirstRunGateEvent,
@@ -74,18 +63,13 @@ export function transitionFirstRunGateState(
     return state.decision === "pending" && !state.stalled ? { ...state, stalled: true } : state;
   }
 
-  if (
-    state.decision === "wizard" ||
-    event.decision === "pending" ||
-    (state.decision === "app" && event.decision !== "wizard")
-  ) {
+  if (event.decision === "pending" || state.decision === event.decision) {
     return state;
   }
 
   return { decision: event.decision, stalled: false };
 }
 
-/** Only a project and thread created by this startup count as a fresh nonempty workspace. */
 export function isFreshFirstRunWorkspace(input: FirstRunWorkspaceInput): boolean {
   if (input.projects.length > 1 || input.threads.length > 1) {
     return false;
@@ -116,13 +100,12 @@ export function isFreshFirstRunWorkspace(input: FirstRunWorkspaceInput): boolean
     input.bootstrapThreadId === bootstrapThread.id &&
     bootstrapThread.environmentId === input.primaryEnvironmentId &&
     bootstrapThread.projectId === bootstrapProject.id &&
-    bootstrapThread.latestTurn === null &&
+    bootstrapThread.latestRun === null &&
     bootstrapThread.latestUserMessageAt === null &&
-    bootstrapThread.session === null
+    bootstrapThread.runtime === null
   );
 }
 
-/** Cached projects may open the app, but only live workspace data may complete onboarding. */
 export function resolveFirstRunDecision(input: FirstRunDecisionInput): {
   readonly decision: FirstRunDecision;
   readonly persistCompletion: boolean;
@@ -162,26 +145,9 @@ export function resolveFirstRunDecision(input: FirstRunDecisionInput): {
     : { decision: "app", persistCompletion: input.workspaceAuthoritative };
 }
 
-/** Hosted onboarding depends on saved environments because there is no primary server. */
-export function resolveHostedFirstRunDecision(input: HostedFirstRunDecisionInput): {
+export function resolveHostedFirstRunDecision(hydrated: boolean): {
   readonly decision: FirstRunDecision;
   readonly persistCompletion: boolean;
 } {
-  if (!input.hydrated) {
-    return { decision: "pending", persistCompletion: false };
-  }
-
-  if (input.completed) {
-    return { decision: "app", persistCompletion: false };
-  }
-
-  if (!input.catalogReady) {
-    return { decision: "pending", persistCompletion: false };
-  }
-
-  // An existing desktop may have disabled its server before onboarding existed.
-  // Keep Connections accessible so it can turn local execution back on.
-  return input.environmentCount === 0 && !input.localEnvironmentDisabled
-    ? { decision: "wizard", persistCompletion: false }
-    : { decision: "app", persistCompletion: true };
+  return { decision: hydrated ? "app" : "pending", persistCompletion: false };
 }

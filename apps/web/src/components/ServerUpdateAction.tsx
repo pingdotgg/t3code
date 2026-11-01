@@ -1,7 +1,21 @@
-import type { EnvironmentId, ServerSelfUpdateCapability } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import {
+  AuthEnvironmentMaintainScope,
+  type AuthSessionState,
+  sessionGrantsScope,
+} from "@t3tools/contracts";
+import type { AsyncResult } from "effect/reactivity";
+import { environmentSession } from "~/state/session";
+import type {
+  DesktopUpdateChannel,
+  EnvironmentId,
+  ServerInstallation,
+  ServerSelfUpdateCapability,
+} from "@t3tools/contracts";
 import type { ServerUpdateStage, ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import {
   isAtomCommandInterrupted,
+  settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { CircleArrowUpIcon } from "lucide-react";
@@ -9,17 +23,16 @@ import { type ComponentProps, useRef, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
-import { useEnvironmentSettings } from "~/hooks/useSettings";
-import { serverEnvironment } from "~/state/server";
+import { serverEnvironment, updateOutdatedServer } from "~/state/server";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { manualServerUpdateCommand } from "~/versionSkew";
+import { useServerConfigs } from "~/state/entities";
+import { crossesReleaseTrack } from "@t3tools/shared/cliRelease";
 import { Button } from "./ui/button";
 import { toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-// The wire "installing" stage is a sub-second launcher handoff, so the UI
-// folds it into the download phase; everything after the handoff is the
-// restart the user is actually waiting through.
 const UPDATE_STAGE_LABELS: Record<ServerUpdateStage, string> = {
   downloading: "Downloading…",
   installing: "Downloading…",
@@ -31,6 +44,29 @@ export function serverUpdateStageLabel(stage: ServerUpdateStage): string {
   return UPDATE_STAGE_LABELS[stage];
 }
 
+const CROSS_TRACK_NOTE = "Switch tracks in About → Update track";
+
+/** Hosts refuse a Stable/Nightly crossing outside a track switch, which checks the database first. */
+function refusedCrossing(
+  target: {
+    readonly selfUpdate: ServerSelfUpdateCapability | null;
+    readonly targetVersion: string;
+    readonly channel?: DesktopUpdateChannel | undefined;
+  },
+  serverVersion: string | undefined,
+): boolean {
+  return (
+    target.channel === undefined &&
+    target.selfUpdate !== null &&
+    serverVersion !== undefined &&
+    crossesReleaseTrack(serverVersion, target.targetVersion)
+  );
+}
+
+function CrossTrackNote() {
+  return <span className="text-muted-foreground text-xs">{CROSS_TRACK_NOTE}</span>;
+}
+
 function updateFailureMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Server update failed.";
 }
@@ -39,38 +75,64 @@ export interface ServerUpdateTarget {
   readonly environmentId: EnvironmentId;
   readonly serverLabel: string;
   readonly selfUpdate: ServerSelfUpdateCapability | null;
+  readonly installation?: ServerInstallation | undefined;
   readonly desktopAppUpdate?: boolean;
-  readonly threadContinuation?: boolean;
   readonly targetVersion: string;
-  readonly continueThreadsAfterServerUpdate?: boolean;
+  /** Set only by a track switch; the host's desktop app moves to this track. */
+  readonly channel?: DesktopUpdateChannel;
+  /** A track switch's checked release migration; the host re-checks its own database. */
+  readonly targetDatabaseMigration?: number;
+  /** The host already runs its track's newest build and only saves the track. */
+  readonly trackOnly?: boolean;
 }
 
 type UpdateButtonProps = Pick<ComponentProps<typeof Button>, "variant" | "size" | "className"> & {
   readonly label?: string;
-  /** "icon" renders a compact icon button with the label in a tooltip. */
   readonly appearance?: "button" | "icon";
 };
 
-function useServerUpdate() {
+export type ServerUpdateOutcome =
+  | { readonly status: "updated" | "skipped" }
+  | { readonly status: "failed"; readonly message: string };
+
+/** Toasts its success or failure unless `quiet`; never rejects. */
+export function useServerUpdate() {
   const updateServer = useAtomCommand(serverEnvironment.updateServer, { reportFailure: false });
-  return async (target: ServerUpdateTarget, failureTitle = "Server update failed") => {
+  return async (
+    target: ServerUpdateTarget,
+    { quiet = false }: { readonly quiet?: boolean } = {},
+  ): Promise<ServerUpdateOutcome> => {
     const { environmentId, serverLabel, selfUpdate, targetVersion } = target;
-    if (pendingUpdateEnvironmentIds.has(environmentId)) return;
+    if (
+      !canUpdateServer(appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId))) ||
+      pendingUpdateEnvironmentIds.has(environmentId)
+    )
+      return { status: "skipped" };
     pendingUpdateEnvironmentIds.add(environmentId);
-    try {
-      const result = await updateServer({
-        environmentId,
-        input: {
-          targetVersion,
-          ...(target.threadContinuation && target.continueThreadsAfterServerUpdate
-            ? { continueRunningThreads: true }
-            : {}),
-        },
-      });
-      if (result._tag === "Failure") {
-        if (isAtomCommandInterrupted(result)) return;
-        throw squashAtomCommandFailure(result);
+    const result = await updateServer({
+      environmentId,
+      input: {
+        targetVersion,
+        ...(target.channel === undefined ? {} : { channel: target.channel }),
+        ...(target.targetDatabaseMigration === undefined
+          ? {}
+          : { targetDatabaseMigration: target.targetDatabaseMigration }),
+      },
+    });
+    pendingUpdateEnvironmentIds.delete(environmentId);
+    if (result._tag === "Failure") {
+      if (isAtomCommandInterrupted(result)) return { status: "skipped" };
+      const message = updateFailureMessage(squashAtomCommandFailure(result));
+      if (!quiet) {
+        toastManager.add({
+          type: "error",
+          title: `${serverLabel} update failed`,
+          description: message,
+        });
       }
+      return { status: "failed", message };
+    }
+    if (!quiet) {
       toastManager.add({
         type: "success",
         title: `${serverLabel} updated`,
@@ -79,19 +141,11 @@ function useServerUpdate() {
             ? `Desktop app relaunched on ${result.value.targetVersion}.`
             : `Reconnected on t3@${result.value.targetVersion}.`,
       });
-    } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: failureTitle,
-        description: updateFailureMessage(error),
-      });
-    } finally {
-      pendingUpdateEnvironmentIds.delete(environmentId);
     }
+    return { status: "updated" };
   };
 }
 
-/** Updates eligible machines independently; manual paths remain in the machine list. */
 export function ServerUpdatesAction({
   targets,
   label = "Update all",
@@ -102,18 +156,20 @@ export function ServerUpdatesAction({
   readonly targets: ReadonlyArray<ServerUpdateTarget>;
 }) {
   const update = useServerUpdate();
+  const serverConfigs = useServerConfigs();
   const pending = useRef(false);
   const [isPending, setIsPending] = useState(false);
   const eligible = targets.filter(
     (target) =>
       target.selfUpdate !== null &&
-      (target.selfUpdate !== "desktop-managed" || target.desktopAppUpdate),
+      (target.selfUpdate !== "desktop-managed" || target.desktopAppUpdate) &&
+      !refusedCrossing(target, serverConfigs.get(target.environmentId)?.environment.serverVersion),
   );
   const handleUpdate = async () => {
     if (pending.current) return;
     pending.current = true;
     setIsPending(true);
-    try {
+    await settlePromise(async () => {
       const available = eligible.filter(
         (target) => !pendingUpdateEnvironmentIds.has(target.environmentId),
       );
@@ -125,13 +181,10 @@ export function ServerUpdatesAction({
           )) ?? true;
         if (!confirmed) return;
       }
-      await Promise.all(
-        available.map((target) => update(target, `${target.serverLabel} update failed`)),
-      );
-    } finally {
-      pending.current = false;
-      setIsPending(false);
-    }
+      await Promise.all(available.map((target) => update(target)));
+    });
+    pending.current = false;
+    setIsPending(false);
   };
   return (
     <Button
@@ -146,12 +199,13 @@ export function ServerUpdatesAction({
   );
 }
 
-/**
- * One-row status for an in-flight server update: "Downloading…" then
- * "Restarting…". The update is a wait, not a warning: a single pulsing dot
- * and label, no step rail, no versions. Failure turns the row red with the
- * rollback reason.
- */
+export function canUpdateServer(
+  result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
+): boolean {
+  if (result._tag !== "Success" || !result.value.authenticated) return false;
+  return sessionGrantsScope(result.value, AuthEnvironmentMaintainScope);
+}
+
 export function ServerUpdateProgress({
   state,
 }: {
@@ -170,46 +224,43 @@ export function ServerUpdateProgress({
   }
   return (
     <div className="mt-1 flex items-center gap-2 text-xs font-medium text-foreground">
-      <span
-        className="size-1.5 shrink-0 animate-status-pulse rounded-full bg-foreground"
-        aria-hidden="true"
-      />
+      <span className="size-1.5 shrink-0 rounded-full bg-foreground" aria-hidden="true" />
       <span>{serverUpdateStageLabel(state.stage)}</span>
     </div>
   );
 }
 
-/**
- * Offers the update path advertised by a version-skewed server. Self-updates
- * delegate their full lifecycle to client-runtime so this component can
- * unmount during reconnect without losing operation state.
- */
+/** client-runtime owns self-updates so unmounting during reconnect preserves operation state. */
 export function ServerUpdateAction({
   environmentId,
   serverLabel,
   selfUpdate,
+  installation,
   desktopAppUpdate = false,
-  threadContinuation = false,
   targetVersion,
+  channel,
   label = "Update",
   variant = "outline",
   size = "xs",
   className,
   appearance = "button",
-}: Omit<ServerUpdateTarget, "continueThreadsAfterServerUpdate"> & UpdateButtonProps) {
+}: ServerUpdateTarget & UpdateButtonProps) {
   const isDesktopAppUpdate = selfUpdate === "desktop-managed";
-  const continueThreadsAfterServerUpdate = useEnvironmentSettings(
-    environmentId,
-    (settings) => settings.continueThreadsAfterServerUpdate,
-  );
+  const serverVersion = useServerConfigs().get(environmentId)?.environment.serverVersion;
+  const sessionStateAtom = environmentSession.sessionStateAtom(environmentId);
+  const canUpdate = canUpdateServer(useAtomValue(sessionStateAtom));
   const update = useServerUpdate();
   const { copyToClipboard } = useCopyToClipboard<{ command: string }>({
-    target: "update command",
+    target: installation?.kind === "npm-global" ? "update command" : "relaunch command",
     onCopy: ({ command }) => {
       toastManager.add({
         type: "success",
-        title: "Update command copied",
-        description: `Run \`${command}\` on ${serverLabel} to update it.`,
+        title:
+          installation?.kind === "npm-global" ? "Update command copied" : "Relaunch command copied",
+        description:
+          installation?.kind === "npm-global"
+            ? `Run \`${command}\` on ${serverLabel}, then restart t3 with your usual options.`
+            : `Stop t3 on ${serverLabel}, then relaunch with \`${command}\` using the same subcommand and options. This does not update an installed t3 command.`,
       });
     },
     onError: (error) => {
@@ -222,13 +273,13 @@ export function ServerUpdateAction({
   });
 
   const handleUpdate = async () => {
-    if (pendingUpdateEnvironmentIds.has(environmentId)) {
+    if (
+      !canUpdateServer(appAtomRegistry.get(sessionStateAtom)) ||
+      pendingUpdateEnvironmentIds.has(environmentId)
+    ) {
       return;
     }
     if (isDesktopAppUpdate) {
-      // No themed host mounted (undefined) means proceed: the click itself
-      // was the request. This is the only confirmation in the flow; the
-      // remote machine installs without asking anyone there.
       const confirmed =
         (await requestConfirmDialog(
           `Update the T3 Code desktop app that runs the ${serverLabel}? It will close and relaunch on that machine.`,
@@ -237,14 +288,13 @@ export function ServerUpdateAction({
         return;
       }
     }
+    if (!canUpdateServer(appAtomRegistry.get(sessionStateAtom))) return;
     await update({
       environmentId,
       serverLabel,
       selfUpdate,
       desktopAppUpdate,
-      threadContinuation,
       targetVersion,
-      continueThreadsAfterServerUpdate,
     });
   };
 
@@ -256,8 +306,18 @@ export function ServerUpdateAction({
     );
   }
 
-  const manualCommand = selfUpdate === null ? manualServerUpdateCommand(targetVersion) : null;
-  const actionLabel = manualCommand !== null ? "Copy update command" : label;
+  if (refusedCrossing({ selfUpdate, targetVersion, channel }, serverVersion)) {
+    return <CrossTrackNote />;
+  }
+
+  const manualCommand =
+    selfUpdate === null ? manualServerUpdateCommand(targetVersion, installation) : null;
+  const actionLabel =
+    manualCommand !== null
+      ? installation?.kind === "npm-global"
+        ? "Copy update command"
+        : "Copy relaunch command"
+      : label;
   const onClick =
     manualCommand !== null
       ? () => copyToClipboard(manualCommand, { command: manualCommand })
@@ -273,6 +333,7 @@ export function ServerUpdateAction({
               variant="ghost-muted"
               className={className}
               aria-label={`${actionLabel} for ${serverLabel}`}
+              disabled={manualCommand === null && !canUpdate}
               onClick={onClick}
             />
           }
@@ -285,8 +346,63 @@ export function ServerUpdateAction({
   }
 
   return (
-    <Button size={size} variant={variant} className={className} onClick={onClick}>
+    <Button
+      size={size}
+      variant={variant}
+      className={className}
+      disabled={manualCommand === null && !canUpdate}
+      onClick={onClick}
+    >
       {actionLabel}
+    </Button>
+  );
+}
+
+/** Read the host descriptor's version because the host never delivers server config. */
+export function OutdatedServerUpdateAction({
+  environmentId,
+  serverLabel,
+  fromVersion,
+  targetVersion,
+  label = "Update",
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly serverLabel: string;
+  readonly fromVersion: string | undefined;
+  readonly targetVersion: string;
+  readonly label?: string;
+}) {
+  const update = useAtomCommand(updateOutdatedServer, { reportFailure: false });
+  const handleUpdate = async () => {
+    if (pendingUpdateEnvironmentIds.has(environmentId)) return;
+    pendingUpdateEnvironmentIds.add(environmentId);
+    const result = await update({
+      environmentId,
+      input: { targetVersion },
+      ...(fromVersion === undefined ? {} : { fromVersion }),
+    });
+    pendingUpdateEnvironmentIds.delete(environmentId);
+    if (result._tag === "Failure") {
+      if (isAtomCommandInterrupted(result)) return;
+      toastManager.add({
+        type: "error",
+        title: `${serverLabel} update failed`,
+        description: updateFailureMessage(squashAtomCommandFailure(result)),
+      });
+      return;
+    }
+    toastManager.add({
+      type: "success",
+      title: `${serverLabel} updated`,
+      description: `Reconnected on t3@${result.value.targetVersion}.`,
+    });
+  };
+  if (fromVersion !== undefined && crossesReleaseTrack(fromVersion, targetVersion)) {
+    return <CrossTrackNote />;
+  }
+  return (
+    <Button size="xs" variant="outline" onClick={() => void handleUpdate()}>
+      {label}
     </Button>
   );
 }

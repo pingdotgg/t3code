@@ -2,13 +2,20 @@ import type * as cf from "@cloudflare/workers-types";
 import type { DurableObject as DurableObjectClass } from "cloudflare:workers";
 
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import { HttpServerResponse } from "effect/unstable/http";
+import { HttpServerResponse } from "effect/http";
+import {
+  dispatchAlarmCallbacks,
+  initializeAlarmCallbacks,
+  makeDurableObjectCallbackFactory,
+} from "./AlarmCallback.ts";
+import { RuntimeContext } from "../../RuntimeContext.ts";
 import { buildEventTelemetry } from "../../TelemetryRuntime.ts";
 import type {
   DurableObjectExport,
@@ -63,8 +70,12 @@ export const makeDurableObjectBridge =
 
         this.#instance = state.blockConcurrencyWhile(() =>
           build((promise) => void (state as any).waitUntil?.(promise)).then(
-            ({ context, export: exported, telemetry }) => {
+            ({ context, runtimeContext, export: exported, telemetry }) => {
               const { constructor, services } = exported;
+              const instanceRuntimeContext = {
+                ...runtimeContext,
+                makeCallback: makeDurableObjectCallbackFactory(this.#state),
+              };
               const doContext = Layer.succeed(
                 DurableObjectState,
                 fromDurableObjectState(this.#state),
@@ -75,11 +86,25 @@ export const makeDurableObjectBridge =
               return constructor.pipe(
                 Effect.provide(doContext),
                 Effect.flatMap((instance) =>
-                  instance.pipe(Effect.provide(doContext)),
+                  Effect.suspend(() => {
+                    const seal = initializeAlarmCallbacks(this.#state);
+                    const instanceContext = Layer.succeed(
+                      RuntimeContext,
+                      instanceRuntimeContext,
+                    ).pipe(Layer.provideMerge(doContext));
+                    return instance.pipe(
+                      Effect.provide(instanceContext),
+                      Effect.ensuring(Effect.sync(seal)),
+                    );
+                  }),
                 ),
                 Effect.map((instance) => ({
                   instance,
-                  services,
+                  services: Context.add(
+                    services,
+                    RuntimeContext,
+                    instanceRuntimeContext,
+                  ),
                   context,
                   telemetry,
                 })),
@@ -189,7 +214,14 @@ export const makeDurableObjectBridge =
       }
 
       async alarm(alarmInfo?: cf.AlarmInvocationInfo) {
-        return this.#execute((instance) => instance.alarm!(alarmInfo));
+        return this.#execute((instance) =>
+          dispatchAlarmCallbacks(
+            this.#state,
+            instance.alarm !== undefined,
+          ).pipe(
+            Effect.andThen(() => instance.alarm?.(alarmInfo) ?? Effect.void),
+          ),
+        );
       }
 
       async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {

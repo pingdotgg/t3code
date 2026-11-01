@@ -3,7 +3,7 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { CredentialsFromAmbientOrEnv } from "./Credentials.ts";
 import { GetSecret } from "./GetSecret.ts";
 import { makeHttpSecretBinding } from "./SecretHttp.ts";
@@ -23,6 +23,7 @@ import { makeHttpSecretBinding } from "./SecretHttp.ts";
  * ```
  *
  * @layer
+ * @product Secret
  * @provides Fly.GetSecret
  */
 export const GetSecretHttp = Layer.effect(

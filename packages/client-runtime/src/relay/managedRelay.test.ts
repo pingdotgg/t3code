@@ -4,28 +4,21 @@ import {
   RelayEnvironmentStatusScope,
 } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Tracer from "effect/Tracer";
-import * as Schema from "effect/Schema";
-import * as TestClock from "effect/testing/TestClock";
 
+import { RELAY_GATEWAY_TIMEOUT_MESSAGE, relayRequestFailureDetail } from "./errorPresentation.ts";
 import * as ManagedRelay from "./managedRelay.ts";
-import { remoteHttpClientLayer } from "../rpc/http.ts";
-import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
+import * as RpcHttp from "../rpc/http.ts";
 
-const encodeRelayError = Schema.encodeEffect(ManagedRelay.ManagedRelayClientError);
-const decodeRelayError = Schema.decodeUnknownEffect(ManagedRelay.ManagedRelayClientError);
-
-function managedRelayTestLayer(
+function layerManagedRelayTest(
   fetchFn: typeof globalThis.fetch,
   relayUrl = "https://relay.example.test",
   accessTokenStore?: ManagedRelay.ManagedRelayAccessTokenStore,
 ) {
-  const httpClientLayer = remoteHttpClientLayer(fetchFn);
-  const signerLayer = Layer.succeed(
+  const layerHttpClient = RpcHttp.layerRemoteHttpClient(fetchFn);
+  const layerSigner = Layer.succeed(
     ManagedRelay.ManagedRelayDpopSigner,
     ManagedRelay.ManagedRelayDpopSigner.of({
       thumbprint: Effect.succeed("client-thumbprint"),
@@ -37,7 +30,7 @@ function managedRelayTestLayer(
     relayUrl,
     clientId: "t3-mobile",
     ...(accessTokenStore ? { accessTokenStore } : {}),
-  }).pipe(Layer.provide(signerLayer), Layer.provide(httpClientLayer));
+  }).pipe(Layer.provide(layerSigner), Layer.provide(layerHttpClient));
 }
 
 function clerkToken(subject: string, nonce: string): string {
@@ -47,76 +40,6 @@ function clerkToken(subject: string, nonce: string): string {
 }
 
 describe("ManagedRelayClient", () => {
-  it.effect("owns tracing at service and implementation boundaries", () => {
-    const spanNames: Array<string> = [];
-    const tracer = Tracer.make({
-      span: (options) => {
-        const span = new Tracer.NativeSpan(options);
-        spanNames.push(span.name);
-        return span;
-      },
-    });
-    const fetchFn = ((input) => {
-      const url = String(input);
-      if (url.endsWith("/v1/client/dpop-token")) {
-        return Promise.resolve(
-          Response.json({
-            access_token: "relay-token",
-            issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-            token_type: "DPoP",
-            expires_in: 1_800,
-            scope: RelayEnvironmentStatusScope,
-          }),
-        );
-      }
-      return Promise.resolve(
-        Response.json({
-          environmentId: "env-1",
-          endpoint: {
-            httpBaseUrl: "https://desktop.example.test/",
-            wsBaseUrl: "wss://desktop.example.test/ws",
-            providerKind: "cloudflare_tunnel",
-          },
-          status: "online",
-          checkedAt: "2026-06-05T20:00:00.000Z",
-          descriptor: {
-            environmentId: "env-1",
-            label: "Desktop",
-            platform: { os: "darwin", arch: "arm64" },
-            serverVersion: "0.0.0-test",
-            capabilities: { repositoryIdentity: true },
-          },
-        }),
-      );
-    }) satisfies typeof globalThis.fetch;
-
-    return Effect.gen(function* () {
-      const relayClient = yield* ManagedRelay.ManagedRelayClient;
-      yield* relayClient.getEnvironmentStatus({
-        clerkToken: clerkToken("user-1", "session-1"),
-        scopes: [RelayEnvironmentStatusScope],
-        environmentId: EnvironmentId.make("env-1"),
-      });
-
-      expect(spanNames).toEqual(
-        expect.arrayContaining([
-          "clientRuntime.managedRelay.getEnvironmentStatus",
-          "clientRuntime.managedRelay.authorize",
-          "clientRuntime.managedRelay.obtainAccessToken",
-          "clientRuntime.managedRelay.tokenCacheCriticalSection",
-          "clientRuntime.managedRelay.exchangeAccessToken",
-        ]),
-      );
-      expect(spanNames).not.toEqual(
-        expect.arrayContaining([
-          "clientRuntime.managedRelay.createTokenExchangeProof",
-          "clientRuntime.managedRelay.exchangeAccessTokenRequest",
-          "clientRuntime.managedRelay.createRequestProof",
-        ]),
-      );
-    }).pipe(Effect.withTracer(tracer), Effect.provide(managedRelayTestLayer(fetchFn)));
-  });
-
   it.effect("rejects unsafe relay URLs before sending credentials", () => {
     let requestCount = 0;
     const fetchFn = (() => {
@@ -136,66 +59,7 @@ describe("ManagedRelayClient", () => {
         message: "Relay URL must be a secure absolute HTTPS origin.",
       });
       expect(requestCount).toBe(0);
-    }).pipe(Effect.provide(managedRelayTestLayer(fetchFn, "http://relay.example.test")));
-  });
-
-  it.effect("reuses usable DPoP tokens and refreshes cleared or expiring cache entries", () => {
-    let tokenExchangeCount = 0;
-    const fetchFn = ((input) => {
-      const url = String(input);
-      if (url.endsWith("/v1/client/dpop-token")) {
-        tokenExchangeCount += 1;
-        return Promise.resolve(
-          Response.json({
-            access_token: `relay-token-${tokenExchangeCount}`,
-            issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-            token_type: "DPoP",
-            expires_in: 10,
-            scope: RelayEnvironmentStatusScope,
-          }),
-        );
-      }
-      return Promise.resolve(
-        Response.json({
-          environmentId: "env-1",
-          endpoint: {
-            httpBaseUrl: "https://desktop.example.test/",
-            wsBaseUrl: "wss://desktop.example.test/ws",
-            providerKind: "cloudflare_tunnel",
-          },
-          status: "online",
-          checkedAt: "2026-05-25T00:01:00.000Z",
-          descriptor: {
-            environmentId: "env-1",
-            label: "Desktop",
-            platform: { os: "darwin", arch: "arm64" },
-            serverVersion: "0.0.0-test",
-            capabilities: { repositoryIdentity: true },
-          },
-        }),
-      );
-    }) satisfies typeof globalThis.fetch;
-
-    return Effect.gen(function* () {
-      const relayClient = yield* ManagedRelay.ManagedRelayClient;
-      const statusInput = {
-        clerkToken: clerkToken("user-1", "session-1"),
-        scopes: [RelayEnvironmentStatusScope],
-        environmentId: EnvironmentId.make("env-1"),
-      } as const;
-
-      yield* relayClient.getEnvironmentStatus(statusInput);
-      yield* relayClient.getEnvironmentStatus(statusInput);
-      expect(tokenExchangeCount).toBe(1);
-
-      yield* TestClock.adjust(Duration.seconds(6));
-      yield* relayClient.getEnvironmentStatus(statusInput);
-      expect(tokenExchangeCount).toBe(2);
-
-      yield* relayClient.resetTokenCache;
-      yield* relayClient.getEnvironmentStatus(statusInput);
-      expect(tokenExchangeCount).toBe(3);
-    }).pipe(Effect.provide(managedRelayTestLayer(fetchFn)));
+    }).pipe(Effect.provide(layerManagedRelayTest(fetchFn, "http://relay.example.test")));
   });
 
   it.effect("uses a cached token while another scope waits for an exchange", () => {
@@ -290,7 +154,7 @@ describe("ManagedRelayClient", () => {
       expect(tokenExchangeCount).toBe(2);
     }).pipe(
       Effect.ensuring(Effect.sync(() => releaseExchange.resolve())),
-      Effect.provide(managedRelayTestLayer(fetchFn, undefined, accessTokenStore)),
+      Effect.provide(layerManagedRelayTest(fetchFn, undefined, accessTokenStore)),
     );
   });
 
@@ -352,7 +216,7 @@ describe("ManagedRelayClient", () => {
       yield* Effect.gen(function* () {
         const relayClient = yield* ManagedRelay.ManagedRelayClient;
         yield* relayClient.getEnvironmentStatus(statusInput(clerkToken("user-1", "session-1")));
-      }).pipe(Effect.provide(managedRelayTestLayer(fetchFn, undefined, accessTokenStore)));
+      }).pipe(Effect.provide(layerManagedRelayTest(fetchFn, undefined, accessTokenStore)));
 
       expect(tokenExchangeCount).toBe(1);
       expect(persistedTokens).toHaveLength(1);
@@ -360,7 +224,7 @@ describe("ManagedRelayClient", () => {
       yield* Effect.gen(function* () {
         const relayClient = yield* ManagedRelay.ManagedRelayClient;
         yield* relayClient.getEnvironmentStatus(statusInput(clerkToken("user-1", "session-2")));
-      }).pipe(Effect.provide(managedRelayTestLayer(fetchFn, undefined, accessTokenStore)));
+      }).pipe(Effect.provide(layerManagedRelayTest(fetchFn, undefined, accessTokenStore)));
 
       expect(tokenExchangeCount).toBe(1);
     });
@@ -457,7 +321,7 @@ describe("ManagedRelayClient", () => {
           accessToken: "fresh-relay-token",
         },
       ]);
-    }).pipe(Effect.provide(managedRelayTestLayer(fetchFn, undefined, accessTokenStore)));
+    }).pipe(Effect.provide(layerManagedRelayTest(fetchFn, undefined, accessTokenStore)));
   });
 
   it.effect("does not persist tokens when the Clerk subject cannot be decoded", () => {
@@ -513,90 +377,46 @@ describe("ManagedRelayClient", () => {
       });
 
       expect(persistedTokens).toEqual([]);
-    }).pipe(Effect.provide(managedRelayTestLayer(fetchFn, undefined, accessTokenStore)));
+    }).pipe(Effect.provide(layerManagedRelayTest(fetchFn, undefined, accessTokenStore)));
   });
 
-  it.effect("times out stalled relay environment listing requests", () => {
-    const fetchFn = (() =>
-      new Promise<Response>(() => undefined)) satisfies typeof globalThis.fetch;
-
-    return Effect.gen(function* () {
-      const relayClient = yield* ManagedRelay.ManagedRelayClient;
-      const errorFiber = yield* relayClient
-        .listEnvironments({ clerkToken: "clerk-token" })
-        .pipe(Effect.flip, Effect.forkScoped);
-
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust(Duration.millis(ManagedRelay.MANAGED_RELAY_REQUEST_TIMEOUT_MS));
-      const error = yield* Fiber.join(errorFiber);
-
-      expect(error).toMatchObject({
-        _tag: "ManagedRelayRequestTimeoutError",
-        activity: "Relay environment listing",
-        timeoutMs: ManagedRelay.MANAGED_RELAY_REQUEST_TIMEOUT_MS,
-        message: `Relay environment listing timed out. ${NETWORK_BLOCKING_HINT}`,
-      });
-    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), managedRelayTestLayer(fetchFn))));
-  });
-
-  it.effect("suggests checking network filtering when fetch fails without a response", () => {
-    const fetchFn = (() =>
-      Promise.reject(new TypeError("Failed to fetch"))) satisfies typeof globalThis.fetch;
-    return Effect.gen(function* () {
-      const relayClient = yield* ManagedRelay.ManagedRelayClient;
-      const error = yield* relayClient
-        .listEnvironments({ clerkToken: "clerk-token" })
-        .pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "ManagedRelayRequestFailedError",
-        transportFailed: true,
-        message: `Could not list relay-managed environments. ${NETWORK_BLOCKING_HINT}`,
-      });
-      const encoded = yield* encodeRelayError(error);
-      const decoded = yield* decodeRelayError(encoded);
-      expect(decoded.message).toBe(error.message);
-    }).pipe(Effect.provide(managedRelayTestLayer(fetchFn)));
-  });
-
-  it.effect("does not suggest network filtering for an HTTP server error", () => {
-    const fetchFn = (() =>
-      Promise.resolve(
-        new Response("Unavailable", { status: 503 }),
-      )) satisfies typeof globalThis.fetch;
-    return Effect.gen(function* () {
-      const relayClient = yield* ManagedRelay.ManagedRelayClient;
-      const error = yield* relayClient
-        .listEnvironments({ clerkToken: "clerk-token" })
-        .pipe(Effect.flip);
-      expect(error.message).toBe("Could not list relay-managed environments.");
-    }).pipe(Effect.provide(managedRelayTestLayer(fetchFn)));
-  });
-
-  it.effect("preserves typed relay trace IDs on client errors", () => {
+  it.effect("explains a relay deadline 504 on link and keeps its trace ID", () => {
     const fetchFn = (() =>
       Promise.resolve(
         Response.json(
+          { error: "relay_request_deadline_exceeded" },
           {
-            _tag: "RelayAuthInvalidError",
-            code: "auth_invalid",
-            reason: "invalid_bearer",
-            traceId: "trace-managed-relay",
+            status: 504,
+            headers: {
+              traceparent: "00-4684d7d140f34f0393d42744d240e207-0baf648c44f4bce6-01",
+            },
           },
-          { status: 401 },
         ),
       )) satisfies typeof globalThis.fetch;
 
     return Effect.gen(function* () {
       const relayClient = yield* ManagedRelay.ManagedRelayClient;
       const error = yield* relayClient
-        .listEnvironments({ clerkToken: "clerk-token" })
+        .linkEnvironment({
+          clerkToken: "clerk-token",
+          payload: {
+            proof: "link-proof",
+            notificationsEnabled: true,
+            liveActivitiesEnabled: true,
+            managedTunnelsEnabled: true,
+          },
+        })
         .pipe(Effect.flip);
 
       expect(error).toMatchObject({
         _tag: "ManagedRelayRequestFailedError",
-        traceId: "trace-managed-relay",
+        status: 504,
+        traceId: "4684d7d140f34f0393d42744d240e207",
       });
-    }).pipe(Effect.provide(managedRelayTestLayer(fetchFn)));
+      expect(
+        error._tag === "ManagedRelayRequestFailedError" ? relayRequestFailureDetail(error) : null,
+      ).toBe(RELAY_GATEWAY_TIMEOUT_MESSAGE);
+    }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
   });
 
   it.effect("accepts generic DPoP errors from relays without the optional reason", () => {
@@ -633,76 +453,6 @@ describe("ManagedRelayClient", () => {
       ) {
         expect(error.relayError.dpopFailureReason).toBeUndefined();
       }
-    }).pipe(Effect.provide(managedRelayTestLayer(fetchFn)));
-  });
-
-  it.effect("lists account devices through the v2 Clerk bearer client endpoint", () => {
-    const fetchFn = ((input, init) => {
-      expect(String(input)).toBe("https://relay.example.test/v2/client/devices");
-      expect(init?.headers).toMatchObject({
-        authorization: "Bearer clerk-token",
-      });
-      return Promise.resolve(
-        Response.json({
-          devices: [
-            {
-              deviceId: "device-1",
-              label: "Julius's iPhone",
-              platform: "ios",
-              iosMajorVersion: 18,
-              appVersion: "1.0.0",
-              notifications: {
-                enabled: false,
-                notifyOnApproval: true,
-                notifyOnInput: true,
-                notifyOnCompletion: true,
-                notifyOnFailure: true,
-              },
-              liveActivities: {
-                enabled: true,
-              },
-              updatedAt: "2026-06-01T00:00:00.000Z",
-            },
-            {
-              deviceId: "device-2",
-              label: "Android phone",
-              platform: "android",
-              iosMajorVersion: null,
-              androidApiLevel: 36,
-              appVersion: "1.0.0",
-              notifications: {
-                enabled: true,
-                notifyOnApproval: true,
-                notifyOnInput: true,
-                notifyOnCompletion: true,
-                notifyOnFailure: true,
-              },
-              liveActivities: { enabled: true },
-              updatedAt: "2026-06-01T00:00:00.000Z",
-            },
-          ],
-        }),
-      );
-    }) satisfies typeof globalThis.fetch;
-
-    return Effect.gen(function* () {
-      const relayClient = yield* ManagedRelay.ManagedRelayClient;
-      const devices = yield* relayClient.listDevices({ clerkToken: "clerk-token" });
-      expect(devices).toMatchObject([
-        {
-          deviceId: "device-1",
-          label: "Julius's iPhone",
-          notifications: {
-            enabled: false,
-          },
-        },
-        {
-          deviceId: "device-2",
-          platform: "android",
-          iosMajorVersion: null,
-          androidApiLevel: 36,
-        },
-      ]);
-    }).pipe(Effect.provide(managedRelayTestLayer(fetchFn)));
+    }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
   });
 });

@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Clock, Context, Cron, DateTime, Duration, Effect, Latch, Layer } from "effect"
-import { ClusterCron, ClusterSchema, Entity } from "effect/unstable/cluster"
+import { ClusterCron, ClusterSchema, Entity } from "effect/cluster"
 import { type Backend, make } from "./harness.ts"
 
 interface Tick {

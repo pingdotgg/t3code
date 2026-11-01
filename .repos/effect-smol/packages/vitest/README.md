@@ -7,10 +7,26 @@ Helpers for testing Effect-based code with [Vitest](https://vitest.dev). Provide
 Install Vitest 5 (`>=5.0.0 <6.0.0`) with the package as a dev dependency:
 
 ```sh
-npm install -D vitest@^5 @effect/vitest@rc
+npm install -D vitest@^5 @effect/vitest
 ```
 
 Vitest 5 supports Node.js `^22.12.0 || ^24.0.0 || >=26.0.0` and Vite 6.4 or later within majors 6, 7, and 8.
+
+## Links
+
+- [Website](https://effect.website): documentation, guides, and news.
+- [Reference](https://effect.website/docs/v4/api/vitest): API documentation for this package.
+- [Discord](https://discord.gg/effect-ts): ask questions, share what you're building, and talk to the core team.
+- [Community](https://effect.website/community-hub): meetups and events, or bring Effect to your own.
+- [Issues](https://github.com/Effect-TS/effect/issues): bug reports and feature requests.
+
+## Let's talk
+
+Whether your team is considering Effect, rolling it out, or already running it in production, we'd love to hear from you: what you're building, what works, and what you need from Effect next.
+
+- **Talk to the maintainers.** Introduce your team on [Discord](https://discord.gg/effect-ts) or email [contact@effectful.co](mailto:contact@effectful.co). We're happy to connect privately on Slack or Discord for feedback and help with adoption.
+- **Production support.** We're exploring how to better support teams running Effect in production. If your organization has specific support needs, let's discuss them.
+- **Adoption help.** Our [adoption partners](https://effect.website/adoption-partners) offer implementation, consulting, team extension, training, and commercial support.
 
 ## Migrating to Vitest 5
 
@@ -39,11 +55,6 @@ The Effect helpers retain their existing calling convention: `it.effect(name, ef
 Both `layer` and `it.layer` accept `{ concurrent: false }` to serialize a named shared-layer suite, or `{ concurrent: true }` to run its tests concurrently. Omitting the option inherits suite concurrency; nested named layers can override it. Anonymous layers always inherit the enclosing suite's concurrency, regardless of the option.
 
 In concurrent tests, use the callback's `ctx.expect` so snapshots and assertion counts belong to the right test.
-
-## Documentation
-
-- [Effect website](https://effect.website)
-- [API reference](https://effect.website/docs/v4/api/vitest)
 
 ## Overview
 
@@ -314,6 +325,34 @@ it.effect("run with scope", () =>
     yield* resource
   }))
 ```
+
+## Using Vitest Fixtures
+
+To use [Vitest fixtures](https://vitest.dev/guide/test-context#extend-test-context) in Effect tests, pass a test extended with `test.extend` to `makeMethods`. It returns the same helpers as `it`, and each test receives the fixtures it destructures from its context.
+
+**Example** (Sharing a Database Across a Test File)
+
+```ts
+import { assert, makeMethods, test } from "@effect/vitest"
+import { PGlite } from "@electric-sql/pglite"
+import { Effect } from "effect"
+
+const it = makeMethods(
+  test.extend("db", { scope: "file" }, async ({}, { onCleanup }) => {
+    const db = await PGlite.create()
+    onCleanup(() => db.close())
+    return db
+  })
+)
+
+it.effect("runs a query", ({ db }) =>
+  Effect.gen(function*() {
+    const result = yield* Effect.promise(() => db.query("select 1 as one"))
+    assert.deepStrictEqual(result.rows, [{ one: 1 }])
+  }))
+```
+
+Destructure the fixtures a test uses: Vitest reads those names to decide what to set up, and rejects `(ctx) =>` once any fixture is defined. `it.effect.each` passes the context after the test case. Property tests cannot request fixtures, but auto fixtures still run. Build `makeMethods` from `test` or `test.extend(...)`, not from the test a `describe` callback receives: that API is bound to the outer suite, so tests in a named `it.layer` can end up outside their named suite and miss its hooks and concurrency setting.
 
 ## Writing Tests with `it.flakyTest`
 

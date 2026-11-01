@@ -31,7 +31,10 @@ test.provider(
         expect(result.failure._tag).toBe("ValidationError");
       }
     }),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:aws", "provider:aws:sagemakerruntime", "live"],
+    timeout: 60_000,
+  },
 );
 
 test.provider(
@@ -52,7 +55,10 @@ test.provider(
         expect(result.failure._tag).toBe("ValidationError");
       }
     }),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:aws", "provider:aws:sagemakerruntime", "live"],
+    timeout: 60_000,
+  },
 );
 
 test.provider(
@@ -72,5 +78,8 @@ test.provider(
         expect(result.failure._tag).toBe("ValidationError");
       }
     }),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:aws", "provider:aws:sagemakerruntime", "live"],
+    timeout: 60_000,
+  },
 );

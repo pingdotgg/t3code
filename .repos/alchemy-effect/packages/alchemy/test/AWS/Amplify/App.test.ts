@@ -92,5 +92,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertAppDeleted(app.appId);
     }),
-  { timeout: 180_000 },
+  { tags: ["provider:aws", "provider:aws:amplify", "live"], timeout: 180_000 },
 );

@@ -151,6 +151,7 @@ export interface Comment extends Resource<
  * ```
  *
  * @resource
+ * @product Issue
  */
 export const Comment = Resource<Comment>("GitHub.Comment");
 

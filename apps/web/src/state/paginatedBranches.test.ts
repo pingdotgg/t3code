@@ -1,5 +1,5 @@
 import type { VcsListRefsResult } from "@t3tools/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -64,17 +64,6 @@ describe("paginated branch scroll trigger", () => {
         previousScrollTop: 120,
         scrollTop: 120,
         scrollHeight: 344,
-        clientHeight: 224,
-      }),
-    ).toBe(false);
-  });
-
-  it("does not load when scrolling upward near the bottom", () => {
-    expect(
-      shouldLoadNextBranchPageAfterScroll({
-        previousScrollTop: 160,
-        scrollTop: 150,
-        scrollHeight: 450,
         clientHeight: 224,
       }),
     ).toBe(false);

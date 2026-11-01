@@ -5,7 +5,7 @@ import * as Lambda from "@distilled.cloud/aws/lambda";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import ShutdownProbe from "./shutdown-probe.ts";
 
 const { test } = Test.make({ providers: AWS.providers() });
@@ -101,7 +101,7 @@ test.provider(
         }),
       );
     }),
-  { timeout: 600_000 },
+  { tags: ["provider:aws", "provider:aws:lambda", "live"], timeout: 600_000 },
 );
 
 /**
@@ -150,5 +150,5 @@ test.provider.skipIf(!process.env.AWS_LAMBDA_TEST_SHUTDOWN)(
 
       yield* stack.destroy();
     }),
-  { timeout: 600_000 },
+  { tags: ["provider:aws", "provider:aws:lambda", "live"], timeout: 600_000 },
 );

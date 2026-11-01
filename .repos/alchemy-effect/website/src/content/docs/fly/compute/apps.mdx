@@ -7,6 +7,18 @@ A [`Fly.App`](/providers/fly/app) is a global namespace in your
 account. It contains Machines, Services, Secrets, IPs, and
 certificates.
 
+A [Service](/fly/compute/services) creates and manages its own App,
+so you do not declare one to deploy a Service. Declare a `Fly.App`
+when you need one directly:
+
+- [Machines](/fly/compute/machines) run in an App you declare.
+- [`Fly.Secret`](/fly/data/secrets), `SecretKey`,
+  [`Fly.Certificate`](/fly/networking#use-your-own-hostname), and
+  [`IpAssignment`](/fly/networking#addresses-for-a-shared-app) attach
+  to a `Fly.App`, not to a Service's own App.
+- Several Services share one hostname, secrets, or domain — see
+  [Group Services in one App](/fly/compute/services#group-services-in-one-app).
+
 ## Create an App
 
 Alchemy generates a unique name unless you pass one.
@@ -16,9 +28,10 @@ const site = yield* Fly.App("Site");
 ```
 
 `url` is `https://{appName}.fly.dev`. Nothing answers there until a
-[Service](/fly/compute/services) or
-[Machine](/fly/compute/machines) publishes a proxy service and the
-App has an [IP assignment](/fly/networking).
+[Machine](/fly/compute/machines) or a grouped
+[Service](/fly/compute/services#group-services-in-one-app) publishes
+a proxy service and the App has an
+[IP assignment](/fly/networking#addresses-for-a-shared-app).
 
 :::note
 Prefer omitting `name` in tests and CI so names stay unique and
@@ -108,7 +121,8 @@ it. Do not unwrap it just to pass it along.
 
 ## Where next
 
-The [tutorial](/fly/tutorial/part-1) deploys an App from an empty
-directory. [Services](/fly/compute/services) run in the App.
-[Machines](/fly/compute/machines) run a raw image. The
-[`App` reference](/providers/fly/app) lists every prop.
+[Services](/fly/compute/services) own their App by default and join
+one with `app`. [Machines](/fly/compute/machines) run a raw image in
+an App. [IPs & certificates](/fly/networking) covers addresses and
+domains on an App. The [`App` reference](/providers/fly/app) lists
+every prop.

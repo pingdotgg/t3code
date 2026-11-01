@@ -1,5 +1,5 @@
 import * as Layer from "effect/Layer";
-import { Atom, AtomRegistry, Reactivity } from "effect/unstable/reactivity";
+import { Atom, AtomRegistry, Reactivity } from "effect/reactivity";
 
 export interface AcceptingHotModule {
   readonly accept: (callback?: () => void) => void;
@@ -56,8 +56,7 @@ export function hotSwappableAtomRuntime<R, E>(options: {
     );
   }
 
-  // This is a real HMR boundary: importers retain the stable AtomRuntime while
-  // this module evaluation installs the freshly constructed Layer above.
+  // Keep the AtomRuntime stable across HMR while replacing its Layer.
   options.hotModule.accept();
   return entry.runtime as Atom.AtomRuntime<R, E>;
 }

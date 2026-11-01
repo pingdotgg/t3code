@@ -7,8 +7,8 @@
  * `:repo` may carry a `.git` suffix; the handlers strip it.
  */
 import { RepoPath, RepoNotFound, PushDenied } from "./Schema.ts";
-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 
 /** `GET /:owner/:repo/info/refs?service=…`: the ref advertisement. */
 export const InfoRefs = HttpApiEndpoint.get(

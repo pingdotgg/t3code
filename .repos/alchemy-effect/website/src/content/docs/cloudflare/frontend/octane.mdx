@@ -1,30 +1,32 @@
 ---
 title: Octane
-description: Deploy an OctaneJS fullstack app to Cloudflare Workers with Cloudflare.Website.Octane — your own vite build, Octane's Cloudflare adapter, wrangler-free.
+description: Deploy an OctaneJS fullstack app to Cloudflare Workers with Cloudflare.Website.Octane — native Octane and Vite configuration, no hosting adapter or Wrangler file required.
 sidebar:
   order: 13
 ---
 
 import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
 
-export const devDeps = "@alchemy.run/frontend-frameworks @octanejs/adapter-cloudflare";
+export const devDeps = "@alchemy.run/frontend-frameworks";
 
-`Cloudflare.Website.Octane` deploys an [OctaneJS](https://octanejs.dev)
-fullstack app as a Cloudflare Worker. Octane wraps Vite, so the resource
-is deliberately thin: it runs your project's own `vite build` — Octane's
-plugin builds the client bundle and the SSR server bundle, and your
-`adapter: cloudflare()` emits the module Worker entry at
-`dist/server/worker.js`. That entry deploys as the Worker script and
-`dist/client` deploys as static assets. No Wrangler file, no build
-command to run.
+`Cloudflare.Website.Octane` builds and deploys an [OctaneJS](https://octanejs.dev)
+fullstack app as a Cloudflare Worker. Alchemy preserves Octane's native
+compiler and client build, builds the server for Workers, and generates
+the Worker entry. No hosting adapter, Wrangler file, or separate build
+command is required.
+
+Your `vite.config.ts` and `octane.config.ts` load without being rewritten.
+Keep the native `octane()` plugin, Tailwind, other Vite plugins, and your
+application routes and callbacks. By default, `dist/server/worker.js`
+deploys as the Worker script and `dist/client` deploys as static assets;
+custom Octane `build.outDir` values are also supported.
 
 ## Install
 
-The build integration is not bundled with alchemy. Install
-`@alchemy.run/frontend-frameworks` alongside Octane's Cloudflare
-adapter; the resource loads the package's `/octane` export from your
-project at deploy time. Both are only used at build time, so dev
-dependencies are enough:
+Keep `octane` and `@octanejs/vite-plugin` in your existing Octane project.
+Add `@alchemy.run/frontend-frameworks` as a dev dependency; Alchemy loads
+its Octane integration at deploy time. `@octanejs/adapter-cloudflare` is
+optional:
 
 <Tabs syncKey="pkgManager">
   <TabItem label="bun" icon="bun">
@@ -43,23 +45,43 @@ dependencies are enough:
 
 ## Configure Octane
 
-Your `octane.config.ts` picks the deploy target, exactly as in Octane's
-own deployment story:
+Define application routes in `octane.config.ts`.
+`Cloudflare.Website.Octane` selects the Worker build, so this file does
+not need an `adapter` declaration:
 
 ```typescript
 // octane.config.ts
-import { cloudflare } from "@octanejs/adapter-cloudflare";
 import { defineConfig, RenderRoute } from "@octanejs/vite-plugin";
 
 export default defineConfig({
-  adapter: cloudflare(),
   router: {
     routes: [new RenderRoute({ path: "/", entry: ["App", "/src/App.tsx"] })],
   },
 });
 ```
 
-A missing or foreign adapter fails the deploy with an actionable error.
+## Existing Cloudflare adapter configurations
+
+Existing `adapter: cloudflare()` declarations remain supported; migration
+is optional. To remove the adapter, delete its import and declaration:
+
+```diff lang="typescript"
+// octane.config.ts
+-import { cloudflare } from "@octanejs/adapter-cloudflare";
+import { defineConfig, RenderRoute } from "@octanejs/vite-plugin";
+
+export default defineConfig({
+-  adapter: cloudflare(),
+  router: {
+    routes: [new RenderRoute({ path: "/", entry: ["App", "/src/App.tsx"] })],
+  },
+});
+```
+
+You can then uninstall `@octanejs/adapter-cloudflare` if nothing else in
+your project uses it. Keep `octane()`, Tailwind, and other native plugins
+in `vite.config.ts`. An adapter for a different hosting target is rejected
+rather than silently overridden.
 
 ## Declare the Website
 
@@ -135,8 +157,8 @@ Worker secret — see [Secrets & env](/cloudflare/security/secrets-env).
 
 ## Read bindings in server code
 
-Octane middleware and `ServerRoute` handlers read bindings through the
-adapter's runtime contract: `context.platform` is the Cloudflare
+Octane middleware and `ServerRoute` handlers read bindings through
+`context.platform`, which the generated Worker entry supplies as the Cloudflare
 `{ env, ctx }` pair. Type it with the inferred env type — `env` and
 `ctx` are optional because Octane's dev server supplies no platform
 (see [Local dev](#local-dev)):

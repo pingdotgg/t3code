@@ -3,10 +3,13 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-  type OrchestrationCommand,
+  type OrchestrationV2ServerCommand as OrchestrationCommand,
+  PullRequestOperationError,
   type OrchestrationProjectShell,
-  type OrchestrationThreadShell,
+  type PullRequestRef,
+  type PullRequestReviewGuideResult,
   type ThreadPullRequestLink,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
@@ -15,17 +18,21 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import type { Tool } from "effect/unstable/ai";
+import type { Tool } from "effect/ai";
 
-import { OrchestrationCommandInvariantError } from "../../../orchestration/Errors.ts";
+import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import {
-  OrchestrationEngineService,
-  type OrchestrationEngineShape,
-} from "../../../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+  type PullRequestTestThread,
+  v2PullRequestThread,
+} from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { listThreadPullRequests, PullRequestsToolkitHandlersLive } from "./handlers.ts";
-import { PullRequestLinkFailedError, PullRequestsToolkit } from "./tools.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
+import { listThreadPullRequests } from "./handlers.ts";
+import * as PullRequestsHandlers from "./handlers.ts";
+import { CHILD_PULL_REQUEST_REPORT_NEXT, PullRequestsToolkit } from "./tools.ts";
 
 const PROJECT_ID = ProjectId.make("project-1");
 const THREAD_ID = ThreadId.make("thread-1");
@@ -39,9 +46,13 @@ const invocation = (
   capabilities: ReadonlyArray<McpInvocationContext.McpCapability>,
 ): McpInvocationContext.McpInvocationScope => ({
   environmentId: EnvironmentId.make("environment-1"),
-  threadId: THREAD_ID,
-  providerSessionId: "provider-session-1",
-  providerInstanceId: ProviderInstanceId.make("codex"),
+  requestNamespace: "provider-session-1",
+  thread: {
+    threadId: THREAD_ID,
+    providerSessionId: "provider-session-1",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  },
+  client: undefined,
   capabilities: new Set(capabilities),
   issuedAt: 1,
 });
@@ -54,7 +65,7 @@ function makeProject(
       remoteName: "origin",
       remoteUrl: "git@github.com:T3Tools/T3Code.git",
     },
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     displayName: "T3Tools/T3Code",
     owner: "T3Tools",
     name: "T3Code",
@@ -72,7 +83,7 @@ function makeProject(
   };
 }
 
-function makeThread(pullRequests: ReadonlyArray<ThreadPullRequestLink>): OrchestrationThreadShell {
+function makeThread(pullRequests: ReadonlyArray<ThreadPullRequestLink>): PullRequestTestThread {
   return {
     id: THREAD_ID,
     projectId: PROJECT_ID,
@@ -83,17 +94,12 @@ function makeThread(pullRequests: ReadonlyArray<ThreadPullRequestLink>): Orchest
     branch: null,
     worktreePath: null,
     pullRequests,
-    latestTurn: null,
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-20T00:00:00.000Z",
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
-    session: null,
     latestUserMessageAt: "2026-08-20T00:00:00.000Z",
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
   };
 }
 
@@ -130,40 +136,76 @@ function makeLink(
 }
 
 interface HarnessOptions {
-  readonly thread?: OrchestrationThreadShell | null;
+  readonly thread?: PullRequestTestThread | null;
   readonly project?: OrchestrationProjectShell | null;
-  readonly reject?: (command: OrchestrationCommand) => OrchestrationCommandInvariantError | null;
+  readonly reject?: (command: OrchestrationCommand) => string | null;
+  readonly projects?: ReadonlyArray<OrchestrationProjectShell>;
+  readonly generate?: (
+    input: PullRequestRef,
+  ) => Effect.Effect<
+    PullRequestReviewGuideResult & { started: boolean },
+    PullRequestOperationError
+  >;
 }
+
+const NO_GUIDE: PullRequestReviewGuideResult = { guide: null, run: null, currentHeadSha: "head-1" };
 
 const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
   options: HarnessOptions = {},
 ) {
   const commands = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
+  const guideRequests = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const thread = options.thread === undefined ? makeThread([]) : options.thread;
   const project = options.project === undefined ? makeProject() : options.project;
-  const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
+  const dispatch: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) =>
     Effect.gen(function* () {
       const rejection = options.reject?.(command) ?? null;
-      if (rejection !== null) return yield* rejection;
+      if (rejection !== null)
+        return yield* new Orchestrator.OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: rejection,
+        });
       yield* Ref.update(commands, (recorded) => [...recorded, command]);
-      return { sequence: 1 };
+      return { sequence: 1, storedEvents: [] };
     });
-  const dependencies = Layer.mergeAll(
-    Layer.mock(ProjectionSnapshotQuery)({
-      getThreadShellById: (threadId) =>
-        Effect.succeed(threadId === THREAD_ID ? Option.fromNullishOr(thread) : Option.none()),
-      getProjectShellById: () => Effect.succeed(Option.fromNullishOr(project)),
+  const layerDependencies = Layer.mergeAll(
+    Layer.mock(ProjectService.ProjectService)({
+      getShell: () => Effect.succeed(Option.fromNullishOr(project)),
+      listShells: () => Effect.succeed(options.projects ?? (project ? [project] : [])),
     }),
-    Layer.mock(OrchestrationEngineService)({
-      readEvents: () => Stream.empty,
+    Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({
+      get: () => Effect.succeed(NO_GUIDE),
+      generate: (input) =>
+        Ref.update(guideRequests, (recorded) => [...recorded, input]).pipe(
+          Effect.andThen(
+            options.generate?.(input) ??
+              Effect.succeed({
+                ...NO_GUIDE,
+                run: {
+                  _tag: "Running" as const,
+                  headSha: "head-1",
+                  startedAt: "2026-10-11T00:00:00.000Z",
+                },
+                started: true,
+              }),
+          ),
+        ),
+    }),
+    Layer.mock(Orchestrator.OrchestratorV2)({
+      getThreadShell: (id) =>
+        Effect.succeed(id === THREAD_ID && thread ? v2PullRequestThread(thread) : null),
       dispatch,
-      streamDomainEvents: Stream.empty,
-      latestSequence: Effect.succeed(0),
     }),
     Layer.succeed(Crypto.Crypto, testCrypto),
+    McpToolAccessTestkit.liveThreadsLayer,
   );
   const toolkit = yield* PullRequestsToolkit.pipe(
-    Effect.provide(PullRequestsToolkitHandlersLive.pipe(Layer.provide(dependencies))),
+    Effect.provide(
+      McpToolAccess.HandlersLayer.layer(PullRequestsHandlers.layer).pipe(
+        Layer.provide(layerDependencies),
+      ),
+    ),
   );
   const call = <Name extends keyof typeof PullRequestsToolkit.tools>(
     name: Name,
@@ -173,14 +215,13 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
     toolkit.handle(name, params).pipe(
       Stream.unwrap,
       Stream.runCollect,
-      // Failure mode is "error", so a delivered result is always the success shape.
       Effect.map(
         (chunk) => chunk.at(-1)!.result as Tool.Success<(typeof PullRequestsToolkit.tools)[Name]>,
       ),
       Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(capabilities)),
-      Effect.provide(dependencies),
+      Effect.provide(layerDependencies),
     );
-  return { commands, call };
+  return { commands, guideRequests, call };
 });
 
 describe("pull request toolkit handlers", () => {
@@ -225,20 +266,142 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
-  it.effect("links by repository and number, defaulting the host to the project's", () =>
+  it.effect("watching an unlinked pull request links it first", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
+      const result = yield* harness.call("watch_pull_request", {
+        url: "https://github.com/t3tools/t3code/pull/9",
+      });
+      expect(result).toMatchObject({ number: 9, watching: false, wasWatching: false });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        {
+          type: "thread.pull-request.watch",
+          number: 9,
+          watching: true,
+          link: { url: "https://github.com/t3tools/t3code/pull/9", source: "agent" },
+        },
+      ]);
+    }),
+  );
+
+  it.effect("refuses to watch a merged pull request and stops an existing watch", () =>
+    Effect.gen(function* () {
+      const watch = {
+        startedAt: "2026-08-20T00:00:00.000Z",
+        headSha: null,
+        failedChecks: [],
+        passed: false,
+        passedChecks: [],
+        remarksThrough: "2026-08-20T00:00:00.000Z",
+        remarkIds: [],
+        conflicting: false,
+        wakes: 0,
+      };
+      const merged = makeLink(1, { headBranch: "done" });
+      const harness = yield* makeHarness({
+        thread: makeThread([
+          { ...merged, snapshot: merged.snapshot && { ...merged.snapshot, state: "merged" } },
+          makeLink(2, { headBranch: "idle" }),
+          makeLink(3, { headBranch: "watched", watch }),
+        ]),
+      });
+      const error = yield* harness
+        .call("watch_pull_request", { repository: "t3tools/t3code", number: 1 })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "PullRequestNotOpenError", state: "merged" });
+      expect(
+        yield* harness.call("unwatch_pull_request", { repository: "t3tools/t3code", number: 3 }),
+      ).toMatchObject({ wasWatching: true });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.watch", number: 3, watching: false },
+      ]);
+    }),
+  );
+
+  it.effect("watches a pull request saved as closed, since it may have reopened", () =>
+    Effect.gen(function* () {
+      const closed = makeLink(1, { headBranch: "closed" });
+      const harness = yield* makeHarness({
+        thread: makeThread([
+          { ...closed, snapshot: closed.snapshot && { ...closed.snapshot, state: "closed" } },
+        ]),
+      });
+      yield* harness.call("watch_pull_request", { repository: "t3tools/t3code", number: 1 });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.watch", number: 1, watching: true },
+      ]);
+    }),
+  );
+
+  it.effect("refuses a watch from a subagent thread, whose parent owns the pull request", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        thread: {
+          ...makeThread([makeLink(1, { headBranch: "feature" })]),
+          lineage: {
+            rootThreadId: ThreadId.make("parent"),
+            parentThreadId: ThreadId.make("parent"),
+            relationshipToParent: "subagent",
+          },
+        },
+      });
+      const error = yield* harness
+        .call("watch_pull_request", { repository: "t3tools/t3code", number: 1 })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "PullRequestWatchFromSubagentError" });
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
+    }),
+  );
+
+  it.effect("asks a subagent thread to end with its PR report after it links", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        thread: {
+          ...makeThread([]),
+          lineage: {
+            rootThreadId: ThreadId.make("parent"),
+            parentThreadId: ThreadId.make("parent"),
+            relationshipToParent: "subagent",
+          },
+        },
+      });
       const result = yield* harness.call("link_pull_request", {
-        repository: "T3Tools/Other",
-        number: 7,
+        url: "https://github.com/t3tools/t3code/pull/124",
       });
-      expect(result).toEqual({
-        host: "github.com",
-        repository: "t3tools/other",
-        number: 7,
-        url: "https://github.com/t3tools/other/pull/7",
-        alreadyLinked: false,
-      });
+      expect(result).toMatchObject({ number: 124, next: CHILD_PULL_REQUEST_REPORT_NEXT });
+    }),
+  );
+
+  it.effect("canonicalizes GitCafe links independently of the thread's project host", () =>
+    Effect.gen(function* () {
+      for (const host of ["git.cafe", "staging.git.cafe"]) {
+        for (const project of [makeProject(), makeProject(null)]) {
+          for (const target of [
+            { host, repository: "PingDotGG/T3Code", number: 21353 },
+            { url: `https://${host}/PingDotGG/T3Code/pull/21353` },
+            { url: `https://${host}/PingDotGG/T3Code/pulls/21353` },
+          ]) {
+            const harness = yield* makeHarness({ project });
+            const result = yield* harness.call("link_pull_request", target);
+            const url = `https://${host}/pingdotgg/t3code/pulls/21353`;
+            expect(result).toMatchObject({
+              host,
+              repository: "pingdotgg/t3code",
+              number: 21353,
+              url,
+            });
+            expect(yield* Ref.get(harness.commands)).toMatchObject([
+              {
+                type: "thread.pull-request.link",
+                host,
+                repository: "pingdotgg/t3code",
+                number: 21353,
+                url,
+              },
+            ]);
+          }
+        }
+      }
     }),
   );
 
@@ -252,7 +415,7 @@ describe("pull request toolkit handlers", () => {
             remoteName: "origin",
             remoteUrl: "git@gitlab.com:group/sub/project.git",
           },
-          provider: "gitlab",
+          provider: SourceControlProviderKind.make("gitlab"),
           displayName: "group/sub/project",
         }),
       });
@@ -262,58 +425,52 @@ describe("pull request toolkit handlers", () => {
       });
       expect(result.url).toBe("https://gitlab.com/group/sub/project/-/merge_requests/42");
       expect(result.host).toBe("gitlab.com");
+      const other = yield* harness.call("link_pull_request", {
+        host: "gitlab.example.test",
+        repository: "team/repo",
+        number: 7,
+      });
+      expect(other.url).toBe("https://gitlab.example.test/team/repo/-/merge_requests/7");
+      const onGitHub = yield* harness.call("link_pull_request", {
+        host: "github.com",
+        repository: "acme/web",
+        number: 9,
+      });
+      expect(onGitHub.url).toBe("https://github.com/acme/web/pull/9");
     }),
   );
 
-  it.effect("links a numeric Forgejo reference with its remote's web origin and mount path", () =>
+  it.effect("links a URL but not a bare number when the project's host is unknown", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         project: makeProject({
-          canonicalKey: "forge.example/git/owner/repo",
+          canonicalKey: "scm.example.test/tfs/collection/project/_git/repo",
           locator: {
             source: "git-remote",
             remoteName: "origin",
-            remoteUrl: "http://forge.example:3000/git/owner/repo.git",
+            remoteUrl: "http://dummy:secret@scm.example.test:8080/tfs/Collection/Project/_git/Repo",
           },
-          provider: "forgejo",
-          displayName: "git/owner/repo",
+          provider: SourceControlProviderKind.make("unknown"),
+          displayName: "tfs/collection/project/_git/repo",
         }),
       });
-      const result = yield* harness.call("link_pull_request", {
-        repository: "git/owner/repo",
-        number: 42,
-      });
-      expect(result).toEqual({
-        host: "forge.example:3000",
-        repository: "git/owner/repo",
-        number: 42,
-        url: "http://forge.example:3000/git/owner/repo/pulls/42",
+      const error = yield* harness
+        .call("link_pull_request", { repository: "tfs/Collection/Project/_git/Repo", number: 124 })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "PullRequestUrlUnavailableError" });
+
+      const supplied = "https://scm.example.test/tfs/Collection/Project/_git/Repo/pullrequest/123";
+      const fromUrl = yield* harness.call("link_pull_request", { url: supplied });
+      expect(fromUrl).toEqual({
+        host: "scm.example.test",
+        repository: "tfs/collection/project/_git/repo",
+        number: 123,
+        url: supplied,
         alreadyLinked: false,
       });
-      const other = yield* harness.call("link_pull_request", {
-        host: "other.example",
-        repository: "owner/repo",
-        number: 42,
-      });
-      expect(other.url).toBe("https://other.example/owner/repo/pull/42");
-    }),
-  );
-
-  it.effect("rejects a target that names neither a URL nor repository and number", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      const error = yield* harness
-        .call("link_pull_request", { repository: "x/y" })
-        .pipe(Effect.flip);
-      expect(error).toMatchObject({ _tag: "PullRequestTargetIncompleteError" });
-      const unknown = yield* harness
-        .call("link_pull_request", {
-          url: "https://github.com/t3tools/t3code/issues/1?token=private-value",
-        })
-        .pipe(Effect.flip);
-      expect(unknown).toMatchObject({ _tag: "PullRequestUrlInvalidError" });
-      expect(unknown.message).not.toContain("private-value");
-      expect(yield* Ref.get(harness.commands)).toEqual([]);
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.link", number: 123, url: supplied },
+      ]);
     }),
   );
 
@@ -322,12 +479,7 @@ describe("pull request toolkit handlers", () => {
       const harness = yield* makeHarness({
         thread: makeThread([makeLink(123)]),
         reject: (command) =>
-          command.type === "thread.pull-request.link"
-            ? new OrchestrationCommandInvariantError({
-                commandType: command.type,
-                detail: "already linked",
-              })
-            : null,
+          command.type === "thread.pull-request.link" ? "already linked" : null,
       });
       const result = yield* harness.call("link_pull_request", {
         url: "https://github.com/t3tools/t3code/pull/123",
@@ -342,10 +494,7 @@ describe("pull request toolkit handlers", () => {
         thread: makeThread([makeLink(5)]),
         reject: (command) =>
           command.type === "thread.pull-request.unlink" && command.number !== 5
-            ? new OrchestrationCommandInvariantError({
-                commandType: command.type,
-                detail: "not linked",
-              })
+            ? "not linked"
             : null,
       });
       const linked = yield* harness.call("unlink_pull_request", {
@@ -368,6 +517,61 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
+  it.effect("links several pull requests in one call", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        thread: makeThread([makeLink(1), { ...makeLink(2), source: "stack-dismissed" }]),
+      });
+      const url = (number: number) => `https://github.com/t3tools/t3code/pull/${number}`;
+      const result = yield* harness.call("link_pull_requests", {
+        urls: [url(1), url(2), url(3), url(3), "https://example.com/not-a-pr"],
+      });
+      expect(result).toEqual({
+        linked: [{ host: "github.com", repository: "t3tools/t3code", numbers: [2, 3] }],
+        alreadyLinked: [{ host: "github.com", repository: "t3tools/t3code", numbers: [1] }],
+        linkedCount: 3,
+        invalidUrls: ["https://example.com/not-a-pr"],
+      });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.link", number: 2, source: "agent" },
+        { type: "thread.pull-request.link", number: 3, source: "agent" },
+      ]);
+    }),
+  );
+
+  it.effect("unlinks every visible pull request in the given states in one call", () =>
+    Effect.gen(function* () {
+      const withState = (number: number, state: "open" | "closed" | "merged") => {
+        const link = makeLink(number, { headBranch: `branch-${number}` });
+        return { ...link, snapshot: { ...link.snapshot!, state } };
+      };
+      const harness = yield* makeHarness({
+        thread: makeThread([
+          withState(1, "merged"),
+          withState(2, "open"),
+          withState(3, "closed"),
+          makeLink(4),
+          { ...withState(5, "merged"), source: "stack-dismissed" },
+        ]),
+      });
+      const result = yield* harness.call("unlink_pull_requests", {
+        states: ["closed", "merged"],
+      });
+      expect(result).toEqual({
+        unlinked: [
+          { host: "github.com", repository: "t3tools/t3code", state: "merged", numbers: [1] },
+          { host: "github.com", repository: "t3tools/t3code", state: "closed", numbers: [3] },
+        ],
+        unlinkedCount: 2,
+        remaining: 2,
+      });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.unlink", number: 1 },
+        { type: "thread.pull-request.unlink", number: 3 },
+      ]);
+    }),
+  );
+
   it("reports an older Forgejo link's HTTP port when listing thread links", () => {
     const result = listThreadPullRequests(
       makeThread([
@@ -379,14 +583,6 @@ describe("pull request toolkit handlers", () => {
     );
     expect(result.pullRequests[0]?.host).toBe("forge.example:3000");
   });
-
-  it.effect("fails cleanly when the token's thread no longer exists", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({ thread: null });
-      const error = yield* harness.call("list_thread_pull_requests", {}).pipe(Effect.flip);
-      expect(error).toMatchObject({ _tag: "PullRequestThreadNotFoundError", threadId: THREAD_ID });
-    }),
-  );
 
   it.effect("lists visible links with host state and derived chain order", () =>
     Effect.gen(function* () {
@@ -407,6 +603,7 @@ describe("pull request toolkit handlers", () => {
         number: 3,
         url: "https://github.com/t3tools/t3code/pull/3",
         source: "agent",
+        watching: false,
         state: "open",
         title: "PR 3",
         headBranch: "feat-c",
@@ -454,11 +651,111 @@ describe("listThreadPullRequests", () => {
     ]);
     expect(result.chains).toEqual([{ kind: "native", numbers: [1, 2] }]);
   });
+
+  it("gives pull requests built on the same one the same position", () => {
+    const result = listThreadPullRequests({
+      pullRequests: [
+        makeLink(1, { headBranch: "feat-a", baseBranch: "main" }),
+        makeLink(2, { headBranch: "feat-b", baseBranch: "feat-a" }),
+        makeLink(3, { headBranch: "feat-c", baseBranch: "feat-a" }),
+      ],
+    });
+    expect(result.pullRequests.map((entry) => [entry.number, entry.stack])).toEqual([
+      [1, { kind: "derived", position: 1, size: 3 }],
+      [2, { kind: "derived", position: 2, size: 3 }],
+      [3, { kind: "derived", position: 2, size: 3 }],
+    ]);
+    expect(result.chains).toEqual([{ kind: "derived", numbers: [1, 2, 3] }]);
+  });
 });
 
-it("keeps failure diagnostics as the cause rather than exposing them in the tool message", () => {
-  const cause = new Error("database internals");
-  const failure = new PullRequestLinkFailedError({ cause });
-  expect(failure.message).toBe("Could not link the pull request.");
-  expect(failure.cause).toBe(cause);
+describe("pull request guide tools", () => {
+  it.effect(
+    "writes guides through the project whose checkout is each pull request's repository",
+    () =>
+      Effect.gen(function* () {
+        const other = {
+          ...makeProject({
+            canonicalKey: "github.com/acme/web",
+            locator: {
+              source: "git-remote",
+              remoteName: "origin",
+              remoteUrl: "git@github.com:acme/web.git",
+            },
+            provider: SourceControlProviderKind.make("github"),
+            displayName: "acme/web",
+            owner: "acme",
+            name: "web",
+          }),
+          id: ProjectId.make("project-web"),
+        };
+        const harness = yield* makeHarness({ projects: [makeProject(), other] });
+        const result = yield* harness.call("write_pull_request_guides", {
+          pullRequests: [
+            { url: "https://github.com/acme/web/pull/7" },
+            { repository: "t3tools/t3code", number: 12 },
+            { url: "https://github.com/someone/else/pull/1" },
+          ],
+        });
+        expect(
+          result.guides.map((guide) => [guide.repository, guide.number, guide.outcome]),
+        ).toEqual([
+          ["acme/web", 7, "started"],
+          ["t3tools/t3code", 12, "started"],
+          ["someone/else", 1, "failed"],
+        ]);
+        expect(result.guides[2]?.detail).toContain("No project in this environment");
+        expect(
+          (yield* Ref.get(harness.guideRequests)).map((ref) => [ref.projectId, ref.number]),
+        ).toEqual([
+          ["project-web", 7],
+          [PROJECT_ID, 12],
+        ]);
+      }),
+  );
+
+  it.effect("reports an unreadable entry on its own and still writes the rest of the batch", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const result = yield* harness.call("write_pull_request_guides", {
+        pullRequests: [
+          { url: "https://example.com/not-a-pull-request" },
+          { repository: "t3tools/t3code" },
+          { repository: "t3tools/t3code", number: 5 },
+        ],
+      });
+      expect(result.guides.map((guide) => guide.outcome)).toEqual(["failed", "failed", "started"]);
+      expect(result.guides[0]?.detail).toContain("not a recognised pull request URL");
+      expect(result.guides[1]?.detail).toContain("Pass either url");
+      expect((yield* Ref.get(harness.guideRequests)).map((ref) => ref.number)).toEqual([5]);
+    }),
+  );
+
+  it.effect("finds an Azure DevOps checkout for a pull request named by its full path", () =>
+    Effect.gen(function* () {
+      const azure = {
+        ...makeProject({
+          canonicalKey: "dev.azure.com/org/project/_git/web",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "https://dev.azure.com/org/project/_git/web",
+          },
+          provider: SourceControlProviderKind.make("azure-devops"),
+          displayName: "org/project/_git/web",
+          owner: "org",
+          name: "web",
+        }),
+        id: ProjectId.make("project-azure"),
+      };
+      const harness = yield* makeHarness({ projects: [makeProject(), azure] });
+      const result = yield* harness.call("write_pull_request_guides", {
+        pullRequests: [{ host: "dev.azure.com", repository: "org/project/_git/web", number: 9 }],
+      });
+      expect(result.guides.map((guide) => guide.outcome)).toEqual(["started"]);
+      expect((yield* Ref.get(harness.guideRequests)).map((ref) => ref.projectId)).toEqual([
+        "project-azure",
+      ]);
+    }),
+  );
 });

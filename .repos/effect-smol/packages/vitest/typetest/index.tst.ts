@@ -1,6 +1,6 @@
-import { it, layer } from "@effect/vitest"
+import { it, layer, makeMethods, type TestContext } from "@effect/vitest"
 import { Context, Effect, Layer, Schema } from "effect"
-import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
+import * as Arbitrary from "effect/Arbitrary"
 import { describe, expect, test } from "tstyche"
 
 class Foo extends Context.Service<Foo, "foo">()("Foo") {}
@@ -122,5 +122,56 @@ describe("property testing", () => {
         expect(text).type.toBe<"a" | "b">()
       }
     )
+  })
+})
+
+describe("fixtures", () => {
+  const withValue = makeMethods(it.extend("value", () => 1))
+
+  test("passes the extended context to Effect tests", () => {
+    withValue.effect("effect", ({ value }) => {
+      expect(value).type.toBe<number>()
+      return Effect.void
+    })
+    withValue.live.skip("live", ({ value }) => {
+      expect(value).type.toBe<number>()
+      return Effect.void
+    })
+  })
+
+  test("passes the extended context to each after the case", () => {
+    withValue.effect.each(["a"])("each", (text, { value }) => {
+      expect(text).type.toBe<string>()
+      expect(value).type.toBe<number>()
+      return Effect.void
+    })
+  })
+
+  test("rejects fixtures that were not defined", () => {
+    expect(withValue.effect).type.not.toBeCallableWith("effect", (_: { readonly missing: string }) => Effect.void)
+  })
+
+  test("keeps the extended context inside layers", () => {
+    withValue.layer(Layer.succeed(Foo, "foo"))((it) => {
+      it.effect("layer", ({ value }) =>
+        Effect.gen(function*() {
+          expect(yield* Foo).type.toBe<"foo">()
+          expect(value).type.toBe<number>()
+        }))
+    })
+  })
+
+  test("keeps the base context for property tests", () => {
+    withValue.effect.prop("prop", [Schema.Int], (_, ctx) => {
+      expect(ctx).type.toBe<TestContext>()
+      return Effect.void
+    })
+  })
+
+  test("leaves the default context unchanged", () => {
+    it.effect("effect", (ctx) => {
+      expect(ctx).type.toBe<TestContext>()
+      return Effect.void
+    })
   })
 })

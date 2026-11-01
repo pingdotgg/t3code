@@ -22,86 +22,90 @@ const fixtureDir = pathe.resolve(
 );
 const tempRoot = pathe.resolve(import.meta.dirname, "../../../.tmp");
 
-describe.concurrent("Vocs dev", () => {
-  test.provider(
-    "Vocs dev: serves SSR, MDX and assets locally and responds to source edits",
-    (stack) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
+describe.concurrent(
+  "Vocs dev",
+  { tags: ["provider:cloudflare", "provider:cloudflare:website", "local"] },
+  () => {
+    test.provider(
+      "Vocs dev: serves SSR, MDX and assets locally and responds to source edits",
+      (stack) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
 
-        yield* stack.destroy();
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-vocs-dev-",
-          tempRoot,
-          entries: [
-            "package.json",
-            "public",
-            "src",
-            "tsconfig.json",
-            "vocs.config.ts",
-          ],
-        });
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-vocs-dev-",
+            tempRoot,
+            entries: [
+              "package.json",
+              "public",
+              "src",
+              "tsconfig.json",
+              "vocs.config.ts",
+            ],
+          });
 
-        const site = yield* stack.deploy(
-          Cloudflare.Website.Vocs("VocsLocal", {
-            rootDir,
-            dev: { port: 0 },
-            memo: {
-              include: [
-                "src/**",
-                "public/**",
-                "package.json",
-                "tsconfig.json",
-                "vocs.config.ts",
-              ],
-            },
-          }),
-        );
+          const site = yield* stack.deploy(
+            Cloudflare.Website.Vocs("VocsLocal", {
+              rootDir,
+              dev: { port: 0 },
+              memo: {
+                include: [
+                  "src/**",
+                  "public/**",
+                  "package.json",
+                  "tsconfig.json",
+                  "vocs.config.ts",
+                ],
+              },
+            }),
+          );
 
-        expect(site.url).toMatch(/^http:\/\/localhost:\d+/);
-        yield* expectUrlContains(`${site.url!}/`, "Alchemy with Vocs", {
-          timeout: "180 seconds",
-          headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
-          label: "Vocs dev SSR home",
-        });
-        yield* expectUrlContains(`${site.url!}/guide`, "Deployment guide", {
-          timeout: "60 seconds",
-          headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
-          label: "Vocs dev MDX guide",
-        });
-        yield* expectUrlContains(
-          `${site.url!}/hello.txt`,
-          "hello from the Vocs public directory",
-          {
+          expect(site.url).toMatch(/^http:\/\/localhost:\d+/);
+          yield* expectUrlContains(`${site.url!}/`, "Alchemy with Vocs", {
+            timeout: "180 seconds",
+            headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
+            label: "Vocs dev SSR home",
+          });
+          yield* expectUrlContains(`${site.url!}/guide`, "Deployment guide", {
             timeout: "60 seconds",
             headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
-            label: "Vocs dev public asset",
-          },
-        );
+            label: "Vocs dev MDX guide",
+          });
+          yield* expectUrlContains(
+            `${site.url!}/hello.txt`,
+            "hello from the Vocs public directory",
+            {
+              timeout: "60 seconds",
+              headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
+              label: "Vocs dev public asset",
+            },
+          );
 
-        const pagePath = path.join(rootDir, "src/pages/index.mdx");
-        const page = yield* fs.readFileString(pagePath);
-        yield* fs.writeFileString(
-          pagePath,
-          page.replace(
-            "No Wrangler configuration or Vocs adapter setup is required.",
+          const pagePath = path.join(rootDir, "src/pages/index.mdx");
+          const page = yield* fs.readFileString(pagePath);
+          yield* fs.writeFileString(
+            pagePath,
+            page.replace(
+              "No Wrangler configuration or Vocs adapter setup is required.",
+              "This Vocs page was updated through HMR.",
+            ),
+          );
+          yield* expectUrlContains(
+            `${site.url!}/?__alchemy_cb=${Date.now()}`,
             "This Vocs page was updated through HMR.",
-          ),
-        );
-        yield* expectUrlContains(
-          `${site.url!}/?__alchemy_cb=${Date.now()}`,
-          "This Vocs page was updated through HMR.",
-          {
-            timeout: "120 seconds",
-            headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
-            label: "Vocs dev page after source edit",
-          },
-        );
+            {
+              timeout: "120 seconds",
+              headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
+              label: "Vocs dev page after source edit",
+            },
+          );
 
-        yield* stack.destroy();
-      }).pipe(logLevel),
-    { timeout: 300_000 },
-  );
-});
+          yield* stack.destroy();
+        }).pipe(logLevel),
+      { timeout: 300_000 },
+    );
+  },
+);

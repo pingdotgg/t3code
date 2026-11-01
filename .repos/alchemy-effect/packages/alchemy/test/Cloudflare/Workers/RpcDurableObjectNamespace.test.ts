@@ -5,8 +5,8 @@ import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as RpcClient from "effect/unstable/rpc/RpcClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as RpcClient from "effect/rpc/RpcClient";
 import Stack from "./fixtures/rpc-do-namespace-do-rpc/stack.ts";
 import { WorkerRpcs as RpcWorkerWorkerRpcs } from "./fixtures/rpc-worker-rpc-http/group.ts";
 import RpcWorkerStack from "./fixtures/rpc-worker-rpc-http/stack.ts";
@@ -132,7 +132,10 @@ test(
     const got = (yield* getRes.json) as { count: number };
     expect(got.count).toBe(3);
   }).pipe(logLevel),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 60_000,
+  },
 );
 
 test(
@@ -160,7 +163,10 @@ test(
     expect(beta.count).toBe(1);
     expect(gamma.count).toBe(0);
   }).pipe(logLevel),
-  { timeout: 30_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 30_000,
+  },
 );
 
 test(
@@ -191,7 +197,10 @@ test(
       );
     expect(lines).toEqual(["1", "2", "3", "4"]);
   }).pipe(logLevel),
-  { timeout: 30_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 30_000,
+  },
 );
 
 test(
@@ -208,7 +217,10 @@ test(
       expect(pingDO.echo).toBe("via DO");
     }).pipe(Effect.scoped, Effect.provide(rpcClientLayer(url)));
   }).pipe(logLevel),
-  { timeout: 30_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 30_000,
+  },
 );
 
 test(
@@ -253,7 +265,10 @@ test(
     const final = (yield* finalRes.json) as { count: number };
     expect(final.count).toBe(N + 1);
   }).pipe(logLevel),
-  { timeout: 30_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 30_000,
+  },
 );
 
 test(
@@ -286,7 +301,10 @@ test(
       }
     }).pipe(Effect.scoped, Effect.provide(rpcClientLayer(url)));
   }).pipe(logLevel),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 60_000,
+  },
 );
 
 test(
@@ -313,7 +331,10 @@ test(
       }
     }).pipe(Effect.scoped, Effect.provide(rpcClientLayer(url)));
   }).pipe(logLevel),
-  { timeout: 30_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 30_000,
+  },
 );
 
 test(
@@ -346,5 +367,8 @@ test(
       }
     }).pipe(Effect.scoped, Effect.provide(rpcClientLayer(url)));
   }).pipe(logLevel),
-  { timeout: 30_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 30_000,
+  },
 );

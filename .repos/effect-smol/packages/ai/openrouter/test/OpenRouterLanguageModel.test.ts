@@ -2,8 +2,8 @@ import { Generated, OpenRouterClient, OpenRouterLanguageModel } from "@effect/ai
 import { assert, describe, it } from "@effect/vitest"
 import { deepStrictEqual, strictEqual } from "@effect/vitest/utils"
 import { Array, Context, Effect, Layer, Redacted, Ref, Schema, Stream } from "effect"
-import { LanguageModel, Prompt, Tool, Toolkit } from "effect/unstable/ai"
-import { HttpClient, type HttpClientError, type HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
+import { HttpClient, type HttpClientError, type HttpClientRequest, HttpClientResponse } from "effect/http"
 
 describe("OpenRouterLanguageModel", () => {
   describe("strictJsonSchema", () => {

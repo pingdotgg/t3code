@@ -74,11 +74,9 @@ export interface OctaneTargetConfig {
 
 /**
  * A deploy target for Octane: the generic `DeployTarget` seams plus the one
- * framework-specific hook an Octane build needs — which Octane deploy adapter
- * the project's `octane.config.ts` must select. Octane's own build pipeline
- * (`vite build` with `@octanejs/vite-plugin`) already produces the final
- * platform output through that adapter, so the target neither injects
- * bundler plugins nor post-processes the build.
+ * framework-specific requirements for native output and legacy adapters.
+ * Node and AWS targets wrap Octane's default Node output. Cloudflare still
+ * requires its native adapter in the project's `octane.config.ts`.
  */
 export interface OctaneTarget extends DeployTarget<OctaneTargetConfig> {
   /**
@@ -92,6 +90,8 @@ export interface OctaneTarget extends DeployTarget<OctaneTargetConfig> {
    * when the project's config selects no (or a foreign) adapter.
    */
   readonly adapterPackage: string;
+  /** Whether this target needs an application-selected adapter rather than native Node output. */
+  readonly requiresAdapter?: boolean;
   /**
    * The Worker entry module the adapter emits, relative to the build's
    * server output directory (Cloudflare: `worker.js`).
@@ -163,10 +163,9 @@ const fail = (message: string, cause?: unknown) =>
  *   `dist/server/worker.js`, self-contained ESM with only `node:`
  *   externals). The `BuildOutput` is then read from disk: `serverModules`
  *   entry-first from `<outDir>/server`, `clientDirectory` =
- *   `<outDir>/client`. The project's `octane.config.ts` must select the
- *   target's adapter (`adapter: cloudflare()`), mirroring Octane's own
- *   deployment story — a missing or foreign adapter fails with an
- *   actionable error.
+ *   `<outDir>/client`. Node and AWS accept adapterless native output;
+ *   Cloudflare requires `adapter: cloudflare()`. Explicit incompatible
+ *   adapters fail with an actionable error.
  * - `dev` runs Octane's own Vite dev server programmatically (the plugin's
  *   dev SSR middleware serves rendering, server routes, and RPC in-process),
  *   scoped — closing the Scope closes the server. NOTE: Octane's dev
@@ -255,7 +254,10 @@ export const make: (
           ),
         );
       }
-      if (config.adapter?.name !== target.adapterName) {
+      if (
+        (config.adapter !== undefined || target.requiresAdapter) &&
+        config.adapter?.name !== target.adapterName
+      ) {
         return yield* Effect.fail(
           fail(
             config.adapter?.name === undefined

@@ -375,6 +375,32 @@ describe("Schedule", () => {
       }))
   })
 
+  describe("once", () => {
+    it.effect("recurs immediately once, then completes with void", () =>
+      Effect.gen(function*() {
+        const step = yield* Schedule.toStep(Schedule.once)
+        const first = yield* step(0, "first")
+        const second = yield* Pull.matchEffect(step(1_000, "second"), {
+          onSuccess: () => Effect.succeed("unexpected success"),
+          onFailure: () => Effect.succeed("unexpected failure"),
+          onDone: (value) => Effect.succeed(value)
+        })
+
+        assert.deepStrictEqual(first, [undefined, Duration.zero])
+        assert.isUndefined(second)
+      }))
+
+    it.effect("repeats an effect exactly once after its initial execution", () =>
+      Effect.gen(function*() {
+        let executions = 0
+        yield* Effect.sync(() => {
+          executions++
+        }).pipe(Effect.repeat(Schedule.once))
+
+        assert.strictEqual(executions, 2)
+      }))
+  })
+
   describe("upTo", () => {
     it.effect("limits by times", () =>
       Effect.gen(function*() {

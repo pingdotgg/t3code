@@ -66,6 +66,12 @@ export type {
   NodeServeNotFoundHandling,
   WriteNodeServeEntryOptions,
 } from "./NodeServe.ts";
+export {
+  NEON_SERVE_ENTRY_FILE_NAME,
+  makeNeonServeEntrySource,
+  finishNeonOutput,
+  makeNeonTarget,
+} from "./NeonServe.ts";
 export { Framework, FrameworkError } from "./Framework.ts";
 export type {
   FrameworkBuildOptions,

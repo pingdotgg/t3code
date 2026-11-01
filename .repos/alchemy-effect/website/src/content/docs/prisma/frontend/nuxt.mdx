@@ -1,0 +1,143 @@
+---
+title: Nuxt
+description: Deploy Nuxt to Prisma Compute with Prisma.Website.Nuxt — Nitro's Node target running on Bun and Nuxt's own dev server locally.
+sidebar:
+  order: 10
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks @vercel/nft";
+
+`Prisma.Website.Nuxt` builds [Nuxt](https://nuxt.com) through your
+project's `@nuxt/kit` with Nitro's Node target. The server, client
+assets, and prerendered pages are uploaded as `tar.gz` and run on
+**Bun in Prisma Compute**. No Docker image or registry is involved.
+
+## Install
+
+Install the build integration in your project; the resource loads its
+`/nuxt` and `/nuxt/node` exports:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun"><Code code={`bun add -d ${devDeps}`} lang="sh" /></TabItem>
+  <TabItem label="npm" icon="npm"><Code code={`npm install -D ${devDeps}`} lang="sh" /></TabItem>
+  <TabItem label="pnpm" icon="pnpm"><Code code={`pnpm add -D ${devDeps}`} lang="sh" /></TabItem>
+  <TabItem label="yarn" icon="seti:yarn"><Code code={`yarn add -D ${devDeps}`} lang="sh" /></TabItem>
+</Tabs>
+
+## Configure Nuxt
+
+Your `nuxt.config.ts` loads natively, including modules and layers:
+
+```typescript
+// nuxt.config.ts
+export default defineNuxtConfig({
+  modules: ["@nuxtjs/tailwindcss"],
+  routeRules: { "/about": { prerender: true } },
+});
+```
+
+Don't set `nitro.preset`. The shared Node target owns the preset and
+rejects foreign presets. That build target still runs on Bun on Prisma.
+
+## Declare the Website
+
+```typescript
+// alchemy.run.ts
+import * as Prisma from "alchemy/Prisma";
+
+export const Website = Prisma.Website.Nuxt("Website");
+```
+
+`rootDir` defaults to `"."`. Omit `project` to create a database-less
+Prisma project on live deploy, or pass a project already in your Stack.
+
+## Add it to the Stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyNuxtSite",
+  { providers: Prisma.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+`site.url` is the Compute endpoint on deploy and Nuxt's local URL in dev.
+
+## Add environment variables
+
+```diff lang="typescript"
+export const Website = Prisma.Website.Nuxt("Website", {
++  env: {
++    GREETING: "Hello from Alchemy!",
++    NUXT_PUBLIC_API_BASE: "https://api.example.com",
++  },
+});
+```
+
+The environment is set before build and dev, and passed to Compute.
+Matching `NUXT_*` keys override declared `runtimeConfig` values using
+Nuxt's normal conventions. Public runtime config is visible to the
+browser; do not put secrets there.
+
+## Read the environment in server code
+
+```typescript
+// server/api/hello.ts
+export default defineEventHandler(() => ({
+  greeting: process.env.GREETING ?? "hello",
+}));
+```
+
+Server routes and SSR run on Bun and can read `process.env`.
+
+## Prerendering
+
+Override native config with the `nuxt` bag:
+
+```typescript
+export const Website = Prisma.Website.Nuxt("Website", {
+  nuxt: {
+    routeRules: { "/about": { prerender: true } },
+  },
+});
+```
+
+Prerendered pages land in `.output/public` and are served as files
+before the Nitro handler. They remain part of the Compute deployment,
+not a separate CDN publication. Use `prerender` for build-time static
+routes and Nitro `cache` rules for runtime caching; provider-specific
+ISR behavior from Vercel or Netlify does not carry over to this target.
+
+## Local dev
+
+`bun alchemy dev` starts Nuxt's native server with HMR and creates no
+Prisma resources for the Website. Use `.pipe(Alchemy.remote())` to
+opt into the live deployment during dev.
+
+## Custom domain
+
+```typescript
+export const Website = Prisma.Website.Nuxt("Website", {
+  domain: "app.example.com",
+});
+```
+
+`Prisma.CustomDomain` requires the project's current default branch.
+Configure its returned DNS records yourself and check provisioning
+status before cutover. See
+[Custom domains](/prisma/frontend/websites#custom-domains).
+
+## Where next
+
+- [Nuxt API](/providers/prisma/website/nuxt).
+- [Nuxt example](https://github.com/alchemy-run/alchemy/tree/main/examples/prisma-website-nuxt).
+- [Websites](/prisma/frontend/websites), [Compute apps](/prisma/compute/apps), and [Setup](/prisma/setup).

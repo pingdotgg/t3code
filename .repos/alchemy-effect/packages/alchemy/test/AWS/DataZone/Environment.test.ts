@@ -26,23 +26,26 @@ const DATALAKE_BUCKET = "amazon-datazone-391965393224-usw2-alchemy-test";
 
 // Ungated: the typed error union covers the not-found probe — proves the
 // distilled error mapping without provisioning anything.
-test.provider("getEnvironment on a nonexistent domain is typed", () =>
-  Effect.gen(function* () {
-    const result = yield* datazone
-      .getEnvironment({
-        domainIdentifier: "dzd_000000000000",
-        identifier: "0000000000",
-      })
-      .pipe(Effect.result);
-    expect(Result.isFailure(result)).toBe(true);
-    if (Result.isFailure(result)) {
-      expect([
-        "ResourceNotFoundException",
-        "AccessDeniedException",
-        "ValidationException",
-      ]).toContain(result.failure._tag);
-    }
-  }),
+test.provider(
+  "getEnvironment on a nonexistent domain is typed",
+  () =>
+    Effect.gen(function* () {
+      const result = yield* datazone
+        .getEnvironment({
+          domainIdentifier: "dzd_000000000000",
+          identifier: "0000000000",
+        })
+        .pipe(Effect.result);
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect([
+          "ResourceNotFoundException",
+          "AccessDeniedException",
+          "ValidationException",
+        ]).toContain(result.failure._tag);
+      }
+    }),
+  { tags: ["provider:aws", "provider:aws:datazone", "live"] },
 );
 
 /** Domain + roles + bucket + blueprint config + project shared by both deploys. */
@@ -191,5 +194,14 @@ test.provider.skipIf(!RUN_SLOW)(
         );
       expect(gone).toBe(true);
     }),
-  { timeout: 1_100_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:datazone",
+      "provider:aws:iam",
+      "provider:aws:s3",
+      "live",
+    ],
+    timeout: 1_100_000,
+  },
 );

@@ -9,8 +9,9 @@ import * as Trie from "effect/Trie"
 
 describe("Trie", () => {
   it("equality rejects tries with different numbers of entries after a hash collision", () => {
+    // Makes the "a" entry collide with the empty trie.
     const value = {
-      [Hash.symbol]: () => Hash.hash("a") * 53
+      [Hash.symbol]: () => -1520130700
     }
     const empty = Trie.empty<typeof value>()
     const nonEmpty = Trie.make(["a", value])

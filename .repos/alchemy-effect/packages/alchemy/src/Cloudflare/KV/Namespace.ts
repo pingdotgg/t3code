@@ -8,6 +8,7 @@ import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
 import { isResourceOfType, Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
+import { localAccountId } from "../LocalAccount.ts";
 import { generateLocalId } from "../LocalRuntime.ts";
 import type { Providers } from "../Providers.ts";
 
@@ -236,7 +237,7 @@ export const ProviderLocal = () =>
   Provider.succeed(Namespace, {
     stables: ["accountId"],
     diff: Effect.fn(function* ({ news = {}, output }) {
-      const { accountId } = yield* yield* CloudflareEnvironment;
+      const accountId = yield* localAccountId;
       if (!output?.namespaceId) return { action: "update" } as const;
       if (!isResolved(news)) return undefined;
       if (output.accountId !== accountId) {
@@ -250,7 +251,7 @@ export const ProviderLocal = () =>
       return output ?? undefined;
     }),
     reconcile: Effect.fn(function* ({ id, news = {}, output }) {
-      const { accountId } = yield* yield* CloudflareEnvironment;
+      const accountId = yield* localAccountId;
       return {
         title: yield* createTitle(id, news.title),
         namespaceId: output?.namespaceId ?? generateLocalId(),

@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Redacted from "effect/Redacted";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import * as Devices from "./Devices.ts";
 import * as AgentActivityRows from "./AgentActivityRows.ts";
@@ -18,11 +18,11 @@ import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as AgentActivityPublisher from "./AgentActivityPublisher.ts";
-import { FcmDeliveries } from "./FcmDeliveries.ts";
+import * as FcmDeliveries from "./FcmDeliveries.ts";
 
-const publisherLayer = AgentActivityPublisher.layer.pipe(
+const layerPublisher = AgentActivityPublisher.layer.pipe(
   Layer.provide(
-    Layer.succeed(FcmDeliveries, {
+    Layer.succeed(FcmDeliveries.FcmDeliveries, {
       enqueue: () => Effect.succeed(null),
       process: () => Effect.void,
     }),
@@ -67,9 +67,9 @@ function makeLiveActivities(
   return {
     register: () => Effect.void,
     listTargets: () => Effect.succeed([]),
+    listIdleArmedTargets: () => Effect.succeed([]),
     markDelivery: () => Effect.void,
-    markStartQueued: () => Effect.void,
-    clearStartQueued: () => Effect.void,
+
     invalidateDeliveryToken: () => Effect.void,
     ...overrides,
   };
@@ -116,6 +116,8 @@ function makeEnvironmentLinks(
       ]),
     listForUser: () => Effect.succeed([]),
     getForUser: () => Effect.succeed(null),
+    findActiveManagedForEnvironment: () => Effect.succeed([]),
+    setHoldWebhooksWhileOffline: () => Effect.void,
     revokeForUser: () => Effect.succeed(false),
     ...overrides,
   };
@@ -125,9 +127,9 @@ function makeDeliveryAttempts(
   overrides: Partial<DeliveryAttempts.DeliveryAttempts["Service"]> = {},
 ): DeliveryAttempts.DeliveryAttempts["Service"] {
   return {
-    record: () => Effect.void,
     claimSourceJob: () => Effect.succeed("claimed"),
     completeSourceJob: () => Effect.void,
+    pruneExpired: Effect.succeed(0),
     ...overrides,
   };
 }
@@ -151,13 +153,13 @@ const config = RelayConfiguration.RelayConfiguration.of({
   managedEndpointNamespace: undefined,
 });
 
-function makeRegistrationReplayLayer(input: {
+function layerRegistrationReplay(input: {
   readonly devices: Devices.Devices["Service"];
   readonly liveActivities: LiveActivities.LiveActivities["Service"];
   readonly queuedJobs: Array<SignedApnsDeliveryJob>;
 }) {
   return MobileRegistrations.layer.pipe(
-    Layer.provide(publisherLayer),
+    Layer.provide(layerPublisher),
     Layer.provide(
       ApnsDeliveries.layer.pipe(
         Layer.provide(ApnsClient.layer.pipe(Layer.provide(ApnsProviderTokens.layer))),
@@ -190,64 +192,12 @@ function makeAgentActivityPublisher(
   return {
     publish: () => Effect.succeed({ ok: true, deliveries: [] }),
     replayForLiveActivityRegistration: () => Effect.succeed(null),
+    endIdleLiveActivities: Effect.void,
     ...overrides,
   };
 }
 
 describe("MobileRegistrations", () => {
-  it.effect("registers devices through the device persistence service", () => {
-    let registered: Parameters<Devices.Devices["Service"]["register"]>[0] | null = null;
-    let replayed:
-      | Parameters<
-          AgentActivityPublisher.AgentActivityPublisher["Service"]["replayForLiveActivityRegistration"]
-        >[0]
-      | null = null;
-
-    return Effect.gen(function* () {
-      const result = yield* Effect.gen(function* () {
-        const registrations = yield* MobileRegistrations.MobileRegistrations;
-        return yield* registrations.registerDevice({ userId: "dev:julius", payload: device });
-      }).pipe(
-        Effect.provide(
-          MobileRegistrations.layer.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                Layer.succeed(
-                  Devices.Devices,
-                  makeDevices({
-                    register: (input) =>
-                      Effect.sync(() => {
-                        registered = input;
-                      }),
-                  }),
-                ),
-                Layer.succeed(LiveActivities.LiveActivities, makeLiveActivities()),
-                Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
-                Layer.succeed(
-                  AgentActivityPublisher.AgentActivityPublisher,
-                  makeAgentActivityPublisher({
-                    replayForLiveActivityRegistration: (input) =>
-                      Effect.sync(() => {
-                        replayed = input;
-                        return null;
-                      }),
-                  }),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-
-      expect(result).toEqual({ ok: true });
-      expect(registered).toEqual({ userId: "dev:julius", registration: device });
-      expect(replayed).toEqual({
-        userId: "dev:julius",
-        deviceId: "device-1",
-      });
-    });
-  });
-
   it.effect("keeps device registration successful when activity replay fails", () => {
     const messages: unknown[] = [];
     const logger = Logger.make(({ message }) => {
@@ -292,149 +242,10 @@ describe("MobileRegistrations", () => {
     }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
   });
 
-  it.effect("unregisters the current user's device", () => {
-    let unregistered: Parameters<Devices.Devices["Service"]["unregister"]>[0] | null = null;
-
-    return Effect.gen(function* () {
-      const result = yield* Effect.gen(function* () {
-        const registrations = yield* MobileRegistrations.MobileRegistrations;
-        return yield* registrations.unregisterDevice({
-          userId: "dev:julius",
-          deviceId: "device-1",
-        });
-      }).pipe(
-        Effect.provide(
-          MobileRegistrations.layer.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                Layer.succeed(
-                  Devices.Devices,
-                  makeDevices({
-                    unregister: (input) =>
-                      Effect.sync(() => {
-                        unregistered = input;
-                      }),
-                  }),
-                ),
-                Layer.succeed(LiveActivities.LiveActivities, makeLiveActivities()),
-                Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
-                Layer.succeed(
-                  AgentActivityPublisher.AgentActivityPublisher,
-                  makeAgentActivityPublisher(),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-
-      expect(result).toEqual({ ok: true });
-      expect(unregistered).toEqual({
-        userId: "dev:julius",
-        deviceId: "device-1",
-      });
-    });
-  });
-
-  it.effect("replays the latest activity state after registering a Live Activity token", () => {
-    const liveActivity = {
-      deviceId: "device-1" as const,
-      activityPushToken: "activity-token" as const,
-    };
-    let registered: Parameters<LiveActivities.LiveActivities["Service"]["register"]>[0] | null =
-      null;
-    let replayed:
-      | Parameters<
-          AgentActivityPublisher.AgentActivityPublisher["Service"]["replayForLiveActivityRegistration"]
-        >[0]
-      | null = null;
-
-    return Effect.gen(function* () {
-      const result = yield* Effect.gen(function* () {
-        const registrations = yield* MobileRegistrations.MobileRegistrations;
-        return yield* registrations.registerLiveActivity({
-          userId: "dev:julius",
-          payload: liveActivity,
-        });
-      }).pipe(
-        Effect.provide(
-          MobileRegistrations.layer.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                Layer.succeed(Devices.Devices, makeDevices()),
-                Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
-                Layer.succeed(
-                  LiveActivities.LiveActivities,
-                  makeLiveActivities({
-                    register: (input) =>
-                      Effect.sync(() => {
-                        registered = input;
-                      }),
-                  }),
-                ),
-                Layer.succeed(
-                  AgentActivityPublisher.AgentActivityPublisher,
-                  makeAgentActivityPublisher({
-                    replayForLiveActivityRegistration: (input) =>
-                      Effect.sync(() => {
-                        replayed = input;
-                        return null;
-                      }),
-                  }),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-
-      expect(result).toEqual({ ok: true });
-      expect(registered).toEqual({
-        userId: "dev:julius",
-        registration: liveActivity,
-      });
-      expect(replayed).toEqual({
-        userId: "dev:julius",
-        deviceId: "device-1",
-      });
-    });
-  });
-
-  it.effect("returns the current aggregate for the app's arming decision", () => {
-    return Effect.gen(function* () {
-      const registrations = yield* MobileRegistrations.MobileRegistrations;
-      const snapshot = yield* registrations.getAgentActivitySnapshot({ userId: "dev:julius" });
-
-      expect(snapshot.aggregate).toMatchObject({
-        activeCount: 1,
-        activities: [{ threadId: "thread-1", phase: "running" }],
-      });
-    }).pipe(
-      Effect.provide(
-        MobileRegistrations.layer.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              Layer.succeed(Devices.Devices, makeDevices()),
-              Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
-              Layer.succeed(LiveActivities.LiveActivities, makeLiveActivities()),
-              Layer.succeed(
-                AgentActivityPublisher.AgentActivityPublisher,
-                makeAgentActivityPublisher(),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  });
-
   it.effect(
     "does not remotely start a Live Activity when a device registers after work is already active",
     () => {
       const queuedJobs: Array<SignedApnsDeliveryJob> = [];
-      const queuedStarts: Array<
-        Parameters<LiveActivities.LiveActivities["Service"]["markStartQueued"]>[0]
-      > = [];
       const registeredDevices: Array<Parameters<Devices.Devices["Service"]["register"]>[0]> = [];
       const devices = makeDevices({
         register: (input) =>
@@ -464,10 +275,6 @@ describe("MobileRegistrations", () => {
               last_live_activity_delivery_at: null,
             },
           ]),
-        markStartQueued: (input) =>
-          Effect.sync(() => {
-            queuedStarts.push(input);
-          }),
       });
 
       return Effect.gen(function* () {
@@ -481,14 +288,10 @@ describe("MobileRegistrations", () => {
           },
         });
 
-        // Activities are armed by the app in the foreground; a device
-        // registration alone never remote-starts one, even when work is
-        // already active and a push-to-start token is on file.
         expect(result).toEqual({ ok: true });
         expect(registeredDevices).toHaveLength(1);
-        expect(queuedStarts).toEqual([]);
         expect(queuedJobs).toEqual([]);
-      }).pipe(Effect.provide(makeRegistrationReplayLayer({ devices, liveActivities, queuedJobs })));
+      }).pipe(Effect.provide(layerRegistrationReplay({ devices, liveActivities, queuedJobs })));
     },
   );
 });

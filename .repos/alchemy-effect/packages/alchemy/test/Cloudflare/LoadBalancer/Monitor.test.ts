@@ -86,6 +86,7 @@ test.provider.skipIf(lbEnabled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:loadbalancer", "live"] },
 );
 
 test.provider.skipIf(!lbEnabled)(
@@ -151,7 +152,10 @@ test.provider.skipIf(!lbEnabled)(
 
       yield* expectGone(accountId, initial.monitorId);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:loadbalancer", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Ungated: the account-scoped listMonitors enumeration works regardless of
@@ -175,7 +179,10 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:loadbalancer", "live"],
+    timeout: 60_000,
+  },
 );
 
 // Full presence check — requires the LB subscription to deploy a real
@@ -207,5 +214,8 @@ test.provider.skipIf(!lbEnabled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:loadbalancer", "live"],
+    timeout: 120_000,
+  },
 );

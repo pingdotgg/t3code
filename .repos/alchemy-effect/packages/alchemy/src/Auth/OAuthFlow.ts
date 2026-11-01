@@ -1,16 +1,16 @@
 import * as Data from "effect/Data";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
-import * as Encoding from "effect/Encoding";
+import { Base64Url } from "effect/encoding";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import http from "node:http";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { AUTH_ERROR_URL, AUTH_SUCCESS_URL } from "./AuthProvider.ts";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 export class OAuthError extends Data.TaggedError("OAuthError")<{
   error: string;
@@ -153,7 +153,7 @@ const randomText = Effect.fn(function* (length: number) {
         }),
     ),
   );
-  return Encoding.encodeBase64Url(bytes);
+  return Base64Url.encode(bytes);
 });
 
 const generatePKCE = Effect.fn(function* (length = 96) {
@@ -170,7 +170,7 @@ const generatePKCE = Effect.fn(function* (length = 96) {
           }),
       ),
     );
-  return { verifier, challenge: Encoding.encodeBase64Url(challenge) };
+  return { verifier, challenge: Base64Url.encode(challenge) };
 });
 
 const TokenResponse = Schema.Struct({

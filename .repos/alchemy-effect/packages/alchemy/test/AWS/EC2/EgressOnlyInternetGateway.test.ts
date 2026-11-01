@@ -48,4 +48,5 @@ test.provider(
       // proves the whole stack (EIGW included) was torn down.
       yield* assertVpcGone(vpc.vpcId);
     }).pipe(logLevel),
+  { tags: ["provider:aws", "provider:aws:ec2", "live"] },
 );

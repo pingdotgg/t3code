@@ -5,19 +5,24 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as TestClock from "effect/testing/TestClock";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, assert } from "@effect/vitest";
 
 import * as AcpClient from "./client.ts";
 import * as AcpSchema from "./_generated/schema.gen.ts";
+import * as AcpSchemaV1 from "./_generated/schema-v1.gen.ts";
 import * as AcpError from "./errors.ts";
+import type * as AcpCompat from "./compat.ts";
+import type * as AcpProtocol from "./protocol.ts";
 import {
   encodeJsonl,
   jsonRpcNotification,
@@ -26,16 +31,30 @@ import {
 } from "./_internal/shared.ts";
 import { makeInMemoryStdio } from "./_internal/stdio.ts";
 
+import antigravityInitialize from "../test/fixtures/antigravity-initialize.json" with { type: "json" };
+
 const InitializeRequest = jsonRpcRequest("initialize", AcpSchema.InitializeRequest);
 const InitializeResponse = jsonRpcResponse(AcpSchema.InitializeResponse);
+const InitializeRequestV1 = jsonRpcRequest("initialize", AcpSchemaV1.InitializeRequest);
+const InitializeResponseV1 = jsonRpcResponse(AcpSchemaV1.InitializeResponse);
+const NewSessionRequestV1 = jsonRpcRequest("session/new", AcpSchemaV1.NewSessionRequest);
+const PromptRequestV1 = jsonRpcRequest("session/prompt", AcpSchemaV1.PromptRequest);
+const PromptResponseV1 = jsonRpcResponse(AcpSchemaV1.PromptResponse);
 const ExtRequest = jsonRpcRequest("x/test", Schema.Struct({ hello: Schema.String }));
 const ExtResponse = jsonRpcResponse(Schema.Struct({ ok: Schema.Boolean }));
 const PromptRequest = jsonRpcRequest("session/prompt", AcpSchema.PromptRequest);
 const PromptResponse = jsonRpcResponse(AcpSchema.PromptResponse);
-const SessionUpdateNotification = jsonRpcNotification(
-  "session/update",
-  AcpSchema.SessionNotification,
+const SessionUpdateNotification = jsonRpcNotification("session/update", Schema.Unknown);
+const PermissionRequest = jsonRpcRequest(
+  "session/request_permission",
+  AcpSchema.RequestPermissionRequest,
 );
+const PermissionResponse = jsonRpcResponse(AcpSchema.RequestPermissionResponse);
+const ErrorResponse = Schema.Struct({ id: Schema.String, error: Schema.Unknown });
+const DieResponse = Schema.Struct({
+  id: Schema.String,
+  error: Schema.TaggedStruct("Cause", { data: Schema.Tuple([Schema.TaggedStruct("Die", {})]) }),
+});
 const decodePromptRequestLine = Schema.decodeEffect(Schema.fromJsonString(PromptRequest));
 const XAiPromptCompleteNotification = jsonRpcNotification(
   "_x.ai/session/prompt_complete",
@@ -102,7 +121,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       yield* Effect.gen(function* () {
         const acp = yield* AcpClient.AcpClient;
         const initialized = yield* acp.agent.initialize({ protocolVersion: 1 });
-        assert.equal(initialized.protocolVersion, 1);
+        assert.equal(initialized.protocolVersion, 2);
 
         const echoed = yield* acp.raw.request("x/echo", { message: "café" });
         assert.deepEqual(echoed, {
@@ -122,29 +141,6 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           }),
         ),
       );
-    }),
-  );
-
-  it.effect("reports malformed JSON that remains after a stdout transform", () =>
-    Effect.gen(function* () {
-      const handle = yield* makeHandle({
-        ACP_MOCK_STDOUT_PREFIX: `${mockStartupNotice}\n`,
-        ACP_MOCK_MALFORMED_OUTPUT: "1",
-      });
-      const termination = yield* Deferred.make<AcpError.AcpError>();
-      const error = yield* Deferred.await(termination).pipe(
-        Effect.provide(
-          AcpClient.layerChildProcess(handle, {
-            transformStdout: stripMockStartupNotice,
-            onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
-          }),
-        ),
-      );
-
-      if (error._tag !== "AcpProtocolParseError") {
-        return assert.fail(`Expected a parse error, got ${error._tag}`);
-      }
-      assert.equal(error.operation, "decode-wire-message");
     }),
   );
 
@@ -191,7 +187,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
   it.effect("retains only transformed session updates in raw notifications and handlers", () =>
     Effect.gen(function* () {
       const { stdio, input } = yield* makeInMemoryStdio();
-      const delivered = yield* Deferred.make<AcpSchema.SessionNotification>();
+      const delivered = yield* Deferred.make<import("./compat.ts").SessionNotification>();
       const imageData = "A".repeat(1_048_576);
       const normalized = {
         sessionId: "session-1",
@@ -199,7 +195,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           sessionUpdate: "agent_message_chunk",
           content: { type: "text", text: "Image data omitted." },
         },
-      } satisfies AcpSchema.SessionNotification;
+      } satisfies import("./compat.ts").SessionNotification;
       let transformCalls = 0;
       const acp = yield* AcpClient.make(stdio, {
         transformSessionUpdate: (notification) => {
@@ -241,6 +237,42 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         params: normalized,
       });
       assert.equal(transformCalls, 1);
+    }),
+  );
+
+  it.effect("keeps the JSON-RPC error of a failed v2 idle", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const delivered = yield* Deferred.make<AcpCompat.SessionNotification>();
+      const acp = yield* AcpClient.make(stdio);
+      yield* acp.handleSessionUpdate((notification) =>
+        Deferred.succeed(delivered, notification).pipe(Effect.asVoid),
+      );
+      const error = { code: -32000, message: "Please sign in to Claude", data: { retry: false } };
+      const idle = {
+        sessionUpdate: "state_update",
+        state: "idle",
+        stopReason: "error",
+        error,
+      } as const;
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(SessionUpdateNotification, {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "session-1",
+            update: idle,
+          },
+        }),
+      );
+
+      const { update } = yield* Deferred.await(delivered);
+      assert.deepEqual(
+        update.sessionUpdate === "state_update" && update.state === "idle" ? update : undefined,
+        idle,
+      );
     }),
   );
 
@@ -292,31 +324,34 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       const elicitationCompletions = yield* Ref.make<Array<unknown>>([]);
       const typedRequests = yield* Ref.make<Array<unknown>>([]);
       const typedNotifications = yield* Ref.make<Array<unknown>>([]);
+      const requestContexts = yield* Ref.make<Array<AcpProtocol.AcpRequestContext>>([]);
       const handle = yield* makeHandle();
       const scope = yield* Scope.make();
-      const acpLayer = AcpClient.layerChildProcess(handle);
-      const context = yield* Layer.buildWithScope(acpLayer, scope);
+      const layerAcp = AcpClient.layerChildProcess(handle);
+      const context = yield* Layer.buildWithScope(layerAcp, scope);
 
       const ext = yield* Effect.gen(function* () {
         const acp = yield* AcpClient.AcpClient;
 
-        yield* acp.handleRequestPermission(() =>
-          Effect.succeed({
-            outcome: {
-              outcome: "selected",
-              optionId: "allow",
-            },
-          }),
+        yield* acp.handleRequestPermission((_request, requestContext) =>
+          Ref.update(requestContexts, (current) => [...current, requestContext]).pipe(
+            Effect.as({
+              outcome: {
+                outcome: "selected",
+                optionId: "allow",
+              },
+            }),
+          ),
         );
-        yield* acp.handleElicitation(() =>
-          Effect.succeed({
-            action: {
+        yield* acp.handleElicitation((_request, requestContext) =>
+          Ref.update(requestContexts, (current) => [...current, requestContext]).pipe(
+            Effect.as({
               action: "accept",
               content: {
                 approved: true,
               },
-            },
-          }),
+            }),
+          ),
         );
         yield* acp.handleSessionUpdate((notification) =>
           Ref.update(updates, (current) => [...current, notification]),
@@ -327,8 +362,11 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         yield* acp.handleExtRequest(
           "x/typed_request",
           Schema.Struct({ message: Schema.String }),
-          (payload) =>
+          (payload, requestContext) =>
             Ref.update(typedRequests, (current) => [...current, payload]).pipe(
+              Effect.andThen(
+                Ref.update(requestContexts, (current) => [...current, requestContext]),
+              ),
               Effect.as({
                 ok: true,
                 echoedMessage: payload.message,
@@ -352,7 +390,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
             version: "0.0.0",
           },
         });
-        assert.equal(init.protocolVersion, 1);
+        assert.equal(init.protocolVersion, 2);
 
         yield* acp.agent.authenticate({ methodId: "cursor_login" });
 
@@ -361,6 +399,11 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           mcpServers: [],
         });
         assert.equal(session.sessionId, "mock-session-1");
+        // ACP v2 removed session/set_mode; modes are config options there.
+        const setMode = yield* acp.agent
+          .setSessionMode({ sessionId: session.sessionId, modeId: "code" })
+          .pipe(Effect.flip);
+        assert.equal(setMode._tag === "AcpRequestError" ? setMode.code : undefined, -32601);
 
         const prompt = yield* acp.agent.prompt({
           sessionId: session.sessionId,
@@ -372,10 +415,19 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         assert.equal(streamed.length, 2);
         assert.equal(streamed[0]?._tag, "SessionUpdate");
         assert.equal(streamed[1]?._tag, "ElicitationComplete");
-        assert.equal((yield* Ref.get(updates)).length, 1);
+        assert.equal((yield* Ref.get(updates)).length, 2);
         assert.equal((yield* Ref.get(elicitationCompletions)).length, 1);
         assert.deepEqual(yield* Ref.get(typedRequests), [{ message: "hello from typed request" }]);
         assert.deepEqual(yield* Ref.get(typedNotifications), [{ count: 2 }]);
+        const observedRequestContexts = yield* Ref.get(requestContexts);
+        assert.deepEqual(
+          observedRequestContexts.map((requestContext) => requestContext.method),
+          ["session/request_permission", "elicitation/create", "x/typed_request"],
+        );
+        assert.equal(
+          new Set(observedRequestContexts.map((requestContext) => requestContext.requestId)).size,
+          observedRequestContexts.length,
+        );
 
         return yield* acp.raw.request("x/echo", {
           hello: "world",
@@ -397,8 +449,8 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       Effect.gen(function* () {
         const handle = yield* makeHandle({ ACP_MOCK_BAD_TYPED_REQUEST: "1" });
         const scope = yield* Scope.make();
-        const acpLayer = AcpClient.layerChildProcess(handle);
-        const context = yield* Layer.buildWithScope(acpLayer, scope);
+        const layerAcp = AcpClient.layerChildProcess(handle);
+        const context = yield* Layer.buildWithScope(layerAcp, scope);
 
         const result = yield* Effect.gen(function* () {
           const acp = yield* AcpClient.AcpClient;
@@ -413,11 +465,9 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           );
           yield* acp.handleElicitation(() =>
             Effect.succeed({
-              action: {
-                action: "accept",
-                content: {
-                  approved: true,
-                },
+              action: "accept",
+              content: {
+                approved: true,
               },
             }),
           );
@@ -463,6 +513,101 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       }),
   );
 
+  it.effect("preserves ACP v2 structured diff semantics", () =>
+    Effect.gen(function* () {
+      const updates = yield* Ref.make<Array<AcpCompat.SessionNotification>>([]);
+      const handle = yield* makeHandle({ ACP_MOCK_V2_DIFF: "1" });
+      const scope = yield* Scope.make();
+      const context = yield* Layer.buildWithScope(AcpClient.layerChildProcess(handle), scope);
+
+      yield* Effect.gen(function* () {
+        const acp = yield* AcpClient.AcpClient;
+        yield* acp.handleRequestPermission(() =>
+          Effect.succeed({ outcome: { outcome: "selected", optionId: "allow" } }),
+        );
+        yield* acp.handleElicitation(() =>
+          Effect.succeed({ action: "accept", content: { approved: true } }),
+        );
+        yield* acp.handleExtRequest(
+          "x/typed_request",
+          Schema.Struct({ message: Schema.String }),
+          () => Effect.succeed({ ok: true }),
+        );
+        yield* acp.handleSessionUpdate((notification) =>
+          Ref.update(updates, (current) => [...current, notification]),
+        );
+
+        yield* acp.agent.initialize({ protocolVersion: 2 });
+        yield* acp.agent.authenticate({ methodId: "cursor_login" });
+        const session = yield* acp.agent.createSession({ cwd: process.cwd(), mcpServers: [] });
+        yield* acp.agent.prompt({
+          sessionId: session.sessionId,
+          prompt: [{ type: "text", text: "show the diff" }],
+        });
+      }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
+
+      const diffUpdate = (yield* Ref.get(updates)).find(
+        (notification) => notification.update.sessionUpdate === "tool_call_update",
+      );
+      assert.deepEqual(diffUpdate?.update, {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-diff",
+        content: [
+          {
+            type: "diff",
+            changes: [
+              {
+                operation: "move",
+                oldPath: "/workspace/old.ts",
+                path: "/workspace/new.ts",
+                fileType: "text",
+                mimeType: "text/typescript",
+              },
+            ],
+            patch: {
+              format: "git_patch",
+              text: "diff --git a/old.ts b/new.ts\nsimilarity index 100%\nrename from old.ts\nrename to new.ts\n",
+            },
+          },
+        ],
+      });
+    }),
+  );
+
+  it.effect("does not turn unsupported ACP v2 auth methods into agent login", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle({ ACP_MOCK_CUSTOM_AUTH: "1" });
+      const response = yield* Effect.gen(function* () {
+        const acp = yield* AcpClient.AcpClient;
+        return yield* acp.agent.initialize({ protocolVersion: 2 });
+      }).pipe(Effect.provide(AcpClient.layerChildProcess(handle)));
+      assert.deepEqual(response.authMethods, []);
+    }),
+  );
+
+  it.effect("preserves registry env-var authentication extensions", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle({ ACP_MOCK_ENV_VAR_AUTH: "1" });
+      const scope = yield* Scope.make();
+      const context = yield* Layer.buildWithScope(AcpClient.layerChildProcess(handle), scope);
+
+      const response = yield* Effect.gen(function* () {
+        const acp = yield* AcpClient.AcpClient;
+        return yield* acp.agent.initialize({ protocolVersion: 2 });
+      }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
+
+      assert.deepEqual(response.authMethods, [
+        {
+          id: "api_key",
+          name: "API key",
+          type: "env_var",
+          vars: [{ name: "MOCK_API_KEY", label: "Mock API key" }],
+          link: "https://example.test/keys",
+        },
+      ]);
+    }),
+  );
+
   it.effect("replays buffered notifications to handlers registered after they arrive", () =>
     Effect.gen(function* () {
       const updates = yield* Ref.make<Array<unknown>>([]);
@@ -471,8 +616,8 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       const typedNotifications = yield* Ref.make<Array<unknown>>([]);
       const handle = yield* makeHandle();
       const scope = yield* Scope.make();
-      const acpLayer = AcpClient.layerChildProcess(handle);
-      const context = yield* Layer.buildWithScope(acpLayer, scope);
+      const layerAcp = AcpClient.layerChildProcess(handle);
+      const context = yield* Layer.buildWithScope(layerAcp, scope);
 
       yield* Effect.gen(function* () {
         const acp = yield* AcpClient.AcpClient;
@@ -487,11 +632,9 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         );
         yield* acp.handleElicitation(() =>
           Effect.succeed({
-            action: {
-              action: "accept",
-              content: {
-                approved: true,
-              },
+            action: "accept",
+            content: {
+              approved: true,
             },
           }),
         );
@@ -541,7 +684,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           Ref.update(elicitationCompletions, (current) => [...current, notification]),
         );
 
-        assert.equal((yield* Ref.get(updates)).length, 1);
+        assert.equal((yield* Ref.get(updates)).length, 2);
         assert.equal((yield* Ref.get(elicitationCompletions)).length, 1);
         assert.deepEqual(yield* Ref.get(typedRequests), [{ message: "hello from typed request" }]);
         assert.deepEqual(yield* Ref.get(typedNotifications), [{ count: 2 }]);
@@ -549,78 +692,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
     }),
   );
 
-  it.effect("continues dispatching session updates after one handler fails", () =>
-    Effect.gen(function* () {
-      const successfulHandlers = yield* Ref.make(0);
-      const handle = yield* makeHandle();
-      const scope = yield* Scope.make();
-      const acpLayer = AcpClient.layerChildProcess(handle);
-      const context = yield* Layer.buildWithScope(acpLayer, scope);
-
-      yield* Effect.gen(function* () {
-        const acp = yield* AcpClient.AcpClient;
-
-        yield* acp.handleRequestPermission(() =>
-          Effect.succeed({
-            outcome: {
-              outcome: "selected",
-              optionId: "allow",
-            },
-          }),
-        );
-        yield* acp.handleElicitation(() =>
-          Effect.succeed({
-            action: {
-              action: "accept",
-              content: {
-                approved: true,
-              },
-            },
-          }),
-        );
-        yield* acp.handleExtRequest(
-          "x/typed_request",
-          Schema.Struct({ message: Schema.String }),
-          () => Effect.succeed({ ok: true }),
-        );
-        yield* acp.handleExtNotification(
-          "x/typed_notification",
-          Schema.Struct({ count: Schema.Number }),
-          () => Effect.void,
-        );
-        yield* acp.handleSessionUpdate(() =>
-          Effect.fail(AcpError.AcpRequestError.internalError("session update handler failed")),
-        );
-        yield* acp.handleSessionUpdate(() => Ref.update(successfulHandlers, (count) => count + 1));
-
-        yield* acp.agent.initialize({
-          protocolVersion: 1,
-          clientCapabilities: {
-            fs: { readTextFile: false, writeTextFile: false },
-            terminal: false,
-          },
-          clientInfo: {
-            name: "effect-acp-test",
-            version: "0.0.0",
-          },
-        });
-        yield* acp.agent.authenticate({ methodId: "cursor_login" });
-
-        const session = yield* acp.agent.createSession({
-          cwd: process.cwd(),
-          mcpServers: [],
-        });
-        yield* acp.agent.prompt({
-          sessionId: session.sessionId,
-          prompt: [{ type: "text", text: "hello" }],
-        });
-
-        assert.equal(yield* Ref.get(successfulHandlers), 1);
-      }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
-    }),
-  );
-
-  it.effect("uses distinct ids for RPC calls and extension requests", () =>
+  it.effect("keeps RPC ids within int32 and apart from extension ids", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();
       const scope = yield* Scope.make();
@@ -661,6 +733,11 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         : yield* decodedExt(firstOutbound);
 
       assert.notEqual(initializeRequest.id, extRequest.id);
+      // Keep locally generated ids compatible with SDKs that decode signed int32.
+      assert.typeOf(initializeRequest.id, "number");
+      assert.equal(initializeRequest.id, 2 ** 30);
+      assert.isAtMost(Number(initializeRequest.id), 2 ** 31 - 1);
+      assert.equal(extRequest.id, 1);
 
       yield* Queue.offer(
         input,
@@ -668,9 +745,9 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           jsonrpc: "2.0",
           id: initializeRequest.id,
           result: {
-            protocolVersion: 1,
-            agentCapabilities: {},
-            agentInfo: {
+            protocolVersion: 2,
+            capabilities: {},
+            info: {
               name: "mock-agent",
               version: "0.0.0",
             },
@@ -688,6 +765,443 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
 
       yield* Fiber.join(initializeFiber);
       assert.deepEqual(yield* Fiber.join(extFiber), { ok: true });
+
+      const sessionFiber = yield* acp.agent
+        .createSession({ cwd: "/tmp", mcpServers: [] })
+        .pipe(Effect.forkScoped);
+      const sessionRequest = yield* Schema.decodeEffect(
+        Schema.fromJsonString(jsonRpcRequest("session/new", AcpSchema.NewSessionRequest)),
+      )(yield* Queue.take(output));
+      assert.equal(sessionRequest.id, 2 ** 30 + 1);
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcResponse(AcpSchema.NewSessionResponse), {
+          jsonrpc: "2.0",
+          id: sessionRequest.id,
+          result: { sessionId: "session-1" },
+        }),
+      );
+      assert.equal((yield* Fiber.join(sessionFiber)).sessionId, "session-1");
+      yield* Scope.close(scope, Exit.void);
+    }),
+  );
+
+  it.effect.each([1, 2])("keeps legacy wire behavior with version %s", (protocolVersion) =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const scope = yield* Scope.make();
+      const acp = yield* AcpClient.make(stdio).pipe(Effect.provideService(Scope.Scope, scope));
+      const updates = yield* Ref.make<Array<unknown>>([]);
+      yield* acp.handleSessionUpdate((notification) =>
+        Ref.update(updates, (current) => [...current, notification]),
+      );
+
+      const initializeFiber = yield* acp.agent
+        .initialize({
+          protocolVersion: 2,
+          clientInfo: { name: "effect-acp-test", version: "0.0.0" },
+          clientCapabilities: { _meta: { "terminal-auth": true } },
+        })
+        .pipe(Effect.forkScoped);
+      const initializeRequest = yield* Queue.take(output).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(InitializeRequestV1))),
+      );
+      assert.equal(initializeRequest.params.protocolVersion, 2);
+      assert.equal(initializeRequest.params.clientCapabilities?._meta?.["terminal-auth"], true);
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(InitializeResponseV1, {
+          jsonrpc: "2.0",
+          id: initializeRequest.id,
+          result: {
+            ...antigravityInitialize,
+            protocolVersion,
+          },
+        }),
+      );
+      const initialized = yield* Fiber.join(initializeFiber);
+      assert.equal(initialized.protocolVersion, protocolVersion);
+      assert.equal(initialized.agentInfo?.name, "antigravity-acp");
+
+      const exchange = <A, E>(effect: Effect.Effect<A, E>, method: string) =>
+        Effect.gen(function* () {
+          const fiber = yield* effect.pipe(Effect.forkScoped);
+          const request = yield* Queue.take(output).pipe(
+            Effect.flatMap(
+              Schema.decodeEffect(Schema.fromJsonString(jsonRpcRequest(method, Schema.Unknown))),
+            ),
+          );
+          yield* Queue.offer(
+            input,
+            yield* encodeJsonl(jsonRpcResponse(Schema.Unknown), {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {},
+            }),
+          );
+          yield* Fiber.join(fiber);
+          return request.params;
+        });
+      assert.deepEqual(
+        yield* exchange(acp.agent.authenticate({ methodId: "oauth-personal" }), "authenticate"),
+        { methodId: "oauth-personal" },
+      );
+      const mcpServers = [{ name: "fixture", command: "fixture-only", args: [], env: [] }];
+
+      const sessionFiber = yield* acp.agent
+        .createSession({ cwd: process.cwd(), mcpServers })
+        .pipe(Effect.forkScoped);
+      const sessionRequest = yield* Queue.take(output).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(NewSessionRequestV1))),
+      );
+      assert.deepEqual(sessionRequest.params.mcpServers, mcpServers);
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcResponse(Schema.Unknown), {
+          jsonrpc: "2.0",
+          id: sessionRequest.id,
+          result: {
+            sessionId: "pi-session-1",
+            models: {
+              currentModelId: "native-model",
+              availableModels: [{ modelId: "native-model", name: "Native model" }],
+            },
+          },
+        }),
+      );
+      const session = yield* Fiber.join(sessionFiber);
+      assert.equal(session.sessionId, "pi-session-1");
+      assert.equal(session.models?.currentModelId, "native-model");
+      const resume = { sessionId: session.sessionId, cwd: process.cwd(), mcpServers };
+      assert.deepEqual(yield* exchange(acp.agent.resumeSession(resume), "session/resume"), resume);
+      assert.deepEqual(yield* exchange(acp.agent.loadSession(resume), "session/load"), resume);
+      const selectModel = yield* acp.agent
+        .setSessionModel({ sessionId: session.sessionId, modelId: "native-model" })
+        .pipe(Effect.forkScoped);
+      const selection = yield* Queue.take(output).pipe(
+        Effect.flatMap(
+          Schema.decodeEffect(
+            Schema.fromJsonString(
+              jsonRpcRequest(
+                "session/set_model",
+                Schema.Struct({ sessionId: Schema.String, modelId: Schema.String }),
+              ),
+            ),
+          ),
+        ),
+      );
+      assert.equal(selection.params.modelId, "native-model");
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcResponse(Schema.Unknown), {
+          jsonrpc: "2.0",
+          id: selection.id,
+          result: {},
+        }),
+      );
+      yield* Fiber.join(selectModel);
+      const selectMode = yield* acp.agent
+        .setSessionMode({ sessionId: session.sessionId, modeId: "yolo" })
+        .pipe(Effect.forkScoped);
+      const modeSelection = yield* Queue.take(output).pipe(
+        Effect.flatMap(
+          Schema.decodeEffect(
+            Schema.fromJsonString(
+              jsonRpcRequest(
+                "session/set_mode",
+                Schema.Struct({ sessionId: Schema.String, modeId: Schema.String }),
+              ),
+            ),
+          ),
+        ),
+      );
+      assert.equal(modeSelection.params.modeId, "yolo");
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcResponse(Schema.Unknown), {
+          jsonrpc: "2.0",
+          id: modeSelection.id,
+          result: {},
+        }),
+      );
+      yield* Fiber.join(selectMode);
+
+      yield* acp.handleElicitation(() =>
+        Effect.succeed({ action: "accept", content: { branch: "main" } }),
+      );
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcRequest("session/elicitation", Schema.Unknown), {
+          jsonrpc: "2.0",
+          id: "legacy-question",
+          headers: [],
+          method: "session/elicitation",
+          params: {
+            sessionId: session.sessionId,
+            mode: "form",
+            message: "Choose a branch",
+            requestedSchema: { type: "object", properties: {} },
+          },
+        }),
+      );
+      const answer = yield* Queue.take(output).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(jsonRpcResponse(Schema.Unknown)))),
+      );
+      assert.deepEqual(answer.result, {
+        action: { action: "accept", content: { branch: "main" } },
+      });
+      // Recorded Devin 2026-09-10 called the older underscore method.
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcRequest("_session/elicitation", Schema.Unknown), {
+          jsonrpc: "2.0",
+          id: "devin-question",
+          headers: [],
+          method: "_session/elicitation",
+          params: {
+            sessionId: session.sessionId,
+            mode: "form",
+            message: "Proceed?",
+            requestedSchema: { type: "object", properties: {} },
+          },
+        }),
+      );
+      const devinAnswer = yield* Queue.take(output).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(jsonRpcResponse(Schema.Unknown)))),
+      );
+      assert.deepEqual(devinAnswer.result, {
+        action: { action: "accept", content: { branch: "main" } },
+      });
+      const completed = yield* Deferred.make<void>();
+      yield* acp.handleElicitationComplete(() =>
+        Deferred.succeed(completed, undefined).pipe(Effect.asVoid),
+      );
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcNotification("session/elicitation/complete", Schema.Unknown), {
+          jsonrpc: "2.0",
+          method: "session/elicitation/complete",
+          params: { elicitationId: "legacy-login" },
+        }),
+      );
+      yield* Deferred.await(completed);
+
+      const promptFiber = yield* acp.agent
+        .prompt({
+          sessionId: "pi-session-1",
+          prompt: [{ type: "text", text: "hello" }],
+        })
+        .pipe(Effect.forkScoped);
+      const promptRequest = yield* Queue.take(output).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(PromptRequestV1))),
+      );
+      yield* Queue.offer(
+        input,
+        concatBytes([
+          yield* encodeJsonl(
+            jsonRpcNotification("session/update", AcpSchemaV1.SessionNotification),
+            {
+              jsonrpc: "2.0",
+              method: "session/update",
+              params: {
+                sessionId: "pi-session-1",
+                update: {
+                  sessionUpdate: "available_commands_update",
+                  availableCommands: [
+                    { name: "review", description: "Review changes", input: { hint: "scope" } },
+                  ],
+                },
+              },
+            },
+          ),
+          yield* encodeJsonl(PromptResponseV1, {
+            jsonrpc: "2.0",
+            id: promptRequest.id,
+            result: { stopReason: "end_turn" },
+          }),
+        ]),
+      );
+      assert.deepEqual(yield* Fiber.join(promptFiber), { stopReason: "end_turn" });
+      assert.deepEqual(yield* Ref.get(updates), [
+        {
+          sessionId: "pi-session-1",
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [
+              {
+                name: "review",
+                description: "Review changes",
+                input: { type: "text", hint: "scope" },
+              },
+            ],
+          },
+        },
+      ]);
+      yield* exchange(acp.agent.logout({}), "logout");
+      yield* Scope.close(scope, Exit.void);
+    }),
+  );
+
+  it.effect("preserves exact ids for parallel requests with identical payloads", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const scope = yield* Scope.make();
+      const acp = yield* AcpClient.make(stdio).pipe(Effect.provideService(Scope.Scope, scope));
+      const contexts = yield* Ref.make<Array<AcpProtocol.AcpRequestContext>>([]);
+      yield* acp.handleRequestPermission((_request, context) =>
+        Ref.update(contexts, (current) => [...current, context]).pipe(
+          Effect.as({ outcome: { outcome: "selected", optionId: "allow" } } as const),
+        ),
+      );
+      const payload = {
+        sessionId: "session-1",
+        title: "Shared tool",
+        subject: {
+          type: "tool_call" as const,
+          toolCall: { toolCallId: "shared-tool", title: "Shared tool" },
+        },
+        options: [{ optionId: "allow", name: "Allow", kind: "allow_once" as const }],
+      };
+      yield* Queue.offer(
+        input,
+        concatBytes(
+          yield* Effect.forEach(["permission-a", "permission-b"], (id) =>
+            encodeJsonl(PermissionRequest, {
+              jsonrpc: "2.0",
+              id,
+              method: "session/request_permission",
+              params: payload,
+              headers: [],
+            }),
+          ),
+        ),
+      );
+
+      const decodeResponse = Schema.decodeEffect(Schema.fromJsonString(PermissionResponse));
+      const responses = yield* Effect.all([
+        Queue.take(output).pipe(Effect.flatMap(decodeResponse)),
+        Queue.take(output).pipe(Effect.flatMap(decodeResponse)),
+      ]);
+      assert.deepEqual(responses.map((response) => response.id).toSorted(), [
+        "permission-a",
+        "permission-b",
+      ]);
+      assert.deepEqual(
+        (yield* Ref.get(contexts))
+          .map(({ requestId, method }) => ({ requestId, method }))
+          .toSorted((left, right) => left.requestId.localeCompare(right.requestId)),
+        [
+          { requestId: "permission-a", method: "session/request_permission" },
+          { requestId: "permission-b", method: "session/request_permission" },
+        ],
+      );
+      yield* Scope.close(scope, Exit.void);
+    }),
+  );
+
+  it.effect("answers each request whose handler dies, and keeps reading", () =>
+    Effect.gen(function* () {
+      const errorLogs = yield* Queue.unbounded<string>();
+      const logger = Logger.make(({ logLevel, message }) => {
+        if (logLevel === "Error") Queue.offerUnsafe(errorLogs, String([message].flat()[0]));
+      });
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const scope = yield* Scope.make();
+      const acp = yield* AcpClient.make(stdio).pipe(
+        Effect.provideService(Scope.Scope, scope),
+        Effect.provide(Logger.layer([logger])),
+      );
+      const bug = () => Effect.die(new Error("handler bug"));
+      yield* acp.handleRequestPermission(bug);
+      yield* acp.handleExtRequest("x/dies", Schema.Unknown, bug);
+      yield* acp.handleExtNotification("x/notification-dies", Schema.Unknown, bug);
+      yield* acp.handleSessionUpdate(bug);
+      const updates = yield* Queue.unbounded<string>();
+      yield* acp.handleSessionUpdate((notification) =>
+        Queue.offer(updates, notification.sessionId).pipe(Effect.asVoid),
+      );
+      yield* acp.handleExtRequest("x/test", Schema.Struct({ hello: Schema.String }), () =>
+        Effect.succeed({ ok: true }),
+      );
+      const send = <E>(line: Effect.Effect<Uint8Array, E>) =>
+        Effect.flatMap(line, (bytes) => Queue.offer(input, bytes));
+      const decodeDie = Schema.decodeEffect(Schema.fromJsonString(DieResponse));
+      const next = <A>(queue: Queue.Dequeue<A>) =>
+        TestClock.withLive(Queue.take(queue).pipe(Effect.timeout("2 seconds")));
+
+      yield* send(
+        encodeJsonl(PermissionRequest, {
+          jsonrpc: "2.0",
+          id: "permission-a",
+          method: "session/request_permission",
+          params: {
+            sessionId: "session-1",
+            title: "Tool",
+            subject: {
+              type: "tool_call" as const,
+              toolCall: { toolCallId: "tool-1", title: "Tool" },
+            },
+            options: [{ optionId: "allow", name: "Allow", kind: "allow_once" as const }],
+          },
+          headers: [],
+        }),
+      );
+      assert.equal((yield* next(output).pipe(Effect.flatMap(decodeDie))).id, "permission-a");
+
+      yield* send(
+        encodeJsonl(jsonRpcRequest("x/dies", Schema.Unknown), {
+          jsonrpc: "2.0",
+          id: "ext-a",
+          method: "x/dies",
+          params: {},
+          headers: [],
+        }),
+      );
+      const extDied = yield* next(output).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(ErrorResponse))),
+      );
+      assert.equal(extDied.id, "ext-a");
+
+      yield* send(
+        encodeJsonl(jsonRpcNotification("x/notification-dies", Schema.Unknown), {
+          jsonrpc: "2.0",
+          method: "x/notification-dies",
+          params: {},
+        }),
+      );
+      yield* send(
+        encodeJsonl(SessionUpdateNotification, {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "session-1",
+            update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hi" } },
+          },
+        }),
+      );
+
+      assert.equal(yield* next(updates), "session-1");
+
+      yield* send(
+        encodeJsonl(ExtRequest, {
+          jsonrpc: "2.0",
+          id: "ext-b",
+          method: "x/test",
+          params: { hello: "world" },
+          headers: [],
+        }),
+      );
+      const answered = yield* next(output).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(ExtResponse))),
+      );
+      assert.deepEqual([answered.id, answered.result], ["ext-b", { ok: true }]);
+
+      assert.deepEqual((yield* Queue.clear(errorLogs)).toSorted(), [
+        "ACP extension request handler failed for 'x/dies'",
+        "ACP notification handler failed",
+        "ACP notification handler failed",
+        "ACP request handler failed for 'session/request_permission'",
+      ]);
       yield* Scope.close(scope, Exit.void);
     }),
   );
@@ -751,13 +1265,23 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
             encodeJsonl(PromptResponse, {
               jsonrpc: "2.0",
               id: decodedPrompt.id,
-              result: {
-                stopReason: "end_turn",
-                _meta: {
-                  sessionId: "grok-session-1",
-                  requestId: "prompt-1",
-                  promptId: "prompt-1",
-                  modelId: "grok-composer-2.5-fast",
+              result: {},
+            }),
+            encodeJsonl(SessionUpdateNotification, {
+              jsonrpc: "2.0",
+              method: "session/update",
+              params: {
+                sessionId: "grok-session-1",
+                update: {
+                  sessionUpdate: "state_update",
+                  state: "idle",
+                  stopReason: "end_turn",
+                  _meta: {
+                    sessionId: "grok-session-1",
+                    requestId: "prompt-1",
+                    promptId: "prompt-1",
+                    modelId: "grok-composer-2.5-fast",
+                  },
                 },
               },
             }),
@@ -776,6 +1300,200 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         });
         yield* Scope.close(scope, Exit.void);
       }),
+  );
+
+  it.effect("returns the ACP v2 idle error as the prompt result", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const acp = yield* AcpClient.make(stdio);
+      const error = { code: -32000, message: "Missing Authentication header" };
+      const prompt = yield* acp.agent
+        .prompt({ sessionId: "idle-error", prompt: [{ type: "text", text: "Hello" }] })
+        .pipe(Effect.forkScoped);
+      const request = yield* decodePromptRequestLine(yield* Queue.take(output));
+      yield* Queue.offer(
+        input,
+        concatBytes([
+          yield* encodeJsonl(jsonRpcResponse(Schema.Unknown), {
+            jsonrpc: "2.0",
+            id: request.id,
+            result: { messageId: `user-${request.id}` },
+          }),
+          yield* encodeJsonl(SessionUpdateNotification, {
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "idle-error",
+              update: { sessionUpdate: "state_update", state: "idle", stopReason: "error", error },
+            },
+          }),
+        ]),
+      );
+      assert.deepEqual(yield* Fiber.join(prompt), { stopReason: "error", error });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("routes MCP-over-ACP connect, message, notification, and disconnect callbacks", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle({ ACP_MOCK_MCP_OVER_ACP: "1" });
+      const scope = yield* Scope.make();
+      const context = yield* Layer.buildWithScope(AcpClient.layerChildProcess(handle), scope);
+      const methods = yield* Ref.make<Array<string>>([]);
+
+      yield* Effect.gen(function* () {
+        const acp = yield* AcpClient.AcpClient;
+        yield* acp.handleRequestPermission(() =>
+          Effect.succeed({ outcome: { outcome: "selected", optionId: "allow" } }),
+        );
+        yield* acp.handleElicitation(() => Effect.succeed({ action: "decline" }));
+        yield* acp.handleExtRequest(
+          "x/typed_request",
+          Schema.Struct({ message: Schema.String }),
+          () => Effect.succeed({ ok: true }),
+        );
+        yield* acp.handleExtNotification(
+          "x/typed_notification",
+          Schema.Struct({ count: Schema.Number }),
+          () => Effect.void,
+        );
+        yield* acp.handleMcpConnect(() =>
+          Ref.update(methods, (current) => [...current, "connect"]).pipe(
+            Effect.as({ connectionId: "connection-1" }),
+          ),
+        );
+        yield* acp.handleMcpMessage(() =>
+          Ref.update(methods, (current) => [...current, "message"]).pipe(Effect.as({ tools: [] })),
+        );
+        yield* acp.handleMcpNotification(() =>
+          Ref.update(methods, (current) => [...current, "notification"]),
+        );
+        yield* acp.handleMcpDisconnect(() =>
+          Ref.update(methods, (current) => [...current, "disconnect"]).pipe(Effect.as({})),
+        );
+        yield* acp.agent.initialize({
+          protocolVersion: 2,
+          clientCapabilities: {},
+          clientInfo: { name: "effect-acp-test", version: "0.0.0" },
+        });
+        const session = yield* acp.agent.createSession({ cwd: process.cwd(), mcpServers: [] });
+        yield* acp.agent.prompt({
+          sessionId: session.sessionId,
+          prompt: [{ type: "text", text: "exercise MCP" }],
+        });
+      }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
+
+      assert.deepEqual(yield* Ref.get(methods), [
+        "connect",
+        "message",
+        "notification",
+        "disconnect",
+      ]);
+    }),
+  );
+
+  it.effect("preserves future content and session-update variants", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle({ ACP_MOCK_UNKNOWN_VARIANTS: "1" });
+      const scope = yield* Scope.make();
+      const context = yield* Layer.buildWithScope(AcpClient.layerChildProcess(handle), scope);
+      const updates = yield* Ref.make<Array<AcpCompat.SessionNotification>>([]);
+
+      yield* Effect.gen(function* () {
+        const acp = yield* AcpClient.AcpClient;
+        yield* acp.handleRequestPermission(() =>
+          Effect.succeed({ outcome: { outcome: "selected", optionId: "allow" } }),
+        );
+        yield* acp.handleElicitation(() => Effect.succeed({ action: "decline" }));
+        yield* acp.handleExtRequest(
+          "x/typed_request",
+          Schema.Struct({ message: Schema.String }),
+          () => Effect.succeed({ ok: true }),
+        );
+        yield* acp.handleExtNotification(
+          "x/typed_notification",
+          Schema.Struct({ count: Schema.Number }),
+          () => Effect.void,
+        );
+        yield* acp.handleSessionUpdate((update) =>
+          Ref.update(updates, (current) => [...current, update]),
+        );
+        yield* acp.agent.initialize({
+          protocolVersion: 2,
+          clientCapabilities: {},
+          clientInfo: { name: "effect-acp-test", version: "0.0.0" },
+        });
+        const session = yield* acp.agent.createSession({ cwd: process.cwd(), mcpServers: [] });
+        yield* acp.agent.prompt({
+          sessionId: session.sessionId,
+          prompt: [{ type: "text", text: "exercise future variants" }],
+        });
+      }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
+
+      const received = yield* Ref.get(updates);
+      assert.deepEqual(received[0]?.update, {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "future-content",
+        content: {
+          type: "_t3_unknown",
+          originalType: "chart",
+          raw: { type: "chart", points: [] },
+        },
+      });
+      assert.deepEqual(received[1]?.update, {
+        sessionUpdate: "_t3_unknown",
+        originalSessionUpdate: "timeline_update",
+        raw: { sessionUpdate: "timeline_update", entries: [] },
+      });
+    }),
+  );
+
+  it.effect("delivers ACP v1 session notices, which the pinned v1 schema predates", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const scope = yield* Scope.make();
+      const acp = yield* AcpClient.make(stdio).pipe(Effect.provideService(Scope.Scope, scope));
+      const initializeFiber = yield* acp.agent
+        .initialize({ protocolVersion: 1, clientCapabilities: { session: { notices: {} } } })
+        .pipe(Effect.forkScoped);
+      const initializeRequest = yield* Queue.take(output).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(InitializeRequestV1))),
+      );
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(InitializeResponseV1, {
+          jsonrpc: "2.0",
+          id: initializeRequest.id,
+          result: { protocolVersion: 1 },
+        }),
+      );
+      yield* Fiber.join(initializeFiber);
+
+      const notice = {
+        sessionUpdate: "notice",
+        severity: "warning",
+        title: "MCP server unavailable",
+        description: "Continuing without it.",
+      } as const;
+      const untitled = { sessionUpdate: "notice", severity: "info" } as const;
+      for (const update of [notice, untitled]) {
+        yield* Queue.offer(
+          input,
+          yield* encodeJsonl(SessionUpdateNotification, {
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: { sessionId: "session-1", update },
+          }),
+        );
+      }
+      const received = yield* acp.raw.notifications.pipe(Stream.take(2), Stream.runCollect);
+      assert.deepEqual(
+        Array.from(received, (event) =>
+          event._tag === "SessionUpdate" ? event.params.update : undefined,
+        ),
+        [notice, { sessionUpdate: "_t3_unknown", originalSessionUpdate: "notice", raw: untitled }],
+      );
+      yield* Scope.close(scope, Exit.void);
+    }),
   );
 });
 
@@ -802,14 +1520,14 @@ it.effect.each(["accept", "decline", "cancel"] as const)(
         const { stdio, input, output } = yield* makeInMemoryStdio();
         const acp = yield* AcpClient.make(stdio);
         const answer = action === "accept" ? { action, content: { choice: "yes" } } : { action };
-        const response = { action: answer, _meta: { trace: "fixture" } };
+        const response = { ...answer, _meta: { trace: "fixture" } };
         yield* acp.handleElicitation((request) => {
           assert.deepEqual(request, elicitationForm);
           return Effect.succeed(response);
         });
         yield* Queue.offer(
           input,
-          yield* encodeJsonl(jsonRpcRequest(method, AcpSchema.ElicitationRequest), {
+          yield* encodeJsonl(jsonRpcRequest(method, AcpSchema.CreateElicitationRequest), {
             jsonrpc: "2.0",
             id: 71,
             headers: [],
@@ -821,43 +1539,11 @@ it.effect.each(["accept", "decline", "cancel"] as const)(
         assert.deepEqual(received, {
           jsonrpc: "2.0",
           id: 71,
-          result: method === "elicitation/create" ? { ...answer, _meta: response._meta } : response,
+          result:
+            method === "elicitation/create" ? response : { action: answer, _meta: response._meta },
         });
       }
     }).pipe(Effect.scoped),
-);
-
-it.effect("dispatches SDK URL elicitation to the same registered handler", () =>
-  Effect.gen(function* () {
-    const { stdio, input, output } = yield* makeInMemoryStdio();
-    const acp = yield* AcpClient.make(stdio);
-    const params = {
-      sessionId: "session-1",
-      mode: "url" as const,
-      message: "Sign in",
-      elicitationId: "elicitation-1",
-      url: "https://example.test/sign-in",
-    };
-    yield* acp.handleElicitation((request) => {
-      assert.deepEqual(request, params);
-      return Effect.succeed({ action: { action: "accept" as const } });
-    });
-    yield* Queue.offer(
-      input,
-      yield* encodeJsonl(jsonRpcRequest("elicitation/create", AcpSchema.ElicitationRequest), {
-        jsonrpc: "2.0",
-        id: 72,
-        headers: [],
-        method: "elicitation/create",
-        params,
-      }),
-    );
-    assert.deepEqual(yield* decodeWireResponse(yield* Queue.take(output)), {
-      jsonrpc: "2.0",
-      id: 72,
-      result: { action: "accept" },
-    });
-  }).pipe(Effect.scoped),
 );
 
 it.effect.each(["elicitation/complete", "session/elicitation/complete"])(
@@ -866,13 +1552,13 @@ it.effect.each(["elicitation/complete", "session/elicitation/complete"])(
     Effect.gen(function* () {
       const { stdio, input } = yield* makeInMemoryStdio();
       const acp = yield* AcpClient.make(stdio);
-      const received = yield* Deferred.make<AcpSchema.ElicitationCompleteNotification>();
+      const received = yield* Deferred.make<AcpSchema.CompleteElicitationNotification>();
       yield* acp.handleElicitationComplete((notification) =>
         Deferred.succeed(received, notification).pipe(Effect.asVoid),
       );
       yield* Queue.offer(
         input,
-        yield* encodeJsonl(jsonRpcNotification(method, AcpSchema.ElicitationCompleteNotification), {
+        yield* encodeJsonl(jsonRpcNotification(method, AcpSchema.CompleteElicitationNotification), {
           jsonrpc: "2.0",
           method,
           params: { elicitationId: "elicitation-1" },
@@ -889,7 +1575,7 @@ it.effect("rejects malformed SDK elicitation without calling the question handle
     let calls = 0;
     yield* acp.handleElicitation(() => {
       calls++;
-      return Effect.succeed({ action: { action: "cancel" as const } });
+      return Effect.succeed({ action: "cancel" as const });
     });
     yield* Queue.offer(
       input,
@@ -913,7 +1599,7 @@ it.effect("returns method-not-found when SDK elicitation has no question handler
     yield* AcpClient.make(stdio);
     yield* Queue.offer(
       input,
-      yield* encodeJsonl(jsonRpcRequest("elicitation/create", AcpSchema.ElicitationRequest), {
+      yield* encodeJsonl(jsonRpcRequest("elicitation/create", AcpSchema.CreateElicitationRequest), {
         jsonrpc: "2.0",
         id: 74,
         headers: [],

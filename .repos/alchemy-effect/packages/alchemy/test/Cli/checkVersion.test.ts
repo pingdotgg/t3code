@@ -4,7 +4,7 @@ import { _internal } from "../../src/Cli/checkVersion";
 
 const { pickDistTag, compareVersions } = _internal;
 
-describe("pickDistTag", () => {
+describe("pickDistTag", { tags: ["unit", "local"] }, () => {
   // Real shape returned by https://registry.npmjs.org/-/package/alchemy/dist-tags
   const realDistTags = { latest: "0.93.7", next: "2.0.0-beta.33" };
 
@@ -48,7 +48,7 @@ describe("pickDistTag", () => {
   });
 });
 
-describe("compareVersions", () => {
+describe("compareVersions", { tags: ["unit", "local"] }, () => {
   test("orders prerelease numbers numerically, not lexically", () => {
     expect(compareVersions("2.0.0-beta.68", "2.0.0-beta.67")).toBeGreaterThan(
       0,

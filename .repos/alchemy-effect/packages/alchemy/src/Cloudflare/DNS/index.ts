@@ -19,3 +19,4 @@ export * from "./ZoneTransferIncoming.ts";
 export * from "./ZoneTransferOutgoing.ts";
 export * from "./ZoneTransferPeer.ts";
 export * from "./ZoneTransferTsig.ts";
+export * from "./AcmeDnsSolver.ts";

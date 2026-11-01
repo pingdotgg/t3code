@@ -9,7 +9,7 @@
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import { dual } from "effect/Function"
-import type { HttpClient } from "effect/unstable/http/HttpClient"
+import type { HttpClient } from "effect/http/HttpClient"
 
 /**
  * Service tag for Anthropic client configuration overrides, such as transformations applied to the generated HTTP client.

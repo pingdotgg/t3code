@@ -5,7 +5,7 @@ import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import {
   materializeIsolatedProject,
   removeIsolatedProject,
@@ -77,5 +77,13 @@ test.provider.skipIf(!runLive)(
       }
     }).pipe(logLevel),
   // One Prisma Compute deploy alone can take the full 600s.
-  { timeout: 1_200_000 },
+  {
+    tags: [
+      "provider:prisma",
+      "provider:prisma:compute",
+      "provider:prisma:project",
+      "live",
+    ],
+    timeout: 1_200_000,
+  },
 );

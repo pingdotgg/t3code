@@ -5,7 +5,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import AnonAccessWorker from "./fixtures/access-context/anon-worker.ts";
 import AuthedAccessWorker from "./fixtures/access-context/authed-worker.ts";
 
@@ -61,38 +61,48 @@ const getJsonReady = (url: string) =>
  * resolves the configured identity — while a worker without the config sees
  * `ctx.access === undefined` (unauthenticated).
  */
-test.provider("dev.access simulates ctx.access locally", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "dev.access simulates ctx.access locally",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const deployed = yield* stack.deploy(
-      Effect.gen(function* () {
-        const authed = yield* AuthedAccessWorker;
-        const anon = yield* AnonAccessWorker;
-        return { authed, anon };
-      }),
-    );
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          const authed = yield* AuthedAccessWorker;
+          const anon = yield* AnonAccessWorker;
+          return { authed, anon };
+        }),
+      );
 
-    // Dev markers: both workers serve from the local dev proxy — no cloud
-    // deploy ran.
-    expect(deployed.authed.url).toMatch(/^http:\/\/localhost:\d+$/);
-    expect(deployed.anon.url).toMatch(/^http:\/\/localhost:\d+$/);
-    // No cloud script exists in dev — the local provider fabricates a
-    // `dev:`-marked identity (mode switches replace the resource, so the
-    // two identities never mix).
-    expect(deployed.authed.workerId).toMatch(/^dev:/);
+      // Dev markers: both workers serve from the local dev proxy — no cloud
+      // deploy ran.
+      expect(deployed.authed.url).toMatch(/^http:\/\/localhost:\d+$/);
+      expect(deployed.anon.url).toMatch(/^http:\/\/localhost:\d+$/);
+      // No cloud script exists in dev — the local provider fabricates a
+      // `dev:`-marked identity (mode switches replace the resource, so the
+      // two identities never mix).
+      expect(deployed.authed.workerId).toMatch(/^dev:/);
 
-    const authed = yield* getJsonReady(deployed.authed.url!);
-    expect(authed).toEqual({
-      authenticated: true,
-      aud: "test-aud",
-      email: "dev@alchemy.test",
-      groups: [{ id: "g1", name: "devs" }],
-    });
+      const authed = yield* getJsonReady(deployed.authed.url!);
+      expect(authed).toEqual({
+        authenticated: true,
+        aud: "test-aud",
+        email: "dev@alchemy.test",
+        groups: [{ id: "g1", name: "devs" }],
+      });
 
-    const anon = yield* getJsonReady(deployed.anon.url!);
-    expect(anon).toEqual({ authenticated: false });
+      const anon = yield* getJsonReady(deployed.anon.url!);
+      expect(anon).toEqual({ authenticated: false });
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:access",
+      "provider:cloudflare:worker",
+      "local",
+    ],
+  },
 );

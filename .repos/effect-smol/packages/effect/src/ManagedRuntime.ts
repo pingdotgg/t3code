@@ -289,10 +289,11 @@ export const make = <R, ER>(
   } | undefined
 ): ManagedRuntime<R, ER> => {
   const memoMap = options?.memoMap ?? Layer.makeMemoMapUnsafe()
-  const scope = Scope.makeUnsafe("parallel")
+  const scope = Scope.makeUnsafe("sequential")
   const layerScope = Scope.forkUnsafe(scope, "sequential")
+  const fiberScope = Scope.forkUnsafe(scope, "parallel")
   const defaultRunOptions: Effect.RunOptions = {
-    onFiberStart: Fiber.runIn(scope)
+    onFiberStart: Fiber.runIn(fiberScope)
   }
   const mergeRunOptions = <O extends Effect.RunOptions>(options?: O): O =>
     options

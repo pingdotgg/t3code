@@ -1,59 +1,61 @@
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
-  ProjectFaviconPath,
-} from "./orchestration.ts";
+} from "./chatAttachment.ts";
+import { ProjectFaviconPath } from "./project.ts";
 import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
+
+/**
+ * The wire tag of a source control host's credentialed media. It names GitHub because GitHub had
+ * it first, and servers and clients of different releases must keep understanding each other.
+ */
+export const SOURCE_CONTROL_MEDIA_ASSET = "github-media" as const;
 
 export const AssetResource = Schema.Union([
   Schema.TaggedStruct("workspace-file", {
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
   }),
-  // One file served in place from anywhere the environment host can read:
-  // images, videos, HTML, and PDF. An absolute path may lie outside the
-  // workspace; a relative one resolves against the thread's workspace.
   Schema.TaggedStruct("media-file", {
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    disposition: Schema.optionalKey(Schema.Literal("attachment")),
   }),
-  // A workspace file named by a draft that has no thread yet. The draft names
-  // its workspace root explicitly instead of resolving one from a thread.
   Schema.TaggedStruct("draft-workspace-file", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
   }),
   Schema.TaggedStruct("attachment", {
     attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
-    /** Display name and mime from the `ChatAttachment` the caller holds. The
-        server bakes both into the signed URL so downloads carry the real
-        filename and Content-Type. Absent on older clients, which fall back to
-        an octet-stream download without a filename. */
     fileName: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(255))),
     mimeType: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
-    /** Generic attachments download by default. Document viewers opt into an
-        inline response after deciding the file type is safe to preview. */
+    /** Defaults to download; viewers may request inline after checking the type is safe. */
     disposition: Schema.optionalKey(Schema.Literals(["inline", "attachment"])),
+    renderIntent: Schema.optionalKey(Schema.Literal("mcp-app")),
+  }),
+  Schema.TaggedStruct("tool-output-image", {
+    threadId: ThreadId,
+    itemId: TurnItemId,
+    index: NonNegativeInt,
   }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
-    // A cache-key hint only. The server reads the authoritative path from the
-    // project projection before it issues the signed URL.
+    // Cache-key hint only; the project projection supplies the authoritative path.
     path: Schema.optional(ProjectFaviconPath),
   }),
   Schema.TaggedStruct("native-app-icon", {
     app: ToolActivityNativeAppReference,
   }),
-  // An upload a pull request body points at on GitHub. A private repository serves these only
+  // Media a change request body points at on its host. A private repository serves these only
   // to a request that carries a credential, which the client has none of, so the server fetches
-  // them with the `gh` credential the repository at `cwd` authenticates with.
-  Schema.TaggedStruct("github-media", {
+  // them with the credential the host's driver holds for the repository at `cwd`.
+  Schema.TaggedStruct(SOURCE_CONTROL_MEDIA_ASSET, {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
   }),
@@ -77,8 +79,9 @@ export const AssetCreateUrlResult = Schema.Struct({
   sourcePath: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
   ),
-  /** Pixel size read from the image header, so a client can reserve the exact box before the bytes arrive. */
   imageDimensions: Schema.optional(AssetImageDimensions),
+  /** Changes only when the file's contents or identity change, unlike `relativeUrl`, which is re-signed on every mint. */
+  fileRevision: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
 });
 export type AssetCreateUrlResult = typeof AssetCreateUrlResult.Type;
 
@@ -187,8 +190,6 @@ export class AssetPreviewTypeValidationError extends Schema.TaggedError<AssetPre
   },
 ) {
   override get message(): string {
-    // Draft resources serve absolute paths through the same host-media
-    // validation as media files, so they share its message.
     return this.resource._tag === "media-file" || this.resource._tag === "draft-workspace-file"
       ? "Only images, videos, audio, HTML, and PDF files can be previewed."
       : "Only browser documents and images can be previewed.";
@@ -213,12 +214,16 @@ export class AssetWorkspaceAssetNotFoundError extends Schema.TaggedError<AssetWo
   "AssetWorkspaceAssetNotFoundError",
   {
     resource: AssetResource,
+    // Absolute path after home/workspace resolution; absent on older servers.
+    checkedPath: Schema.optionalKey(Schema.String),
   },
 ) {
   override get message(): string {
     return this.resource._tag === "media-file"
       ? "Media file was not found."
-      : "Workspace asset was not found.";
+      : this.resource._tag === "tool-output-image"
+        ? "Tool output image was not found."
+        : "Workspace asset was not found.";
   }
 }
 
@@ -292,12 +297,13 @@ export class AssetSigningKeyLoadError extends Schema.TaggedError<AssetSigningKey
   }
 }
 
-export class AssetGitHubMediaUrlValidationError extends Schema.TaggedError<AssetGitHubMediaUrlValidationError>()(
+// The tag predates the rename and stays: clients on either side of an update decode it.
+export class AssetSourceControlMediaUrlValidationError extends Schema.TaggedError<AssetSourceControlMediaUrlValidationError>()(
   "AssetGitHubMediaUrlValidationError",
   {},
 ) {
   override get message(): string {
-    return "Only media hosted by GitHub can be fetched with a GitHub credential.";
+    return "Only media a source control host keeps behind a credential can be fetched with one.";
   }
 }
 
@@ -314,7 +320,7 @@ export const AssetAccessError = Schema.Union([
   AssetProjectFaviconResolutionError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
-  AssetGitHubMediaUrlValidationError,
+  AssetSourceControlMediaUrlValidationError,
   AssetSigningKeyLoadError,
 ]);
 export type AssetAccessError = typeof AssetAccessError.Type;

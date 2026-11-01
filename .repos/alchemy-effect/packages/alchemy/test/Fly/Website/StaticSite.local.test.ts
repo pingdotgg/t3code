@@ -14,41 +14,45 @@ const fixtureDir = pathe.resolve(
 );
 const tempRoot = pathe.resolve(import.meta.dirname, "../../../.tmp");
 
-describe("Fly.Website.StaticSite local", () => {
-  test.provider(
-    "dev builds and serves outdir locally with no cloud resources",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe(
+  "Fly.Website.StaticSite local",
+  { tags: ["provider:fly", "provider:fly:website", "local"] },
+  () => {
+    test.provider(
+      "dev builds and serves outdir locally with no cloud resources",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const cwd = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-staticsite-fly-local-",
-          tempRoot,
-          entries: ["src", "build.sh"],
-        });
+          const cwd = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-staticsite-fly-local-",
+            tempRoot,
+            entries: ["src", "build.sh"],
+          });
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const site = yield* Fly.Website.StaticSite("Blog", {
-              path: cwd,
-              build: { command: "bash build.sh", output: "dist" },
-            });
-            return { site };
-          }),
-        );
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const site = yield* Fly.Website.StaticSite("Blog", {
+                path: cwd,
+                build: { command: "bash build.sh", output: "dist" },
+              });
+              return { site };
+            }),
+          );
 
-        const url = deployed.site.url;
-        expect(url).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/);
-        expect(deployed.site.service).toBeUndefined();
-        expect(deployed.site.app).toBeUndefined();
+          const url = deployed.site.url;
+          expect(url).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/);
+          expect(deployed.site.service).toBeUndefined();
+          expect(deployed.site.app).toBeUndefined();
 
-        yield* expectUrlContains(`${url}/`, "StaticSite fixture v1", {
-          timeout: "90 seconds",
-          label: "dev staticsite index",
-        });
+          yield* expectUrlContains(`${url}/`, "StaticSite fixture v1", {
+            timeout: "90 seconds",
+            label: "dev staticsite index",
+          });
 
-        yield* stack.destroy();
-      }),
-    { timeout: 120_000 },
-  );
-});
+          yield* stack.destroy();
+        }),
+      { timeout: 120_000 },
+    );
+  },
+);

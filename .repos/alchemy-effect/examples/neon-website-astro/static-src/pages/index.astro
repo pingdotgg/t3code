@@ -1,0 +1,24 @@
+---
+import "../../src/styles/global.css";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Static Astro on Neon</title>
+  </head>
+  <body class="bg-slate-50 p-8 text-slate-900">
+    <h1 class="text-3xl font-bold">Static Astro on Neon</h1>
+    <p>This entire page is rendered at build time.</p>
+    <button type="button" id="counter">count: 0</button>
+    <a href="/example.json">Static JSON asset</a>
+    <script>
+      let count = 0;
+      const button = document.querySelector<HTMLButtonElement>("#counter")!;
+      button.addEventListener("click", () => {
+        button.textContent = `count: ${++count}`;
+      });
+    </script>
+  </body>
+</html>

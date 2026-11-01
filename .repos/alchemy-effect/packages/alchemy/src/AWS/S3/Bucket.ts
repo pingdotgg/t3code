@@ -9,11 +9,14 @@ import * as Order from "effect/Order";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
+import { createHash } from "node:crypto";
 import type { ScopedPlanStatusSession } from "../../Report.ts";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource, type ResourceBinding } from "../../Resource.ts";
+import { Stack } from "../../Stack.ts";
+import { isActionState, State } from "../../State/State.ts";
 import { diffTags } from "../../Tags.ts";
 import { AWSEnvironment, type AccountID } from "../Environment.ts";
 import { durationToDays } from "../IAM/common.ts";
@@ -251,10 +254,16 @@ export interface Bucket extends Resource<
      * AWS account ID that owns the bucket.
      */
     accountId: AccountID;
+    /**
+     * Notification configuration requested through bindings, retained for drift
+     * detection when binding outputs are unresolved during planning.
+     */
+    managedNotificationConfiguration?: s3.NotificationConfiguration;
   },
   {
     /**
-     * Notification configuration for the bucket.
+     * Notification configuration for the bucket. Alchemy assigns stable target
+     * IDs and reconciles Lambda, queue, topic, and EventBridge bindings.
      */
     notificationConfiguration?: s3.NotificationConfiguration;
     /**
@@ -451,8 +460,13 @@ export interface Bucket extends Resource<
  * ```
  *
  * ### Event Notifications
- * Subscribe to bucket events from the init phase. The subscription
- * and Lambda invoke permissions are created automatically.
+ * Subscribe to bucket events from the init phase. The runtime binding creates
+ * the delivery permissions: Lambda invokes directly, while servers consume an SQS queue.
+ *
+ * Notification bindings reconcile Lambda, SQS, SNS, and EventBridge destinations.
+ * Removing a binding removes the targets Alchemy manages while preserving external
+ * configurations, including identical pre-existing targets. EventBridge ownership
+ * is recorded in a reserved bucket tag so interrupted deployments can recover.
  *
  * **Example:** Process object creation events
  * ```typescript
@@ -688,7 +702,16 @@ export const BucketProvider = () =>
           Effect.map((r) =>
             Object.fromEntries((r.TagSet ?? []).map((t) => [t.Key!, t.Value!])),
           ),
-          Effect.catchTag("NoSuchTagSet", () => Effect.succeed({})),
+          Effect.catchTag("NoSuchTagSet", () =>
+            Effect.succeed<Record<string, string>>({}),
+          ),
+        );
+
+      const eventBridgeOwnerTag = "alchemy:notifications:eventbridge";
+      const notificationOwner = (bucketName: string) =>
+        Effect.sync(
+          () =>
+            `alchemy-notification-${createHash("sha256").update(bucketName).digest("hex").slice(0, 16)}-`,
         );
 
       const syncBucketTags = Effect.fn(function* ({
@@ -708,7 +731,11 @@ export const BucketProvider = () =>
         // correctly even after a cold-start adoption (where olds.tags
         // equals news.tags and would otherwise look like a no-op).
         const previousTags = oldTags ?? (yield* fetchBucketTags(bucketName));
-        const desiredTags = newTags ?? {};
+        const desiredTags = { ...newTags };
+        delete desiredTags[eventBridgeOwnerTag];
+        if (previousTags[eventBridgeOwnerTag]) {
+          desiredTags[eventBridgeOwnerTag] = previousTags[eventBridgeOwnerTag];
+        }
         const { removed, upsert } = diffTags(previousTags, desiredTags);
         const canSkip = oldTags !== undefined;
 
@@ -814,73 +841,274 @@ export const BucketProvider = () =>
         yield* session.note(`Removed bucket policy: ${bucketName}`);
       });
 
-      // Apply S3 event notification configuration declared via bindings
-      // (e.g. `S3.consumeBucketEvents(bucket, handler)`). Without this the
-      // binding is recorded in state but never reaches the bucket, so no
-      // events are ever delivered.
-      // Canonical form of the Lambda targets, ignoring S3-assigned `Id`s and
-      // event ordering, so drift detection doesn't churn across deploys.
-      const canonicalLambda = (
-        configs: readonly s3.LambdaFunctionConfiguration[],
-      ) =>
-        JSON.stringify(
-          Arr.map(configs, (c) => ({
-            arn: c.LambdaFunctionArn,
-            events: Arr.sort(c.Events ?? [], Order.String),
-            filter: c.Filter ?? null,
-          })),
+      type NotificationTarget =
+        | s3.LambdaFunctionConfiguration
+        | s3.QueueConfiguration
+        | s3.TopicConfiguration;
+      const notificationTargetKey = (target: NotificationTarget) =>
+        JSON.stringify({
+          arn:
+            "LambdaFunctionArn" in target
+              ? target.LambdaFunctionArn
+              : "QueueArn" in target
+                ? target.QueueArn
+                : target.TopicArn,
+          events: [...(target.Events ?? [])].sort(),
+          filter: (target.Filter?.Key?.FilterRules ?? [])
+            .map((rule) => [rule.Name?.toLowerCase(), rule.Value])
+            .sort(([a, av], [b, bv]) =>
+              `${a}:${av}`.localeCompare(`${b}:${bv}`),
+            ),
+        });
+      const readManagedNotifications = Effect.fn(function* (
+        fqn: string,
+        instanceId: string,
+        output: Bucket["Attributes"] | undefined,
+      ) {
+        if (!output || output.managedNotificationConfiguration !== undefined) {
+          return output?.managedNotificationConfiguration;
+        }
+        const stack = yield* Stack;
+        const state = yield* yield* State;
+        const row = yield* state.get({
+          stack: stack.name,
+          stage: stack.stage,
+          fqn,
+        });
+        if (
+          !row ||
+          isActionState(row) ||
+          row.resourceType !== "AWS.S3.Bucket" ||
+          row.fqn !== fqn ||
+          row.instanceId !== instanceId ||
+          row.attr?.bucketName !== output.bucketName ||
+          (row.status !== "created" &&
+            row.status !== "updated" &&
+            row.status !== "replaced" &&
+            row.status !== "updating") ||
+          (row.status === "updating" && row.adopting)
+        ) {
+          return undefined;
+        }
+        // An updating row contains the new bindings; only its old snapshot proves ownership.
+        const previous = row.status === "updating" ? row.old : row;
+        if (
+          previous.attr?.bucketName !== output.bucketName ||
+          previous.attr?.bucketArn !== output.bucketArn ||
+          previous.attr?.accountId !== output.accountId ||
+          previous.attr?.region !== output.region
+        ) {
+          return undefined;
+        }
+        const managed: s3.NotificationConfiguration | undefined =
+          previous.attr.managedNotificationConfiguration;
+        if (managed !== undefined) return managed;
+        const bindings: ResourceBinding<Bucket["Binding"]>[] =
+          previous.bindings ?? [];
+        if (!isResolved(bindings)) return undefined;
+        const legacy = bindings.flatMap(
+          ({ data }) =>
+            data.notificationConfiguration?.LambdaFunctionConfigurations ?? [],
         );
-
+        if (legacy.length === 0) return undefined;
+        const observed = yield* s3.getBucketNotificationConfiguration({
+          Bucket: output.bucketName,
+        });
+        return {
+          LambdaFunctionConfigurations: (
+            observed.LambdaFunctionConfigurations ?? []
+          ).filter((target) =>
+            legacy.some(
+              (old) =>
+                (old.Id === undefined || old.Id === target.Id) &&
+                notificationTargetKey(old) === notificationTargetKey(target),
+            ),
+          ),
+        } satisfies s3.NotificationConfiguration;
+      });
+      const notificationKey = (config: s3.NotificationConfiguration) => {
+        const targets = (values: NotificationTarget[] = []) =>
+          values
+            .map(
+              (target) => `${target.Id ?? ""}:${notificationTargetKey(target)}`,
+            )
+            .sort();
+        return JSON.stringify({
+          lambda: targets(config.LambdaFunctionConfigurations),
+          queue: targets(config.QueueConfigurations),
+          topic: targets(config.TopicConfigurations),
+          eventBridge: config.EventBridgeConfiguration !== undefined,
+        });
+      };
+      const desiredNotifications = (
+        bindings: ResourceBinding<Bucket["Binding"]>[],
+        owner: string,
+      ) =>
+        Effect.sync(() => {
+          const desired: s3.NotificationConfiguration = {
+            LambdaFunctionConfigurations: [],
+            QueueConfigurations: [],
+            TopicConfigurations: [],
+          };
+          for (const { sid, data } of bindings) {
+            const config = data.notificationConfiguration;
+            if (!config) continue;
+            const target = <T extends NotificationTarget>(value: T): T => ({
+              ...value,
+              Id: `${owner}${createHash("sha256")
+                .update(
+                  JSON.stringify([
+                    sid,
+                    value.Id ?? notificationTargetKey(value),
+                  ]),
+                )
+                .digest("hex")}`,
+            });
+            desired.LambdaFunctionConfigurations!.push(
+              ...(config.LambdaFunctionConfigurations ?? []).map(target),
+            );
+            desired.QueueConfigurations!.push(
+              ...(config.QueueConfigurations ?? []).map(target),
+            );
+            desired.TopicConfigurations!.push(
+              ...(config.TopicConfigurations ?? []).map(target),
+            );
+            if (config.EventBridgeConfiguration !== undefined) {
+              desired.EventBridgeConfiguration = {};
+            }
+          }
+          return desired;
+        });
+      const mergeNotifications = (
+        existing: s3.NotificationConfiguration,
+        desired: s3.NotificationConfiguration,
+        previous: s3.NotificationConfiguration | undefined,
+        owner: string,
+        ownsEventBridge: boolean,
+      ): s3.NotificationConfiguration => {
+        const targets = <T extends NotificationTarget>(
+          observed: T[] = [],
+          wanted: T[] = [],
+          managed: T[] = [],
+        ): T[] => {
+          const managedIds = new Set(
+            managed.flatMap((target) => (target.Id ? [target.Id] : [])),
+          );
+          const external = observed.filter(
+            (target) =>
+              !(
+                target.Id?.startsWith(owner) &&
+                /^[0-9a-f]{64}$/.test(target.Id.slice(owner.length))
+              ) && !managedIds.has(target.Id ?? ""),
+          );
+          const satisfied = new Set(external.map(notificationTargetKey));
+          return [
+            ...external,
+            ...[...wanted]
+              .sort((a, b) => (a.Id ?? "").localeCompare(b.Id ?? ""))
+              .filter((target) => {
+                const key = notificationTargetKey(target);
+                if (satisfied.has(key)) return false;
+                satisfied.add(key);
+                return true;
+              }),
+          ];
+        };
+        return {
+          LambdaFunctionConfigurations: targets(
+            existing.LambdaFunctionConfigurations,
+            desired.LambdaFunctionConfigurations,
+            previous?.LambdaFunctionConfigurations,
+          ),
+          QueueConfigurations: targets(
+            existing.QueueConfigurations,
+            desired.QueueConfigurations,
+            previous?.QueueConfigurations,
+          ),
+          TopicConfigurations: targets(
+            existing.TopicConfigurations,
+            desired.TopicConfigurations,
+            previous?.TopicConfigurations,
+          ),
+          ...(desired.EventBridgeConfiguration !== undefined ||
+          (existing.EventBridgeConfiguration !== undefined && !ownsEventBridge)
+            ? { EventBridgeConfiguration: {} }
+            : {}),
+        };
+      };
       const syncBucketNotifications = Effect.fn(function* ({
         bucketName,
         bindings,
+        previous,
         session,
         operation,
       }: {
         bucketName: string;
         session: ScopedPlanStatusSession;
         bindings: ResourceBinding<Bucket["Binding"]>[];
+        previous: s3.NotificationConfiguration | undefined;
         operation: "create" | "update";
       }) {
-        const desired = Arr.flatMap(
-          bindings,
-          (binding) =>
-            binding.data.notificationConfiguration
-              ?.LambdaFunctionConfigurations ?? [],
-        );
-
-        // Nothing declared — leave any externally-managed config untouched.
-        if (Arr.isReadonlyArrayEmpty(desired)) return;
-
+        const owner = yield* notificationOwner(bucketName);
+        const desired = yield* desiredNotifications(bindings, owner);
         const existing = yield* s3.getBucketNotificationConfiguration({
           Bucket: bucketName,
         });
-
+        const tags = yield* fetchBucketTags(bucketName);
+        let ownsEventBridge = tags[eventBridgeOwnerTag] === owner;
         if (
-          canonicalLambda(existing.LambdaFunctionConfigurations ?? []) ===
-          canonicalLambda(desired)
+          desired.EventBridgeConfiguration !== undefined &&
+          existing.EventBridgeConfiguration === undefined &&
+          !ownsEventBridge
         ) {
-          return;
+          // Record ownership before enabling so interrupted writes remain recoverable.
+          yield* s3.putBucketTagging({
+            Bucket: bucketName,
+            Tagging: {
+              TagSet: Object.entries({
+                ...tags,
+                [eventBridgeOwnerTag]: owner,
+              }).map(([Key, Value]) => ({ Key, Value })),
+            },
+          });
+          ownsEventBridge = true;
         }
-
-        yield* Effect.logInfo(
-          `S3 Bucket ${operation}: applying notification configuration to ${bucketName}`,
+        const next = mergeNotifications(
+          existing,
+          desired,
+          previous,
+          owner,
+          ownsEventBridge,
         );
-        yield* s3.putBucketNotificationConfiguration({
-          Bucket: bucketName,
-          // Preserve any Topic/Queues/EventBridge config already on the bucket;
-          // only manage the Lambda targets declared through bindings.
-          NotificationConfiguration: {
-            ...existing,
-            LambdaFunctionConfigurations: desired,
-          },
-          // The Lambda invoke permission is created as a separate resource
-          // that may be applied after this bucket reconcile. Skip S3's
-          // synchronous test-invoke so the PUT doesn't fail on ordering;
-          // the permission exists by the time events are delivered.
-          SkipDestinationValidation: true,
-        });
-        yield* session.note(`Updated bucket notifications: ${bucketName}`);
+        if (notificationKey(existing) !== notificationKey(next)) {
+          yield* Effect.logInfo(
+            `S3 Bucket ${operation}: applying notification configuration to ${bucketName}`,
+          );
+          yield* s3.putBucketNotificationConfiguration({
+            Bucket: bucketName,
+            NotificationConfiguration: next,
+            // Destination policies can reconcile later in the same binding cycle.
+            SkipDestinationValidation: true,
+          });
+          yield* session.note(`Updated bucket notifications: ${bucketName}`);
+        }
+        if (desired.EventBridgeConfiguration === undefined && ownsEventBridge) {
+          delete tags[eventBridgeOwnerTag];
+          if (Object.keys(tags).length > 0) {
+            yield* s3.putBucketTagging({
+              Bucket: bucketName,
+              Tagging: {
+                TagSet: Object.entries(tags).map(([Key, Value]) => ({
+                  Key,
+                  Value,
+                })),
+              },
+            });
+          } else {
+            yield* s3.deleteBucketTagging({ Bucket: bucketName });
+          }
+        }
+        return desired;
       });
 
       // ---- Bucket configuration sync helpers ------------------------------
@@ -1414,7 +1642,7 @@ export const BucketProvider = () =>
               ),
             );
           }),
-        read: Effect.fn(function* ({ id, olds, output }) {
+        read: Effect.fn(function* ({ id, fqn, instanceId, olds, output }) {
           const bucketName =
             output?.bucketName ?? (yield* createBucketName(id, olds ?? {}));
           const { accountId, region } = yield* AWSEnvironment.current;
@@ -1436,9 +1664,22 @@ export const BucketProvider = () =>
               `${bucketName}.s3.${region}.amazonaws.com` as const,
             region,
             accountId,
+            managedNotificationConfiguration: yield* readManagedNotifications(
+              fqn,
+              instanceId,
+              output,
+            ),
           };
         }),
-        diff: Effect.fn(function* ({ id, news = {}, olds = {}, output }) {
+        diff: Effect.fn(function* ({
+          id,
+          fqn,
+          instanceId,
+          news = {},
+          olds = {},
+          output,
+          newBindings,
+        }) {
           if (!isResolved(news)) return undefined;
           const oldBucketName = yield* createBucketName(id, olds);
           const newBucketName = yield* createBucketName(id, news);
@@ -1473,11 +1714,59 @@ export const BucketProvider = () =>
             ) {
               return { action: "update" } as const;
             }
+            const previous = yield* readManagedNotifications(
+              fqn,
+              instanceId,
+              output,
+            );
+            if (
+              output.managedNotificationConfiguration === undefined &&
+              previous !== undefined
+            ) {
+              return { action: "update" } as const;
+            }
+            const owner = yield* notificationOwner(output.bucketName);
+            const desired = isResolved(newBindings)
+              ? yield* desiredNotifications(newBindings, owner)
+              : previous;
+            if (desired) {
+              const notifications = yield* s3
+                .getBucketNotificationConfiguration({
+                  Bucket: output.bucketName,
+                })
+                .pipe(
+                  Effect.catchTag("NoSuchBucket", () =>
+                    Effect.succeed(undefined),
+                  ),
+                );
+              const tags: Record<string, string> = notifications
+                ? yield* fetchBucketTags(output.bucketName)
+                : {};
+              if (
+                notifications &&
+                ((desired.EventBridgeConfiguration === undefined &&
+                  tags[eventBridgeOwnerTag] === owner) ||
+                  notificationKey(notifications) !==
+                    notificationKey(
+                      mergeNotifications(
+                        notifications,
+                        desired,
+                        previous,
+                        owner,
+                        tags[eventBridgeOwnerTag] === owner,
+                      ),
+                    ))
+              ) {
+                return { action: "update" } as const;
+              }
+            }
           }
         }),
         precreate: (props) => ensureBucketExists(props),
         reconcile: Effect.fn(function* ({
           id,
+          fqn,
+          instanceId,
           news = {},
           olds,
           output,
@@ -1597,18 +1886,24 @@ export const BucketProvider = () =>
             operation,
           });
 
-          yield* syncBucketNotifications({
-            bucketName: resolved.bucketName,
-            bindings,
-            session,
-            operation,
-          });
+          const managedNotificationConfiguration =
+            yield* syncBucketNotifications({
+              bucketName: resolved.bucketName,
+              bindings,
+              previous: yield* readManagedNotifications(
+                fqn,
+                instanceId,
+                output,
+              ),
+              session,
+              operation,
+            });
 
           if (operation === "create") {
             yield* session.note(`Ensured bucket: ${resolved.bucketName}`);
           }
 
-          return resolved;
+          return { ...resolved, managedNotificationConfiguration };
         }),
         delete: Effect.fn(function* ({ olds = {}, output, session, force }) {
           // Whether we are allowed to destroy the bucket's contents.

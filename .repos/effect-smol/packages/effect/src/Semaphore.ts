@@ -159,6 +159,13 @@ export interface Semaphore {
    * **When to use**
    *
    * Use to return every currently taken permit to the semaphore at once.
+   *
+   * **Gotchas**
+   *
+   * This does not stop effects already running with `withPermit` or `withPermits`.
+   * Their permits become available immediately, but those effects still release
+   * their permits when they finish. The resulting available count can then
+   * exceed the semaphore's configured number of permits.
    */
   readonly releaseAll: Effect.Effect<number>
 }
@@ -564,6 +571,13 @@ export const release: {
  *
  * Use to return every currently taken permit to a semaphore at once, typically
  * during cleanup of manual `take` / `release` protocols.
+ *
+ * **Gotchas**
+ *
+ * This does not stop effects already running with `withPermit` or `withPermits`.
+ * Their permits become available immediately, but those effects still release
+ * their permits when they finish. The resulting available count can then
+ * exceed the semaphore's configured number of permits.
  *
  * @see {@link release} for releasing a known permit count
  * @see {@link withPermits} for automatic acquire and release around an effect

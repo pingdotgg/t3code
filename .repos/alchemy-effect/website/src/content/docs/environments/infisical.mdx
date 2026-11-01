@@ -1,0 +1,82 @@
+---
+title: Infisical
+description: Load an Infisical environment into your Stack — a machine identity on your machine, the platform's own OIDC token in CI.
+---
+
+[Infisical](https://infisical.com) keeps secrets in projects, split
+into environments with folders inside each. `Infisical.Secrets`
+downloads one folder, with
+[secret references](https://infisical.com/docs/documentation/platform/secret-reference)
+expanded on the server, into the stack's
+[secret providers](/environments/secret-providers). It works exactly
+like [Doppler](/environments/doppler); this page covers only what
+differs.
+
+```typescript
+import * as Infisical from "alchemy/Infisical";
+
+secrets: [
+  Infisical.Secrets(({ stage }) => ({
+    project: "my-app",
+    environment: stage === "prod" ? "prod" : "dev",
+    path: "/api",
+  })),
+],
+```
+
+`project` is the project's slug, or its id with a user token, since
+Infisical only resolves slugs for machine identities. `environment`
+is the environment slug. Optional `path`, `recursive`, and
+`includeImports` narrow or widen what is read; imports are on by
+default and a secret defined directly in the folder wins over an
+imported one.
+
+## Connect your account
+
+Alchemy authenticates with an Infisical machine identity or user token. Create a
+[machine identity](https://infisical.com/docs/documentation/platform/identities/machine-identities)
+for yourself with
+[Universal Auth](https://infisical.com/docs/documentation/platform/identities/universal-auth),
+read access to your dev project, and a client secret.
+Then run `alchemy profile edit --add Infisical` and choose
+**Machine identity**; every command afterwards exchanges it for a
+fresh access token. The client secret remains subject to its configured
+expiry and use limits. **User token** takes the ten-day token
+from the dashboard's account menu instead. Both accept an API URL for
+the [EU cloud](https://eu.infisical.com) or a self-hosted instance.
+
+```sh
+alchemy profile edit --add Infisical --method universal-auth \
+  --set clientId=env:INFISICAL_CLIENT_ID \
+  --set clientSecret=env:INFISICAL_CLIENT_SECRET
+```
+
+## In CI
+
+Set `INFISICAL_TOKEN` to a ready access token, or `INFISICAL_IDENTITY_ID`
+to a machine identity whose
+[OIDC auth](https://infisical.com/docs/documentation/platform/identities/oidc-auth/general)
+trusts your platform:
+
+```yaml
+jobs:
+  deploy:
+    permissions:
+      id-token: write   # lets the job request an OIDC token
+      contents: read
+    steps:
+      - run: bun alchemy deploy --stage prod --yes
+        env:
+          INFISICAL_IDENTITY_ID: ${{ vars.INFISICAL_IDENTITY_ID }}
+```
+
+Platform detection, precedence, and the `INFISICAL_OIDC_TOKEN` and
+`INFISICAL_OIDC_AUDIENCE` overrides match
+[Doppler's](/environments/doppler#in-ci). `INFISICAL_API_URL` selects
+the EU cloud or a self-hosted instance in either mode.
+
+## Where next
+
+- [Secret providers](/environments/secret-providers) — ordering, mixing sources, and per-stage callbacks.
+- [Profiles](/environments/profiles) — where the machine identity lives.
+- [Infisical docs](https://infisical.com/docs) — projects, environments, and access policies.

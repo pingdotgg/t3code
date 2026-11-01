@@ -1,28 +1,12 @@
 import type { ComponentProps } from "react";
 
-import { ThemedSwitch } from "../../../components/ThemedSwitch";
-import { SettingsControlRow } from "./SettingsControlRow";
+import { ListToggleRow } from "../../../components/ui/ListToggleRow";
 
-export function SettingsSwitchRow(
-  props: Omit<ComponentProps<typeof SettingsControlRow>, "children"> & {
-    readonly value: boolean;
-    readonly onValueChange: (value: boolean) => void;
-  },
-) {
-  return (
-    <SettingsControlRow
-      disabled={props.disabled}
-      icon={props.icon}
-      label={props.label}
-      subtitle={props.subtitle}
-    >
-      <ThemedSwitch
-        style={{ alignSelf: "center" }}
-        accessibilityLabel={props.label}
-        disabled={props.disabled}
-        onValueChange={props.onValueChange}
-        value={props.value}
-      />
-    </SettingsControlRow>
-  );
+export function SettingsSwitchRow({
+  subtitle,
+  ...props
+}: Omit<ComponentProps<typeof ListToggleRow>, "description"> & {
+  readonly subtitle?: string;
+}) {
+  return <ListToggleRow {...props} description={subtitle} />;
 }

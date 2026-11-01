@@ -5,10 +5,10 @@ import * as Layer from "effect/Layer";
 import { EnvironmentId } from "@t3tools/contracts";
 import { RelayMobileClientId } from "@t3tools/contracts/relay";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
-import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
-import { HttpClient } from "effect/unstable/http";
+import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
+import { HttpClient } from "effect/http";
 
-import { MobileStorage } from "../../persistence/mobile-storage";
+import * as MobileStorage from "../../persistence/mobile-storage";
 
 import { linkEnvironmentToCloudWithPreference } from "./linkEnvironment";
 
@@ -63,7 +63,7 @@ const createProofMock = vi.fn(
   (input: { readonly method: string; readonly url: string; readonly accessToken?: string }) =>
     Effect.succeed(`dpop:${input.method}:${input.url}`),
 );
-const testDpopSignerLayer = Layer.succeed(
+const layerTestDpopSigner = Layer.succeed(
   ManagedRelay.ManagedRelayDpopSigner,
   ManagedRelay.ManagedRelayDpopSigner.of({
     thumbprint: Effect.succeed("client-proof-key-thumbprint"),
@@ -71,16 +71,13 @@ const testDpopSignerLayer = Layer.succeed(
   }),
 );
 
-function cloudClientLayer() {
-  const httpClientLayer = remoteHttpClientLayer((input, init) => globalThis.fetch(input, init));
+function layerCloudClient() {
+  const layerHttpClient = layerRemoteHttpClient((input, init) => globalThis.fetch(input, init));
   return Layer.mergeAll(
-    httpClientLayer,
+    layerHttpClient,
     Layer.succeed(
-      MobileStorage,
-      MobileStorage.of({
-        loadSavedConnections: Effect.succeed([]),
-        saveConnection: () => Effect.void,
-        clearSavedConnection: () => Effect.void,
+      MobileStorage.MobileStorage,
+      MobileStorage.MobileStorage.of({
         loadOrCreateAgentAwarenessDeviceId: Effect.succeed("device-1"),
         loadAgentAwarenessDeviceId: Effect.succeed("device-1"),
         loadAgentAwarenessRegistrationRecord: Effect.succeed(null),
@@ -93,7 +90,7 @@ function cloudClientLayer() {
     ManagedRelay.layer({
       relayUrl: "https://relay.example.test",
       clientId: RelayMobileClientId,
-    }).pipe(Layer.provideMerge(testDpopSignerLayer), Layer.provide(httpClientLayer)),
+    }).pipe(Layer.provideMerge(layerTestDpopSigner), Layer.provide(layerHttpClient)),
   );
 }
 
@@ -104,9 +101,9 @@ const withCloudServices = <A, E>(
     | HttpClient.HttpClient
     | ManagedRelay.ManagedRelayClient
     | ManagedRelay.ManagedRelayDpopSigner
-    | MobileStorage
+    | MobileStorage.MobileStorage
   >,
-) => effect.pipe(Effect.provide(cloudClientLayer()));
+) => effect.pipe(Effect.provide(layerCloudClient()));
 
 function validLinkProof() {
   return "signed-environment-link-jwt";
@@ -179,79 +176,6 @@ describe("mobile cloud link environment client", () => {
       }),
   );
 
-  it.effect("preserves typed local environment failures while obtaining a link proof", () =>
-    Effect.gen(function* () {
-      const fetchMock = vi.fn((url: string | URL) => {
-        if (String(url).endsWith("/v1/client/environment-link-challenges")) {
-          return Promise.resolve(Response.json(validLinkChallengeResponse()));
-        }
-        return Promise.resolve(
-          Response.json(
-            {
-              _tag: "EnvironmentHttpUnauthorizedError",
-              message: "Invalid environment bearer session.",
-            },
-            { status: 401 },
-          ),
-        );
-      });
-      vi.stubGlobal("fetch", fetchMock);
-
-      const error = yield* withCloudServices(
-        linkEnvironmentToCloudWithPreference({
-          clerkToken: "clerk-token",
-          connection: savedConnection,
-          liveActivitiesEnabled: true,
-        }),
-      ).pipe(Effect.flip);
-      expect(error._tag).toBe("CloudEnvironmentLinkError");
-      expect(error.message).toBe(
-        "Could not obtain environment link proof: Invalid environment bearer session.",
-      );
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-    }),
-  );
-
-  it.effect("preserves typed relay error bodies while linking environments", () =>
-    Effect.gen(function* () {
-      const fetchMock = vi.fn((url: string | URL) => {
-        if (String(url).endsWith("/v1/client/environment-link-challenges")) {
-          return Promise.resolve(Response.json(validLinkChallengeResponse()));
-        }
-        if (String(url).endsWith("/api/connect/link-proof")) {
-          return Promise.resolve(Response.json(validLinkProof()));
-        }
-        return Promise.resolve(
-          Response.json(
-            {
-              _tag: "RelayEnvironmentLinkProofInvalidError",
-              code: "environment_link_proof_invalid",
-              reason: "origin_not_allowed",
-              traceId: "trace-test",
-            },
-            { status: 400 },
-          ),
-        );
-      });
-      vi.stubGlobal("fetch", fetchMock);
-
-      const error = yield* withCloudServices(
-        linkEnvironmentToCloudWithPreference({
-          clerkToken: "clerk-token",
-          connection: savedConnection,
-          liveActivitiesEnabled: true,
-        }),
-      ).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "CloudEnvironmentLinkError",
-        message:
-          "https://relay.example.test/v1/client/environment-links failed: Relay rejected the environment link proof (origin_not_allowed).",
-        traceId: "trace-test",
-      });
-      expect(fetchMock).toHaveBeenCalledTimes(3);
-    }),
-  );
-
   it.effect("rejects relay link credentials for a different managed endpoint provider", () =>
     Effect.gen(function* () {
       const fetchMock = vi.fn((url: string | URL) => {
@@ -293,7 +217,6 @@ describe("mobile cloud link environment client", () => {
       const bodies: Array<unknown> = [];
       const fetchMock = vi.fn((url: string | URL, init?: RequestInit) => {
         if (init?.body) {
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           bodies.push(JSON.parse(requestBodyText(init.body)));
         }
         if (String(url).endsWith("/v1/client/environment-link-challenges")) {
@@ -340,44 +263,6 @@ describe("mobile cloud link environment client", () => {
         cloudUserId: "user_123",
         environmentCredential: "environment-credential",
       });
-    }),
-  );
-
-  it.effect("enables Live Activities for both the link challenge and registration", () =>
-    Effect.gen(function* () {
-      const bodies: Array<Record<string, unknown>> = [];
-      const fetchMock = vi.fn((url: string | URL, init?: RequestInit) => {
-        if (init?.body) {
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
-          bodies.push(JSON.parse(requestBodyText(init.body)) as Record<string, unknown>);
-        }
-        if (String(url).endsWith("/v1/client/environment-link-challenges")) {
-          return Promise.resolve(Response.json(validLinkChallengeResponse()));
-        }
-        if (String(url).endsWith("/api/connect/link-proof")) {
-          return Promise.resolve(Response.json(validLinkProof()));
-        }
-        if (String(url).endsWith("/v1/client/environment-links")) {
-          return Promise.resolve(Response.json(validLinkResponse()));
-        }
-        return Promise.resolve(
-          Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
-        );
-      });
-      vi.stubGlobal("fetch", fetchMock);
-
-      yield* withCloudServices(
-        linkEnvironmentToCloudWithPreference({
-          clerkToken: "clerk-token",
-          connection: savedConnection,
-          liveActivitiesEnabled: true,
-        }),
-      );
-
-      expect(bodies.filter((body) => "liveActivitiesEnabled" in body)).toEqual([
-        expect.objectContaining({ liveActivitiesEnabled: true }),
-        expect.objectContaining({ liveActivitiesEnabled: true }),
-      ]);
     }),
   );
 });

@@ -2,7 +2,11 @@ import { ConfigError } from "@distilled.cloud/core/errors";
 import { Credentials } from "@distilled.cloud/hetzner";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { resolveProviderConfig } from "../Auth/Resolve.ts";
+import {
+  deferUntilFirstUse,
+  orDieCredentialsUnavailable,
+  resolveProviderConfig,
+} from "../Auth/Resolve.ts";
 import {
   HETZNER_AUTH_PROVIDER_NAME,
   type HetznerAuthConfig,
@@ -28,23 +32,30 @@ export const fromAuthProvider = () =>
   Layer.effect(
     Credentials,
     Effect.gen(function* () {
-      const { profileName, resolve } = yield* resolveProviderConfig<
+      // Defer profile lookup and credential resolution until first use, so
+      // building the provider layers never requires a configured profile.
+      const resolve = yield* resolveProviderConfig<
         HetznerAuthConfig,
         HetznerResolvedCredentials
-      >(HETZNER_AUTH_PROVIDER_NAME);
-
-      return yield* resolve.pipe(
-        Effect.map((creds) => ({
-          token: creds.token,
-          apiBaseUrl: creds.apiBaseUrl,
-        })),
-        Effect.mapError(
-          (e) =>
-            new ConfigError({
-              message: `Failed to resolve Hetzner credentials from ${profileName === undefined ? "the CI environment" : `profile '${profileName}'`}: ${(e as { message?: string }).message ?? String(e)}`,
-            }),
+      >(HETZNER_AUTH_PROVIDER_NAME).pipe(
+        Effect.flatMap(({ profileName, resolve }) =>
+          resolve.pipe(
+            Effect.map((creds) => ({
+              token: creds.token,
+              apiBaseUrl: creds.apiBaseUrl,
+            })),
+            Effect.mapError(
+              (e) =>
+                new ConfigError({
+                  message: `Failed to resolve Hetzner credentials from ${profileName === undefined ? "the CI environment" : `profile '${profileName}'`}: ${(e as { message?: string }).message ?? String(e)}`,
+                }),
+            ),
+          ),
         ),
-        Effect.orDie,
+        deferUntilFirstUse,
+      );
+      return yield* resolve.pipe(
+        orDieCredentialsUnavailable(HETZNER_AUTH_PROVIDER_NAME),
         Effect.cached,
       );
     }),

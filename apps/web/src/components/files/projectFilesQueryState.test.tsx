@@ -1,12 +1,33 @@
 import {
+  AuthFilesystemReadScope,
   EnvironmentId,
-  type ProjectListEntriesResult,
+  type AuthSessionState,
   ProjectReadFileError,
   type ProjectReadFileResult,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+const authorizationMocks = vi.hoisted(() => ({
+  sessionAtom: null as Atom.Atom<
+    AsyncResult.AsyncResult<Pick<AuthSessionState, "authenticated" | "scopes">, Error>
+  > | null,
+  phase: "connected" as "connected" | "offline",
+}));
+
+vi.mock("~/state/session", () => ({
+  environmentSession: { sessionStateAtom: () => authorizationMocks.sessionAtom },
+}));
+
+vi.mock("~/state/presentation", () => ({
+  useEnvironmentPresentation: () => ({
+    isReady: true,
+    presentation: { connection: { phase: authorizationMocks.phase, error: null } },
+  }),
+}));
 
 const projectMocks = vi.hoisted(() => ({
   listEntries: vi.fn(),
@@ -63,6 +84,7 @@ vi.mock("react", async (importOriginal) => {
     ...actual,
     useCallback: reactHooks.useCallback,
     useEffect: reactHooks.useEffect,
+    useMemo: <A,>(factory: () => A) => factory(),
     useRef: reactHooks.useRef,
   };
 });
@@ -97,13 +119,6 @@ function file(contents: string): ProjectReadFileResult {
   };
 }
 
-function projectEntries(paths: readonly string[]): ProjectListEntriesResult {
-  return {
-    entries: paths.map((path) => ({ path, kind: "file" })),
-    truncated: false,
-  };
-}
-
 async function flushEffects(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
@@ -112,10 +127,67 @@ async function flushEffects(): Promise<void> {
 
 describe("project query refresh", () => {
   beforeEach(() => {
+    authorizationMocks.sessionAtom = Atom.make(
+      AsyncResult.success({ authenticated: true, scopes: [AuthFilesystemReadScope] }),
+    );
+    authorizationMocks.phase = "connected";
     projectMocks.listEntries.mockReset();
     projectMocks.optimisticFile.mockReset();
     projectMocks.readFile.mockReset();
     reactHooks.reset();
+  });
+
+  it("does not query or expose optimistic file contents without read permission", () => {
+    authorizationMocks.sessionAtom = Atom.make(
+      AsyncResult.success({ authenticated: true, scopes: [] }),
+    );
+    const registry = AtomRegistry.make();
+    atomHooks.registry = registry;
+    projectMocks.optimisticFile.mockReturnValue(Atom.make({ data: file("cached contents") }));
+    try {
+      const query = useProjectFileQuery(environmentId, "/repo", "src/preview.ts");
+      expect(projectMocks.readFile).not.toHaveBeenCalled();
+      expect(query.data).toBeNull();
+      expect(query.error).toBe("This connection cannot read host files.");
+      expect(query.isPending).toBe(false);
+      const entries = useProjectEntriesQuery(environmentId, "/repo");
+      expect(projectMocks.listEntries).not.toHaveBeenCalled();
+      expect(entries.data).toBeNull();
+      expect(entries.error).toBe("This connection cannot read host files.");
+      expect(entries.isPending).toBe(false);
+    } finally {
+      registry.dispose();
+      atomHooks.registry = null;
+    }
+  });
+
+  it("refetches a listing when the workspace mutation changes, not when it is first read", async () => {
+    let fetches = 0;
+    const listing = Atom.make(() => {
+      fetches += 1;
+      return AsyncResult.success({ entries: [], truncated: false });
+    }).pipe(Atom.keepAlive);
+    projectMocks.listEntries.mockReturnValue(listing);
+    const registry = AtomRegistry.make();
+    atomHooks.registry = registry;
+    const read = (mutationId: string | null) =>
+      useProjectEntriesQuery(environmentId, "/repo", "src", mutationId);
+
+    try {
+      read("mutation-1");
+      read("mutation-1");
+      expect(fetches).toBe(1);
+
+      read("mutation-2");
+      // The refetch runs after the render that read the new revision; a reader that is not
+      // subscribed sees it on its next read.
+      await Promise.resolve();
+      read("mutation-2");
+      expect(fetches).toBe(2);
+    } finally {
+      registry.dispose();
+      atomHooks.registry = null;
+    }
   });
 
   it("replaces an in-flight initial read when a workspace mutation arrives", async () => {
@@ -137,6 +209,7 @@ describe("project query refresh", () => {
     const render = (mutationId: string | null) => {
       reactHooks.beginRender();
       const query = useProjectFileQuery(environmentId, "/repo", "src/preview.ts");
+      expect(query.readError).toBeNull();
       renderedContents = query.data?.contents ?? null;
       useWorkspaceMutationRefresh({
         mutationId,
@@ -170,98 +243,28 @@ describe("project query refresh", () => {
     }
   });
 
-  it("revalidates cached entries when a workspace mutation is observed after mounting", async () => {
-    const requests: Array<ReturnType<typeof deferred<ProjectListEntriesResult>>> = [];
-    const entriesAtom = Atom.make(
-      Effect.promise(() => {
-        const request = deferred<ProjectListEntriesResult>();
-        requests.push(request);
-        return request.promise;
-      }),
-    ).pipe(Atom.swr({ staleTime: 30_000, revalidateOnMount: true }));
-    const registry = AtomRegistry.make();
-    const unmount = registry.mount(entriesAtom);
-    projectMocks.listEntries.mockReturnValue(entriesAtom);
-    atomHooks.registry = registry;
-    let renderedPaths: readonly string[] = [];
-
-    const render = (mutationId: string | null) => {
-      reactHooks.beginRender();
-      const query = useProjectEntriesQuery(environmentId, "/repo");
-      renderedPaths = query.data?.entries.map((entry) => entry.path) ?? [];
-      useWorkspaceMutationRefresh({
-        mutationId,
-        refresh: query.refresh,
-        resourceKey: "files:environment-1:/repo",
-      });
-    };
-
-    try {
-      await flushEffects();
-      expect(requests).toHaveLength(1);
-      requests[0]!.resolve(projectEntries(["src/old.ts"]));
-      await flushEffects();
-
-      render("mutation-1");
-      expect(renderedPaths).toEqual(["src/old.ts"]);
-      await flushEffects();
-      expect(requests).toHaveLength(2);
-
-      requests[1]!.resolve(projectEntries(["src/new.ts"]));
-      await flushEffects();
-      render("mutation-1");
-      expect(renderedPaths).toEqual(["src/new.ts"]);
-      expect(requests).toHaveLength(2);
-    } finally {
-      unmount();
-      registry.dispose();
-      atomHooks.registry = null;
-    }
-  });
-
-  it("does not issue a file read for a disabled image preview", async () => {
-    const requests: Array<ReturnType<typeof deferred<ProjectReadFileResult>>> = [];
-    const readAtom = Atom.make(
-      Effect.promise(() => {
-        const request = deferred<ProjectReadFileResult>();
-        requests.push(request);
-        return request.promise;
-      }),
-    );
-    const registry = AtomRegistry.make();
-    projectMocks.readFile.mockReturnValue(readAtom);
-    projectMocks.optimisticFile.mockReturnValue(Atom.make(null));
-    atomHooks.registry = registry;
-
-    try {
-      reactHooks.beginRender();
-      const query = useProjectFileQuery(environmentId, "/repo", "preview.png", false);
-      useWorkspaceMutationRefresh({
-        enabled: false,
-        mutationId: "mutation-1",
-        refresh: query.refresh,
-        resourceKey: "file:environment-1:/repo:preview.png",
-      });
-      await flushEffects();
-
-      expect(projectMocks.readFile).not.toHaveBeenCalled();
-      expect(requests).toHaveLength(0);
-    } finally {
-      registry.dispose();
-      atomHooks.registry = null;
-    }
-  });
-
-  it("reports a directory named like an image as not a file", async () => {
-    const readAtom = Atom.make(
-      Effect.fail(
-        new ProjectReadFileError({
-          cwd: "/repo",
-          relativePath: "assets.png",
-          failure: "path_not_file",
-        }),
-      ),
-    );
+  it("confirms files from reads and preserves that identity until a definitive folder result", () => {
+    const contents = file("# readme");
+    const success = AsyncResult.success(contents);
+    const failure = (kind: ProjectReadFileError["failure"], cached = false) =>
+      AsyncResult.failure(
+        Cause.fail(
+          new ProjectReadFileError({ cwd: "/repo", relativePath: "src/preview.ts", failure: kind }),
+        ),
+        { previousSuccess: cached ? Option.some(success) : Option.none() },
+      );
+    const states = [
+      ["initial read", AsyncResult.initial(true), false, false, null],
+      ["unknown path", failure("operation_failed"), false, false, null],
+      ["binary file", failure("binary_file"), true, false, null],
+      ["read success", success, true, false, contents],
+      ["pending refresh", AsyncResult.waiting(success), true, false, contents],
+      ["transient refresh failure", failure("operation_failed", true), true, false, contents],
+      ["became a folder", failure("path_not_file", true), false, true, contents],
+    ] as const;
+    const readAtom = Atom.make<
+      AsyncResult.AsyncResult<ProjectReadFileResult, ProjectReadFileError>
+    >(AsyncResult.initial(true));
     const registry = AtomRegistry.make();
     const unmount = registry.mount(readAtom);
     projectMocks.readFile.mockReturnValue(readAtom);
@@ -269,40 +272,15 @@ describe("project query refresh", () => {
     atomHooks.registry = registry;
 
     try {
-      await flushEffects();
-      reactHooks.beginRender();
-      const query = useProjectFileQuery(environmentId, "/repo", "assets.png");
-      expect(query.isNotFile).toBe(true);
-      expect(query.data).toBeNull();
-    } finally {
-      unmount();
-      registry.dispose();
-      atomHooks.registry = null;
-    }
-  });
-
-  it("reports a directory read as not a file", async () => {
-    const readAtom = Atom.make(
-      Effect.fail(
-        new ProjectReadFileError({
-          cwd: "/repo",
-          relativePath: ".agents/skills",
-          failure: "path_not_file",
-        }),
-      ),
-    );
-    const registry = AtomRegistry.make();
-    const unmount = registry.mount(readAtom);
-    projectMocks.readFile.mockReturnValue(readAtom);
-    projectMocks.optimisticFile.mockReturnValue(Atom.make(null));
-    atomHooks.registry = registry;
-
-    try {
-      await flushEffects();
-      reactHooks.beginRender();
-      const query = useProjectFileQuery(environmentId, "/repo", ".agents/skills");
-      expect(query.isNotFile).toBe(true);
-      expect(query.data).toBeNull();
+      for (const [label, result, isFile, isNotFile, data] of states) {
+        registry.set(readAtom, result);
+        reactHooks.beginRender();
+        const query = useProjectFileQuery(environmentId, "/repo", "src/preview.ts");
+        expect(query.isFile, label).toBe(isFile);
+        expect(query.isNotFile, label).toBe(isNotFile);
+        expect(query.data, label).toBe(data);
+        expect(query.isPending, label).toBe(result.waiting);
+      }
     } finally {
       unmount();
       registry.dispose();

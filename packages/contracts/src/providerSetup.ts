@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import {
+  EnvironmentId,
   ForwardCompatibleArray,
   ForwardCompatibleOptional,
   IsoDateTime,
@@ -17,14 +18,13 @@ const SetupOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 
 export const ProviderAuthMethod = Schema.Struct({
   id: SetupOperationId,
+  accountEmail: Schema.optional(TrimmedNonEmptyString),
   name: TrimmedNonEmptyString,
   description: Schema.NullOr(Schema.String),
   type: Schema.Literals(["agent", "terminal", "credentials"]),
 });
 export type ProviderAuthMethod = typeof ProviderAuthMethod.Type;
 
-// These describe client interactions, not OAuth grant types. The provider
-// adapter remains responsible for credentials, callbacks, and refresh.
 export const ProviderAuthInteraction = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("browser"),
@@ -86,6 +86,8 @@ export type ProviderAuthResponse = typeof ProviderAuthResponse.Type;
 export const ProviderAuthStartInput = Schema.Struct({
   instanceId: ProviderInstanceId,
   methodId: Schema.optionalKey(SetupOperationId),
+  returnUrl: Schema.optionalKey(Schema.String),
+  callbackMode: Schema.optionalKey(Schema.Literals(["server", "client"])),
 });
 export type ProviderAuthStartInput = typeof ProviderAuthStartInput.Type;
 
@@ -112,8 +114,7 @@ export const ProviderAuthState = Schema.Struct({
   authorizationUrl: Schema.NullOr(Schema.String),
   expiresAt: Schema.NullOr(IsoDateTime),
   message: Schema.NullOr(Schema.String),
-  // Newer servers may add method types, interactions, or owners; older
-  // clients drop what they cannot decode instead of rejecting the state.
+  // Drop unknown auth methods rather than rejecting the entire state.
   methods: Schema.optionalKey(
     ForwardCompatibleArray(ProviderAuthMethod).check(Schema.isMaxLength(32)),
   ),
@@ -153,6 +154,8 @@ export const ProviderInstallState = Schema.Struct({
   totalBytes: Schema.NullOr(ByteCount),
   version: Schema.NullOr(TrimmedNonEmptyString),
   installedVersion: Schema.NullOr(TrimmedNonEmptyString),
+  executablePath: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  source: Schema.optionalKey(Schema.NullOr(Schema.Literals(["managed", "local"]))),
   canRemove: Schema.Boolean,
   message: Schema.NullOr(Schema.String),
 });
@@ -178,3 +181,55 @@ export class ProviderSetupError extends Schema.TaggedError<ProviderSetupError>()
     return this.detail;
   }
 }
+
+export const ChatGptReconnectProfile = Schema.Struct({
+  clientId: Schema.String.check(Schema.isPattern(/^oaiapp_[\w-]+$/u)),
+  subject: Schema.optionalKey(Schema.String),
+  email: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  redirectUri: Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(/^http:\/\/(?:127\.0\.0\.1|localhost):[1-9]\d{0,4}\/auth\/callback$/u),
+    ),
+  ),
+  connectionLabel: Schema.optionalKey(Schema.String),
+  sharingEnabled: Schema.optionalKey(Schema.Boolean),
+  idTokenHint: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(16_384))),
+});
+export type ChatGptReconnectProfile = typeof ChatGptReconnectProfile.Type;
+export const ChatGptTransferredProfile = Schema.Struct({
+  registration: ChatGptReconnectProfile,
+  credentials: Schema.Struct({
+    clientId: Schema.String,
+    accessToken: Schema.NonEmptyString.check(Schema.isMaxLength(16_384)),
+    refreshToken: Schema.NullOr(Schema.String.check(Schema.isMaxLength(16_384))),
+    idToken: Schema.NonEmptyString.check(Schema.isMaxLength(16_384)),
+    issuer: Schema.String,
+    expiresAt: Schema.Finite,
+    earliestRefreshAt: Schema.NullOr(Schema.Finite),
+    scopes: Schema.Array(Schema.String),
+    subject: Schema.String,
+    email: Schema.NullOr(Schema.String),
+  }),
+});
+export type ChatGptTransferredProfile = typeof ChatGptTransferredProfile.Type;
+export const ChatGptReconnectProfileInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  methodId: Schema.String,
+});
+export const ChatGptImportProfileInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  profile: ChatGptTransferredProfile,
+});
+export const ChatGptHandoffInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  environmentId: EnvironmentId,
+  attemptId: Schema.String.check(Schema.isMaxLength(128)),
+  returnUrl: Schema.String.check(Schema.isMaxLength(4_096)),
+  profile: Schema.NullOr(ChatGptReconnectProfile),
+});
+export type ChatGptHandoffInput = typeof ChatGptHandoffInput.Type;
+export const ChatGptHandoffState = Schema.Union([
+  Schema.Struct({ phase: Schema.Literal("auth"), state: ProviderAuthState }),
+  Schema.Struct({ phase: Schema.Literal("finished"), profile: ChatGptTransferredProfile }),
+]);
+export type ChatGptHandoffState = typeof ChatGptHandoffState.Type;

@@ -23,6 +23,7 @@ test.provider(
       );
       expect(error._tag).toBe("ModelNotFound");
     }),
+  { tags: ["provider:aws", "provider:aws:sagemaker", "live"] },
 );
 
 const findModel = (modelName: string) =>
@@ -103,5 +104,13 @@ test.provider(
       yield* stack.destroy();
       expect(yield* findModel(replaced.modelName)).toBeUndefined();
     }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:iam",
+      "provider:aws:sagemaker",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );

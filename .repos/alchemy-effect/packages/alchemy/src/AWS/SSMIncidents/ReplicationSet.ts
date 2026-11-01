@@ -4,7 +4,7 @@ import * as incidents from "@distilled.cloud/aws/ssm-incidents";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import type { HttpClient } from "effect/unstable/http/HttpClient";
+import type { HttpClient } from "effect/http/HttpClient";
 import { Unowned } from "../../AdoptPolicy.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";

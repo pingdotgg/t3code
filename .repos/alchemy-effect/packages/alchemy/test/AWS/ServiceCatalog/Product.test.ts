@@ -141,5 +141,13 @@ test.provider(
       yield* stack.destroy();
       yield* assertProductGone(created.productId);
     }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:s3",
+      "provider:aws:servicecatalog",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );

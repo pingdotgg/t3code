@@ -19,9 +19,10 @@ type Ref<T> = T | Effect.Effect<T, never, Providers>;
 /**
  * Fly IP family allocated onto an App. Dedicated `v4` is billed and may
  * be rejected when the org has no IPv4 quota. Prefer `v6` (free) or
- * `shared_v4` (free) in tests.
+ * `shared_v4` (free) in tests. `private_v6` is a Flycast address: it is
+ * reachable only from the organization's private network.
  */
-export type IpAssignmentType = "v4" | "v6" | "shared_v4";
+export type IpAssignmentType = "v4" | "v6" | "shared_v4" | "private_v6";
 
 export interface IpAssignmentProps {
   /**
@@ -32,8 +33,9 @@ export interface IpAssignmentProps {
   /**
    * Address family to allocate. `v6` is a dedicated IPv6 (free).
    * `shared_v4` is a shared Anycast IPv4 (free). `v4` is a dedicated
-   * IPv4 (billed; may 400 when the org is over quota). Changing type
-   * replaces the assignment.
+   * IPv4 (billed; may 400 when the org is over quota). `private_v6` is
+   * a Flycast IPv6 (free) that Fly's proxy serves only inside the
+   * private network. Changing type replaces the assignment.
    */
   type: IpAssignmentType;
   /**
@@ -41,7 +43,8 @@ export interface IpAssignmentProps {
    */
   region?: string;
   /**
-   * Isolated network name. Create-only; changing it replaces.
+   * Private network a `private_v6` address is reachable from. Defaults
+   * to the organization's network. Create-only; changing it replaces.
    */
   network?: string;
   /**
@@ -72,6 +75,12 @@ export type IpAssignment = Resource<
     serviceName: string | undefined;
     /** Whether the address is a shared Anycast IPv4. */
     shared: boolean;
+    /**
+     * Named private network a `private_v6` address is reachable from.
+     * `undefined` for the organization's default network and for public
+     * addresses.
+     */
+    network: string | undefined;
     /** RFC3339 creation timestamp, if the API returned one. */
     createdAt: string | undefined;
   },
@@ -141,6 +150,22 @@ const IpAssignmentResource = Resource<IpAssignment>("Fly.IpAssignment");
  * });
  * ```
  *
+ * ### Flycast (private IPv6)
+ * `private_v6` is a Flycast address. Fly's proxy serves it only inside
+ * the organization's private network, at `{app}.flycast`. It is free.
+ * Use it for a backend that another App calls and the internet must
+ * not reach. Requests still go through the proxy, so blue/green
+ * cordoning, `autostart`, and `autostop` keep working. Allocate no
+ * public address on the same App.
+ *
+ * **Example:** Allocate private_v6
+ * ```typescript
+ * export const Private = Fly.IpAssignment("Private", {
+ *   app: Backend,
+ *   type: "private_v6",
+ * });
+ * ```
+ *
  * ### Region
  * `region` pins a dedicated address. Shared Anycast ignores it. See
  * [Regions](/fly/compute/regions) for the list of codes.
@@ -176,14 +201,15 @@ const IpAssignmentResource = Resource<IpAssignment>("Fly.IpAssignment");
  * :::
  *
  * ### Isolated network
- * `network` is an optional 6PN name. Create-only.
+ * `network` names the private network a `private_v6` address is
+ * reachable from. Create-only.
  *
  * **Example:** Custom network
  * ```typescript
  * export const Private = Fly.IpAssignment("Private", {
- *   app: Site,
- *   type: "v6",
- *   network: "private",
+ *   app: Backend,
+ *   type: "private_v6",
+ *   network: "tenant-a",
  * });
  * ```
  *
@@ -222,6 +248,7 @@ const IpAssignmentResource = Resource<IpAssignment>("Fly.IpAssignment");
  * ```
  *
  * @resource
+ * @product App
  */
 export const IpAssignment: typeof IpAssignmentResource = Object.assign(
   (
@@ -259,7 +286,22 @@ const appNameOf = (value: unknown): string | undefined => {
 };
 
 const asType = (value: string | undefined): IpAssignmentType | undefined =>
-  value === "v4" || value === "v6" || value === "shared_v4" ? value : undefined;
+  value === "v4" ||
+  value === "v6" ||
+  value === "shared_v4" ||
+  value === "private_v6"
+    ? value
+    : undefined;
+
+/**
+ * Fly omits `type` from IP assignment responses. Only Flycast addresses carry
+ * a `network` (its name is empty for the organization's default network).
+ */
+const isFlycast = (assignment: FlyIPAssignment) =>
+  assignment.network !== undefined && assignment.network !== null;
+
+const networkOf = (assignment: FlyIPAssignment) =>
+  assignment.network?.name || undefined;
 
 const inferType = (
   assignment: FlyIPAssignment,
@@ -268,6 +310,7 @@ const inferType = (
   const wire = asType(assignment.type);
   if (wire !== undefined) return wire;
   if (assignment.shared === true) return "shared_v4";
+  if (isFlycast(assignment)) return "private_v6";
   const ip = assignment.ip ?? "";
   if (ip.includes(":")) return "v6";
   if (fallback !== undefined) return fallback;
@@ -287,15 +330,18 @@ const toAttrs = (
     region: assignment.region,
     serviceName: assignment.service_name,
     shared: type === "shared_v4" || assignment.shared === true,
+    network: networkOf(assignment),
     createdAt: assignment.created_at,
   };
 };
 
 const matchesDesired = (
   assignment: FlyIPAssignment,
-  news: Pick<IpAssignmentProps, "type" | "region" | "serviceName">,
+  news: Pick<IpAssignmentProps, "type" | "region" | "serviceName" | "network">,
 ): boolean => {
   if (inferType(assignment, news.type) !== news.type) return false;
+  if (news.type === "private_v6" && networkOf(assignment) !== news.network)
+    return false;
   if (news.region !== undefined && assignment.region !== news.region) {
     return false;
   }
@@ -323,7 +369,7 @@ const findByIp = (appName: string, ip: string) =>
 
 const findMatching = (
   appName: string,
-  news: Pick<IpAssignmentProps, "type" | "region" | "serviceName">,
+  news: Pick<IpAssignmentProps, "type" | "region" | "serviceName" | "network">,
 ) =>
   listAssignments(appName).pipe(
     Effect.map((ips) => ips.find((item) => matchesDesired(item, news))),
@@ -338,6 +384,73 @@ const waitUntilGone = (appName: string, ip: string) =>
       times: 8,
     }),
   );
+
+/** Whether the App has any address reachable from the internet. */
+export const hasPublicAddress = (appName: string) =>
+  listAssignments(appName).pipe(
+    Effect.map((ips) => ips.some((item) => inferType(item) !== "private_v6")),
+  );
+
+/**
+ * Converge the addresses of an App a {@link Service} owns. Every owned App
+ * gets a Flycast address on its private network (the organization's
+ * default network when `network` is omitted). A public App also gets a
+ * shared IPv4 and an IPv6; a private one has every public address
+ * released. All three types are free.
+ */
+export const syncOwnedAppAddresses = Effect.fn(function* (
+  appName: string,
+  isPublic: boolean,
+  network?: string,
+) {
+  const observed = yield* listAssignments(appName);
+  const isDesiredFlycast = (item: FlyIPAssignment) =>
+    inferType(item) === "private_v6" && networkOf(item) === network;
+  if (!observed.some(isDesiredFlycast)) {
+    yield* machines
+      .createAppIPAssignment({ app_name: appName, type: "private_v6", network })
+      .pipe(Effect.catchTag("Conflict", () => Effect.succeed(undefined)));
+  }
+  if (isPublic) {
+    for (const type of ["shared_v4", "v6"] as const) {
+      if (observed.some((item) => inferType(item) === type)) continue;
+      yield* machines
+        .createAppIPAssignment({ app_name: appName, type })
+        .pipe(Effect.catchTag("Conflict", () => Effect.succeed(undefined)));
+    }
+  }
+  // Release public addresses of a private Service and Flycast addresses
+  // on any other network.
+  for (const item of observed) {
+    if (item.ip === undefined || isDesiredFlycast(item)) continue;
+    if (isPublic && inferType(item) !== "private_v6") continue;
+    yield* machines
+      .deleteAppIPAssignment({ app_name: appName, ip: item.ip })
+      .pipe(Effect.catchTag("NotFound", () => Effect.void));
+    yield* waitUntilGone(appName, item.ip);
+  }
+});
+
+/**
+ * Add a Flycast address on `network` to an App a {@link Service} shares,
+ * so bound callers can reach it. Only ever adds; the address is removed
+ * with the App.
+ */
+export const ensureFlycastAddress = Effect.fn(function* (
+  appName: string,
+  network?: string,
+) {
+  const observed = yield* listAssignments(appName);
+  if (
+    observed.some(
+      (item) => inferType(item) === "private_v6" && networkOf(item) === network,
+    )
+  )
+    return;
+  yield* machines
+    .createAppIPAssignment({ app_name: appName, type: "private_v6", network })
+    .pipe(Effect.catchTag("Conflict", () => Effect.succeed(undefined)));
+});
 
 export const IpAssignmentProvider = () =>
   Provider.succeed(IpAssignment, {
@@ -356,9 +469,7 @@ export const IpAssignmentProvider = () =>
         news.serviceName !== undefined &&
         news.serviceName !== output.serviceName;
       const networkChanged =
-        olds !== undefined &&
-        news.network !== undefined &&
-        news.network !== olds.network;
+        news.network !== (olds !== undefined ? olds.network : output.network);
       if (
         appChanged ||
         typeChanged ||

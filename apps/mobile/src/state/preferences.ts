@@ -1,39 +1,34 @@
 import * as Effect from "effect/Effect";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
-import { MobilePreferencesStore, type Preferences } from "../persistence/mobile-preferences";
+import * as MobilePreferences from "../persistence/mobile-preferences";
 import * as Runtime from "../lib/runtime";
 
-export {
-  MobilePreferencesLoadError,
-  MobilePreferencesSaveError,
-  MobilePreferencesStore,
-} from "../persistence/mobile-preferences";
-
 interface OptimisticPreferences {
-  readonly values: Partial<Preferences>;
-  readonly versions: Partial<Record<keyof Preferences, number>>;
+  readonly values: Partial<MobilePreferences.Preferences>;
+  readonly versions: Partial<Record<keyof MobilePreferences.Preferences, number>>;
 }
 
-// A bare function is interpreted by useAtomSet as an update to the command's
-// AsyncResult, not as a preference transform. Keep transforms inside a payload.
+// useAtomSet treats bare functions as AsyncResult updates; wrap preference transforms in payloads.
 type PreferencesUpdate =
-  | Partial<Preferences>
-  | { readonly transform: (current: Preferences) => Partial<Preferences> };
+  | Partial<MobilePreferences.Preferences>
+  | {
+      readonly transform: (
+        current: MobilePreferences.Preferences,
+      ) => Partial<MobilePreferences.Preferences>;
+    };
 
-/**
- * Owns the device preference blob for the lifetime of the app registry.
- * Optimistic patches are kept separately so writes made while persistence is
- * still loading cannot be replaced by the eventual read result.
- */
-export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePreferencesStore>) {
+/** Keep optimistic patches separate so hydration cannot overwrite pending writes. */
+export function createMobilePreferencesState(
+  runtime: Atom.AtomRuntime<MobilePreferences.MobilePreferencesStore>,
+) {
   const storedPreferencesAtom = runtime
     .atom(
-      MobilePreferencesStore.pipe(
+      MobilePreferences.MobilePreferencesStore.pipe(
         Effect.flatMap((store) => store.load),
         Effect.catch((error) =>
           Effect.logWarning("Could not load mobile preferences.", error).pipe(
-            Effect.as<Preferences>({}),
+            Effect.as<MobilePreferences.Preferences>({}),
           ),
         ),
       ),
@@ -44,7 +39,7 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
     Atom.keepAlive,
     Atom.withLabel("mobile:preferences:optimistic-patch"),
   );
-  const confirmedPreferencesAtom = Atom.make<Preferences>({}).pipe(
+  const confirmedPreferencesAtom = Atom.make<MobilePreferences.Preferences>({}).pipe(
     Atom.keepAlive,
     Atom.withLabel("mobile:preferences:confirmed"),
   );
@@ -74,14 +69,14 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
         const version = ++nextPatchVersion;
         const current = get(optimisticPatchAtom);
         const versions = { ...current.versions };
-        for (const key of Object.keys(patch) as Array<keyof Preferences>) {
+        for (const key of Object.keys(patch) as Array<keyof MobilePreferences.Preferences>) {
           versions[key] = version;
         }
         get.set(optimisticPatchAtom, {
           values: { ...current.values, ...patch },
           versions,
         });
-        return MobilePreferencesStore.pipe(
+        return MobilePreferences.MobilePreferencesStore.pipe(
           Effect.flatMap((store) =>
             "transform" in update ? store.update(update.transform) : store.savePatch(patch),
           ),
@@ -91,15 +86,17 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
               const optimistic = get(optimisticPatchAtom);
               const values = { ...optimistic.values } as Record<string, unknown>;
               const currentVersions = { ...optimistic.versions } as Record<string, unknown>;
-              for (const key of Object.keys(patch) as Array<keyof Preferences>) {
+              for (const key of Object.keys(patch) as Array<keyof MobilePreferences.Preferences>) {
                 if (optimistic.versions[key] === version) {
                   delete values[key];
                   delete currentVersions[key];
                 }
               }
               get.set(optimisticPatchAtom, {
-                values: values as Partial<Preferences>,
-                versions: currentVersions as Partial<Record<keyof Preferences, number>>,
+                values: values as Partial<MobilePreferences.Preferences>,
+                versions: currentVersions as Partial<
+                  Record<keyof MobilePreferences.Preferences, number>
+                >,
               });
             }),
           ),
@@ -108,23 +105,23 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
               const optimistic = get(optimisticPatchAtom);
               const values = { ...optimistic.values } as Record<string, unknown>;
               const currentVersions = { ...optimistic.versions } as Record<string, unknown>;
-              for (const key of Object.keys(patch) as Array<keyof Preferences>) {
+              for (const key of Object.keys(patch) as Array<keyof MobilePreferences.Preferences>) {
                 if (optimistic.versions[key] === version) {
                   delete values[key];
                   delete currentVersions[key];
                 }
               }
               get.set(optimisticPatchAtom, {
-                values: values as Partial<Preferences>,
-                versions: currentVersions as Partial<Record<keyof Preferences, number>>,
+                values: values as Partial<MobilePreferences.Preferences>,
+                versions: currentVersions as Partial<
+                  Record<keyof MobilePreferences.Preferences, number>
+                >,
               });
             }),
           ),
         );
       },
-      // The storage layer serializes preference read-modify-write operations.
-      // Keep every invocation alive so one preference update cannot interrupt
-      // another update to a different field in the shared blob.
+      // Storage serializes shared-blob updates; keep concurrent invocations alive to prevent cross-field interruption.
       { concurrent: true },
     )
     .pipe(Atom.keepAlive, Atom.withLabel("mobile:preferences:update"));
@@ -132,8 +129,8 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
   return { preferencesAtom, updatePreferencesAtom } as const;
 }
 
-const mobilePreferencesRuntime = Atom.runtime(Runtime.runtimeContextLayer);
-export const mobilePreferencesState = createMobilePreferencesState(mobilePreferencesRuntime);
+const mobilePreferencesRuntime = Atom.runtime(Runtime.layer);
+const mobilePreferencesState = createMobilePreferencesState(mobilePreferencesRuntime);
 
 export const mobilePreferencesAtom = mobilePreferencesState.preferencesAtom;
 export const updateMobilePreferencesAtom = mobilePreferencesState.updatePreferencesAtom;

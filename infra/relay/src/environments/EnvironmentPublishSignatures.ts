@@ -14,7 +14,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
@@ -56,21 +56,9 @@ export class EnvironmentPublishSignatureInvalid extends Schema.TaggedError<Envir
   }
 }
 
-export class EnvironmentPublishPublicKeyMissing extends Schema.TaggedError<EnvironmentPublishPublicKeyMissing>()(
-  "EnvironmentPublishPublicKeyMissing",
-  {
-    environmentId: Schema.String,
-  },
-) {
-  override get message(): string {
-    return `Environment '${this.environmentId}' has no publish public key`;
-  }
-}
-
 export type EnvironmentPublishSignatureError =
   | EnvironmentPublishSignatureExpired
   | EnvironmentPublishSignatureInvalid
-  | EnvironmentPublishPublicKeyMissing
   | DpopProofs.DpopProofReplayPersistenceError;
 
 export class EnvironmentPublishSignatures extends Context.Service<
@@ -100,7 +88,7 @@ function environmentPublishReplayThumbprintData(input: {
 }
 
 const formatEnvironmentPublishReplayThumbprint = (digest: Uint8Array) =>
-  `env-publish:${Encoding.encodeBase64Url(digest)}`;
+  `env-publish:${Base64Url.encode(digest)}`;
 
 const make = Effect.gen(function* () {
   const proofReplay = yield* DpopProofs.DpopProofReplay;

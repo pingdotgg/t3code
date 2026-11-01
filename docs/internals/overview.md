@@ -20,22 +20,14 @@ method on it. See [environment auth](./environment-auth.md).
 
 ### Pull request linking compatibility
 
-Web, desktop, mobile, and environments upgrade independently. Negotiate linking through the
-environment descriptor, never through a client version or an assumed coordinated release:
+Every protocol-2 environment advertises `threadPullRequests`. Once an environment's server config
+has loaded, clients use persisted `pullRequests[]`, multi-link commands, stack UI, and reverse thread
+lookup. Before that, they hide linking actions.
 
-| Environment capability                | Client behavior                                                                                                   |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `threadPullRequests: true`            | Use persisted `pullRequests[]`, multi-link commands, stack UI, and reverse thread lookup.                         |
-| Only `threadPullRequestLinking: true` | Use `linkedPullRequest` and the existing `thread.meta.update` single-link operation. Do not call multi-link RPCs. |
-| Neither flag                          | Hide linking actions; existing branch-discovered PR display remains available.                                    |
-
-New environments continue advertising the legacy flag, accepting legacy metadata commands, and
-emitting the derived `linkedPullRequest` field for older clients. That hostless field includes only
-links in the thread project's own repository; cross-host and cross-repository links require the
-multi-link protocol. New clients accept snapshots that
-omit `pullRequests`. Retain the legacy wire fields, projection column, and replay support; this feature
-does not schedule their removal. Missing new capabilities must also override cached multi-link data
-after an environment downgrade.
+Environments keep advertising `threadPullRequestLinking`, accepting legacy metadata commands, and
+emitting the derived `linkedPullRequest` field, because older clients still read them. That
+hostless field includes only links in the thread project's own repository. Retain the legacy wire
+fields, projection column, and replay support.
 
 Provider-specific behavior belongs behind an adapter. Orchestration works with normalized commands
 and events, so adding a provider should not require branches throughout the domain or clients.
@@ -53,17 +45,18 @@ select known environment-local checkouts; the group itself does not store inheri
 ## Durable intent and side effects
 
 The event log is the source of truth for orchestration state. The
-[engine](../../apps/server/src/orchestration/Layers/OrchestrationEngine.ts) serializes commands;
-the [decider](../../apps/server/src/orchestration/decider.ts) produces events without performing
-provider or filesystem work. Events, persisted projections, and the accepted command receipt commit
-in one database transaction. The in-memory state changes and subscribers receive events after that
-commit. This keeps command retries idempotent and prevents a persisted projection from getting
-ahead of the event log.
+[v2 orchestrator](../../apps/server/src/orchestration-v2/Orchestrator.ts) serializes commands and
+decides events without performing provider or filesystem work.
+[EventSink](../../apps/server/src/orchestration-v2/EventSink.ts) commits events, persisted projections,
+the accepted command receipt, and outbox effects in one database transaction. Subscribers receive
+events after that commit. This keeps command retries idempotent and prevents a persisted projection
+from getting ahead of the event log.
 
-Reactors perform side effects after intent has been recorded, then feed results back through
-commands. A command acknowledgement therefore means the intent committed, not that the provider,
-checkpoint, or other follow-up work finished. Keep external I/O out of the decider and the database
-transaction.
+The [effect worker](../../apps/server/src/orchestration-v2/EffectWorker.ts) performs side effects
+after intent has been recorded, then feeds results back into orchestration. A command acknowledgement
+therefore means the intent committed, not that the provider, checkpoint, or other follow-up work
+finished. Keep external I/O out of command decisions and the database transaction. Effects tied to
+a lost provider process cannot simply replay; recovery retires them before admitting new work.
 
 Persisted events must remain decodable on replay. Changing a schema affects old environments at
 startup as well as live RPC traffic. Compatibility work must account for stored history, not just
@@ -71,25 +64,38 @@ what the newest client sends.
 
 ## Turn completion and checkpoints
 
-A turn ending and its follow-up work settling are separate milestones. The
-[projector](../../apps/server/src/orchestration/projector.ts) settles the turn from its session
-status. A late checkpoint or diff must not extend the recorded turn duration or keep the client
-showing provider work as active.
+A provider turn ending and its follow-up work settling are separate milestones. Orchestration
+records provider turn and run state independently from
+[run finalization](../../apps/server/src/orchestration-v2/RunFinalizationService.ts). A late
+checkpoint or diff must not extend the recorded provider duration or keep the client showing
+provider work as active. PR discovery after completion also checks that the checkout still matches
+the thread's non-default branch and that a newer run is not active.
 
 [Checkpoints](../../apps/server/src/checkpointing/CheckpointStore.ts) use hidden Git refs to
 capture workspace state without adding commits to the user's branch. A revert must coordinate
 workspace state with the provider conversation. A provider that cannot roll back its conversation
 must reject that operation before changing the filesystem.
 
+Thread settlement is server-owned. The
+[settlement service](../../apps/server/src/orchestration-v2/ThreadSettlementService.ts) evaluates PR
+and inactivity settings without a connected client. Merge notifications invalidate cached PR state
+and trigger a check. A merge outside T3, such as an agent running `gh pr merge`, sends no
+notification, so the [PR sync reactor](../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts)
+re-reads a thread's open links when a run that ran a merge or close command ends. Each forge's
+definition names its CLI's commands in `changeRequestCloseCommand`. The guarded
+`thread.auto-settle` command rejects newer activity, explicit settlement overrides, and live or
+blocked work. It records the activity timestamp for stable
+sorting and detaches idle provider sessions. Clients render the persisted result; they do not
+derive settlement from their own clocks or PR caches.
+
 ## Waiting for asynchronous work
 
 Tests use [drainable workers](../../packages/shared/src/DrainableWorker.ts) to wait until both the
 queue and its current item have finished. An empty queue alone does not prove the worker is idle.
 
-Runtime receipts mark specific test milestones. Their
-[production layer](../../apps/server/src/orchestration/Layers/RuntimeReceiptBus.ts) is a no-op;
-production behavior must use persisted state and events. These test signals are separate from the
-durable command receipts that make dispatch idempotent.
+V2 tests also drain the effect worker or await a specific persisted event or receipt. Test signals
+are separate from the durable command receipts that make dispatch idempotent. Production behavior
+must use persisted state and events, not test instrumentation or assumptions about elapsed time.
 
 The Electron shell acquires `DesktopPreReadyPlatform.layer` synchronously before asynchronous
 services. On Linux this sets the desktop-entry identity and global-shortcut portal flags before

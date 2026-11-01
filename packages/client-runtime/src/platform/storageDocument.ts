@@ -9,7 +9,7 @@ import {
 } from "../connection/catalog.ts";
 import { type ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
-import { StoredGitHubRoutingPermission } from "../connection/githubRoutingPermissions.ts";
+import { StoredPullRequestRoutingPermission } from "../connection/pullRequestRoutingPermissions.ts";
 
 export const StoredConnectionCredential = Schema.Struct({
   connectionId: Schema.String,
@@ -23,10 +23,9 @@ export const ConnectionCatalogDocument = Schema.Struct({
   profiles: Schema.Array(ConnectionProfile),
   credentials: Schema.Array(StoredConnectionCredential),
   remoteDpopTokens: Schema.Array(TokenStore.RemoteDpopAccessToken),
-  githubRoutingPermissions: Schema.optionalKey(Schema.Array(StoredGitHubRoutingPermission)),
-  // Saved environments the user switched off. They stay registered with their
-  // credentials and cache but never connect until switched back on. Older
-  // documents predate the key, so decoding defaults it to none.
+  // Pull request routing grants. The field name predates the rename and stays, so older and
+  // newer clients sharing this document keep reading and revoking the same grants.
+  githubRoutingPermissions: Schema.optionalKey(Schema.Array(StoredPullRequestRoutingPermission)),
   disabledEnvironmentIds: Schema.Array(EnvironmentId).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
@@ -70,63 +69,73 @@ function connectionIdOf(target: ConnectionTarget): string | null {
   }
 }
 
-function removeConnectionMetadata(
+function routeKey(target: ConnectionTarget): string {
+  return connectionIdOf(target) ?? target._tag;
+}
+
+function removeRouteMetadata(
   document: ConnectionCatalogDocument,
-  target: ConnectionTarget,
-  removeRemoteToken: boolean,
+  removed: ReadonlyArray<ConnectionTarget>,
 ): ConnectionCatalogDocument {
-  const connectionId = connectionIdOf(target);
+  const connectionIds = new Set(removed.flatMap((target) => connectionIdOf(target) ?? []));
+  const relayRemoved = removed.some((target) => target._tag === "RelayConnectionTarget");
+  const environmentIds = new Set(removed.map((target) => target.environmentId));
   return {
     ...document,
-    targets: removeCatalogValue(
-      document.targets,
-      (value) => value.environmentId,
-      target.environmentId,
-    ),
-    profiles:
-      connectionId === null
-        ? document.profiles
-        : removeCatalogValue(document.profiles, (value) => value.connectionId, connectionId),
-    credentials:
-      connectionId === null
-        ? document.credentials
-        : removeCatalogValue(document.credentials, (value) => value.connectionId, connectionId),
-    remoteDpopTokens: removeRemoteToken
-      ? removeCatalogValue(
-          document.remoteDpopTokens,
-          (value) => value.environmentId,
-          target.environmentId,
-        )
+    profiles: document.profiles.filter((value) => !connectionIds.has(value.connectionId)),
+    credentials: document.credentials.filter((value) => !connectionIds.has(value.connectionId)),
+    remoteDpopTokens: relayRemoved
+      ? document.remoteDpopTokens.filter((value) => !environmentIds.has(value.environmentId))
       : document.remoteDpopTokens,
-    // Re-registration passes `removeRemoteToken: false` and must keep the
-    // switched-off flag; only a real removal clears it.
-    disabledEnvironmentIds: removeRemoteToken
-      ? removeCatalogValue(document.disabledEnvironmentIds, (value) => value, target.environmentId)
-      : document.disabledEnvironmentIds,
+  };
+}
+
+export function catalogRoutes(
+  document: ConnectionCatalogDocument,
+  environmentId: EnvironmentId,
+): ReadonlyArray<PersistedConnectionTarget> {
+  return document.targets.filter((target) => target.environmentId === environmentId);
+}
+
+/**
+ * Records owned by a dropped route go with it; the environment keeps its
+ * position in the catalog. An empty list leaves the environment's other records
+ * in place; use `removeConnectionFromCatalog` to forget the environment.
+ */
+export function setRoutesInCatalog(
+  document: ConnectionCatalogDocument,
+  environmentId: EnvironmentId,
+  routes: ReadonlyArray<PersistedConnectionTarget>,
+): ConnectionCatalogDocument {
+  const kept = new Set(routes.map(routeKey));
+  const dropped = catalogRoutes(document, environmentId).filter(
+    (target) => !kept.has(routeKey(target)),
+  );
+  const firstIndex = document.targets.findIndex((target) => target.environmentId === environmentId);
+  const others = document.targets.filter((target) => target.environmentId !== environmentId);
+  const insertAt =
+    firstIndex === -1
+      ? others.length
+      : document.targets.slice(0, firstIndex).filter((t) => t.environmentId !== environmentId)
+          .length;
+  return {
+    ...removeRouteMetadata(document, dropped),
+    targets: [...others.slice(0, insertAt), ...routes, ...others.slice(insertAt)],
   };
 }
 
 export function registerConnectionInCatalog(
   document: ConnectionCatalogDocument,
   registration: ConnectionRegistration,
+  routes: ReadonlyArray<PersistedConnectionTarget> = [registration.target],
 ): ConnectionCatalogDocument {
-  const target = registration.target;
-  const previous = document.targets.find(
-    (candidate) => candidate.environmentId === target.environmentId,
-  );
-  const cleaned =
-    previous === undefined ? document : removeConnectionMetadata(document, previous, false);
-  // Re-registering (for example editing a label or URL) keeps the disabled
-  // flag; only `setConnectionEnabledInCatalog` or removal changes it.
-  const next: ConnectionCatalogDocument = {
-    ...cleaned,
-    targets: replaceCatalogValue(cleaned.targets, (value) => value.environmentId, target),
-  };
+  const next = setRoutesInCatalog(document, registration.target.environmentId, routes);
 
   switch (registration._tag) {
     case "RelayConnectionRegistration":
       return next;
     case "BearerConnectionRegistration":
+    case "SshConnectionRegistration":
       return {
         ...next,
         profiles: replaceCatalogValue(
@@ -139,34 +148,36 @@ export function registerConnectionInCatalog(
           credential: registration.credential,
         }),
       };
-    case "SshConnectionRegistration":
-      return {
-        ...next,
-        profiles: replaceCatalogValue(
-          next.profiles,
-          (value) => value.connectionId,
-          registration.profile,
-        ),
-      };
   }
 }
 
 export function removeConnectionFromCatalog(
   document: ConnectionCatalogDocument,
-  target: ConnectionTarget,
+  environmentId: EnvironmentId,
 ): ConnectionCatalogDocument {
-  const next = removeConnectionMetadata(document, target, true);
-  return document.githubRoutingPermissions === undefined
-    ? next
-    : {
-        ...next,
-        githubRoutingPermissions: document.githubRoutingPermissions.filter(
-          (permission) => permission.environmentId !== target.environmentId,
-        ),
-      };
+  const next = setRoutesInCatalog(document, environmentId, []);
+  return {
+    ...next,
+    remoteDpopTokens: removeCatalogValue(
+      next.remoteDpopTokens,
+      (value) => value.environmentId,
+      environmentId,
+    ),
+    disabledEnvironmentIds: removeCatalogValue(
+      next.disabledEnvironmentIds,
+      (value) => value,
+      environmentId,
+    ),
+    ...(next.githubRoutingPermissions === undefined
+      ? {}
+      : {
+          githubRoutingPermissions: next.githubRoutingPermissions.filter(
+            (permission) => permission.environmentId !== environmentId,
+          ),
+        }),
+  };
 }
 
-/** Flips the disabled flag for a saved environment; unknown ids are ignored. */
 export function setConnectionEnabledInCatalog(
   document: ConnectionCatalogDocument,
   environmentId: EnvironmentId,

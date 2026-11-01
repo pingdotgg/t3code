@@ -1,17 +1,17 @@
-import { useNavigation } from "@react-navigation/native";
+import type { NativeStackHeaderItem } from "@react-navigation/native-stack";
+import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { Platform, Pressable } from "react-native";
 
-import { ControlPillMenu } from "../../../components/ControlPill";
-import { SymbolView } from "../../../components/AppSymbol";
+import { Menu } from "../../../components/ui/Menu";
+import { SymbolView } from "../../../components/ui/AppSymbol";
+import { ENVIRONMENT_MACHINE_SYMBOLS } from "../../../components/EnvironmentMachineSymbol";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { withNativeGlassHeaderItem } from "../../layout/native-glass-header-items";
-import { useAdaptiveWorkspaceLayout } from "../../layout/AdaptiveWorkspaceLayout";
 import { useSettingsEnvironmentFilter } from "../settings-environment-filter";
 
-export function SettingsEnvironmentFilterHeader(props: { readonly closeSettings?: boolean }) {
-  const navigation = useNavigation();
-  const { layout } = useAdaptiveWorkspaceLayout();
-  const closeSettings = props.closeSettings === true && !layout.usesSplitView;
+export function SettingsEnvironmentFilterHeader(props: {
+  readonly trailingItems?: readonly NativeStackHeaderItem[];
+}) {
   const {
     availableTargets,
     selectedTargets,
@@ -29,11 +29,16 @@ export function SettingsEnvironmentFilterHeader(props: { readonly closeSettings?
       ? "line.3.horizontal.decrease"
       : "line.3.horizontal.decrease.circle.fill";
   const filterVersion = JSON.stringify({
-    closeSettings,
     selection: selectedIds === null ? null : [...selectedIds].sort(),
-    targets: availableTargets.map((entry) => [entry.environmentId, entry.label, entry.displayUrl]),
+    targets: availableTargets.map((entry) => [
+      entry.environmentId,
+      entry.label,
+      entry.displayUrl,
+      resolveEnvironmentMachineKind(entry.serverConfig),
+    ]),
     project: selectedProjectKey,
     projects: selectableProjectGroups.map((group) => [group.key, group.label]),
+    trailingItems: props.trailingItems,
   });
 
   return (
@@ -65,6 +70,12 @@ export function SettingsEnvironmentFilterHeader(props: { readonly closeSettings?
                     ...availableTargets.map((entry) => ({
                       type: "action" as const,
                       label: entry.label,
+                      icon: {
+                        type: "sfSymbol" as const,
+                        name: ENVIRONMENT_MACHINE_SYMBOLS[
+                          resolveEnvironmentMachineKind(entry.serverConfig)
+                        ],
+                      },
                       description: entry.displayUrl ?? undefined,
                       state:
                         selectedIds === null || selectedIds.has(entry.environmentId)
@@ -89,7 +100,7 @@ export function SettingsEnvironmentFilterHeader(props: { readonly closeSettings?
                     },
                     ...selectableProjectGroups.map((group) => ({
                       type: "action" as const,
-                      label: group.label,
+                      label: projectMenuLabel(group),
                       state: selectedProjectKey === group.key ? ("on" as const) : undefined,
                       onPress: () => selectProject(group.key),
                     })),
@@ -98,18 +109,7 @@ export function SettingsEnvironmentFilterHeader(props: { readonly closeSettings?
               ],
             },
           }),
-          ...(closeSettings
-            ? [
-                withNativeGlassHeaderItem({
-                  accessibilityLabel: "Close settings",
-                  icon: { name: "xmark", type: "sfSymbol" },
-                  identifier: "settings-close",
-                  label: "",
-                  onPress: () => navigation.goBack(),
-                  type: "button",
-                }),
-              ]
-            : []),
+          ...(props.trailingItems ?? []),
         ],
       }}
     />
@@ -132,7 +132,7 @@ export function AndroidSettingsEnvironmentFilter() {
       : "line.3.horizontal.decrease.circle.fill";
 
   return (
-    <ControlPillMenu
+    <Menu
       accessible
       accessibilityRole="button"
       accessibilityLabel="Filter settings environments and projects"
@@ -146,6 +146,7 @@ export function AndroidSettingsEnvironmentFilter() {
         ...availableTargets.map((entry) => ({
           id: `environment:${entry.environmentId}`,
           title: `Environment · ${entry.label}`,
+          image: ENVIRONMENT_MACHINE_SYMBOLS[resolveEnvironmentMachineKind(entry.serverConfig)],
           subtitle: entry.displayUrl ?? undefined,
           state:
             selectedIds === null || selectedIds.has(entry.environmentId)
@@ -159,7 +160,7 @@ export function AndroidSettingsEnvironmentFilter() {
         },
         ...selectableProjectGroups.map((group) => ({
           id: `project:${group.key}`,
-          title: `Project · ${group.label}`,
+          title: `Project · ${projectMenuLabel(group)}`,
           state: selectedProjectKey === group.key ? ("on" as const) : ("off" as const),
         })),
       ]}
@@ -186,6 +187,9 @@ export function AndroidSettingsEnvironmentFilter() {
       >
         <SymbolView name={filterIcon} size={22} tintColorClassName="accent-icon" />
       </Pressable>
-    </ControlPillMenu>
+    </Menu>
   );
 }
+
+const projectMenuLabel = (group: { readonly label: string; readonly archived: boolean }) =>
+  group.archived ? `${group.label} · Archived` : group.label;

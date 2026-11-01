@@ -7,8 +7,8 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as pathe from "pathe";
 import { cloneFixture } from "../Utils/Fixture.ts";
 import { expectUrlContains } from "../Utils/Http.ts";
@@ -33,111 +33,123 @@ const fixtureDir = pathe.resolve(
 // process cwd (see Vite.test.ts) — clone under the package's own `.tmp/`.
 const tempRoot = pathe.resolve(import.meta.dirname, "../../../.tmp");
 
-describe.concurrent("TanStack Start", () => {
-  /**
-   * TanStack Start deploys through `Cloudflare.Website.Vite` (per the Vite
-   * resource's TanStack example) — the `tanstackStart()` plugin in the
-   * fixture's own `vite.config.ts` composes with the injected Cloudflare
-   * plugin. This is the live-deploy counterpart to the dev-mode coverage in
-   * Vite.test.ts: SSR HTML on a raw fetch, a server route answering, the
-   * client asset serving, and an R2 binding round-trip.
-   */
-  test.provider(
-    "TanStack Start: live deploy serves SSR, server routes, assets, and R2 bindings",
-    (stack) =>
-      Effect.gen(function* () {
-        const { accountId } = yield* yield* CloudflareEnvironment;
+describe.concurrent(
+  "TanStack Start",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:r2",
+      "provider:cloudflare:website",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+  },
+  () => {
+    /**
+     * TanStack Start deploys through `Cloudflare.Website.Vite` (per the Vite
+     * resource's TanStack example) — the `tanstackStart()` plugin in the
+     * fixture's own `vite.config.ts` composes with the injected Cloudflare
+     * plugin. This is the live-deploy counterpart to the dev-mode coverage in
+     * Vite.test.ts: SSR HTML on a raw fetch, a server route answering, the
+     * client asset serving, and an R2 binding round-trip.
+     */
+    test.provider(
+      "TanStack Start: live deploy serves SSR, server routes, assets, and R2 bindings",
+      (stack) =>
+        Effect.gen(function* () {
+          const { accountId } = yield* yield* CloudflareEnvironment;
 
-        yield* stack.destroy();
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-tanstack-live-",
-          tempRoot,
-          entries: [
-            "alchemy.run.ts",
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-tanstack-live-",
+            tempRoot,
+            entries: [
+              "alchemy.run.ts",
+              "package.json",
+              "tsconfig.json",
+              "vite.config.ts",
+              "src",
+            ],
+          });
+          const memoInclude = [
+            "src/**",
             "package.json",
             "tsconfig.json",
             "vite.config.ts",
-            "src",
-          ],
-        });
-        const memoInclude = [
-          "src/**",
-          "package.json",
-          "tsconfig.json",
-          "vite.config.ts",
-          "alchemy.run.ts",
-        ];
+            "alchemy.run.ts",
+          ];
 
-        const marker = "tanstack-live-marker";
+          const marker = "tanstack-live-marker";
 
-        const { site, bucket } = yield* stack.deploy(
-          Effect.gen(function* () {
-            const bucket = yield* Cloudflare.R2.Bucket("TanStackLiveBucket", {
-              forceDestroy: true,
-            });
-            const site = yield* Cloudflare.Website.Vite("TanStackStartLive", {
-              rootDir,
-              workersDev: true,
-              compatibility: {
-                date: "2024-09-23",
-                flags: ["nodejs_compat"],
-              },
-              // No `assets` config (mirroring the Vite resource's TanStack
-              // example): client assets serve asset-first from the asset
-              // layer, everything else (SSR routes, /api/*) falls through
-              // to the TanStack server handler. `runWorkerFirst: true`
-              // would route `/assets/*` into the worker, which 404s them.
-              memo: { include: memoInclude },
-              env: {
-                BUCKET: bucket,
-                DEV_MARKER: marker,
-              },
-            });
-            return { site, bucket };
-          }),
-        );
+          const { site, bucket } = yield* stack.deploy(
+            Effect.gen(function* () {
+              const bucket = yield* Cloudflare.R2.Bucket("TanStackLiveBucket", {
+                forceDestroy: true,
+              });
+              const site = yield* Cloudflare.Website.Vite("TanStackStartLive", {
+                rootDir,
+                workersDev: true,
+                compatibility: {
+                  date: "2024-09-23",
+                  flags: ["nodejs_compat"],
+                },
+                // No `assets` config (mirroring the Vite resource's TanStack
+                // example): client assets serve asset-first from the asset
+                // layer, everything else (SSR routes, /api/*) falls through
+                // to the TanStack server handler. `runWorkerFirst: true`
+                // would route `/assets/*` into the worker, which 404s them.
+                memo: { include: memoInclude },
+                env: {
+                  BUCKET: bucket,
+                  DEV_MARKER: marker,
+                },
+              });
+              return { site, bucket };
+            }),
+          );
 
-        expect(site.url).toBeDefined();
-        yield* expectWorkerExists(site.workerName, accountId);
+          expect(site.url).toBeDefined();
+          yield* expectWorkerExists(site.workerName, accountId);
 
-        // ── SSR: the index route's component renders server-side ─────────
-        // `hmr-marker-fixture` is the constant baked into the fixture's
-        // index route — a raw fetch (no client JS) must carry it.
-        yield* expectUrlContains(`${site.url!}/`, "hmr-marker-fixture", {
-          timeout: "120 seconds",
-          label: "tanstack ssr home",
-        });
+          // ── SSR: the index route's component renders server-side ─────────
+          // `hmr-marker-fixture` is the constant baked into the fixture's
+          // index route — a raw fetch (no client JS) must carry it.
+          yield* expectUrlContains(`${site.url!}/`, "hmr-marker-fixture", {
+            timeout: "120 seconds",
+            label: "tanstack ssr home",
+          });
 
-        // ── Server route + R2 binding round-trip ─────────────────────────
-        const key = "tanstack-live-key.txt";
-        const r2Url = `${site.url!}/api/r2?key=${encodeURIComponent(key)}`;
+          // ── Server route + R2 binding round-trip ─────────────────────────
+          const key = "tanstack-live-key.txt";
+          const r2Url = `${site.url!}/api/r2?key=${encodeURIComponent(key)}`;
 
-        const put = yield* putTextJsonReady<{ ok: boolean; marker: string }>(
-          r2Url,
-          "tanstack-live-value",
-        );
-        expect(put.ok).toBe(true);
-        // The env binding reached the server route.
-        expect(put.marker).toBe(marker);
+          const put = yield* putTextJsonReady<{ ok: boolean; marker: string }>(
+            r2Url,
+            "tanstack-live-value",
+          );
+          expect(put.ok).toBe(true);
+          // The env binding reached the server route.
+          expect(put.marker).toBe(marker);
 
-        const get = yield* fetchJsonReady<{
-          marker: string;
-          value: string | null;
-        }>(r2Url);
-        expect(get.value).toBe("tanstack-live-value");
-        expect(get.marker).toBe(marker);
+          const get = yield* fetchJsonReady<{
+            marker: string;
+            value: string | null;
+          }>(r2Url);
+          expect(get.value).toBe("tanstack-live-value");
+          expect(get.marker).toBe(marker);
 
-        // ── Static asset: the client bundle the SSR HTML references ──────
-        yield* expectClientScriptServes(site.url!);
+          // ── Static asset: the client bundle the SSR HTML references ──────
+          yield* expectClientScriptServes(site.url!);
 
-        yield* stack.destroy();
-        yield* waitForWorkerToBeDeleted(site.workerName, accountId);
-        yield* waitForBucketToBeDeleted(bucket.bucketName, accountId);
-      }).pipe(logLevel),
-    { timeout: 360_000 },
-  );
-});
+          yield* stack.destroy();
+          yield* waitForWorkerToBeDeleted(site.workerName, accountId);
+          yield* waitForBucketToBeDeleted(bucket.bucketName, accountId);
+        }).pipe(logLevel),
+      { timeout: 360_000 },
+    );
+  },
+);
 
 const freshConn = HttpClient.mapRequest(
   HttpClientRequest.setHeader("connection", "close"),

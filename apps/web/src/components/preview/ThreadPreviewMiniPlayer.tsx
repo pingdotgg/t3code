@@ -1,16 +1,20 @@
-"use client";
-
 import { FILL_PREVIEW_VIEWPORT, type ScopedThreadRef } from "@t3tools/contracts";
+import { previewPdfAssetUrl } from "@t3tools/shared/preview";
+import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
-  useCallback,
-  useLayoutEffect,
+  useEffect,
   useRef,
   useState,
 } from "react";
+import { create } from "zustand";
+import { useAtomValue } from "@effect/atom-react";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 
+import { useChatCanvas } from "../chat/ChatCanvasContext";
+import type { ChatCanvasPreview } from "../chat/chatCanvasLayout";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import {
   findActiveBrowserRecordingRuntimeTabId,
@@ -19,6 +23,17 @@ import {
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import type { BrowserViewportResizeDirection } from "~/browser/browserViewportLayout";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
+import { rendersServerTabNatively } from "~/browser/previewRuntime";
+import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
+import { type ServerBrowserHandle, ServerBrowserSurface } from "~/browser/ServerBrowserSurface";
+import {
+  closeServerPictureInPicture,
+  openServerPictureInPicture,
+  serverPictureInPictureKey,
+  supportsServerPictureInPicture,
+  useServerPictureInPictureKey,
+} from "~/browser/serverPictureInPicture";
+import { useBrowserLayoutZoomFactor } from "~/browser/useBrowserLayoutZoomFactor";
 import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -28,6 +43,7 @@ import {
   type PreviewMiniPlayerSize,
   type PreviewMiniPlayerSource,
   type PreviewMiniPlayerState,
+  browserMiniPlayerSource,
   previewMiniPlayerSourceKey,
   usePreviewMiniPlayerStore,
 } from "~/previewMiniPlayerStore";
@@ -36,80 +52,41 @@ import { useDeviceState } from "~/state/device";
 
 import { DeviceStreamView } from "../device/DeviceStreamView";
 import type { DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
+import { Atom } from "effect/reactivity";
+import { deviceScreenKey, deviceStreamScreenAtom } from "../device/deviceStreamSession";
+import type { PreviewStreamViewport } from "@t3tools/client-runtime/preview/server-browser-stream";
 import { previewBridge } from "./previewBridge";
+import { showPreviewPopup } from "./showPreviewPopup";
 import {
   clampPreviewMiniPlayerPosition,
-  NO_PREVIEW_MINI_PLAYER_OBSTACLES,
   PREVIEW_MINI_PLAYER_CORNER_RADIUS,
   PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX,
   type PreviewMiniPlayerFrame,
-  type PreviewMiniPlayerObstacles,
   resizePreviewMiniPlayer,
   resolveDeviceMiniPlayerCornerRadius,
   resolveDeviceMiniPlayerSourceSize,
-  resolvePreviewMiniPlayerFrame,
   resolvePreviewMiniPlayerSourceSize,
 } from "./previewMiniPlayerLayout";
 
 interface PointerGesture {
   readonly pointerId: number;
+  readonly pointerType: string;
   readonly pointerX: number;
   readonly pointerY: number;
   readonly frame: PreviewMiniPlayerFrame;
   readonly direction: BrowserViewportResizeDirection | null;
+  moved: boolean;
 }
+
+const HANDLE_TAP_SLOP_PX = 6;
 
 interface Props {
   readonly threadRef: ScopedThreadRef;
   readonly miniPlayer: PreviewMiniPlayerState;
-  /** The docked composer overlay; null while the composer floats mid-screen. */
-  readonly composerOverlayElement: HTMLElement | null;
-}
-
-interface Layout {
-  readonly container: PreviewMiniPlayerSize;
-  readonly obstacles: PreviewMiniPlayerObstacles;
-}
-
-const sameLayout = (a: Layout, b: Layout) =>
-  a.container.width === b.container.width &&
-  a.container.height === b.container.height &&
-  (a.obstacles.composer === b.obstacles.composer ||
-    (a.obstacles.composer !== null &&
-      b.obstacles.composer !== null &&
-      a.obstacles.composer.left === b.obstacles.composer.left &&
-      a.obstacles.composer.right === b.obstacles.composer.right &&
-      a.obstacles.composer.height === b.obstacles.composer.height));
-
-/**
- * Measures the chat column and the composer in the column's coordinates. The
- * composer's columns come from its centered stack, not the full-width overlay,
- * so the margins beside it stay open to the player.
- */
-function measureLayout(container: HTMLElement, composerOverlay: HTMLElement | null): Layout {
-  const containerRect = container.getBoundingClientRect();
-  const stackRect = composerOverlay
-    ?.querySelector('[data-chat-composer-stack="true"]')
-    ?.getBoundingClientRect();
-  const overlayRect = composerOverlay?.getBoundingClientRect();
-  return {
-    container: { width: container.clientWidth, height: container.clientHeight },
-    obstacles: {
-      composer:
-        overlayRect && stackRect && overlayRect.height > 0
-          ? {
-              left: Math.floor(stackRect.left - containerRect.left),
-              right: Math.ceil(stackRect.right - containerRect.left),
-              height: Math.ceil(overlayRect.height),
-            }
-          : null,
-    },
-  };
 }
 
 const frameCornerRadius = () => PREVIEW_MINI_PLAYER_CORNER_RADIUS;
 
-// Invisible grab zones straddling each edge; the cursor is the only affordance.
 const RESIZE_HANDLES: ReadonlyArray<{
   readonly direction: BrowserViewportResizeDirection;
   readonly className: string;
@@ -124,8 +101,97 @@ const RESIZE_HANDLES: ReadonlyArray<{
   { direction: "southeast", className: "-bottom-2 -right-2 size-4 cursor-nwse-resize" },
 ];
 
-/** Floats the thread's browser tab or device stream over chat. */
-export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer, composerOverlayElement }: Props) {
+// What the stream reports about its source. It lives outside the player so the
+// chat canvas lays out the frame from the same source size the player uses. One
+// slot is enough, since only the shown thread renders a player, and it keeps the
+// store from collecting an entry for every tab a session ever streamed.
+const useStreamedSourceSize = create<{
+  readonly key: string;
+  readonly viewport: PreviewStreamViewport;
+} | null>(() => null);
+
+const NO_DEVICE_SCREEN_ATOM = Atom.make<DeviceScreenSize | null>(null).pipe(
+  Atom.withLabel("device-stream-screen:none"),
+);
+
+const streamedSourceKey = (threadRef: ScopedThreadRef, sourceKey: string) =>
+  `${scopedThreadKey(threadRef)}\u0000${sourceKey}`;
+
+// The mini player's device stream view, named so the canvas can read the
+// screen size that view reports.
+const miniPlayerDeviceViewId = (
+  threadRef: ScopedThreadRef,
+  source: Extract<PreviewMiniPlayerSource, { kind: "device" }>,
+) =>
+  `preview-mini-player\u0000${scopedThreadKey(threadRef)}\u0000${deviceScreenKey(threadRef.environmentId, source.hostId, source.deviceId)}`;
+
+function useBrowserMiniPlayerSource(threadRef: ScopedThreadRef | null, tabId: string | null) {
+  const previewState = useThreadPreviewState(threadRef);
+  const snapshot = tabId === null ? null : (previewState.sessions[tabId] ?? null);
+  const runtimeTabId =
+    threadRef && tabId !== null
+      ? previewRuntimeTabId(threadRef, previewState.serverEpoch, tabId)
+      : null;
+  const desktopOverlay = tabId === null ? null : (previewState.desktopByTabId[tabId] ?? null);
+  const layoutZoomFactor = useBrowserLayoutZoomFactor(desktopOverlay?.zoomFactor ?? 1);
+  const fittedSourceContent = useBrowserSurfaceStore((state) =>
+    runtimeTabId === null ? null : (state.byTabId[runtimeTabId]?.fittedSourceContent ?? null),
+  );
+  const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
+  const serverTab =
+    threadRef !== null &&
+    snapshot?.runtime === "server" &&
+    !rendersServerTabNatively(threadRef.environmentId, primaryEnvironmentId, snapshot);
+  const streamViewport = useStreamedSourceSize((state) =>
+    threadRef &&
+    tabId !== null &&
+    state?.key ===
+      streamedSourceKey(threadRef, previewMiniPlayerSourceKey(browserMiniPlayerSource(tabId)))
+      ? state.viewport
+      : null,
+  );
+  const sourceSize: PreviewMiniPlayerSize =
+    serverTab && streamViewport
+      ? streamViewport
+      : resolvePreviewMiniPlayerSourceSize(
+          snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT,
+          fittedSourceContent,
+          layoutZoomFactor,
+        );
+  return { serverEpoch: previewState.serverEpoch, snapshot, desktopOverlay, serverTab, sourceSize };
+}
+
+/** The mini player as the chat canvas lays it out; null when no player renders. */
+export function useThreadPreviewCanvasSource(
+  threadRef: ScopedThreadRef | null,
+  miniPlayer: PreviewMiniPlayerState | null,
+): ChatCanvasPreview | null {
+  const source = miniPlayer?.source ?? null;
+  const browser = useBrowserMiniPlayerSource(
+    threadRef,
+    source?.kind === "browser" ? source.tabId : null,
+  );
+  const sourceKey = source ? previewMiniPlayerSourceKey(source) : null;
+  const screen = useAtomValue(
+    threadRef && source?.kind === "device"
+      ? deviceStreamScreenAtom(miniPlayerDeviceViewId(threadRef, source))
+      : NO_DEVICE_SCREEN_ATOM,
+  );
+  if (!miniPlayer || !source || sourceKey === null) return null;
+  if (source.kind === "browser" && !browser.snapshot) return null;
+  return {
+    key: sourceKey,
+    width: miniPlayer.width,
+    position: miniPlayer.position,
+    lastInteraction: miniPlayer.lastInteraction,
+    source:
+      source.kind === "browser"
+        ? browser.sourceSize
+        : resolveDeviceMiniPlayerSourceSize(source.platform, screen),
+  };
+}
+
+export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer }: Props) {
   const { source } = miniPlayer;
   return source.kind === "browser" ? (
     <BrowserMiniPlayer
@@ -133,7 +199,6 @@ export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer, composerOverlay
       threadRef={threadRef}
       tabId={source.tabId}
       miniPlayer={miniPlayer}
-      composerOverlayElement={composerOverlayElement}
     />
   ) : (
     <DeviceMiniPlayer
@@ -141,32 +206,25 @@ export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer, composerOverlay
       threadRef={threadRef}
       source={source}
       miniPlayer={miniPlayer}
-      composerOverlayElement={composerOverlayElement}
     />
   );
 }
 
-function BrowserMiniPlayer({
-  threadRef,
-  tabId,
-  miniPlayer,
-  composerOverlayElement,
-}: Props & { readonly tabId: string }) {
-  const previewState = useThreadPreviewState(threadRef);
-  const snapshot = previewState.sessions[tabId] ?? null;
-  const runtimeTabId = previewRuntimeTabId(threadRef, previewState.serverEpoch, tabId);
+function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly tabId: string }) {
+  const httpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
+  const { serverEpoch, snapshot, desktopOverlay, serverTab, sourceSize } =
+    useBrowserMiniPlayerSource(threadRef, tabId);
+  const runtimeTabId = previewRuntimeTabId(threadRef, serverEpoch, tabId);
   const recordingTabIds = useActiveBrowserRecordingTabIds();
   const recording =
     recordingTabIds.has(runtimeTabId) ||
     findActiveBrowserRecordingRuntimeTabId(threadRef, tabId) !== null;
-  const desktopOverlay = previewState.desktopByTabId[tabId] ?? null;
-  const fittedSourceContent = useBrowserSurfaceStore(
-    (state) => state.byTabId[runtimeTabId]?.fittedSourceContent ?? null,
-  );
-  const sourceSize = resolvePreviewMiniPlayerSourceSize(
-    snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT,
-    fittedSourceContent,
-    desktopOverlay?.zoomFactor ?? 1,
+  const serverSurfaceRef = useRef<ServerBrowserHandle | null>(null);
+  const serverPictureInPicture =
+    useServerPictureInPictureKey() === serverPictureInPictureKey(threadRef.threadId, tabId);
+  const viewportKey = streamedSourceKey(
+    threadRef,
+    previewMiniPlayerSourceKey(browserMiniPlayerSource(tabId)),
   );
 
   const openInPanel = () => {
@@ -174,77 +232,124 @@ function BrowserMiniPlayer({
     useRightPanelStore.getState().openBrowser(threadRef, tabId);
   };
 
-  const toggleNativePictureInPicture = () => {
-    if (!previewBridge) return;
-    const operation = desktopOverlay?.pictureInPicture
-      ? previewBridge.pictureInPicture.close
-      : previewBridge.pictureInPicture.open;
-    void operation(runtimeTabId).catch((error) => {
+  const toggleNativePictureInPicture = async () => {
+    try {
+      if (serverTab) {
+        if (serverPictureInPicture) closeServerPictureInPicture();
+        else
+          await openServerPictureInPicture({
+            ...threadRef,
+            tabId,
+            seed: serverSurfaceRef.current?.canvas() ?? null,
+          });
+      } else if (previewBridge) {
+        const operation = desktopOverlay?.pictureInPicture
+          ? previewBridge.pictureInPicture.close
+          : previewBridge.pictureInPicture.open;
+        await operation(runtimeTabId);
+      }
+    } catch (error) {
       toastManager.add({
         type: "error",
-        title: "Unable to update popped-out preview",
+        title: serverTab ? "Unable to pop out preview" : "Unable to update popped-out preview",
         description: error instanceof Error ? error.message : "An error occurred.",
       });
-    });
+    }
   };
 
   if (!snapshot) return null;
+  const pdfUrl =
+    snapshot.navStatus._tag === "Success"
+      ? previewPdfAssetUrl(snapshot.navStatus.url, httpBaseUrl)
+      : null;
+  const poppedOut = serverTab ? serverPictureInPicture : Boolean(desktopOverlay?.pictureInPicture);
+  const canPopOut = serverTab
+    ? poppedOut || (pdfUrl === null && supportsServerPictureInPicture())
+    : true;
 
   return (
     <MiniPlayerShell
       threadRef={threadRef}
       miniPlayer={miniPlayer}
       sourceSize={sourceSize}
-      composerOverlayElement={composerOverlayElement}
       label="Floating browser preview"
       recording={recording}
       onOpenInPanel={openInPanel}
       pillActions={
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant={desktopOverlay?.pictureInPicture ? "secondary" : "ghost"}
-                size="icon-xs"
-                aria-label={
-                  desktopOverlay?.pictureInPicture
-                    ? "Close popped-out preview"
-                    : "Pop preview into separate window"
-                }
-                disabled={!desktopOverlay?.hasWebContents}
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={toggleNativePictureInPicture}
-              />
-            }
-          >
-            <PictureInPicture2 />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            {desktopOverlay?.pictureInPicture
-              ? "Close separate window"
-              : "Pop into separate window"}
-          </TooltipPopup>
-        </Tooltip>
+        canPopOut ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant={poppedOut ? "secondary" : "ghost"}
+                  size="icon-xs"
+                  aria-label={
+                    poppedOut ? "Close popped-out preview" : "Pop preview into separate window"
+                  }
+                  disabled={!serverTab && !desktopOverlay?.hasWebContents}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={toggleNativePictureInPicture}
+                />
+              }
+            >
+              <PictureInPicture2 />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {poppedOut ? "Close separate window" : "Pop into separate window"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null
       }
     >
-      {(frame) => (
-        <>
-          <BrowserSurfaceSlot
-            tabId={runtimeTabId}
-            visible={Boolean(desktopOverlay?.hasWebContents)}
-            cornerRadius={PREVIEW_MINI_PLAYER_CORNER_RADIUS}
-            zIndex={PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX}
-            fitSourceContent
-            layoutVersion={`${frame.x}:${frame.y}`}
-            className="absolute inset-0"
-          />
-          {!desktopOverlay?.hasWebContents ? (
-            <div className="pointer-events-none absolute inset-0 z-[49] flex items-center justify-center rounded-[inherit] bg-muted text-xs text-muted-foreground">
-              Reconnecting preview…
-            </div>
-          ) : null}
-        </>
-      )}
+      {(frame) =>
+        serverTab ? (
+          <div
+            className="pointer-events-auto absolute inset-0 overflow-hidden rounded-[inherit]"
+            style={{ zIndex: PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX }}
+          >
+            <ServerBrowserSurface
+              ref={serverSurfaceRef}
+              environmentId={threadRef.environmentId}
+              threadId={threadRef.threadId}
+              tabId={tabId}
+              pdfUrl={pdfUrl}
+              visible
+              followSize={false}
+              controlPosition="bottom"
+              onViewport={(viewport) =>
+                useStreamedSourceSize.setState(
+                  (state) =>
+                    state?.key === viewportKey &&
+                    state.viewport.width === viewport.width &&
+                    state.viewport.height === viewport.height
+                      ? state
+                      : { key: viewportKey, viewport },
+                  true,
+                )
+              }
+              onPopup={(popupTabId) => showPreviewPopup(threadRef, popupTabId, "floating")}
+              className="size-full"
+            />
+          </div>
+        ) : (
+          <>
+            <BrowserSurfaceSlot
+              tabId={runtimeTabId}
+              visible={Boolean(desktopOverlay?.hasWebContents)}
+              cornerRadius={PREVIEW_MINI_PLAYER_CORNER_RADIUS}
+              zIndex={PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX}
+              fitSourceContent
+              layoutVersion={`${frame.x}:${frame.y}`}
+              className="absolute inset-0"
+            />
+            {!desktopOverlay?.hasWebContents ? (
+              <div className="pointer-events-none absolute inset-0 z-[49] flex items-center justify-center rounded-[inherit] bg-muted text-xs text-muted-foreground">
+                Reconnecting preview…
+              </div>
+            ) : null}
+          </>
+        )
+      }
     </MiniPlayerShell>
   );
 }
@@ -253,20 +358,18 @@ function DeviceMiniPlayer({
   threadRef,
   source,
   miniPlayer,
-  composerOverlayElement,
 }: Props & { readonly source: Extract<PreviewMiniPlayerSource, { kind: "device" }> }) {
   const { state: deviceState } = useDeviceState(threadRef.environmentId);
-  const [screen, setScreen] = useState<DeviceScreenSize | null>(null);
+  const viewId = miniPlayerDeviceViewId(threadRef, source);
+  const screen = useAtomValue(deviceStreamScreenAtom(viewId));
   const sourceSize = resolveDeviceMiniPlayerSourceSize(source.platform, screen);
   const device = deviceState.devices.find(
     (entry) => entry.hostId === source.hostId && entry.id === source.deviceId,
   );
-  const hostLabel =
-    deviceState.hosts.find((host) => host.id === source.hostId)?.label ?? "Device host";
-  const cornerRadius = useCallback(
-    (player: PreviewMiniPlayerSize) => resolveDeviceMiniPlayerCornerRadius(source.platform, player),
-    [source.platform],
-  );
+  const host = deviceState.hosts.find((entry) => entry.id === source.hostId);
+  const hostLabel = host?.label ?? "Device host";
+  const cornerRadius = (player: PreviewMiniPlayerSize) =>
+    resolveDeviceMiniPlayerCornerRadius(source.platform, player);
 
   const openInPanel = () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
@@ -283,13 +386,11 @@ function DeviceMiniPlayer({
       threadRef={threadRef}
       miniPlayer={miniPlayer}
       sourceSize={sourceSize}
-      composerOverlayElement={composerOverlayElement}
       label="Floating device preview"
       onOpenInPanel={openInPanel}
       cornerRadius={cornerRadius}
     >
       {() => (
-        // The stream is DOM, so it takes the band the browser's native webview would.
         <div
           className="pointer-events-auto absolute inset-0 overflow-hidden rounded-[inherit]"
           style={{ zIndex: PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX }}
@@ -302,7 +403,8 @@ function DeviceMiniPlayer({
             deviceName={device?.name ?? source.name}
             deviceDescription={`${hostLabel} · ${device?.version ?? source.platform}`}
             visible
-            onScreen={setScreen}
+            viewId={viewId}
+            serveSimOnly={host?.kind === "simlock"}
           />
         </div>
       )}
@@ -310,16 +412,11 @@ function DeviceMiniPlayer({
   );
 }
 
-/**
- * The frame, drag/resize gestures, and hover pill shared by every floating
- * source. Native clipping and the DOM frame use the same radius so their
- * separately composited edges stay aligned.
- */
+/** Match native clipping and DOM radii to align their separately composited edges. */
 function MiniPlayerShell({
   threadRef,
   miniPlayer,
   sourceSize,
-  composerOverlayElement,
   label,
   onOpenInPanel,
   pillActions,
@@ -330,54 +427,39 @@ function MiniPlayerShell({
   readonly threadRef: ScopedThreadRef;
   readonly miniPlayer: PreviewMiniPlayerState;
   readonly sourceSize: PreviewMiniPlayerSize;
-  readonly composerOverlayElement: HTMLElement | null;
   readonly label: string;
   readonly onOpenInPanel: () => void;
   readonly pillActions?: ReactNode;
   readonly recording?: boolean;
-  /** The clip radius for a given frame; the pill stays inside the curve. */
   readonly cornerRadius?: (frame: PreviewMiniPlayerSize) => number;
   readonly children: (frame: PreviewMiniPlayerFrame) => ReactNode;
 }) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const canvas = useChatCanvas();
   const gestureRef = useRef<PointerGesture | null>(null);
-  const [layout, setLayout] = useState<Layout | null>(null);
-  const container = layout?.container ?? null;
-  const obstacles = layout?.obstacles ?? NO_PREVIEW_MINI_PLAYER_OBSTACLES;
+  // Touch toggles the pill after the tap's click so that click cannot land on the newly opened pill.
+  const [pillOpen, setPillOpen] = useState(false);
+  const handleTappedRef = useRef(false);
+  const handleRef = useRef<HTMLDivElement | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document pointerdown listener closes the open pill on an outside press
+  useEffect(() => {
+    if (!pillOpen) return;
+    const dismiss = (event: PointerEvent) => {
+      if (event.target instanceof Node && handleRef.current?.contains(event.target)) return;
+      setPillOpen(false);
+    };
+    document.addEventListener("pointerdown", dismiss, true);
+    return () => document.removeEventListener("pointerdown", dismiss, true);
+  }, [pillOpen]);
+  const container = canvas?.container ?? null;
   const sourceKey = previewMiniPlayerSourceKey(miniPlayer.source);
-  const frame = container
-    ? resolvePreviewMiniPlayerFrame({
-        width: miniPlayer.width,
-        position: miniPlayer.position,
-        source: sourceSize,
-        container,
-        obstacles,
-      })
-    : null;
+  const frame = canvas?.previewKey === sourceKey ? canvas.layout.frame : null;
 
   const radius = frame ? cornerRadius(frame) : PREVIEW_MINI_PLAYER_CORNER_RADIUS;
-  // Inside a wide curve the default 8px inset would land on the clipped-away corner.
   const pillInset = Math.max(8, Math.round(radius * 0.55));
 
   const close = () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
   };
-
-  // The composer grows on its own (drafts, banners), so it is observed alongside the column.
-  useLayoutEffect(() => {
-    const element = containerRef.current;
-    if (!element) return;
-    const measure = () => {
-      const next = measureLayout(element, composerOverlayElement);
-      setLayout((current) => (current && sameLayout(current, next) ? current : next));
-    };
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    if (composerOverlayElement) observer.observe(composerOverlayElement);
-    return () => observer.disconnect();
-  }, [composerOverlayElement]);
 
   const beginGesture = (
     event: ReactPointerEvent<HTMLElement>,
@@ -386,10 +468,12 @@ function MiniPlayerShell({
     if (event.button !== 0 || !frame) return;
     gestureRef.current = {
       pointerId: event.pointerId,
+      pointerType: event.pointerType,
       pointerX: event.clientX,
       pointerY: event.clientY,
       frame,
       direction,
+      moved: false,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
@@ -400,6 +484,8 @@ function MiniPlayerShell({
     const gesture = gestureRef.current;
     if (!gesture || gesture.pointerId !== event.pointerId || !container) return;
     const delta = { x: event.clientX - gesture.pointerX, y: event.clientY - gesture.pointerY };
+    if (!gesture.moved && Math.hypot(delta.x, delta.y) < HANDLE_TAP_SLOP_PX) return;
+    gesture.moved = true;
     const store = usePreviewMiniPlayerStore.getState();
     if (gesture.direction === null) {
       store.move(
@@ -409,7 +495,6 @@ function MiniPlayerShell({
           { x: gesture.frame.x + delta.x, y: gesture.frame.y + delta.y },
           container,
           gesture.frame,
-          obstacles,
         ),
       );
       return;
@@ -420,22 +505,26 @@ function MiniPlayerShell({
       delta,
       source: sourceSize,
       container,
-      obstacles,
     });
-    store.resize(threadRef, sourceKey, next.width);
-    store.move(threadRef, sourceKey, { x: next.x, y: next.y });
+    store.resize(threadRef, sourceKey, next.width, { x: next.x, y: next.y });
   };
 
   const endGesture = (event: ReactPointerEvent<HTMLElement>) => {
-    if (gestureRef.current?.pointerId !== event.pointerId) return;
+    const gesture = gestureRef.current;
+    if (gesture?.pointerId !== event.pointerId) return;
     gestureRef.current = null;
+    handleTappedRef.current =
+      event.type === "pointerup" &&
+      gesture.direction === null &&
+      gesture.pointerType === "touch" &&
+      !gesture.moved;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
   };
 
   return (
-    <div ref={containerRef} className="pointer-events-none absolute inset-0">
+    <div className="pointer-events-none absolute inset-0">
       {frame ? (
         <section
           aria-label={label}
@@ -450,14 +539,25 @@ function MiniPlayerShell({
           }}
         >
           <div
-            className="group pointer-events-auto absolute z-[49] size-3"
+            ref={handleRef}
+            data-pill-open={pillOpen ? "" : undefined}
+            className="group pointer-events-auto absolute z-[49] size-3 touch-none cursor-grab active:cursor-grabbing pointer-coarse:-m-2.5 pointer-coarse:size-8"
             style={{ right: pillInset, top: pillInset }}
+            onPointerDown={(event) => beginGesture(event, null)}
+            onPointerMove={handlePointerMove}
+            onPointerUp={endGesture}
+            onPointerCancel={endGesture}
+            onClick={() => {
+              if (!handleTappedRef.current) return;
+              handleTappedRef.current = false;
+              setPillOpen((open) => !open);
+            }}
           >
             <div
               role={recording ? "status" : undefined}
               aria-label={recording ? "Recording preview" : undefined}
               aria-hidden={!recording}
-              className="absolute right-0 top-0 size-2 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
+              className="absolute right-0 top-0 size-2 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 group-data-pill-open:opacity-0 pointer-coarse:right-2.5 pointer-coarse:top-2.5"
             >
               <span
                 className={cn(
@@ -468,13 +568,7 @@ function MiniPlayerShell({
                 )}
               />
             </div>
-            <div
-              className="pointer-events-none absolute right-0 top-0 flex h-8 cursor-grab items-center gap-0.5 rounded-lg border border-border/80 bg-popover/92 p-0.5 opacity-0 shadow-lg/20 backdrop-blur-xl transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 active:cursor-grabbing"
-              onPointerDown={(event) => beginGesture(event, null)}
-              onPointerMove={handlePointerMove}
-              onPointerUp={endGesture}
-              onPointerCancel={endGesture}
-            >
+            <div className="pointer-events-none absolute right-0 top-0 flex h-8 cursor-grab items-center gap-0.5 rounded-lg border border-border/80 bg-popover/92 p-0.5 opacity-0 shadow-lg/20 backdrop-blur-xl transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-data-pill-open:pointer-events-auto group-data-pill-open:opacity-100 active:cursor-grabbing pointer-coarse:right-2.5 pointer-coarse:top-2.5">
               {recording ? (
                 <span aria-hidden className="flex size-6 shrink-0 items-center justify-center">
                   <span className="size-2 rounded-full bg-destructive motion-safe:animate-status-pulse" />

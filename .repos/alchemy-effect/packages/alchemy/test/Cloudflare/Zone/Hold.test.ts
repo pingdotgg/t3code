@@ -97,6 +97,7 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:zone", "live"] },
 );
 
 // Canonical `list()` test (zone-scoped singleton): a hold is a per-zone
@@ -105,20 +106,23 @@ test.provider(
 // `listAllZones` and reads the hold state in each. Assert the result is
 // non-empty and contains the standing test zone. This works on any plan
 // (reading the hold state needs no Enterprise entitlement).
-test.provider("list enumerates the hold state across all zones", (stack) =>
-  Effect.gen(function* () {
-    const zoneId = yield* resolveZoneId;
+test.provider(
+  "list enumerates the hold state across all zones",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const provider = yield* Provider.findProvider(Cloudflare.Zone.Hold);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(Cloudflare.Zone.Hold);
+      const all = yield* provider.list();
 
-    expect(all.length).toBeGreaterThan(0);
-    expect(all.some((h) => h.zoneId === zoneId)).toBe(true);
+      expect(all.length).toBeGreaterThan(0);
+      expect(all.some((h) => h.zoneId === zoneId)).toBe(true);
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:zone", "live"] },
 );
 
 test.provider.skipIf(!enterpriseZoneId)(
@@ -171,4 +175,5 @@ test.provider.skipIf(!enterpriseZoneId)(
       const removed = yield* getHold(zoneId);
       expect(isHeld(removed)).toBe(false);
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:zone", "live"] },
 );

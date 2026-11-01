@@ -1,21 +1,17 @@
-import { useLayoutEffect, type PointerEvent as ReactPointerEvent } from "react";
+import { type PointerEvent as ReactPointerEvent } from "react";
 import { type SensorProps } from "@dnd-kit/core";
 import { getOwnerDocument, getWindow } from "@dnd-kit/utilities";
-
-// Search unmounts the drag context while its owning Sidebar remains mounted.
-export function SidebarDragLifecycle({ onUnmount }: { onUnmount: () => void }) {
-  useLayoutEffect(() => onUnmount, [onUnmount]);
-  return null;
-}
 
 type Options = {
   distance: number;
   onAttach: (sensor: SidebarPointerSensor) => void;
   onFinish: (started: boolean) => void;
+  /** Return true to claim the move and hide this position from sorting. */
+  onMove?: (point: { x: number; y: number }) => boolean;
+  /** Return true to consume the release and cancel sorting. */
+  onDrop?: (point: { x: number; y: number }) => boolean;
 };
 
-/** A sidebar gesture ends on release, cancellation, or loss of its window.
- * Own the listeners so unmounting the list can cancel the sensor too. */
 export class SidebarPointerSensor {
   static activators = [
     {
@@ -30,7 +26,7 @@ export class SidebarPointerSensor {
   private readonly document: Document;
   private readonly window: Window;
 
-  constructor(private readonly props: SensorProps<Options>) {
+  constructor(private readonly props: Omit<SensorProps<Options>, "activeNode" | "context">) {
     this.pointer = props.event as PointerEvent;
     this.document = getOwnerDocument(this.pointer.target);
     this.window = getWindow(this.pointer.target);
@@ -62,10 +58,12 @@ export class SidebarPointerSensor {
 
   private move = (event: PointerEvent) => {
     if (this.phase === "finished" || event.pointerId !== this.pointer.pointerId) return;
-    // A release outside the window can be missed. Never activate or continue
-    // a drag when the initiating button is no longer held.
-    if ((event.buttons & 1) === 0) return this.cancel();
     const coordinates = { x: event.clientX, y: event.clientY };
+    // Desktop may report buttons=0 before pointerup; drop active context drags before cancelling sort.
+    if ((event.buttons & 1) === 0) {
+      if (this.phase === "dragging") this.props.options.onDrop?.(coordinates);
+      return this.cancel();
+    }
     if (this.phase === "pending") {
       const offset = {
         x: event.clientX - this.pointer.clientX,
@@ -85,16 +83,20 @@ export class SidebarPointerSensor {
       this.document.addEventListener("selectionchange", this.clearSelection);
       this.clearSelection();
       this.props.onStart(this.coordinates());
-      return;
     }
     if (this.phase === "dragging") {
       if (event.cancelable) event.preventDefault();
+      if (this.props.options.onMove?.(coordinates) === true) return;
       this.props.onMove(coordinates);
     }
   };
 
   private end = (event: PointerEvent) => {
-    if (event.pointerId === this.pointer.pointerId) this.finish(false);
+    if (event.pointerId !== this.pointer.pointerId) return;
+    const dropped =
+      this.phase === "dragging" &&
+      this.props.options.onDrop?.({ x: event.clientX, y: event.clientY }) === true;
+    this.finish(dropped);
   };
   private pointerCancel = (event: PointerEvent) => {
     if (event.pointerId === this.pointer.pointerId) this.cancel();
@@ -122,15 +124,15 @@ export class SidebarPointerSensor {
     this.document.removeEventListener("dragstart", this.preventDefault);
     this.document.removeEventListener("contextmenu", this.preventDefault);
     this.document.removeEventListener("selectionchange", this.clearSelection);
-    // Cancellation can precede release by an arbitrary amount of time. Consume
-    // that release click, or let a fresh pointerdown end suppression if release
-    // happened outside the document. Ordinary clicks never install this guard.
-    if (!aborted) {
+    // Suppress the eventual click after cancellation; a fresh pointerdown clears suppression after
+    // out-of-document release.
+    if (!aborted || cancelled) {
+      this.document.addEventListener("click", this.suppressClick, { capture: true });
       this.document.addEventListener("pointerdown", this.clearClickSuppression, { capture: true });
     }
     try {
-      // Release the sidebar preview before dnd-kit clears its transforms.
-      // Its public end/cancel event can be omitted before its first layout.
+      // Release the preview before dnd-kit clears transforms; end/cancel events may be omitted before first
+      // layout.
       this.props.options.onFinish(!aborted);
     } finally {
       if (aborted) this.props.onAbort(this.props.active);

@@ -1,0 +1,120 @@
+---
+title: Config and secrets
+description: Bind Effect Config into an Alchemy host, compose database layers, and preserve generated signing secrets.
+---
+
+## Keep configuration in a typed service
+
+```typescript
+// auth.ts
+import { BetterAuth } from "@alchemy.run/better-auth";
+import * as Config from "effect/Config";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+
+const makeAuth = Effect.gen(function* () {
+  const baseURL = yield* Config.String("AUTH_BASE_URL").pipe(Config.option);
+  return yield* BetterAuth({
+    basePath: "/api/auth",
+    emailAndPassword: { enabled: true },
+    baseURL: Option.getOrUndefined(baseURL),
+  });
+});
+
+export class Auth extends Context.Service<
+  Auth,
+  Effect.Success<typeof makeAuth>
+>()("app/Auth") {
+  static readonly layer = Layer.effect(Auth, makeAuth);
+}
+```
+
+`BetterAuth` checks the inline options and infers plugin types. The wrapper owns `database` and `secondaryStorage`; supply those through layers rather than options.
+
+`AUTH_BASE_URL` is optional and contains an origin without a trailing slash when supplied. Resolving Config during service construction lets Alchemy discover and bind it before requests arrive.
+
+## Supply the database at the host
+
+```typescript
+// worker.ts
+import { CloudflareD1 } from "@alchemy.run/better-auth/CloudflareD1";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { Auth } from "./auth.ts";
+
+const AuthDb = Cloudflare.D1.Database("AuthDb");
+
+export default class AuthApi extends Cloudflare.Worker<AuthApi>()(
+  "AuthApi",
+  { main: import.meta.url, compatibility: { flags: ["nodejs_compat"] } },
+  Effect.gen(function* () {
+    const auth = yield* Auth;
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const path = request.url.split("?")[0];
+        if (path === "/api/auth" || path.startsWith("/api/auth/")) {
+          return yield* auth.fetch;
+        }
+        return HttpServerResponse.text("Not found", { status: 404 });
+      }),
+    };
+  }).pipe(
+    Effect.provide(Auth.layer.pipe(Layer.provide(CloudflareD1(AuthDb)))),
+  ),
+) {}
+```
+
+This host creates its own D1 database, registers migrations, and forwards Better Auth's complete HTTP responses. The Auth service itself has no Cloudflare dependency.
+
+## Run the standalone stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import AuthApi from "./worker.ts";
+
+export default Alchemy.Stack(
+  "AuthConfiguration",
+  { providers: Cloudflare.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const api = yield* AuthApi;
+    return { url: api.url };
+  }),
+);
+```
+
+These three files use Bun, matching releases of `alchemy` and `@alchemy.run/better-auth`, Better Auth 1.7.5, Effect 4, and `kysely`. Configure Cloudflare credentials for deployment; preserve the local Alchemy state directory across runs.
+
+```sh
+bunx alchemy dev
+```
+
+Alchemy selects an available port and prints the origin. With `AUTH_BASE_URL` unset, Better Auth derives its origin from the incoming request, so no fixed port is needed.
+
+## Override the origin deliberately
+
+```sh
+read -r AUTH_BASE_URL
+export AUTH_BASE_URL
+bunx alchemy deploy --stage prod
+```
+
+Enter the actual origin serving this Worker, without a path or trailing slash. `baseURL` does not provision DNS or attach a custom domain; configure that routing separately before sending traffic there.
+
+A gitignored env file can supply the same value through `--env-file .env.production`. Pass the file explicitly on subsequent deployments, and update any local override if Alchemy's printed origin changes.
+
+`--stage prod` selects the stack instance; `--profile prod` selects cloud credentials. Neither option implicitly loads an env file or selects an application URL; keep local development on a separate stage.
+
+## Preserve the signing identity
+
+Omit `secret` for a new application: Alchemy provisions a random signing secret once and preserves it across deployments. Keep the auth instance's `id`, resource namespace, stage, and state stable.
+
+When importing an existing installation, preserve its existing signing identity through protected configuration rather than generating a replacement. Preserving a secret alone does not migrate users, sessions, or cookies; follow the [upgrade guidance](/better-auth/upgrades/from-1-6-to-1-7) before moving an existing database.

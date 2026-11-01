@@ -1,7 +1,7 @@
 ---
 title: Effect Service Conventions
-model: gpt-6-sol
-effort: max
+model: gpt-6-1-sol
+reasoning: low
 input: incremental
 tools:
   - browse_code
@@ -22,7 +22,7 @@ showToolCalls: true
 
 # Effect service review
 
-Review changed TypeScript for the conventions below. They apply when a pull request creates, moves, refactors, or consumes an Effect service. Review only the lines the PR changed; older code in the same file that predates these conventions is not a finding. Do not demand repository-wide cleanup.
+Review changed TypeScript for the conventions below. They apply when a pull request creates, moves, refactors, or consumes an Effect service, or adds server behavior. Authors read the same rules in `docs/internals/effect-services.md`; keep the two in step. Review only the lines the PR changed; older code in the same file that predates these conventions is not a finding. Do not demand repository-wide cleanup.
 
 ## Imports and module namespaces
 
@@ -31,13 +31,30 @@ Review changed TypeScript for the conventions below. They apply when a pull requ
 - Named imports stay correct for whole packages such as `@t3tools/contracts` and for modules used only for a pure helper, error, schema, config value, or type. Do not request `import type * as Contracts`.
 - When a barrel exposes a whole service module, prefer `export * as TokenStore from "./tokenStore.ts"` over individually renamed `make` and `layer` exports.
 
+## Placement
+
+- Flag new or broadened feature logic in a transport handler: a WebSocket RPC handler in `apps/server/src/ws.ts`, an HTTP route handler, or an MCP tool handler. A handler decodes input, calls one service method, and maps the service's errors to the transport's error. Filesystem, Git, process, or persistence work, folder naming, multi-step command dispatch, retries, or rollback inside a handler belongs in a service method; ask for it to move to the domain's existing service, or a new one when none owns the domain. Existing inline handlers are legacy; flag only changed lines.
+- Flag a new exported free function that does a server capability's effectful work (filesystem, Git, processes, persisted state) and is called from a handler, when it should be a service method. Plain functions for pure work (formatting, naming, parsing) are fine.
+
 ## Service definition
 
 - One canonical module per service in this order: imports, error and schema declarations, the `Context.Service` tag with its interface inline, `make`, then `layer`.
 - Define the interface inline in `Context.Service`. Do not add a standalone `FooShape` interface; refer to the inferred type as `Foo["Service"]`.
-- Export a real `make` when the module owns construction. Do not write `make = Effect.succeed(...)` only to force `Layer.effect`; use `Layer.succeed`, `Layer.scoped`, or whichever constructor matches.
+- Define a real `make` when the module owns construction, and export it only when another module imports it; knip fails CI on an unused export, so do not ask for an export nothing uses. Do not write `make = Effect.succeed(...)` only to force `Layer.effect`; use `Layer.succeed`, `Layer.scoped`, or whichever constructor matches.
 - Use plain `make` and `layer` in a module named for its implementation (`BunPtyAdapter.ts`). Keep implementation-specific names when one abstract port module holds several implementations (`makeCloudflaredRelayClient`, `layerCloudflared` in `RelayClient.ts`). `infra/relay/src/db.ts` may keep its inline `Layer.succeed(RelayDb, db)`.
 - When a service moves, delete the old files and update every consumer, including orchestration, MCP, tests, and integration harnesses. Do not leave compatibility re-export shims.
+
+## Effect functions and tracing
+
+- Reusable functions use named `Effect.fn("Service.operation")`, not functions wrapping
+  `Effect.gen`. Inline programs, callbacks, and layer construction can keep `Effect.gen`.
+- Named `Effect.fn` creates a span; the unnamed form does not. Default to named spans for service
+  operations and I/O. `Effect.fnUntraced` is deliberate for per-chunk/per-event work, tight loops,
+  or helpers duplicating an existing tracing boundary; require a nearby reason for new uses.
+- Preserve existing span names/options and avoid adding duplicate spans. Pass combinators after
+  the generator body; transforms receive the original function arguments after the effect.
+- Preserve generic signatures, laziness, resource scope, and interruption behavior. An explicit
+  generator return type is `Effect.fn.Return<A, E, R>`.
 
 ## Dependency acquisition and runtime boundaries
 
@@ -52,6 +69,7 @@ Review changed TypeScript for the conventions below. They apply when a pull requ
 - Define service failures with `Schema.TaggedError` and structured attributes: operation or stage, resource path or entity identifier, normalized category or status. Derive `message` from those attributes only. Never derive it from `cause`, `cause.message`, or a stringified defect, and do not add a `detail` field that copies `cause.message`.
 - When wrapping a real failure, keep the immediate underlying error as `cause` so the chain and stack survive. Make `cause` required if every construction wraps a failure. Pure validation or domain errors created without an underlying failure need no cause.
 - Keep attributes and log annotations safe and bounded: no raw wire payloads, command arguments or output, signed URLs, credentials, query strings, or arbitrary defect text. Preserve the exact value only as `cause`; expose normalized categories, lengths, counts, and safe URL protocol or hostname where useful.
+  The documented exception is `DeviceBootError.diagnostics`: device hub launch commands and failure text are intentionally exposed to authorized device users and agents, capped at 2,000 characters and included in the error message. Do not apply this exception to other service errors.
 - At a translation boundary, pass through an already structured domain error when it is part of the target error channel; wrap only unknown or lower-level failures. Map failures where the context is known instead of wrapping a whole multi-step pipeline in one generic error.
 - Do not encode the same distinction twice with both a specific error tag and a single-value `operation`, `reason`, `kind`, or `phase` literal. Split into separate error classes when a discriminator drives caller control flow or the user-facing message; a discriminator used only for diagnostics may stay a field. Caller-visible messages exposed through HTTP, RPC, persisted state, or UI are behavior and must survive a structural refactor.
 - Do not add a helper whose only behavior is `(...args) => new SomeError({ ...args })`. Construct the error at the failure boundary. Keep a mapper only when it performs real normalization, passes through domain errors, or adds reusable context; when such a mapper belongs to the target error type, prefer a static factory on that class.

@@ -30,77 +30,81 @@ const fixtureEntries = [
   "public",
 ];
 
-describe("Hetzner.Website.SolidStart local", () => {
-  test.provider(
-    "dev runs the framework server with no cloud resources",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe(
+  "Hetzner.Website.SolidStart local",
+  { tags: ["provider:hetzner", "provider:hetzner:website", "local"] },
+  () => {
+    test.provider(
+      "dev runs the framework server with no cloud resources",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-solidstart-hetzner-local-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-solidstart-hetzner-local-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const site = yield* Hetzner.Website.SolidStart("Web", {
-              rootDir,
-            });
-            return { site };
-          }),
-        );
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const site = yield* Hetzner.Website.SolidStart("Web", {
+                rootDir,
+              });
+              return { site };
+            }),
+          );
 
-        const url = deployed.site.url;
-        expect(url).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/);
-        expect(deployed.site.service).toBeUndefined();
-        expect(deployed.site.server).toBeUndefined();
+          const url = deployed.site.url;
+          expect(url).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/);
+          expect(deployed.site.service).toBeUndefined();
+          expect(deployed.site.server).toBeUndefined();
 
-        yield* stack.destroy();
-      }),
-    { timeout: 120_000 },
-  );
+          yield* stack.destroy();
+        }),
+      { timeout: 120_000 },
+    );
 
-  test.provider.skipIf(!runDevSsr)(
-    "dev serves SSR home and API routes",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+    test.provider.skipIf(!runDevSsr)(
+      "dev serves SSR home and API routes",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-solidstart-hetzner-local-ssr-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-solidstart-hetzner-local-ssr-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const site = yield* Hetzner.Website.SolidStart("Web", {
-              rootDir,
-            });
-            return { site };
-          }),
-        );
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const site = yield* Hetzner.Website.SolidStart("Web", {
+                rootDir,
+              });
+              return { site };
+            }),
+          );
 
-        const url = deployed.site.url;
-        yield* expectUrlContains(`${url}/`, "SOLIDSTART_AWS_PAGE_MARKER", {
-          timeout: "90 seconds",
-          label: "dev home page",
-        });
-        yield* expectUrlContains(
-          `${url}/api/hello?echo=roundtrip`,
-          "SOLIDSTART_AWS_API_MARKER",
-          { label: "api route (dev)" },
-        );
-        yield* expectUrlContains(
-          `${url}/prerendered`,
-          "SOLIDSTART_AWS_PRERENDERED_MARKER",
-          { label: "extra route (dev)" },
-        );
+          const url = deployed.site.url;
+          yield* expectUrlContains(`${url}/`, "SOLIDSTART_AWS_PAGE_MARKER", {
+            timeout: "90 seconds",
+            label: "dev home page",
+          });
+          yield* expectUrlContains(
+            `${url}/api/hello?echo=roundtrip`,
+            "SOLIDSTART_AWS_API_MARKER",
+            { label: "api route (dev)" },
+          );
+          yield* expectUrlContains(
+            `${url}/prerendered`,
+            "SOLIDSTART_AWS_PRERENDERED_MARKER",
+            { label: "extra route (dev)" },
+          );
 
-        yield* stack.destroy();
-      }),
-    { timeout: 120_000 },
-  );
-});
+          yield* stack.destroy();
+        }),
+      { timeout: 120_000 },
+    );
+  },
+);

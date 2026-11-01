@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import * as pathe from "pathe";
 
 const { test } = Test.make({ providers: Cloudflare.providers() });
@@ -126,7 +126,10 @@ test.provider(
 
       yield* expectGone(accountId, dest.name);
     }).pipe(logLevel),
-  { timeout: 300_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 300_000,
+  },
 );
 
 test.provider(
@@ -241,7 +244,10 @@ test.provider(
 
       yield* expectGone(accountId, NAME_UPDATE);
     }).pipe(logLevel),
-  { timeout: 300_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 300_000,
+  },
 );
 
 test.provider(
@@ -297,7 +303,10 @@ test.provider(
 
       yield* expectGone(accountId, NAME_REPLACE_V2);
     }).pipe(logLevel),
-  { timeout: 300_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 300_000,
+  },
 );
 
 test.provider(
@@ -344,5 +353,8 @@ test.provider(
 
       yield* expectGone(accountId, NAME_LIST);
     }).pipe(logLevel),
-  { timeout: 300_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 300_000,
+  },
 );

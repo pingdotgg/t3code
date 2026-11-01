@@ -9,13 +9,13 @@
   note: "The schema for persisted multipart files was renamed."
 "@effect/platform/Multipart#isField":
   replacement: "Multipart.isField"
-  note: "The guard remains in effect/unstable/http/Multipart."
+  note: "The guard remains in effect/http/Multipart."
 "@effect/platform/Multipart#isFile":
   replacement: "Multipart.isFile"
-  note: "The guard remains in effect/unstable/http/Multipart."
+  note: "The guard remains in effect/http/Multipart."
 "@effect/platform/Multipart#isPart":
   replacement: "Multipart.isPart"
-  note: "The guard remains in effect/unstable/http/Multipart."
+  note: "The guard remains in effect/http/Multipart."
 "@effect/platform/Multipart#MaxFieldSize":
   replacement: "Multipart.MaxFieldSize"
   note: "Now a Context.Reference<ByteSize.ByteSize>; provide a value such as ByteSize.bytes(100)."
@@ -27,7 +27,7 @@
   note: "The setting remains as a Context.Reference; use undefined rather than Option.none for no limit."
 "@effect/platform/Multipart#schemaJson":
   replacement: "Multipart.schemaJson"
-  note: "The JSON-field decoder remains in effect/unstable/http/Multipart and uses v4 Schema constraints."
+  note: "The JSON-field decoder remains in effect/http/Multipart and uses v4 Schema constraints."
 "@effect/platform/Multipart#TypeId":
   replacement: "typeof Multipart.TypeId"
   note: "The runtime marker remains exported, but the separate type alias was removed."
@@ -50,7 +50,7 @@
   replacement: "Effect.provideService(Multipart.MaxParts, count)"
   note: "Provide the v4 Context.Reference around the effect, converting Option.none to undefined."
 "@effect/platform/Multipart#makeChannel":
-  replacement: "effect/unstable/http/Multipart#makeChannel"
+  replacement: "effect/http/Multipart#makeChannel"
   note: "The channel constructor moved and no longer accepts bufferSize; input and output chunks use non-empty readonly arrays."
 "@effect/platform/Multipart#withLimits.Options":
   replacement: "Multipart.withLimits.Options"

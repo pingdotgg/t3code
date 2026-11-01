@@ -21,6 +21,7 @@ test.provider(
         yield* socialmessaging.listLinkedWhatsAppBusinessAccounts({});
       expect(Array.isArray(response.linkedAccounts ?? [])).toBe(true);
     }),
+  { tags: ["provider:aws", "provider:aws:socialmessaging", "live"] },
 );
 
 test.provider(
@@ -35,6 +36,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:socialmessaging", "live"] },
 );
 
 test.provider(
@@ -48,6 +50,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:socialmessaging", "live"] },
 );
 
 // Full lifecycle — requires a WhatsApp Business Account already linked via
@@ -114,5 +117,8 @@ test.provider.skipIf(
       );
       expect(gone._tag).toBe("ResourceNotFoundException");
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:socialmessaging", "live"],
+    timeout: 120_000,
+  },
 );

@@ -1,0 +1,72 @@
+diff --git a/build/serializer/sourceMap.js b/build/serializer/sourceMap.js
+index 2a58f57..a90ce77 100644
+--- a/build/serializer/sourceMap.js
++++ b/build/serializer/sourceMap.js
+@@ -177,6 +177,58 @@ function repairInvalidNegativeIndices(map) {
+         mappings: encode(decoded)
+     } : map;
+ }
++// Hermes can emit mappings for Metro trailer/debug lines that have no
++// corresponding Metro source-map line. @jridgewell/remapping assumes every
++// referenced generated line exists, so strip those invalid bridge segments.
++function getGeneratedLineCount(map) {
++    const { TraceMap, decodedMappings } = loadTraceMapping();
++    return decodedMappings(new TraceMap(map)).length;
++}
++function dropInvalidOriginalSegments(map, maxOriginalLine) {
++    const { TraceMap, decodedMappings } = loadTraceMapping();
++    const decoded = decodedMappings(new TraceMap(map));
++    let didChange = false;
++    const filtered = decoded.map((line) => {
++        const filteredLine = line.filter((segment) => {
++            if (segment.length < 4) {
++                return true;
++            }
++            const sourceIndex = segment[1];
++            const sourceLine = segment[2];
++            const sourceColumn = segment[3];
++            return (sourceIndex >= 0 &&
++                sourceIndex < map.sources.length &&
++                sourceLine >= 0 &&
++                sourceLine < maxOriginalLine &&
++                sourceColumn >= 0);
++        });
++        if (filteredLine.length !== line.length) {
++            didChange = true;
++        }
++        return filteredLine;
++    });
++    if (!didChange) {
++        return map;
++    }
++    return {
++        ...map,
++        mappings: loadSourcemapCodec().encode(filtered),
++    };
++}
++function sanitizeSourceMapsForComposition(maps) {
++    let sanitized = maps;
++    for (let index = 1; index < maps.length; index++) {
++        const maxOriginalLine = getGeneratedLineCount(sanitized[index - 1]);
++        const next = dropInvalidOriginalSegments(sanitized[index], maxOriginalLine);
++        if (next !== sanitized[index]) {
++            if (sanitized === maps) {
++                sanitized = maps.slice();
++            }
++            sanitized[index] = next;
++        }
++    }
++    return sanitized;
++}
+ function composeSourceMaps(maps) {
+     if (maps.length < 1) {
+         throw new Error('composeSourceMaps: Expected at least one map');
+@@ -192,7 +244,7 @@ function composeSourceMaps(maps) {
+         };
+     });
+     // Metro convention is original-first; remapping is most-recent first.
+-    let input = normalized.slice().reverse();
++    let input = sanitizeSourceMapsForComposition(normalized).slice().reverse();
+     const remap = loadRemapping();
+     let composed;
+     try {

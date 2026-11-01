@@ -44,6 +44,14 @@ const DEFINITIONS = [
     kind: "skill",
     capabilities: { details: "tooltip", expanded: "none", defaultDraftView: "compact" },
   },
+  {
+    kind: "thread",
+    capabilities: { details: "tooltip", expanded: "none", defaultDraftView: "compact" },
+  },
+  {
+    kind: "environment",
+    capabilities: { details: "tooltip", expanded: "none", defaultDraftView: "compact" },
+  },
 ] as const satisfies ReadonlyArray<ContextPresentationDefinition>;
 
 function buildDefinitionRegistry(
@@ -64,9 +72,9 @@ function buildDefinitionRegistry(
   return registry;
 }
 
-export const CONTEXT_PRESENTATION_DEFINITIONS = buildDefinitionRegistry(DEFINITIONS);
+const CONTEXT_PRESENTATION_DEFINITIONS = buildDefinitionRegistry(DEFINITIONS);
 
-export function contextPresentationDefinition(
+function contextPresentationDefinition(
   kind: KnownComposerContextKind,
 ): ContextPresentationDefinition {
   return CONTEXT_PRESENTATION_DEFINITIONS.get(kind)!;
@@ -87,11 +95,6 @@ export interface ContextPresentationRegistry<TRecord, TRenderContext, TResult> {
   render(kind: string, record: TRecord | undefined, context: TRenderContext): TResult;
 }
 
-/**
- * Creates one checked dispatcher for a rendering surface. Definitions are shared; renderers stay
- * surface-specific so web composer and transcript presentation can differ without drifting on
- * capability semantics.
- */
 export function createContextPresentationRegistry<TRecord, TRenderContext, TResult>(options: {
   handlers: ReadonlyArray<ContextPresentationHandler<TRecord, TRenderContext, TResult>>;
   requiredKinds?: ReadonlyArray<KnownComposerContextKind>;

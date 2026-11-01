@@ -4,11 +4,16 @@ Open **Usage** from the sidebar or the command palette, or press `mod+u` on web 
 desktop when the terminal is not focused. Customize `usage.open` in
 **Settings → Keybindings**.
 
+On mobile, choose **Usage** in the workspace navigation.
+
 ## Understand your usage
 
-**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, and Cursor history from your connected
-environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
-cost. These estimates are not your subscription bill.
+**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, Pi, Muse Code, and Cursor history
+from your connected environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
+cost, split by token type and by speed. These estimates are not your subscription bill.
+**Premium** is what Fast and Ultrafast requests cost above standard rates. Cost that cannot be
+split, such as a provider-reported cost for a model without public rates, shows as **Other**.
+Select a model under **Breakdown** to see its trend, cache hit rate, and cost per million tokens.
 
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
@@ -27,13 +32,28 @@ you to allow access on the server Mac.
 
 Usage includes each configured account's history, including disabled accounts. Custom homes follow
 the account's home setting or its `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, or `GROK_HOME` environment
-variable. Use absolute paths or `~/` paths in the account's environment settings; relative
-environment paths depend on each project's working directory and cannot be reliably discovered
-by Usage. Accounts sharing a history directory count once.
+variable. Pi reads `~/.pi/agent/sessions`, or the `sessions` directory under
+`PI_CODING_AGENT_DIR`. Set `PI_CODING_AGENT_SESSION_DIR` to read a different session directory.
+To include sessions saved through `--session-dir` or Pi's `sessionDir` setting, set this environment
+variable to the same directory. Pi includes recorded tool and summary costs under `Tools/summaries`.
+Muse Code reads native session history, including child sessions, from the home reported by the
+configured Muse CLI. Its environment settings, including `XDG_DATA_HOME`, apply. Models without
+known prices still contribute tokens and appear as unpriced; set custom prices to estimate their cost.
+Use absolute paths or `~/` paths in the account's environment settings; relative environment paths
+depend on each project's working directory and cannot be reliably discovered by Usage. Accounts
+sharing a history directory count once.
+
+The server saves its first hostname in `<T3 home>/usage-host-id`, so a recreated container keeps
+its usage identity when T3 home is persisted. Set `T3CODE_HOST_ID` to choose the identity
+explicitly.
+
+When your app and server support different providers, usage totals may cover only the providers
+your app understands. Update the app to include newly supported providers.
 
 On web and desktop, use the environment dropdown to filter costs, tokens, and limits. All
 environments are selected by default. The dropdown shows which environments are still scanning;
-results appear as each one responds.
+results appear as each one responds, and figures still updating are dimmed. Cursor shows its last
+saved totals first, then updates them when Cursor's API responds.
 
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.
@@ -73,7 +93,8 @@ On web or desktop, open the environment dropdown on **Usage**, then choose **Mod
 edit, or reset a model's estimated price. **Apply to** starts with your current Usage filter;
 choose all environments or select individual destinations. Enter the exact model ID and USD
 rates per million input and output tokens. You can enter any model ID, including models
-without public pricing.
+without public pricing. When a model on **Usage** has no known price, select it under
+**Breakdown** and choose **Set price** to open this table with that model added.
 
 Cache read and cache write rates are optional and use the input rate when blank. Enter `0` for
 tokens that are free. Saved prices replace automatic pricing for all of that environment's
@@ -83,6 +104,11 @@ edited rows. Untouched cells keep each environment's rate. Select one environmen
 prices. **Reset to automatic** marks a model's override for removal when you save; you can undo
 it before saving.
 
+To count one model as another, such as a preview model under its released name, enter the target
+model ID under **Map to**. The mapped model no longer appears on **Usage**: its tokens and cost
+move to the target model and use the target's price. Clear **Map to** or reset the row to show
+the model on its own again.
+
 Each destination reports whether the change saved. Offline or unavailable environments are
 marked **Not saved**. Reconnect them and choose **Retry failed saves** to finish the same change
 without writing again to environments that already saved. Changes are not queued after you close
@@ -91,10 +117,11 @@ the dialog.
 ## Track subscription limits
 
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
-or Claude accounts across your environments and hubs you read one number per window rather than a
+or Claude accounts across your enabled environments and hubs you read one number per window rather than a
 list. Each window card shows how much of the pool is left and a bar with one segment per account,
-kept in the same column across windows. Accounts are ordered by their 5-hour reset, soonest
-first, or by the first available window when no account reports a 5-hour limit. A gap means the
+kept in the same column across windows. Accounts are ordered by their next 5-hour refill, soonest
+first. For an account with no weekly quota left, this is when its session becomes usable again.
+The first available window is used when no account reports a 5-hour limit. A gap means the
 account does not report that window. When the provider reports reset times, the card also says
 when the next reset lands and how much it hands back. The hatched
 part of a segment is what that reset restores. Tap a segment or account row for the account's plan,
@@ -107,6 +134,12 @@ the bar show each account's quota, countdown, and credits. Tap a row to open its
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.
 
+When a Claude or Codex account has no overall weekly quota left, its pooled session contribution
+shows 0% left. The next refill depends on both reset times: an exhausted session must also reset,
+and a partly spent session may only regain its unused portion when the week resets. Missing or
+stale reset times have no refill estimate; refresh Limits for a new reading. Claude's
+model-specific weekly allowances keep their reported values.
+
 Opening Limits checks the selected connected environments automatically. Each client waits at
 least five minutes between automatic checks of an environment, including after a failed check.
 If a window still looks stale, refresh Limits to re-check every provider and hub.
@@ -116,9 +149,19 @@ current model's limits without leaving the conversation. The result opens above 
 closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh
 anything. The command is offered only for providers that appear under **Usage → Limits**.
 
+To keep them in view on web and desktop, turn on **Usage limits** in **Settings → Appearance → Thread details**, or right-click the thread details card.
+The bottom of the thread details card then shows how much is left in each limit window of the
+current provider account. Some windows, such as a weekly Opus limit, count only one model. Hover a
+row to see when it resets and your pace. Turn on **Context window** to also show the thread's
+context use against the model's limit. A tick on the bar marks where the provider compacts
+automatically, when it reports that point.
+
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
 the environment. T3 cannot report limits for external OpenCode servers because their credentials
-belong to the remote server. Cursor reports
+belong to the remote server. Limits need an OpenCode Go API key, or an OpenCode Console connected
+in OpenCode with an API key. A Console browser sign-in alone does not report them. You can also add
+your Go API key as `OPENCODE_API_KEY` in the OpenCode instance's **Environment variables**, then
+refresh provider status. Cursor reports
 its monthly allowance, including separate Auto and API usage, using the CLI login or
 `CURSOR_AUTH_TOKEN`. On macOS, this includes the default Keychain login after you enable Cursor
 usage. Keychain login is used for limits only with Cursor's default API endpoint. If you configure
@@ -146,9 +189,9 @@ settings section when you no longer need it.
 ## Subscription usage widget
 
 Add **Subscription usage** from your iOS or Android widget gallery to see remaining Codex and
-Claude quotas. Tap it to open **Usage → Limits**. On iOS, use **Edit Widget** to choose Session,
-Weekly, or both for each provider. Reopen T3 to refresh expired readings. The Android widget
-requires Android 12L or later.
+Claude quotas. Tap it to open **Usage → Limits**; on Android this works while T3 is running in
+the background, otherwise open the app from the launcher. On iOS, use **Edit Widget** to choose
+Session, Weekly, or both for each provider. Reopen T3 to refresh expired readings.
 
 ## Keyboard shortcuts
 

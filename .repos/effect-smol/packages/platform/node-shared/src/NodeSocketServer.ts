@@ -20,11 +20,11 @@ import * as Fiber from "effect/Fiber"
 import { pipe } from "effect/Function"
 import * as Function from "effect/Function"
 import * as Layer from "effect/Layer"
+import * as NetAddress from "effect/net/NetAddress"
 import * as References from "effect/References"
 import * as Scope from "effect/Scope"
-import * as NetAddress from "effect/unstable/net/NetAddress"
-import * as Socket from "effect/unstable/socket/Socket"
-import * as SocketServer from "effect/unstable/socket/SocketServer"
+import * as Socket from "effect/socket/Socket"
+import * as SocketServer from "effect/socket/SocketServer"
 import type * as Http from "node:http"
 import * as Net from "node:net"
 import * as Tls from "node:tls"
@@ -146,6 +146,7 @@ export const layerTls: (
  * providing the WebSocket and its Node `IncomingMessage` to connection
  * handlers and closing the server when the scope ends.
  *
+ * @stability unstable
  * @category constructors
  * @since 4.0.0
  */
@@ -253,6 +254,7 @@ export const makeWebSocket: (
  * Provides a WebSocket `SocketServer` backed by the `ws` package and managed
  * with the supplied server options.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */

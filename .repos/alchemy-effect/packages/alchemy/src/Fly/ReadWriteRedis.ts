@@ -20,6 +20,7 @@ import type { WriteRedisClient } from "./WriteRedis.ts";
  * ```
  *
  * @binding
+ * @product Redis
  */
 export interface ReadWriteRedis extends Binding.Service<
   ReadWriteRedis,

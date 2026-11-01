@@ -1,4 +1,5 @@
-import * as railway from "@distilled.cloud/railway";
+import { Query } from "@distilled.cloud/core/query";
+import { Railway as RailwayApi } from "@distilled.cloud/railway";
 import * as Provider from "@/Provider";
 import * as Railway from "@/Railway";
 import { suitePartition } from "./suiteProject.ts";
@@ -9,8 +10,8 @@ import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import VolumeApi, {
   Data,
   MARKER,
@@ -19,6 +20,21 @@ import VolumeApi, {
 } from "./fixtures/volume-api.ts";
 
 const { test } = Test.make({ providers: Railway.providers() });
+
+const readVolumeInstance = Query.fn((id: string) => {
+  const instance = RailwayApi.volumeInstance({ id });
+  return {
+    id: instance.id,
+    volumeId: instance.volumeId,
+    mountPath: instance.mountPath,
+    environmentId: instance.environmentId,
+    volume: {
+      name: instance.volume.name,
+      projectId: instance.volume.projectId,
+    },
+    serviceId: instance.serviceId,
+  };
+});
 
 const logLevel = Effect.provideService(
   MinimumLogLevel,
@@ -60,18 +76,8 @@ test.provider(
       expect(created.volume.sizeMB).toEqual(expect.any(Number));
       expect(created.volume.createdAt).toEqual(expect.any(String));
 
-      const fetched = yield* railway.volumeInstance(
-        {
-          id: created.volume.volumeInstanceId,
-        },
-        {
-          id: true,
-          volumeId: true,
-          mountPath: true,
-          environmentId: true,
-          volume: { name: true, projectId: true },
-          serviceId: true,
-        },
+      const fetched = yield* readVolumeInstance(
+        created.volume.volumeInstanceId,
       );
       expect(fetched.id).toEqual(created.volume.volumeInstanceId);
       expect(fetched.volumeId).toEqual(created.volume.volumeId);
@@ -114,11 +120,8 @@ test.provider(
       expect(updated.volume.mountPath).toEqual("/app/data");
       expect(updated.volume.name).toEqual(created.volume.name);
 
-      const fetchedUpdate = yield* railway.volumeInstance(
-        {
-          id: updated.volume.volumeInstanceId,
-        },
-        { id: true, mountPath: true, volume: { name: true } },
+      const fetchedUpdate = yield* readVolumeInstance(
+        updated.volume.volumeInstanceId,
       );
       expect(fetchedUpdate.id).toEqual(updated.volume.volumeInstanceId);
       expect(fetchedUpdate.mountPath).toEqual("/app/data");
@@ -129,7 +132,16 @@ test.provider(
       const gone = yield* waitUntilVolumeGone(created.volume.volumeInstanceId);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:volume",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -192,7 +204,17 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:service",
+      "provider:railway:volume",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -217,12 +239,7 @@ test.provider(
       expect(created.api.url).toEqual(expect.any(String));
       expect(created.api.url).toContain("up.railway.app");
 
-      const fetched = yield* railway.volumeInstance(
-        {
-          id: created.data.volumeInstanceId,
-        },
-        { serviceId: true, mountPath: true, volumeId: true },
-      );
+      const fetched = yield* readVolumeInstance(created.data.volumeInstanceId);
       expect(fetched.serviceId).toEqual(created.api.serviceId);
       expect(fetched.mountPath).toEqual(VOLUME_PATH);
       expect(fetched.volumeId).toEqual(created.data.volumeId);
@@ -257,5 +274,16 @@ test.provider(
       const gone = yield* waitUntilVolumeGone(created.data.volumeInstanceId);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:mountvolume",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:service",
+      "provider:railway:volume",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

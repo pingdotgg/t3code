@@ -53,52 +53,62 @@ it.effect(
         ),
       ),
     ),
+  { tags: ["unit", "local"] },
 );
 
-it.effect("surfaces provider credential deletion failures", () =>
-  Effect.gen(function* () {
-    const store = yield* CredentialsStore;
-    const error = yield* store.delete("test", "provider").pipe(Effect.flip);
+it.effect(
+  "surfaces provider credential deletion failures",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* CredentialsStore;
+      const error = yield* store.delete("test", "provider").pipe(Effect.flip);
 
-    expect(error).toBeInstanceOf(AuthError);
-    expect(error.message).toContain("Could not delete credentials at");
-  }).pipe(Effect.provide(failingDeleteLayer)),
+      expect(error).toBeInstanceOf(AuthError);
+      expect(error.message).toContain("Could not delete credentials at");
+    }).pipe(Effect.provide(failingDeleteLayer)),
+  { tags: ["unit", "local"] },
 );
 
-it.effect("surfaces profile credential deletion failures", () =>
-  Effect.gen(function* () {
-    const store = yield* CredentialsStore;
-    const error = yield* store.deleteProfile("test").pipe(Effect.flip);
+it.effect(
+  "surfaces profile credential deletion failures",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* CredentialsStore;
+      const error = yield* store.deleteProfile("test").pipe(Effect.flip);
 
-    expect(error).toBeInstanceOf(AuthError);
-    expect(error.message).toBe(
-      "Could not delete credentials for profile 'test'.",
-    );
-  }).pipe(Effect.provide(failingDeleteLayer)),
+      expect(error).toBeInstanceOf(AuthError);
+      expect(error.message).toBe(
+        "Could not delete credentials for profile 'test'.",
+      );
+    }).pipe(Effect.provide(failingDeleteLayer)),
+  { tags: ["unit", "local"] },
 );
 
-it.effect("ignores missing credential files", () =>
-  Effect.gen(function* () {
-    const store = yield* CredentialsStore;
-    yield* store.delete("test", "provider");
-    yield* store.deleteProfile("test");
-  }).pipe(
-    Effect.provide(
-      CredentialsStoreLive.pipe(
-        Layer.provide(
-          FileSystem.layerNoop({
-            remove: (path) =>
-              Effect.fail(
-                PlatformError.systemError({
-                  _tag: "NotFound",
-                  module: "FileSystem",
-                  method: "remove",
-                  pathOrDescriptor: path,
-                }),
-              ),
-          }),
+it.effect(
+  "ignores missing credential files",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* CredentialsStore;
+      yield* store.delete("test", "provider");
+      yield* store.deleteProfile("test");
+    }).pipe(
+      Effect.provide(
+        CredentialsStoreLive.pipe(
+          Layer.provide(
+            FileSystem.layerNoop({
+              remove: (path) =>
+                Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "NotFound",
+                    module: "FileSystem",
+                    method: "remove",
+                    pathOrDescriptor: path,
+                  }),
+                ),
+            }),
+          ),
         ),
       ),
     ),
-  ),
+  { tags: ["unit", "local"] },
 );

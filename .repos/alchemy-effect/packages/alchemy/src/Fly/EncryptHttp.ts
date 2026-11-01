@@ -1,7 +1,7 @@
 import * as machines from "@distilled.cloud/fly-io/machines";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { CredentialsFromAmbientOrEnv } from "./Credentials.ts";
 import { Encrypt, type EncryptRequest } from "./Encrypt.ts";
 import {
@@ -25,6 +25,7 @@ import {
  * ```
  *
  * @layer
+ * @product Secret Key
  * @provides Fly.Encrypt
  */
 export const EncryptHttp = Layer.effect(

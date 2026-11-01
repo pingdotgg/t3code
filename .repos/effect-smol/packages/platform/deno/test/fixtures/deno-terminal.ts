@@ -1,5 +1,6 @@
 import * as DenoStdio from "@effect/platform-deno/DenoStdio"
 import * as DenoTerminal from "@effect/platform-deno/DenoTerminal"
+import { Prompt } from "effect/cli"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as FileSystem from "effect/FileSystem"
@@ -10,7 +11,6 @@ import * as Queue from "effect/Queue"
 import * as Stdio from "effect/Stdio"
 import * as Stream from "effect/Stream"
 import * as Terminal from "effect/Terminal"
-import { Prompt } from "effect/unstable/cli"
 
 const TerminalLayer = Layer.mergeAll(
   DenoStdio.layer,

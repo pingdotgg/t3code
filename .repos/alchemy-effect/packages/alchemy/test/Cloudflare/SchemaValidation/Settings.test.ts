@@ -114,7 +114,15 @@ test.provider(
       expect(restored.validationDefaultMitigationAction).toEqual("none");
       expect(restored.validationOverrideMitigationAction ?? null).toEqual(null);
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:schemavalidation",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 // Canonical `list()` test (zone-scoped singleton): there is no account-wide
@@ -141,5 +149,13 @@ test.provider(
       // keep the destroy bookends so the harness state stays clean.
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:schemavalidation",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

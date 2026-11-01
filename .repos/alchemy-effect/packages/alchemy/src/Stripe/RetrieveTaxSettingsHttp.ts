@@ -20,6 +20,7 @@ import type { TaxSettings } from "./TaxSettings.ts";
  * key is bound.
  *
  * @layer
+ * @product Tax
  * @provides Stripe.RetrieveTaxSettings
  */
 export const RetrieveTaxSettingsHttp = Layer.effect(

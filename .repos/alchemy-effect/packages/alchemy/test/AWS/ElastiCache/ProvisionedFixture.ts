@@ -3,15 +3,16 @@ import type { SecurityGroupId } from "@/AWS/EC2/SecurityGroup.ts";
 import type { SubnetId } from "@/AWS/EC2/Subnet.ts";
 import type { VpcId } from "@/AWS/EC2/Vpc.ts";
 import * as Core from "@/Test/Core";
+import * as EC2 from "@distilled.cloud/aws/ec2";
 import * as ElastiCache from "@distilled.cloud/aws/elasticache";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import { makeEc2VpcCapacityLease } from "../EC2/VpcCapacity.ts";
+import { getDefaultVpc } from "../DefaultVpc.ts";
 
 export interface ProvisionedNetwork {
   vpcId: VpcId;
-  privateSubnetIds: SubnetId[];
+  subnetIds: SubnetId[];
   securityGroupId: SecurityGroupId;
   subnetGroupName: string;
 }
@@ -22,37 +23,62 @@ const networkStack = Core.scratchStack(
   "Network",
   "test/AWS/ElastiCache/ProvisionedFixture.ts",
 );
-const vpcLease = makeEc2VpcCapacityLease(1);
 
 let ready = Deferred.makeUnsafe<ProvisionedNetwork, unknown>();
 let started = false;
 let holders = 0;
 let deployed = false;
 
+// The account's default VPC costs no VPC quota, so cache suites never queue
+// behind EC2 suites for VPC capacity. Lambdas reach the caches over private
+// addresses, so public default subnets need no NAT.
+const findDefaultSubnets = Effect.gen(function* () {
+  const vpc = yield* getDefaultVpc;
+  const subnets = yield* EC2.describeSubnets({
+    Filters: [
+      { Name: "vpc-id", Values: [vpc.vpcId] },
+      { Name: "default-for-az", Values: ["true"] },
+      { Name: "state", Values: ["available"] },
+    ],
+  });
+  // Not every AZ offers every cache node type; stay within the first three.
+  const subnetIds = (subnets.Subnets ?? [])
+    .filter((subnet) => /[abc]$/.test(subnet.AvailabilityZone ?? ""))
+    .sort((l, r) =>
+      (l.AvailabilityZone ?? "").localeCompare(r.AvailabilityZone ?? ""),
+    )
+    .flatMap((subnet) => (subnet.SubnetId ? [subnet.SubnetId] : []))
+    .slice(0, 2) as SubnetId[];
+  if (subnetIds.length < 2) {
+    return yield* Effect.fail(
+      new Error("ElastiCache tests require two default subnets in AZs a-c"),
+    );
+  }
+  return { vpcId: vpc.vpcId, subnetIds };
+});
+
 const deployNetwork = Effect.gen(function* () {
-  yield* vpcLease.acquire;
+  const { vpcId, subnetIds } = yield* Core.withProviders(
+    findDefaultSubnets,
+    testOptions,
+    "Network",
+  );
   yield* networkStack.destroy();
   return yield* networkStack.deploy(
     Effect.gen(function* () {
-      const network = yield* AWS.EC2.Network("Network", {
-        cidrBlock: "10.92.0.0/16",
-        availabilityZones: 2,
-        nat: "none",
-        tags: { fixture: "elasticache-provisioned" },
-      });
       const securityGroup = yield* AWS.EC2.SecurityGroup("CacheSecurityGroup", {
-        vpcId: network.vpcId,
+        vpcId,
         description: "ElastiCache shared cache access",
         tags: { fixture: "elasticache-provisioned" },
       });
       const subnetGroup = yield* AWS.ElastiCache.SubnetGroup("Subnets", {
         description: "alchemy provisioned cache subnets",
-        subnetIds: network.privateSubnetIds,
+        subnetIds,
         tags: { fixture: "elasticache-provisioned" },
       });
       return {
-        vpcId: network.vpcId,
-        privateSubnetIds: network.privateSubnetIds,
+        vpcId,
+        subnetIds,
         securityGroupId: securityGroup.groupId,
         subnetGroupName: subnetGroup.subnetGroupName,
       } as unknown as ProvisionedNetwork;
@@ -96,7 +122,7 @@ export const releaseProvisionedNetwork = Effect.suspend(() => {
   deployed = false;
   started = false;
   ready = Deferred.makeUnsafe();
-  return networkStack.destroy().pipe(Effect.ensuring(vpcLease.release));
+  return networkStack.destroy();
 });
 
 export const shareProvisionedNetwork = (hooks: {

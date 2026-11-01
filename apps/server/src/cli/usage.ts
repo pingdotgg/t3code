@@ -20,10 +20,10 @@ import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Command, Flag, GlobalFlag } from "effect/unstable/cli";
-import { FetchHttpClient } from "effect/unstable/http";
-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
-import * as Socket from "effect/unstable/socket/Socket";
+import { Command, Flag, GlobalFlag } from "effect/cli";
+import { FetchHttpClient } from "effect/http";
+import { RpcClient, RpcSerialization } from "effect/rpc";
+import * as Socket from "effect/socket/Socket";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";

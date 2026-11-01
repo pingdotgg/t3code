@@ -34,24 +34,27 @@ const retryForbidden = <A, E extends { _tag: string }, R>(
 // prefixes), then listing each prefix's delegations. The result is a
 // well-typed `PrefixDelegationAttributes[]` — the exact shape `read`
 // produces — and is empty on a non-BYOIP account.
-test.provider("list enumerates prefix delegations (read-only)", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates prefix delegations (read-only)",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const provider = yield* Provider.findProvider(
-      Cloudflare.Addressing.PrefixDelegation,
-    );
-    const all = yield* retryForbidden(provider.list());
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Addressing.PrefixDelegation,
+      );
+      const all = yield* retryForbidden(provider.list());
 
-    expect(Array.isArray(all)).toBe(true);
-    for (const d of all) {
-      expect(typeof d.delegationId).toBe("string");
-      expect(typeof d.prefixId).toBe("string");
-      expect(typeof d.accountId).toBe("string");
-      expect(typeof d.cidr).toBe("string");
-      expect(typeof d.delegatedAccountId).toBe("string");
-    }
+      expect(Array.isArray(all)).toBe(true);
+      for (const d of all) {
+        expect(typeof d.delegationId).toBe("string");
+        expect(typeof d.prefixId).toBe("string");
+        expect(typeof d.accountId).toBe("string");
+        expect(typeof d.cidr).toBe("string");
+        expect(typeof d.delegatedAccountId).toBe("string");
+      }
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:addressing", "live"] },
 );

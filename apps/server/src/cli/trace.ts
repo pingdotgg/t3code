@@ -1,8 +1,3 @@
-/**
- * `t3 trace summary` - per-span counts, rates, and latency percentiles from
- * the local server trace file and its rotated backups. It reads the files
- * directly, so it works while the server is stalled or stopped.
- */
 import { PositiveInt } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -13,44 +8,35 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 
 import * as ServerConfig from "../config.ts";
 import { streamTraceFileLines, toRotatedTracePaths } from "../diagnostics/TraceDiagnostics.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag, DurationFromString, traceFileConfig, traceMaxFilesConfig } from "./config.ts";
 
-// Only the fields the summary needs. Other record fields are ignored.
 const decodeTraceSpanLine = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
       name: Schema.String,
       durationMs: Schema.Finite,
       endTimeUnixNano: Schema.FiniteFromString,
-      // Server (`effect-span`) records.
       exit: Schema.optional(Schema.Struct({ _tag: Schema.String })),
-      // Browser (`otlp-span`) records. Effect's OTLP tracer writes code "2" for
-      // errors and code "1" with message "Interrupted" for interrupts.
+      // OTLP errors use code 2; interrupts carry effect.fiber.interrupted, or code 1 with Interrupted before Effect 4.0.2.
       status: Schema.optional(
         Schema.Struct({
           code: Schema.optional(Schema.String),
           message: Schema.optional(Schema.String),
         }),
       ),
+      attributes: Schema.optional(
+        Schema.Struct({ "effect.fiber.interrupted": Schema.optional(Schema.Unknown) }),
+      ),
     }),
   ),
 );
 
-/**
- * Groups trace NDJSON by span name. Call `addLine` once per line as the files
- * stream in, then `finish` for the summary. Spans that ended before `sinceMs`
- * are left out. Rates are per minute between the first and last span end,
- * since spans are written when they end.
- */
 export function makeTraceSpanSummary(sinceMs = -Infinity) {
-  // Keep each span's duration (8 bytes, a few MB for the default 110 MB of
-  // rotated traces) for exact percentiles. A bounded sketch would save little
-  // and make p50 and p90 approximate.
   const byName = new Map<string, { durations: number[]; interrupted: number; failures: number }>();
   let spanCount = 0;
   let skippedLineCount = 0;
@@ -77,7 +63,11 @@ export function makeTraceSpanSummary(sinceMs = -Infinity) {
     lastEndMs = Math.max(lastEndMs, endMs);
     const stats = byName.get(span.name) ?? { durations: [], interrupted: 0, failures: 0 };
     stats.durations.push(span.durationMs);
-    if (span.exit?._tag === "Interrupted" || span.status?.message === "Interrupted") {
+    if (
+      span.exit?._tag === "Interrupted" ||
+      span.attributes?.["effect.fiber.interrupted"] === true ||
+      span.status?.message === "Interrupted"
+    ) {
       stats.interrupted += 1;
     }
     if (span.exit?._tag === "Failure" || span.status?.code === "2") stats.failures += 1;
@@ -89,7 +79,6 @@ export function makeTraceSpanSummary(sinceMs = -Infinity) {
     const spans = [...byName]
       .map(([name, { durations, interrupted, failures }]) => {
         const sorted = durations.toSorted((left, right) => left - right);
-        // Nearest-rank percentile.
         const percentile = (p: number) => sorted[Math.ceil(p * sorted.length) - 1]!;
         return {
           name,
@@ -111,7 +100,7 @@ export function makeTraceSpanSummary(sinceMs = -Infinity) {
 }
 
 const formatMs = (ms: number) =>
-  ms < 1_000 ? `${Math.round(ms)}ms` : `${(ms / 1_000).toFixed(1)}s`;
+  ms < 1_000 ? `${Math.round(ms)}ms` : `${Math.round(ms / 100) / 10}s`;
 
 function formatTraceSummary(
   summary: ReturnType<ReturnType<typeof makeTraceSpanSummary>["finish"]>,
@@ -138,7 +127,7 @@ function formatTraceSummary(
   const widths = header.map((_, column) => Math.max(...table.map((row) => row[column]!.length)));
   const formatIso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
   return [
-    `${summary.spanCount} spans ended from ${formatIso(summary.firstEndMs)} to ${formatIso(summary.lastEndMs)} (${summary.minutes.toFixed(1)} min).`,
+    `${summary.spanCount} spans ended from ${formatIso(summary.firstEndMs)} to ${formatIso(summary.lastEndMs)} (${summary.minutes.toFixed(1).replace(/\.0+$/, "")} min).`,
     ...(summary.skippedLineCount > 0
       ? [`Skipped ${summary.skippedLineCount} lines that are not spans.`]
       : []),
@@ -173,8 +162,6 @@ const traceSummaryCommand = Command.make("summary", {
   Command.withHandler(
     Effect.fn("cli.trace.summary")(function* (flags) {
       const fs = yield* FileSystem.FileSystem;
-      // T3CODE_TRACE_FILE, else the userdata trace file for --base-dir or
-      // T3CODE_HOME. Implicit dev runs write elsewhere; set T3CODE_TRACE_FILE.
       const envHome = yield* Config.String("T3CODE_HOME").pipe(Config.option);
       const baseDir = yield* resolveBaseDir(
         Option.getOrUndefined(Option.orElse(flags.baseDir, () => envHome)),

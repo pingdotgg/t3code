@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import type { HttpClient } from "effect/unstable/http/HttpClient";
+import type { HttpClient } from "effect/http/HttpClient";
 import { CredentialsStoreLive } from "../../Auth/Credentials.ts";
 import { decodeFqn, encodeFqn } from "../../FQN.ts";
 import { STATE_STORE_VERSION } from "../../State/HttpStateApi.ts";

@@ -14,7 +14,7 @@ const content = (n: number, seed: number) => {
   return out;
 };
 
-describe("inflateEntry", () => {
+describe("inflateEntry", { tags: ["unit", "local"] }, () => {
   test("returns the content and the exact compressed span, ignoring trailing bytes", async () => {
     const a = content(5000, 1);
     const b = content(300, 2);

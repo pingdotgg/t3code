@@ -4,6 +4,7 @@ import {
   fileAttachmentTooLargeMessage,
 } from "@t3tools/client-runtime/state/attachments";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
+import type { ThreadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import {
   CommandId,
   EnvironmentId,
@@ -24,6 +25,7 @@ import {
 import * as Schema from "effect/Schema";
 
 import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
+import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { DraftComposerAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { resolveProviderInteractionMode } from "./legacy-plan-mode";
@@ -34,14 +36,13 @@ const THREAD_OUTBOX_MAX_RETRY_DELAY_MS = 16_000;
 
 const QueuedThreadCreationSchema = Schema.Struct({
   projectId: ProjectId,
-  // Snapshot of the project's display metadata so a pending task stays
-  // presentable in the thread list even when the project shell is not loaded.
   projectTitle: Schema.optional(Schema.String),
   projectCwd: Schema.optional(Schema.String),
   workspaceMode: Schema.Literals(["local", "worktree"]),
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   startFromOrigin: Schema.optional(Schema.Boolean),
+  pullRequestReference: Schema.optional(Schema.String),
 });
 
 export const QueuedThreadMessageSchema = Schema.Struct({
@@ -54,10 +55,9 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   context: Schema.optional(OrchestrationMessageContext),
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
+  dispatchMode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
-  // Present when the queued item creates a brand-new thread (pending task)
-  // instead of appending a turn to an existing one.
   creation: Schema.optional(QueuedThreadCreationSchema),
   createdAt: IsoDateTime,
 });
@@ -73,6 +73,7 @@ export interface QueuedThreadCreation {
   readonly branch: string | null;
   readonly worktreePath: string | null;
   readonly startFromOrigin?: boolean;
+  readonly pullRequestReference?: string;
 }
 
 export interface QueuedThreadMessage {
@@ -86,6 +87,8 @@ export interface QueuedThreadMessage {
   readonly modelSelection?: ModelSelectionType;
   readonly runtimeMode?: RuntimeModeType;
   readonly interactionMode?: ProviderInteractionModeType;
+  /** Captured at enqueue because draining may occur long after the tap. */
+  readonly dispatchMode?: ComposerDispatchMode;
   readonly creation?: QueuedThreadCreation;
   readonly createdAt: string;
 }
@@ -171,21 +174,24 @@ export function resolveThreadOutboxDeliveryAction(input: {
   readonly threadExists: boolean;
   readonly shellStatus: EnvironmentShellStatus;
   readonly environmentConnected: boolean;
-  readonly threadBusy: boolean;
+  /**
+   * Set when the shell can leave idle subagent children out: absence alone is not deletion there,
+   * only a settled family read without the row is.
+   */
+  readonly familyRead?: ThreadFamilyRead;
 }): ThreadOutboxDeliveryAction {
   if (input.isCreation) {
-    // A pending task creates its thread on delivery. If the thread already
-    // exists the creation command went through and only cleanup remains.
     if (input.threadExists) {
       return "remove";
     }
-    // Wait for the shell to be live before sending: until the thread list has
-    // synchronized, a previously delivered creation whose cleanup failed would
-    // look missing and get re-issued, duplicating the thread.
+    // Wait for live shells; an unsynchronized list can hide delivered creations and cause duplicate re-issuance.
     return input.environmentConnected && input.shellStatus === "live" ? "send" : "wait";
   }
   if (!input.threadExists) {
-    return input.shellStatus === "live" ? "remove" : "wait";
+    return input.shellStatus === "live" &&
+      (input.familyRead === undefined || input.familyRead === "settled")
+      ? "remove"
+      : "wait";
   }
   return input.environmentConnected ? "send" : "wait";
 }
@@ -197,15 +203,9 @@ export type ThreadOutboxDispatchStep =
   | { readonly step: "restore"; readonly reason: string }
   | { readonly step: "send" };
 
-/**
- * Wait for provider and file capabilities before sending. Cleanup does not
- * need config: a creation whose thread exists, or a message whose thread is
- * gone, can still be removed while config loads.
- */
 export function resolveThreadOutboxDispatchStep(input: {
   readonly deliveryAction: ThreadOutboxDeliveryAction;
   readonly fileAttachments: ReadonlyArray<{ readonly name: string; readonly sizeBytes: number }>;
-  /** Null while the environment's server config has not synced yet. */
   readonly serverConfig: { readonly maxFileUploadBytes: number | undefined } | null;
 }): ThreadOutboxDispatchStep {
   if (input.deliveryAction !== "send") {
@@ -230,15 +230,12 @@ export function resolveThreadOutboxDispatchStep(input: {
     : { step: "send" };
 }
 
-/**
- * A queued creation can only be dispatched once its payload would pass server
- * validation; incomplete payloads stay pending until the user edits them.
- */
 export function isQueuedThreadCreationSendable(message: QueuedThreadMessage): boolean {
   if (!message.creation) {
     return false;
   }
-  if (message.text.trim().length === 0 || message.modelSelection === undefined) {
+  const hasContent = message.text.trim().length > 0 || message.attachments.length > 0;
+  if (!hasContent || message.modelSelection === undefined) {
     return false;
   }
   return message.creation.workspaceMode !== "worktree" || Boolean(message.creation.branch);
@@ -254,16 +251,7 @@ function errorMessage(error: unknown): string | null {
   return typeof error === "string" ? error : null;
 }
 
-/**
- * Only a failure the server actually decided (`OrchestrationDispatchCommandError`,
- * or an authorization rejection) means the payload itself is bad. The other
- * typed failures a queued send can hit are transport-shaped: a socket that
- * dropped mid-request (`RpcClientError` wrapping a Socket read/write/close
- * reason), or an environment that is not connected or not registered. Those
- * are matched by tag, not by message text, because a `SocketReadError` message
- * is just "An error occurred during Read". A wrong answer here restores the
- * pending task into a draft and it disappears from the list.
- */
+/** Dispatch/auth rejections invalidate payloads; other typed failures may be disconnected transports and must retry. */
 export function shouldRetryThreadOutboxDelivery(error: unknown): boolean {
   if (typeof error === "object" && error !== null && "_tag" in error) {
     switch (error._tag) {
@@ -299,3 +287,8 @@ export function resolveThreadOutboxFailureAction(input: {
   }
   return "restore";
 }
+
+export type AcknowledgedThreadMessage = QueuedThreadMessage & {
+  /** The server sequence that committed the message; older servers do not report it. */
+  readonly sequence?: number;
+};

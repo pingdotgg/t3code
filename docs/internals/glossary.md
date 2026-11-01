@@ -13,23 +13,21 @@ Terms whose meaning matters across T3 Code. Architecture and lifecycle constrain
 | Workspace root | The project's base filesystem directory on the environment.                                       |
 | Worktree       | A separate Git checkout a thread can use instead of the project's main checkout.                  |
 | Thread         | The durable conversation and work history for a project. It survives provider process exits.      |
-| Turn           | One user-to-agent work cycle. Provider work can finish before checkpoint and diff work settles.   |
+| Turn           | One user-to-agent cycle, a V2 run. Provider work can end before checkpoint and diff work settles. |
 | Activity       | A non-message timeline item, such as a tool action, approval, or failure.                         |
 | T3 home        | The base data directory. Runtime state normally lives under its `userdata` directory.             |
 
 ## Orchestration
 
-| Term                    | Meaning                                                                                      |
-| ----------------------- | -------------------------------------------------------------------------------------------- |
-| Command                 | A request to change domain state. Accepting it does not mean its side effects have finished. |
-| Event                   | A persisted fact produced by a command.                                                      |
-| Decider                 | The pure logic that turns a command and current state into events.                           |
-| Projection / read model | A view of current state derived from persisted events.                                       |
-| Projector               | The logic that applies events to a read model.                                               |
-| Reactor                 | A worker that performs follow-up work in response to recorded intent or runtime signals.     |
-| Command receipt         | A durable record of a command's result, used to make retries idempotent.                     |
-| Runtime receipt         | A test-only signal that an asynchronous milestone completed.                                 |
-| Quiesced                | The relevant follow-up workers have finished, beyond the provider turn merely ending.        |
+| Term                    | Meaning                                                                                                   |
+| ----------------------- | --------------------------------------------------------------------------------------------------------- |
+| Command                 | A request to change domain state. Accepting it does not mean its side effects have finished.              |
+| Event                   | A persisted fact produced by a command.                                                                   |
+| Orchestrator            | The service that serializes commands and decides their events from current state, without I/O.            |
+| Projection / read model | A persisted view of current state, committed in the same transaction as the events that change it.        |
+| Command receipt         | A durable record of a command's result, used to make retries idempotent.                                  |
+| Outbox effect           | Side-effect intent committed with the events, such as starting a provider turn or capturing a checkpoint. |
+| Effect worker           | The worker that runs outbox effects after commit and feeds their results back as commands.                |
 
 ## Providers and checkpoints
 
@@ -51,7 +49,7 @@ Terms whose meaning matters across T3 Code. Architecture and lifecycle constrain
 | Term                 | Meaning                                                                                                                                                                                  |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Pull request link    | A persisted thread association identified by host, repository, and number. Links can cross projects within an environment and carry a server-maintained snapshot.                        |
-| Pull request sync    | The reactor that refreshes each distinct linked review once per cadence and discovers native stack layers. Explicit refreshes and failed stack reads trigger another read.               |
+| Pull request sync    | The worker that refreshes each distinct linked review once per cadence and discovers native stack layers. Explicit refreshes and failed stack reads trigger another read.                |
 | Current pull request | The link used by single-review controls and older clients. Open work takes precedence; a completed single chain points at its top layer. Unrelated terminal links use the latest update. |
 
 ## Composer context

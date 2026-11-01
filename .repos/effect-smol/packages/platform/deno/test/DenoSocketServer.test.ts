@@ -2,8 +2,8 @@ import * as DenoSocket from "@effect/platform-deno/DenoSocket"
 import * as DenoSocketServer from "@effect/platform-deno/DenoSocketServer"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Exit, Redacted, Scope } from "effect"
-import * as NetAddress from "effect/unstable/net/NetAddress"
-import type * as Socket from "effect/unstable/socket/Socket"
+import * as NetAddress from "effect/net/NetAddress"
+import type * as Socket from "effect/socket/Socket"
 
 const ca = Deno.readTextFileSync(new URL("./fixtures/tls/ca.pem", import.meta.url))
 const cert = Deno.readTextFileSync(new URL("./fixtures/tls/cert.pem", import.meta.url))

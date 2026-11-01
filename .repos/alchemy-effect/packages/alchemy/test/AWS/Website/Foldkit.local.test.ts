@@ -32,76 +32,80 @@ const fixtureEntries = [
   "public",
 ];
 
-describe("AWS.Website.Foldkit local", () => {
-  test.provider(
-    "dev runs the app's own Vite dev server with no cloud resources",
-    (stack) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
+describe(
+  "AWS.Website.Foldkit local",
+  { tags: ["provider:aws", "provider:aws:website", "local"] },
+  () => {
+    test.provider(
+      "dev runs the app's own Vite dev server with no cloud resources",
+      (stack) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
 
-        yield* stack.destroy();
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-foldkit-aws-local-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-foldkit-aws-local-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const site = yield* AWS.Website.Foldkit("FoldkitSite", {
-              rootDir,
-            });
-            return { site };
-          }),
-        );
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const site = yield* AWS.Website.Foldkit("FoldkitSite", {
+                rootDir,
+              });
+              return { site };
+            }),
+          );
 
-        // The site is Vite's own dev server (the Foldkit plugin runs inside
-        // it): a localhost URL and no cloud rows at all — proof no AWS call
-        // ran, and specifically NOT a *.cloudfront.net URL.
-        const url = deployed.site.url! as string;
-        expect(url).toMatch(
-          /^http:\/\/(localhost|127\.0\.0\.1|\[[0-9a-fA-F:]+\])/,
-        );
-        expect(deployed.site.distribution).toBeUndefined();
-        expect(deployed.site.server).toBeUndefined();
-        expect(deployed.site.bucket).toBeUndefined();
-        expect(deployed.site.files).toBeUndefined();
+          // The site is Vite's own dev server (the Foldkit plugin runs inside
+          // it): a localhost URL and no cloud rows at all — proof no AWS call
+          // ran, and specifically NOT a *.cloudfront.net URL.
+          const url = deployed.site.url! as string;
+          expect(url).toMatch(
+            /^http:\/\/(localhost|127\.0\.0\.1|\[[0-9a-fA-F:]+\])/,
+          );
+          expect(deployed.site.distribution).toBeUndefined();
+          expect(deployed.site.server).toBeUndefined();
+          expect(deployed.site.bucket).toBeUndefined();
+          expect(deployed.site.files).toBeUndefined();
 
-        // The shell serves through Vite's dev server (index.html transformed
-        // on the fly, module scripts served from source).
-        yield* expectUrlContains(`${url}/`, "FOLDKIT_AWS_PAGE_MARKER", {
-          timeout: "120 seconds",
-          label: "dev index page",
-        });
-        // The Foldkit app's source modules serve straight from src/ — no
-        // build ran.
-        yield* expectUrlContains(
-          `${url}/src/main.ts`,
-          "FOLDKIT_AWS_MODULE_MARKER",
-          { label: "dev module source" },
-        );
+          // The shell serves through Vite's dev server (index.html transformed
+          // on the fly, module scripts served from source).
+          yield* expectUrlContains(`${url}/`, "FOLDKIT_AWS_PAGE_MARKER", {
+            timeout: "120 seconds",
+            label: "dev index page",
+          });
+          // The Foldkit app's source modules serve straight from src/ — no
+          // build ran.
+          yield* expectUrlContains(
+            `${url}/src/main.ts`,
+            "FOLDKIT_AWS_MODULE_MARKER",
+            { label: "dev module source" },
+          );
 
-        // ── HMR surface: edit index.html in place. The stack is NOT
-        // re-applied — Vite's dev server serves the transformed html per
-        // request, so the same URL must show the new marker ───────────────
-        const indexPath = path.join(rootDir, "index.html");
-        const index = yield* fs.readFileString(indexPath);
-        yield* fs.writeFileString(
-          indexPath,
-          index.replaceAll(
-            "FOLDKIT_AWS_PAGE_MARKER",
-            "FOLDKIT_AWS_PAGE_MARKER_V2",
-          ),
-        );
-        yield* expectUrlContains(`${url}/`, "FOLDKIT_AWS_PAGE_MARKER_V2", {
-          timeout: "90 seconds",
-          label: "index page after edit",
-        });
+          // ── HMR surface: edit index.html in place. The stack is NOT
+          // re-applied — Vite's dev server serves the transformed html per
+          // request, so the same URL must show the new marker ───────────────
+          const indexPath = path.join(rootDir, "index.html");
+          const index = yield* fs.readFileString(indexPath);
+          yield* fs.writeFileString(
+            indexPath,
+            index.replaceAll(
+              "FOLDKIT_AWS_PAGE_MARKER",
+              "FOLDKIT_AWS_PAGE_MARKER_V2",
+            ),
+          );
+          yield* expectUrlContains(`${url}/`, "FOLDKIT_AWS_PAGE_MARKER_V2", {
+            timeout: "90 seconds",
+            label: "index page after edit",
+          });
 
-        yield* stack.destroy();
-      }),
-    { timeout: 600_000 },
-  );
-});
+          yield* stack.destroy();
+        }),
+      { timeout: 600_000 },
+    );
+  },
+);

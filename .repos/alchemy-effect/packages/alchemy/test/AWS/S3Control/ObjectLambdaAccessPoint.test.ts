@@ -57,7 +57,7 @@ test.provider(
         );
       expect(result).toBe("missing");
     }),
-  { timeout: 60_000 },
+  { tags: ["provider:aws", "provider:aws:s3control", "live"], timeout: 60_000 },
 );
 
 // S3 Object Lambda is entitlement-gated: "Amazon S3 Object Lambda is
@@ -103,7 +103,7 @@ test.provider(
       // never actually created
       expect(result).not.toBe("created");
     }),
-  { timeout: 60_000 },
+  { tags: ["provider:aws", "provider:aws:s3control", "live"], timeout: 60_000 },
 );
 
 // Full lifecycle requires an account entitled to S3 Object Lambda (the
@@ -182,5 +182,14 @@ test.provider.skipIf(!process.env.AWS_TEST_OBJECT_LAMBDA)(
         deployed.olap.objectLambdaAccessPointName,
       );
     }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:lambda",
+      "provider:aws:s3",
+      "provider:aws:s3control",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );

@@ -6,64 +6,77 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 const { test } = Test.make({ providers: Prisma.providers(), dev: true });
 
-test.provider("dev mode returns a local Compute without a token", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "dev mode returns a local Compute without a token",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const app = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Prisma.Compute("App", {
-          project: "project-dev",
-          appName: "api",
-          port: 8787,
-          dev: {
-            url: "http://localhost:8787",
-          },
-        });
-      }),
-    );
+      const app = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Prisma.Compute("App", {
+            project: "project-dev",
+            appName: "api",
+            port: 8787,
+            dev: {
+              url: "http://localhost:8787",
+            },
+          });
+        }),
+      );
 
-    expect(app.local).toBe(true);
-    expect(app.url).toBe("http://localhost:8787");
-    expect(app.appId).toContain("dev:");
+      expect(app.local).toBe(true);
+      expect(app.url).toBe("http://localhost:8787");
+      expect(app.appId).toContain("dev:");
 
-    yield* stack.destroy();
-  }),
+      yield* stack.destroy();
+    }),
+  { tags: ["provider:prisma", "provider:prisma:compute", "local"] },
 );
 
-test.provider("dev mode supports the same stack shape with Project", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "dev mode supports the same stack shape with Project",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const output = yield* stack.deploy(
-      Effect.gen(function* () {
-        const project = yield* Prisma.Project("Project", {
-          name: "local-project",
-          createDatabase: false,
-        });
-        const app = yield* Prisma.Compute("AppWithProject", {
-          project,
-          appName: "api",
-          port: 8787,
-          dev: {
-            url: "http://localhost:8787",
-          },
-        });
-        return { project, app };
-      }),
-    );
+      const output = yield* stack.deploy(
+        Effect.gen(function* () {
+          const project = yield* Prisma.Project("Project", {
+            name: "local-project",
+            createDatabase: false,
+          });
+          const app = yield* Prisma.Compute("AppWithProject", {
+            project,
+            appName: "api",
+            port: 8787,
+            dev: {
+              url: "http://localhost:8787",
+            },
+          });
+          return { project, app };
+        }),
+      );
 
-    expect(output.project.projectId).toBe("dev:project:Project");
-    expect(output.app.projectId).toBe(output.project.projectId);
-    expect(output.app.local).toBe(true);
-    expect(output.app.url).toBe("http://localhost:8787");
+      expect(output.project.projectId).toBe("dev:project:Project");
+      expect(output.app.projectId).toBe(output.project.projectId);
+      expect(output.app.local).toBe(true);
+      expect(output.app.url).toBe("http://localhost:8787");
 
-    yield* stack.destroy();
-  }),
+      yield* stack.destroy();
+    }),
+  {
+    tags: [
+      "provider:prisma",
+      "provider:prisma:compute",
+      "provider:prisma:project",
+      "local",
+    ],
+  },
 );
 
 test.provider(
@@ -131,6 +144,17 @@ test.provider(
 
       yield* stack.destroy();
     }),
+  {
+    tags: [
+      "provider:prisma",
+      "provider:prisma:compute",
+      "provider:prisma:connect",
+      "provider:prisma:connection",
+      "provider:prisma:database",
+      "provider:prisma:project",
+      "local",
+    ],
+  },
 );
 
 test.provider(
@@ -210,7 +234,22 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { exclusive: true },
+  {
+    tags: [
+      "provider:prisma",
+      "provider:prisma:app",
+      "provider:prisma:branch",
+      "provider:prisma:compute",
+      "provider:prisma:connection",
+      "provider:prisma:database",
+      "provider:prisma:deployment",
+      "provider:prisma:environmentvariable",
+      "provider:prisma:project",
+      "provider:prisma:sourcerepository",
+      "local",
+    ],
+    exclusive: true,
+  },
 );
 
 test.provider(
@@ -232,7 +271,7 @@ test.provider(
         scriptPath,
         [
           "trap 'printf stopped > dev-stopped.txt; exit 0' TERM INT",
-          'printf \'{"port":"%s","greeting":"%s"}\' "$PORT" "$GREETING" > dev-output.json',
+          'printf \'{"port":"%s","greeting":"%s","nodeEnv":"%s"}\' "$PORT" "$GREETING" "$NODE_ENV" > dev-output.json',
           "while true; do sleep 1; done",
           "",
         ].join("\n"),
@@ -272,6 +311,7 @@ test.provider(
       expect(JSON.parse(output)).toEqual({
         port: "8789",
         greeting: "hello-dev",
+        nodeEnv: "development",
       });
 
       yield* stack.destroy();
@@ -287,5 +327,8 @@ test.provider(
 
       expect(stopped).toBe("stopped");
     }),
-  { timeout: 10_000 },
+  {
+    tags: ["provider:prisma", "provider:prisma:compute", "local"],
+    timeout: 10_000,
+  },
 );

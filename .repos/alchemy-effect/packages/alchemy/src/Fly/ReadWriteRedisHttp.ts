@@ -7,6 +7,7 @@ import { ReadWriteRedis } from "./ReadWriteRedis.ts";
  * HTTP implementation of {@link ReadWriteRedis}.
  *
  * @layer
+ * @product Redis
  * @provides Fly.ReadWriteRedis
  */
 export const ReadWriteRedisHttp = Layer.effect(

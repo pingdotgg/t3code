@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as NodePathLayer from "@effect/platform-node/NodePath";
 import * as ProcessRunner from "../processRunner.ts";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 // @effect-diagnostics nodeBuiltinImport:off - tests the same standalone script used by local and SSH hosts.
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeFSP from "node:fs/promises";
@@ -97,6 +97,7 @@ describe.each([false, true])("device tool cleanup, flat=%s", (flat) => {
   });
 });
 
+// regression: #12819 safely reclaim obsolete managed tool versions
 it.effect("maintenance failures retain safe context and the original process result", () =>
   Effect.gen(function* () {
     const output = {

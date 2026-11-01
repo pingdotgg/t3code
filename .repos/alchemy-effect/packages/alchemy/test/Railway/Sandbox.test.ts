@@ -1,4 +1,5 @@
-import * as railway from "@distilled.cloud/railway";
+import { Query } from "@distilled.cloud/core/query";
+import { Railway as RailwayApi } from "@distilled.cloud/railway";
 import * as Provider from "@/Provider";
 import * as Railway from "@/Railway";
 import { suitePartition } from "./suiteProject.ts";
@@ -8,7 +9,7 @@ import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 const { test } = Test.make({ providers: Railway.providers() });
 
@@ -19,15 +20,58 @@ const logLevel = Effect.provideService(
 
 const isGoneStatus = (status: string | undefined) => status === "DESTROYED";
 
+// Railway answers a missing sandbox with `null`, not an error.
+const readSandboxStatus = Query.fn((environmentId: string, id: string) =>
+  RailwayApi.sandbox({ environmentId, id }).pipe(
+    Query.map((sandbox) => ({ status: sandbox.status })),
+  ),
+);
+
+const readSandbox = Query.fn((environmentId: string, id: string) =>
+  RailwayApi.sandbox({ environmentId, id }).pipe(
+    Query.map((sandbox) => ({
+      id: sandbox.id,
+      environmentId: sandbox.environmentId,
+      status: sandbox.status,
+      idleTimeoutMinutes: sandbox.idleTimeoutMinutes,
+    })),
+  ),
+);
+
+const readSandboxDomains = Query.fn((environmentId: string, id: string) =>
+  RailwayApi.sandbox({ environmentId, id }).pipe(
+    Query.map((sandbox) => ({
+      domains: sandbox.domains.pipe(
+        Query.map((domain) => ({
+          domain: domain.domain,
+          port: domain.port,
+          prefix: domain.prefix,
+        })),
+      ),
+      networkIsolation: sandbox.networkIsolation,
+    })),
+  ),
+);
+
+const createSandbox = Query.fn(
+  (input: { environmentId: string; idleTimeoutMinutes: number }) => {
+    const sandbox = RailwayApi.sandboxCreate({ input });
+    return { environmentId: sandbox.environmentId, id: sandbox.id };
+  },
+);
+
+const destroySandbox = Query.fn((environmentId: string, id: string) =>
+  RailwayApi.sandboxDestroy({ environmentId, id }).pipe(
+    Query.map((sandbox) => ({ id: sandbox.id })),
+  ),
+);
+
 const waitUntilGone = (environmentId: string, sandboxId: string) =>
-  railway.sandbox({ environmentId, id: sandboxId }, { status: true }).pipe(
+  readSandboxStatus(environmentId, sandboxId).pipe(
     Effect.map((sandbox) =>
       sandbox === null || isGoneStatus(sandbox.status)
         ? ("gone" as const)
         : ("found" as const),
-    ),
-    railway.catchTags(["RailwayNotFound"], () =>
-      Effect.succeed("gone" as const),
     ),
     Effect.repeat({
       schedule: Schedule.spaced("1 second"),
@@ -37,8 +81,7 @@ const waitUntilGone = (environmentId: string, sandboxId: string) =>
   );
 
 const destroyLive = (environmentId: string, sandboxId: string) =>
-  railway.sandboxDestroy({ environmentId, id: sandboxId }, { id: true }).pipe(
-    railway.catchTags(["RailwayNotFound"], () => Effect.void),
+  destroySandbox(environmentId, sandboxId).pipe(
     Effect.flatMap(() => waitUntilGone(environmentId, sandboxId)),
   );
 
@@ -56,15 +99,10 @@ test.provider(
       );
 
       const result = yield* Effect.result(
-        railway.createSandbox(
-          {
-            input: {
-              environmentId: created.environment.environmentId,
-              idleTimeoutMinutes: 5,
-            },
-          },
-          { environmentId: true, id: true },
-        ),
+        createSandbox({
+          environmentId: created.environment.environmentId,
+          idleTimeoutMinutes: 5,
+        }),
       );
 
       if (Result.isSuccess(result)) {
@@ -76,11 +114,20 @@ test.provider(
         return;
       }
 
-      expect(railway.isErrorTag(result.failure, "RailwayForbidden")).toBe(true);
+      expect(result.failure._tag === "RailwayForbidden").toBe(true);
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:sandbox",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -113,17 +160,9 @@ test.provider(
       expect(created.box.idleTimeoutMinutes).toEqual(5);
       expect(created.box.domains).toEqual([]);
 
-      const fetched = yield* railway.sandbox(
-        {
-          environmentId: created.box.environmentId,
-          id: created.box.sandboxId,
-        },
-        {
-          id: true,
-          environmentId: true,
-          status: true,
-          idleTimeoutMinutes: true,
-        },
+      const fetched = yield* readSandbox(
+        created.box.environmentId,
+        created.box.sandboxId,
       );
       if (fetched === null) {
         return yield* Effect.fail(
@@ -162,7 +201,16 @@ test.provider(
       );
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:sandbox",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -194,12 +242,9 @@ test.provider(
       expect(box.networkIsolation).toBe("PRIVATE");
       expect(box.domains).toHaveLength(1);
       expect(box.domains[0]?.port).toBe(8080);
-      const observed = yield* railway.sandbox(
-        { environmentId: box.environmentId, id: box.sandboxId },
-        {
-          domains: { domain: true, port: true, prefix: true },
-          networkIsolation: true,
-        },
+      const observed = yield* readSandboxDomains(
+        box.environmentId,
+        box.sandboxId,
       );
       expect(observed?.domains).toEqual(box.domains);
       const started = yield* Railway.execSandbox({
@@ -238,7 +283,16 @@ test.provider(
         yield* waitUntilGone(cleared.box.environmentId, cleared.box.sandboxId),
       ).toBe("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:sandbox",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -307,5 +361,14 @@ test.provider(
         "gone",
       );
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:sandbox",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

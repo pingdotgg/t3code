@@ -1,390 +1,1138 @@
+import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import {
+  type ThreadLinkedPullRequest,
   CommandId,
-  ORCHESTRATION_WS_METHODS,
-  type ClientOrchestrationCommand,
+  CheckpointId,
+  CheckpointScopeId,
+  ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2CheckpointUnavailableError,
+  WS_METHODS,
+  type ChatAttachment,
+  MessageId,
+  type ModelSelection,
+  type NodeId,
+  type OrchestrationV2Command,
+  type OrchestrationV2CreationSource,
+  type PlanId,
+  type ProjectId,
+  type ProjectIconOverride,
+  type ProjectScript,
+  type ProviderApprovalDecision,
+  type ProviderInteractionMode,
+  type ProviderUserInputAnswers,
+  type RunId,
+  type RuntimeMode,
+  type RuntimeRequestId,
+  type ThreadId,
+  type ThreadEnvMode,
+  type UploadChatAttachment,
+  type GuestMessageId,
 } from "@t3tools/contracts";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as Crypto from "effect/Crypto";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
-import type { EnvironmentSupervisor } from "../connection/supervisor.ts";
-import {
-  type EnvironmentRpcFailure,
-  type EnvironmentRpcSuccess,
-  type EnvironmentRpcUnavailableError,
-  request,
-} from "../rpc/client.ts";
+import { getInitialServerConfig, request } from "../rpc/client.ts";
 
-type CommandType = ClientOrchestrationCommand["type"];
-type CommandOf<T extends CommandType> = Extract<ClientOrchestrationCommand, { readonly type: T }>;
-type CommandInput<T extends CommandType> = Omit<
-  CommandOf<T>,
-  "type" | "commandId" | "createdAt"
-> & {
-  readonly commandId?: CommandId;
-} & ("createdAt" extends keyof CommandOf<T>
-    ? {
-        readonly createdAt?: CommandOf<T>["createdAt"];
-      }
-    : {});
-
-export type CreateProjectInput = CommandInput<"project.create">;
-export type UpdateProjectInput = CommandInput<"project.meta.update">;
-export type DeleteProjectInput = CommandInput<"project.delete">;
-export type CreateThreadInput = CommandInput<"thread.create">;
-export type DeleteThreadInput = CommandInput<"thread.delete">;
-export type ArchiveThreadInput = CommandInput<"thread.archive">;
-export type UnarchiveThreadInput = CommandInput<"thread.unarchive">;
-export type SettleThreadInput = CommandInput<"thread.settle">;
-export type UnsettleThreadInput = CommandInput<"thread.unsettle">;
-export type SnoozeThreadInput = CommandInput<"thread.snooze">;
-export type UnsnoozeThreadInput = CommandInput<"thread.unsnooze">;
-export type PinThreadInput = CommandInput<"thread.pin">;
-export type UnpinThreadInput = CommandInput<"thread.unpin">;
-export type ReorderPinnedThreadInput = CommandInput<"thread.pin.reorder">;
-export type SetThreadAutoSettleInput = CommandInput<"thread.auto-settle.set">;
-export type ReorderActiveThreadInput = CommandInput<"thread.active.reorder">;
-export type UpdateThreadMetadataInput = CommandInput<"thread.meta.update">;
-export type LinkThreadPullRequestInput = CommandInput<"thread.pull-request.link">;
-export type UnlinkThreadPullRequestInput = CommandInput<"thread.pull-request.unlink">;
-export type SetThreadRuntimeModeInput = CommandInput<"thread.runtime-mode.set">;
-export type SetThreadInteractionModeInput = CommandInput<"thread.interaction-mode.set">;
-export type StartThreadTurnInput = CommandInput<"thread.turn.start">;
-export type InterruptThreadTurnInput = CommandInput<"thread.turn.interrupt">;
-export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond">;
-export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.respond">;
-export type DismissThreadUserInputInput = CommandInput<"thread.user-input.dismiss">;
-export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert"> & {
-  readonly restoreFiles?: boolean;
-};
-export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
-
-type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
-type CommandEffect = Effect.Effect<
-  EnvironmentRpcSuccess<DispatchTag>,
-  EnvironmentRpcFailure<DispatchTag> | EnvironmentRpcUnavailableError,
-  Crypto.Crypto | EnvironmentSupervisor
->;
-
-function commandId(input: { readonly commandId?: CommandId }) {
-  return Effect.gen(function* () {
-    if (input.commandId !== undefined) {
-      return input.commandId;
-    }
-    const crypto = yield* Crypto.Crypto;
-    return yield* crypto.randomUUIDv4.pipe(Effect.orDie, Effect.map(CommandId.make));
-  });
-}
-
-function timestampedCommandMetadata(input: {
+interface CommandMetadata {
   readonly commandId?: CommandId;
   readonly createdAt?: string;
-}) {
-  return Effect.all({
-    commandId: commandId(input),
-    createdAt:
-      input.createdAt === undefined
-        ? DateTime.now.pipe(Effect.map(DateTime.formatIso))
-        : Effect.succeed(input.createdAt),
+  readonly creationSource?: OrchestrationV2CreationSource;
+}
+
+export interface CreateProjectInput extends CommandMetadata {
+  readonly projectId: ProjectId;
+  readonly title: string;
+  readonly workspaceRoot: string;
+  readonly createWorkspaceRootIfMissing?: boolean;
+  readonly defaultModelSelection?: ModelSelection | null;
+  readonly scripts?: ReadonlyArray<ProjectScript>;
+}
+
+export interface UpdateProjectInput extends CommandMetadata {
+  readonly projectId: ProjectId;
+  readonly title?: string;
+  readonly workspaceRoot?: string;
+  readonly defaultModelSelection?: ModelSelection | null;
+  readonly autoPull?: boolean;
+  readonly projectIcon?: ProjectIconOverride | null;
+  readonly faviconPath?: string | null;
+  readonly defaultThreadEnvMode?: ThreadEnvMode | null;
+  readonly scripts?: ReadonlyArray<ProjectScript>;
+  readonly pinned?: boolean;
+  readonly archived?: boolean;
+}
+
+export interface DeleteProjectInput extends CommandMetadata {
+  readonly projectId: ProjectId;
+  readonly force?: boolean;
+}
+
+export interface CreateThreadInput extends CommandMetadata {
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  readonly title: string;
+  readonly modelSelection: ModelSelection;
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
+  readonly branch: string | null;
+  readonly worktreePath: string | null;
+}
+
+export interface ThreadCommandInput extends CommandMetadata {
+  readonly threadId: ThreadId;
+}
+
+export interface DeleteThreadInput extends ThreadCommandInput {
+  /** The server deletes only a thread with no runs and no messages. */
+  readonly onlyIfUnused?: boolean;
+}
+export type ArchiveThreadInput = ThreadCommandInput;
+export type UnarchiveThreadInput = ThreadCommandInput;
+export type SettleThreadInput = ThreadCommandInput;
+
+export interface UnsettleThreadInput extends ThreadCommandInput {
+  readonly reason: "user";
+}
+
+export interface PinThreadInput extends ThreadCommandInput {
+  readonly orderKey?: string;
+}
+export type UnpinThreadInput = ThreadCommandInput;
+
+export interface ReorderPinnedThreadInput extends ThreadCommandInput {
+  readonly orderKey: string;
+}
+
+export interface ReorderActiveThreadInput extends ThreadCommandInput {
+  readonly orderKey: string;
+}
+
+export interface SnoozeThreadInput extends ThreadCommandInput {
+  readonly snoozedUntil: string;
+}
+
+export interface UnsnoozeThreadInput extends ThreadCommandInput {
+  readonly reason: "user";
+}
+
+export interface VisitThreadInput extends ThreadCommandInput {
+  readonly visitedAt: string;
+  /** Counts toward search frecency; `searchQuery` is the palette query that picked it. */
+  readonly opened?: boolean;
+  readonly searchQuery?: string;
+}
+
+export type MarkThreadUnreadInput = ThreadCommandInput;
+
+export interface UpdateThreadMetadataInput extends ThreadCommandInput {
+  readonly limitRecovery?: import("@t3tools/contracts").OrchestrationV2LimitRecoveryUpdate | null;
+  readonly title?: string;
+  readonly modelSelection?: ModelSelection;
+  readonly branch?: string | null;
+  readonly worktreePath?: string | null;
+  readonly regenerateTitle?: boolean;
+  readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
+  readonly expectedEmpty?: boolean;
+}
+
+export interface SetThreadRuntimeModeInput extends ThreadCommandInput {
+  readonly runtimeMode: RuntimeMode;
+}
+
+export interface SetThreadInteractionModeInput extends ThreadCommandInput {
+  readonly interactionMode: ProviderInteractionMode;
+}
+
+interface StartThreadBootstrap {
+  readonly createThread?: {
+    readonly projectId: ProjectId;
+    readonly title: string;
+    readonly modelSelection: ModelSelection;
+    readonly runtimeMode: RuntimeMode;
+    readonly interactionMode: ProviderInteractionMode;
+    readonly branch: string | null;
+    readonly worktreePath: string | null;
+    readonly createdAt: string;
+  };
+  readonly prepareWorktree?: {
+    readonly requireWorktree?: boolean;
+    readonly projectCwd: string;
+    readonly baseBranch: string;
+    readonly branch?: string;
+    readonly startFromOrigin?: boolean;
+  };
+  readonly runSetupScript?: boolean;
+}
+
+export interface StartThreadTurnInput extends ThreadCommandInput {
+  readonly manualContinuationOfRunId?: RunId;
+  readonly message: {
+    readonly messageId: MessageId;
+    readonly role: "user";
+    readonly text: string;
+    readonly attachments: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
+    readonly context?: import("@t3tools/contracts").OrchestrationMessageContext;
+    readonly idleCompaction?: import("@t3tools/contracts").OrchestrationV2IdleCompaction;
+  };
+  readonly modelSelection?: ModelSelection;
+  readonly titleSeed?: string;
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
+  readonly bootstrap?: StartThreadBootstrap;
+  readonly sourceProposedPlan?: { readonly threadId: ThreadId; readonly planId: PlanId };
+  readonly dispatchMode?: "auto" | "queue" | "steer" | "restart" | "start";
+}
+
+export interface InterruptThreadTurnInput extends ThreadCommandInput {
+  readonly runId?: RunId;
+  readonly subagentId?: NodeId;
+  readonly turnId?: string;
+}
+
+export interface RespondToThreadApprovalInput extends ThreadCommandInput {
+  readonly requestId: RuntimeRequestId;
+  readonly decision: ProviderApprovalDecision;
+  readonly feedback?: string;
+}
+
+export interface RespondToThreadUserInputInput extends ThreadCommandInput {
+  readonly requestId: RuntimeRequestId;
+  readonly answers: ProviderUserInputAnswers;
+  readonly attachmentsByQuestionId?: import("@t3tools/contracts").UserInputAttachments;
+}
+
+export interface DismissThreadUserInputInput extends ThreadCommandInput {
+  readonly requestId: RuntimeRequestId;
+}
+
+export interface RevertThreadCheckpointInput extends ThreadCommandInput {
+  readonly restoreFiles?: boolean;
+  readonly checkpointId?: string;
+  readonly scopeId?: string;
+  readonly turnCount?: number;
+}
+
+export type StopThreadSessionInput = ThreadCommandInput;
+
+export interface ForkThreadFromRunInput extends CommandMetadata {
+  readonly sourceThreadId: ThreadId;
+  readonly targetThreadId: ThreadId;
+  readonly runId: RunId;
+  readonly title?: string;
+}
+
+export interface ForkSideChatInput extends CommandMetadata {
+  readonly sourceThreadId: ThreadId;
+  readonly targetThreadId: ThreadId;
+  readonly title?: string;
+}
+
+export interface MergeThreadBackInput extends CommandMetadata {
+  readonly sourceThreadId: ThreadId;
+  readonly targetThreadId: ThreadId;
+  readonly runId: RunId;
+}
+
+export interface ResumeThreadQueueInput extends ThreadCommandInput {
+  readonly runId?: RunId;
+}
+
+export interface PromoteQueuedRunInput extends ThreadCommandInput {
+  readonly queuedRunId: RunId;
+  readonly targetRunId: RunId;
+}
+
+export interface CancelQueuedRunInput extends ThreadCommandInput {
+  readonly runId: RunId;
+}
+
+export interface RetryWorkspacePreparationInput extends ThreadCommandInput {
+  readonly runId: RunId;
+}
+
+export interface EditQueuedRunInput extends ThreadCommandInput {
+  readonly runId: RunId;
+  readonly text: string;
+  /**
+   * Full replacement attachment list for the queued message. Omitted =
+   * text-only edit that leaves attachments untouched.
+   */
+  readonly edit?: {
+    readonly messageId: MessageId;
+    readonly attachments: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
+    readonly context?: import("@t3tools/contracts").OrchestrationMessageContext;
+  };
+}
+
+const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(function* (
+  input: CommandMetadata,
+) {
+  if (input.commandId !== undefined) return input.commandId;
+  const crypto = yield* Crypto.Crypto;
+  return CommandId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie));
+});
+
+const dispatch = (command: OrchestrationV2Command) =>
+  request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
+
+const getProjection = (threadId: ThreadId) =>
+  request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId });
+
+const persistAttachments = Effect.fn("EnvironmentCommands.persistAttachments")(function* (
+  threadId: ThreadId,
+  messageId: MessageId,
+  attachments: ReadonlyArray<ChatAttachment | UploadChatAttachment>,
+) {
+  const stored = attachments.filter(
+    (attachment): attachment is ChatAttachment => !("dataUrl" in attachment),
+  );
+  const uploads = attachments.filter(
+    (attachment): attachment is UploadChatAttachment => "dataUrl" in attachment,
+  );
+  if (uploads.length === 0) return stored;
+  const result = yield* request(WS_METHODS.assetsPersistChatAttachments, {
+    threadId,
+    messageId,
+    attachments: uploads,
   });
-}
+  if (stored.length === 0) return result.attachments;
+  const byUpload = new Map(
+    uploads.map((attachment, index) => [attachment, result.attachments[index]]),
+  );
+  return attachments.flatMap((attachment) => {
+    if (!("dataUrl" in attachment)) return [attachment];
+    const persisted = byUpload.get(attachment);
+    return persisted === undefined ? [] : [persisted];
+  });
+});
 
-function dispatch(command: ClientOrchestrationCommand) {
-  return request(ORCHESTRATION_WS_METHODS.dispatchCommand, command);
-}
+const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (
+  mutation:
+    | {
+        readonly type: "project.create";
+        readonly commandId: CommandId;
+        readonly projectId: ProjectId;
+        readonly title: string;
+        readonly workspaceRoot: string;
+        readonly createWorkspaceRootIfMissing?: boolean;
+        readonly defaultModelSelection?: ModelSelection | null;
+        readonly scripts?: ReadonlyArray<ProjectScript>;
+      }
+    | {
+        readonly type: "project.update";
+        readonly commandId: CommandId;
+        readonly projectId: ProjectId;
+        readonly title?: string;
+        readonly workspaceRoot?: string;
+        readonly defaultModelSelection?: ModelSelection | null;
+        readonly scripts?: ReadonlyArray<ProjectScript>;
+      }
+    | {
+        readonly type: "project.delete";
+        readonly commandId: CommandId;
+        readonly projectId: ProjectId;
+        readonly force?: boolean;
+      },
+) {
+  return yield* request(WS_METHODS.projectsMutate, mutation);
+});
 
-export const createProject: (input: CreateProjectInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.createProject",
-)(function* (input) {
-  const metadata = yield* timestampedCommandMetadata(input);
-  return yield* dispatch({
-    ...input,
+export const createProject = Effect.fn("EnvironmentCommands.createProject")(function* (
+  input: CreateProjectInput,
+) {
+  return yield* mutateProject({
     type: "project.create",
-    commandId: metadata.commandId,
-    createdAt: metadata.createdAt,
+    commandId: yield* allocateCommandId(input),
+    projectId: input.projectId,
+    title: input.title,
+    workspaceRoot: input.workspaceRoot,
+    ...(input.createWorkspaceRootIfMissing === undefined
+      ? {}
+      : { createWorkspaceRootIfMissing: input.createWorkspaceRootIfMissing }),
+    ...(input.defaultModelSelection === undefined
+      ? {}
+      : { defaultModelSelection: input.defaultModelSelection }),
+    ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
   });
 });
 
-export const updateProject: (input: UpdateProjectInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.updateProject",
-)(function* (input) {
-  return yield* dispatch({
-    ...input,
-    type: "project.meta.update",
-    commandId: yield* commandId(input),
+export const updateProject = Effect.fn("EnvironmentCommands.updateProject")(function* (
+  input: UpdateProjectInput,
+) {
+  return yield* mutateProject({
+    type: "project.update",
+    commandId: yield* allocateCommandId(input),
+    projectId: input.projectId,
+    ...(input.title === undefined ? {} : { title: input.title }),
+    ...(input.workspaceRoot === undefined ? {} : { workspaceRoot: input.workspaceRoot }),
+    ...(input.defaultModelSelection === undefined
+      ? {}
+      : { defaultModelSelection: input.defaultModelSelection }),
+    ...(input.autoPull === undefined ? {} : { autoPull: input.autoPull }),
+    ...(input.projectIcon === undefined ? {} : { projectIcon: input.projectIcon }),
+    ...(input.faviconPath === undefined ? {} : { faviconPath: input.faviconPath }),
+    ...(input.defaultThreadEnvMode === undefined
+      ? {}
+      : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
+    ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+    ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
+    ...(input.archived === undefined ? {} : { archived: input.archived }),
   });
 });
 
-export const deleteProject: (input: DeleteProjectInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.deleteProject",
-)(function* (input) {
-  return yield* dispatch({
-    ...input,
+export const deleteProject = Effect.fn("EnvironmentCommands.deleteProject")(function* (
+  input: DeleteProjectInput,
+) {
+  return yield* mutateProject({
     type: "project.delete",
-    commandId: yield* commandId(input),
+    commandId: yield* allocateCommandId(input),
+    projectId: input.projectId,
+    ...(input.force === undefined ? {} : { force: input.force }),
   });
 });
 
-export const createThread: (input: CreateThreadInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.createThread",
-)(function* (input) {
-  const metadata = yield* timestampedCommandMetadata(input);
+export const createThread = Effect.fn("EnvironmentCommands.createThread")(function* (
+  input: CreateThreadInput,
+) {
   return yield* dispatch({
-    ...input,
     type: "thread.create",
-    commandId: metadata.commandId,
-    createdAt: metadata.createdAt,
+    commandId: yield* allocateCommandId(input),
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
+    threadId: input.threadId,
+    projectId: input.projectId,
+    title: input.title,
+    modelSelection: input.modelSelection,
+    runtimeMode: input.runtimeMode,
+    interactionMode: input.interactionMode,
+    branch: input.branch,
+    worktreePath: input.worktreePath,
   });
 });
 
-export const deleteThread: (input: DeleteThreadInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.deleteThread",
-)(function* (input) {
+function simpleThreadCommand(
+  type:
+    | "thread.archive"
+    | "thread.unarchive"
+    | "thread.settle"
+    | "thread.pin"
+    | "thread.unpin"
+    | "thread.guest-share.close",
+  input: ThreadCommandInput,
+) {
+  return allocateCommandId(input).pipe(
+    Effect.flatMap((commandId) => dispatch({ type, commandId, threadId: input.threadId })),
+  );
+}
+
+export const deleteThread = Effect.fn("EnvironmentCommands.deleteThread")(function* (
+  input: DeleteThreadInput,
+) {
   return yield* dispatch({
-    ...input,
     type: "thread.delete",
-    commandId: yield* commandId(input),
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    ...(input.onlyIfUnused === undefined ? {} : { onlyIfUnused: input.onlyIfUnused }),
   });
 });
 
-export const archiveThread: (input: ArchiveThreadInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.archiveThread",
-)(function* (input) {
+export type CloseGuestShareInput = ThreadCommandInput;
+export const closeGuestShare = Effect.fn("EnvironmentCommands.closeGuestShare")(function* (
+  input: CloseGuestShareInput,
+) {
+  return yield* simpleThreadCommand("thread.guest-share.close", input);
+});
+
+export interface ResolveGuestMessageInput extends ThreadCommandInput {
+  readonly guestMessageId: GuestMessageId;
+  readonly decision: "send" | "dismiss";
+  readonly creationSource?: "web" | "mobile";
+}
+/** Send runs the guest's text as a normal turn; the server supplies the text, not the client. */
+export const resolveGuestMessage = Effect.fn("EnvironmentCommands.resolveGuestMessage")(function* (
+  input: ResolveGuestMessageInput,
+) {
+  const commandId = yield* allocateCommandId(input);
+  if (input.decision === "dismiss") {
+    return yield* dispatch({
+      type: "thread.guest-message.dismiss",
+      commandId,
+      threadId: input.threadId,
+      guestMessageId: input.guestMessageId,
+    });
+  }
   return yield* dispatch({
-    ...input,
-    type: "thread.archive",
-    commandId: yield* commandId(input),
+    type: "message.dispatch",
+    commandId,
+    threadId: input.threadId,
+    messageId: MessageId.make(commandId),
+    guestMessageId: input.guestMessageId,
+    text: "",
+    attachments: [],
+    dispatchMode: { type: "queue_after_active" },
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
   });
 });
 
-export const unarchiveThread: (input: UnarchiveThreadInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.unarchiveThread",
-)(function* (input) {
-  return yield* dispatch({
-    ...input,
-    type: "thread.unarchive",
-    commandId: yield* commandId(input),
-  });
+export const archiveThread = Effect.fn("EnvironmentCommands.archiveThread")(function* (
+  input: ArchiveThreadInput,
+) {
+  return yield* simpleThreadCommand("thread.archive", input);
 });
 
-export const settleThread: (input: SettleThreadInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.settleThread",
-)(function* (input) {
-  return yield* dispatch({
-    ...input,
-    type: "thread.settle",
-    commandId: yield* commandId(input),
-  });
+export const unarchiveThread = Effect.fn("EnvironmentCommands.unarchiveThread")(function* (
+  input: UnarchiveThreadInput,
+) {
+  return yield* simpleThreadCommand("thread.unarchive", input);
 });
 
-export const unsettleThread: (input: UnsettleThreadInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.unsettleThread",
-)(function* (input) {
-  return yield* dispatch({
-    ...input,
-    type: "thread.unsettle",
-    commandId: yield* commandId(input),
-  });
+export const settleThread = Effect.fn("EnvironmentCommands.settleThread")(function* (
+  input: SettleThreadInput,
+) {
+  return yield* simpleThreadCommand("thread.settle", input);
 });
 
-export const snoozeThread: (input: SnoozeThreadInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.snoozeThread",
-)(function* (input) {
+export const pinThread = Effect.fn("EnvironmentCommands.pinThread")(function* (
+  input: PinThreadInput,
+) {
+  const commandId = yield* allocateCommandId(input);
   return yield* dispatch({
-    ...input,
-    type: "thread.snooze",
-    commandId: yield* commandId(input),
-  });
-});
-
-export const unsnoozeThread: (input: UnsnoozeThreadInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.unsnoozeThread",
-)(function* (input) {
-  return yield* dispatch({
-    ...input,
-    type: "thread.unsnooze",
-    commandId: yield* commandId(input),
-  });
-});
-
-export const pinThread: (input: PinThreadInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.pinThread",
-)(function* (input) {
-  return yield* dispatch({
-    ...input,
     type: "thread.pin",
-    commandId: yield* commandId(input),
+    commandId,
+    threadId: input.threadId,
+    ...(input.orderKey === undefined ? {} : { orderKey: input.orderKey }),
   });
 });
 
-export const unpinThread: (input: UnpinThreadInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.unpinThread",
-)(function* (input) {
+export interface SetThreadAutoSettleInput extends ThreadCommandInput {
+  readonly enabled: boolean;
+}
+export const setThreadAutoSettle = Effect.fn("EnvironmentCommands.setThreadAutoSettle")(function* (
+  input: SetThreadAutoSettleInput,
+) {
   return yield* dispatch({
-    ...input,
-    type: "thread.unpin",
-    commandId: yield* commandId(input),
-  });
-});
-
-export const setThreadAutoSettle: (input: SetThreadAutoSettleInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.setThreadAutoSettle",
-)(function* (input) {
-  return yield* dispatch({
-    ...input,
     type: "thread.auto-settle.set",
-    commandId: yield* commandId(input),
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    enabled: input.enabled,
   });
 });
 
-export const reorderPinnedThread: (input: ReorderPinnedThreadInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.reorderPinnedThread",
-)(function* (input) {
+export const reorderPinnedThread = Effect.fn("EnvironmentCommands.reorderPinnedThread")(function* (
+  input: ReorderPinnedThreadInput,
+) {
+  const commandId = yield* allocateCommandId(input);
   return yield* dispatch({
-    ...input,
     type: "thread.pin.reorder",
-    commandId: yield* commandId(input),
+    commandId,
+    threadId: input.threadId,
+    orderKey: input.orderKey,
   });
 });
 
-export const reorderActiveThread: (input: ReorderActiveThreadInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.reorderActiveThread",
-)(function* (input) {
+export const reorderActiveThread = Effect.fn("EnvironmentCommands.reorderActiveThread")(function* (
+  input: ReorderActiveThreadInput,
+) {
   return yield* dispatch({
-    ...input,
     type: "thread.active.reorder",
-    commandId: yield* commandId(input),
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    orderKey: input.orderKey,
   });
 });
 
-export const updateThreadMetadata: (input: UpdateThreadMetadataInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.updateThreadMetadata",
-)(function* (input) {
+export const unpinThread = Effect.fn("EnvironmentCommands.unpinThread")(function* (
+  input: UnpinThreadInput,
+) {
+  return yield* simpleThreadCommand("thread.unpin", input);
+});
+
+export const unsettleThread = Effect.fn("EnvironmentCommands.unsettleThread")(function* (
+  input: UnsettleThreadInput,
+) {
   return yield* dispatch({
-    ...input,
-    type: "thread.meta.update",
-    commandId: yield* commandId(input),
+    type: "thread.unsettle",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    reason: input.reason,
   });
 });
 
-export const linkThreadPullRequest: (input: LinkThreadPullRequestInput) => CommandEffect =
-  Effect.fn("EnvironmentCommands.linkThreadPullRequest")(function* (input) {
+export const snoozeThread = Effect.fn("EnvironmentCommands.snoozeThread")(function* (
+  input: SnoozeThreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.snooze",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    snoozedUntil: input.snoozedUntil,
+  });
+});
+
+export const unsnoozeThread = Effect.fn("EnvironmentCommands.unsnoozeThread")(function* (
+  input: UnsnoozeThreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.unsnooze",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    reason: input.reason,
+  });
+});
+
+export const visitThread = Effect.fn("EnvironmentCommands.visitThread")(function* (
+  input: VisitThreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.visit",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    visitedAt: input.visitedAt,
+    ...(input.opened ? { opened: true } : {}),
+    ...(input.searchQuery ? { searchQuery: input.searchQuery } : {}),
+  });
+});
+
+export const markThreadUnread = Effect.fn("EnvironmentCommands.markThreadUnread")(function* (
+  input: MarkThreadUnreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.mark-unread",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+  });
+});
+
+export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadMetadata")(
+  function* (input: UpdateThreadMetadataInput) {
+    const commandId = yield* allocateCommandId(input);
+    let result = null;
+    if (
+      input.title !== undefined ||
+      input.branch !== undefined ||
+      input.worktreePath !== undefined ||
+      input.regenerateTitle !== undefined ||
+      input.linkedPullRequest !== undefined ||
+      input.limitRecovery !== undefined
+    ) {
+      result = yield* dispatch({
+        type: "thread.metadata.update",
+        ...(input.limitRecovery === undefined ? {} : { limitRecovery: input.limitRecovery }),
+        commandId,
+        threadId: input.threadId,
+        ...(input.title === undefined ? {} : { title: input.title }),
+        ...(input.branch === undefined ? {} : { branch: input.branch }),
+        ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
+        ...(input.expectedEmpty === true ? { expectedEmpty: true } : {}),
+        ...(input.regenerateTitle === undefined ? {} : { regenerateTitle: input.regenerateTitle }),
+        ...(input.linkedPullRequest === undefined
+          ? {}
+          : { linkedPullRequest: input.linkedPullRequest }),
+      });
+    }
+    if (input.modelSelection !== undefined) {
+      result = yield* dispatch({
+        type: "thread.model-selection.set",
+        commandId: result === null ? commandId : CommandId.make(`${commandId}:model-selection`),
+        threadId: input.threadId,
+        modelSelection: input.modelSelection,
+      });
+    }
+    return result ?? { sequence: 0 };
+  },
+);
+
+export const setThreadRuntimeMode = Effect.fn("EnvironmentCommands.setThreadRuntimeMode")(
+  function* (input: SetThreadRuntimeModeInput) {
+    return yield* dispatch({
+      type: "thread.runtime-mode.set",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      runtimeMode: input.runtimeMode,
+    });
+  },
+);
+
+export const setThreadInteractionMode = Effect.fn("EnvironmentCommands.setThreadInteractionMode")(
+  function* (input: SetThreadInteractionModeInput) {
+    return yield* dispatch({
+      type: "thread.interaction-mode.set",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      interactionMode: input.interactionMode,
+    });
+  },
+);
+
+export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(function* (
+  input: StartThreadTurnInput,
+) {
+  const commandId = yield* allocateCommandId(input);
+  const attachments = yield* persistAttachments(
+    input.threadId,
+    input.message.messageId,
+    input.message.attachments,
+  );
+  const context = remapComposerContextAttachments(
+    input.message.context,
+    input.message.attachments,
+    attachments,
+  );
+  const bootstrap = input.bootstrap?.createThread;
+  const prepareWorktree = input.bootstrap?.prepareWorktree;
+  if (bootstrap !== undefined || prepareWorktree !== undefined) {
+    const existingProjection =
+      bootstrap === undefined ? yield* getProjection(input.threadId) : null;
+    const thread = bootstrap ?? existingProjection!.thread;
+    const workspaceStrategy =
+      prepareWorktree !== undefined
+        ? {
+            type: "worktree" as const,
+            baseRef: prepareWorktree.baseBranch,
+            ...(prepareWorktree.branch === undefined ? {} : { branch: prepareWorktree.branch }),
+            ...(prepareWorktree.startFromOrigin === undefined
+              ? {}
+              : { startFromOrigin: prepareWorktree.startFromOrigin }),
+          }
+        : bootstrap?.worktreePath
+          ? {
+              type: "existing_worktree" as const,
+              worktreePath: bootstrap.worktreePath,
+              ...(bootstrap.branch === null ? {} : { branch: bootstrap.branch }),
+            }
+          : {
+              type: "root" as const,
+              ...(bootstrap?.branch === null || bootstrap?.branch === undefined
+                ? {}
+                : { branch: bootstrap.branch }),
+            };
+    return yield* request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
+      commandId,
+      creationSource: input.creationSource ?? "web",
+      threadId: input.threadId,
+      ...(bootstrap === undefined ? { reuseExistingThread: true } : {}),
+      projectId: thread.projectId,
+      title: input.titleSeed ?? thread.title,
+      generateTitle: input.titleSeed !== undefined,
+      modelSelection: input.modelSelection ?? thread.modelSelection,
+      runtimeMode: input.runtimeMode,
+      interactionMode: input.interactionMode,
+      workspaceStrategy,
+      initialMessage: {
+        messageId: input.message.messageId,
+        text: input.message.text,
+        ...(context ? { context } : {}),
+        attachments,
+      },
+    });
+  }
+
+  const requestedMode = input.dispatchMode ?? "auto";
+  if (requestedMode === "start") {
+    return yield* dispatch({
+      type: "message.dispatch",
+      commandId,
+      createdBy: "user",
+      creationSource: input.creationSource ?? "web",
+      threadId: input.threadId,
+      messageId: input.message.messageId,
+      ...(input.manualContinuationOfRunId === undefined
+        ? {}
+        : { manualContinuationOfRunId: input.manualContinuationOfRunId }),
+      text: input.message.text,
+      ...(context ? { context } : {}),
+      ...(input.message.idleCompaction === undefined
+        ? {}
+        : { idleCompaction: input.message.idleCompaction }),
+      attachments,
+      ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+      ...(input.sourceProposedPlan === undefined
+        ? {}
+        : { sourcePlanRef: input.sourceProposedPlan }),
+      dispatchMode: { type: "start_immediately" },
+    });
+  }
+
+  const dispatchMode =
+    requestedMode === "queue"
+      ? ({ type: "queue_after_active" } as const)
+      : ({ type: "start_immediately" } as const);
+  return yield* dispatch({
+    type: "message.dispatch",
+    commandId,
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
+    threadId: input.threadId,
+    messageId: input.message.messageId,
+    text: input.message.text,
+    ...(context ? { context } : {}),
+    ...(input.message.idleCompaction === undefined
+      ? {}
+      : { idleCompaction: input.message.idleCompaction }),
+    attachments,
+    ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
+    ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+    ...(input.sourceProposedPlan === undefined ? {} : { sourcePlanRef: input.sourceProposedPlan }),
+    ...(requestedMode !== "queue" ? { deliveryIntent: requestedMode } : {}),
+    dispatchMode,
+  });
+});
+
+export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThreadTurn")(function* (
+  input: InterruptThreadTurnInput,
+) {
+  let threadId = input.threadId;
+  if (input.subagentId !== undefined) {
+    const projection = yield* getProjection(input.threadId);
+    const subagent = projection.subagents.find((agent) => agent.id === input.subagentId);
+    if (subagent?.origin === "app_owned" && subagent.childThreadId !== null) {
+      // The parent ends the task even when its child lost track of it. Older
+      // servers reject this for app-owned tasks, so the child stop below still runs.
+      if (subagent.runId !== null) {
+        yield* dispatch({
+          type: "subagent.stop",
+          commandId: yield* allocateCommandId({}),
+          threadId: input.threadId,
+          runId: subagent.runId,
+          subagentId: subagent.id,
+        }).pipe(Effect.ignore);
+      }
+      threadId = subagent.childThreadId;
+    } else {
+      if (subagent?.runId == null) return { sequence: 0 };
+      return yield* dispatch({
+        type: "subagent.stop",
+        commandId: yield* allocateCommandId(input),
+        threadId: input.threadId,
+        runId: subagent.runId,
+        subagentId: subagent.id,
+      });
+    }
+  }
+  // A run named by the caller belongs to the parent, not the rerouted child.
+  let runId =
+    threadId === input.threadId ? (input.runId ?? (input.turnId as RunId | undefined)) : undefined;
+  if (runId === undefined) {
+    const config = yield* getInitialServerConfig();
+    if (config.environment.capabilities.threadStop === true) {
+      // A paginated projection can omit commands still running from earlier turns.
+      return yield* dispatch({
+        type: "thread.stop",
+        commandId: yield* allocateCommandId(input),
+        threadId,
+      });
+    }
+  }
+  if (runId === undefined) {
+    const projection = yield* getProjection(threadId);
+    runId = projection.runs.findLast(
+      (run) =>
+        run.status === "preparing" ||
+        run.status === "starting" ||
+        run.status === "running" ||
+        run.status === "waiting",
+    )?.id;
+    if (runId === undefined) {
+      const latestRun = projection.runs.at(-1);
+      if (
+        derivePendingBackgroundWork({
+          latestRun,
+          providerThreads: projection.providerThreads,
+          turnItems: projection.turnItems,
+          activeProviderThreadId: projection.thread.activeProviderThreadId,
+          runs: projection.runs,
+        }).length > 0
+      ) {
+        runId = latestRun?.id;
+      }
+    }
+    if (runId === undefined) {
+      let result = { sequence: 0 };
+      for (const link of visibleThreadPullRequests(projection.thread.pullRequests ?? [])) {
+        if (link.watch === undefined) continue;
+        result = yield* dispatch({
+          type: "thread.pull-request.watch",
+          commandId: yield* allocateCommandId(result.sequence === 0 ? input : {}),
+          threadId,
+          host: link.host,
+          repository: link.repository,
+          number: link.number,
+          watching: false,
+        });
+      }
+      return result;
+    }
+  }
+  if (runId === undefined) return { sequence: 0 };
+  return yield* dispatch({
+    type: "run.interrupt",
+    commandId: yield* allocateCommandId(input),
+    threadId,
+    runId,
+    holdQueue: true,
+  });
+});
+
+export const respondToThreadApproval = Effect.fn("EnvironmentCommands.respondToThreadApproval")(
+  function* (input: RespondToThreadApprovalInput) {
+    return yield* dispatch({
+      type: "runtime-request.respond",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      requestId: input.requestId,
+      decision: input.decision,
+      ...(input.feedback === undefined ? {} : { feedback: input.feedback }),
+    });
+  },
+);
+
+export const respondToThreadUserInput = Effect.fn("EnvironmentCommands.respondToThreadUserInput")(
+  function* (input: RespondToThreadUserInputInput) {
+    return yield* dispatch({
+      type: "runtime-request.respond",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      requestId: input.requestId,
+      answers: input.answers,
+      ...(input.attachmentsByQuestionId === undefined
+        ? {}
+        : { attachmentsByQuestionId: input.attachmentsByQuestionId }),
+    });
+  },
+);
+
+export const dismissThreadUserInput = Effect.fn("EnvironmentCommands.dismissThreadUserInput")(
+  function* (input: DismissThreadUserInputInput) {
+    return yield* dispatch({
+      type: "thread.user-input.dismiss",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      requestId: input.requestId,
+    });
+  },
+);
+
+export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThreadCheckpoint")(
+  function* (input: RevertThreadCheckpointInput) {
+    if (input.checkpointId !== undefined && input.scopeId !== undefined) {
+      return yield* dispatch({
+        type: "checkpoint.rollback",
+        ...(input.restoreFiles === undefined ? {} : { restoreFiles: input.restoreFiles }),
+        commandId: yield* allocateCommandId(input),
+        threadId: input.threadId,
+        scopeId: CheckpointScopeId.make(input.scopeId),
+        checkpointId: CheckpointId.make(input.checkpointId),
+      });
+    }
+    const projection = yield* getProjection(input.threadId);
+    const checkpoint =
+      projection.checkpoints.find(
+        (candidate) => candidate.id === input.checkpointId && candidate.scopeId === input.scopeId,
+      ) ??
+      projection.checkpoints.findLast((candidate) =>
+        input.turnCount === 0
+          ? candidate.ordinalWithinScope === 0 && candidate.appRunOrdinal === null
+          : candidate.appRunOrdinal === input.turnCount,
+      );
+    if (checkpoint === undefined || checkpoint.status !== "ready") {
+      const target =
+        input.checkpointId === undefined
+          ? `run ordinal ${input.turnCount ?? "unknown"}`
+          : `checkpoint ${input.checkpointId}`;
+      return yield* new OrchestrationV2CheckpointUnavailableError({
+        threadId: input.threadId,
+        target,
+      });
+    }
+    return yield* dispatch({
+      type: "checkpoint.rollback",
+      ...(input.restoreFiles === undefined ? {} : { restoreFiles: input.restoreFiles }),
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      scopeId: checkpoint.scopeId,
+      checkpointId: checkpoint.id,
+    });
+  },
+);
+
+export const stopThreadSession = Effect.fn("EnvironmentCommands.stopThreadSession")(function* (
+  input: StopThreadSessionInput,
+) {
+  const projection = yield* getProjection(input.threadId);
+  const commandId = yield* allocateCommandId(input);
+  let result = { sequence: 0 };
+  for (const session of projection.providerSessions) {
+    result = yield* dispatch({
+      type: "provider-session.detach",
+      commandId: CommandId.make(`${commandId}:detach:${session.id}`),
+      threadId: input.threadId,
+      providerSessionId: session.id,
+      reason: "client-requested",
+    });
+  }
+  return result;
+});
+
+export const forkThreadFromRun = Effect.fn("EnvironmentCommands.forkThreadFromRun")(function* (
+  input: ForkThreadFromRunInput,
+) {
+  return yield* dispatch({
+    type: "thread.fork",
+    commandId: yield* allocateCommandId(input),
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
+    sourceThreadId: input.sourceThreadId,
+    targetThreadId: input.targetThreadId,
+    sourcePoint: { type: "run", runId: input.runId },
+    ...(input.title === undefined ? {} : { title: input.title }),
+  });
+});
+
+/** Forks the thread's latest stable point into a hidden side chat; works while it runs. */
+export const forkSideChat = Effect.fn("EnvironmentCommands.forkSideChat")(function* (
+  input: ForkSideChatInput,
+) {
+  return yield* dispatch({
+    type: "thread.fork",
+    commandId: yield* allocateCommandId(input),
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
+    sourceThreadId: input.sourceThreadId,
+    targetThreadId: input.targetThreadId,
+    sourcePoint: { type: "latest_stable" },
+    sideChat: true,
+    ...(input.title === undefined ? {} : { title: input.title }),
+  });
+});
+
+export const mergeThreadBack = Effect.fn("EnvironmentCommands.mergeThreadBack")(function* (
+  input: MergeThreadBackInput,
+) {
+  return yield* dispatch({
+    type: "thread.merge_back",
+    commandId: yield* allocateCommandId(input),
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
+    sourceThreadId: input.sourceThreadId,
+    targetThreadId: input.targetThreadId,
+    sourcePoint: { type: "run", runId: input.runId },
+  });
+});
+
+export const resumeThreadQueue = Effect.fn("EnvironmentCommands.resumeThreadQueue")(function* (
+  input: ResumeThreadQueueInput,
+) {
+  return yield* dispatch({
+    ...(input.runId === undefined
+      ? { type: "queue.resume" as const }
+      : { type: "queued-run.start" as const, runId: input.runId }),
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+  });
+});
+
+export const promoteQueuedRun = Effect.fn("EnvironmentCommands.promoteQueuedRun")(function* (
+  input: PromoteQueuedRunInput,
+) {
+  return yield* dispatch({
+    type: "queued-message.promote-to-steer",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    queuedRunId: input.queuedRunId,
+    targetRunId: input.targetRunId,
+  });
+});
+
+export const cancelQueuedRun = Effect.fn("EnvironmentCommands.cancelQueuedRun")(function* (
+  input: CancelQueuedRunInput,
+) {
+  return yield* dispatch({
+    type: "queued-run.cancel",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    runId: input.runId,
+  });
+});
+
+export const retryWorkspacePreparation = Effect.fn("EnvironmentCommands.retryWorkspacePreparation")(
+  function* (input: RetryWorkspacePreparationInput) {
+    return yield* dispatch({
+      type: "prepared-run.retry",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      runId: input.runId,
+    });
+  },
+);
+
+export const editQueuedRun = Effect.fn("EnvironmentCommands.editQueuedRun")(function* (
+  input: EditQueuedRunInput,
+) {
+  const attachments =
+    input.edit === undefined
+      ? undefined
+      : yield* persistAttachments(input.threadId, input.edit.messageId, input.edit.attachments);
+  return yield* dispatch({
+    type: "queued-run.edit",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    runId: input.runId,
+    text: input.text,
+    ...(attachments === undefined ? {} : { attachments }),
+    ...(input.edit?.context && attachments
+      ? {
+          context: remapComposerContextAttachments(
+            input.edit.context,
+            input.edit.attachments,
+            attachments,
+          ),
+        }
+      : {}),
+  });
+});
+
+export type LinkThreadPullRequestInput = Omit<
+  Extract<OrchestrationV2Command, { type: "thread.pull-request.link" }>,
+  "type" | "commandId"
+> &
+  CommandMetadata;
+export type UnlinkThreadPullRequestInput = Omit<
+  Extract<OrchestrationV2Command, { type: "thread.pull-request.unlink" }>,
+  "type" | "commandId"
+> &
+  CommandMetadata;
+export const linkThreadPullRequest = Effect.fn("EnvironmentCommands.linkThreadPullRequest")(
+  function* (input: LinkThreadPullRequestInput) {
     return yield* dispatch({
       ...input,
       type: "thread.pull-request.link",
-      commandId: yield* commandId(input),
+      commandId: yield* allocateCommandId(input),
     });
-  });
-
-export const unlinkThreadPullRequest: (input: UnlinkThreadPullRequestInput) => CommandEffect =
-  Effect.fn("EnvironmentCommands.unlinkThreadPullRequest")(function* (input) {
+  },
+);
+export type WatchThreadPullRequestInput = Omit<
+  Extract<OrchestrationV2Command, { type: "thread.pull-request.watch" }>,
+  "type" | "commandId"
+> &
+  CommandMetadata;
+export const watchThreadPullRequest = Effect.fn("EnvironmentCommands.watchThreadPullRequest")(
+  function* (input: WatchThreadPullRequestInput) {
+    return yield* dispatch({
+      ...input,
+      type: "thread.pull-request.watch",
+      commandId: yield* allocateCommandId(input),
+    });
+  },
+);
+export const unlinkThreadPullRequest = Effect.fn("EnvironmentCommands.unlinkThreadPullRequest")(
+  function* (input: UnlinkThreadPullRequestInput) {
     return yield* dispatch({
       ...input,
       type: "thread.pull-request.unlink",
-      commandId: yield* commandId(input),
+      commandId: yield* allocateCommandId(input),
     });
-  });
-
-export const setThreadRuntimeMode: (input: SetThreadRuntimeModeInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.setThreadRuntimeMode",
-)(function* (input) {
-  const metadata = yield* timestampedCommandMetadata(input);
-  return yield* dispatch({
-    ...input,
-    type: "thread.runtime-mode.set",
-    commandId: metadata.commandId,
-    createdAt: metadata.createdAt,
-  });
-});
-
-export const setThreadInteractionMode: (input: SetThreadInteractionModeInput) => CommandEffect =
-  Effect.fn("EnvironmentCommands.setThreadInteractionMode")(function* (input) {
-    const metadata = yield* timestampedCommandMetadata(input);
-    return yield* dispatch({
-      ...input,
-      type: "thread.interaction-mode.set",
-      commandId: metadata.commandId,
-      createdAt: metadata.createdAt,
-    });
-  });
-
-export const startThreadTurn: (input: StartThreadTurnInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.startThreadTurn",
-)(function* (input) {
-  const metadata = yield* timestampedCommandMetadata(input);
-  return yield* dispatch({
-    ...input,
-    type: "thread.turn.start",
-    commandId: metadata.commandId,
-    createdAt: metadata.createdAt,
-  });
-});
-
-export const interruptThreadTurn: (input: InterruptThreadTurnInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.interruptThreadTurn",
-)(function* (input) {
-  const metadata = yield* timestampedCommandMetadata(input);
-  return yield* dispatch({
-    ...input,
-    type: "thread.turn.interrupt",
-    commandId: metadata.commandId,
-    createdAt: metadata.createdAt,
-  });
-});
-
-export const respondToThreadApproval: (input: RespondToThreadApprovalInput) => CommandEffect =
-  Effect.fn("EnvironmentCommands.respondToThreadApproval")(function* (input) {
-    const metadata = yield* timestampedCommandMetadata(input);
-    return yield* dispatch({
-      ...input,
-      type: "thread.approval.respond",
-      commandId: metadata.commandId,
-      createdAt: metadata.createdAt,
-    });
-  });
-
-export const respondToThreadUserInput: (input: RespondToThreadUserInputInput) => CommandEffect =
-  Effect.fn("EnvironmentCommands.respondToThreadUserInput")(function* (input) {
-    const metadata = yield* timestampedCommandMetadata(input);
-    return yield* dispatch({
-      ...input,
-      type: "thread.user-input.respond",
-      commandId: metadata.commandId,
-      createdAt: metadata.createdAt,
-    });
-  });
-
-export const dismissThreadUserInput: (input: DismissThreadUserInputInput) => CommandEffect =
-  Effect.fn("EnvironmentCommands.dismissThreadUserInput")(function* (input) {
-    const metadata = yield* timestampedCommandMetadata(input);
-    return yield* dispatch({
-      ...input,
-      type: "thread.user-input.dismiss",
-      commandId: metadata.commandId,
-      createdAt: metadata.createdAt,
-    });
-  });
-
-export const revertThreadCheckpoint: (input: RevertThreadCheckpointInput) => CommandEffect =
-  Effect.fn("EnvironmentCommands.revertThreadCheckpoint")(function* (input) {
-    const metadata = yield* timestampedCommandMetadata(input);
-    const { restoreFiles, ...command } = input;
-    return yield* dispatch({
-      ...command,
-      type: restoreFiles === false ? "thread.conversation.revert" : "thread.checkpoint.revert",
-      commandId: metadata.commandId,
-      createdAt: metadata.createdAt,
-    });
-  });
-
-export const stopThreadSession: (input: StopThreadSessionInput) => CommandEffect = Effect.fn(
-  "EnvironmentCommands.stopThreadSession",
-)(function* (input) {
-  const metadata = yield* timestampedCommandMetadata(input);
-  return yield* dispatch({
-    ...input,
-    type: "thread.session.stop",
-    commandId: metadata.commandId,
-    createdAt: metadata.createdAt,
-  });
-});
+  },
+);

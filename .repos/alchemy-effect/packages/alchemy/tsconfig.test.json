@@ -1,7 +1,29 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["package.json", "test"],
+  "include": [
+    "package.json",
+    "test",
+    // JSON modules imported by fixtures (plain `include: ["test"]` only
+    // sweeps .ts files).
+    "test/Cloudflare/Workers/fixtures/prisma-orm/generated/contract.json",
+    "test/Prisma/ORM/fixtures/client/generated/contract.json",
+    "test/Prisma/ORM/fixtures/psl/generated/contract.json",
+    "test/Prisma/ORM/fixtures/variants/generated/contract.json"
+  ],
   "exclude": [
+    // Prisma migration packages are self-emitting Node scripts whose
+    // snapshot imports (`../../snapshots/<hash>/contract`) are extensionless
+    // and only resolve under Prisma's own toolchain — not this project.
+    "test/Cloudflare/Workers/fixtures/prisma-orm/migrations",
+    // Executed by the prisma CLI (which resolves its own toolchain types);
+    // its inferred config type is not portable from this project.
+    "test/Cloudflare/Workers/fixtures/prisma-orm/prisma.config.ts",
+    "test/Prisma/ORM/fixtures/client/migrations",
+    "test/Prisma/ORM/fixtures/client/prisma.config.ts",
+    "test/Prisma/ORM/fixtures/psl/prisma.config.ts",
+    "test/Prisma/ORM/fixtures/psl/migrations",
+    "test/Prisma/ORM/fixtures/variants/prisma.config.ts",
+    "test/Prisma/ORM/fixtures/variants/migrations",
     "test/Cli/fixtures/shutdown-feedback-fixture.ts",
     "test/Local/fixtures/rpc-server-entry.ts",
     "test/Local/fixtures/rpc-server-entry-b.ts",
@@ -53,9 +75,6 @@
     },
     {
       "path": "../alchemy-test/tsconfig.json"
-    },
-    {
-      "path": "./tsconfig.bin.json"
     }
   ]
 }

@@ -54,129 +54,133 @@ const fixtureEntries = [
   "public",
 ];
 
-describe("AWS.Website.SolidStart local", () => {
-  test.provider(
-    "dev runs SolidStart's own Vite dev server with no cloud resources",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe(
+  "AWS.Website.SolidStart local",
+  { tags: ["provider:aws", "provider:aws:website", "local"] },
+  () => {
+    test.provider(
+      "dev runs SolidStart's own Vite dev server with no cloud resources",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-solidstart-aws-local-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-solidstart-aws-local-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const site = yield* AWS.Website.SolidStart("SolidStartSite", {
-              rootDir,
-              env: {
-                SOLIDSTART_ENV_MARKER: "solidstart-aws-dev-env-marker",
-              },
-            });
-            return { site };
-          }),
-        );
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const site = yield* AWS.Website.SolidStart("SolidStartSite", {
+                rootDir,
+                env: {
+                  SOLIDSTART_ENV_MARKER: "solidstart-aws-dev-env-marker",
+                },
+              });
+              return { site };
+            }),
+          );
 
-        // The site is the framework's own dev server: a localhost URL and
-        // no cloud rows at all (proof no AWS call ran).
-        const url = deployed.site.url! as string;
-        expect(url).toMatch(
-          /^http:\/\/(localhost|127\.0\.0\.1|\[[0-9a-fA-F:]+\])/,
-        );
-        // The URL is an origin, not a directory — appending a path must not
-        // produce a double slash (SolidStart runs `appType: "custom"`, so its
-        // router sees the raw pathname and `//about` is a 404).
-        expect(url.endsWith("/")).toBe(false);
-        expect(deployed.site.distribution).toBeUndefined();
-        expect(deployed.site.server).toBeUndefined();
-        expect(deployed.site.bucket).toBeUndefined();
+          // The site is the framework's own dev server: a localhost URL and
+          // no cloud rows at all (proof no AWS call ran).
+          const url = deployed.site.url! as string;
+          expect(url).toMatch(
+            /^http:\/\/(localhost|127\.0\.0\.1|\[[0-9a-fA-F:]+\])/,
+          );
+          // The URL is an origin, not a directory — appending a path must not
+          // produce a double slash (SolidStart runs `appType: "custom"`, so its
+          // router sees the raw pathname and `//about` is a 404).
+          expect(url.endsWith("/")).toBe(false);
+          expect(deployed.site.distribution).toBeUndefined();
+          expect(deployed.site.server).toBeUndefined();
+          expect(deployed.site.bucket).toBeUndefined();
 
-        // The dev server is reachable from another process.
-        expect(yield* expectUrlOk(`${url}/`)).toBe(200);
+          // The dev server is reachable from another process.
+          expect(yield* expectUrlOk(`${url}/`)).toBe(200);
 
-        yield* stack.destroy();
-      }),
-    { timeout: 600_000 },
-  );
+          yield* stack.destroy();
+        }),
+      { timeout: 600_000 },
+    );
 
-  // Body-level assertions: gated on a Node-hosted dev sidecar (see the note
-  // on `runDevSsr` above).
-  test.provider.skipIf(!runDevSsr)(
-    "dev serves SSR, the project's vite.config.ts, injected env, and HMR",
-    (stack) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
+    // Body-level assertions: gated on a Node-hosted dev sidecar (see the note
+    // on `runDevSsr` above).
+    test.provider.skipIf(!runDevSsr)(
+      "dev serves SSR, the project's vite.config.ts, injected env, and HMR",
+      (stack) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
 
-        yield* stack.destroy();
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-solidstart-aws-local-ssr-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-solidstart-aws-local-ssr-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const site = yield* AWS.Website.SolidStart("SolidStartSite", {
-              rootDir,
-              env: {
-                SOLIDSTART_ENV_MARKER: "solidstart-aws-dev-env-marker",
-              },
-            });
-            return { site };
-          }),
-        );
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const site = yield* AWS.Website.SolidStart("SolidStartSite", {
+                rootDir,
+                env: {
+                  SOLIDSTART_ENV_MARKER: "solidstart-aws-dev-env-marker",
+                },
+              });
+              return { site };
+            }),
+          );
 
-        const url = deployed.site.url! as string;
+          const url = deployed.site.url! as string;
 
-        // SSR page served by the SolidStart dev server (native HMR).
-        yield* expectUrlContains(`${url}/`, "SOLIDSTART_AWS_PAGE_MARKER", {
-          timeout: "120 seconds",
-          label: "dev SSR home page",
-        });
-        // The fixture's own vite.config.ts applied in dev too.
-        yield* expectUrlContains(
-          `${url}/`,
-          "config:solidstart-aws-user-config-loaded",
-          { label: "user vite.config.ts applied (dev)" },
-        );
-        // server.environment reaches the dev server's process env — the
-        // same values the Lambda gets on deploy (dev/live parity).
-        yield* expectUrlContains(
-          `${url}/`,
-          "env:solidstart-aws-dev-env-marker",
-          { label: "server.environment injected into dev server" },
-        );
-        // API route through the dev server.
-        yield* expectUrlContains(
-          `${url}/api/hello?echo=dev`,
-          "SOLIDSTART_AWS_API_MARKER",
-          { label: "API route (dev)" },
-        );
-
-        // ── HMR: edit the API route in place. The stack is NOT re-applied —
-        // vite's dev rebuild must pick the change up and serve it through
-        // the same URL ───────────────────────────────────────────────────
-        const helloPath = path.join(rootDir, "src/routes/api/hello.ts");
-        const hello = yield* fs.readFileString(helloPath);
-        yield* fs.writeFileString(
-          helloPath,
-          hello.replace(
+          // SSR page served by the SolidStart dev server (native HMR).
+          yield* expectUrlContains(`${url}/`, "SOLIDSTART_AWS_PAGE_MARKER", {
+            timeout: "120 seconds",
+            label: "dev SSR home page",
+          });
+          // The fixture's own vite.config.ts applied in dev too.
+          yield* expectUrlContains(
+            `${url}/`,
+            "config:solidstart-aws-user-config-loaded",
+            { label: "user vite.config.ts applied (dev)" },
+          );
+          // server.environment reaches the dev server's process env — the
+          // same values the Lambda gets on deploy (dev/live parity).
+          yield* expectUrlContains(
+            `${url}/`,
+            "env:solidstart-aws-dev-env-marker",
+            { label: "server.environment injected into dev server" },
+          );
+          // API route through the dev server.
+          yield* expectUrlContains(
+            `${url}/api/hello?echo=dev`,
             "SOLIDSTART_AWS_API_MARKER",
-            "SOLIDSTART_AWS_API_MARKER_V2",
-          ),
-        );
-        yield* expectUrlContains(
-          `${url}/api/hello?echo=dev`,
-          "SOLIDSTART_AWS_API_MARKER_V2",
-          { timeout: "90 seconds", label: "API route after HMR edit" },
-        );
+            { label: "API route (dev)" },
+          );
 
-        yield* stack.destroy();
-      }),
-    { timeout: 600_000 },
-  );
-});
+          // ── HMR: edit the API route in place. The stack is NOT re-applied —
+          // vite's dev rebuild must pick the change up and serve it through
+          // the same URL ───────────────────────────────────────────────────
+          const helloPath = path.join(rootDir, "src/routes/api/hello.ts");
+          const hello = yield* fs.readFileString(helloPath);
+          yield* fs.writeFileString(
+            helloPath,
+            hello.replace(
+              "SOLIDSTART_AWS_API_MARKER",
+              "SOLIDSTART_AWS_API_MARKER_V2",
+            ),
+          );
+          yield* expectUrlContains(
+            `${url}/api/hello?echo=dev`,
+            "SOLIDSTART_AWS_API_MARKER_V2",
+            { timeout: "90 seconds", label: "API route after HMR edit" },
+          );
+
+          yield* stack.destroy();
+        }),
+      { timeout: 600_000 },
+    );
+  },
+);

@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 
-describe("Diff", () => {
+describe("Diff", { tags: ["unit", "local"] }, () => {
   describe("havePropsChanged with Redacted values", () => {
     // Config values yielded in a Worker's init phase (e.g.
     // `yield* Config.String("MY_VARIABLE")`) land in `props.env`

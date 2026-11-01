@@ -3,6 +3,8 @@ import * as Test from "@/Test/Alchemy";
 import * as cloudfront from "@distilled.cloud/aws/cloudfront";
 import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as pathe from "pathe";
 import { cloneFixture } from "../../Cloudflare/Utils/Fixture.ts";
@@ -37,83 +39,102 @@ const fixtureEntries = [
 // the co-located Octane.local.test.ts suite.
 const runEmulated = process.env.ALCHEMY_TEST_DEV === "1";
 
-describe.skipIf(!runLive || runEmulated)("AWS.Website.Octane", () => {
-  test.provider(
-    "deploys SSR on a streaming Lambda URL with S3 assets behind CloudFront",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
-
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-octane-aws-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
-
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const site = yield* AWS.Website.Octane("OctaneSite", {
-              rootDir,
-              forceDestroy: true,
-              invalidation: { paths: "all", wait: true },
-            });
-            return { site };
-          }),
-        );
-
-        const url = deployed.site.url! as string;
-        expect(url).toMatch(/^https:\/\//);
-        expect(deployed.site.serverUrl).toBeDefined();
-        yield* Effect.log(
-          `site url: ${url} | server url: ${deployed.site.serverUrl}`,
-        );
-
-        // The Lambda Function URL serves the SSR page directly — isolates
-        // server-function health from the CloudFront edge routing.
-        yield* expectUrlContains(
-          `${deployed.site.serverUrl!}`,
-          "OCTANE_AWS_PAGE_MARKER",
-          {
-            timeout: "120 seconds",
-            label: "SSR direct from Lambda URL",
-          },
-        );
-
-        // SSR page rendered by the Lambda through CloudFront.
-        yield* expectUrlContains(`${url}/`, "OCTANE_AWS_PAGE_MARKER", {
-          timeout: "180 seconds",
-          label: "SSR home page",
-        });
-        // Server API route through the streaming Function URL origin.
-        yield* expectUrlContains(
-          `${url}/api/hello?echo=roundtrip`,
-          "OCTANE_AWS_API_MARKER",
-          { label: "API route" },
-        );
-        yield* expectUrlContains(
-          `${url}/api/hello?echo=roundtrip`,
-          "roundtrip",
-          { label: "API route query echo" },
-        );
-        // Public file served from S3 via the KV file manifest.
-        yield* expectUrlContains(
-          `${url}/robots.txt`,
-          "octane-aws-robots-marker",
-          {
-            label: "public asset from S3",
-          },
-        );
-
-        const distributionId = deployed.site.distribution!.distributionId;
-
-        if (!process.env.NO_DESTROY) {
+describe.skipIf(!runLive || runEmulated)(
+  "AWS.Website.Octane",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:cloudfront",
+      "provider:aws:website",
+      "live",
+    ],
+  },
+  () => {
+    test.provider(
+      "deploys SSR on a streaming Lambda URL with S3 assets behind CloudFront",
+      (stack) =>
+        Effect.gen(function* () {
           yield* stack.destroy();
-          yield* assertDistributionDeleted(distributionId);
-        }
-      }),
-    { timeout: 2_400_000 },
-  );
-});
+
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-octane-aws-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
+
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const configPath = path.join(rootDir, "octane.config.ts");
+          const config = yield* fs.readFileString(configPath);
+          expect(config).not.toContain("adapter:");
+          expect(config).not.toContain("@alchemy.run/frontend-frameworks");
+
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const site = yield* AWS.Website.Octane("OctaneSite", {
+                rootDir,
+                forceDestroy: true,
+                invalidation: { paths: "all", wait: true },
+              });
+              return { site };
+            }),
+          );
+
+          expect(yield* fs.readFileString(configPath)).toBe(config);
+          const url = deployed.site.url! as string;
+          expect(url).toMatch(/^https:\/\//);
+          expect(deployed.site.serverUrl).toBeDefined();
+          yield* Effect.log(
+            `site url: ${url} | server url: ${deployed.site.serverUrl}`,
+          );
+
+          // The Lambda Function URL serves the SSR page directly — isolates
+          // server-function health from the CloudFront edge routing.
+          yield* expectUrlContains(
+            `${deployed.site.serverUrl!}`,
+            "OCTANE_AWS_PAGE_MARKER",
+            {
+              timeout: "120 seconds",
+              label: "SSR direct from Lambda URL",
+            },
+          );
+
+          // SSR page rendered by the Lambda through CloudFront.
+          yield* expectUrlContains(`${url}/`, "OCTANE_AWS_PAGE_MARKER", {
+            timeout: "180 seconds",
+            label: "SSR home page",
+          });
+          // Server API route through the streaming Function URL origin.
+          yield* expectUrlContains(
+            `${url}/api/hello?echo=roundtrip`,
+            "OCTANE_AWS_API_MARKER",
+            { label: "API route" },
+          );
+          yield* expectUrlContains(
+            `${url}/api/hello?echo=roundtrip`,
+            "roundtrip",
+            { label: "API route query echo" },
+          );
+          // Public file served from S3 via the KV file manifest.
+          yield* expectUrlContains(
+            `${url}/robots.txt`,
+            "octane-aws-robots-marker",
+            {
+              label: "public asset from S3",
+            },
+          );
+
+          const distributionId = deployed.site.distribution!.distributionId;
+
+          if (!process.env.NO_DESTROY) {
+            yield* stack.destroy();
+            yield* assertDistributionDeleted(distributionId);
+          }
+        }),
+      { timeout: 2_400_000 },
+    );
+  },
+);
 
 const assertDistributionDeleted = (distributionId: string) =>
   cloudfront.getDistribution({ Id: distributionId }).pipe(

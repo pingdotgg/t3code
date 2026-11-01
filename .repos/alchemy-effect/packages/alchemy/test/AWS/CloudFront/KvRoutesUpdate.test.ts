@@ -11,121 +11,125 @@ import * as Schedule from "effect/Schedule";
 
 const { test } = Test.make({ providers: AWS.providers() });
 
-describe("AWS.CloudFront.KvRoutesUpdate", () => {
-  test.provider(
-    "destroy succeeds after the store is deleted out of band",
-    (stack) =>
+describe(
+  "AWS.CloudFront.KvRoutesUpdate",
+  { tags: ["provider:aws", "provider:aws:cloudfront", "live"] },
+  () => {
+    test.provider(
+      "destroy succeeds after the store is deleted out of band",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
+          const store = yield* stack.deploy(
+            Effect.gen(function* () {
+              const store = yield* KeyValueStore("Store", {});
+              yield* KvRoutesUpdate("Route", {
+                store: store.keyValueStoreArn,
+                namespace: "app",
+                key: "routes",
+                entry: "site,app,*,/",
+              });
+              return store;
+            }),
+          );
+          const current = yield* cloudfront.describeKeyValueStore({
+            Name: store.keyValueStoreName,
+          });
+          yield* cloudfront.deleteKeyValueStore({
+            Name: store.keyValueStoreName,
+            IfMatch: current.ETag!,
+          });
+          yield* assertKeyValueStoreDeleted(store.keyValueStoreName);
+          yield* stack.destroy();
+          yield* stack.destroy();
+        }),
+      { timeout: 120_000 },
+    );
+
+    // KvRoutesUpdate is an update operation that manages a single route entry
+    // inside a JSON array stored at a KV store key. It is keyed entirely by
+    // {store, namespace, key, entry} and has no enumeration API, so list() is
+    // non-listable and returns [] cleanly.
+    test.provider("list returns [] (non-listable)", () =>
       Effect.gen(function* () {
-        yield* stack.destroy();
-        const store = yield* stack.deploy(
-          Effect.gen(function* () {
-            const store = yield* KeyValueStore("Store", {});
-            yield* KvRoutesUpdate("Route", {
-              store: store.keyValueStoreArn,
-              namespace: "app",
-              key: "routes",
-              entry: "site,app,*,/",
-            });
-            return store;
-          }),
-        );
-        const current = yield* cloudfront.describeKeyValueStore({
-          Name: store.keyValueStoreName,
-        });
-        yield* cloudfront.deleteKeyValueStore({
-          Name: store.keyValueStoreName,
-          IfMatch: current.ETag!,
-        });
-        yield* assertKeyValueStoreDeleted(store.keyValueStoreName);
-        yield* stack.destroy();
-        yield* stack.destroy();
+        const provider = yield* Provider.findProvider(KvRoutesUpdate);
+        const all = yield* provider.list();
+        expect(all).toEqual([]);
       }),
-    { timeout: 120_000 },
-  );
+    );
 
-  // KvRoutesUpdate is an update operation that manages a single route entry
-  // inside a JSON array stored at a KV store key. It is keyed entirely by
-  // {store, namespace, key, entry} and has no enumeration API, so list() is
-  // non-listable and returns [] cleanly.
-  test.provider("list returns [] (non-listable)", () =>
-    Effect.gen(function* () {
-      const provider = yield* Provider.findProvider(KvRoutesUpdate);
-      const all = yield* provider.list();
-      expect(all).toEqual([]);
-    }),
-  );
+    test.provider(
+      "create, update, and delete a routes document entry",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-  test.provider(
-    "create, update, and delete a routes document entry",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+          const initialEntry = "site,mysite,*,/";
 
-        const initialEntry = "site,mysite,*,/";
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const store = yield* KeyValueStore("RoutesStore", {
+                comment: "kv-routes lifecycle",
+              });
+              const route = yield* KvRoutesUpdate("HomeRoute", {
+                store: store.keyValueStoreArn,
+                namespace: "app",
+                key: "routes",
+                entry: initialEntry,
+              });
+              return { store, route };
+            }),
+          );
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const store = yield* KeyValueStore("RoutesStore", {
-              comment: "kv-routes lifecycle",
-            });
-            const route = yield* KvRoutesUpdate("HomeRoute", {
-              store: store.keyValueStoreArn,
-              namespace: "app",
-              key: "routes",
-              entry: initialEntry,
-            });
-            return { store, route };
-          }),
-        );
+          expect(deployed.route.store).toBe(deployed.store.keyValueStoreArn);
+          expect(deployed.route.namespace).toBe("app");
+          expect(deployed.route.key).toBe("routes");
+          expect(deployed.route.entry).toBe(initialEntry);
 
-        expect(deployed.route.store).toBe(deployed.store.keyValueStoreArn);
-        expect(deployed.route.namespace).toBe("app");
-        expect(deployed.route.key).toBe("routes");
-        expect(deployed.route.entry).toBe(initialEntry);
+          const described = yield* withKvsRegion(
+            kvs.describeKeyValueStore({
+              KvsARN: deployed.store.keyValueStoreArn,
+            }),
+          );
+          expect(described.KvsARN).toBe(deployed.store.keyValueStoreArn);
 
-        const described = yield* withKvsRegion(
-          kvs.describeKeyValueStore({
-            KvsARN: deployed.store.keyValueStoreArn,
-          }),
-        );
-        expect(described.KvsARN).toBe(deployed.store.keyValueStoreArn);
+          yield* assertRoutes(deployed.store.keyValueStoreArn, "app:routes", [
+            initialEntry,
+          ]);
 
-        yield* assertRoutes(deployed.store.keyValueStoreArn, "app:routes", [
-          initialEntry,
-        ]);
+          const updatedEntry = "site,mysite,*,/app";
 
-        const updatedEntry = "site,mysite,*,/app";
+          const updated = yield* stack.deploy(
+            Effect.gen(function* () {
+              const store = yield* KeyValueStore("RoutesStore", {
+                comment: "kv-routes lifecycle",
+              });
+              const route = yield* KvRoutesUpdate("HomeRoute", {
+                store: store.keyValueStoreArn,
+                namespace: "app",
+                key: "routes",
+                entry: updatedEntry,
+              });
+              return { store, route };
+            }),
+          );
 
-        const updated = yield* stack.deploy(
-          Effect.gen(function* () {
-            const store = yield* KeyValueStore("RoutesStore", {
-              comment: "kv-routes lifecycle",
-            });
-            const route = yield* KvRoutesUpdate("HomeRoute", {
-              store: store.keyValueStoreArn,
-              namespace: "app",
-              key: "routes",
-              entry: updatedEntry,
-            });
-            return { store, route };
-          }),
-        );
+          expect(updated.store.keyValueStoreArn).toBe(
+            deployed.store.keyValueStoreArn,
+          );
+          expect(updated.route.entry).toBe(updatedEntry);
 
-        expect(updated.store.keyValueStoreArn).toBe(
-          deployed.store.keyValueStoreArn,
-        );
-        expect(updated.route.entry).toBe(updatedEntry);
+          yield* assertRoutes(updated.store.keyValueStoreArn, "app:routes", [
+            updatedEntry,
+          ]);
 
-        yield* assertRoutes(updated.store.keyValueStoreArn, "app:routes", [
-          updatedEntry,
-        ]);
-
-        yield* stack.destroy();
-        yield* assertKeyValueStoreDeleted(deployed.store.keyValueStoreName);
-      }),
-    { timeout: 120_000 },
-  );
-});
+          yield* stack.destroy();
+          yield* assertKeyValueStoreDeleted(deployed.store.keyValueStoreName);
+        }),
+      { timeout: 120_000 },
+    );
+  },
+);
 
 const getRoutesDocument = (store: string, fullKey: string) =>
   withKvsRegion(kvs.getKey({ KvsARN: store, Key: fullKey })).pipe(

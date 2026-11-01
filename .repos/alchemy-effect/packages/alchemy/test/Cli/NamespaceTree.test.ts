@@ -2,7 +2,7 @@ import { buildNamespaceTree, flattenTree } from "@/Cli/NamespaceTree.ts";
 import { describe, expect, test } from "alchemy-test";
 import { createNode, replaceNode, updateNode } from "./PlanTestNodes.ts";
 
-describe("NamespaceTree YAML properties", () => {
+describe("NamespaceTree YAML properties", { tags: ["unit", "local"] }, () => {
   test("does not attach details in compact mode", () => {
     const [item] = flattenTree(
       buildNamespaceTree([

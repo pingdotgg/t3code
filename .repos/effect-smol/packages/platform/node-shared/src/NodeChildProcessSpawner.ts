@@ -21,6 +21,9 @@
  * wait after `SIGKILL`. Zombie descendants can consume either full bound. On
  * Windows, `taskkill` terminates the tree and only the leader's exit is awaited.
  *
+ * POSIX cleanup targets a numeric process-group ID. If the group disappears
+ * and its ID is reused before cleanup, an unrelated group may be signalled.
+ *
  * @since 4.0.0
  */
 import type * as Arr from "effect/Array"
@@ -33,18 +36,18 @@ import * as Layer from "effect/Layer"
 import * as Path from "effect/Path"
 import type * as PlatformError from "effect/PlatformError"
 import * as Predicate from "effect/Predicate"
-import type * as Scope from "effect/Scope"
-import * as Sink from "effect/Sink"
-import * as Stream from "effect/Stream"
-import * as ChildProcess from "effect/unstable/process/ChildProcess"
-import type { ChildProcessHandle } from "effect/unstable/process/ChildProcessSpawner"
+import * as ChildProcess from "effect/process/ChildProcess"
+import type { ChildProcessHandle } from "effect/process/ChildProcessSpawner"
 import {
   ChildProcessSpawner,
   ExitCode,
   make as makeSpawner,
   makeHandle,
   ProcessId
-} from "effect/unstable/process/ChildProcessSpawner"
+} from "effect/process/ChildProcessSpawner"
+import type * as Scope from "effect/Scope"
+import * as Sink from "effect/Sink"
+import * as Stream from "effect/Stream"
 import * as NodeChildProcess from "node:child_process"
 import { PassThrough } from "node:stream"
 import { buildSpawnOptions } from "./internal/nodeChildProcessSpawner.ts"
@@ -544,7 +547,9 @@ const make = Effect.gen(function*() {
             if (exited) {
               const [code] = yield* Deferred.await(exitSignal)
               if (code !== 0 && Predicate.isNotNull(code)) {
-                yield* Effect.ignore(killProcessGroup(cmd, childProcess, cmd.options.killSignal ?? "SIGTERM"))
+                yield* Effect.ignore(terminateProcessGroup(cmd, childProcess, exitSignal, cmd.options))
+              } else if (isReferenced && process.platform !== "win32" && cmd.options.detached !== false) {
+                yield* Effect.ignore(terminateProcessGroup(cmd, childProcess, exitSignal, cmd.options))
               }
               return
             }

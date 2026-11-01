@@ -6,7 +6,7 @@ import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import Box from "./fixtures/sprite.ts";
 
 const { test } = Test.make({ providers: Fly.providers() });
@@ -54,7 +54,7 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 90_000 },
+  { tags: ["provider:fly", "provider:fly:sprite", "live"], timeout: 90_000 },
 );
 
 test.provider(
@@ -69,7 +69,7 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 90_000 },
+  { tags: ["provider:fly", "provider:fly:sprite", "live"], timeout: 90_000 },
 );
 
 test.provider(
@@ -128,5 +128,5 @@ test.provider(
       const gone = yield* waitUntilGone(deployed.name);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  { tags: ["provider:fly", "provider:fly:sprite", "live"], timeout: 180_000 },
 );

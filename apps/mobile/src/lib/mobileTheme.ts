@@ -31,12 +31,10 @@ export const MOBILE_THEME_OPTIONS: ReadonlyArray<{
   ...BUILT_IN_THEMES.map((theme) => ({ id: theme.id as MobileThemeId, label: theme.label })),
 ];
 
-// Closed set: every key `createMobileThemeVariables` writes. Reads of a
-// misspelled variable then fail to compile instead of yielding undefined.
 export type MobileThemeVariable = keyof ReturnType<typeof createMobileThemeVariables>;
 export type MobileThemeVariables = Readonly<Record<MobileThemeVariable, string>>;
 
-export function normalizeMobileThemeId(value: unknown): MobileThemeId {
+function normalizeMobileThemeId(value: unknown): MobileThemeId {
   return typeof value === "string" && (MOBILE_THEME_IDS as readonly string[]).includes(value)
     ? (value as MobileThemeId)
     : DEFAULT_MOBILE_THEME_ID;
@@ -77,7 +75,6 @@ export function createMobileThemeSelectionPatch(
   return {
     lightThemeId: nextThemeIds.light,
     darkThemeId: nextThemeIds.dark,
-    // Keep older OTA bundles on the theme for the appearance currently in use.
     themeId: nextThemeIds[activeAppearance],
   };
 }
@@ -97,6 +94,22 @@ function linearToSrgb(value: number): number {
   return Math.round(Math.min(1, Math.max(0, converted)) * 255);
 }
 
+function oklabToLinearSrgb(lightness: number, a: number, b: number) {
+  const l = (lightness + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (lightness - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (lightness - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ] as const;
+}
+
+function oklabToSrgb(lightness: number, a: number, b: number) {
+  const [red, green, blue] = oklabToLinearSrgb(lightness, a, b);
+  return [linearToSrgb(red), linearToSrgb(green), linearToSrgb(blue)] as const;
+}
+
 /** React Native does not accept OKLCH ColorValues, so palettes cross the app boundary as sRGB. */
 export function themeColorToNativeColor(value: string): string {
   const match = OKLCH_PATTERN.exec(value);
@@ -106,24 +119,14 @@ export function themeColorToNativeColor(value: string): string {
   const chroma = Number(match[2]);
   const hue = (Number(match[3]) * Math.PI) / 180;
   const alpha = match[4] === undefined ? 1 : Number(match[4]);
-  const a = chroma * Math.cos(hue);
-  const b = chroma * Math.sin(hue);
-  const lPrime = lightness + 0.3963377774 * a + 0.2158037573 * b;
-  const mPrime = lightness - 0.1055613458 * a - 0.0638541728 * b;
-  const sPrime = lightness - 0.0894841775 * a - 1.291485548 * b;
-  const l = lPrime ** 3;
-  const m = mPrime ** 3;
-  const s = sPrime ** 3;
-  const red = linearToSrgb(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s);
-  const green = linearToSrgb(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s);
-  const blue = linearToSrgb(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s);
+  const [red, green, blue] = oklabToSrgb(lightness, chroma * Math.cos(hue), chroma * Math.sin(hue));
 
   return alpha < 1
     ? `rgba(${red}, ${green}, ${blue}, ${Number(alpha.toFixed(4))})`
     : `#${[red, green, blue].map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function nativeColors(colors: ThemeColors): ThemeColors {
+export function nativeColors(colors: ThemeColors): ThemeColors {
   return Object.fromEntries(
     Object.entries(colors).map(([role, color]) => [role, themeColorToNativeColor(color)]),
   ) as ThemeColors;
@@ -145,11 +148,7 @@ function rgbChannels(color: string): readonly [number, number, number] | null {
   return [Number.parseInt(red, 16), Number.parseInt(green, 16), Number.parseInt(blue, 16)];
 }
 
-/**
- * An opaque form of a theme colour, composited over the surface behind it. Native chip drawing
- * parses only opaque hex — an `rgba()` string falls back to a default that is nothing like the
- * colour asked for — so a translucent role like `--color-border` has to be flattened first.
- */
+/** Native chips require opaque hex; flatten translucent roles. */
 export function flattenThemeColor(color: string, surface: string): string {
   const alphaHex = /^#([\da-f]{6})([\da-f]{2})$/i.exec(color);
   if (alphaHex) {
@@ -171,12 +170,31 @@ export function flattenThemeColor(color: string, surface: string): string {
   return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
+function srgbToLinear(channel: number): number {
+  const value = channel / 255;
+  return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+}
+
+function srgbToOklab(channels: readonly [number, number, number]) {
+  const [red = 0, green = 0, blue = 0] = channels.map(srgbToLinear);
+  const l = Math.cbrt(0.4122214708 * red + 0.5363325363 * green + 0.0514459929 * blue);
+  const m = Math.cbrt(0.2119034982 * red + 0.6806995451 * green + 0.1073969566 * blue);
+  const s = Math.cbrt(0.0883024619 * red + 0.2817188376 * green + 0.6299787005 * blue);
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ] as const;
+}
+
 function relativeLuminance(channels: readonly [number, number, number]): number {
-  const [red, green, blue] = channels.map((channel) => {
-    const value = channel / 255;
-    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  });
+  const [red, green, blue] = channels.map(srgbToLinear);
   return 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!;
+}
+
+export function isDarkThemeColor(color: string): boolean {
+  const channels = rgbChannels(color);
+  return channels !== null && relativeLuminance(channels) < 0.18;
 }
 
 function contrastRatio(
@@ -191,15 +209,28 @@ function contrastRatio(
   );
 }
 
-/** Preserve the color's hue while giving text 4.5:1 contrast on every supplied surface. */
-function readableTextColor(accent: string, surface: string | ReadonlyArray<string>): string {
+export function themeColorContrastRatio(first: string, second: string): number {
+  const firstChannels = rgbChannels(first);
+  const secondChannels = rgbChannels(second);
+  return firstChannels && secondChannels ? contrastRatio(firstChannels, secondChannels) : 1;
+}
+
+export function themeColorWithContrast(
+  accent: string,
+  surface: string | ReadonlyArray<string>,
+  minimum = 4.5,
+): string {
   const accentChannels = rgbChannels(accent);
   const surfaceChannels = (typeof surface === "string" ? [surface] : surface)
     .map(rgbChannels)
     .filter((channels) => channels !== null);
   const minimumContrast = (channels: readonly [number, number, number]) =>
     Math.min(...surfaceChannels.map((surface) => contrastRatio(channels, surface)));
-  if (!accentChannels || surfaceChannels.length === 0 || minimumContrast(accentChannels) >= 4.5) {
+  if (
+    !accentChannels ||
+    surfaceChannels.length === 0 ||
+    minimumContrast(accentChannels) >= minimum
+  ) {
     return accent;
   }
 
@@ -216,7 +247,7 @@ function readableTextColor(accent: string, surface: string | ReadonlyArray<strin
       Math.round(accentChannels[1] + (target[1] - accentChannels[1]) * amount),
       Math.round(accentChannels[2] + (target[2] - accentChannels[2]) * amount),
     ];
-    if (minimumContrast(candidate) >= 4.5) {
+    if (minimumContrast(candidate) >= minimum) {
       readable = candidate;
       upperAmount = amount;
     } else {
@@ -224,6 +255,63 @@ function readableTextColor(accent: string, surface: string | ReadonlyArray<strin
     }
   }
   return `#${readable.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/**
+ * Unlike `themeColorWithContrast`, which blends toward black or white and greys the color out,
+ * this moves only OKLCH lightness and takes the most chroma sRGB allows at each step, so a vivid
+ * accent stays vivid at the contrast it needs.
+ */
+export function themeAccentWithContrast(
+  accent: string,
+  surfaces: ReadonlyArray<string>,
+  minimum = 4.5,
+): string {
+  const accentChannels = rgbChannels(accent);
+  const surfaceChannels = surfaces.map(rgbChannels).filter((channels) => channels !== null);
+  const minimumContrast = (channels: readonly [number, number, number]) =>
+    Math.min(...surfaceChannels.map((surface) => contrastRatio(channels, surface)));
+  if (
+    !accentChannels ||
+    surfaceChannels.length === 0 ||
+    minimumContrast(accentChannels) >= minimum
+  ) {
+    return accent;
+  }
+
+  const [lightness, a, b] = srgbToOklab(accentChannels);
+  const hue = Math.atan2(b, a);
+  const inGamut = (channels: ReadonlyArray<number>) =>
+    channels.every((channel) => channel >= -1e-4 && channel <= 1 + 1e-4);
+  const mostVivid = (stepLightness: number) => {
+    let chroma = 0;
+    let lower = 0;
+    let upper = Math.max(Math.hypot(a, b), 0.2);
+    for (let index = 0; index < 20; index += 1) {
+      const candidate = (lower + upper) / 2;
+      if (
+        inGamut(
+          oklabToLinearSrgb(stepLightness, candidate * Math.cos(hue), candidate * Math.sin(hue)),
+        )
+      ) {
+        chroma = candidate;
+        lower = candidate;
+      } else {
+        upper = candidate;
+      }
+    }
+    return oklabToSrgb(stepLightness, chroma * Math.cos(hue), chroma * Math.sin(hue));
+  };
+
+  const lighten = minimumContrast([255, 255, 255]) >= minimumContrast([0, 0, 0]);
+  const step = lighten ? 0.002 : -0.002;
+  for (let next = lightness; lighten ? next <= 1 : next >= 0; next += step) {
+    const candidate = mostVivid(next);
+    if (minimumContrast(candidate) >= minimum) {
+      return `#${candidate.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+    }
+  }
+  return lighten ? "#ffffff" : "#000000";
 }
 
 export function themeColorWithAlpha(color: string, alpha: number): string {
@@ -239,10 +327,19 @@ export function createMobileThemeVariables(
   colors: ThemeColors,
   appearance: MobileThemeAppearance,
   groupedCardColor = colors.surface,
+  prominentAction: readonly [string, string] = [colors.text, colors.canvas],
 ) {
   const c = nativeColors(colors);
   const groupedCard = themeColorToNativeColor(groupedCardColor);
-  const textSurfaces = [c.canvas, c.surface, c.surfaceRaised, c.chrome, groupedCard];
+  const textSurfaces = [
+    c.canvas,
+    c.surface,
+    c.surfaceRaised,
+    c.chrome,
+    c.sidebar,
+    c.secondary,
+    groupedCard,
+  ];
   return {
     "--color-screen": c.canvas,
     "--color-sheet": withAlpha(c.chrome, 0.98),
@@ -254,7 +351,7 @@ export function createMobileThemeVariables(
     "--color-thread-canvas": c.canvas,
     "--color-thread-selected": c.sidebarRowActive,
     "--color-thread-selected-foreground": c.sidebarForeground,
-    "--color-thread-selected-foreground-muted": readableTextColor(
+    "--color-thread-selected-foreground-muted": themeColorWithContrast(
       c.sidebarMutedForeground,
       c.sidebarRowActive,
     ),
@@ -270,8 +367,8 @@ export function createMobileThemeVariables(
       groupedCard === c.surface ? (appearance === "dark" ? 0.46 : 0.54) : 0.8,
     ),
     "--color-foreground": c.text,
-    "--color-foreground-secondary": readableTextColor(c.textMuted, textSurfaces),
-    "--color-foreground-muted": readableTextColor(c.mutedForeground, textSurfaces),
+    "--color-foreground-secondary": themeColorWithContrast(c.textMuted, textSurfaces),
+    "--color-foreground-muted": themeColorWithContrast(c.mutedForeground, textSurfaces),
     "--color-foreground-tertiary": c.secondaryLabel,
     "--color-border": c.border,
     "--color-focus": c.focus,
@@ -283,8 +380,10 @@ export function createMobileThemeVariables(
     "--color-inline-skill-border": withAlpha(c.accent, 0.42),
     "--color-inline-skill-foreground": c.accentSurfaceForeground,
     "--color-primary": c.messageAction,
+    "--color-prominent-action": themeColorToNativeColor(prominentAction[0]),
+    "--color-prominent-action-foreground": themeColorToNativeColor(prominentAction[1]),
     "--color-primary-foreground": c.messageActionForeground,
-    "--color-primary-text": readableTextColor(c.messageAction, textSurfaces),
+    "--color-primary-text": themeColorWithContrast(c.messageAction, textSurfaces),
     "--color-primary-shadow": "#000000",
     "--color-secondary": c.secondary,
     "--color-secondary-foreground": c.secondaryForeground,
@@ -304,7 +403,7 @@ export function createMobileThemeVariables(
     "--color-input": c.surface,
     "--color-input-border": c.input,
     "--color-sidebar-search": c.sidebarControlSurface,
-    "--color-placeholder": readableTextColor(c.placeholder, textSurfaces),
+    "--color-placeholder": themeColorWithContrast(c.placeholder, textSurfaces),
     "--color-icon": c.text,
     "--color-icon-muted": c.iconMuted,
     "--color-icon-subtle": c.secondaryLabel,
@@ -317,7 +416,7 @@ export function createMobileThemeVariables(
     "--color-status-bar": c.canvas,
     "--color-md-body": c.text,
     "--color-md-strong": c.text,
-    "--color-md-link": readableTextColor(c.messageAction, c.canvas),
+    "--color-md-link": themeColorWithContrast(c.messageAction, c.canvas),
     "--color-md-blockquote-border": c.border,
     "--color-md-blockquote-bg": c.muted,
     "--color-md-code-bg": c.codeBackground,
@@ -330,11 +429,14 @@ export function createMobileThemeVariables(
     "--color-user-bubble": c.messageSurface,
     "--color-user-bubble-foreground": c.messageForeground,
     "--color-user-bubble-foreground-muted": withAlpha(c.messageForeground, 0.78),
-    "--color-user-bubble-skill-foreground": readableTextColor(c.messageAction, c.messageSurface),
+    "--color-user-bubble-skill-foreground": themeColorWithContrast(
+      c.messageAction,
+      c.messageSurface,
+    ),
     "--color-backdrop": withAlpha("#000000", appearance === "dark" ? 0.48 : 0.22),
     "--color-drawer": c.sidebar,
     "--color-drawer-foreground": c.sidebarForeground,
-    "--color-drawer-foreground-muted": readableTextColor(c.sidebarMutedForeground, [
+    "--color-drawer-foreground-muted": themeColorWithContrast(c.sidebarMutedForeground, [
       c.sidebar,
       c.sidebarRowHover,
     ]),
@@ -345,10 +447,6 @@ export function createMobileThemeVariables(
     "--color-chevron": withAlpha(c.textMuted, 0.42),
   };
 }
-
-export const MOBILE_THEME_VARIABLE_NAMES = Object.keys(
-  createMobileThemeVariables(T3_CHAT_THEME.colors, "light"),
-) as ReadonlyArray<MobileThemeVariable>;
 
 export function getMobileThemeColors(
   themeId: SharedMobileThemeId,
@@ -367,14 +465,16 @@ export function getMobileThemeVariables(
   overrides: Partial<MobileThemeVariables> | null = null,
 ): MobileThemeVariables {
   const colors = getMobileThemeColors(themeId, appearance);
-  // Mobile settings groups and fallback materials use tonal fills where desktop
-  // uses outlined cards. Regular cards retain their shared desktop surface.
   const groupedCard =
     themeId === DEFAULT_MOBILE_THEME_ID
       ? appearance === "light"
         ? colors.toolbarControlHover
         : colors.sidebarRowActive
-      : colors.surface;
+      : themeId === "t3-chat"
+        ? appearance === "light"
+          ? colors.toolbarControl
+          : colors.surface
+        : colors.muted;
   const mobileColors =
     themeId === DEFAULT_MOBILE_THEME_ID
       ? {
@@ -388,9 +488,17 @@ export function getMobileThemeVariables(
           ),
         }
       : colors;
-  const baseVariables = createMobileThemeVariables(mobileColors, appearance, groupedCard);
+  const baseVariables = createMobileThemeVariables(
+    mobileColors,
+    appearance,
+    groupedCard,
+    themeId === "t3-chat" && appearance === "dark"
+      ? [colors.messageActionForeground, colors.messageAction]
+      : themeId !== DEFAULT_MOBILE_THEME_ID && themeId !== "t3-chat"
+        ? [colors.messageAction, colors.messageActionForeground]
+        : undefined,
+  );
 
-  // The complete base record guarantees that optional overrides cannot leave a token undefined.
   return overrides ? ({ ...baseVariables, ...overrides } as MobileThemeVariables) : baseVariables;
 }
 

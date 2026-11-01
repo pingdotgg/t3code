@@ -3,7 +3,7 @@ import * as Test from "@/Test/Alchemy";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import * as pathe from "pathe";
 import Stack from "./fixtures/url-stack.ts";
 
@@ -34,7 +34,10 @@ test(
     const body = yield* getJson(`${effectUrl}/`);
     expect(body.url).toBe(effectUrl);
   }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 180_000,
+  },
 );
 
 test(
@@ -44,7 +47,10 @@ test(
     const body = yield* getJson(`${asyncUrl}/`);
     expect(body.url).toBe(asyncUrl);
   }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 180_000,
+  },
 );
 
 // The canonical VITE_PUBLIC_URL use case: the URL is resolved before the vite
@@ -92,5 +98,8 @@ test.provider.skipIf(!!process.env.FAST)(
 
       yield* stack.destroy();
     }),
-  { timeout: 360_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "live"],
+    timeout: 360_000,
+  },
 );

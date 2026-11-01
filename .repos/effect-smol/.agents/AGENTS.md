@@ -16,14 +16,19 @@ This is the Effect TypeScript monorepo. The git base branch is `main`; use `pnpm
 
 Use the narrowest validation that covers the change:
 
-| Change type                      | Validation                                                                         |
-| -------------------------------- | ---------------------------------------------------------------------------------- |
-| Code changes                     | `pnpm lint-fix`, targeted `pnpm test --run <test_file.ts>`, `pnpm check`           |
-| Tests-only changes               | `pnpm lint-fix`, targeted `pnpm test --run <test_file.ts>`, `pnpm check`           |
-| Type-level/API type changes      | Targeted `pnpm test-types <filename>`, plus `pnpm check` when source types changed |
-| JSDoc text/category/link changes | `pnpm jsdocs --check`, `pnpm lint`                                                 |
-| JSDoc example changes            | `pnpm jsdocs --check`, `pnpm lint`, root `pnpm doctest --run <files>`              |
-| Docs-only changes                | `pnpm lint-fix`; no tests unless examples or code changed                          |
+| Change type                        | Validation                                                                         |
+| ---------------------------------- | ---------------------------------------------------------------------------------- |
+| Runtime source or test changes     | `pnpm lint-fix`, targeted `pnpm test --run <test_file.ts>`, `pnpm check`           |
+| Type-system behavior or type tests | Targeted `pnpm test-types <filename>`, plus `pnpm check` when source types changed |
+| JSDoc text/category/link changes   | `pnpm jsdocs --check`, `pnpm lint`                                                 |
+| JSDoc example changes              | `pnpm jsdocs --check`, `pnpm lint`, root `pnpm doctest --run <files>`              |
+| Docs-only changes                  | `pnpm lint-fix`; no tests unless examples or code changed                          |
+
+Choose coverage from the contract being changed. Runtime tests cover executed
+behavior. Tstyche tests cover intended compiler behavior such as inference,
+assignability, rejection, or displayed public types. An ordinary source edit or
+exported declaration is covered by `pnpm check` unless compiler behavior is part
+of the task.
 
 Never run bare `pnpm test` or `pnpm doctest`; both start the full suite in watch mode. Always pass `--run` and the
 specific files covering the change. CI runs the full suite.

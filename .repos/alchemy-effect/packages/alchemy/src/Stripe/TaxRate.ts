@@ -190,6 +190,7 @@ export type TaxRate = Resource<
  * ```
  *
  * @resource
+ * @product Tax
  */
 export const TaxRate = Resource<TaxRate>("Stripe.TaxRate");
 

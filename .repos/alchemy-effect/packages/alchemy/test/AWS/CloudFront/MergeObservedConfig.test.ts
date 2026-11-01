@@ -151,130 +151,142 @@ const desired: cloudfront.DistributionConfig = {
   IsIPV6Enabled: true,
 } as cloudfront.DistributionConfig;
 
-describe("mergeWithObservedConfig", () => {
-  const merged = mergeWithObservedConfig(desired, observed);
+describe(
+  "mergeWithObservedConfig",
+  { tags: ["unit", "provider:aws", "provider:aws:cloudfront", "local"] },
+  () => {
+    const merged = mergeWithObservedConfig(desired, observed);
 
-  test("desired values win over observed ones", () => {
-    expect(merged.Enabled).toBe(false);
-    expect(merged.IsIPV6Enabled).toBe(true);
-    expect(merged.Origins?.Items?.[0]?.OriginAccessControlId).toBe(
-      "OAC_DESIRED",
-    );
-    expect(merged.DefaultCacheBehavior?.FunctionAssociations?.Quantity).toBe(1);
-  });
+    test("desired values win over observed ones", () => {
+      expect(merged.Enabled).toBe(false);
+      expect(merged.IsIPV6Enabled).toBe(true);
+      expect(merged.Origins?.Items?.[0]?.OriginAccessControlId).toBe(
+        "OAC_DESIRED",
+      );
+      expect(merged.DefaultCacheBehavior?.FunctionAssociations?.Quantity).toBe(
+        1,
+      );
+    });
 
-  test("top-level members the desired config omits are filled from observed", () => {
-    expect(merged.DefaultRootObject).toBe("");
-    expect(merged.WebACLId).toBe("");
-    expect(merged.ContinuousDeploymentPolicyId).toBe("");
-    expect(merged.Staging).toBe(false);
-    expect(merged.PriceClass).toBe("PriceClass_100");
-    expect(merged.Logging).toEqual(observed.Logging);
-    expect(merged.OriginGroups).toEqual({ Quantity: 0 });
-    expect(merged.CustomErrorResponses).toEqual({ Quantity: 0 });
-  });
+    test("top-level members the desired config omits are filled from observed", () => {
+      expect(merged.DefaultRootObject).toBe("");
+      expect(merged.WebACLId).toBe("");
+      expect(merged.ContinuousDeploymentPolicyId).toBe("");
+      expect(merged.Staging).toBe(false);
+      expect(merged.PriceClass).toBe("PriceClass_100");
+      expect(merged.Logging).toEqual(observed.Logging);
+      expect(merged.OriginGroups).toEqual({ Quantity: 0 });
+      expect(merged.CustomErrorResponses).toEqual({ Quantity: 0 });
+    });
 
-  test("nested members inside origin items are filled by Id", () => {
-    const origin = merged.Origins?.Items?.[0];
-    expect(origin?.CustomHeaders).toEqual({ Quantity: 0 });
-    expect(origin?.OriginPath).toBe("");
-    expect(origin?.ConnectionAttempts).toBe(3);
-    expect(origin?.ConnectionTimeout).toBe(10);
-    expect(origin?.OriginShield).toEqual({ Enabled: false });
-    expect(origin?.S3OriginConfig?.OriginReadTimeout).toBe(30);
-  });
+    test("nested members inside origin items are filled by Id", () => {
+      const origin = merged.Origins?.Items?.[0];
+      expect(origin?.CustomHeaders).toEqual({ Quantity: 0 });
+      expect(origin?.OriginPath).toBe("");
+      expect(origin?.ConnectionAttempts).toBe(3);
+      expect(origin?.ConnectionTimeout).toBe(10);
+      expect(origin?.OriginShield).toEqual({ Enabled: false });
+      expect(origin?.S3OriginConfig?.OriginReadTimeout).toBe(30);
+    });
 
-  test("nested members inside behaviors are filled (default + by PathPattern)", () => {
-    for (const behavior of [
-      merged.DefaultCacheBehavior,
-      merged.CacheBehaviors?.Items?.[0],
-    ]) {
-      expect(behavior?.TrustedSigners).toEqual({ Enabled: false, Quantity: 0 });
-      expect(behavior?.TrustedKeyGroups).toEqual({
-        Enabled: false,
-        Quantity: 0,
+    test("nested members inside behaviors are filled (default + by PathPattern)", () => {
+      for (const behavior of [
+        merged.DefaultCacheBehavior,
+        merged.CacheBehaviors?.Items?.[0],
+      ]) {
+        expect(behavior?.TrustedSigners).toEqual({
+          Enabled: false,
+          Quantity: 0,
+        });
+        expect(behavior?.TrustedKeyGroups).toEqual({
+          Enabled: false,
+          Quantity: 0,
+        });
+        expect(behavior?.SmoothStreaming).toBe(false);
+        expect(behavior?.FieldLevelEncryptionId).toBe("");
+        expect(behavior?.GrpcConfig).toEqual({ Enabled: false });
+        expect(behavior?.LambdaFunctionAssociations).toEqual({ Quantity: 0 });
+      }
+    });
+
+    test("partial nested objects are completed member-wise, not replaced", () => {
+      // Desired sets CloudFrontDefaultCertificate only; the observed
+      // SSLSupportMethod / MinimumProtocolVersion carry over.
+      const mergedWithCert = mergeWithObservedConfig(
+        {
+          ...desired,
+          ViewerCertificate: { CloudFrontDefaultCertificate: true },
+        },
+        observed,
+      );
+      expect(mergedWithCert.ViewerCertificate).toEqual({
+        CloudFrontDefaultCertificate: true,
+        SSLSupportMethod: "vip",
+        MinimumProtocolVersion: "TLSv1",
       });
-      expect(behavior?.SmoothStreaming).toBe(false);
-      expect(behavior?.FieldLevelEncryptionId).toBe("");
-      expect(behavior?.GrpcConfig).toEqual({ Enabled: false });
-      expect(behavior?.LambdaFunctionAssociations).toEqual({ Quantity: 0 });
-    }
-  });
-
-  test("partial nested objects are completed member-wise, not replaced", () => {
-    // Desired sets CloudFrontDefaultCertificate only; the observed
-    // SSLSupportMethod / MinimumProtocolVersion carry over.
-    const mergedWithCert = mergeWithObservedConfig(
-      { ...desired, ViewerCertificate: { CloudFrontDefaultCertificate: true } },
-      observed,
-    );
-    expect(mergedWithCert.ViewerCertificate).toEqual({
-      CloudFrontDefaultCertificate: true,
-      SSLSupportMethod: "vip",
-      MinimumProtocolVersion: "TLSv1",
     });
-  });
 
-  test("desired arrays are never extended by observed items", () => {
-    // Observed has one origin; a desired config that removes it must win.
-    const withoutOrigins = mergeWithObservedConfig(
-      {
-        ...desired,
-        Origins: { Quantity: 0, Items: [] },
-      },
-      observed,
-    );
-    expect(withoutOrigins.Origins).toEqual({ Quantity: 0, Items: [] });
-  });
-
-  test("a Quantity-only desired list never resurrects observed Items", () => {
-    // Dropping a geo whitelist produces `{ RestrictionType: "none",
-    // Quantity: 0 }` with no `Items`; filling `Items` from the observed
-    // whitelist would desynchronize Quantity/Items and CloudFront rejects
-    // the update with `InconsistentQuantities`.
-    const withWhitelist = {
-      ...observed,
-      Restrictions: {
-        GeoRestriction: {
-          RestrictionType: "whitelist",
-          Quantity: 2,
-          Items: ["US", "GB"],
+    test("desired arrays are never extended by observed items", () => {
+      // Observed has one origin; a desired config that removes it must win.
+      const withoutOrigins = mergeWithObservedConfig(
+        {
+          ...desired,
+          Origins: { Quantity: 0, Items: [] },
         },
-      },
-    } as cloudfront.DistributionConfig;
-    const dropped = mergeWithObservedConfig(
-      {
-        ...desired,
+        observed,
+      );
+      expect(withoutOrigins.Origins).toEqual({ Quantity: 0, Items: [] });
+    });
+
+    test("a Quantity-only desired list never resurrects observed Items", () => {
+      // Dropping a geo whitelist produces `{ RestrictionType: "none",
+      // Quantity: 0 }` with no `Items`; filling `Items` from the observed
+      // whitelist would desynchronize Quantity/Items and CloudFront rejects
+      // the update with `InconsistentQuantities`.
+      const withWhitelist = {
+        ...observed,
         Restrictions: {
-          GeoRestriction: { RestrictionType: "none", Quantity: 0 },
+          GeoRestriction: {
+            RestrictionType: "whitelist",
+            Quantity: 2,
+            Items: ["US", "GB"],
+          },
         },
-      } as cloudfront.DistributionConfig,
-      withWhitelist,
-    );
-    expect(dropped.Restrictions).toEqual({
-      GeoRestriction: { RestrictionType: "none", Quantity: 0 },
+      } as cloudfront.DistributionConfig;
+      const dropped = mergeWithObservedConfig(
+        {
+          ...desired,
+          Restrictions: {
+            GeoRestriction: { RestrictionType: "none", Quantity: 0 },
+          },
+        } as cloudfront.DistributionConfig,
+        withWhitelist,
+      );
+      expect(dropped.Restrictions).toEqual({
+        GeoRestriction: { RestrictionType: "none", Quantity: 0 },
+      });
     });
-  });
 
-  test("an origin absent from observed is passed through unchanged", () => {
-    const withNewOrigin = mergeWithObservedConfig(
-      {
-        ...desired,
-        Origins: {
-          Quantity: 1,
-          Items: [
-            {
-              Id: "brand-new",
-              DomainName: "new.example.com",
-            } as cloudfront.Origin,
-          ],
+    test("an origin absent from observed is passed through unchanged", () => {
+      const withNewOrigin = mergeWithObservedConfig(
+        {
+          ...desired,
+          Origins: {
+            Quantity: 1,
+            Items: [
+              {
+                Id: "brand-new",
+                DomainName: "new.example.com",
+              } as cloudfront.Origin,
+            ],
+          },
         },
-      },
-      observed,
-    );
-    expect(withNewOrigin.Origins?.Items?.[0]).toEqual({
-      Id: "brand-new",
-      DomainName: "new.example.com",
+        observed,
+      );
+      expect(withNewOrigin.Origins?.Items?.[0]).toEqual({
+        Id: "brand-new",
+        DomainName: "new.example.com",
+      });
     });
-  });
-});
+  },
+);

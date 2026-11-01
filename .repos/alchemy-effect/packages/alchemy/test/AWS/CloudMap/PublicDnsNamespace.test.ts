@@ -40,5 +40,5 @@ test.provider.skipIf(!process.env.AWS_TEST_CLOUDMAP_PUBLIC)(
       );
       expect(gone).toBe(true);
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:cloudmap", "live"], timeout: 240_000 },
 );

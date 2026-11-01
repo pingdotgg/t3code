@@ -57,6 +57,8 @@ interface BaseResourceState {
   attr?: Attr;
   /** The removal policy of the resource */
   removalPolicy?: RemovalPolicy["Service"];
+  /** Attr-less lookup could recover the predecessor migrated away from this FQN. */
+  adoptionBlocked?: "migrated-fqn";
   /**
    * The {@link ProviderMode} this resource was last reconciled with.
    *

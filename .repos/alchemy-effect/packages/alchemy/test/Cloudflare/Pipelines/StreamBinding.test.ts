@@ -7,7 +7,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import Stack from "./fixtures/stack.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -76,7 +76,15 @@ test(
     // would deliver the stream's attributes as a plain object.
     expect(body).toMatchObject({ mode: "async", sent: true, kind: "function" });
   }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:pipelines",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 test(
@@ -92,7 +100,15 @@ test(
       kind: "function",
     });
   }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:pipelines",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -135,5 +151,13 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 300_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:pipelines",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 300_000,
+  },
 );

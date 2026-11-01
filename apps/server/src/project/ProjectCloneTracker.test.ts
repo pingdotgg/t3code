@@ -1,7 +1,9 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import {
   OrchestrationDispatchCommandError,
   ProjectId,
+  projectCloneProgressSummary,
   SourceControlRepositoryError,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -87,7 +89,6 @@ describe("ProjectCloneTracker", () => {
 
       const result = yield* tracker.start(startInput, harness.hooks);
       expect(result.cwd).toBe("/workspace/t3code");
-      // The project exists before git runs so the draft can open immediately.
       expect(harness.created).toEqual([{ projectId, workspaceRoot: "/workspace/t3code" }]);
 
       yield* Effect.yieldNow;
@@ -100,9 +101,47 @@ describe("ProjectCloneTracker", () => {
       expect(final).toMatchObject({ phase: "done", percent: 100 });
       expect(harness.cloned).toEqual([projectId]);
 
-      // Done clones drop out after the grace window so the toast can settle.
       yield* TestClock.adjust("31 seconds");
       expect(yield* tracker.get(projectId)).toBeNull();
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("flags a clone stalled when git goes quiet and clears it when git speaks", () => {
+    const release = Deferred.makeUnsafe<void>();
+    const resumed = Deferred.makeUnsafe<void>();
+    const harness = makeHarness({
+      clone: (input, options) =>
+        Effect.gen(function* () {
+          const report = options?.onProgress ?? (() => Effect.void);
+          yield* report({ stage: "receiving", percent: 24, detail: "168.80 MiB | 20.69 MiB/s" });
+          yield* Deferred.await(resumed);
+          yield* report({ stage: "receiving", percent: 25, detail: "170.00 MiB | 1.00 MiB/s" });
+          yield* Deferred.await(release);
+          return { cwd: input.destinationPath, remoteUrl: input.remoteUrl ?? "", repository: null };
+        }),
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      yield* tracker.start(startInput, harness.hooks);
+      yield* Effect.yieldNow;
+      expect((yield* tracker.get(projectId))?.stalled).toBe(false);
+
+      yield* TestClock.adjust("19 seconds");
+      expect((yield* tracker.get(projectId))?.stalled).toBe(false);
+      yield* TestClock.adjust("1 second");
+      const stalled = yield* tracker.get(projectId);
+      expect(stalled).toMatchObject({ stalled: true, percent: 24 });
+      expect(projectCloneProgressSummary(stalled!)).toBe("Receiving objects · 24% · Stalled");
+
+      yield* Deferred.succeed(resumed, undefined);
+      yield* Effect.yieldNow;
+      expect(yield* tracker.get(projectId)).toMatchObject({ stalled: false, percent: 25 });
+
+      yield* TestClock.adjust("20 seconds");
+      expect((yield* tracker.get(projectId))?.stalled).toBe(true);
+      yield* Deferred.succeed(release, undefined);
+      yield* Effect.yieldNow;
+      expect(yield* tracker.get(projectId)).toMatchObject({ phase: "done", stalled: false });
     }).pipe(Effect.provide(harness.layer));
   });
 
@@ -116,7 +155,7 @@ describe("ProjectCloneTracker", () => {
             ? Effect.fail(
                 new SourceControlRepositoryError({
                   operation: "cloneRepository",
-                  provider: "unknown",
+                  provider: SourceControlProviderKind.make("unknown"),
                   detail: "fatal: repository not found",
                 }),
               )
@@ -135,7 +174,6 @@ describe("ProjectCloneTracker", () => {
       expect(failed).toMatchObject({ phase: "failed", error: "fatal: repository not found" });
 
       expect(yield* tracker.retry(projectId)).toBe(true);
-      // The partial checkout is cleared so git sees an empty destination.
       expect(harness.discarded).toEqual(["/workspace/t3code"]);
       yield* Effect.yieldNow;
       expect((yield* tracker.get(projectId))?.phase).toBe("done");
@@ -153,7 +191,6 @@ describe("ProjectCloneTracker", () => {
       expect(yield* tracker.cancel(projectId)).toBe(true);
       expect((yield* tracker.get(projectId))?.phase).toBe("cancelled");
       expect(harness.discarded).toEqual(["/workspace/t3code"]);
-      // Nothing left to cancel; retry is what brings it back.
       expect(yield* tracker.cancel(projectId)).toBe(false);
       expect(yield* tracker.retry(projectId)).toBe(true);
     }).pipe(Effect.provide(harness.layer));
@@ -162,7 +199,6 @@ describe("ProjectCloneTracker", () => {
   it.effect("a cancel that lands after git finished keeps the checkout", () => {
     const gate = Deferred.makeUnsafe<void>();
     const harness = makeHarness();
-    // The clone itself completes instantly; the post-clone hook is what hangs.
     const hooks: ProjectCloneTracker.ProjectCloneHooks = {
       ...harness.hooks,
       onCloned: () => Deferred.await(gate),
@@ -239,7 +275,6 @@ describe("ProjectCloneTracker", () => {
       const error = yield* Effect.flip(tracker.start(startInput, hooks));
       expect(error.message).toContain("workspace root exists");
       expect(yield* tracker.get(projectId)).toBeNull();
-      // The destination is free again for a corrected attempt.
       yield* tracker.start(startInput, harness.hooks);
       yield* Effect.yieldNow;
       expect((yield* tracker.get(projectId))?.phase).toBe("done");
@@ -255,7 +290,7 @@ describe("ProjectCloneTracker", () => {
             Effect.fail(
               new SourceControlRepositoryError({
                 operation: "cloneRepository",
-                provider: "unknown",
+                provider: SourceControlProviderKind.make("unknown"),
                 detail: "Destination path already exists and is not empty.",
               }),
             ),

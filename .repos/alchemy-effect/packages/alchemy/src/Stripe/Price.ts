@@ -198,6 +198,7 @@ export type Price = Resource<
  * ```
  *
  * @resource
+ * @product Product
  */
 export const Price = Resource<Price>("Stripe.Price");
 

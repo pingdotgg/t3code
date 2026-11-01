@@ -1,16 +1,57 @@
-import { otlpSerializationLayer } from "@t3tools/shared/observability";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as SharedObservability from "@t3tools/shared/observability";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Redactable from "effect/Redactable";
 import * as References from "effect/References";
-import * as OtlpExporter from "effect/unstable/observability/OtlpExporter";
-import * as OtlpLogger from "effect/unstable/observability/OtlpLogger";
+import * as OtlpExporter from "effect/observability/OtlpExporter";
+import * as OtlpLogger from "effect/observability/OtlpLogger";
 
-import { otlpResource, ServerConfig } from "./config.ts";
+import * as ServerConfig from "./config.ts";
 
-export const ServerLoggerLive = Effect.gen(function* () {
-  const config = yield* ServerConfig;
-  const minimumLogLevelLayer = Layer.succeed(References.MinimumLogLevel, config.logLevel);
+// HTTP errors logged with --log-ws-events carry the request URL and its connection ticket.
+const redactingCredentials = <Output>(logger: Logger.Logger<unknown, Output>) =>
+  Logger.make<unknown, Output>((options) =>
+    logger.log({ ...options, cause: SharedObservability.redactCauseCredentials(options.cause) }),
+  );
+
+// consolePretty collapses Cause fields via util.inspect; render them with Cause.pretty like standalone arguments.
+const consolePretty = (): Logger.Logger<unknown, void> => {
+  const pretty = redactingCredentials(Logger.consolePretty());
+  return Logger.make((options) =>
+    pretty.log({
+      ...options,
+      message: Array.isArray(options.message)
+        ? options.message.map(prettyCauseFields)
+        : prettyCauseFields(options.message),
+    }),
+  );
+};
+
+function prettyCauseFields(value: unknown): unknown {
+  if (typeof value !== "object" || value === null) return value;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return value;
+  // A message with its own redaction hook already decides how it prints.
+  if (Redactable.isRedactable(value)) return value;
+  // Copy descriptors to preserve symbols without invoking getters.
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  let changed = false;
+  for (const descriptor of Object.values(descriptors)) {
+    if ("value" in descriptor && Cause.isCause(descriptor.value)) {
+      descriptor.value = Cause.pretty(descriptor.value);
+      changed = true;
+    }
+  }
+  return changed ? Object.create(prototype, descriptors) : value;
+}
+
+export const layer = Effect.gen(function* () {
+  const config = yield* ServerConfig.ServerConfig;
+  const hostName = yield* HostProcess.Hostname;
+  const layerMinimumLogLevel = Layer.succeed(References.MinimumLogLevel, config.logLevel);
 
   const logs = config.otlpLogsExport;
   const otlpLogger =
@@ -20,30 +61,20 @@ export const ServerLoggerLive = Effect.gen(function* () {
           url: config.otlpLogsUrl,
           exportInterval: `${logs.exportIntervalMs} millis`,
           headers: logs.headers,
-          resource: otlpResource(config),
-        });
+          resource: ServerConfig.otlpResource(config, hostName),
+        }).pipe(Effect.map(redactingCredentials));
 
-  // `Logger.layer` writes the whole logger set rather than adding to it, so
-  // every logger the server wants has to be named in this one call.
-  //
-  // `Logger.tracerLogger` reaches a collector by attaching each message to the
-  // active span as a span event, which covers only messages logged inside a
-  // recorded span and files them under traces. The OTLP logger carries the same
-  // messages as log records stamped with their trace and span ids, so it is a
-  // superset: keeping both would export every in-span message twice.
-  //
-  // Recording events on spans is also the shape OpenTelemetry is deprecating,
-  // in favor of the log-based events this logger emits:
-  // https://opentelemetry.io/blog/2026/deprecating-span-events/
-  const loggerLayer = Logger.layer(
+  // Logger.layer replaces the whole set; name every logger here.
+  // OTLP includes traced messages as log records, so also using tracerLogger would duplicate in-span exports.
+  const layerLogger = Logger.layer(
     otlpLogger === undefined
-      ? [Logger.consolePretty(), Logger.tracerLogger]
-      : [Logger.consolePretty(), otlpLogger],
+      ? [consolePretty(), Logger.tracerLogger]
+      : [consolePretty(), otlpLogger],
     { mergeWithExisting: false },
   ).pipe(
     Layer.provide(OtlpExporter.layerFlusher),
-    Layer.provide(otlpSerializationLayer(logs.protocol)),
+    Layer.provide(SharedObservability.layerOtlpSerialization(logs.protocol)),
   );
 
-  return Layer.mergeAll(loggerLayer, minimumLogLevelLayer);
+  return Layer.mergeAll(layerLogger, layerMinimumLogLevel);
 }).pipe(Layer.unwrap);

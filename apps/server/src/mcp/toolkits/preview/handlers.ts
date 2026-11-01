@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -7,6 +8,8 @@ import {
   PreviewAutomationRecordingTransferError,
   PreviewAutomationRecordingDesktopUpdateRequiredError,
   PreviewAutomationRecordingArtifact,
+  PreviewAutomationActInputs,
+  OrchestratorMcpFailure,
   type ToolActivityIcon,
   type ThreadId,
   type PreviewAutomationOperation,
@@ -28,20 +31,16 @@ import {
 import { resolveAttachmentRelativePath } from "../../../attachmentPaths.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { PreviewSnapshotToolkit, PreviewStandardToolkit, PreviewToolkit } from "./tools.ts";
 
-/**
- * Collapses the `show` alias onto `open` and defaults tab reuse.
- *
- * Deliberately leaves an unstated `open` unstated. Whether a preview the agent
+/** Whether a preview the agent
  * said nothing about surfaces is the user's `browserAutoShowFloatingPreview`
  * preference, which is desktop-local and unreadable from here — filling in
  * `true` would silently override it for every `preview_open`.
  */
-export function normalizePreviewOpenInput(
-  input: PreviewAutomationOpenInput,
-): PreviewAutomationOpenInput {
+function normalizePreviewOpenInput(input: PreviewAutomationOpenInput): PreviewAutomationOpenInput {
   const open = input.open ?? input.show;
   return {
     ...input,
@@ -60,7 +59,7 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
   import("@t3tools/contracts").PreviewAutomationError,
   McpInvocationContext.McpInvocationContext | PreviewAutomationBroker.PreviewAutomationBroker
 > {
-  const scope = yield* McpInvocationContext.requireMcpCapability("preview");
+  const scope = yield* McpInvocationContext.requireThreadMcpCapability("preview");
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   let targetTabId = tabId;
   const result = yield* broker.invoke<A>({
@@ -113,6 +112,10 @@ const invokeTargeted = <A extends object>(
   );
 };
 
+const decodeActInput = Record.map(PreviewAutomationActInputs, (schema) =>
+  Schema.decodeUnknownEffect(schema),
+);
+
 const UploadedRecordingArtifact = Schema.Struct({
   ...PreviewAutomationRecordingArtifact.fields,
   uploadedAttachmentId: Schema.optional(Schema.String),
@@ -145,7 +148,6 @@ export const claimPreviewRecording = Effect.fn("PreviewToolkit.claimRecording")(
       threadId,
     });
   }
-  // The same completed upload can be returned to overlapping stop requests.
   const finalId = `${threadSegment}-${uuid}-${extension}`;
   const currentPath = resolveAttachmentRelativePath({
     attachmentsDir: config.attachmentsDir,
@@ -174,7 +176,6 @@ export const claimPreviewRecording = Effect.fn("PreviewToolkit.claimRecording")(
     yield* validateFile(currentPath);
     yield* fileSystem.rename(currentPath, finalPath);
   }).pipe(
-    // Another stop may already have claimed this exact upload for this thread.
     Effect.catchIf(
       (cause) =>
         cause._tag !== "PreviewAutomationRecordingTransferError" &&
@@ -188,37 +189,59 @@ export const claimPreviewRecording = Effect.fn("PreviewToolkit.claimRecording")(
 });
 
 const handlers = {
-  preview_status: (input) => invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
-  preview_open: (input) =>
+  preview_dialog: McpToolAccess.actsAsCaller((input) =>
+    invokeTargeted<PreviewAutomationStatus>("dialog", input),
+  ),
+  preview_status: McpToolAccess.readsAsCaller((input) =>
+    invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
+  ),
+  preview_open: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationStatus>("open", normalizePreviewOpenInput(input)),
-  preview_navigate: (input) =>
+  ),
+  preview_navigate: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationStatus>("navigate", input, input.timeoutMs),
-  preview_resize: (input) =>
+  ),
+  preview_resize: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationResizeResult>("resize", input, input.timeoutMs),
-  preview_set_appearance: (input) =>
+  ),
+  preview_set_appearance: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationSetColorSchemeResult>("setColorScheme", input),
-  preview_snapshot: (input) => {
-    // Output selection and saving are MCP-only; the browser still produces a complete snapshot.
+  ),
+  preview_snapshot: McpToolAccess.readsAsCaller((input) => {
     const { includeImage: _includeImage, save: _save, ...operationInput } = input ?? {};
     return invokeTargeted<PreviewAutomationSnapshot>("snapshot", operationInput);
-  },
-  preview_click: (input) => invokeTargeted<object>("click", input, input.timeoutMs),
-  preview_type: (input) => invokeTargeted<object>("type", input, input.timeoutMs),
-  preview_press: (input) => invokeTargeted<object>("press", input),
-  preview_scroll: (input) => invokeTargeted<object>("scroll", input),
-  preview_evaluate: ({ tabId, ...input }) =>
+  }),
+  preview_act: McpToolAccess.actsAsCaller(({ action, ...input }) =>
+    decodeActInput[action](input).pipe(
+      Effect.mapError(
+        (cause) => new OrchestratorMcpFailure({ code: "invalid_request", message: cause.message }),
+      ),
+      Effect.flatMap((decoded) =>
+        invokeTargeted<object>(
+          action,
+          decoded,
+          "timeoutMs" in decoded ? decoded.timeoutMs : undefined,
+        ),
+      ),
+    ),
+  ),
+  preview_evaluate: McpToolAccess.actsAsCaller(({ tabId, ...input }) =>
     invoke<unknown>("evaluate", input, undefined, tabId).pipe(
       Effect.map(({ result, toolIcon }) => ({
         value: result ?? null,
         ...(toolIcon ? { toolIcon } : {}),
       })),
     ),
-  preview_wait_for: (input) => invokeTargeted<object>("waitFor", input, input.timeoutMs),
-  preview_recording_start: (input) =>
+  ),
+  preview_wait_for: McpToolAccess.readsAsCaller((input) =>
+    invokeTargeted<object>("waitFor", input, input.timeoutMs),
+  ),
+  preview_recording_start: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationRecordingStatus>("recordingStart", input ?? {}),
-  preview_recording_stop: (input) =>
+  ),
+  preview_recording_stop: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.requireMcpCapability("preview");
+      const scope = yield* McpInvocationContext.requireThreadMcpCapability("preview");
       const { tabId, ...operationInput } = input;
       const response = yield* invoke<unknown>(
         "recordingStop",
@@ -226,15 +249,16 @@ const handlers = {
         PREVIEW_RECORDING_STOP_TIMEOUT_MS,
         tabId,
       );
-      const artifact = yield* claimPreviewRecording(scope.threadId, response.result);
+      const artifact = yield* claimPreviewRecording(scope.thread.threadId, response.result);
       return { ...artifact, ...(response.toolIcon ? { toolIcon: response.toolIcon } : {}) };
     }),
-} satisfies Parameters<typeof PreviewToolkit.toLayer>[0];
+  ),
+} satisfies McpToolAccess.Handlers<typeof PreviewToolkit.tools>;
 
 const { preview_snapshot, ...standardHandlers } = handlers;
 
-export const PreviewStandardToolkitHandlersLive = PreviewStandardToolkit.toLayer(standardHandlers);
+export const layerStandard = McpToolAccess.toLayer(PreviewStandardToolkit, standardHandlers);
 
-export const PreviewSnapshotToolkitHandlersLive = PreviewSnapshotToolkit.toLayer({
+export const layerSnapshot = McpToolAccess.toLayer(PreviewSnapshotToolkit, {
   preview_snapshot,
 });

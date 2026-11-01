@@ -15,40 +15,44 @@ const fixtureDir = pathe.resolve(
 const tempRoot = pathe.resolve(import.meta.dirname, "../../../.tmp");
 const fixtureEntries = ["index.html", "package.json", "src"];
 
-describe("Hetzner.Website.Vite local", () => {
-  test.provider(
-    "dev runs Vite's own dev server with no cloud resources",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe(
+  "Hetzner.Website.Vite local",
+  { tags: ["provider:hetzner", "provider:hetzner:website", "local"] },
+  () => {
+    test.provider(
+      "dev runs Vite's own dev server with no cloud resources",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-vite-hetzner-local-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-vite-hetzner-local-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const site = yield* Hetzner.Website.Vite("ViteSite", {
-              rootDir,
-            });
-            return { site };
-          }),
-        );
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const site = yield* Hetzner.Website.Vite("ViteSite", {
+                rootDir,
+              });
+              return { site };
+            }),
+          );
 
-        const url = deployed.site.url;
-        expect(url).toMatch(/^http:\/\/localhost:\d+\/?$/);
-        expect(deployed.site.service).toBeUndefined();
-        expect(deployed.site.server).toBeUndefined();
+          const url = deployed.site.url;
+          expect(url).toMatch(/^http:\/\/localhost:\d+\/?$/);
+          expect(deployed.site.service).toBeUndefined();
+          expect(deployed.site.server).toBeUndefined();
 
-        yield* expectUrlContains(`${url}/`, "Vite SPA fixture", {
-          timeout: "90 seconds",
-          label: "dev index page",
-        });
+          yield* expectUrlContains(`${url}/`, "Vite SPA fixture", {
+            timeout: "90 seconds",
+            label: "dev index page",
+          });
 
-        yield* stack.destroy();
-      }),
-    { timeout: 120_000 },
-  );
-});
+          yield* stack.destroy();
+        }),
+      { timeout: 120_000 },
+    );
+  },
+);

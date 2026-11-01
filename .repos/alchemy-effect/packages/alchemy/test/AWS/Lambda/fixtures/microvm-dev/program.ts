@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * The in-VM program for the local MicroVM content-diff test. The test

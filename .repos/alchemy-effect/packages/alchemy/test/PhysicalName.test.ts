@@ -31,7 +31,7 @@ const provide = <A, E>(
   instanceId?: string,
 ) => effect.pipe(Effect.provide(environment(stack, instanceId)));
 
-describe("createPhysicalName", () => {
+describe("createPhysicalName", { tags: ["unit", "local"] }, () => {
   it.effect("keeps short names untruncated", () =>
     provide(
       Effect.gen(function* () {

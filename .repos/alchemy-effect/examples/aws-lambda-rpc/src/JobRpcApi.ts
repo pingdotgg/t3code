@@ -4,7 +4,7 @@ import {
   RpcGroup,
   RpcSerialization,
   RpcServer,
-} from "effect/unstable/rpc";
+} from "effect/rpc";
 import { Job, JobId } from "./Job.ts";
 import { JobNotifications } from "./JobNotifications.ts";
 import { JobStorage } from "./JobStorage.ts";

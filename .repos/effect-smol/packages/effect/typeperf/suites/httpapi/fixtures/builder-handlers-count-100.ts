@@ -1,6 +1,6 @@
 // Measures chained builder handle registration for 100 same-shaped endpoints in one group.
 import { Effect, Schema } from "effect"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api"
 
 Schema.String
 HttpApi.make("Api")

@@ -72,7 +72,10 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:stripe", "provider:stripe:terminalreader", "live"],
+    timeout: 60_000,
+  },
 );
 
 test.provider(
@@ -167,7 +170,15 @@ test.provider(
       const gone = yield* waitUntilGone(created.reader.id);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:terminallocation",
+      "provider:stripe:terminalreader",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -207,5 +218,13 @@ test.provider(
       const gone = yield* waitUntilGone(deployed.reader.id);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:terminallocation",
+      "provider:stripe:terminalreader",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

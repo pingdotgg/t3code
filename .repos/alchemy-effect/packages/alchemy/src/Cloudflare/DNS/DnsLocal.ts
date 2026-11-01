@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 import type { Credentials } from "../Credentials.ts";
 import type { Zone } from "../Zone/Zone.ts";
 import type { DnsAuth } from "./DnsHttp.ts";

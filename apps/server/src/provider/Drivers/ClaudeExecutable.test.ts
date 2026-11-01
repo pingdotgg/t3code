@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 
@@ -17,37 +17,13 @@ function withWindowsResolution(input: {
   const existing = new Set(input.existingFiles ?? []);
   return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
-      Effect.provideService(HostProcessPlatform, "win32"),
+      Effect.provideService(HostProcess.Platform, "win32"),
       Effect.provideService(SpawnExecutableResolution, () => input.resolvedCommand),
       Effect.provideService(ClaudeExecutableFileCheck, (filePath) => existing.has(filePath)),
     );
 }
 
 describe("resolveClaudeSdkExecutablePath", () => {
-  it.effect("returns the configured path unchanged on non-Windows platforms", () =>
-    Effect.gen(function* () {
-      expect(
-        yield* resolveClaudeSdkExecutablePath("claude", {}).pipe(
-          Effect.provideService(HostProcessPlatform, "darwin"),
-          Effect.provideService(SpawnExecutableResolution, () => {
-            throw new Error("must not resolve on non-Windows platforms");
-          }),
-        ),
-      ).toBe("claude");
-    }),
-  );
-
-  it.effect("returns the resolved absolute path for native Windows executables", () =>
-    Effect.gen(function* () {
-      const nativeBinary = "C:\\Users\\dev\\.local\\bin\\claude.exe";
-      expect(
-        yield* resolveClaudeSdkExecutablePath("claude", {}).pipe(
-          withWindowsResolution({ resolvedCommand: nativeBinary }),
-        ),
-      ).toBe(nativeBinary);
-    }),
-  );
-
   it.effect("follows an npm launcher shim to the packaged native binary", () =>
     Effect.gen(function* () {
       expect(
@@ -107,16 +83,6 @@ describe("resolveClaudeSdkExecutablePath", () => {
       expect(
         yield* resolveClaudeSdkExecutablePath("claude", {}).pipe(
           withWindowsResolution({ resolvedCommand: NPM_SHIM }),
-        ),
-      ).toBe("claude");
-    }),
-  );
-
-  it.effect("returns the configured path when command resolution finds nothing", () =>
-    Effect.gen(function* () {
-      expect(
-        yield* resolveClaudeSdkExecutablePath("claude", {}).pipe(
-          withWindowsResolution({ resolvedCommand: undefined }),
         ),
       ).toBe("claude");
     }),

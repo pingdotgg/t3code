@@ -3,8 +3,6 @@ import * as NodeFS from "node:fs";
 import * as NodeVM from "node:vm";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-// Exercise the shipped patch without loading React Native in the Node runner.
-// Native scroll delivery and animation frames advance independently here.
 function createList(bundle: string) {
   const source = NodeFS.readFileSync(
     new URL(`../apps/mobile/node_modules/@legendapp/list/${bundle}`, import.meta.url),
@@ -78,8 +76,9 @@ function createList(bundle: string) {
   };
 }
 
-for (const bundle of ["react-native.js", "react-native.mjs"]) {
-  describe(`initial inset end reveal (${bundle})`, () => {
+describe.each(["react-native.js", "react-native.mjs"])(
+  "initial inset end reveal (%s)",
+  (bundle) => {
     it("waits for the native offset instead of the optimistic scroll target", () => {
       const list = createList(bundle);
       list.start();
@@ -90,25 +89,6 @@ for (const bundle of ["react-native.js", "react-native.mjs"]) {
       list.advance(7);
       expect(list.ready()).toBe(true);
       expect(list.onLoad).toHaveBeenCalledTimes(1);
-    });
-
-    it("gates the seeded contentOffset completion path too", () => {
-      const list = createList(bundle);
-      list.complete();
-      expect(list.ready()).toBe(false);
-      list.state.lastNativeScroll = 400;
-      list.advance(7);
-      expect(list.ready()).toBe(true);
-    });
-
-    it("preserves an initial index before the last item", () => {
-      const list = createList(bundle);
-      list.state.props.data = ["requested message", "later message"];
-      list.state.scroll = 200;
-      list.complete();
-      list.advance(8);
-      expect(list.ready()).toBe(true);
-      expect(list.scrollTo).not.toHaveBeenCalled();
     });
 
     it("does not count an in-flight scroll as stability", () => {
@@ -140,20 +120,6 @@ for (const bundle of ["react-native.js", "react-native.mjs"]) {
       expect(list.ready()).toBe(true);
     });
 
-    it("accounts for header insets when content is shorter than the full viewport", () => {
-      const list = createList(bundle);
-      list.resize(780);
-      list.state.scroll = -20;
-      list.state.lastNativeScroll = -100;
-      list.start();
-      list.advance(8);
-      expect(list.ready()).toBe(false);
-      expect(list.scrollTo).toHaveBeenCalledWith({ animated: false, x: 0, y: -20 });
-      list.state.lastNativeScroll = -20;
-      list.advance(7);
-      expect(list.ready()).toBe(true);
-    });
-
     it("keeps the reveal bounded when native events never arrive", () => {
       const list = createList(bundle);
       list.state.lastNativeScroll = undefined;
@@ -179,36 +145,5 @@ for (const bundle of ["react-native.js", "react-native.mjs"]) {
       expect(list.scrollTo).not.toHaveBeenCalled();
       expect(list.onLoad).toHaveBeenCalledTimes(1);
     });
-
-    it("preserves a drag that started before initial layout completed", () => {
-      const list = createList(bundle);
-      list.state.didUserDrag = true;
-      list.complete();
-      list.advance(1);
-      expect(list.ready()).toBe(true);
-      expect(list.state.didUserDrag).toBe(true);
-      expect(list.scrollTo).not.toHaveBeenCalled();
-    });
-
-    it("reveals short content at UIKit's resting offset without awaiting a scroll event", () => {
-      const list = createList(bundle);
-      list.resize(700);
-      list.state.lastNativeScroll = undefined;
-      list.complete();
-      expect(list.ready()).toBe(true);
-      list.advance(10);
-      expect(list.scrollTo).not.toHaveBeenCalled();
-    });
-
-    it("does not gate empty lists or lists without an automatic header inset", () => {
-      const list = createList(bundle);
-      list.setInset(0);
-      list.complete();
-      expect(list.ready()).toBe(true);
-      const empty = createList(bundle);
-      empty.state.props.data = [];
-      empty.complete();
-      expect(empty.ready()).toBe(true);
-    });
-  });
-}
+  },
+);

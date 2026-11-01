@@ -1,4 +1,4 @@
-import { Services } from "@distilled.cloud/hetzner";
+import * as Hetzner from "@distilled.cloud/hetzner";
 import type { GetFloatingIpResponseFloatingIp } from "@distilled.cloud/hetzner/floating_ips";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
@@ -161,6 +161,7 @@ export type FloatingIp = Resource<
  * ```
  *
  * @resource
+ * @product IP Address
  */
 export const FloatingIp = Resource<FloatingIp>("Hetzner.FloatingIp");
 
@@ -200,18 +201,18 @@ const createFloatingIpName = (
   });
 
 const getById = (id: number) =>
-  Services.floatingIps.getFloatingIp({ id }).pipe(
+  Hetzner.floatingIps.getFloatingIp({ id }).pipe(
     Effect.map(({ floating_ip }) => floating_ip),
     Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
   );
 
 const getByName = (name: string) =>
-  Services.floatingIps
+  Hetzner.floatingIps
     .listFloatingIps({ name, per_page: 50 })
     .pipe(Effect.map(({ floating_ips }) => floating_ips[0]));
 
 const getByLabels = (labels: Record<string, string>) =>
-  Services.floatingIps
+  Hetzner.floatingIps
     .listFloatingIps({
       label_selector: labelSelector(labels),
       per_page: 50,
@@ -240,7 +241,7 @@ const observe = Effect.fn(function* ({
 });
 
 const refresh = (id: number) =>
-  Services.floatingIps.getFloatingIp({ id }).pipe(
+  Hetzner.floatingIps.getFloatingIp({ id }).pipe(
     Effect.map(({ floating_ip }) => floating_ip),
     Effect.retry({
       while: (e) => e._tag === "NotFound",
@@ -272,7 +273,7 @@ const matchesDesired = (
   });
 
 const disableProtection = (id: number) =>
-  Services.floatingIpActions
+  Hetzner.floatingIpActions
     .changeFloatingIpProtection({ id, delete: false })
     .pipe(Effect.flatMap(({ action }) => waitForAction(action)));
 
@@ -287,7 +288,7 @@ export const FloatingIpProvider = () =>
     stables: ["id", "ip", "type", "homeLocation", "homeLocationId", "created"],
     nuke: { dependsOn: ["Hetzner.Server"] },
     list: Effect.fn(function* () {
-      const items = yield* Services.floatingIps.listFloatingIps
+      const items = yield* Hetzner.floatingIps.listFloatingIps
         .items({ label_selector: alchemyStackSelector, per_page: 50 })
         .pipe(
           Stream.runCollect,
@@ -350,7 +351,7 @@ export const FloatingIpProvider = () =>
       // Ensure — create only when missing. A Conflict is a race with a
       // peer reconciler or a name that just became visible; re-observe.
       if (current === undefined) {
-        const created = yield* Services.floatingIps
+        const created = yield* Hetzner.floatingIps
           .createFloatingIp({
             type: news.type,
             home_location: location.name,
@@ -386,7 +387,7 @@ export const FloatingIpProvider = () =>
         upsert.length > 0 ||
         removed.length > 0;
       if (needsUpdate) {
-        const updated = yield* Services.floatingIps.updateFloatingIp({
+        const updated = yield* Hetzner.floatingIps.updateFloatingIp({
           id: current.id,
           name,
           description: desiredDescription,
@@ -397,7 +398,7 @@ export const FloatingIpProvider = () =>
 
       if (current.protection.delete !== desiredProtection) {
         const { action } =
-          yield* Services.floatingIpActions.changeFloatingIpProtection({
+          yield* Hetzner.floatingIpActions.changeFloatingIpProtection({
             id: current.id,
             delete: desiredProtection,
           });
@@ -413,12 +414,12 @@ export const FloatingIpProvider = () =>
         yield* disableProtection(current.id);
       }
       if (current.server !== null) {
-        const { action } = yield* Services.floatingIpActions.unassignFloatingIp(
-          { id: current.id },
-        );
+        const { action } = yield* Hetzner.floatingIpActions.unassignFloatingIp({
+          id: current.id,
+        });
         yield* waitForAction(action);
       }
-      yield* Services.floatingIps
+      yield* Hetzner.floatingIps
         .deleteFloatingIp({ id: current.id })
         .pipe(Effect.catchTag("NotFound", () => Effect.void));
     }),

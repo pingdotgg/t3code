@@ -12,6 +12,7 @@ import { assert, it } from "@effect/vitest";
 
 import * as AcpAgent from "./agent.ts";
 import * as AcpSchema from "./_generated/schema.gen.ts";
+import type * as AcpProtocol from "./protocol.ts";
 import {
   encodeJsonl,
   jsonRpcNotification,
@@ -29,21 +30,27 @@ const InitializeResponse = jsonRpcResponse(AcpSchema.InitializeResponse);
 const RequestPermissionResponse = jsonRpcResponse(AcpSchema.RequestPermissionResponse);
 const SessionCancelNotification = jsonRpcNotification(
   "session/cancel",
-  AcpSchema.CancelNotification,
+  AcpSchema.CancelSessionNotification,
 );
 const ExtPingNotification = jsonRpcNotification("x/ping", Schema.Struct({ count: Schema.Number }));
 const ExtRequest = jsonRpcRequest("x/test", Schema.Struct({ hello: Schema.String }));
 const ExtResponse = jsonRpcResponse(Schema.Struct({ ok: Schema.Boolean }));
+const DieResponse = Schema.Struct({
+  id: Schema.Number,
+  error: Schema.TaggedStruct("Cause", { data: Schema.Tuple([Schema.TaggedStruct("Die", {})]) }),
+});
 const decodeRequestPermissionRequest = Schema.decodeEffect(
   Schema.fromJsonString(RequestPermissionRequest),
 );
 const decodeInitializeResponse = Schema.decodeEffect(Schema.fromJsonString(InitializeResponse));
+const decodeExtResponse = Schema.decodeEffect(Schema.fromJsonString(ExtResponse));
 
 it.effect("effect-acp agent handles core agent requests and outbound client requests", () =>
   Effect.gen(function* () {
     const { stdio, input, output } = yield* makeInMemoryStdio();
     const cancelNotifications = yield* Ref.make<Array<string>>([]);
     const extNotifications = yield* Ref.make<Array<number>>([]);
+    const requestContexts = yield* Ref.make<Array<AcpProtocol.AcpRequestContext>>([]);
     const cancelReceived = yield* Deferred.make<void>();
     const extReceived = yield* Deferred.make<void>();
     const scope = yield* Scope.make();
@@ -52,15 +59,25 @@ it.effect("effect-acp agent handles core agent requests and outbound client requ
     yield* Effect.gen(function* () {
       const agent = yield* AcpAgent.AcpAgent;
 
-      yield* agent.handleInitialize(() =>
-        Effect.succeed({
-          protocolVersion: 1,
-          agentCapabilities: {},
-          agentInfo: {
-            name: "mock-agent",
-            version: "0.0.0",
-          },
-        }),
+      yield* agent.handleInitialize((_request, requestContext) =>
+        Ref.update(requestContexts, (current) => [...current, requestContext]).pipe(
+          Effect.as({
+            protocolVersion: 2,
+            capabilities: {},
+            info: {
+              name: "mock-agent",
+              version: "0.0.0",
+            },
+          }),
+        ),
+      );
+      yield* agent.handleExtRequest(
+        "x/test",
+        Schema.Struct({ hello: Schema.String }),
+        (_payload, requestContext) =>
+          Ref.update(requestContexts, (current) => [...current, requestContext]).pipe(
+            Effect.as({ ok: true }),
+          ),
       );
       yield* agent.handleCancel((notification) =>
         Ref.update(cancelNotifications, (current) => [...current, notification.sessionId]).pipe(
@@ -79,9 +96,13 @@ it.effect("effect-acp agent handles core agent requests and outbound client requ
       const permissionFiber = yield* agent.client
         .requestPermission({
           sessionId: "session-1",
-          toolCall: {
-            toolCallId: "tool-1",
-            title: "Allow mock action",
+          title: "Allow mock action",
+          subject: {
+            type: "tool_call",
+            toolCall: {
+              toolCallId: "tool-1",
+              title: "Allow mock action",
+            },
           },
           options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
         })
@@ -92,9 +113,13 @@ it.effect("effect-acp agent handles core agent requests and outbound client requ
       assert.equal(permissionRequest.method, "session/request_permission");
       assert.deepEqual(permissionRequest.params, {
         sessionId: "session-1",
-        toolCall: {
-          toolCallId: "tool-1",
-          title: "Allow mock action",
+        title: "Allow mock action",
+        subject: {
+          type: "tool_call",
+          toolCall: {
+            toolCallId: "tool-1",
+            title: "Allow mock action",
+          },
         },
         options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
       });
@@ -124,12 +149,9 @@ it.effect("effect-acp agent handles core agent requests and outbound client requ
           id: 2,
           method: "initialize",
           params: {
-            protocolVersion: 1,
-            clientCapabilities: {
-              fs: { readTextFile: false, writeTextFile: false },
-              terminal: false,
-            },
-            clientInfo: {
+            protocolVersion: 2,
+            capabilities: {},
+            info: {
               name: "effect-acp-test",
               version: "0.0.0",
             },
@@ -143,14 +165,35 @@ it.effect("effect-acp agent handles core agent requests and outbound client requ
         jsonrpc: "2.0",
         id: 2,
         result: {
-          protocolVersion: 1,
-          agentCapabilities: {},
-          agentInfo: {
+          protocolVersion: 2,
+          capabilities: {},
+          info: {
             name: "mock-agent",
             version: "0.0.0",
           },
         },
       });
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(ExtRequest, {
+          jsonrpc: "2.0",
+          id: "extension-3",
+          method: "x/test",
+          params: { hello: "world" },
+          headers: [],
+        }),
+      );
+      const extResponse = yield* decodeExtResponse(yield* Queue.take(output));
+      assert.deepEqual(extResponse, {
+        jsonrpc: "2.0",
+        id: "extension-3",
+        result: { ok: true },
+      });
+      assert.deepEqual(yield* Ref.get(requestContexts), [
+        { requestId: "$t3:jsonrpc:number:2", method: "initialize" },
+        { requestId: "extension-3", method: "x/test" },
+      ]);
 
       yield* Queue.offer(
         input,
@@ -179,7 +222,7 @@ it.effect("effect-acp agent handles core agent requests and outbound client requ
   }),
 );
 
-it.effect("effect-acp agent uses distinct ids for RPC calls and extension requests", () =>
+it.effect("effect-acp agent keeps RPC ids within int32 and apart from extension ids", () =>
   Effect.gen(function* () {
     const { stdio, input, output } = yield* makeInMemoryStdio();
     const scope = yield* Scope.make();
@@ -191,9 +234,13 @@ it.effect("effect-acp agent uses distinct ids for RPC calls and extension reques
       const permissionFiber = yield* agent.client
         .requestPermission({
           sessionId: "session-1",
-          toolCall: {
-            toolCallId: "tool-1",
-            title: "Allow mock action",
+          title: "Allow mock action",
+          subject: {
+            type: "tool_call",
+            toolCall: {
+              toolCallId: "tool-1",
+              title: "Allow mock action",
+            },
           },
           options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
         })
@@ -224,6 +271,11 @@ it.effect("effect-acp agent uses distinct ids for RPC calls and extension reques
         : yield* decodedExt(firstOutbound);
 
       assert.notEqual(permissionRequest.id, extRequest.id);
+      // Keep locally generated ids compatible with SDKs that decode signed int32.
+      assert.typeOf(permissionRequest.id, "number");
+      assert.equal(permissionRequest.id, 2 ** 30);
+      assert.isAtMost(Number(permissionRequest.id), 2 ** 31 - 1);
+      assert.equal(extRequest.id, 1);
 
       yield* Queue.offer(
         input,
@@ -250,6 +302,121 @@ it.effect("effect-acp agent uses distinct ids for RPC calls and extension reques
       const permission = yield* Fiber.join(permissionFiber);
       assert.equal(permission.outcome.outcome, "selected");
       assert.deepEqual(yield* Fiber.join(extFiber), { ok: true });
+
+      const nextPermissionFiber = yield* agent.client
+        .requestPermission(permissionRequest.params)
+        .pipe(Effect.forkScoped);
+      const nextPermissionRequest = yield* decodedPermission(yield* Queue.take(output));
+      assert.equal(nextPermissionRequest.id, 2 ** 30 + 1);
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(RequestPermissionResponse, {
+          jsonrpc: "2.0",
+          id: nextPermissionRequest.id,
+          result: { outcome: { outcome: "cancelled" } },
+        }),
+      );
+      assert.equal((yield* Fiber.join(nextPermissionFiber)).outcome.outcome, "cancelled");
     }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
+  }),
+);
+
+it.effect.each([0, 2 ** 30, 2 ** 32])(
+  "effect-acp agent answers incoming id %s independently of outbound ids",
+  (requestId) =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const agent = yield* AcpAgent.make(stdio);
+      const contexts = yield* Ref.make<Array<AcpProtocol.AcpRequestContext>>([]);
+      yield* agent.handleInitialize((_request, context) =>
+        Ref.update(contexts, (current) => [...current, context]).pipe(
+          Effect.as({
+            protocolVersion: 2,
+            capabilities: {},
+            info: { name: "mock-agent", version: "0.0.0" },
+          }),
+        ),
+      );
+
+      // Opposite directions may reuse an id even while a request is pending.
+      const outboundFiber = yield* agent.client
+        .requestPermission({
+          sessionId: "session-1",
+          title: "Allow mock action",
+          subject: {
+            type: "tool_call",
+            toolCall: { toolCallId: "tool-1", title: "Allow mock action" },
+          },
+          options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+        })
+        .pipe(Effect.forkScoped);
+      const outbound = yield* decodeRequestPermissionRequest(yield* Queue.take(output));
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(InitializeRequest, {
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "initialize",
+          params: {
+            protocolVersion: 2,
+            capabilities: {},
+            info: { name: "test-client", version: "0.0.0" },
+          },
+          headers: [],
+        }),
+      );
+      assert.deepEqual(yield* decodeInitializeResponse(yield* Queue.take(output)), {
+        jsonrpc: "2.0",
+        id: requestId,
+        result: {
+          protocolVersion: 2,
+          capabilities: {},
+          info: { name: "mock-agent", version: "0.0.0" },
+        },
+      });
+      assert.deepEqual(yield* Ref.get(contexts), [
+        { requestId: `$t3:jsonrpc:number:${requestId}`, method: "initialize" },
+      ]);
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(RequestPermissionResponse, {
+          jsonrpc: "2.0",
+          id: outbound.id,
+          result: { outcome: { outcome: "cancelled" } },
+        }),
+      );
+      assert.equal((yield* Fiber.join(outboundFiber)).outcome.outcome, "cancelled");
+    }),
+);
+
+it.effect("effect-acp agent answers a request whose handler dies with an error for it", () =>
+  Effect.gen(function* () {
+    const { stdio, input, output } = yield* makeInMemoryStdio();
+    const scope = yield* Scope.make();
+    const context = yield* Layer.buildWithScope(AcpAgent.layer(stdio), scope);
+    const agent = yield* Effect.service(AcpAgent.AcpAgent).pipe(Effect.provide(context));
+    yield* agent.handleInitialize(() => Effect.die(new Error("handler bug")));
+
+    yield* Queue.offer(
+      input,
+      yield* encodeJsonl(InitializeRequest, {
+        jsonrpc: "2.0",
+        id: 7,
+        method: "initialize",
+        params: {
+          protocolVersion: 2,
+          capabilities: {},
+          info: { name: "effect-acp-test", version: "0.0.0" },
+        },
+        headers: [],
+      }),
+    );
+    const response = yield* Queue.take(output).pipe(
+      Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DieResponse))),
+    );
+    assert.equal(response.id, 7);
+    yield* Scope.close(scope, Exit.void);
   }),
 );

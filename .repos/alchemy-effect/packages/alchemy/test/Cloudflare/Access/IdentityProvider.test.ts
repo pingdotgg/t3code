@@ -13,7 +13,7 @@ import * as Option from "effect/Option";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import IdpLookupWorker from "./fixtures/idp-lookup-worker.ts";
 
 const { test } = Test.make({ providers: Cloudflare.providers() });
@@ -86,250 +86,288 @@ const oidcConfig = {
   scopes: ["openid", "email", "profile"],
 };
 
-test.provider("create, verify, and destroy an OIDC IdP", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "create, verify, and destroy an OIDC IdP",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const idp = yield* stack.deploy(
-      Cloudflare.Access.IdentityProvider("BasicOidc", {
-        name: "alchemy-zt-idp-basic",
-        type: "oidc",
-        config: oidcConfig,
-      }),
-    );
+      const idp = yield* stack.deploy(
+        Cloudflare.Access.IdentityProvider("BasicOidc", {
+          name: "alchemy-zt-idp-basic",
+          type: "oidc",
+          config: oidcConfig,
+        }),
+      );
 
-    expect(idp.identityProviderId).toBeTruthy();
-    expect(idp.accountId).toEqual(accountId);
-    expect(idp.name).toEqual("alchemy-zt-idp-basic");
-    expect(idp.type).toEqual("oidc");
+      expect(idp.identityProviderId).toBeTruthy();
+      expect(idp.accountId).toEqual(accountId);
+      expect(idp.name).toEqual("alchemy-zt-idp-basic");
+      expect(idp.type).toEqual("oidc");
 
-    const live = yield* getIdp(undefined, accountId, idp.identityProviderId);
-    expect(live.name).toEqual("alchemy-zt-idp-basic");
-    expect(live.type).toEqual("oidc");
-    // Cloudflare masks the client secret on read.
-    expect(
-      (live.config as { clientSecret?: string | null }).clientSecret ?? null,
-    ).toBeNull();
+      const live = yield* getIdp(undefined, accountId, idp.identityProviderId);
+      expect(live.name).toEqual("alchemy-zt-idp-basic");
+      expect(live.type).toEqual("oidc");
+      // Cloudflare masks the client secret on read.
+      expect(
+        (live.config as { clientSecret?: string | null }).clientSecret ?? null,
+      ).toBeNull();
 
-    yield* stack.destroy();
-    yield* expectGone(undefined, accountId, idp.identityProviderId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* expectGone(undefined, accountId, idp.identityProviderId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:access", "live"] },
 );
 
-test.provider("update name and config in place (same id)", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "update name and config in place (same id)",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const initial = yield* stack.deploy(
-      Cloudflare.Access.IdentityProvider("UpdateOidc", {
-        name: "alchemy-zt-idp-update",
-        type: "oidc",
-        config: oidcConfig,
-      }),
-    );
+      const initial = yield* stack.deploy(
+        Cloudflare.Access.IdentityProvider("UpdateOidc", {
+          name: "alchemy-zt-idp-update",
+          type: "oidc",
+          config: oidcConfig,
+        }),
+      );
 
-    // Note: assert the config change through `claims` — distilled decodes
-    // the GET response through a discriminated union whose matched variant
-    // does not carry the oidc-only fields (authUrl/tokenUrl/…), so those
-    // are stripped from the decoded value even though Cloudflare returns
-    // them on the wire.
-    const updated = yield* stack.deploy(
-      Cloudflare.Access.IdentityProvider("UpdateOidc", {
-        name: "alchemy-zt-idp-update-v2",
-        type: "oidc",
-        config: {
-          ...oidcConfig,
-          claims: ["email", "groups"],
-        },
-      }),
-    );
+      // Note: assert the config change through `claims` — distilled decodes
+      // the GET response through a discriminated union whose matched variant
+      // does not carry the oidc-only fields (authUrl/tokenUrl/…), so those
+      // are stripped from the decoded value even though Cloudflare returns
+      // them on the wire.
+      const updated = yield* stack.deploy(
+        Cloudflare.Access.IdentityProvider("UpdateOidc", {
+          name: "alchemy-zt-idp-update-v2",
+          type: "oidc",
+          config: {
+            ...oidcConfig,
+            claims: ["email", "groups"],
+          },
+        }),
+      );
 
-    // Same IdP mutated in place — not a replacement.
-    expect(updated.identityProviderId).toEqual(initial.identityProviderId);
-    expect(updated.name).toEqual("alchemy-zt-idp-update-v2");
+      // Same IdP mutated in place — not a replacement.
+      expect(updated.identityProviderId).toEqual(initial.identityProviderId);
+      expect(updated.name).toEqual("alchemy-zt-idp-update-v2");
 
-    const live = yield* getIdp(
-      undefined,
-      accountId,
-      updated.identityProviderId,
-    );
-    expect(live.name).toEqual("alchemy-zt-idp-update-v2");
-    expect(
-      [...((live.config as { claims?: string[] | null }).claims ?? [])].sort(),
-    ).toEqual(["email", "groups"]);
+      const live = yield* getIdp(
+        undefined,
+        accountId,
+        updated.identityProviderId,
+      );
+      expect(live.name).toEqual("alchemy-zt-idp-update-v2");
+      expect(
+        [
+          ...((live.config as { claims?: string[] | null }).claims ?? []),
+        ].sort(),
+      ).toEqual(["email", "groups"]);
 
-    // Redeploying identical props is a no-op (still the same IdP).
-    const noop = yield* stack.deploy(
-      Cloudflare.Access.IdentityProvider("UpdateOidc", {
-        name: "alchemy-zt-idp-update-v2",
-        type: "oidc",
-        config: {
-          ...oidcConfig,
-          claims: ["email", "groups"],
-        },
-      }),
-    );
-    expect(noop.identityProviderId).toEqual(initial.identityProviderId);
+      // Redeploying identical props is a no-op (still the same IdP).
+      const noop = yield* stack.deploy(
+        Cloudflare.Access.IdentityProvider("UpdateOidc", {
+          name: "alchemy-zt-idp-update-v2",
+          type: "oidc",
+          config: {
+            ...oidcConfig,
+            claims: ["email", "groups"],
+          },
+        }),
+      );
+      expect(noop.identityProviderId).toEqual(initial.identityProviderId);
 
-    yield* stack.destroy();
-    yield* expectGone(undefined, accountId, initial.identityProviderId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* expectGone(undefined, accountId, initial.identityProviderId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:access", "live"] },
 );
 
-test.provider("list enumerates the deployed IdP", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates the deployed IdP",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const deployed = yield* stack.deploy(
-      Cloudflare.Access.IdentityProvider("ListOidc", {
-        name: "alchemy-zt-idp-list",
-        type: "oidc",
-        config: oidcConfig,
-      }),
-    );
+      const deployed = yield* stack.deploy(
+        Cloudflare.Access.IdentityProvider("ListOidc", {
+          name: "alchemy-zt-idp-list",
+          type: "oidc",
+          config: oidcConfig,
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(
-      Cloudflare.Access.IdentityProvider,
-    );
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Access.IdentityProvider,
+      );
+      const all = yield* provider.list();
 
-    expect(
-      all.some((x) => x.identityProviderId === deployed.identityProviderId),
-    ).toBe(true);
+      expect(
+        all.some((x) => x.identityProviderId === deployed.identityProviderId),
+      ).toBe(true);
 
-    yield* stack.destroy();
-    yield* expectGone(
-      undefined,
-      deployed.accountId,
-      deployed.identityProviderId,
-    );
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* expectGone(
+        undefined,
+        deployed.accountId,
+        deployed.identityProviderId,
+      );
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:access", "live"] },
 );
 
-test.provider("changing the type replaces the IdP", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "changing the type replaces the IdP",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const oidc = yield* stack.deploy(
-      Cloudflare.Access.IdentityProvider("ReplaceIdp", {
-        name: "alchemy-zt-idp-replace",
-        type: "oidc",
-        config: oidcConfig,
-      }),
-    );
+      const oidc = yield* stack.deploy(
+        Cloudflare.Access.IdentityProvider("ReplaceIdp", {
+          name: "alchemy-zt-idp-replace",
+          type: "oidc",
+          config: oidcConfig,
+        }),
+      );
 
-    // The name is the resource's cold-read identity, so a replacement
-    // (type change) pairs with a rename — keeping the old name would make
-    // the engine find the doomed sibling and refuse to adopt it.
-    const github = yield* stack.deploy(
-      Cloudflare.Access.IdentityProvider("ReplaceIdp", {
-        name: "alchemy-zt-idp-replace-github",
-        type: "github",
-        config: {
-          clientId: "alchemy-test-client",
-          clientSecret: "alchemy-test-secret",
-        },
-      }),
-    );
+      // The name is the resource's cold-read identity, so a replacement
+      // (type change) pairs with a rename — keeping the old name would make
+      // the engine find the doomed sibling and refuse to adopt it.
+      const github = yield* stack.deploy(
+        Cloudflare.Access.IdentityProvider("ReplaceIdp", {
+          name: "alchemy-zt-idp-replace-github",
+          type: "github",
+          config: {
+            clientId: "alchemy-test-client",
+            clientSecret: "alchemy-test-secret",
+          },
+        }),
+      );
 
-    // Type is immutable in our model — the engine must have replaced it.
-    expect(github.identityProviderId).not.toEqual(oidc.identityProviderId);
-    expect(github.type).toEqual("github");
+      // Type is immutable in our model — the engine must have replaced it.
+      expect(github.identityProviderId).not.toEqual(oidc.identityProviderId);
+      expect(github.type).toEqual("github");
 
-    const live = yield* getIdp(undefined, accountId, github.identityProviderId);
-    expect(live.type).toEqual("github");
-    // The old IdP was deleted by the replacement.
-    yield* expectGone(undefined, accountId, oidc.identityProviderId);
+      const live = yield* getIdp(
+        undefined,
+        accountId,
+        github.identityProviderId,
+      );
+      expect(live.type).toEqual("github");
+      // The old IdP was deleted by the replacement.
+      yield* expectGone(undefined, accountId, oidc.identityProviderId);
 
-    yield* stack.destroy();
-    yield* expectGone(undefined, accountId, github.identityProviderId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* expectGone(undefined, accountId, github.identityProviderId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:access", "live"] },
 );
 
-test.provider("zone-scoped IdP lifecycle (create, rename, destroy)", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
-    const zoneId = yield* resolveZoneId;
+test.provider(
+  "zone-scoped IdP lifecycle (create, rename, destroy)",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const zoneId = yield* resolveZoneId;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const idp = yield* stack.deploy(
-      Cloudflare.Access.IdentityProvider("ZoneOidc", {
-        zoneId,
-        name: "alchemy-zt-idp-zone",
-        type: "oidc",
-        config: oidcConfig,
-      }),
-    );
+      const idp = yield* stack.deploy(
+        Cloudflare.Access.IdentityProvider("ZoneOidc", {
+          zoneId,
+          name: "alchemy-zt-idp-zone",
+          type: "oidc",
+          config: oidcConfig,
+        }),
+      );
 
-    expect(idp.identityProviderId).toBeTruthy();
-    expect(idp.zoneId).toEqual(zoneId);
+      expect(idp.identityProviderId).toBeTruthy();
+      expect(idp.zoneId).toEqual(zoneId);
 
-    // Out-of-band via the zone-scoped route.
-    const live = yield* getIdp(zoneId, accountId, idp.identityProviderId);
-    expect(live.name).toEqual("alchemy-zt-idp-zone");
-    expect(live.type).toEqual("oidc");
+      // Out-of-band via the zone-scoped route.
+      const live = yield* getIdp(zoneId, accountId, idp.identityProviderId);
+      expect(live.name).toEqual("alchemy-zt-idp-zone");
+      expect(live.type).toEqual("oidc");
 
-    // Rename converges in place — same IdP, same scope.
-    const renamed = yield* stack.deploy(
-      Cloudflare.Access.IdentityProvider("ZoneOidc", {
-        zoneId,
-        name: "alchemy-zt-idp-zone-v2",
-        type: "oidc",
-        config: oidcConfig,
-      }),
-    );
-    expect(renamed.identityProviderId).toEqual(idp.identityProviderId);
-    expect(renamed.name).toEqual("alchemy-zt-idp-zone-v2");
+      // Rename converges in place — same IdP, same scope.
+      const renamed = yield* stack.deploy(
+        Cloudflare.Access.IdentityProvider("ZoneOidc", {
+          zoneId,
+          name: "alchemy-zt-idp-zone-v2",
+          type: "oidc",
+          config: oidcConfig,
+        }),
+      );
+      expect(renamed.identityProviderId).toEqual(idp.identityProviderId);
+      expect(renamed.name).toEqual("alchemy-zt-idp-zone-v2");
 
-    yield* stack.destroy();
-    yield* expectGone(zoneId, accountId, idp.identityProviderId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* expectGone(zoneId, accountId, idp.identityProviderId);
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:access",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
-test.provider("moving an IdP between scopes replaces it", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
-    const zoneId = yield* resolveZoneId;
+test.provider(
+  "moving an IdP between scopes replaces it",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const zoneId = yield* resolveZoneId;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const accountScoped = yield* stack.deploy(
-      Cloudflare.Access.IdentityProvider("ScopeMove", {
-        name: "alchemy-zt-idp-scope-move",
-        type: "oidc",
-        config: oidcConfig,
-      }),
-    );
-    expect(accountScoped.zoneId).toBeUndefined();
+      const accountScoped = yield* stack.deploy(
+        Cloudflare.Access.IdentityProvider("ScopeMove", {
+          name: "alchemy-zt-idp-scope-move",
+          type: "oidc",
+          config: oidcConfig,
+        }),
+      );
+      expect(accountScoped.zoneId).toBeUndefined();
 
-    // Adding zoneId is a scope change — a replacement, paired with a
-    // rename so the doomed sibling isn't found by the cold-read scan.
-    const zoneScoped = yield* stack.deploy(
-      Cloudflare.Access.IdentityProvider("ScopeMove", {
-        zoneId,
-        name: "alchemy-zt-idp-scope-move-zone",
-        type: "oidc",
-        config: oidcConfig,
-      }),
-    );
-    expect(zoneScoped.identityProviderId).not.toEqual(
-      accountScoped.identityProviderId,
-    );
-    expect(zoneScoped.zoneId).toEqual(zoneId);
+      // Adding zoneId is a scope change — a replacement, paired with a
+      // rename so the doomed sibling isn't found by the cold-read scan.
+      const zoneScoped = yield* stack.deploy(
+        Cloudflare.Access.IdentityProvider("ScopeMove", {
+          zoneId,
+          name: "alchemy-zt-idp-scope-move-zone",
+          type: "oidc",
+          config: oidcConfig,
+        }),
+      );
+      expect(zoneScoped.identityProviderId).not.toEqual(
+        accountScoped.identityProviderId,
+      );
+      expect(zoneScoped.zoneId).toEqual(zoneId);
 
-    // The old account-scoped IdP was deleted by the replacement.
-    yield* expectGone(undefined, accountId, accountScoped.identityProviderId);
+      // The old account-scoped IdP was deleted by the replacement.
+      yield* expectGone(undefined, accountId, accountScoped.identityProviderId);
 
-    yield* stack.destroy();
-    yield* expectGone(zoneId, accountId, zoneScoped.identityProviderId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* expectGone(zoneId, accountId, zoneScoped.identityProviderId);
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:access",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
 // Adoption + data-source coverage below. Live IdPs carry no ownership
@@ -446,6 +484,7 @@ test.provider(
       yield* stack.destroy();
       yield* expectGone(undefined, accountId, adopted.identityProviderId);
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:access", "live"] },
 );
 
 // The `cloudflare` (WARP) IdP is an account singleton whose display name is
@@ -519,6 +558,7 @@ test.provider(
       yield* stack.destroy();
       yield* expectGone(undefined, accountId, adopted2.identityProviderId);
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:access", "live"] },
 );
 
 test.provider(
@@ -599,6 +639,14 @@ test.provider(
       yield* stack.destroy();
       yield* expectGone(undefined, idp.accountId, idp.identityProviderId);
     }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:access",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
 class LookupNotServing extends Data.TaggedError("LookupNotServing")<{
@@ -667,7 +715,15 @@ test.provider(
         deployed.idp.identityProviderId,
       );
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:access",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 // Compile-time contract of the per-type configs — never executed. The

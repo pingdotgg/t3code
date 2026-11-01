@@ -6,13 +6,13 @@
   note: "The lowercase convenience constructor was removed; construct the retained error part through Response.makePart."
 "@effect/ai/Response#FilePartEncoded":
   replacement: "Response.FilePartEncoded"
-  note: "Moved to effect/unstable/ai/Response; file data remains a base64 string in the encoded representation."
+  note: "Moved to effect/ai/Response; file data remains a base64 string in the encoded representation."
 "@effect/ai/Response#finishPart":
   replacement: "Response.makePart(\"finish\", params)"
   note: "The lowercase convenience constructor was removed. V4 Usage has nested inputTokens and outputTokens objects, and FinishPart adds optional HTTP response details."
 "@effect/ai/Response#Part":
   replacement: "Response.Part"
-  note: "Moved to effect/unstable/ai/Response. The non-streaming union now also includes ToolApprovalRequestPart."
+  note: "Moved to effect/ai/Response. The non-streaming union now also includes ToolApprovalRequestPart."
 "@effect/ai/Response#PartTypeId":
   replacement: "Response.isPart"
   note: "The public PartTypeId was removed and the marker is internal in v4. Use Response.isPart for runtime refinement."
@@ -24,7 +24,7 @@
   note: "The lowercase convenience constructor was removed; construct the retained ReasoningEndPart through Response.makePart."
 "@effect/ai/Response#ReasoningPartEncoded":
   replacement: "Response.ReasoningPartEncoded"
-  note: "Moved to effect/unstable/ai/Response; the encoded reasoning payload remains text: string."
+  note: "Moved to effect/ai/Response; the encoded reasoning payload remains text: string."
 "@effect/ai/Response#reasoningStartPart":
   replacement: "Response.makePart(\"reasoning-start\", params)"
   note: "The lowercase convenience constructor was removed; construct the retained ReasoningStartPart through Response.makePart."
@@ -39,16 +39,16 @@
   note: "The lowercase convenience constructor was removed; construct the retained TextEndPart through Response.makePart."
 "@effect/ai/Response#TextPartEncoded":
   replacement: "Response.TextPartEncoded"
-  note: "Moved to effect/unstable/ai/Response; the encoded text payload remains text: string."
+  note: "Moved to effect/ai/Response; the encoded text payload remains text: string."
 "@effect/ai/Response#textStartPart":
   replacement: "Response.makePart(\"text-start\", params)"
   note: "The lowercase convenience constructor was removed; construct the retained TextStartPart through Response.makePart."
 "@effect/ai/Response#toolCallPart":
   replacement: "Response.toolCallPart"
-  note: "Moved to effect/unstable/ai/Response. The constructor remains, but providerName was removed from tool-call parts."
+  note: "Moved to effect/ai/Response. The constructor remains, but providerName was removed from tool-call parts."
 "@effect/ai/Response#ToolCallPartEncoded":
   replacement: "Response.ToolCallPartEncoded"
-  note: "Moved to effect/unstable/ai/Response; providerName was removed while providerExecuted remains optional when encoded."
+  note: "Moved to effect/ai/Response; providerName was removed while providerExecuted remains optional when encoded."
 "@effect/ai/Response#toolParamsDeltaPart":
   replacement: "Response.makePart(\"tool-params-delta\", params)"
   note: "The lowercase convenience constructor was removed; construct the retained ToolParamsDeltaPart through Response.makePart."
@@ -60,10 +60,10 @@
   note: "The lowercase convenience constructor was removed; providerName was also removed from ToolParamsStartPart in v4."
 "@effect/ai/Response#toolResultPart":
   replacement: "Response.toolResultPart"
-  note: "Moved to effect/unstable/ai/Response; providerName was removed and decoded tool results now require preliminary, normally false."
+  note: "Moved to effect/ai/Response; providerName was removed and decoded tool results now require preliminary, normally false."
 "@effect/ai/Response#ToolResultPartEncoded":
   replacement: "Response.ToolResultPartEncoded"
-  note: "Moved to effect/unstable/ai/Response; providerName was removed and optional preliminary was added to the encoded shape."
+  note: "Moved to effect/ai/Response; providerName was removed and optional preliminary was added to the encoded shape."
 "@effect/ai/Response#urlSourcePart":
   replacement: "Response.makePart(\"source\", { ...params, sourceType: \"url\" })"
   note: "The lowercase convenience constructor was removed. The UrlSourcePart model remains, and the generic constructor now requires the URL source discriminator."

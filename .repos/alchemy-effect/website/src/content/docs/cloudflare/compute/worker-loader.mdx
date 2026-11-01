@@ -21,7 +21,7 @@ returns the runtime handle in one step. There is no layer to provide:
 // src/worker.ts
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
 
 export default Cloudflare.Worker(
   "LoaderWorker",

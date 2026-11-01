@@ -266,11 +266,104 @@ const ingress = yield* Kubernetes.HelmChart("IngressNginx", {
 `chart` also accepts `oci://` references and local chart directories,
 and `values` is a literal object — the same shape as a `values.yaml`
 file. Because the objects are applied (not `helm install`ed), Alchemy
-owns their lifecycle: drift is corrected on every deploy, objects
-that drop out of the render are pruned, and destroy deletes them —
+owns their lifecycle: the full render is re-applied whenever the
+chart's inputs change, objects that drop out of the render are
+pruned, and destroy deletes them —
 there is no in-cluster Helm release record. Charts that rely on
 install/upgrade hooks for correctness should be installed with Helm
 directly.
+
+## What EKS adds to Kubernetes workloads
+
+The `Kubernetes.*` resources are cluster-agnostic. When their
+`cluster` is an EKS cluster, `AWS.providers()` contributes an
+adapter that handles the AWS-specific parts.
+
+### Authentication
+
+Alchemy signs a short-lived bearer token with your AWS credentials
+for every request, so there is no kubeconfig to manage. It's the
+same token `aws eks get-token` produces. The principal that created the
+cluster is its admin. Grant anyone else access with
+[`AccessEntry`](/providers/aws/eks/accessentry).
+
+### Images in ECR
+
+Each `Deployment` and `Job` gets its own private ECR repository.
+`main` programs are bundled and built into an image, `context`
+Dockerfiles are built, and `image` references are pulled and pushed
+into the repository, so pods only pull from your account. Set
+`architecture: "arm64"` for Graviton nodes. The default builds
+`amd64`. The repository is deleted when the workload is destroyed.
+
+### Pod Identity
+
+Each workload gets an IAM role and a
+[`PodIdentityAssociation`](/providers/aws/eks/podidentityassociation)
+for its ServiceAccount. AWS bindings used by the workload add their
+IAM statements to that role, and the pod receives temporary
+credentials for it through the EKS Pod Identity agent. Attach
+AWS-managed or customer-managed policies with
+`identity.managedPolicyArns`:
+
+```typescript
+const exporter = yield* Kubernetes.Job("Export", {
+  cluster,
+  main: import.meta.url,
+  identity: {
+    managedPolicyArns: ["arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"],
+  },
+});
+```
+
+### Load balancers
+
+Auto Mode's built-in load balancer controller only handles Services
+with `loadBalancerClass: eks.amazonaws.com/nlb`, and creates internal
+load balancers by default. On `LoadBalancer` Services Alchemy sets
+that class (when the cluster has Auto Mode load balancing enabled)
+and the `service.beta.kubernetes.io/aws-load-balancer-scheme:
+internet-facing` annotation, so `url` is reachable from the
+internet. Your own `serviceAnnotations` take precedence. Set the
+scheme to `internal` to keep a service private:
+
+```typescript
+const internal = yield* Kubernetes.Deployment("Internal", {
+  cluster,
+  image: "ghcr.io/acme/internal:v1",
+  port: 8080,
+  serviceAnnotations: {
+    "service.beta.kubernetes.io/aws-load-balancer-scheme": "internal",
+  },
+});
+```
+
+### Cleanup
+
+The ECR repository and Pod Identity role outlive the cluster's own
+objects. On destroy Alchemy deletes the in-cluster objects if the
+cluster is still reachable, then deletes the repository and role
+whether or not the cluster still exists, so destroying a cluster and
+its workloads together leaves nothing behind in AWS.
+
+## Target an EKS cluster you don't manage
+
+To deploy onto a cluster created elsewhere, name it in a connection.
+The adapter looks up the endpoint and certificate authority from the
+cluster name:
+
+```typescript
+const cluster: Kubernetes.Connection = {
+  auth: { kind: "aws-eks", clusterName: "shared-prod", region: "us-west-2" },
+};
+```
+
+`region` defaults to the Stack's AWS region. The `aws-eks` auth kind
+is added to the `Kubernetes.Connection` type by importing
+`alchemy/AWS`, and it requires `AWS.providers()` in the Stack. Your
+AWS principal needs an access entry on the cluster. Workloads get
+the same ECR, Pod Identity, and load balancer behavior as on a
+Stack-managed cluster.
 
 ## Run on SageMaker HyperPod
 
@@ -333,6 +426,10 @@ surface.
 
 ## Where next
 
+- [Kubernetes](/kubernetes) — the full guide to `Kubernetes.*`
+  workloads, manifests, and Helm charts, with a
+  [tutorial](/kubernetes/tutorial/part-1) you can run on a local
+  cluster before deploying to EKS.
 - [VPC & networking](/aws/networking) — what the `Network` helper
   builds under the cluster.
 - [HyperPod](/aws/compute/hyperpod) — run training fleets on this

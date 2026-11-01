@@ -1,7 +1,8 @@
+import * as sshKeys from "@distilled.cloud/hetzner/ssh_keys";
 import * as Hetzner from "@/Hetzner";
 import { isActionState, State } from "@/State/State.ts";
 import * as Test from "@/Test/Alchemy";
-import { Services } from "@distilled.cloud/hetzner";
+import * as servers from "@distilled.cloud/hetzner/servers";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 
@@ -27,12 +28,12 @@ for (const name of [undefined, "alchemy-server-recovery-explicit"]) {
         if (keyId === undefined) {
           return yield* Effect.die(new Error("Expected a deploy SSH key"));
         }
-        expect(
-          (yield* Services.servers.getServer({ id: server.id })).server?.name,
-        ).toBe(server.name);
-        expect(
-          (yield* Services.sshKeys.getSshKey({ id: keyId })).ssh_key.id,
-        ).toBe(keyId);
+        expect((yield* servers.getServer({ id: server.id })).server?.name).toBe(
+          server.name,
+        );
+        expect((yield* sshKeys.getSshKey({ id: keyId })).ssh_key.id).toBe(
+          keyId,
+        );
 
         // Reproduce a crash after cloud creation but before attributes were committed.
         yield* Effect.gen(function* () {
@@ -54,13 +55,13 @@ for (const name of [undefined, "alchemy-server-recovery-explicit"]) {
         yield* stack.destroy();
 
         expect(
-          yield* Services.servers.getServer({ id: server.id }).pipe(
+          yield* servers.getServer({ id: server.id }).pipe(
             Effect.as(false),
             Effect.catchTag("NotFound", () => Effect.succeed(true)),
           ),
         ).toBe(true);
         expect(
-          yield* Services.sshKeys.getSshKey({ id: keyId }).pipe(
+          yield* sshKeys.getSshKey({ id: keyId }).pipe(
             Effect.as(false),
             Effect.catchTag("NotFound", () => Effect.succeed(true)),
           ),
@@ -68,6 +69,15 @@ for (const name of [undefined, "alchemy-server-recovery-explicit"]) {
 
         yield* stack.destroy();
       }),
-    { timeout: 120_000, exclusive: true },
+    {
+      tags: [
+        "provider:hetzner",
+        "provider:hetzner:server",
+        "provider:hetzner:service",
+        "live",
+      ],
+      timeout: 120_000,
+      exclusive: true,
+    },
   );
 }

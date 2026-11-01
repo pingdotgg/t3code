@@ -2,7 +2,7 @@ import { exec } from "@/Util/exec.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "alchemy-test";
 import * as Effect from "effect/Effect";
-import { ChildProcess } from "effect/unstable/process";
+import { ChildProcess } from "effect/process";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -48,7 +48,7 @@ const importInSubprocess = (entry: string) => {
   ).pipe(Effect.scoped);
 };
 
-describe("lazy rolldown (#562)", () => {
+describe("lazy rolldown (#562)", { tags: ["unit", "local"] }, () => {
   for (const entry of entries) {
     it.effect(
       `importing ${entry} does not load rolldown's native binding`,

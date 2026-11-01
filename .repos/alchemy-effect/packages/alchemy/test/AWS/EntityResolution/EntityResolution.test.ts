@@ -32,6 +32,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:entityresolution", "live"] },
 );
 
 const CUSTOMER_FIELDS: entityresolution.SchemaInputAttribute[] = [
@@ -225,7 +226,17 @@ test.provider(
       );
       expect(schemaError._tag).toBe("ResourceNotFoundException");
     }),
-  { timeout: 300_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:entityresolution",
+      "provider:aws:glue",
+      "provider:aws:iam",
+      "provider:aws:s3",
+      "live",
+    ],
+    timeout: 300_000,
+  },
 );
 
 // The matching RUN processes the full input through the Entity Resolution
@@ -274,5 +285,15 @@ test.provider.skipIf(!process.env.AWS_TEST_ENTITYRESOLUTION_RUN)(
 
       yield* stack.destroy();
     }),
-  { timeout: 900_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:entityresolution",
+      "provider:aws:glue",
+      "provider:aws:iam",
+      "provider:aws:s3",
+      "live",
+    ],
+    timeout: 900_000,
+  },
 );

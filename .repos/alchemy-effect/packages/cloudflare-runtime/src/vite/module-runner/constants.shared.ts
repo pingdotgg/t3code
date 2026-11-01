@@ -1,4 +1,4 @@
-export const INIT_PATH = "/__vite_module_runner/init";
+export { PATH_MODULE_RUNNER_INIT as INIT_PATH } from "../../core/globals/EntryOptions.shared.ts";
 export const ENVIRONMENT_NAME_HEADER = "distilled-environment-name";
 export const WORKER_ENTRY_PATH_HEADER = "distilled-worker-entry-path";
 

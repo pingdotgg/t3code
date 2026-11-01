@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import { MinimumLogLevel } from "effect/References";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { BunHttpServer } from "../../Http.ts";
 import { Stage } from "../../Stage.ts";
 import {

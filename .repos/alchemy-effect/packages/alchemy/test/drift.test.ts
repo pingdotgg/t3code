@@ -67,7 +67,7 @@ const readCalls = (cloud: TestCloudService) =>
 
 const instanceId = "852f6ec2e19b66589825efe14dca2971";
 
-describe("drift detection and repair", () => {
+describe("drift detection and repair", { tags: ["unit", "local"] }, () => {
   test.provider(
     "clean deployment: every resource is unchanged and reconcile is not invoked",
     (stack) => {
@@ -244,7 +244,7 @@ describe("drift detection and repair", () => {
   );
 });
 
-describe("dry run", () => {
+describe("dry run", { tags: ["unit", "local"] }, () => {
   test.provider(
     "reports drift without repairing the cloud or touching state",
     (stack) => {
@@ -302,7 +302,7 @@ describe("dry run", () => {
   });
 });
 
-describe("skipped resources", () => {
+describe("skipped resources", { tags: ["unit", "local"] }, () => {
   test.provider("a provider without read is skipped with a reason", (stack) =>
     Effect.gen(function* () {
       yield* stack.deploy(Bucket("MyBucket", { name: "test-bucket" }));
@@ -418,7 +418,7 @@ describe("skipped resources", () => {
   });
 });
 
-describe("failures", () => {
+describe("failures", { tags: ["unit", "local"] }, () => {
   test.provider(
     "a failing repair does not prevent sibling repairs, and fails the drift",
     (stack) => {
@@ -532,7 +532,7 @@ describe("failures", () => {
   );
 });
 
-describe("ownership", () => {
+describe("ownership", { tags: ["unit", "local"] }, () => {
   test.provider(
     "an unowned read result with matching attributes is unchanged",
     (stack) => {
@@ -578,7 +578,7 @@ describe("ownership", () => {
   );
 });
 
-describe("bindings", () => {
+describe("bindings", { tags: ["unit", "local"] }, () => {
   test.provider(
     "binding-derived attributes are repaired from the persisted bindings",
     (stack) => {
@@ -611,7 +611,7 @@ describe("bindings", () => {
   );
 });
 
-describe("plan", () => {
+describe("plan", { tags: ["unit", "local"] }, () => {
   test.provider(
     "projects detection results onto plan node actions",
     (stack) => {
@@ -788,7 +788,7 @@ describe("plan", () => {
   );
 });
 
-describe("session events", () => {
+describe("session events", { tags: ["unit", "local"] }, () => {
   test.provider(
     "repair reports progress through the provided session",
     (stack) => {

@@ -14,8 +14,10 @@ export interface UploadPartCopyRequest extends Omit<
  *
  * Bind this operation to a bucket to get a callable that uploads a multipart
  * part by copying from an existing object — the destination bucket name is
- * injected automatically and `s3:PutObject`/`s3:GetObject` are granted on the
- * bucket's objects. Copying from a *different* source bucket additionally
+ * injected automatically and `s3:PutObject`, `s3:GetObject`, and
+ * `s3:GetObjectVersion` are granted on the bucket's objects. Select a source
+ * version by appending `?versionId=<encoded version ID>` to the URL-encoded
+ * `CopySource` bucket/key. Copying from a *different* source bucket additionally
  * requires read access to that bucket (bind `GetObject` on it). Provide the
  * implementation with `Effect.provide(AWS.S3.UploadPartCopyHttp)`.
  * ### Multipart Uploads

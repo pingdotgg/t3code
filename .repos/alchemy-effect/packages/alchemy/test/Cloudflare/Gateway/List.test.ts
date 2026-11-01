@@ -42,144 +42,153 @@ const expectGone = (accountId: string, listId: string) =>
 const itemValues = (items: ReadonlyArray<{ value: string }>) =>
   items.map((i) => i.value).sort();
 
-test.provider("create, verify, and destroy a DOMAIN list", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "create, verify, and destroy a DOMAIN list",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const list = yield* stack.deploy(
-      Cloudflare.Gateway.List("BasicList", {
-        name: "alchemy-zt-list-basic",
-        type: "DOMAIN",
-        description: "alchemy test list",
-        items: [
-          { value: "a.alchemy-test.example" },
-          { value: "b.alchemy-test.example" },
-        ],
-      }),
-    );
+      const list = yield* stack.deploy(
+        Cloudflare.Gateway.List("BasicList", {
+          name: "alchemy-zt-list-basic",
+          type: "DOMAIN",
+          description: "alchemy test list",
+          items: [
+            { value: "a.alchemy-test.example" },
+            { value: "b.alchemy-test.example" },
+          ],
+        }),
+      );
 
-    expect(list.listId).toBeTruthy();
-    expect(list.accountId).toEqual(accountId);
-    expect(list.type).toEqual("DOMAIN");
-    expect(itemValues(list.items)).toEqual([
-      "a.alchemy-test.example",
-      "b.alchemy-test.example",
-    ]);
+      expect(list.listId).toBeTruthy();
+      expect(list.accountId).toEqual(accountId);
+      expect(list.type).toEqual("DOMAIN");
+      expect(itemValues(list.items)).toEqual([
+        "a.alchemy-test.example",
+        "b.alchemy-test.example",
+      ]);
 
-    const live = yield* getList(accountId, list.listId);
-    expect(live.name).toEqual("alchemy-zt-list-basic");
-    expect(live.description).toEqual("alchemy test list");
-    expect(itemValues((live.items ?? []) as { value: string }[])).toEqual([
-      "a.alchemy-test.example",
-      "b.alchemy-test.example",
-    ]);
+      const live = yield* getList(accountId, list.listId);
+      expect(live.name).toEqual("alchemy-zt-list-basic");
+      expect(live.description).toEqual("alchemy test list");
+      expect(itemValues((live.items ?? []) as { value: string }[])).toEqual([
+        "a.alchemy-test.example",
+        "b.alchemy-test.example",
+      ]);
 
-    yield* stack.destroy();
-    yield* expectGone(accountId, list.listId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* expectGone(accountId, list.listId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:gateway", "live"] },
 );
 
-test.provider("update items, description, and name in place", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "update items, description, and name in place",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const initial = yield* stack.deploy(
-      Cloudflare.Gateway.List("UpdateList", {
-        name: "alchemy-zt-list-update",
-        type: "DOMAIN",
-        items: [
-          { value: "keep.alchemy-test.example" },
-          { value: "remove.alchemy-test.example" },
-        ],
-      }),
-    );
+      const initial = yield* stack.deploy(
+        Cloudflare.Gateway.List("UpdateList", {
+          name: "alchemy-zt-list-update",
+          type: "DOMAIN",
+          items: [
+            { value: "keep.alchemy-test.example" },
+            { value: "remove.alchemy-test.example" },
+          ],
+        }),
+      );
 
-    const updated = yield* stack.deploy(
-      Cloudflare.Gateway.List("UpdateList", {
-        name: "alchemy-zt-list-update-v2",
-        type: "DOMAIN",
-        description: "now with a description",
-        items: [
-          { value: "keep.alchemy-test.example" },
-          { value: "add.alchemy-test.example" },
-        ],
-      }),
-    );
+      const updated = yield* stack.deploy(
+        Cloudflare.Gateway.List("UpdateList", {
+          name: "alchemy-zt-list-update-v2",
+          type: "DOMAIN",
+          description: "now with a description",
+          items: [
+            { value: "keep.alchemy-test.example" },
+            { value: "add.alchemy-test.example" },
+          ],
+        }),
+      );
 
-    // Same list mutated in place — not a replacement.
-    expect(updated.listId).toEqual(initial.listId);
-    expect(updated.name).toEqual("alchemy-zt-list-update-v2");
-    expect(itemValues(updated.items)).toEqual([
-      "add.alchemy-test.example",
-      "keep.alchemy-test.example",
-    ]);
+      // Same list mutated in place — not a replacement.
+      expect(updated.listId).toEqual(initial.listId);
+      expect(updated.name).toEqual("alchemy-zt-list-update-v2");
+      expect(itemValues(updated.items)).toEqual([
+        "add.alchemy-test.example",
+        "keep.alchemy-test.example",
+      ]);
 
-    const live = yield* getList(accountId, updated.listId);
-    expect(live.name).toEqual("alchemy-zt-list-update-v2");
-    expect(live.description).toEqual("now with a description");
-    expect(itemValues((live.items ?? []) as { value: string }[])).toEqual([
-      "add.alchemy-test.example",
-      "keep.alchemy-test.example",
-    ]);
+      const live = yield* getList(accountId, updated.listId);
+      expect(live.name).toEqual("alchemy-zt-list-update-v2");
+      expect(live.description).toEqual("now with a description");
+      expect(itemValues((live.items ?? []) as { value: string }[])).toEqual([
+        "add.alchemy-test.example",
+        "keep.alchemy-test.example",
+      ]);
 
-    // Redeploying identical props is a no-op (still the same list).
-    const noop = yield* stack.deploy(
-      Cloudflare.Gateway.List("UpdateList", {
-        name: "alchemy-zt-list-update-v2",
-        type: "DOMAIN",
-        description: "now with a description",
-        items: [
-          { value: "keep.alchemy-test.example" },
-          { value: "add.alchemy-test.example" },
-        ],
-      }),
-    );
-    expect(noop.listId).toEqual(initial.listId);
+      // Redeploying identical props is a no-op (still the same list).
+      const noop = yield* stack.deploy(
+        Cloudflare.Gateway.List("UpdateList", {
+          name: "alchemy-zt-list-update-v2",
+          type: "DOMAIN",
+          description: "now with a description",
+          items: [
+            { value: "keep.alchemy-test.example" },
+            { value: "add.alchemy-test.example" },
+          ],
+        }),
+      );
+      expect(noop.listId).toEqual(initial.listId);
 
-    yield* stack.destroy();
-    yield* expectGone(accountId, initial.listId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* expectGone(accountId, initial.listId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:gateway", "live"] },
 );
 
-test.provider("changing the type replaces the list", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "changing the type replaces the list",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const domainList = yield* stack.deploy(
-      Cloudflare.Gateway.List("ReplaceList", {
-        name: "alchemy-zt-list-replace",
-        type: "DOMAIN",
-        items: [{ value: "x.alchemy-test.example" }],
-      }),
-    );
+      const domainList = yield* stack.deploy(
+        Cloudflare.Gateway.List("ReplaceList", {
+          name: "alchemy-zt-list-replace",
+          type: "DOMAIN",
+          items: [{ value: "x.alchemy-test.example" }],
+        }),
+      );
 
-    // The name is the resource's cold-read identity, so a replacement
-    // (type change) pairs with a rename — keeping the old name would make
-    // the engine find the doomed sibling and refuse to adopt it.
-    const ipList = yield* stack.deploy(
-      Cloudflare.Gateway.List("ReplaceList", {
-        name: "alchemy-zt-list-replace-ip",
-        type: "IP",
-        items: [{ value: "203.0.113.1" }],
-      }),
-    );
+      // The name is the resource's cold-read identity, so a replacement
+      // (type change) pairs with a rename — keeping the old name would make
+      // the engine find the doomed sibling and refuse to adopt it.
+      const ipList = yield* stack.deploy(
+        Cloudflare.Gateway.List("ReplaceList", {
+          name: "alchemy-zt-list-replace-ip",
+          type: "IP",
+          items: [{ value: "203.0.113.1" }],
+        }),
+      );
 
-    // Type is immutable — the engine must have created a new list.
-    expect(ipList.listId).not.toEqual(domainList.listId);
-    expect(ipList.type).toEqual("IP");
+      // Type is immutable — the engine must have created a new list.
+      expect(ipList.listId).not.toEqual(domainList.listId);
+      expect(ipList.type).toEqual("IP");
 
-    const live = yield* getList(accountId, ipList.listId);
-    expect(live.type).toEqual("IP");
-    // The old list was deleted by the replacement.
-    yield* expectGone(accountId, domainList.listId);
+      const live = yield* getList(accountId, ipList.listId);
+      expect(live.type).toEqual("IP");
+      // The old list was deleted by the replacement.
+      yield* expectGone(accountId, domainList.listId);
 
-    yield* stack.destroy();
-    yield* expectGone(accountId, ipList.listId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* expectGone(accountId, ipList.listId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:gateway", "live"] },
 );

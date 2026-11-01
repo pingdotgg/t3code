@@ -1,8 +1,9 @@
 import * as Cloudflare from "@/Cloudflare";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { DrizzleUsersObject } from "./object.ts";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { DrizzleClockObject, DrizzleUsersObject } from "./object.ts";
 
 export default class DrizzleDurableObjectWorker extends Cloudflare.Worker<DrizzleDurableObjectWorker>()(
   "DrizzleDurableObjectWorker",
@@ -10,6 +11,7 @@ export default class DrizzleDurableObjectWorker extends Cloudflare.Worker<Drizzl
     main: import.meta.url,
   },
   Effect.gen(function* () {
+    const clocks = yield* DrizzleClockObject;
     const objects = yield* DrizzleUsersObject;
 
     return {
@@ -19,6 +21,44 @@ export default class DrizzleDurableObjectWorker extends Cloudflare.Worker<Drizzl
         const object = objects.getByName(
           url.searchParams.get("do") ?? "default",
         );
+
+        if (url.pathname === "/sqlite-clock") {
+          return yield* Effect.gen(function* () {
+            if (url.searchParams.get("direct") === "true") {
+              const name = yield* object.clockName();
+              yield* clocks.getByName(name).wait();
+            } else {
+              yield* object.sqliteClock();
+            }
+            return yield* HttpServerResponse.json({ clock: "ready" });
+          }).pipe(
+            Effect.catchCause((cause) =>
+              HttpServerResponse.json(
+                { error: Cause.pretty(cause) },
+                { status: 500 },
+              ),
+            ),
+          );
+        }
+
+        if (url.pathname === "/sqlite-gate") {
+          return yield* object
+            .sqliteGate(url.searchParams.get("view") === "true")
+            .pipe(
+              Effect.flatMap((result) => HttpServerResponse.json(result)),
+              Effect.catchCause((cause) =>
+                HttpServerResponse.json(
+                  { error: Cause.pretty(cause) },
+                  { status: 500 },
+                ),
+              ),
+            );
+        }
+
+        if (url.pathname === "/sqlite-rollback") {
+          const result = yield* object.sqliteRollback().pipe(Effect.orDie);
+          return yield* HttpServerResponse.json(result);
+        }
 
         if (request.method === "POST" && url.pathname === "/users") {
           const name = url.searchParams.get("name") ?? "anonymous";

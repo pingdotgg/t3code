@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
-import { ChildProcess } from "effect/unstable/process";
+import { ChildProcess } from "effect/process";
 import * as crypto from "node:crypto";
 import * as Artifacts from "../Artifacts.ts";
 import { isResolved } from "../Diff.ts";

@@ -3,25 +3,15 @@ import type {
   AuthClientMetadataDeviceType,
   AuthClientPresentationMetadata,
 } from "@t3tools/contracts";
-import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
+import type * as HttpServerRequest from "effect/http/HttpServerRequest";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no createHmac or timingSafeEqual.
 import * as NodeCrypto from "node:crypto";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 
 const SESSION_COOKIE_NAME = "t3_session";
 
-/**
- * Cookies are scoped by host but *not* by port, so any two servers that can be
- * live on one hostname at once need separate names — otherwise the second
- * clobbers the first's session and both sides see "Invalid session token
- * signature" until someone clears cookies by hand.
- *
- * Remote web servers use their persisted environment identity and omit the
- * port, so the name survives state-directory moves and public port changes.
- *
- * Desktop scans upward from 3773 for a free port and binds
- *   127.0.0.1, so a second instance lands on a different port and the same host.
- */
+/** Cookies span ports; use separate names for servers sharing a hostname. */
 export function resolveSessionCookieName(input: {
   readonly mode: "web" | "desktop";
   readonly port: number;
@@ -47,9 +37,6 @@ export function resolveSessionCookieName(input: {
     return `${SESSION_COOKIE_NAME}_${instanceHash}`;
   }
 
-  // Cookies are scoped by host, not port. Loopback development servers need an
-  // instance-specific name or parallel agents overwrite each other's session,
-  // and a server that later reuses the port receives a token signed elsewhere.
   return `${SESSION_COOKIE_NAME}_${input.port}_${instanceHash}`;
 }
 
@@ -81,12 +68,12 @@ export function isRemoteReachableHost(host: string | undefined): boolean {
 
 export function base64UrlEncode(input: string | Uint8Array): string {
   return typeof input === "string"
-    ? Encoding.encodeBase64Url(new TextEncoder().encode(input))
-    : Encoding.encodeBase64Url(input);
+    ? Base64Url.encode(new TextEncoder().encode(input))
+    : Base64Url.encode(input);
 }
 
 export function base64UrlDecodeUtf8(input: string): string {
-  return Result.getOrThrow(Encoding.decodeBase64UrlString(input));
+  return Result.getOrThrow(Base64Url.decodeString(input));
 }
 
 export function signPayload(payload: string, secret: Uint8Array): string {
@@ -141,9 +128,9 @@ function inferBrowser(userAgent: string | undefined): string | undefined {
     return undefined;
   }
   const normalized = userAgent.toLowerCase();
-  if (/edg\//.test(normalized)) return "Edge";
-  if (/opr\//.test(normalized)) return "Opera";
-  if (/firefox\//.test(normalized)) return "Firefox";
+  if (/edg(?:e|a|ios)?\//.test(normalized)) return "Edge";
+  if (/opr\/|opios\//.test(normalized)) return "Opera";
+  if (/firefox\/|fxios\//.test(normalized)) return "Firefox";
   if (/electron\//.test(normalized)) return "Electron";
   if (/chrome\//.test(normalized) || /crios\//.test(normalized)) return "Chrome";
   if (/safari\//.test(normalized) && !/chrome\//.test(normalized)) return "Safari";

@@ -19,9 +19,6 @@ const EFFECT_RUNTIME_METHODS = new Set([
   "runSyncWith",
 ]);
 
-// Existing manual runners are tracked as debt through the `maxOccurrences`
-// option, set per file in the lint config. The rule permits no net-new
-// occurrences in those files, while every other test file must have zero.
 const readMaxOccurrences = (options: ReadonlyArray<unknown>): number => {
   const [first] = options;
   return typeof first === "object" &&

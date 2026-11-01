@@ -15,6 +15,7 @@
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import type { BuildChildModule, BuildChildPayload } from "./BuildChild.ts";
 import { writeBuildOutput } from "./BuildOutput.ts";
 
@@ -31,7 +32,20 @@ const program = Effect.gen(function* () {
       ),
     );
   }
-  const output = yield* module.buildInChild(payload.config as never);
+  const output = yield* module.buildInChild(payload.config as never).pipe(
+    // Hand the failure message back to `runBuildChild` for its error.
+    Effect.tapError((error) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs
+          .writeFileString(
+            payload.errorPath,
+            error instanceof Error ? error.message : String(error),
+          )
+          .pipe(Effect.ignore);
+      }),
+    ),
+  );
   yield* writeBuildOutput(payload.outputPath, output);
 }).pipe(Effect.provide(NodeServices.layer));
 

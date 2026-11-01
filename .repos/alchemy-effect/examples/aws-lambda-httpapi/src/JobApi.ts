@@ -1,11 +1,11 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 import { Job, JobId } from "./Job.ts";
 import { JobNotifications, NotifyJobError } from "./JobNotifications.ts";
 import { GetJobError, JobStorage, PutJobError } from "./JobStorage.ts";

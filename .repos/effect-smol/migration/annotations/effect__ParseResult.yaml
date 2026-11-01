@@ -13,7 +13,7 @@
   note: "Composite parse failures moved to SchemaIssue. The v4 constructor takes the failing AST and an array of nested issues; input is retained only when reportInput is enabled."
 "effect/ParseResult#DeclarationDecodeUnknown":
   replacement: "SchemaGetter.Getter"
-  note: "Custom declaration decoding now uses SchemaGetter values and Schema.declare annotations."
+  note: "Custom declaration decoding now uses SchemaGetter values and Schema.declare annotations. Getter is a tagged union, not a constructor; use transformOptionalEffect for an Option-to-Effect decoder. Use standalone SchemaGetter.run, map, and compose instead of instance methods."
 "effect/ParseResult#decodeEither":
   replacement: "Schema.decodeExit"
   note: "Either parsing was replaced by Exit parsing."

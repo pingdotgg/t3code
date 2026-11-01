@@ -20,9 +20,9 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as TestConsole from "effect/testing/TestConsole";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 
-import { cli } from "../bin.ts";
+import { cli } from "../binCli.ts";
 
 const encodeConfig = Schema.encodeSync(ServerConfig);
 const decodeClaims = Schema.decodeUnknownSync(

@@ -10,7 +10,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import { Gateway } from "./fixtures/Gateway.ts";
 import TestWorker from "./fixtures/TestWorker.ts";
 
@@ -23,193 +23,233 @@ const logLevel = Effect.provideService(
   process.env.DEBUG ? "Debug" : "Info",
 );
 
-test.provider("create and delete ai gateway with default props", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "create and delete ai gateway with default props",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const gateway = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.AI.Gateway("DefaultGateway", {
-          id: "alchemy-test-ai-gateway-default",
-        });
-      }),
-    );
+      const gateway = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.AI.Gateway("DefaultGateway", {
+            id: "alchemy-test-ai-gateway-default",
+          });
+        }),
+      );
 
-    expect(gateway.gatewayId).toEqual("alchemy-test-ai-gateway-default");
-    expect(gateway.cacheInvalidateOnUpdate).toEqual(false);
-    expect(gateway.cacheTtl).toEqual(null);
-    expect(gateway.collectLogs).toEqual(true);
-    expect(gateway.rateLimitingInterval).toEqual(null);
-    expect(gateway.rateLimitingLimit).toEqual(null);
-    expect(gateway.rateLimitingTechnique).toEqual("fixed");
+      expect(gateway.gatewayId).toEqual("alchemy-test-ai-gateway-default");
+      expect(gateway.cacheInvalidateOnUpdate).toEqual(false);
+      expect(gateway.cacheTtl).toEqual(null);
+      expect(gateway.collectLogs).toEqual(true);
+      expect(gateway.rateLimitingInterval).toEqual(null);
+      expect(gateway.rateLimitingLimit).toEqual(null);
+      expect(gateway.rateLimitingTechnique).toEqual("fixed");
 
-    const actualGateway = yield* aiGateway.getAiGateway({
-      accountId,
-      id: gateway.gatewayId,
-    });
-    expect(actualGateway.id).toEqual(gateway.gatewayId);
+      const actualGateway = yield* aiGateway.getAiGateway({
+        accountId,
+        id: gateway.gatewayId,
+      });
+      expect(actualGateway.id).toEqual(gateway.gatewayId);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* waitForGatewayToBeDeleted(gateway.gatewayId, accountId);
-  }).pipe(logLevel),
+      yield* waitForGatewayToBeDeleted(gateway.gatewayId, accountId);
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+  },
 );
 
-test.provider("create, update, delete ai gateway", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "create, update, delete ai gateway",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const gateway = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.AI.Gateway("TestGateway", {
-          id: "alchemy-test-ai-gateway",
-          cacheTtl: 60,
-          collectLogs: true,
-          rateLimitingInterval: 60,
-          rateLimitingLimit: 100,
-          rateLimitingTechnique: "fixed",
-        });
-      }),
-    );
+      const gateway = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.AI.Gateway("TestGateway", {
+            id: "alchemy-test-ai-gateway",
+            cacheTtl: 60,
+            collectLogs: true,
+            rateLimitingInterval: 60,
+            rateLimitingLimit: 100,
+            rateLimitingTechnique: "fixed",
+          });
+        }),
+      );
 
-    const actualGateway = yield* aiGateway.getAiGateway({
-      accountId,
-      id: gateway.gatewayId,
-    });
-    expect(actualGateway.id).toEqual(gateway.gatewayId);
-    expect(actualGateway.cacheTtl).toEqual(60);
-    expect(actualGateway.rateLimitingLimit).toEqual(100);
+      const actualGateway = yield* aiGateway.getAiGateway({
+        accountId,
+        id: gateway.gatewayId,
+      });
+      expect(actualGateway.id).toEqual(gateway.gatewayId);
+      expect(actualGateway.cacheTtl).toEqual(60);
+      expect(actualGateway.rateLimitingLimit).toEqual(100);
 
-    const updatedGateway = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.AI.Gateway("TestGateway", {
-          id: "alchemy-test-ai-gateway",
-          cacheTtl: 120,
-          collectLogs: true,
-          rateLimitingInterval: 120,
-          rateLimitingLimit: 200,
-          rateLimitingTechnique: "sliding",
-        });
-      }),
-    );
+      const updatedGateway = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.AI.Gateway("TestGateway", {
+            id: "alchemy-test-ai-gateway",
+            cacheTtl: 120,
+            collectLogs: true,
+            rateLimitingInterval: 120,
+            rateLimitingLimit: 200,
+            rateLimitingTechnique: "sliding",
+          });
+        }),
+      );
 
-    const actualUpdatedGateway = yield* aiGateway.getAiGateway({
-      accountId,
-      id: updatedGateway.gatewayId,
-    });
-    expect(actualUpdatedGateway.cacheTtl).toEqual(120);
-    expect(actualUpdatedGateway.rateLimitingInterval).toEqual(120);
-    expect(actualUpdatedGateway.rateLimitingLimit).toEqual(200);
-    expect(actualUpdatedGateway.rateLimitingTechnique).toEqual("sliding");
+      const actualUpdatedGateway = yield* aiGateway.getAiGateway({
+        accountId,
+        id: updatedGateway.gatewayId,
+      });
+      expect(actualUpdatedGateway.cacheTtl).toEqual(120);
+      expect(actualUpdatedGateway.rateLimitingInterval).toEqual(120);
+      expect(actualUpdatedGateway.rateLimitingLimit).toEqual(200);
+      expect(actualUpdatedGateway.rateLimitingTechnique).toEqual("sliding");
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* waitForGatewayToBeDeleted(gateway.gatewayId, accountId);
-  }).pipe(logLevel),
+      yield* waitForGatewayToBeDeleted(gateway.gatewayId, accountId);
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+  },
 );
 
 // Per-gateway spend limits replace the deprecated account-level spending
 // limit. Verify they are applied on create, mutate in place, and that a
 // redeploy of identical props is a no-op (exercising the diff normalization
 // that drops the server-assigned rule id and per-rule `enabled` default).
-test.provider("create, update spend limits, delete ai gateway", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "create, update spend limits, delete ai gateway",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const gateway = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.AI.Gateway("SpendGateway", {
-          id: "alchemy-test-ai-gateway-spend",
-          spendLimits: {
-            enabled: true,
-            // Effect Duration.Input is decoded to whole seconds for the API.
-            rules: [{ limitType: "cost", limit: 500_00, window: "1 day" }],
-          },
-        });
-      }),
-    );
+      const gateway = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.AI.Gateway("SpendGateway", {
+            id: "alchemy-test-ai-gateway-spend",
+            spendLimits: {
+              enabled: true,
+              // Effect Duration.Input is decoded to whole seconds for the API.
+              rules: [{ limitType: "cost", limit: 500_00, window: "1 day" }],
+            },
+          });
+        }),
+      );
 
-    expect(gateway.spendLimits?.enabled).toEqual(true);
-    expect(gateway.spendLimits?.rules?.[0]?.limit).toEqual(500_00);
-    expect(gateway.spendLimits?.rules?.[0]?.window).toEqual(86_400);
+      expect(gateway.spendLimits?.enabled).toEqual(true);
+      expect(gateway.spendLimits?.rules?.[0]?.limit).toEqual(500_00);
+      expect(gateway.spendLimits?.rules?.[0]?.window).toEqual(86_400);
 
-    const live = yield* aiGateway.getAiGateway({
-      accountId,
-      id: gateway.gatewayId,
-    });
-    expect(live.spendLimits?.enabled).toEqual(true);
-    expect(live.spendLimits?.rules?.[0]?.limit).toEqual(500_00);
-    expect(live.spendLimits?.rules?.[0]?.window).toEqual(86_400);
+      const live = yield* aiGateway.getAiGateway({
+        accountId,
+        id: gateway.gatewayId,
+      });
+      expect(live.spendLimits?.enabled).toEqual(true);
+      expect(live.spendLimits?.rules?.[0]?.limit).toEqual(500_00);
+      expect(live.spendLimits?.rules?.[0]?.window).toEqual(86_400);
 
-    // Re-deploying identical props must be a no-op (no perpetual drift from
-    // the server-assigned rule id / enabled default).
-    const again = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.AI.Gateway("SpendGateway", {
-          id: "alchemy-test-ai-gateway-spend",
-          spendLimits: {
-            enabled: true,
-            rules: [{ limitType: "cost", limit: 500_00, window: "1 day" }],
-          },
-        });
-      }),
-    );
-    expect(again.spendLimits?.rules?.[0]?.limit).toEqual(500_00);
+      // Re-deploying identical props must be a no-op (no perpetual drift from
+      // the server-assigned rule id / enabled default).
+      const again = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.AI.Gateway("SpendGateway", {
+            id: "alchemy-test-ai-gateway-spend",
+            spendLimits: {
+              enabled: true,
+              rules: [{ limitType: "cost", limit: 500_00, window: "1 day" }],
+            },
+          });
+        }),
+      );
+      expect(again.spendLimits?.rules?.[0]?.limit).toEqual(500_00);
 
-    // Update the cap in place.
-    const updated = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.AI.Gateway("SpendGateway", {
-          id: "alchemy-test-ai-gateway-spend",
-          spendLimits: {
-            enabled: true,
-            rules: [{ limitType: "cost", limit: 1_000_00, window: "1 hour" }],
-          },
-        });
-      }),
-    );
-    expect(updated.spendLimits?.rules?.[0]?.limit).toEqual(1_000_00);
+      // Update the cap in place.
+      const updated = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.AI.Gateway("SpendGateway", {
+            id: "alchemy-test-ai-gateway-spend",
+            spendLimits: {
+              enabled: true,
+              rules: [{ limitType: "cost", limit: 1_000_00, window: "1 hour" }],
+            },
+          });
+        }),
+      );
+      expect(updated.spendLimits?.rules?.[0]?.limit).toEqual(1_000_00);
 
-    const liveUpdated = yield* aiGateway.getAiGateway({
-      accountId,
-      id: gateway.gatewayId,
-    });
-    expect(liveUpdated.spendLimits?.rules?.[0]?.limit).toEqual(1_000_00);
-    expect(liveUpdated.spendLimits?.rules?.[0]?.window).toEqual(3_600);
+      const liveUpdated = yield* aiGateway.getAiGateway({
+        accountId,
+        id: gateway.gatewayId,
+      });
+      expect(liveUpdated.spendLimits?.rules?.[0]?.limit).toEqual(1_000_00);
+      expect(liveUpdated.spendLimits?.rules?.[0]?.window).toEqual(3_600);
 
-    yield* stack.destroy();
-    yield* waitForGatewayToBeDeleted(gateway.gatewayId, accountId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* waitForGatewayToBeDeleted(gateway.gatewayId, accountId);
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+  },
 );
 
-test.provider("list enumerates the deployed ai gateway", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates the deployed ai gateway",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const gatewayId = "alchemy-test-ai-gateway-list";
+      const gatewayId = "alchemy-test-ai-gateway-list";
 
-    const deployed = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.AI.Gateway("ListGateway", {
-          id: gatewayId,
-        });
-      }),
-    );
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.AI.Gateway("ListGateway", {
+            id: gatewayId,
+          });
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(Cloudflare.AI.Gateway);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(Cloudflare.AI.Gateway);
+      const all = yield* provider.list();
 
-    expect(all.some((g) => g.gatewayId === deployed.gatewayId)).toBe(true);
+      expect(all.some((g) => g.gatewayId === deployed.gatewayId)).toBe(true);
 
-    yield* stack.destroy();
-    yield* waitForGatewayToBeDeleted(deployed.gatewayId, deployed.accountId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* waitForGatewayToBeDeleted(deployed.gatewayId, deployed.accountId);
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+  },
 );
 
 // Engine-level adoption: AI Gateways have no ownership signal (Cloudflare
@@ -272,6 +312,14 @@ test.provider(
       yield* stack.destroy();
       yield* waitForGatewayToBeDeleted(gatewayId, accountId);
     }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+  },
 );
 
 const waitForGatewayToBeDeleted = Effect.fn(function* (
@@ -342,5 +390,13 @@ test(
     expect(body.url).toContain(out.gatewayId);
     expect(body.url).toContain("gateway.ai.cloudflare.com");
   }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );

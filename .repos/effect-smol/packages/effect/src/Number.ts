@@ -632,23 +632,13 @@ export const remainder: {
   (divisor: number): (self: number) => number
   (self: number, divisor: number): number
 } = dual(2, (self: number, divisor: number): number => {
-  const selfString = self.toString()
-  const divisorString = divisor.toString()
-  if (selfString.includes("e") || divisorString.includes("e")) {
-    if (!globalThis.Number.isFinite(self) || !globalThis.Number.isFinite(divisor) || divisor === 0) {
-      return NaN
-    }
-    return remainderWithScientificNotation(self, divisor)
+  if (!globalThis.Number.isFinite(self) || !globalThis.Number.isFinite(divisor) || divisor === 0) {
+    return NaN
   }
-  const selfDecCount = (selfString.split(".")[1] || "").length
-  const divisorDecCount = (divisorString.split(".")[1] || "").length
-  const decCount = selfDecCount > divisorDecCount ? selfDecCount : divisorDecCount
-  const selfInt = self === 0 ? self : parseInt(self.toFixed(decCount).replace(".", ""))
-  const divisorInt = parseInt(divisor.toFixed(decCount).replace(".", ""))
-  return (selfInt % divisorInt) / Math.pow(10, decCount)
-})
+  if (globalThis.Number.isInteger(self) && globalThis.Number.isInteger(divisor)) {
+    return self % divisor
+  }
 
-function remainderWithScientificNotation(self: number, divisor: number): number {
   const [selfCoefficient, selfExponent] = toScientificInteger(self)
   const [divisorCoefficient, divisorExponent] = toScientificInteger(divisor)
   const exponent = Math.min(selfExponent, divisorExponent)
@@ -660,9 +650,12 @@ function remainderWithScientificNotation(self: number, divisor: number): number 
   }
   const remainder = globalThis.Number(`${out}e${exponent}`)
   return remainder === 0 ? Math.sign(self) * globalThis.Number.MIN_VALUE : remainder
-}
+})
 
 function toScientificInteger(n: number): readonly [coefficient: bigint, exponent: number] {
+  if (globalThis.Number.isInteger(n)) {
+    return [BigInt(n), 0]
+  }
   const scientific = Math.abs(n).toExponential()
   const eIndex = scientific.indexOf("e")
   const digits = scientific.slice(0, eIndex).replace(".", "")

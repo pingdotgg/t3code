@@ -44,8 +44,8 @@
   replacement: "HttpClient.transformResponse(Effect.provideService(HttpClient.TracerPropagationEnabled, enabled))"
   note: "Provide the renamed propagation reference around response effects."
 "@effect/platform/HttpClient#tap":
-  replacement: "effect/unstable/http/HttpClient#tap"
+  replacement: "effect/http/HttpClient#tap"
   note: "Moved to the v4 HTTP module with the same response-effect callback and client error/service widening."
 "@effect/platform/HttpClient#transform":
-  replacement: "effect/unstable/http/HttpClient#transform"
+  replacement: "effect/http/HttpClient#transform"
   note: "Moved to the v4 HTTP module with the same request-aware transformation shape."

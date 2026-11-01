@@ -1,5 +1,5 @@
 import { Effect, Exit, Schema } from "effect"
-import { Rpc, RpcSerialization } from "effect/unstable/rpc"
+import { Rpc, RpcSerialization } from "effect/rpc"
 import assert from "node:assert/strict"
 import { cpus } from "node:os"
 import { Bench } from "tinybench"

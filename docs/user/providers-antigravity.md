@@ -8,9 +8,9 @@ which models and account access are available through this agent.
 
 On web or desktop, open **Settings > Providers**, choose the environment that runs
 your project, and enable Antigravity. Install its runtime there, then choose
-**Sign in with Google** and complete the browser sign-in. Wait for T3 Code to confirm
-account access and load models before starting a thread. Provider setup is not
-available in the mobile app.
+**Sign in** and complete the browser sign-in. Wait for T3 Code to confirm
+account access and load models before starting a thread. Once the runtime is installed,
+you can also sign in from **Settings > Providers** in the mobile app.
 
 Installation continues if you leave settings or reconnect. Setup requires
 permission to operate the environment; update an older server if it does not offer
@@ -23,7 +23,7 @@ on the environment's machine. From another device, the final page will usually
 fail to load because the sign-in listener is on the environment.
 
 Copy the full return address, including everything after `?`, into the return URL
-field in the web or desktop client where you started setup, then choose
+field in the client where you started sign-in, then choose
 **Continue**. Keep the original address; do not replace it with the server's
 hostname. Only that T3 Code sign-in session can finish the attempt. If it expires,
 retry sign-in and use the new link.
@@ -43,8 +43,8 @@ Choose **Sign-in method** in the Antigravity provider settings:
 | Gemini API key             | API key; choose Connect without a browser                                                    |
 | Agent Platform / Vertex AI | API key, or GCP project and location with Application Default Credentials on the environment |
 
-The Antigravity API key field is stored in plain text in settings on the
-environment. The agent uses the method and credentials selected for this instance;
+The environment stores the Antigravity API key outside its settings file, and
+clients only see whether one is saved. The agent uses the method and credentials selected for this instance;
 ambient `GEMINI_API_KEY` and Google credential variables do not override them.
 Changing the method stops the instance's sessions. Sign out before replacing an
 account.
@@ -68,9 +68,15 @@ Leave the field blank to use the managed runtime, or a compatible executable on
 
 ## Models and threads
 
-The model list comes from your Antigravity account and can differ from other
-Antigravity apps. A resumed thread keeps its selected model. If access to that
-model ends, select another available model before continuing.
+The model list comes from your Antigravity account, including Claude and GPT models
+when your plan has them. Pick a thinking level beside the model list in the model picker; it
+shows only the levels the selected model supports. A resumed thread keeps its
+selected model. If access to that model ends, select another available model
+before continuing.
+
+Antigravity creates empty `.gemini/skills` and `.agents/skills` folders in the
+workspace when a session starts. Git does not track empty folders, so they never
+appear in commits.
 
 Use Antigravity's native `/plan` command for planning. T3 Code's separate Plan mode
 is unavailable. Tool approvals follow [Permission modes](./permission-modes.md).
@@ -80,6 +86,9 @@ Questions with fixed choices still need one of the offered answers, even in
 T3 Code keeps conversation history and file diffs, but Antigravity cannot rewind
 its conversation. Reverting a thread or editing and resubmitting an earlier turn
 is unavailable. Continue with a follow-up message or start a new thread.
+
+Manual context compaction is unavailable through Antigravity's ACP runtime, even
+though its CLI has `/compact`. Start a new thread when you need a fresh context.
 
 ### Skills and attachments
 
@@ -92,14 +101,9 @@ Skills for every project go in `~/.gemini/config/skills` or
 `~/.gemini/antigravity-cli/skills`. Antigravity does not read `~/.agents/skills`,
 so a skill there only appears when the project itself is your home directory.
 
-Antigravity accepts images, PDFs, text files, and supported audio formats directly.
-Its limits are 1 MiB per text file, 10 MiB per image, 20 MiB per audio clip, and
-50 MiB total native attachments per message. PDFs, text, and audio that exceed
-their native limits or the remaining native budget are passed as file paths
-for the agent to inspect with tools. ZIP archives and videos also use file paths.
-These files do not count toward the native attachment budget or enable native video input.
-Unsupported image formats are rejected. The native limits can be lower than
-the general upload limit.
+Antigravity receives images directly. Every other attachment, including PDFs,
+text, audio, archives, and videos, is passed as a saved file path for the agent
+to inspect with its tools. A video path does not enable native video input.
 
 ### Subagents
 
@@ -117,7 +121,7 @@ runtimes are shared on the environment.
 | Action                    | Effect                                                            |
 | ------------------------- | ----------------------------------------------------------------- |
 | Disable                   | Stops the instance's sessions and keeps its Google sign-in.       |
-| Sign out of Google        | Stops the instance's sessions and removes its saved Google login. |
+| Sign out                  | Stops the instance's sessions and removes its saved Google login. |
 | Remove downloaded runtime | Removes the shared installation and keeps Google credentials.     |
 
 All three keep thread history and workspace files. Sending `/logout` by itself in
@@ -130,12 +134,16 @@ is refused while the runtime is in use.
 
 ## Check access and troubleshoot
 
+Open **Usage > Limits** to see the remaining Gemini and shared Claude/GPT allowances
+for Google sign-ins. Each group has separate five-hour and weekly limits and reset
+times. Limits refresh with provider status and include usage outside T3 Code.
+
 A server restart keeps your Google sign-in. The provider shows the saved account
 until a session, a refresh, or a sign-out reports something new.
 
 To check access and reload models, use **Refresh provider status** in web or desktop
 provider settings, or **Refresh models** in mobile thread settings. If asked to
-sign in again, use setup on web or desktop.
+sign in again, use provider settings on web or desktop, or **Settings > Providers** on mobile.
 
 If Google reports `SUBSCRIPTION_REQUIRED`, an account restriction, or a usage limit,
 follow the provider's message and any retry time. See [Google's account plans][plans]

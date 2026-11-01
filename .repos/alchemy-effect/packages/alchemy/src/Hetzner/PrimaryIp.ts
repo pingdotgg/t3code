@@ -1,4 +1,4 @@
-import { Services } from "@distilled.cloud/hetzner";
+import * as Hetzner from "@distilled.cloud/hetzner";
 import type { GetPrimaryIpResponsePrimaryIp } from "@distilled.cloud/hetzner/primary_ips";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
@@ -175,6 +175,7 @@ export type PrimaryIp = Resource<
  * ```
  *
  * @resource
+ * @product IP Address
  */
 export const PrimaryIp = Resource<PrimaryIp>("Hetzner.PrimaryIp");
 
@@ -261,13 +262,13 @@ const createPrimaryIpName = (
   });
 
 const getById = (id: number) =>
-  Services.primaryIps.getPrimaryIp({ id }).pipe(
+  Hetzner.primaryIps.getPrimaryIp({ id }).pipe(
     Effect.map(({ primary_ip }) => primary_ip),
     Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
   );
 
 const getByName = (name: string) =>
-  Services.primaryIps
+  Hetzner.primaryIps
     .listPrimaryIps({ name, per_page: 50 })
     .pipe(Effect.map(({ primary_ips }) => primary_ips[0]));
 
@@ -294,7 +295,7 @@ const observe = Effect.fn(function* ({
 });
 
 const refresh = (id: number) =>
-  Services.primaryIps.getPrimaryIp({ id }).pipe(
+  Hetzner.primaryIps.getPrimaryIp({ id }).pipe(
     Effect.map(({ primary_ip }) => primary_ip),
     Effect.retry({
       while: (e) => e._tag === "NotFound",
@@ -307,7 +308,7 @@ const refresh = (id: number) =>
   );
 
 const disableProtection = (id: number) =>
-  Services.primaryIpActions
+  Hetzner.primaryIpActions
     .changePrimaryIpProtection({ id, delete: false })
     .pipe(Effect.flatMap(({ action }) => waitForAction(action)));
 
@@ -316,7 +317,7 @@ export const PrimaryIpProvider = () =>
     stables: ["id", "ip", "type", "location", "locationId", "created"],
     nuke: { dependsOn: ["Hetzner.Server"] },
     list: Effect.fn(function* () {
-      const items = yield* Services.primaryIps.listPrimaryIps
+      const items = yield* Hetzner.primaryIps.listPrimaryIps
         .items({ label_selector: alchemyStackSelector, per_page: 50 })
         .pipe(
           Stream.runCollect,
@@ -378,7 +379,7 @@ export const PrimaryIpProvider = () =>
           });
         }
         const location = yield* findLocation(placement);
-        const created = yield* Services.primaryIps
+        const created = yield* Hetzner.primaryIps
           .createPrimaryIp({
             name,
             type: news.type,
@@ -392,7 +393,7 @@ export const PrimaryIpProvider = () =>
                 Effect.flatMap((hit) =>
                   hit !== undefined
                     ? Effect.succeed({ primary_ip: hit, action: undefined })
-                    : Services.primaryIps.createPrimaryIp({
+                    : Hetzner.primaryIps.createPrimaryIp({
                         name,
                         type: news.type,
                         location: location.name,
@@ -419,7 +420,7 @@ export const PrimaryIpProvider = () =>
         upsert.length > 0 ||
         removed.length > 0;
       if (needsUpdate) {
-        const updated = yield* Services.primaryIps.updatePrimaryIp({
+        const updated = yield* Hetzner.primaryIps.updatePrimaryIp({
           id: current.id,
           name,
           auto_delete: desiredAutoDelete,
@@ -430,7 +431,7 @@ export const PrimaryIpProvider = () =>
 
       if (current.protection.delete !== desiredProtection) {
         const { action } =
-          yield* Services.primaryIpActions.changePrimaryIpProtection({
+          yield* Hetzner.primaryIpActions.changePrimaryIpProtection({
             id: current.id,
             delete: desiredProtection,
           });
@@ -448,12 +449,12 @@ export const PrimaryIpProvider = () =>
         yield* disableProtection(current.id);
       }
       if (current.assignee_id !== null) {
-        const { action } = yield* Services.primaryIpActions.unassignPrimaryIp({
+        const { action } = yield* Hetzner.primaryIpActions.unassignPrimaryIp({
           id: current.id,
         });
         yield* waitForAction(action);
       }
-      yield* Services.primaryIps
+      yield* Hetzner.primaryIps
         .deletePrimaryIp({ id: current.id })
         .pipe(Effect.catchTag("NotFound", () => Effect.void));
     }),

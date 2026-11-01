@@ -1,8 +1,8 @@
 import * as DenoSocket from "@effect/platform-deno/DenoSocket"
 import { assert, describe, it } from "@effect/vitest"
 import { Deferred, Effect, Fiber, Queue } from "effect"
+import * as Socket from "effect/socket/Socket"
 import * as Stream from "effect/Stream"
-import * as Socket from "effect/unstable/socket/Socket"
 
 const ca = Deno.readTextFileSync(new URL("./fixtures/tls/ca.pem", import.meta.url))
 const cert = Deno.readTextFileSync(new URL("./fixtures/tls/cert.pem", import.meta.url))

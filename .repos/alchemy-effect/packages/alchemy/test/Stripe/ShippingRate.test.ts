@@ -116,7 +116,10 @@ test.provider(
       const deactivated = yield* waitUntilDeactivated(created.id);
       expect(deactivated).toEqual("inactive");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:stripe", "provider:stripe:shippingrate", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -152,7 +155,10 @@ test.provider(
       const after = yield* provider.list();
       expect(after.find((rate) => rate.id === deployed.id)).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:stripe", "provider:stripe:shippingrate", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -202,5 +208,8 @@ test.provider(
       const deactivated = yield* waitUntilDeactivated(replaced.id);
       expect(deactivated).toEqual("inactive");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:stripe", "provider:stripe:shippingrate", "live"],
+    timeout: 120_000,
+  },
 );

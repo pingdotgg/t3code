@@ -1,7 +1,8 @@
 import { assert, describe, it } from "@effect/vitest"
-import { type Cause, Deferred, Effect, Exit, Fiber, Queue, Schema, Stream } from "effect"
-import { Entity, ShardingConfig } from "effect/unstable/cluster"
-import { Rpc } from "effect/unstable/rpc"
+import { type Cause, Deferred, Effect, Exit, Fiber, Option, Queue, Schema, Scope, Stream } from "effect"
+import { Entity, ShardingConfig } from "effect/cluster"
+import { CurrentActivationScope } from "effect/cluster/internal/entityActivation"
+import { Rpc } from "effect/rpc"
 import { CallerId, ContextBleedEntity, ContextBleedLayer, TestEntity, TestEntityLayer, User } from "./TestEntity.ts"
 
 const StreamEntity = Entity.make("StreamEntity", [
@@ -60,6 +61,32 @@ const observeFatalDefect = (disableFatalDefects: boolean | undefined, defecting:
 
 describe.concurrent("Entity", () => {
   describe("makeTestClient", () => {
+    it.effect("provides an activation scope per entity and closes it with the client", () =>
+      Effect.gen(function*() {
+        const entity = Entity.make("ActivationScope", [Rpc.make("Read", { success: Schema.String })])
+        const activations: Array<Scope.Scope> = []
+        const closed: Array<string> = []
+        const layer = entity.toLayer(Effect.gen(function*() {
+          const address = yield* Entity.CurrentAddress
+          const activation = yield* Effect.serviceOption(CurrentActivationScope)
+          assert(Option.isSome(activation), "makeTestClient must provide the entity activation scope")
+          activations.push(activation.value)
+          yield* Scope.addFinalizer(activation.value, Effect.sync(() => closed.push(address.entityId)))
+          return { Read: () => Effect.succeed(address.entityId) }
+        }))
+        yield* Effect.scoped(Effect.gen(function*() {
+          const makeClient = yield* Entity.makeTestClient(entity, layer)
+          const first = yield* makeClient("one")
+          const second = yield* makeClient("two")
+          assert.strictEqual(yield* first.Read(), "one")
+          assert.strictEqual(yield* second.Read(), "two")
+          assert.strictEqual(activations.length, 2)
+          assert.notStrictEqual(activations[0], activations[1])
+          assert.deepStrictEqual(closed, [])
+        }))
+        assert.deepStrictEqual(closed.sort(), ["one", "two"])
+      }).pipe(Effect.provide(TestShardingConfig)))
+
     it.effect("creates an in-memory client for an entity layer", () =>
       Effect.gen(function*() {
         const makeClient = yield* Entity.makeTestClient(TestEntity, TestEntityLayer)

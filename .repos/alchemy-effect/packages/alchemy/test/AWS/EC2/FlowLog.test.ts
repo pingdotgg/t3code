@@ -120,7 +120,16 @@ test.provider(
       yield* stack.destroy();
       yield* assertDeleted(flowLog.flowLogId);
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:iam",
+      "provider:aws:logs",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -138,5 +147,14 @@ test.provider(
       yield* stack.destroy();
       yield* assertDeleted(flowLog.flowLogId);
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:iam",
+      "provider:aws:logs",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
