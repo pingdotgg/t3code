@@ -216,11 +216,6 @@ function terminalRunStatus(status: OrchestrationV2RunStatus): boolean {
   );
 }
 
-/** Any open question, async ones included, puts the thread in Input. */
-export function shellHasPendingUserInput(thread: OrchestrationV2ThreadShell): boolean {
-  return thread.pendingRuntimeRequest?.kind === "user_input";
-}
-
 // Only work the agent waits on holds it: commands and monitors it left running
 // unmarked, such as a dev server, present the run's own status. The
 // server suppresses the roster while an interruptible activity run exists, so a
@@ -315,7 +310,8 @@ export function presentThreadShell(
       thread.pendingRuntimeRequest !== null &&
       thread.pendingRuntimeRequest.kind !== "user_input" &&
       thread.pendingRuntimeRequest.kind !== "auth_refresh",
-    hasPendingUserInput: shellHasPendingUserInput(thread),
+    // Async questions count too, so a thread with any open question leaves Working.
+    hasPendingUserInput: thread.pendingRuntimeRequest?.kind === "user_input",
     pendingSubagentRequest,
     pendingGuestMessageCount: thread.pendingGuestMessageCount ?? 0,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
