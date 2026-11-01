@@ -288,10 +288,11 @@ describe("server browser snapshot screenshot", () => {
   const screenshotOf = async (html: string) => {
     const page = await context.newPage();
     await page.setContent(html);
-    const { screenshot } = await ServerBrowserPage.snapshot({
+    const { screenshot, fullScreenshot } = await ServerBrowserPage.snapshot({
       page,
       cdp: await context.newCDPSession(page),
       renderScale: 2,
+      fullScreenshot: true,
       consoleEntries: [],
       networkEntries: [],
       actionTimeline: [],
@@ -314,7 +315,7 @@ describe("server browser snapshot screenshot", () => {
         Array.from(context.getImageData(x * bitmap.width, y * bitmap.height, 1, 1).data),
       );
     })()`)) as Array<[number, number, number, number]>;
-    return { screenshot, pixels };
+    return { screenshot, fullScreenshot, pixels };
   };
   const colorOf = ([red, green, blue]: readonly [number, number, number, number]) =>
     blue - red > 100 ? "blue" : red - blue > 100 ? "red" : `rgb(${red}, ${green}, ${blue})`;
@@ -329,12 +330,13 @@ describe("server browser snapshot screenshot", () => {
   });
 
   it("captures a plain page at the shrunk size with its content in place", async () => {
-    const { screenshot, pixels } = await screenshotOf(halves(""));
+    const { screenshot, fullScreenshot, pixels } = await screenshotOf(halves(""));
 
     expect({
       size: [screenshot.width, screenshot.height],
+      fullSize: [fullScreenshot?.width, fullScreenshot?.height],
       colors: pixels.map(colorOf),
-    }).toEqual({ size: [1280, 800], colors: ["blue", "red", "red"] });
+    }).toEqual({ size: [1280, 800], fullSize: [2560, 1600], colors: ["blue", "red", "red"] });
   });
 
   it("shrinks the screenshot of an XML document, whose createElement makes no canvas", async () => {
