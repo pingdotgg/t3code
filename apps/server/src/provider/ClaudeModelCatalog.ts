@@ -31,6 +31,14 @@ export interface ClaudeCatalogModel {
   readonly model: ServerProviderModel;
   readonly runtime: ClaudeCodeProfile;
   readonly compatibility: ClaudeCodeCompatibility;
+  /** What to send Claude Code instead of the slug, from its own model list. */
+  readonly apiModel?: string;
+}
+
+/** A row of Claude Code's own model list, as initialization reports it. */
+export interface ClaudeCodeReportedModel {
+  readonly value: string;
+  readonly resolvedModel?: string | undefined;
 }
 
 export interface ClaudeModelCatalog {
@@ -126,6 +134,49 @@ function resolveClaudeCatalogModel(
       entry.model.aliases?.some((alias) => alias.toLowerCase() === value.toLowerCase()),
     )
   );
+}
+
+const CLAUDE_CODE_MODEL_SUFFIX = /\[[^\]]*\]$/;
+
+// Cloud backends decorate first-party ids: Bedrock adds a region prefix and a
+// version ("us.anthropic.claude-opus-4-6-v1"), Vertex adds "@<date>".
+function stripClaudeBackendDecoration(wireModel: string): string {
+  return wireModel
+    .replace(/^(?:[a-z-]+\.)?anthropic\./, "")
+    .replace(/-v\d+(?::\d+)?$/, "")
+    .replace(/@[^@]*$/, "");
+}
+
+/**
+ * On Bedrock, Vertex and similar backends Claude Code does not accept the first-party slug: it
+ * either sends it verbatim or, when `availableModels` excludes it, silently runs the default
+ * model instead. Its model list names the id that does work, often a family alias that
+ * `ANTHROPIC_DEFAULT_*_MODEL` points at a backend id.
+ */
+export function withClaudeCodeModelRoutes(
+  catalog: ClaudeModelCatalog,
+  reportedModels: ReadonlyArray<ClaudeCodeReportedModel>,
+): ClaudeModelCatalog {
+  const apiModels = new Map<string, string>();
+  for (const reported of reportedModels) {
+    if (reported.value === "default") continue;
+    const wireModel = (reported.resolvedModel ?? reported.value).replace(
+      CLAUDE_CODE_MODEL_SUFFIX,
+      "",
+    );
+    const firstPartyModel = stripClaudeBackendDecoration(wireModel);
+    if (firstPartyModel === wireModel) continue;
+    const entry = resolveClaudeCatalogModel(catalog, firstPartyModel);
+    if (!entry || apiModels.has(entry.model.slug)) continue;
+    apiModels.set(entry.model.slug, reported.value.replace(CLAUDE_CODE_MODEL_SUFFIX, ""));
+  }
+  if (apiModels.size === 0) return catalog;
+  return {
+    models: catalog.models.map((entry) => {
+      const apiModel = apiModels.get(entry.model.slug);
+      return apiModel ? { ...entry, apiModel } : entry;
+    }),
+  };
 }
 
 export function resolveClaudeModelSlug(catalog: ClaudeModelCatalog, slugOrAlias: string): string {
@@ -259,7 +310,7 @@ export function resolveClaudeCatalogApiModelId(
   modelSelection: ModelSelection,
 ): string {
   const entry = resolveClaudeCatalogModel(catalog, modelSelection.model);
-  const slug = entry?.model.slug ?? modelSelection.model;
+  const slug = entry?.apiModel ?? entry?.model.slug ?? modelSelection.model;
   const descriptors = getProviderOptionDescriptors({
     caps: entry?.model.capabilities ?? EMPTY_CAPABILITIES,
     selections: modelSelection.options,

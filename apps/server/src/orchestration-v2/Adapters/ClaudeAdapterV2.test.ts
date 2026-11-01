@@ -65,6 +65,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -90,6 +91,17 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  type ClaudeModelCatalog,
+  resolveClaudeModelCatalog,
+  withClaudeCodeModelRoutes,
+} from "../../provider/ClaudeModelCatalog.ts";
+import {
+  makeClaudeCodeModelRoutes,
+  resolveClaudeModelSettingsKey,
+} from "../../provider/ClaudeCodeModelRoutes.ts";
+import { resolveProviderCatalog } from "../../provider/ModelManifest.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -2949,6 +2961,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly freshQueueOnReopen?: boolean;
     readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
     readonly allocateSessionId?: Effect.Effect<string>;
+    readonly modelCatalog?: (
+      cwd: string | null,
+      launchSettings?: ClaudeSdk.Settings,
+    ) => Effect.Effect<ClaudeModelCatalog>;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -3011,6 +3027,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         path: yield* Path.Path,
         crypto: yield* Crypto.Crypto,
         idAllocator,
+        ...(options?.modelCatalog ? { modelCatalog: options.modelCatalog } : {}),
         continuationRequests: {
           offer: (request) =>
             Effect.sync(() => {
@@ -4674,6 +4691,69 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("sends the model id Claude Code reported for the selected catalog model", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const modelCatalog = yield* Ref.make(BUNDLED_CLAUDE_MODEL_CATALOG);
+        const harness = yield* makeWakeHarnessWithOptions({
+          modelCatalog: () => Ref.get(modelCatalog),
+        });
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number, model: string) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-reported-model:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            modelSelection: { instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID, model },
+          });
+        // Models the live manifest delivers after a release, so the bundled catalog lacks them.
+        const manifestCatalog = resolveClaudeModelCatalog(
+          resolveProviderCatalog(
+            {
+              version: 1,
+              currentModels: {},
+              providers: {
+                claudeAgent: {
+                  profiles: {},
+                  models: [
+                    { slug: "claude-haiku-6", name: "Claude Haiku 6", status: "current" },
+                    { slug: "claude-sonnet-6", name: "Claude Sonnet 6", status: "current" },
+                  ],
+                },
+              },
+            },
+            ProviderDriverKind.make("claudeAgent"),
+          ) ?? undefined,
+        );
+        // The probe reports Bedrock with ANTHROPIC_DEFAULT_*_MODEL set after the adapter starts.
+        yield* Ref.set(
+          modelCatalog,
+          withClaudeCodeModelRoutes(manifestCatalog, [
+            { value: "default", resolvedModel: "global.anthropic.claude-sonnet-6" },
+            { value: "sonnet", resolvedModel: "global.anthropic.claude-sonnet-6" },
+            { value: "haiku", resolvedModel: "global.anthropic.claude-haiku-6" },
+          ]),
+        );
+
+        yield* harness.runtime.startTurn(turn(1, "claude-haiku-6"));
+        assert.equal(harness.getOpenedOptions()?.model, "haiku");
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+
+        yield* harness.runtime.startTurn(turn(2, "claude-sonnet-6"));
+        assert.deepEqual(harness.liveSelectionChanges[0], { model: "sonnet" });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     {
       content: { type: "advisor_tool_result_error", error_code: "overloaded" },
@@ -4732,6 +4812,126 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
       ),
     ),
+  );
+
+  it.effect(
+    "sends Claude Code's reported model id only where the cwd resolves it as the probe did",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sdk = yield* Effect.promise(() =>
+          vi.importActual<typeof ClaudeSdk>("@anthropic-ai/claude-agent-sdk"),
+        );
+        vi.mocked(ClaudeSdk.resolveSettings).mockImplementation(sdk.resolveSettings);
+        const probeCwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-probe-" });
+        const project = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-project-" });
+        const overridden = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-local-",
+        });
+        yield* fileSystem.makeDirectory(path.join(overridden, ".claude"));
+        yield* fileSystem.writeFileString(
+          path.join(overridden, ".claude", "settings.local.json"),
+          JSON.stringify({
+            env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: "global.anthropic.claude-sonnet-4-6" },
+          }),
+        );
+        const routes = yield* makeClaudeCodeModelRoutes(
+          Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
+          (cwd) =>
+            resolveClaudeModelSettingsKey(["project", "local"], cwd).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+            ),
+          probeCwd,
+        );
+        yield* routes.record([
+          { value: "haiku", resolvedModel: "us.anthropic.claude-haiku-4-5-20251001-v1:0" },
+        ]);
+        yield* routes.settle;
+        const openedModel = (cwd: string, launchSettings?: Record<string, unknown>) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const harness = yield* makeWakeHarnessWithOptions({
+                modelCatalog: routes.catalogFor,
+                settings: {
+                  ...DEFAULT_CLAUDE_SETTINGS,
+                  launchArgs:
+                    launchSettings === undefined
+                      ? ""
+                      : `--settings '${JSON.stringify(launchSettings)}'`,
+                },
+              });
+              yield* harness.runtime.startTurn(
+                makeClaudeTestTurnInput({
+                  threadId: harness.threadId,
+                  providerThread: harness.providerThread,
+                  now: yield* DateTime.now,
+                  attemptId: RunAttemptId.make("attempt-reported-model-cwd"),
+                  text: "Request",
+                  attachments: [],
+                  modelSelection: {
+                    instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+                    model: "claude-haiku-4-5",
+                  },
+                  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+                    runtimeMode: "full-access",
+                    interactionMode: "default",
+                    cwd,
+                  }),
+                }),
+              );
+              return harness.getOpenedOptions()?.model;
+            }),
+          );
+
+        assert.equal(yield* openedModel(project), "haiku");
+        assert.equal(
+          yield* openedModel(project, {
+            env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: "global.anthropic.claude-sonnet-4-6" },
+          }),
+          "claude-haiku-4-5",
+        );
+        assert.equal(yield* openedModel(project, { env: { FOO: "1" } }), "haiku");
+        // Claude Code resolves `haiku` to Sonnet there, so the slug is the only safe id.
+        assert.equal(yield* openedModel(overridden), "claude-haiku-4-5");
+
+        // A linked worktree and a repository subdirectory read the main checkout's local file.
+        const repo = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-repo-" });
+        const worktree = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-wt-" });
+        const worktreeGitDir = path.join(repo, ".git", "worktrees", "wt");
+        yield* fileSystem.makeDirectory(worktreeGitDir, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(worktreeGitDir, "commondir"), "../..\n");
+        yield* fileSystem.writeFileString(
+          path.join(worktree, ".git"),
+          `gitdir: ${worktreeGitDir}\n`,
+        );
+        yield* fileSystem.makeDirectory(path.join(repo, ".claude"));
+        yield* fileSystem.makeDirectory(path.join(repo, "packages", "app"), { recursive: true });
+        const rootLocal = (settings: object) =>
+          fileSystem.writeFileString(
+            path.join(repo, ".claude", "settings.local.json"),
+            JSON.stringify(settings),
+          );
+        yield* rootLocal({
+          env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: "global.anthropic.claude-sonnet-4-6" },
+        });
+        assert.equal(
+          yield* openedModel(worktree),
+          (yield* HostProcess.Platform) === "win32" ? "haiku" : "claude-haiku-4-5",
+        );
+        assert.equal(
+          yield* openedModel(path.join(repo, "packages", "app")),
+          (yield* HostProcess.Platform) === "win32" ? "haiku" : "claude-haiku-4-5",
+        );
+        yield* rootLocal({ env: { FOO: "1" } });
+        assert.equal(yield* openedModel(worktree), "haiku");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
   );
 
   describe("MCP elicitations", () => {
