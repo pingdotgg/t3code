@@ -80,7 +80,13 @@ export const make = Effect.gen(function* () {
 
         const instances = yield* pool.list;
         const primary = instances.find((instance) => instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID);
-        const configOption = primary === undefined ? Option.none() : yield* primary.currentConfig;
+        if (
+          primary === undefined ||
+          !(yield* primary.waitForReady(BOOTSTRAP_TRANSIENT_RETRY_TIMEOUT))
+        ) {
+          return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
+        }
+        const configOption = yield* primary.currentConfig;
         if (Option.isNone(configOption)) {
           return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
         }

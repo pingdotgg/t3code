@@ -549,6 +549,41 @@ describe("DesktopWindow", () => {
       }),
   );
 
+  it.effect.each(["renderer", "backend"] as const)(
+    "loads early and reveals once when %s becomes ready first",
+    (first) =>
+      Effect.gen(function* () {
+        const fake = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const reveal = vi.fn();
+        yield* Effect.gen(function* () {
+          const windows = yield* DesktopWindow.DesktopWindow;
+          yield* windows.ensureMain;
+          assert.equal(fake.loadURL.mock.calls.length, 1);
+          if (first === "renderer") fake.windowListeners.get("ready-to-show")?.();
+          assert.equal(reveal.mock.calls.length, 0);
+          yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          if (first === "backend") {
+            assert.equal(reveal.mock.calls.length, 0);
+            fake.windowListeners.get("ready-to-show")?.();
+          }
+          yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          assert.equal(yield* Ref.get(createCount), 1);
+          assert.equal(reveal.mock.calls.length, 1);
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              window: fake.window,
+              createCount,
+              mainWindow,
+              onReveal: reveal,
+            }),
+          ),
+        );
+      }),
+  );
+
   it.effect("blocks only repeated Cmd+W input before it reaches the native window menu", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();

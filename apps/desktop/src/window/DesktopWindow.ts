@@ -5,6 +5,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 
 import * as Electron from "electron";
 
@@ -310,6 +311,8 @@ export const make = Effect.gen(function* () {
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
+  const mainWindowMutex = yield* Semaphore.make(1);
+  let pendingFirstReveal: Effect.Effect<void> = Effect.void;
   let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
 
   const dismissConnectingSplash = Effect.gen(function* () {
@@ -822,14 +825,27 @@ export const make = Effect.gen(function* () {
     if (environment.platform === "linux") {
       revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
     }
+    let rendererReady = false;
+    let firstRevealComplete = false;
+    const revealWhenReady = Effect.gen(function* () {
+      if (
+        !rendererReady ||
+        firstRevealComplete ||
+        window.isDestroyed() ||
+        (yield* Ref.get(desktopState.quitting))
+      )
+        return;
+      if (yield* waitingForBackend) return;
+      firstRevealComplete = true;
+      window.webContents.setBackgroundThrottling(true);
+      if (persistedSettings.mainWindowMaximized) window.maximize();
+      yield* electronWindow.reveal(window);
+      yield* dismissConnectingSplash;
+    });
+    pendingFirstReveal = revealWhenReady;
     bindFirstRevealTrigger(revealSubscribers, () => {
-      if (!window.isDestroyed()) {
-        window.webContents.setBackgroundThrottling(true);
-      }
-      if (persistedSettings.mainWindowMaximized) {
-        window.maximize();
-      }
-      void runPromise(Effect.andThen(electronWindow.reveal(window), dismissConnectingSplash));
+      rendererReady = true;
+      void runPromise(revealWhenReady);
     });
 
     loadApplication();
@@ -862,7 +878,7 @@ export const make = Effect.gen(function* () {
       return existingWindow;
     }
     return yield* createMain;
-  }).pipe(Effect.withSpan("desktop.window.ensureMain"));
+  }).pipe(mainWindowMutex.withPermits(1), Effect.withSpan("desktop.window.ensureMain"));
 
   const requireWindow = (window: Option.Option<Electron.BrowserWindow>) =>
     Option.match(window, {
@@ -884,9 +900,7 @@ export const make = Effect.gen(function* () {
   const createMainIfBackendReady = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return;
     if (yield* waitingForBackend) return;
-    const existingWindow = yield* currentMainWindow;
-    if (Option.isSome(existingWindow)) return;
-    yield* createMain;
+    yield* ensureMain;
   }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
 
   const showConnectingSplash = Effect.gen(function* () {
@@ -998,6 +1012,7 @@ export const make = Effect.gen(function* () {
       yield* Ref.set(backendReadyRef, true);
       yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
       yield* createMainIfBackendReady;
+      yield* pendingFirstReveal;
     }),
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(
       Effect.withSpan("desktop.window.handleBackendNotReady"),
