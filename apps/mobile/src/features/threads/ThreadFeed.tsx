@@ -2568,14 +2568,14 @@ export const ThreadFeed = memo(function ThreadFeed({
   const userScrollSessionRef = useRef(false);
   // Null until the first report, so a remounted feed resyncs a screen that outlived the old one.
   const atEndRef = useRef<boolean | null>(null);
-  const reportListAtEnd = useEffectEvent(() => {
+  const reportListAtEnd = () => {
     // While following, the end only lags a growing row by a frame and the arrow is hidden anyway,
     // so reporting it would re-render the screen twice per streamed growth for nothing.
     const isAtEnd = endFollowEnabledRef.current || listRef.current?.getState().isAtEnd;
     if (isAtEnd === undefined || atEndRef.current === isAtEnd) return;
     atEndRef.current = isAtEnd;
     onAtEndChange?.(isAtEnd);
-  });
+  };
   const setEndFollow = (enabled: boolean) => {
     if (endFollowEnabledRef.current === enabled) {
       return;
@@ -3201,26 +3201,26 @@ export const ThreadFeed = memo(function ThreadFeed({
   // on Android the declarative contentInset floor covers this same window.
   const listMountKey = `${feedThreadKey}:${presentedFeed.some((entry) => entry.type !== "thinking") ? "filled" : "empty"}`;
   const { contentInsetEndAdjustment } = props;
+  // LegendList's combined ref drops a ref cleanup's return, so detach arrives as attachList(null).
+  const releaseListRef = useRef<(() => void) | null>(null);
   const attachList = (list: LegendListRef | null) => {
+    releaseListRef.current?.();
+    releaseListRef.current = null;
     listRef.current = list;
+    if (!list) return;
     const bottom = contentInsetEndAdjustment.get();
-    if (list && bottom > 0) list.reportContentInset({ bottom });
-  };
-  // The edge signal refreshes on scroll, data and layout passes, not when a row grows, so a
-  // reply streaming in while the reader holds the list also re-reads the end.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the mounted list's end and size signals
-  useLayoutEffect(() => {
-    const listState = listRef.current?.getState();
-    if (!listState) return;
+    if (bottom > 0) list.reportContentInset({ bottom });
+    // The edge signal refreshes on scroll, data and layout passes, not when a row grows, so a
+    // reply streaming in while the reader holds the list also re-reads the end.
+    const listState = list.getState();
     const unsubscribeAtEnd = listState.listen("isAtEnd", () => reportListAtEnd());
     const unsubscribeTotalSize = listState.listen("totalSize", () => reportListAtEnd());
-    reportListAtEnd();
-    return () => {
+    releaseListRef.current = () => {
       unsubscribeAtEnd();
       unsubscribeTotalSize();
     };
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The mount key names the list instance to subscribe to.
-  }, [listMountKey, listRef]);
+    reportListAtEnd();
+  };
   const jumpIndex = jumpReady
     ? presentedFeed.findIndex((entry) => entry.type === "message" && entry.id === jumpToMessageId)
     : null;
