@@ -66,8 +66,8 @@ find only searches the files loaded so far.
 
 ## Review a diff from the keyboard
 
-Click into the Diff panel to review it without the mouse. The panel starts on
-files. Press `i` to move into a file's lines, and Escape to step back out.
+Click into the Diff panel or a pull request's Code tab to review it without the
+mouse. Both start on files. Press `i` to move into a file's lines, and Escape to step back out.
 
 On files:
 
@@ -81,14 +81,16 @@ On lines:
 
 - `j` and `k` move one line.
 - `Shift+j` and `Shift+k` show more of the unchanged lines below or above.
-- `c` comments on the line. After you send or cancel the comment, you are
-  back on the line.
+- `c` comments on the line. In a pull request, that starts a review comment.
+  After you send or cancel the comment, you are back on the line.
 - `Shift+v` starts a selection. `j` and `k` extend it, and `c` comments on
   the selected lines.
 - `v` marks the file viewed and returns to files.
 
-Viewed marks belong to this device and thread. A file that changes after you
-view it shows as not viewed again. To jump to the next unviewed file after each
+In the Diff panel, viewed marks belong to this device and thread, and a file that
+changes after you view it shows as not viewed again. In a pull request, `v` sets
+the same marks as the Viewed checkbox; see
+[Mark files as viewed](./source-control.md#mark-files-as-viewed). To jump to the next unviewed file after each
 mark, turn on **Settings → Diffs → Auto-advance after marking viewed**.
 
 Change any of these keys in **Settings → Keybindings** under the **Diff**

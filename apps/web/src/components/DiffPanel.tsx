@@ -13,7 +13,6 @@ import {
   CheckIcon,
   ChevronDownIcon,
   Columns2Icon,
-  FileIcon,
   FlaskConicalOffIcon,
   FolderTreeIcon,
   PilcrowIcon,
@@ -68,7 +67,16 @@ import { formatRelativeTimeLabel, formatShortTimestamp } from "../timestampForma
 import { DiffFilePathCopyButton } from "./DiffFilePathCopyButton";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { DiffStatLabel } from "./chat/DiffStatLabel";
-import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
+import {
+  AnnotatableCodeView,
+  type AnnotatableCodeViewHandle,
+  type AnnotatableCodeViewReview,
+} from "./diffs/AnnotatableCodeView";
+import {
+  DiffCursorOutline,
+  DiffSingleFileToggle,
+  DiffViewedToggle,
+} from "./diffs/DiffReviewControls";
 import { type DiffReviewFile, useDiffReviewKeyboard } from "./diffs/useDiffReviewKeyboard";
 import { DiffFileTree } from "./diffs/DiffFileTree";
 import { FileExplorerPane } from "./files/FileExplorerPane";
@@ -77,7 +85,6 @@ import { Button } from "./ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Switch } from "./ui/switch";
-import { Checkbox } from "./ui/checkbox";
 import {
   Combobox,
   ComboboxEmpty,
@@ -101,8 +108,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
-import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
-import { shortcutLabelForCommand } from "../keybindings";
+import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
 import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
@@ -118,7 +124,6 @@ import { useOpenLink } from "../browser/useOpenLink";
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
 const DIFF_FILE_TREE_STORAGE_KEY = "t3code.diffFileTreeOpen";
-const DIFF_SINGLE_FILE_STORAGE_KEY = "t3code.diffSingleFile";
 const fileEntryCache = new WeakMap<
   FileDiffMetadata,
   { fileDiff: FileDiffMetadata; fileKey: string; fileVersion: number; viewedFingerprint: string }
@@ -156,13 +161,7 @@ function DiffFileCollapseToggle({
 }) {
   return (
     <>
-      {hasCursor ? (
-        // The sticky header is the nearest positioned box, so this outlines the whole header.
-        <span
-          aria-hidden
-          className="pointer-events-none absolute inset-0 ring-1 ring-primary/70 ring-inset"
-        />
-      ) : null}
+      {hasCursor ? <DiffCursorOutline /> : null}
       <Tooltip>
         <TooltipTrigger
           render={
@@ -188,39 +187,6 @@ function DiffFileCollapseToggle({
         <TooltipPopup side="top">{collapsed ? "Expand diff" : "Collapse diff"}</TooltipPopup>
       </Tooltip>
     </>
-  );
-}
-
-function DiffFileViewedToggle({
-  filePath,
-  viewed,
-  shortcutLabel,
-  onViewedChange,
-}: {
-  filePath: string;
-  viewed: boolean;
-  shortcutLabel: string | null;
-  onViewedChange: (viewed: boolean) => void;
-}) {
-  const action = viewed ? "Mark as not viewed" : "Mark as viewed";
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <label className="inline-flex cursor-pointer items-center gap-1.5 text-2xs text-muted-foreground" />
-        }
-      >
-        <Checkbox
-          aria-label={`Viewed ${filePath}`}
-          checked={viewed}
-          onCheckedChange={(checked) => onViewedChange(checked)}
-        />
-        Viewed
-      </TooltipTrigger>
-      <TooltipPopup side="top">
-        {shortcutLabel ? `${action} (${shortcutLabel})` : action}
-      </TooltipPopup>
-    </Tooltip>
   );
 }
 
@@ -276,11 +242,6 @@ export default function DiffPanel({
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
     DIFF_FILE_TREE_STORAGE_KEY,
-    false,
-    Schema.Boolean,
-  );
-  const [singleFile, setSingleFile] = useLocalStorage(
-    DIFF_SINGLE_FILE_STORAGE_KEY,
     false,
     Schema.Boolean,
   );
@@ -736,13 +697,6 @@ export default function DiffPanel({
     rendered: isFileReady(fileDiff) && !isFilePending(fileDiff),
   }));
   const viewedFileCount = shownFileEntries.filter(({ fileDiff }) => isFileViewed(fileDiff)).length;
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const viewedShortcutLabel = shortcutLabelForCommand(keybindings, "diff.toggleFileViewed", {
-    context: { diffFocus: true },
-  });
-  const commentShortcutLabel = shortcutLabelForCommand(keybindings, "diff.comment", {
-    context: { diffFocus: true, diffLineMode: true },
-  });
   const codeViewReveal = useCodeViewFileReveal();
   const viewerHandleRef = useRef<AnnotatableCodeViewHandle | null>(null);
   const attachViewer = useStableCallback((handle: AnnotatableCodeViewHandle | null) => {
@@ -757,11 +711,8 @@ export default function DiffPanel({
     }
     codeViewReveal.request(file.fileKey);
   };
-  const {
-    rootRef: reviewRootRef,
-    reviewRef,
-    ...review
-  } = useDiffReviewKeyboard({
+  const reviewRef = useRef<AnnotatableCodeViewReview | null>(null);
+  const { rootRef: reviewRootRef, ...review } = useDiffReviewKeyboard({
     scopeKey: collapseScopeKey,
     files: reviewFiles,
     diffStyle: diffLayout === "split" ? "split" : "unified",
@@ -774,8 +725,7 @@ export default function DiffPanel({
     setViewed: (file, viewed) => setFileViewed(file.fileDiff, viewed),
     revealFile: (file) =>
       revealFileAt(renderableFileEntries.findIndex(({ fileKey }) => fileKey === file.fileKey)),
-    singleFile,
-    setSingleFile,
+    beginComment: (fileKey, range) => reviewRef.current?.beginComment(fileKey, range),
   });
   const renderLoadingBoundary = () =>
     review.singleFileKey === undefined && settledFileCount < renderableFiles.length ? (
@@ -1300,24 +1250,11 @@ export default function DiffPanel({
           </Toggle>
         </ToggleGroup>
         {diffFileKeys.length > 0 && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Toggle
-                  aria-label={singleFile ? "Show all files" : "Show one file at a time"}
-                  variant="ghost"
-                  size="sm"
-                  pressed={singleFile}
-                  onPressedChange={review.toggleSingleFile}
-                />
-              }
-            >
-              <FileIcon className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {singleFile ? "Show all files" : "Show one file at a time"}
-            </TooltipPopup>
-          </Tooltip>
+          <DiffSingleFileToggle
+            singleFile={review.singleFile}
+            shortcutLabel={review.shortcutLabels.singleFile}
+            onToggle={review.toggleSingleFile}
+          />
         )}
         <Tooltip>
           <TooltipTrigger
@@ -1556,7 +1493,7 @@ export default function DiffPanel({
                     selectedLines={review.selectedLines}
                     onSelectedLinesChange={review.onSelectedLinesChange}
                     onDraftClose={review.onDraftClose}
-                    commentShortcutLabel={commentShortcutLabel}
+                    commentShortcutLabel={review.shortcutLabels.comment}
                     codeViewKey={`${codeViewMountKey}:${lazySource ? filePatchScope : "preview"}`}
                     className="h-full min-h-0 overflow-auto"
                     files={codeViewFiles}
@@ -1593,10 +1530,10 @@ export default function DiffPanel({
                             <DiffStatLabel additions={stat.additions} deletions={stat.deletions} />
                           ) : null}
                           {isFilePending(fileDiff) ? null : (
-                            <DiffFileViewedToggle
+                            <DiffViewedToggle
                               filePath={path}
                               viewed={isFileViewed(fileDiff)}
-                              shortcutLabel={viewedShortcutLabel}
+                              shortcutLabel={review.shortcutLabels.viewed}
                               onViewedChange={(viewed) => {
                                 setFileViewed(fileDiff, viewed);
                                 setDiffFileCollapsed(getCachedFileEntry(fileDiff).fileKey, viewed);

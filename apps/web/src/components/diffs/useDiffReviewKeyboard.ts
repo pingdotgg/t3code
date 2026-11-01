@@ -1,16 +1,22 @@
+import { useAtomValue } from "@effect/atom-react";
 import type {
   CodeViewLineScrollTarget,
   CodeViewLineSelection,
   FileDiffMetadata,
   HunkExpansionRegion,
+  SelectedLineRange,
 } from "@pierre/diffs";
+import type { CodeViewHandle } from "@pierre/diffs/react";
 import type { KeybindingCommand } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { useEffect, useRef, useState } from "react";
 
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { shortcutLabelForCommand } from "~/keybindings";
 import { type CommandHandlers, registerCommands } from "~/shortcuts/dispatcher";
+import { primaryServerKeybindingsAtom } from "~/state/server";
 
-import type { AnnotatableCodeViewHandle, AnnotatableCodeViewReview } from "./AnnotatableCodeView";
 import {
   adjacentFileKey,
   adjacentUnviewedFileKey,
@@ -56,6 +62,7 @@ const REPEATABLE_COMMANDS: ReadonlySet<DiffReviewCommand> = new Set([
 ]);
 
 const NO_EXPANSIONS: ReadonlyMap<number, HunkExpansionRegion> = new Map();
+const SINGLE_FILE_STORAGE_KEY = "t3code.diffSingleFile";
 
 const CONTROL_SELECTOR =
   'button, a[href], input, select, [role="button"], [role="checkbox"], [role="switch"]';
@@ -72,7 +79,7 @@ export interface DiffReviewFile {
   readonly rendered: boolean;
 }
 
-interface DiffReviewKeyboardInput {
+interface DiffReviewKeyboardInput<Annotation> {
   /** The thread and diff scope; a new one starts without a cursor. */
   readonly scopeKey: string | null;
   readonly files: ReadonlyArray<DiffReviewFile>;
@@ -80,30 +87,34 @@ interface DiffReviewKeyboardInput {
   /** Partial diffs only expand when the full files can be loaded. */
   readonly canLoadFullFiles: boolean;
   readonly autoAdvanceOnViewed: boolean;
-  readonly getViewer: () => AnnotatableCodeViewHandle | null;
+  readonly getViewer: () => CodeViewHandle<Annotation, undefined> | null;
   readonly isCollapsed: (fileKey: string) => boolean;
   readonly setCollapsed: (fileKey: string, collapsed: boolean) => void;
   readonly isViewed: (file: DiffReviewFile) => boolean;
   readonly setViewed: (file: DiffReviewFile, viewed: boolean) => void;
   /** Loads the file if needed and scrolls its header into view. */
   readonly revealFile: (file: DiffReviewFile) => void;
-  /** Shows only the cursor's file, forced open. */
-  readonly singleFile: boolean;
-  readonly setSingleFile: (singleFile: boolean) => void;
+  readonly beginComment: (fileKey: string, range: SelectedLineRange) => void;
 }
 
 /**
  * Keyboard review of the Diff panel: a file cursor, a line cursor inside a file, and a line
  * selection. Commands run through the shortcut dispatcher while focus is inside the panel.
  */
-export function useDiffReviewKeyboard(input: DiffReviewKeyboardInput) {
+export function useDiffReviewKeyboard<Annotation>(input: DiffReviewKeyboardInput<Annotation>) {
   const { scopeKey, files } = input;
   const [cursorState, setCursorState] = useState<{
     readonly scopeKey: string | null;
     readonly cursor: DiffReviewCursor | null;
   }>({ scopeKey, cursor: null });
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const reviewRef = useRef<AnnotatableCodeViewReview | null>(null);
+  // Shows only the cursor's file, forced open; one preference for every diff view.
+  const [singleFile, setSingleFile] = useLocalStorage(
+    SINGLE_FILE_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const pendingScrollRef = useRef<CodeViewLineScrollTarget | null>(null);
   // Chrome marks a clicked control :focus-visible on the next key press, so record how focus came.
   const tabbedToRef = useRef<EventTarget | null>(null);
@@ -114,7 +125,7 @@ export function useDiffReviewKeyboard(input: DiffReviewKeyboardInput) {
       files.find((file) => file.filePath === storedCursor.filePath) ??
       null)
     : null;
-  const singleFileKey = input.singleFile ? (cursorFile ?? files[0])?.fileKey : undefined;
+  const singleFileKey = singleFile ? (cursorFile ?? files[0])?.fileKey : undefined;
   const isCollapsed = (fileKey: string) => fileKey !== singleFileKey && input.isCollapsed(fileKey);
   const cursor: DiffReviewCursor | null =
     storedCursor === null || cursorFile === null
@@ -225,7 +236,7 @@ export function useDiffReviewKeyboard(input: DiffReviewKeyboardInput) {
         const file = cursorFile ?? files[0];
         if (!file) return false;
         setCursor(fileCursor(file));
-        input.setSingleFile(!input.singleFile);
+        setSingleFile(!singleFile);
         input.revealFile(file);
         return true;
       }
@@ -268,10 +279,7 @@ export function useDiffReviewKeyboard(input: DiffReviewKeyboardInput) {
       }
       case "diff.comment": {
         if (!cursor || !cursorFile || !range) return false;
-        reviewRef.current?.beginComment(
-          cursorFile.fileKey,
-          topToBottomRange(range, rowsFor(cursorFile)),
-        );
+        input.beginComment(cursorFile.fileKey, topToBottomRange(range, rowsFor(cursorFile)));
         return true;
       }
       case "diff.startSelection": {
@@ -354,13 +362,21 @@ export function useDiffReviewKeyboard(input: DiffReviewKeyboardInput) {
     };
   }, [handleCommand, isLineMode]);
 
+  const labelFor = (command: DiffReviewCommand, diffLineMode = false) =>
+    shortcutLabelForCommand(keybindings, command, { context: { diffFocus: true, diffLineMode } });
+
   return {
     cursor,
+    singleFile,
     singleFileKey,
     selectedLines,
     rootRef,
-    reviewRef,
     flushScroll,
+    shortcutLabels: {
+      viewed: labelFor("diff.toggleFileViewed"),
+      comment: labelFor("diff.comment", true),
+      singleFile: labelFor("diff.toggleSingleFile"),
+    },
     toggleSingleFile: () => runCommand("diff.toggleSingleFile"),
     /** Puts the file cursor on a file the user picked another way, such as the file tree. */
     selectFile: (filePath: string) => {

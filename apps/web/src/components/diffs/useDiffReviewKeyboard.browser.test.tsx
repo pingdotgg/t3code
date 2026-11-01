@@ -31,8 +31,7 @@ function Panel(props: { folds: string[]; clicks: string[] }) {
     isViewed: () => false,
     setViewed: () => {},
     revealFile: () => {},
-    singleFile: false,
-    setSingleFile: () => {},
+    beginComment: () => {},
   });
   return (
     <div ref={rootRef} tabIndex={-1} data-diff-panel data-testid="panel">
