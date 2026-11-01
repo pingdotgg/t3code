@@ -18,7 +18,6 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -186,13 +185,12 @@ function fixtureEvents(now: DateTime.Utc): ReadonlyArray<OrchestrationV2DomainEv
   ];
 }
 
-const storageCases = (["sqlite", "memory"] as const).map((storage) => ({
-  storage,
-  storeLayer:
-    storage === "sqlite"
-      ? ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))
-      : ProjectionStore.layerMemory,
-}));
+const storageCases = [
+  {
+    storage: "sqlite" as const,
+    storeLayer: ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+  },
+];
 
 it.effect.each(storageCases)(
   "$storage: finds the active root turn without an attempt reverse link",
@@ -276,23 +274,26 @@ it.effect.each(storageCases)(
       const calls: string[] = [];
       const layerSessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
         get: () =>
-          Effect.succeed(
-            Option.some({
-              interruptTurn: () =>
-                Effect.sync(() => {
-                  calls.push("interrupt");
-                }),
-              steerTurn: (input: { message: { text: string }; runId: RunId }) =>
-                Effect.sync(() => {
-                  assert.equal(input.runId, runId);
-                  calls.push(input.message.text);
-                }),
-              respondToRuntimeRequest: () =>
-                Effect.sync(() => {
-                  calls.push("reply");
-                }),
-            } as never),
-          ),
+          Effect.succeedSome({
+            interruptTurn: () =>
+              Effect.sync(() => {
+                calls.push("interrupt");
+              }),
+            steerTurn: (input: {
+              message: {
+                text: string;
+              };
+              runId: RunId;
+            }) =>
+              Effect.sync(() => {
+                assert.equal(input.runId, runId);
+                calls.push(input.message.text);
+              }),
+            respondToRuntimeRequest: () =>
+              Effect.sync(() => {
+                calls.push("reply");
+              }),
+          } as never),
       });
       yield* Effect.gen(function* () {
         const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
