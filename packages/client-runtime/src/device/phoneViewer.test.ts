@@ -154,31 +154,42 @@ it("rejects incompatible accessories and releases an accessory that finishes aft
   viewer.dispose();
 });
 
-it("uses the fold model only for a closed hinge or an inner display frame", () => {
-  const { viewer, draw, source, state } = fixture(ANDROID_PHONE_SHAPE, 180);
+it("uses the fold model only for an inner display frame, whatever the hinge angle", () => {
+  const { viewer, draw, source, state } = fixture(ANDROID_PHONE_SHAPE, 0);
+  let time = 0;
   const shown = () => {
-    draw();
+    draw((time += 1000));
     const phone = state.frames.at(-1)!.phone!;
     const size = new Box3().setFromObject(phone).getSize(new Vector3());
     return {
       fold: phone.getObjectByName("continuous-inner-screen") !== undefined,
-      aspect: size.x / size.y,
+      fitsFrame: Math.abs(Math.log(size.x / size.y / (source.width / source.height))) < 0.1,
     };
   };
   const showFrame = (width: number, height: number) => {
     source.width = width;
     source.height = height;
-    viewer.setScreen({ width, height, orientation: "portrait" });
+    viewer.setScreen({
+      width,
+      height,
+      orientation: width > height ? "landscape_left" : "portrait",
+    });
     viewer.frameUpdated();
     return shown();
   };
-  expect(shown()).toEqual({ fold: false, aspect: expect.closeTo(1206 / 2622, 1) });
-  expect(showFrame(2076, 2152)).toEqual({ fold: true, aspect: expect.closeTo(2076 / 2152, 1) });
-  expect(showFrame(1080, 2400)).toEqual({ fold: false, aspect: expect.closeTo(1080 / 2400, 1) });
+  const phoneModel = { fold: false, fitsFrame: true };
+  expect(shown()).toEqual(phoneModel);
+  viewer.setFoldAngle(180);
+  expect(shown()).toEqual(phoneModel);
+  viewer.frameUpdated();
+  expect(shown()).toEqual(phoneModel);
+  expect(showFrame(2076, 2152)).toEqual({ fold: true, fitsFrame: true });
   viewer.setFoldAngle(0);
   expect(shown().fold).toBe(true);
+  expect(showFrame(1920, 1200)).toEqual(phoneModel);
   viewer.setFoldAngle(180);
-  expect(shown().fold).toBe(true);
-  expect(showFrame(2400, 1080).fold).toBe(false);
+  expect(shown()).toEqual(phoneModel);
+  expect(showFrame(2076, 2152)).toEqual({ fold: true, fitsFrame: true });
+  expect(showFrame(1080, 2400)).toEqual(phoneModel);
   viewer.dispose();
 });

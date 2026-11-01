@@ -108,9 +108,9 @@ export function createPhoneViewer(options: {
   let foldAspect = isFoldInnerAspect(rawAspect()) ? rawAspect() : DEFAULT_FOLD_INNER_ASPECT;
   const createFoldScene = (angle: number, displayLayout = layout) =>
     createAndroidFoldScene(texture, displayLayout, angle, foldAspect);
-  // Closed, the fold shows its cover screen. Open, only an inner display frame fits the fold body.
-  const fitsFold = (angle: number, nextProfile = profile) =>
-    nextProfile.id.startsWith("android") && (angle < 90 || isFoldInnerAspect(rawAspect()));
+  // Only an inner display frame fits the fold body; the cover screen would stretch any other frame.
+  const fitsFold = (nextProfile = profile) =>
+    nextProfile.id.startsWith("android") && isFoldInnerAspect(rawAspect());
   const visibleFoldAngle = (fallback: number) => {
     if (!foldTurn) return fallback;
     const progress = Math.min(1, (performance.now() - foldTurn.startedAt) / ANDROID_FOLD_TURN_MS);
@@ -118,7 +118,7 @@ export function createPhoneViewer(options: {
     return foldTurn.from + (foldTurn.to - foldTurn.from) * eased;
   };
   let phone: ReturnType<typeof createPhoneScene> | ReturnType<typeof createAndroidFoldScene> =
-    foldAngle !== null && fitsFold(foldAngle)
+    foldAngle !== null && fitsFold()
       ? createFoldScene(foldAngle)
       : createPhoneScene(texture, layout, profile);
   let orientationAngle = "setAngle" in phone ? 0 : layout.rotation;
@@ -241,8 +241,7 @@ export function createPhoneViewer(options: {
       const innerChanged = isFoldInnerAspect(frameAspect) && frameAspect !== foldAspect;
       if (innerChanged) foldAspect = frameAspect;
       const wasFold = "setAngle" in phone;
-      const foldTo =
-        !imported && foldAngle !== null && fitsFold(foldAngle, nextProfile) ? foldAngle : null;
+      const foldTo = !imported && foldAngle !== null && fitsFold(nextProfile) ? foldAngle : null;
       if (foldTo !== null && (!wasFold || innerChanged)) {
         const angle = wasFold ? visibleFoldAngle(foldTo) : foldTo;
         if (!wasFold) foldTurn = null;
@@ -297,7 +296,7 @@ export function createPhoneViewer(options: {
         ? null
         : model
           ? createImportedPhoneScene(model.asset, texture, layout)
-          : foldAngle !== null && fitsFold(foldAngle)
+          : foldAngle !== null && fitsFold()
             ? createFoldScene(foldAngle)
             : createPhoneScene(texture, layout, profile);
       foldTurn = null;
@@ -373,8 +372,11 @@ export function createPhoneViewer(options: {
         applyPose();
         fit(true);
       };
-      // An unfold turns the hinge before the cover frame becomes the inner one; the frame decides after.
-      if (next !== null && "setAngle" in phone) {
+      if (next === null || !fitsFold()) {
+        if ("setAngle" in phone) swap(createPhoneScene(texture, layout, profile));
+      } else if (!("setAngle" in phone)) {
+        swap(createFoldScene(next));
+      } else {
         const from = visibleFoldAngle(previous ?? next);
         if (reducedMotion()) {
           foldTurn = null;
@@ -383,10 +385,6 @@ export function createPhoneViewer(options: {
         } else {
           foldTurn = { from, to: next, startedAt: performance.now() };
         }
-      } else if (next !== null && fitsFold(next)) {
-        swap(createFoldScene(next));
-      } else if ("setAngle" in phone) {
-        swap(createPhoneScene(texture, layout, profile));
       }
       scheduler.invalidate();
     },
