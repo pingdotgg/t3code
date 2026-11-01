@@ -125,6 +125,7 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
+import { KeyboardController } from "react-native-keyboard-controller";
 import { Image as ExpoImage } from "expo-image";
 import { useResolveClassNames } from "uniwind";
 import { useFilePreviewGallery, FilePreviewGallery } from "../../components/FilePreviewGallery";
@@ -3184,6 +3185,9 @@ export const ThreadFeed = memo(function ThreadFeed({
     }
   };
   const handleScrollBeginDrag = () => {
+    if (Platform.OS === "android") {
+      void KeyboardController.dismiss();
+    }
     clearUserScrollSettle();
     userScrollSessionRef.current = true;
     cancelReflow();
@@ -3733,7 +3737,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             onItemSizeChanged={handleItemSizeChanged}
             drawDistance={500}
             keyboardShouldPersistTaps="always"
-            keyboardDismissMode="none"
+            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
             keyboardLiftBehavior="whenAtEnd"
             // Seed viewport size to skip programmatic attach-time positioning, which races UIKit's adjustedContentInset.
             {...(viewportHeight > 0 && viewportWidth > 0
