@@ -123,13 +123,13 @@ export function createCdpRelayConnection(
       case "Browser.setDownloadBehavior": {
         const directory = command.params?.["downloadPath"];
         const allowed = command.params?.["behavior"] !== "deny" && typeof directory === "string";
-        target.setDownloadDirectory(allowed ? directory : null);
         // Browser-scoped behavior targets Electron's app session; preview paths belong to will-download.
         const result = await target.send(
           "Page.setDownloadBehavior",
           { behavior: command.params?.["behavior"] === "deny" ? "deny" : "default" },
           undefined,
         );
+        target.setDownloadDirectory(allowed ? directory : null);
         downloadEventsEnabled = command.params?.["eventsEnabled"] === true;
         return result;
       }

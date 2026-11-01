@@ -251,21 +251,31 @@ describe("CDP relay downloads", () => {
   });
 
   it.each([false, true])(
-    "keeps the previous download event setting (%s) when configuration fails",
+    "keeps the previous download configuration (events enabled: %s) when configuration fails",
     async (enabled) => {
       const send = vi
         .fn(async () => ({}))
         .mockResolvedValueOnce({})
         .mockRejectedValueOnce(new Error("Page command rejected"));
       const written: Array<Record<string, unknown>> = [];
-      const relay = makeRelay(makeTarget(send), (raw) => written.push(JSON.parse(raw)));
+      let directory: string | null = null;
+      const relay = makeRelay(
+        makeTarget(send, (value) => {
+          directory = value;
+        }),
+        (raw) => written.push(JSON.parse(raw)),
+      );
       relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
       for (const [id, eventsEnabled] of [enabled, !enabled].entries()) {
         relay.receive(
           JSON.stringify({
             id: id + 2,
             method: "Browser.setDownloadBehavior",
-            params: { behavior: "allowAndName", downloadPath: "/srv/artifacts", eventsEnabled },
+            params: {
+              behavior: id === 1 && enabled ? "deny" : "allowAndName",
+              downloadPath: id === 0 ? "/srv/artifacts" : "/srv/new-artifacts",
+              eventsEnabled,
+            },
           }),
         );
         await settle();
@@ -274,6 +284,7 @@ describe("CDP relay downloads", () => {
         id: 3,
         error: { code: -32000, message: "Page command rejected" },
       });
+      expect(directory).toBe("/srv/artifacts");
       written.length = 0;
       relay.event("Page.downloadWillBegin", { guid: "g1" }, "");
       relay.event("Page.downloadProgress", { guid: "g1", state: "completed" }, "");
