@@ -470,6 +470,55 @@ export const DesktopSshPasswordPromptResolutionInputSchema = Schema.Struct({
   password: Schema.NullOr(Schema.String),
 });
 
+// T3 Code sets these itself, and Chromium owns the rest; a gateway header must not replace them.
+const RESERVED_GATEWAY_HEADER_NAMES = new Set([
+  "authorization",
+  "connection",
+  "content-length",
+  "content-type",
+  "cookie",
+  "dpop",
+  "host",
+  "origin",
+  "transfer-encoding",
+  "upgrade",
+]);
+
+export const isReservedGatewayHeaderName = (name: string): boolean => {
+  const normalized = name.toLowerCase();
+  return (
+    RESERVED_GATEWAY_HEADER_NAMES.has(normalized) ||
+    normalized.startsWith("sec-") ||
+    normalized.startsWith("proxy-")
+  );
+};
+
+export const DesktopGatewayHeaderSchema = Schema.Struct({
+  name: Schema.String.check(Schema.isPattern(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/)).check(
+    Schema.makeFilter((name: string) => !isReservedGatewayHeaderName(name), {
+      expected: "a header T3 Code does not set itself",
+    }),
+  ),
+  value: Schema.String.check(Schema.isTrimmed())
+    .check(Schema.isNonEmpty())
+    .check(Schema.isPattern(/^[^\r\n\0]*$/)),
+});
+export type DesktopGatewayHeader = typeof DesktopGatewayHeaderSchema.Type;
+
+/** Headers the desktop app adds to every request for one environment origin, such as an access proxy's service token. */
+export const DesktopGatewayHeadersInputSchema = Schema.Struct({
+  origin: Schema.String,
+  headers: Schema.Array(DesktopGatewayHeaderSchema).check(Schema.isMinLength(1)),
+});
+export type DesktopGatewayHeadersInput = typeof DesktopGatewayHeadersInputSchema.Type;
+
+/** What the renderer may see of saved gateway headers: their names, never their values. */
+export const DesktopGatewayHeadersEntrySchema = Schema.Struct({
+  origin: Schema.String,
+  headerNames: Schema.Array(Schema.String),
+});
+export type DesktopGatewayHeadersEntry = typeof DesktopGatewayHeadersEntrySchema.Type;
+
 export const PersistedSavedEnvironmentRecordSchema = Schema.Struct({
   environmentId: EnvironmentId,
   label: Schema.String,
@@ -1042,6 +1091,12 @@ export interface DesktopBridge {
   setClientSettings: (settings: ClientSettings) => Promise<void>;
   getConnectionCatalog: () => Promise<string | null>;
   setConnectionCatalog: (catalog: string) => Promise<boolean>;
+  getGatewayHeaders: () => Promise<readonly DesktopGatewayHeadersEntry[]>;
+  /** Replaces the headers saved for `input.origin`. */
+  setGatewayHeaders: (
+    input: DesktopGatewayHeadersInput,
+  ) => Promise<readonly DesktopGatewayHeadersEntry[]>;
+  removeGatewayHeaders: (origin: string) => Promise<readonly DesktopGatewayHeadersEntry[]>;
   discoverSshHosts: () => Promise<readonly DesktopDiscoveredSshHost[]>;
   resolveSshHost: (alias: string) => Promise<DesktopSshEnvironmentTarget>;
   requestSnapShotPermissions: (includeAccessibility: boolean) => Promise<void>;
