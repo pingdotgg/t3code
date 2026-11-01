@@ -324,8 +324,16 @@ export const LoadBalancingWeights = Schema.Record(
 
 export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 
-export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
+export const ChatWidth = Schema.Literals(["comfortable", "wide", "full", "custom"]);
 export type ChatWidth = typeof ChatWidth.Type;
+
+/** In rem so the cap scales with the interface font size. */
+export const MIN_CHAT_CUSTOM_WIDTH_REM = 46;
+export const MAX_CHAT_CUSTOM_WIDTH_REM = 96;
+export const ChatCustomWidthRem = Schema.Int.check(
+  Schema.isBetween({ minimum: MIN_CHAT_CUSTOM_WIDTH_REM, maximum: MAX_CHAT_CUSTOM_WIDTH_REM }),
+);
+const DEFAULT_CHAT_CUSTOM_WIDTH_REM: typeof ChatCustomWidthRem.Type = 60;
 
 /** How the composer shows reasoning effort: the level's name, or rising bars. */
 export const EffortDisplay = Schema.Literals(["label", "bars"]);
@@ -357,6 +365,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
   ),
   chatWidth: ChatWidth.pipe(Schema.withDecodingDefault(Effect.succeed("comfortable" as const))),
+  chatCustomWidthRem: ChatCustomWidthRem.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CHAT_CUSTOM_WIDTH_REM)),
+  ),
   effortDisplay: EffortDisplay.pipe(Schema.withDecodingDefault(Effect.succeed("label" as const))),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -1723,6 +1734,7 @@ export const ClientSettingsPatch = Schema.Struct({
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
   chatWidth: Schema.optionalKey(ChatWidth),
+  chatCustomWidthRem: Schema.optionalKey(ChatCustomWidthRem),
   effortDisplay: Schema.optionalKey(EffortDisplay),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
