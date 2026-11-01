@@ -2784,6 +2784,8 @@ export default function ChatView(props: ChatViewProps) {
   });
   const runCodeBlockCommand: ChatShellCommandRunner = (command, onStarted, terminalId) => {
     const threadId = activeThreadId;
+    // Captured now: the output must go to the thread and mode that started the command.
+    const sendToOrigin = sendThreadMessage;
     const runInTerminal = parentPanel?.runShellCommand ?? runShellCommandStable;
     runInTerminal(
       command,
@@ -2791,18 +2793,16 @@ export default function ChatView(props: ChatViewProps) {
         onStarted(run);
         if (threadId === null) return;
         watchChatShellRun(run, (output) => {
-          void sendThreadMessageStable(threadId, chatShellRunResultMessage(command, output)).catch(
-            (cause) => {
-              toastManager.add(
-                stackedThreadToast({
-                  type: "error",
-                  title: "Couldn't send the output to Claude",
-                  description:
-                    cause instanceof Error ? cause.message : "An unexpected error occurred.",
-                }),
-              );
-            },
-          );
+          void sendToOrigin(threadId, chatShellRunResultMessage(command, output)).catch((cause) => {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Couldn't send the output to Claude",
+                description:
+                  cause instanceof Error ? cause.message : "An unexpected error occurred.",
+              }),
+            );
+          });
         });
       },
       terminalId,

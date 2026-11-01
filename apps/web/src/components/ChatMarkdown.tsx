@@ -1636,7 +1636,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
             ? onRunShellCommand
             : undefined
         }
-        shellRunScope={shellRunScope}
+        // The source offset tells two fences with the same command apart.
+        shellRunScope={
+          shellRunScope === undefined
+            ? undefined
+            : `${shellRunScope}@${node?.position?.start.offset ?? 0}`
+        }
         isStreaming={isStreaming}
       >
         {highlightedCode}

@@ -44,9 +44,12 @@ export function watchChatShellRun(
       session.output.chunks.map((chunk) => chunk.data).join(""),
       run.id,
     );
-    if (output.exitCode === null && session.status !== "closed" && session.error === null) return;
+    // A shell that exited without printing the end marker is finished too, so the block stops at "Running…".
+    const ended =
+      session.status === "exited" || (session.status === "closed" && session.version > 0);
+    if (output.exitCode === null && !ended && session.error === null) return;
     unsubscribe();
-    if (output.exitCode === null) return;
+    if (output.exitCode === null && session.error !== null) return;
     finishedRunIds.add(run.id);
     onFinished(output);
   });

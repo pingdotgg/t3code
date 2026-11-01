@@ -231,8 +231,12 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       });
     }
     const targetCwd = options?.cwd ?? gitCwd ?? activeProject.workspaceRoot;
+    // A busy terminal is running something else, so the run needs its own terminal.
     const reusableTerminalId = options?.chatShellRun
-      ? (options.chatShellRun.terminalId ?? null)
+      ? options.chatShellRun.terminalId &&
+        !runningTerminalIds.includes(options.chatShellRun.terminalId)
+        ? options.chatShellRun.terminalId
+        : null
       : options?.preferNewTerminal ||
           !canReuseTerminal ||
           !readEnvironmentScope(environmentId, AuthTerminalReadScope)

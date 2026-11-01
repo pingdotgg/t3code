@@ -21,9 +21,11 @@ export function ChatCodeBlockRunOutput({ run }: { readonly run: ChatShellRun }) 
       ? `Couldn't read output: ${session.error}`
       : exitCode !== null
         ? `Exited with code ${exitCode}`
-        : session.status === "closed"
-          ? "Terminal closed"
-          : "Running…";
+        : session.status === "exited"
+          ? "Ended without an exit status"
+          : session.status === "closed"
+            ? "Terminal closed"
+            : "Running…";
 
   return (
     <div
