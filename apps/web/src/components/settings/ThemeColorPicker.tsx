@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { isThemeColor, themeColorToHex, type ThemeColorRole } from "../../themePalette";
 import { cn } from "../../lib/utils";
 import { hexToHsv, hsvToHex, type HsvColor } from "../../lib/color";
@@ -240,21 +240,34 @@ function ThemeColorPicker({
   label,
   value,
   onChange,
+  onEditStart,
+  onEditCancel,
   onInteract,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  onEditStart?: () => void;
+  onEditCancel?: () => void;
   onInteract?: () => void;
 }) {
   const [committer] = useState(createFrameCommitter);
+  // Escape reverts the edit, so commits after it (the pending frame flushed on close, or a drag
+  // still firing through the exit animation) are dropped instead of landing on the restored colors.
+  const cancelledRef = useRef(false);
   // Unmounting with the popover open (the editor closes mid-drag) never fires onOpenChange.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- flushes the frame committer on unmount, since an open popover never fires onOpenChange
   useEffect(() => committer.flush, [committer]);
   return (
     <Popover
-      onOpenChange={(open) => {
-        if (!open) committer.flush();
+      onOpenChange={(open, eventDetails) => {
+        cancelledRef.current = !open && eventDetails.reason === "escape-key";
+        if (open) {
+          onEditStart?.();
+          return;
+        }
+        committer.flush();
+        if (cancelledRef.current) onEditCancel?.();
       }}
     >
       <Tooltip>
@@ -290,7 +303,9 @@ function ThemeColorPicker({
         <ThemeColorPickerPanel
           committer={committer}
           label={label}
-          onChange={onChange}
+          onChange={(nextValue) => {
+            if (!cancelledRef.current) onChange(nextValue);
+          }}
           value={value}
         />
       </PopoverPopup>
@@ -302,6 +317,8 @@ export const ThemeColorField = memo(function ThemeColorField({
   role,
   value,
   onChange,
+  onEditStart,
+  onEditCancel,
   onSelect,
   onToggleSelected,
   selected = false,
@@ -310,6 +327,8 @@ export const ThemeColorField = memo(function ThemeColorField({
   role: ThemeColorRole;
   value: string;
   onChange: (role: ThemeColorRole, value: string) => void;
+  onEditStart?: (role: ThemeColorRole) => void;
+  onEditCancel?: (role: ThemeColorRole) => void;
   onSelect?: (role: ThemeColorRole) => void;
   onToggleSelected?: (role: ThemeColorRole) => void;
   selected?: boolean;
@@ -350,6 +369,8 @@ export const ThemeColorField = memo(function ThemeColorField({
         <ThemeColorPicker
           label={label}
           onChange={(nextValue) => onChange(role, nextValue)}
+          onEditCancel={() => onEditCancel?.(role)}
+          onEditStart={() => onEditStart?.(role)}
           onInteract={() => onSelect?.(role)}
           value={swatchValue}
         />
