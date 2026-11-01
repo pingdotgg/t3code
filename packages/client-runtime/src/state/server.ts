@@ -1162,7 +1162,7 @@ export function createServerEnvironmentAtoms<R, E>(
     manageBundledSkill: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:manage-bundled-skill",
       tag: WS_METHODS.serverManageBundledSkill,
-      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
     }),
     databaseStorage,
     databaseCompactionRecommendations,
