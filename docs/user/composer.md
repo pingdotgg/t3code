@@ -257,8 +257,7 @@ use **Check for updates** and update any outdated copies. You can also remove
 managed copies here. Locally edited skills and copies installed outside T3 Code
 are preserved; move them before installing the bundled version.
 
-Other providers can install the folders from
-[`.agents/skills`](../../.agents/skills) in their own skill directories.
+Other providers can copy the skill folders into their own skill directories.
 
 Use `$t3code-threads` to hand work to an independent thread or move the current
 conversation into a managed worktree. Use `$t3code-orchestration` to coordinate
@@ -287,10 +286,7 @@ skill supplies instructions; it does not install SDKs/controllers, authenticate
 Linear/Jira, or enable agent access. **Up to date** describes the instruction
 files, not the availability of those external connections.
 
-These adapt Orca's important workflows to T3's actual capabilities. The older
-`linear-tickets` and `jira-tickets` aliases are not duplicated. Orca's disposable
-VM/cloud environment recipes have no T3 equivalent; worktree setup covers local
-initialization only. Device guidance is written against T3's own device API.
+Worktree setup covers local initialization only.
 
 ## Goals
 
