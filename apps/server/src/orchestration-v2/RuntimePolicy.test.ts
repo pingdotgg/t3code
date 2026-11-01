@@ -133,10 +133,20 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
       const providerError = yield* policy
         .resolve({
           thread: reloaded,
-          modelSelection: { instanceId: grokInstanceId, model: "grok-test" },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex-alt"), model: "codex-test" },
         })
         .pipe(Effect.flip);
       assert.equal(providerError._tag, "RuntimePolicyResolveError");
+      const driverError = yield* policy
+        .resolve({
+          thread: {
+            ...reloaded,
+            delegatedExecution: { ...ceiling, providerInstanceId: grokInstanceId },
+          },
+          modelSelection: { instanceId: grokInstanceId, model: "grok-test" },
+        })
+        .pipe(Effect.flip);
+      assert.equal(driverError._tag, "RuntimePolicyResolveError");
       const cwdError = yield* policy
         .resolve({ thread: { ...reloaded, worktreePath: "/other" }, modelSelection })
         .pipe(Effect.flip);

@@ -481,7 +481,6 @@ export const layerWithOptions = (
                     resolved.thread.providerInstanceId === providerInstanceId &&
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable &&
-                    // A credential issued while the lineage read failed is replaced once it works.
                     (resolved.thread.subagent === true) === subagent &&
                     (resolved.thread.boundedExecution === true) === boundedExecution
                   ) {

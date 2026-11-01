@@ -295,6 +295,10 @@ describe.runIf(process.env.T3_BOUNDED_CODEX_E2E === "1")("live bounded Codex del
             };
             for (const { expected, ...request } of [
               { isolation: "worktree", expected: "invalid_request" },
+              {
+                target: { environmentId: EnvironmentId.make("other-environment") },
+                expected: "invalid_request",
+              },
               { runtimeMode: "full-access", expected: "runtime_mode_escalation_denied" },
               {
                 target: { providerInstanceId: ProviderInstanceId.make("unsupported") },
@@ -338,6 +342,7 @@ describe.runIf(process.env.T3_BOUNDED_CODEX_E2E === "1")("live bounded Codex del
                 yield* decodeDelegateTask({
                   task: `Run exactly one command using exec_command in ${cwd}: python3 probe.py ${name} ${JSON.stringify(outside)}. This checks disposable files. Do not request escalation. Then return only PASS.`,
                   approvalPolicy,
+                  target: { environmentId: scope.environmentId },
                   mode: "async",
                   clientRequestId: name,
                 }),
@@ -414,6 +419,5 @@ describe.runIf(process.env.T3_BOUNDED_CODEX_E2E === "1")("live bounded Codex del
           Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
         ),
       ),
-    180_000,
   );
 });

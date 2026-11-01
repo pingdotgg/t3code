@@ -2310,18 +2310,20 @@ const make = Effect.gen(function* () {
       const parentCeiling =
         callerScope.thread === undefined
           ? undefined
-          : (yield* loadProjection(callerScope.thread.threadId)).thread.delegatedExecution;
+          : (yield* threadManagement
+              .getThreadRecords(callerScope.thread.threadId, [])
+              .pipe(Effect.mapError(threadManagementFailure))).thread.delegatedExecution;
       const bounded = input.approvalPolicy === "never" || parentCeiling !== undefined;
-      if (bounded && input.target?.environmentId !== undefined) {
+      const environmentId =
+        input.target === undefined
+          ? undefined
+          : PeerForwarding.remoteTarget(callerScope, input.target.environmentId);
+      if (bounded && environmentId !== undefined) {
         return yield* failure(
           "invalid_request",
           "Bounded delegation does not support remote environments.",
         );
       }
-      const environmentId =
-        input.target === undefined
-          ? undefined
-          : PeerForwarding.remoteTarget(callerScope, input.target.environmentId);
       if (input.target !== undefined && environmentId !== undefined) {
         yield* requireCapability(callerScope);
         const scope = yield* requireThreadScope(callerScope, "delegate_task");
