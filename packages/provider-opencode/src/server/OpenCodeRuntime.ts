@@ -1,6 +1,6 @@
 import * as NodeURL from "node:url";
 
-import type { ChatAttachment, ProviderApprovalDecision } from "@t3tools/contracts";
+import type { ChatAttachment, ModelSelection, ProviderApprovalDecision } from "@t3tools/contracts";
 import {
   createOpencodeClient,
   type Agent,
@@ -37,6 +37,10 @@ import { collectStreamAsString } from "@t3tools/provider-core/server/snapshotPro
 import * as NetService from "@t3tools/shared/Net";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import {
+  DEFAULT_VARIANT_CHOICE_ID,
+  getModelSelectionStringOptionValue,
+} from "@t3tools/shared/model";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
@@ -302,6 +306,11 @@ export function parseOpenCodeModelSlug(
     providerID: trimmed.slice(0, separator),
     modelID: trimmed.slice(separator + 1),
   };
+}
+
+export function openCodeVariant(selection: ModelSelection): string | undefined {
+  const variant = getModelSelectionStringOptionValue(selection, "variant");
+  return variant === DEFAULT_VARIANT_CHOICE_ID ? undefined : variant;
 }
 
 export function openCodeQuestionId(

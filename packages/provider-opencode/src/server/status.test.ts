@@ -31,6 +31,7 @@ import {
   OPENCODE_2_RESPONSES,
   replayOpenCodeServer,
 } from "./probeResponses.fixture.ts";
+import { DEFAULT_VARIANT_CHOICE_ID } from "@t3tools/shared/model";
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
@@ -677,6 +678,68 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         "build",
       );
     }),
+  );
+
+  it.effect.each(["1.x", "2.x"] as const)(
+    "offers a Default reasoning choice for a %s custom model with no inferable default",
+    (generation) =>
+      Effect.gen(function* () {
+        const variants = ["low", "medium", "high"];
+        runtimeMock.state.versionStdout =
+          generation === "2.x" ? "opencode v2.0.18\n" : DEFAULT_VERSION_STDOUT;
+        runtimeMock.state.inventory = {
+          providerList: {
+            connected: ["acme"],
+            all: [
+              {
+                id: "acme",
+                name: "Acme",
+                models: {
+                  "acme-chat": {
+                    id: "acme-chat",
+                    name: "Acme Chat",
+                    variants: Object.fromEntries(variants.map((id) => [id, {}])),
+                  },
+                },
+              },
+            ],
+            default: {},
+          },
+          agents: [],
+        };
+
+        const snapshot = yield* checkProvider(
+          makeOpenCodeSettings(),
+          process.cwd(),
+          undefined,
+          undefined,
+          Effect.succeed([
+            {
+              providerID: "acme",
+              id: "acme-chat",
+              name: "Acme Chat",
+              variants: variants.map((id) => ({ id })),
+            },
+          ]),
+        );
+        const variant = snapshot.models
+          .find((model) => model.slug === "acme/acme-chat")
+          ?.capabilities?.optionDescriptors?.find((descriptor) => descriptor.id === "variant");
+
+        NodeAssert.ok(variant?.type === "select");
+        NodeAssert.deepEqual(
+          variant.options.find((option) => option.id === DEFAULT_VARIANT_CHOICE_ID),
+          { id: DEFAULT_VARIANT_CHOICE_ID, label: "Default" },
+          "OpenCode cannot infer a default variant, so the picker needs a choice that sends none",
+        );
+        NodeAssert.equal(variant.currentValue, DEFAULT_VARIANT_CHOICE_ID);
+        NodeAssert.deepEqual(
+          variant.options
+            .map((option) => option.id)
+            .filter((id) => id !== DEFAULT_VARIANT_CHOICE_ID),
+          variants,
+        );
+      }),
   );
 
   it.effect("includes OpenCode skills in the provider snapshot", () =>

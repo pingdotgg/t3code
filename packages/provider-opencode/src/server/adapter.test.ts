@@ -20,6 +20,7 @@ import {
   ThreadId,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
+  type ProviderOptionSelection,
 } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
@@ -53,6 +54,7 @@ import {
   reconcileOpenCodePromptAdmissionStatus,
 } from "./adapter.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { DEFAULT_VARIANT_CHOICE_ID } from "@t3tools/shared/model";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeOpenCodeSettings = Schema.decodeEffect(OpenCodeSettings);
@@ -151,13 +153,14 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   nativeSessionId: string,
   client: object,
   host: Partial<ProviderHost.ProviderHost["Service"]> = {},
+  modelOptions: ReadonlyArray<ProviderOptionSelection> = [],
 ) {
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
   const threadId = ThreadId.make(`thread-opencode-${suffix}`);
   const modelSelection = {
     instanceId,
     model: "anthropic/claude-sonnet",
-    options: [],
+    options: modelOptions,
   };
   const policy = runtimePolicy("full-access", { cwd: "/workspace" });
   const adapter = yield* makeOpenCodeAdapterV2({
@@ -349,6 +352,39 @@ describe("OpenCodeAdapterV2", () => {
       );
       assert.equal(terminal?.status, "failed");
       assert.equal(terminal?.failure?.class, "usage_limit");
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("sends no variant when the turn selects OpenCode's default variant", () =>
+    Effect.gen(function* () {
+      const prompted = promiseGate<{ readonly variant?: string }>();
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "default-variant",
+        "root",
+        {
+          event: { subscribe: async () => ({ stream: asyncEventStream().stream }) },
+          session: {
+            create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            promptAsync: async (input: { readonly variant?: string }) => {
+              prompted.resolve(input);
+              return { data: true };
+            },
+            abort: async () => ({ data: true }),
+            children: async () => ({ data: [] }),
+          },
+        },
+        {},
+        [{ id: "variant", value: DEFAULT_VARIANT_CHOICE_ID }],
+      );
+      yield* harness.startTurn().pipe(Effect.forkScoped);
+      const prompt = yield* Effect.promise(() => prompted.promise);
+      assert.isFalse(
+        "variant" in prompt,
+        `OpenCode received variant ${JSON.stringify(prompt.variant)} for the Default choice`,
+      );
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,

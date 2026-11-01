@@ -238,6 +238,9 @@ export function getProviderOptionStatedValue(
   );
 }
 
+/** The variant choice that sends no variant; distinct from any variant name a provider defines. */
+export const DEFAULT_VARIANT_CHOICE_ID = "t3:default";
+
 export function getProviderOptionCurrentValue(
   descriptor: ProviderOptionDescriptor | null | undefined,
   selection?: ModelSelection | null,
@@ -247,6 +250,16 @@ export function getProviderOptionCurrentValue(
     return undefined;
   }
   const hasExplicitOption = selection?.options?.some((option) => option.id === descriptor.id);
+  // Without an explicit variant none is sent, which is exactly the catalog's Default choice.
+  if (
+    descriptor.type === "select" &&
+    descriptor.id === "variant" &&
+    selection &&
+    !hasExplicitOption &&
+    descriptor.options.some((option) => option.id === DEFAULT_VARIANT_CHOICE_ID)
+  ) {
+    return DEFAULT_VARIANT_CHOICE_ID;
+  }
   // Reported values are display-only; callers that build dispatch options omit this context.
   const reportedValue = getReportedOptionValue(descriptor.id, selection, reportedSelection);
   if (reportedValue !== undefined) return reportedValue;
