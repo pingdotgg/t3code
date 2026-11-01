@@ -5,6 +5,7 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import {
   EnvironmentId,
   type ModelSelection,
+  NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderCapabilities,
@@ -16,6 +17,7 @@ import {
   ProviderInstanceId,
   type ProviderSessionId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -155,6 +157,22 @@ const layerBeforeUnchangedWriteEventSink = (before: Ref.Ref<Effect.Effect<void>>
           Ref.getAndSet(before, Effect.void).pipe(
             Effect.flatten,
             Effect.andThen(delegate.writeIfProviderThreadUnchanged(input)),
+          ),
+      });
+    }),
+  ).pipe(Layer.provide(layerTestEventSink));
+
+const layerBeforeSubagentWriteEventSink = (before: Ref.Ref<Effect.Effect<void>>) =>
+  Layer.effect(
+    EventSink.EventSinkV2,
+    Effect.gen(function* () {
+      const delegate = yield* EventSink.EventSinkV2;
+      return EventSink.EventSinkV2.of({
+        ...delegate,
+        writeIfSubagentActive: (input) =>
+          Ref.getAndSet(before, Effect.void).pipe(
+            Effect.flatten,
+            Effect.andThen(delegate.writeIfSubagentActive(input)),
           ),
       });
     }),
@@ -477,6 +495,7 @@ function layerTest(input: {
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
   readonly pauseAttachWrite?: Parameters<typeof layerPausingAttachEventSink>[0];
   readonly beforeUnchangedWrite?: Ref.Ref<Effect.Effect<void>>;
+  readonly beforeSubagentWrite?: Ref.Ref<Effect.Effect<void>>;
   readonly pauseResolve?: {
     readonly armed: Ref.Ref<boolean>;
     readonly paused: Deferred.Deferred<void>;
@@ -500,9 +519,11 @@ function layerTest(input: {
         ? layerPausingAttachEventSink(input.pauseAttachWrite)
         : input.beforeUnchangedWrite !== undefined
           ? layerBeforeUnchangedWriteEventSink(input.beforeUnchangedWrite)
-          : input.failReleaseEventWrites
-            ? layerFailingReleaseEventSink
-            : layerTestEventSink;
+          : input.beforeSubagentWrite !== undefined
+            ? layerBeforeSubagentWriteEventSink(input.beforeSubagentWrite)
+            : input.failReleaseEventWrites
+              ? layerFailingReleaseEventSink
+              : layerTestEventSink;
   const layerRegistry = Layer.unwrap(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
@@ -2450,6 +2471,133 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
       events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
     });
     yield* Effect.forEach(providerThreads, writeProviderThread);
+    // Each session's process also runs a native subagent that has its own child thread.
+    const subagents = providerThreads.map((providerThread, index) => {
+      const childThreadId = ThreadId.make(`${threadId}:subagent-${index}`);
+      return {
+        providerThread,
+        childThreadId,
+        subagentId: NodeId.make(`node:${threadId}:subagent-${index}`),
+        childRootNodeId: NodeId.make(`node:${childThreadId}:thread-root`),
+      };
+    });
+    const writeSubagent = (seeded: (typeof subagents)[number], startedAt: DateTime.Utc) =>
+      Effect.gen(function* () {
+        const { providerThread, childThreadId, subagentId, childRootNodeId } = seeded;
+        const nativeTaskRef = {
+          driver: CODEX_DRIVER,
+          nativeId: subagentId,
+          strength: "strong",
+        } as const;
+        const parentNodeId = NodeId.make(`node:${threadId}:root`);
+        const running = { status: "running", startedAt, completedAt: null } as const;
+        const node = {
+          ...running,
+          runId: null,
+          countsForRun: false,
+          providerTurnId: null,
+          nativeItemRef: nativeTaskRef,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+        } as const;
+        const shared = {
+          ...running,
+          threadId,
+          runId: null,
+          origin: "provider_native",
+          driver: CODEX_DRIVER,
+          providerInstanceId: modelSelection.instanceId,
+          childThreadId,
+          prompt: "audit src",
+          result: null,
+          updatedAt: startedAt,
+        } as const;
+        const event = (eventThreadId: ThreadId) =>
+          Effect.map(idAllocator.allocate.event({ threadId: eventThreadId }), (id) => ({
+            id,
+            threadId: eventThreadId,
+            driver: CODEX_DRIVER,
+            occurredAt: startedAt,
+          }));
+        yield* eventSink.write({
+          events: [
+            {
+              ...(yield* event(threadId)),
+              type: "subagent.updated",
+              nodeId: subagentId,
+              payload: {
+                ...shared,
+                id: subagentId,
+                parentNodeId,
+                createdBy: "agent",
+                providerThreadId: null,
+                nativeTaskRef,
+                title: "audit",
+                model: null,
+              },
+            },
+            {
+              ...(yield* event(threadId)),
+              type: "node.updated",
+              nodeId: subagentId,
+              payload: {
+                ...node,
+                id: subagentId,
+                threadId,
+                parentNodeId,
+                rootNodeId: parentNodeId,
+                kind: "subagent",
+                providerThreadId: providerThread.id,
+              },
+            },
+            {
+              ...(yield* event(threadId)),
+              type: "turn-item.updated",
+              nodeId: subagentId,
+              payload: {
+                ...shared,
+                id: TurnItemId.make(`item:${subagentId}`),
+                nodeId: subagentId,
+                providerThreadId: providerThread.id,
+                providerTurnId: null,
+                nativeItemRef: nativeTaskRef,
+                parentItemId: null,
+                ordinal: 1,
+                type: "subagent",
+                title: "audit",
+                subagentId,
+              },
+            },
+            {
+              ...(yield* event(childThreadId)),
+              type: "node.updated",
+              nodeId: childRootNodeId,
+              payload: {
+                ...node,
+                id: childRootNodeId,
+                threadId: childThreadId,
+                parentNodeId: null,
+                rootNodeId: childRootNodeId,
+                kind: "root_turn",
+                providerThreadId: null,
+              },
+            },
+          ],
+        });
+      });
+    for (const seeded of subagents) {
+      yield* eventSink.write({
+        events: [
+          yield* makeThreadCreatedEvent({
+            idAllocator,
+            threadId: seeded.childThreadId,
+            now,
+            delegatedBy: threadId,
+          }),
+        ],
+      });
+      yield* writeSubagent(seeded, now);
+    }
     yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
     const rosters = Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -2461,47 +2609,73 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
         ).map((task) => task.taskId),
       );
     });
-    return { threadId, providerSessionId, providerThreads, writeProviderThread, rosters };
+    // Per session: the subagent record, its node, its turn item and its child thread's root turn.
+    const subagentStatuses = Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      return yield* Effect.forEach(subagents, ({ subagentId, childThreadId, childRootNodeId }) =>
+        Effect.map(projectionStore.getThreadProjection(childThreadId), (child) => [
+          projection.subagents.find((subagent) => subagent.id === subagentId)?.status,
+          projection.nodes.find((node) => node.id === subagentId)?.status,
+          projection.turnItems.find(
+            (item) => item.type === "subagent" && item.subagentId === subagentId,
+          )?.status,
+          child.nodes.find((node) => node.id === childRootNodeId)?.status,
+        ]),
+      );
+    });
+    return {
+      threadId,
+      providerSessionId,
+      providerThreads,
+      writeProviderThread,
+      rosters,
+      subagents,
+      writeSubagent,
+      subagentStatuses,
+    };
   });
 
-it.effect(
-  "ProviderSessionManagerV2 clears the background roster of a session a detach releases",
-  () =>
-    Effect.gen(function* () {
-      const state = yield* Ref.make(emptyState);
-      const effect = Effect.gen(function* () {
-        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-        const { threadId, providerSessionId, rosters } = yield* openSessionWithBackgroundCommand(
-          "provider-session-manager-detach-roster",
-        );
-        assert.deepStrictEqual(yield* rosters, [["dev-server"], ["dev-server"]]);
+const allRunning = Array.from({ length: 4 }, () => "running" as const);
+const allInterrupted = Array.from({ length: 4 }, () => "interrupted" as const);
 
-        yield* manager.detach({ providerSessionId, threadId, detail: "Thread settled." });
-
-        assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
-        assert.deepStrictEqual(yield* rosters, [[], ["dev-server"]]);
-      });
-
-      yield* effect.pipe(
-        Effect.provide(
-          layerTest({ state, idleTimeoutMs: 60_000, capabilities: ExclusiveCapabilities }),
-        ),
-      );
-    }),
-);
-
-it.effect("ProviderSessionManagerV2 keeps the roster of a runtime whose tasks can outlive it", () =>
+it.effect("ProviderSessionManagerV2 ends the background work of a session a detach releases", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const { providerSessionId, rosters } = yield* openSessionWithBackgroundCommand(
-        "provider-session-manager-outliving-roster",
-      );
+      const { threadId, providerSessionId, rosters, subagentStatuses } =
+        yield* openSessionWithBackgroundCommand("provider-session-manager-detach-roster");
+      assert.deepStrictEqual(yield* rosters, [["dev-server"], ["dev-server"]]);
+      assert.deepStrictEqual(yield* subagentStatuses, [allRunning, allRunning]);
+
+      yield* manager.detach({ providerSessionId, threadId, detail: "Thread settled." });
+
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+      assert.deepStrictEqual(yield* rosters, [[], ["dev-server"]]);
+      assert.deepStrictEqual(yield* subagentStatuses, [allInterrupted, allRunning]);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        layerTest({ state, idleTimeoutMs: 60_000, capabilities: ExclusiveCapabilities }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 keeps the work of a runtime whose tasks can outlive it", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const { providerSessionId, rosters, subagentStatuses } =
+        yield* openSessionWithBackgroundCommand("provider-session-manager-outliving-roster");
 
       yield* manager.close(providerSessionId);
 
       assert.deepStrictEqual(yield* rosters, [["dev-server"], ["dev-server"]]);
+      assert.deepStrictEqual(yield* subagentStatuses, [allRunning, allRunning]);
     });
 
     yield* effect.pipe(
@@ -2542,6 +2716,66 @@ it.effect("ProviderSessionManagerV2 keeps a provider update that lands while rel
       Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, beforeUnchangedWrite })),
     );
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a native subagent resumed after release read it, until the commit",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const beforeSubagentWrite = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+      const effect = Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const { providerSessionId, subagents, writeSubagent, subagentStatuses } =
+          yield* openSessionWithBackgroundCommand("provider-session-manager-resumed-before-commit");
+        const resumedAt = DateTime.add(yield* DateTime.now, { seconds: 1 });
+        yield* Ref.set(
+          beforeSubagentWrite,
+          writeSubagent(subagents[0]!, resumedAt).pipe(Effect.orDie),
+        );
+
+        yield* manager.close(providerSessionId);
+
+        assert.deepStrictEqual(yield* subagentStatuses, [allRunning, allRunning]);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, beforeSubagentWrite })),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a native subagent that a replacement resumed during release",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const scopeCloseReached = yield* Deferred.make<void>();
+      const effect = Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const { providerSessionId, subagents, writeSubagent, subagentStatuses } =
+          yield* openSessionWithBackgroundCommand("provider-session-manager-resumed-subagent");
+        const closing = yield* manager.close(providerSessionId).pipe(Effect.forkScoped);
+        yield* Deferred.await(scopeCloseReached);
+
+        yield* writeSubagent(subagents[0]!, DateTime.add(yield* DateTime.now, { seconds: 1 }));
+        yield* TestClock.adjust("30 seconds");
+        yield* Fiber.join(closing);
+
+        assert.deepStrictEqual(yield* subagentStatuses, [allRunning, allRunning]);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            hangSessionScopeClose: true,
+            scopeCloseReached,
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect(

@@ -51,6 +51,10 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import {
+  endOrphanedNativeSubagent,
+  endRunlessRootTurns,
+} from "@t3tools/provider-core/server/subagentProjection";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -741,27 +745,33 @@ export const layerWithOptions = (
         }
       });
 
+      interface ReleasedSessionInput {
+        readonly entry: LiveSessionEntry;
+        readonly reason: ProviderSessionReleaseReason;
+        readonly detachedThreadId?: ThreadId;
+      }
+
+      // Keep OpenCode's work: its background subagents share a server and can outlive the session.
+      const threadsLosingBackgroundWork = (input: ReleasedSessionInput): ReadonlySet<ThreadId> => {
+        if (
+          input.reason === "server_shutdown" ||
+          input.entry.runtime.backgroundTasksEndWithProcess !== true
+        ) {
+          return new Set();
+        }
+        const threadIds = new Set(input.entry.attachedThreadIds);
+        if (input.detachedThreadId !== undefined) threadIds.add(input.detachedThreadId);
+        return threadIds;
+      };
+
       // Read tasks as soon as the session leaves the live map, before a replacement reports its own.
-      // Keep OpenCode's roster: its background subagents share a server and can outlive the session.
       const readReleasedBackgroundTasks = Effect.fn(
         "ProviderSessionManager.readReleasedBackgroundTasks",
       )(
-        function* (input: {
-          readonly entry: LiveSessionEntry;
-          readonly reason: ProviderSessionReleaseReason;
-          readonly detachedThreadId?: ThreadId;
-        }) {
-          if (
-            input.reason === "server_shutdown" ||
-            input.entry.runtime.backgroundTasksEndWithProcess !== true
-          ) {
-            return [];
-          }
+        function* (input: ReleasedSessionInput) {
           const providerSessionId = input.entry.runtime.providerSessionId;
-          const threadIds = new Set(input.entry.attachedThreadIds);
-          if (input.detachedThreadId !== undefined) threadIds.add(input.detachedThreadId);
           const released = [];
-          for (const threadId of threadIds) {
+          for (const threadId of threadsLosingBackgroundWork(input)) {
             const projection = yield* projectionStore.getThreadRecords(threadId, [
               "providerThreads",
             ]);
@@ -793,6 +803,123 @@ export const layerWithOptions = (
       type ReleasedBackgroundTasks = Effect.Success<
         ReturnType<typeof readReleasedBackgroundTasks>
       >[number];
+
+      // A released process can never report how the native subagents running inside it ended.
+      const readReleasedNativeSubagents = Effect.fn(
+        "ProviderSessionManager.readReleasedNativeSubagents",
+      )(
+        function* (input: ReleasedSessionInput) {
+          const providerSessionId = input.entry.runtime.providerSessionId;
+          const released = [];
+          for (const threadId of threadsLosingBackgroundWork(input)) {
+            const projection = yield* projectionStore.getRuntimeRecoveryProjection(threadId);
+            const sessionProviderThreadIds = new Set(
+              projection.providerThreads.flatMap((providerThread) =>
+                providerThread.providerSessionId === providerSessionId ? [providerThread.id] : [],
+              ),
+            );
+            for (const subagent of projection.subagents) {
+              const item = projection.turnItems.find(
+                (candidate) =>
+                  candidate.type === "subagent" && candidate.subagentId === subagent.id,
+              );
+              const providerThreadId = item?.providerThreadId ?? subagent.providerThreadId;
+              if (
+                subagent.origin !== "provider_native" ||
+                !isOrchestrationV2WorkActive(subagent.status) ||
+                providerThreadId == null ||
+                !sessionProviderThreadIds.has(providerThreadId)
+              ) {
+                continue;
+              }
+              released.push({
+                threadId,
+                providerSessionId,
+                subagentId: subagent.id,
+                startedAt: subagent.startedAt,
+              });
+            }
+          }
+          return released;
+        },
+        (effect, input) =>
+          effect.pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("orchestration-v2.provider-session-release-subagent-read-failed", {
+                providerSessionId: input.entry.runtime.providerSessionId,
+                cause,
+              }).pipe(Effect.as([])),
+            ),
+          ),
+      );
+      type ReleasedNativeSubagent = Effect.Success<
+        ReturnType<typeof readReleasedNativeSubagents>
+      >[number];
+
+      const startedAtMillis = (startedAt: DateTime.Utc | null) =>
+        startedAt === null ? null : DateTime.toEpochMillis(startedAt);
+
+      const readRecoveryProjection = (threadId: ThreadId) =>
+        projectionStore.getRuntimeRecoveryProjection(threadId).pipe(
+          Effect.catchTags({
+            ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+          }),
+        );
+
+      // A replacement process can resume a subagent at any point before this commits; a new start keeps it.
+      // Each subagent and its child turns commit together, guarded by the start this release read.
+      const writeReleasedNativeSubagentEvents = (released: ReadonlyArray<ReleasedNativeSubagent>) =>
+        Effect.forEach(
+          released,
+          ({ threadId, subagentId, providerSessionId, startedAt }) =>
+            Effect.gen(function* () {
+              const projection = yield* readRecoveryProjection(threadId);
+              if (projection === null) return;
+              const subagent = projection.subagents.find(
+                (candidate) => candidate.id === subagentId,
+              );
+              if (
+                subagent === undefined ||
+                startedAtMillis(subagent.startedAt) !== startedAtMillis(startedAt)
+              ) {
+                return;
+              }
+              const now = yield* DateTime.now;
+              const events: Array<OrchestrationV2DomainEvent> = [];
+              events.push(
+                ...(yield* endOrphanedNativeSubagent({
+                  projection,
+                  subagentId,
+                  status: "interrupted",
+                  now,
+                  emitted: events,
+                  allocateEventId: () =>
+                    idAllocator.allocate.event({ threadId, providerSessionId }),
+                })),
+              );
+              const childThreadId = subagent.childThreadId;
+              const child =
+                childThreadId === null ? null : yield* readRecoveryProjection(childThreadId);
+              if (childThreadId !== null && child !== null) {
+                events.push(
+                  ...(yield* endRunlessRootTurns({
+                    threadId: childThreadId,
+                    providerInstanceId: subagent.providerInstanceId,
+                    projection: child,
+                    status: "interrupted",
+                    now,
+                    emitted: events,
+                    allocateEventId: () =>
+                      idAllocator.allocate.event({ threadId: childThreadId, providerSessionId }),
+                  })),
+                );
+              }
+              if (events.length > 0) {
+                yield* eventSink.writeIfSubagentActive({ expected: subagent, events });
+              }
+            }),
+          { discard: true },
+        );
 
       // Dead processes cannot report task endings; stale rosters keep threads Waiting.
       const writeReleasedBackgroundWorkEvents = (
@@ -849,6 +976,7 @@ export const layerWithOptions = (
         readonly reason: ProviderSessionReleaseReason;
         readonly detail?: string;
         readonly releasedBackgroundTasks: ReadonlyArray<ReleasedBackgroundTasks>;
+        readonly releasedNativeSubagents: ReadonlyArray<ReleasedNativeSubagent>;
         readonly releasedAt: DateTime.Utc;
         readonly replaced: boolean;
       }) =>
@@ -863,6 +991,7 @@ export const layerWithOptions = (
               ),
             ),
             Effect.exit(writeReleasedBackgroundWorkEvents(input.releasedBackgroundTasks)),
+            Effect.exit(writeReleasedNativeSubagentEvents(input.releasedNativeSubagents)),
           ],
           { concurrency: 1 },
         ).pipe(Effect.flatMap(Exit.asVoidAll));
@@ -1019,13 +1148,15 @@ export const layerWithOptions = (
               onNone: () => Effect.void,
               onSome: (entry) =>
                 Effect.gen(function* () {
-                  const releasedBackgroundTasks = yield* readReleasedBackgroundTasks({
+                  const released = {
                     entry,
                     reason: input.reason,
                     ...(input.detachedThreadId === undefined
                       ? {}
                       : { detachedThreadId: input.detachedThreadId }),
-                  });
+                  };
+                  const releasedBackgroundTasks = yield* readReleasedBackgroundTasks(released);
+                  const releasedNativeSubagents = yield* readReleasedNativeSubagents(released);
                   if (input.cancelIdleFiber !== false) {
                     yield* cancelIdleFiber(entry.idleFiber);
                   }
@@ -1048,6 +1179,7 @@ export const layerWithOptions = (
                     reason: input.reason,
                     ...(input.detail === undefined ? {} : { detail: input.detail }),
                     releasedBackgroundTasks,
+                    releasedNativeSubagents,
                     releasedAt,
                   };
                   const recorded = yield* Effect.exit(
