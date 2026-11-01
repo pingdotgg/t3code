@@ -29,6 +29,17 @@ function useKeySet(newlineSeparatedKeys: string): ReadonlySet<string> {
 type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
 
 /**
+ * The React Compiler drops unread dependencies, so pass the expired-grace version through
+ * this call to keep inbox updates tied to its subscription.
+ */
+function observeInbox(
+  threads: Parameters<typeof threadListInboxReturns.observe>[0],
+  _expiredGraceVersion: number,
+) {
+  return threadListInboxReturns.observe(threads);
+}
+
+/**
  * Shelf callbacks prevent compiler caching across the whole derivation, so each stage keeps
  * its own memo boundary to preserve the list's identity during unrelated navigation renders.
  */
@@ -66,8 +77,7 @@ export function useThreadListV2(input: {
     threadListInboxReturns.getSnapshot,
   );
   const inbox = useMemo(
-    () => threadListInboxReturns.observe(workingShelfEnabled ? threads : null),
-    // oxlint-disable-next-line react/memo-dependencies -- the version signals an expired grace
+    () => observeInbox(workingShelfEnabled ? threads : null, inboxVersion),
     [threads, workingShelfEnabled, inboxVersion],
   );
   // Compute move availability per section; per-row planning is quadratic.
