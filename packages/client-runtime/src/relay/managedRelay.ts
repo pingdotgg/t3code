@@ -255,6 +255,7 @@ export interface ManagedRelayAuthorization {
 export interface ManagedRelayClientLayerOptions {
   readonly relayUrl: string;
   readonly clientId: RelayPublicClientId;
+  readonly backgroundRelayUrl?: string;
   readonly accessTokenStore?: ManagedRelayAccessTokenStore;
 }
 
@@ -458,8 +459,7 @@ function disabledManagedRelayClient(relayUrl: string): ManagedRelayClient["Servi
   });
 }
 
-/** @public */
-export const make = Effect.fn("ManagedRelayClient.make")(function* (
+const makeSingleRelay = Effect.fn("ManagedRelayClient.make")(function* (
   options: ManagedRelayClientLayerOptions,
 ) {
   const relayUrl = normalizeSecureRelayUrl(options.relayUrl);
@@ -997,6 +997,34 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
       Effect.withSpan("clientRuntime.managedRelay.resetTokenCache"),
       withRelayClientTracing,
     ),
+  });
+});
+
+/** @public */
+export const make = Effect.fn("ManagedRelayClient.makeWithBackgroundRelay")(function* (
+  options: ManagedRelayClientLayerOptions,
+) {
+  const primary = yield* makeSingleRelay(options);
+  if (
+    options.backgroundRelayUrl === undefined ||
+    normalizeSecureRelayUrl(options.backgroundRelayUrl) === primary.relayUrl
+  )
+    return primary;
+
+  // Background tokens stay in a separate cache; the primary persisted store belongs
+  // to T3 Connect. Invalid overrides fail at request time rather than falling back.
+  const background = yield* makeSingleRelay({
+    relayUrl: options.backgroundRelayUrl,
+    clientId: options.clientId,
+  });
+  return ManagedRelayClient.of({
+    ...primary,
+    listDevices: background.listDevices,
+    registerDevice: background.registerDevice,
+    unregisterDevice: background.unregisterDevice,
+    registerLiveActivity: background.registerLiveActivity,
+    getAgentActivitySnapshot: background.getAgentActivitySnapshot,
+    resetTokenCache: primary.resetTokenCache.pipe(Effect.ensuring(background.resetTokenCache)),
   });
 });
 
