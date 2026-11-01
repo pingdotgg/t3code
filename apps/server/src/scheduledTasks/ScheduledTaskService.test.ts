@@ -2,7 +2,7 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as NodeUtil from "node:util";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import {
   EventId,
   MessageId,
@@ -18,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -1057,5 +1058,110 @@ it.effect("catches an outcome missed by reconnect while dispatch is still in fli
       yield* untilStatus(service, task.id, "succeeded");
       assert.equal((yield* service.list()).tasks[0]?.runCount, 1);
     }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect(
+  "a run interrupted mid-dispatch is released and the next run records its real outcome",
+  () =>
+    Effect.gen(function* () {
+      const dispatches = yield* Ref.make(0);
+      const harness = yield* makeTurnHarness({
+        // Only the first dispatch hangs, so the run can be interrupted in flight.
+        duringDispatch: () =>
+          Ref.getAndUpdate(dispatches, (n) => n + 1).pipe(
+            Effect.flatMap((n) => (n === 0 ? Effect.never : Effect.void)),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const { task } = yield* upsertBoundTask(service);
+        const interrupted = yield* service.runNow({ id: task.id }).pipe(Effect.forkChild);
+        yield* Queue.take(harness.dispatched);
+        yield* Fiber.interrupt(interrupted);
+        const [released] = (yield* service.list()).tasks;
+        assert.equal(released?.lastRunStatus, "failed");
+        assert.equal(released?.runCount, 1);
+
+        yield* TestClock.adjust("1 second");
+        const next = yield* service.runNow({ id: task.id });
+        assert.equal(next.task.lastRunStatus, "running");
+        const messageId = yield* Queue.take(harness.dispatched);
+        yield* Queue.offerAll(harness.events, [
+          runEvent(runOf("run:after-interrupt", messageId, "running")),
+          runEvent(runOf("run:after-interrupt", messageId, "completed")),
+        ]);
+        yield* untilStatus(service, task.id, "succeeded");
+        const [settled] = (yield* service.list()).tasks;
+        assert.isNull(settled?.lastRunError);
+        assert.equal(settled?.runCount, 2);
+      }).pipe(Effect.provide(harness.layer));
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a run interrupted right after it reserves the task does not block the next run", () =>
+  Effect.gen(function* () {
+    const launches = yield* Ref.make(0);
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            launch: () =>
+              Ref.update(launches, (n) => n + 1).pipe(
+                Effect.as({ threadId: ThreadId.make("thread:launched"), resumed: false } as never),
+              ),
+          }),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:interrupted-reservation"),
+        title: "Check in",
+        prompt: "Check progress",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: ProjectId.make("project:test"),
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+
+      // The reservation is the first Set.add of the task id; interrupt the run right there.
+      const add = Set.prototype.add;
+      let interrupted = false;
+      const first = yield* Effect.gen(function* () {
+        using _reserve = vi.spyOn(Set.prototype, "add").mockImplementation(function (
+          this: Set<unknown>,
+          value: unknown,
+        ) {
+          const result = add.call(this, value);
+          if (value === task.id && !interrupted) {
+            interrupted = true;
+            Fiber.getCurrent()?.interruptUnsafe();
+          }
+          return result;
+        });
+        return yield* service
+          .runNow({ id: task.id })
+          .pipe(Effect.forkChild, Effect.flatMap(Fiber.await));
+      });
+      assert.isTrue(interrupted);
+      assert.isTrue(Exit.hasInterrupts(first));
+
+      const second = yield* service.runNow({ id: task.id });
+      assert.equal(second.threadId, ThreadId.make("thread:launched"));
+      assert.equal(yield* Ref.get(launches), 1);
+    }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
