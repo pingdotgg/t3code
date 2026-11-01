@@ -2,6 +2,7 @@ import {
   MessageId,
   NodeId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
@@ -737,6 +738,69 @@ describe("threadHistoryPaging", () => {
       populated.plans[0]?.kind === "proposed_plan" ? populated.plans[0].markdown.length : 0,
     ).toBe(2_097_152);
   });
+
+  it.each([40_000, 80_000])(
+    "reserves pending question cards before visible history: %s bytes",
+    (questionBytes) => {
+      const rows = Array.from({ length: 20 }, (_, index) =>
+        makeRow(index + 1, { outputBytes: 1_500 }),
+      );
+      const requestId = RuntimeRequestId.make("pending-question");
+      const card: OrchestrationV2TurnItem = {
+        id: TurnItemId.make("pending-question-card"),
+        type: "user_input_request",
+        threadId: THREAD,
+        runId: null,
+        nodeId: NODE,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        requestId,
+        responseMode: "message",
+        questions: [
+          { id: "scope", header: "Scope", question: "q".repeat(questionBytes), options: [] },
+        ],
+        startedAt: NOW,
+        completedAt: NOW,
+        updatedAt: NOW,
+      };
+      const projection = {
+        ...makeProjection(rows),
+        turnItems: [card, ...rows.map((row) => row.item)],
+        runtimeRequests: [
+          {
+            id: requestId,
+            nodeId: NODE,
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input" as const,
+            status: "pending" as const,
+            responseCapability: { type: "message" as const },
+            createdAt: NOW,
+            resolvedAt: null,
+          },
+        ],
+      };
+      const policy = { ...THREAD_HISTORY_PAGE_POLICY, maxEncodedBytes: 64_000 };
+
+      const bounded = buildBoundedThreadProjection({ projection, snapshotSequence: 9, policy });
+
+      expect(bounded.projection.turnItems).toContain(card);
+      expect(bounded.projection.visibleTurnItems.length).toBeGreaterThan(0);
+      expect(bounded.hasMoreHistory).toBe(true);
+      if (questionBytes < policy.maxEncodedBytes) {
+        expect(Buffer.byteLength(JSON.stringify(bounded.projection), "utf8")).toBeLessThanOrEqual(
+          policy.maxEncodedBytes,
+        );
+      } else {
+        expect(bounded.projection.visibleTurnItems).toHaveLength(1);
+      }
+    },
+  );
 
   it("preserves oversized actionable state", () => {
     const projection = makeProjection([makeRow(0)]);
