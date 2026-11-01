@@ -1769,7 +1769,7 @@ function textFromClaudeContent(content: SDKAssistantMessage["message"]["content"
   return content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
 }
 
-// Claude 5.1+ emits at most one pre-tool text block as thinking; treat only a second consecutive thinking block as text.
+// Claude 5.1+ emits at most one pre-tool text block as thinking; treat a second consecutive thinking block, or a lone one before AskUserQuestion, as text.
 function claudeWritesUpdatesAsThinking(model: string): boolean {
   const match = /claude-[a-z]+-(\d+)(?:-(\d{1,2}))?(?!\d)/u.exec(model);
   if (match === null) return false;
@@ -8416,7 +8416,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   block.type === "tool_use" &&
                   update !== null &&
                   update.messageId === message.message.id &&
-                  update.followsThinking &&
+                  (update.followsThinking || block.name === "AskUserQuestion") &&
                   claudeWritesUpdatesAsThinking(message.message.model)
                 ) {
                   yield* emitAssistantTextArtifacts({
