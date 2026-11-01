@@ -8,6 +8,7 @@ import {
   type DesktopUpdateStatusReport,
   type HostPowerSnapshot,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -24,6 +25,7 @@ import * as Stream from "effect/Stream";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 import * as DesktopRendererHistory from "./DesktopRendererHistory.ts";
+import * as LinuxHostPower from "./LinuxHostPower.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 
 const LIVE_SAMPLE_INTERVAL = Duration.seconds(1);
@@ -147,6 +149,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const powerMonitor = yield* ElectronPowerMonitor.ElectronPowerMonitor;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
+  const platform = yield* HostProcess.Platform;
   const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
   yield* electronApp.whenReady;
 
@@ -162,6 +165,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     speedLimitPercent: Option.none(),
   };
   const powerState = yield* Ref.make(initialPowerState);
+  const linuxThermalState = yield* Ref.make<LinuxHostPower.LinuxThermalState>("unknown");
   const hostPowerIntervals = yield* Ref.make<HostPowerIntervals>({
     active: DEFAULT_HOST_POWER_ACTIVE_INTERVAL,
     idle: DEFAULT_HOST_POWER_IDLE_INTERVAL,
@@ -254,6 +258,21 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
           };
           return [next, next] as const;
         });
+        const linuxPower = yield* platform === "linux"
+          ? LinuxHostPower.sample("/sys").pipe(
+              Effect.map((linuxSample) =>
+                LinuxHostPower.fillElectronGaps(
+                  observedPower.thermalState,
+                  Option.getOrNull(observedPower.speedLimitPercent),
+                  linuxSample,
+                ),
+              ),
+            )
+          : Effect.succeed({
+              thermalState: observedPower.thermalState,
+              speedLimitPercent: Option.getOrNull(observedPower.speedLimitPercent),
+            });
+        yield* Ref.set(linuxThermalState, linuxPower.thermalState);
         const nextSequence = yield* Ref.modify(sequence, (current) => [current + 1, current + 1]);
         const snapshot: DesktopHostTelemetrySnapshot = {
           version: 1,
@@ -269,11 +288,14 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
             suspended: observedPower.suspended,
             onBattery: observedPower.onBattery,
             lowPowerMode: "unknown",
-            thermalState: observedPower.thermalState,
+            thermalState: linuxPower.thermalState,
             stale: false,
             updatedAt: sampledAt,
           },
-          speedLimitPercent: observedPower.speedLimitPercent,
+          speedLimitPercent:
+            linuxPower.speedLimitPercent === null
+              ? Option.none()
+              : Option.some(linuxPower.speedLimitPercent),
           electronProcesses: (demand ? metrics : []).map((metric) => ({
             pid: metric.pid,
             creationTimeMs: Math.max(0, Math.round(metric.creationTime)),
@@ -313,7 +335,19 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
       // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - races a trigger queue against the interval; both arms are real outcomes, not a timeout
       const allowSuspendRecovery = yield* Effect.raceFirst(
         Queue.take(sampleTriggers).pipe(Effect.as(false)),
-        Effect.sleep(sampleInterval(currentPower, demand, intervals)).pipe(Effect.as(true)),
+        Effect.sleep(
+          sampleInterval(
+            {
+              ...currentPower,
+              thermalState:
+                currentPower.thermalState === "unknown"
+                  ? yield* Ref.get(linuxThermalState)
+                  : currentPower.thermalState,
+            },
+            demand,
+            intervals,
+          ),
+        ).pipe(Effect.as(true)),
       );
       yield* sampleOnce(allowSuspendRecovery);
     }
