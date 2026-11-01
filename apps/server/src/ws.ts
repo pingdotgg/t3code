@@ -148,8 +148,6 @@ import {
 } from "./orchestration-v2/ThreadLiveEventCoalescer.ts";
 import {
   buildBoundedThreadStreamSnapshot,
-  decideThreadResume,
-  isThreadReplayRawPayloadSafe,
   threadReplayEncodedBytes,
   THREAD_RESUME_MAX_REPLAY_EVENTS,
 } from "./orchestration-v2/ThreadStream.ts";
@@ -596,6 +594,7 @@ function projectFileFailureContext(
 }
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
+const THREAD_REPLAY_PAGE_BYTES = 256 * 1024;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
@@ -865,13 +864,14 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
           ),
         );
 
-    const loadReplayThrough = (afterSequence: number, throughSequence: number) =>
-      applicationEvents
+    const loadReplayThrough = (afterSequence: number, throughSequence: number) => {
+      let encodedBytes = 0;
+      const replay = applicationEvents
         .readAgentEvents({
           threadId: input.threadId,
           afterSequence,
           throughSequence,
-          limit: THREAD_RESUME_MAX_REPLAY_EVENTS + 1,
+          maxPageBytes: THREAD_REPLAY_PAGE_BYTES,
           // Downgrades can leave unknown rows; skip them and resume live from highWater so later events survive.
           skipUnknownEventTypes: true,
         })
@@ -881,17 +881,27 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
             sequence: stored.sequence,
             event: projectDomainEventForWire(stored.event),
           })),
-          Stream.runCollect,
-          Effect.map((items) => Array.from(items)),
-          Effect.mapError(
-            (cause) =>
-              new OrchestrationV2GetThreadProjectionError({
-                threadId: input.threadId,
-                message: `Failed while replaying orchestration V2 thread ${input.threadId}`,
-                cause,
-              }),
-          ),
         );
+      return replay.pipe(
+        // Count delivered events rather than stored rows: a page of
+        // unknown future event types must not truncate the catch-up.
+        Stream.take(THREAD_RESUME_MAX_REPLAY_EVENTS),
+        Stream.takeUntil((item) => {
+          encodedBytes += threadReplayEncodedBytes([item]);
+          return encodedBytes >= THREAD_REPLAY_PAGE_BYTES;
+        }),
+        Stream.runCollect,
+        Effect.map((items) => Array.from(items)),
+        Effect.mapError(
+          (cause) =>
+            new OrchestrationV2GetThreadProjectionError({
+              threadId: input.threadId,
+              message: `Failed while replaying orchestration V2 thread ${input.threadId}`,
+              cause,
+            }),
+        ),
+      );
+    };
 
     const completionMarker =
       input.requestCompletionMarker === true
@@ -956,31 +966,24 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       if (input.afterSequence > highWater) {
         return yield* snapshotThenLive();
       }
-      const stats = yield* applicationEvents
-        .getAgentReplayStats({
+      const hasCreateEvent = yield* applicationEvents
+        .hasAgentEvent({
           threadId: input.threadId,
           afterSequence: input.afterSequence,
           throughSequence: highWater,
-          maxEvents: THREAD_RESUME_MAX_REPLAY_EVENTS,
+          eventType: "thread.created",
         })
         .pipe(
           Effect.mapError(
             (cause) =>
               new OrchestrationV2GetThreadProjectionError({
                 threadId: input.threadId,
-                message: `Failed to measure orchestration V2 thread ${input.threadId} replay`,
+                message: `Failed to check orchestration V2 thread ${input.threadId} creation`,
                 cause,
               }),
           ),
         );
-      // Bound stored and projected payload bytes separately; neither bounds process memory.
-      if (
-        stats.eventCount > THREAD_RESUME_MAX_REPLAY_EVENTS ||
-        !isThreadReplayRawPayloadSafe(stats.rawPayloadBytes)
-      ) {
-        return yield* snapshotThenLive();
-      }
-      if (stats.hasCreateEvent) {
+      if (hasCreateEvent) {
         const shell = yield* threadManagement.getThreadShell(input.threadId).pipe(
           Effect.mapError(
             (cause) =>
@@ -991,22 +994,23 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
               }),
           ),
         );
-        // Retained creation events may describe deleted threads; replace replay only if a snapshot exists.
         if (shell !== null) return yield* snapshotThenLive();
       }
-      const replay = coalesceLiveUpdatedEvents(
-        yield* loadReplayThrough(input.afterSequence, highWater),
+      // Fetch the next page only after the transport consumes this one.
+      const replay = Stream.paginate(input.afterSequence, (cursor) =>
+        loadReplayThrough(cursor, highWater).pipe(
+          Effect.map((items) => {
+            const last = items.at(-1);
+            return [
+              coalesceLiveUpdatedEvents(items),
+              last === undefined || last.sequence >= highWater
+                ? Option.none()
+                : Option.some(last.sequence),
+            ] as const;
+          }),
+        ),
       );
-      const plan = decideThreadResume({
-        afterSequence: input.afterSequence,
-        highWater,
-        replayEventCount: replay.length,
-        replayEncodedBytes: threadReplayEncodedBytes(replay),
-      });
-      if (plan.mode === "snapshot") {
-        return yield* snapshotThenLive();
-      }
-      return rpcInitialItems(replay).pipe(
+      return replay.pipe(
         Stream.concat(completionMarker),
         Stream.concat(eventStreamFrom(highWater)),
         withLiveDedupe,

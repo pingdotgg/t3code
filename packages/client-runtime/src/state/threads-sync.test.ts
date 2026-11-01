@@ -2107,6 +2107,33 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("resumes partial catch-up before its completion marker arrives", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+      yield* Queue.offer(h.inputs, titleUpdated("Partial progress", CACHED_SNAPSHOT_SEQUENCE + 1));
+      yield* awaitThreadState(
+        h.observed,
+        (value) =>
+          value.status === "synchronizing" &&
+          Option.isSome(value.data) &&
+          value.data.value.thread.title === "Partial progress",
+      );
+      yield* h.replaceSession;
+      yield* SubscriptionRef.changes(h.subscriptionCount).pipe(
+        Stream.filter((count) => count >= 2),
+        Stream.runHead,
+      );
+      expect(yield* Ref.get(h.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE + 1);
+      expect((yield* Ref.get(h.latest)).status).toBe("synchronizing");
+      yield* Queue.offerAll(h.inputs, [
+        titleUpdated("Finished", CACHED_SNAPSHOT_SEQUENCE + 2),
+        synchronized(),
+      ]);
+      const live = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+      expect(Option.getOrThrow(live.data).thread.title).toBe("Finished");
+    }),
+  );
+
   it.effect("keeps replayed updates synchronizing until the completion marker arrives", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
