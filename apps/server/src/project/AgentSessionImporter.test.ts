@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -530,33 +531,80 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
-it.effect("gives up on a native session that never answers and closes it", () =>
+it.effect("releases the ACP import lock when a native session never answers", () =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
     const threadId = yield* seedOwner(candidate(CODEX_MODEL_SELECTION, "native-history-hang"));
+    const opened = yield* Deferred.make<void>();
     let closed = false;
-    // An agent that only resumes sessions and never answers session/resume.
+    // An agent that only resumes sessions and never answers its first session/resume.
     const adapter = {
       openSession: () =>
-        Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            closed = true;
-          }),
-        ).pipe(Effect.andThen(Effect.never)),
+        Effect.suspend(() => {
+          if (!closed) {
+            return Effect.addFinalizer(() =>
+              Effect.sync(() => {
+                closed = true;
+              }),
+            ).pipe(
+              Effect.andThen(Deferred.succeed(opened, undefined)),
+              Effect.andThen(Effect.never),
+            );
+          }
+          return Effect.succeed({
+            readThreadSnapshot: ({ providerThread }) =>
+              Effect.succeed({
+                providerThread,
+                providerTurns: [],
+                runtimeRequests: [],
+                messages: [
+                  {
+                    createdBy: "user",
+                    creationSource: "provider",
+                    id: MessageId.make("replayed:hang"),
+                    threadId,
+                    runId: null,
+                    nodeId: null,
+                    role: "user",
+                    text: "Fix the build",
+                    attachments: [],
+                    streaming: false,
+                    createdAt: now,
+                    updatedAt: now,
+                  },
+                ],
+              }),
+          } as Pick<ProviderAdapter.ProviderAdapterV2SessionRuntime, "readThreadSnapshot">);
+        }),
     } as unknown as ProviderAdapter.ProviderAdapterV2["Service"];
     const importer = yield* makeImporter([], Effect.void, () => Effect.succeed(adapter));
+    const importHistory = coordinator.withSessionMutation(
+      importer.importNativeHistory({ threadId, workspaceRoot: "/workspace/project" }),
+    );
 
-    const importing = yield* importer
-      .importNativeHistory({ threadId, workspaceRoot: "/workspace/project" })
-      .pipe(Effect.flip, Effect.forkChild);
+    const importing = yield* importHistory.pipe(Effect.flip, Effect.forkChild);
+    yield* Deferred.await(opened);
+    // Any other ACP import or delete waits for the same lock.
+    const next = yield* coordinator
+      .withSessionMutation(Effect.succeed("next"))
+      .pipe(Effect.forkChild);
     yield* TestClock.adjust("2 minutes");
 
     expect((yield* Fiber.join(importing))._tag).toBe("TimeoutError");
     expect(closed).toBe(true);
+    expect(yield* Fiber.join(next)).toBe("next");
     expect(
       (yield* projections.getThreadRecords(threadId, [])).thread.historyOrigin,
     ).toBeUndefined();
-  }).pipe(Effect.scoped, Effect.provide(persistence)),
+    expect(yield* importHistory).toBe(1);
+    expect((yield* projections.getThreadRecords(threadId, [])).thread.historyOrigin).toBe(
+      "v1_import",
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(Layer.merge(persistence, AcpRegistryRuntimeCoordinator.layer)),
+  ),
 );
 
 /**

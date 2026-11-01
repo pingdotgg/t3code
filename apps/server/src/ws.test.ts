@@ -29,6 +29,7 @@ import {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as DateTime from "effect/DateTime";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -1096,6 +1097,7 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
     const complete = yield* seedAcpThread("complete", { imported: true, ran: false });
     const ran = yield* seedAcpThread("ran", { imported: false, ran: true });
     const failing = yield* seedAcpThread("failing", { imported: false, ran: false });
+    const timingOut = yield* seedAcpThread("timing-out", { imported: false, ran: false });
     const repaired: Array<ThreadId> = [];
     const session = (sessionId: string) => ({
       sessionId,
@@ -1166,7 +1168,9 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
         importNativeHistory: ({ threadId }) =>
           threadId === failing
             ? Effect.fail(new Orchestrator.OrchestratorProjectionError({ threadId, cause: "read" }))
-            : Effect.sync(() => repaired.push(threadId)).pipe(Effect.as(1)),
+            : threadId === timingOut
+              ? Effect.fail(new Cause.TimeoutError())
+              : Effect.sync(() => repaired.push(threadId)).pipe(Effect.as(1)),
       }),
     );
     const client = yield* RpcTest.makeClient(acpSessionRpcs).pipe(
@@ -1216,10 +1220,12 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
       });
     assert.deepEqual(yield* importSession("pending"), { threadId: pending, imported: true });
     assert.deepEqual(repaired, [pending]);
-    const failure = yield* importSession("failing").pipe(Effect.flip);
-    assert.equal(failure._tag, "AcpRegistryOperationError");
-    if (failure._tag === "AcpRegistryOperationError") {
-      assert.equal(failure.reason, "session_import_failed");
+    for (const sessionId of ["failing", "timing-out"]) {
+      const failure = yield* importSession(sessionId).pipe(Effect.flip);
+      assert.equal(failure._tag, "AcpRegistryOperationError");
+      if (failure._tag === "AcpRegistryOperationError") {
+        assert.equal(failure.reason, "session_import_failed");
+      }
     }
   }).pipe(
     Effect.provide(
