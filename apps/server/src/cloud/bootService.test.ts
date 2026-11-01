@@ -929,7 +929,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
   // regression: #28552 booting out the agent from inside it kills the caller before bootstrap
   it.effect("hands an in-service install to launchd without booting out the running agent", () =>
     Effect.gen(function* () {
-      const { service, fs, statePath, commands, makeService } = yield* makeHarness("darwin");
+      const { service, fs, statePath, commands, handoffJobs, makeService } =
+        yield* makeHarness("darwin");
       const plan = yield* service.install();
       const state = yield* fs.readFileString(statePath);
       const plist = yield* fs.readFileString(plan.unitPath);
@@ -942,6 +943,14 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(result).toMatchObject({ handedOff: true });
       expect(yield* fs.readFileString(statePath)).toBe(state);
       expect(yield* fs.readFileString(plan.unitPath)).toBe(plist);
+      // The job runs the target CLI's install as if from a terminal, so it cannot hand off again.
+      expect(handoffJobs).toHaveLength(1);
+      expect(handoffJobs[0]).toContain(
+        [result.program[0], "service", "install", "--base-dir", plan.baseDir]
+          .map((argument) => `    <string>${argument}</string>`)
+          .join("\n"),
+      );
+      expect(handoffJobs[0]).not.toContain("T3_BOOT_SERVICE_UNIT");
     }),
   );
 
