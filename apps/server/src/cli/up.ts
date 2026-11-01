@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Path from "effect/Path";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
@@ -41,7 +42,7 @@ import {
 } from "./connect.ts";
 import { resolveHostCliCommand } from "./invocation.ts";
 import * as CliService from "./service.ts";
-import { signInBlocker, turnOnRequireGrant } from "./tailscale.ts";
+import { readFailure, signInBlocker, turnOnRequireGrant } from "./tailscale.ts";
 
 type Route = "tailscale" | "connect" | "lan";
 type Routes = Readonly<Record<Route, boolean>>;
@@ -346,15 +347,13 @@ export const resolveOwner = Effect.fn("cli.up.resolveOwner")(function* (
 
 /** Tailscale's state here, or why Tailscale sign-in cannot work on this machine. */
 const checkTailscale = Effect.fn("cli.up.checkTailscale")(function* () {
-  const status = yield* readTailscaleStatus("active").pipe(Effect.option);
-  if (Option.isNone(status)) {
-    return {
-      ok: false,
-      reason: "Tailscale did not answer. Install it and run `sudo tailscale up`.",
-    } as const;
+  const platform = yield* HostProcess.Platform;
+  const read = yield* Effect.result(readTailscaleStatus("active"));
+  if (Result.isFailure(read)) {
+    return { ok: false, reason: readFailure(read.failure, platform) } as const;
   }
-  const { value } = status;
-  const blocker = signInBlocker(value, yield* HostProcess.Platform);
+  const value = read.success;
+  const blocker = signInBlocker(value, platform);
   // signInBlocker already refuses a host with no IPv4 address.
   const address = value.tailnetIpv4Addresses[0];
   if (blocker !== null || address === undefined) {

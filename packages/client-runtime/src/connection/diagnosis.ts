@@ -363,6 +363,7 @@ const HOST_TAILSCALE_NOTICE: ReadonlySet<ServerTailscaleIssueCause> = new Set([
   "key_expiring",
   "health_warning",
   "outdated",
+  "no_ipv4",
 ]);
 
 /** " (as of 2h ago)" for facts a minute old or more. */

@@ -136,6 +136,12 @@ describe("classifyTailscaleHealth", () => {
       ["outdated"],
     ],
     [
+      "no IPv4 address",
+      Result.succeed({ ...running, tailnetIpv4Addresses: [] }),
+      "running",
+      ["no_ipv4"],
+    ],
+    [
       "an older CLI that reports no capabilities or TUN",
       Result.succeed({
         ...running,

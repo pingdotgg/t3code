@@ -291,7 +291,8 @@ export const make = Effect.gen(function* () {
           (status) =>
             status.backendState === "Running" &&
             status.userspaceNetworking !== true &&
-            TailscaleHost.isSupportedTailscaleVersion(status.version),
+            TailscaleHost.isSupportedTailscaleVersion(status.version) &&
+            status.tailnetIpv4Addresses.length > 0,
         ),
         Effect.orElseSucceed(() => false),
       )

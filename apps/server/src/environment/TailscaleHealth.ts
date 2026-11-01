@@ -59,7 +59,7 @@ export function stateFix(
   }
 }
 
-function readErrorFacts(
+export function readErrorFacts(
   error: TailscaleCommandError | TailscaleStatusParseError,
   platform: NodeJS.Platform,
 ): ServerTailscaleIssue & { readonly cause: Exclude<TailscaleState, "running"> } {
@@ -126,6 +126,12 @@ export function classifyTailscaleHealth(
       issues.push({
         cause: "userspace_networking",
         fix: "Run tailscaled with a TUN device, so T3 Code can see which device connects.",
+      });
+    }
+    if (status.tailnetIpv4Addresses.length === 0) {
+      issues.push({
+        cause: "no_ipv4",
+        fix: "Allow IPv4 for this machine in your tailnet policy. Tailscale sign-in needs it.",
       });
     }
     if (!TailscaleHost.isSupportedTailscaleVersion(status.version)) {

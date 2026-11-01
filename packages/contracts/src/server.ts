@@ -623,6 +623,7 @@ export const ServerTailscaleIssueCause = Schema.Literals([
   "magic_dns_off",
   "userspace_networking",
   "outdated",
+  "no_ipv4",
 ]);
 export type ServerTailscaleIssueCause = typeof ServerTailscaleIssueCause.Type;
 
@@ -701,6 +702,8 @@ export function tailscaleIssueHeadline(
       return `Tailscale on ${host} uses userspace networking`;
     case "outdated":
       return `Tailscale on ${host} is too old for Tailscale sign-in`;
+    case "no_ipv4":
+      return `Tailscale on ${host} has no IPv4 address`;
   }
 }
 

@@ -1,6 +1,7 @@
 import * as NodeUtil from "node:util";
 
 import {
+  type ServerTailscaleIssue,
   ServerTailscaleStatus,
   TAILNET_APP_CAPABILITY,
   tailscaleIssueHeadline,
@@ -14,6 +15,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
@@ -23,6 +25,7 @@ import { SERVICE_ENV_FILE } from "../cloud/serviceProtocol.ts";
 import { peersJoined, policyGrantedPeers } from "../auth/tailnetGrants.ts";
 import {
   formatTailscaleHealth,
+  readErrorFacts,
   readTailscaleHealth,
   stateFix,
 } from "../environment/TailscaleHealth.ts";
@@ -65,16 +68,23 @@ export const turnOnRequireGrant = Effect.fn("cli.tailscale.turnOnRequireGrant")(
   );
 });
 
+/** A Tailscale issue on this machine as one line, as `t3 tailscale status` words it. */
+const issueLine = (issue: ServerTailscaleIssue) =>
+  `${tailscaleIssueHeadline("this machine", issue, null, 0)}. ${issue.fix}`;
+
+/** Why a `tailscale status` read failed, as `t3 tailscale status` words it. */
+export const readFailure = (
+  error: Parameters<typeof readErrorFacts>[0],
+  platform: NodeJS.Platform,
+): string => issueLine(readErrorFacts(error, platform));
+
 /** Why Tailscale sign-in cannot work on this host, or null when it can. */
 export const signInBlocker = (
   status: TailscaleStatus,
   platform: NodeJS.Platform,
 ): string | null => {
   const state = tailscaleStateFromBackend(status.backendState);
-  if (state !== "running") {
-    const fix = stateFix(state, platform);
-    return `${tailscaleIssueHeadline("this machine", { cause: state, fix }, null, 0)}. ${fix}`;
-  }
+  if (state !== "running") return issueLine({ cause: state, fix: stateFix(state, platform) });
   return status.userspaceNetworking === true
     ? "Tailscale sign-in needs device addresses, and userspace networking hides them. Give the container /dev/net/tun and run tailscaled without --tun=userspace-networking."
     : !isSupportedTailscaleVersion(status.version)
@@ -90,11 +100,17 @@ export const signInBlocker = (
  * check: lookups after a switch read another tailnet, and a device that joined was not read.
  */
 const readPolicyGrantedPeers = Effect.gen(function* () {
-  const status = yield* readTailscaleStatus("active");
+  const platform = yield* HostProcess.Platform;
+  const read = yield* Effect.result(readTailscaleStatus("active"));
+  if (Result.isFailure(read)) {
+    const blocker = readFailure(read.failure, platform);
+    return { granted: [], unreadable: [], tagged: false, noNode: false, blocker };
+  }
+  const status = read.success;
   const facts = {
     tagged: status.selfTags.length > 0,
     noNode: status.selfNodeId === null,
-    blocker: signInBlocker(status, yield* HostProcess.Platform),
+    blocker: signInBlocker(status, platform),
   };
   // Where sign-in cannot work, the policy does not matter, so nothing more is read.
   if (facts.blocker !== null) return { granted: [], unreadable: [], ...facts };
@@ -171,7 +187,10 @@ const requireGrantCommand = Command.make("require-grant", {
                     "Run this again.",
                   ]
                 : scan === null
-                  ? ["Grant required: yes, because Tailscale is not answering."]
+                  ? [
+                      "No device signs in here while Tailscale does not answer.",
+                      "Grant required: not turned on.",
+                    ]
                   : scan.noNode
                     ? [
                         "Grant required: yes, because Tailscale names no node for this host.",
