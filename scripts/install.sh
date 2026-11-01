@@ -250,6 +250,8 @@ version_t3() {
   case "$1" in "$2"/*) ;; *) return 1 ;; esac
   case "${1#"$2"/}" in */*/*) return 1 ;; */t3) return 0 ;; *) return 1 ;; esac
 }
+newline="
+"
 real_desktop_launcher=
 if real_bin="$(CDPATH='' cd -P -- "${t3_home}/bin" 2>/dev/null && pwd)"; then
   real_desktop_launcher="${real_bin}/t3"
@@ -258,10 +260,16 @@ fi
 # or the desktop app's launcher), or nothing. Anything that is not a symlink is someone else's.
 link_kind() {
   [ -L "$1" ] || return 0
-  existing="$(readlink "$1" 2>/dev/null || true)"
+  # The x keeps a trailing newline in the target, which $(...) would drop.
+  existing="$(readlink "$1" 2>/dev/null && echo x)" || return 0
+  existing="${existing%x}"
+  existing="${existing%"$newline"}"
   # A target naming a folder (t3/, t3/.) never runs the file it would resolve to.
   case "$existing" in "" | . | .. | */ | */. | */..) return 0 ;; esac
   case "$existing" in /*) ;; *) existing="${bin_dir}/${existing}" ;; esac
+  # A folder that is itself a link (versions/current) is not followed.
+  folder="$(dirname -- "$existing")"
+  [ ! -L "$folder" ] || return 0
   # Resolved on disk, which sees through a symlinked T3 home and follows `..` as the OS does.
   if existing_dir="$(CDPATH='' cd -P -- "$(dirname -- "$existing")" 2>/dev/null && pwd)"; then
     real_existing="${existing_dir}/${existing##*/}"
@@ -272,8 +280,8 @@ link_kind() {
     return 0
   fi
   # Only a missing folder (a pruned version) leaves the text, and only without . or .. segments.
-  # A folder that exists but cannot be resolved, or is a link, may be another program's.
-  if [ -e "$(dirname -- "$existing")" ] || [ -L "$(dirname -- "$existing")" ]; then return 0; fi
+  # A folder that cannot be resolved for another reason may be another program's.
+  [ ! -e "$folder" ] && (CDPATH='' cd -P -- "$(dirname -- "$folder")" 2>/dev/null) || return 0
   case "$existing" in
     */./* | */../*) ;;
     "${t3_home}/bin/t3") echo older ;;
@@ -282,8 +290,9 @@ link_kind() {
 }
 kind=
 real_public="$(CDPATH='' cd -P -- "$bin_dir" && pwd)/t3"
-# The command link is replaced in place, which is safe only away from the public name.
-if [ "$real_public" = "$real_command_link" ]; then
+# The command link is replaced in place, which is safe only away from the public name. -ef compares
+# device and inode, so an alias or a bind mount of the runtime folder counts too.
+if [ "$real_public" = "$real_command_link" ] || [ "$bin_dir" -ef "${t3_home}/runtime" ]; then
   fail "T3CODE_INSTALL_BIN_DIR cannot be ${t3_home}/runtime. Choose another folder."
 fi
 if [ -e "$public" ] || [ -L "$public" ]; then
@@ -313,17 +322,25 @@ case "$kind" in
     mv "$public" "$aside" || { rmdir "$aside_dir"; fail "could not replace ${public}"; }
     if [ -n "$(link_kind "$aside")" ]; then
       if ! ln -s "$command_link" "${bin_dir}/"; then
-        # Keep the working old command when the name is still free.
-        ln -P "$aside" "${bin_dir}/" 2>/dev/null || true
+        # Keep the working old command when the name is still free; if it cannot go back, it stays.
+        ln -P "$aside" "${bin_dir}/" 2>/dev/null ||
+          fail "could not link ${public}; the old link is at ${aside}."
         rm -f "$aside" && rmdir "$aside_dir"
         fail "could not link ${public}"
       fi
       rm -f "$aside" && rmdir "$aside_dir"
     else
       # Another program wrote it after the check: put it back without overwriting anything newer.
-      ln -P "$aside" "${bin_dir}/" 2>/dev/null ||
-        fail "another program wrote ${public} during the install; its file is now at ${aside}."
-      rm -f "$aside" && rmdir "$aside_dir"
+      if [ -d "$aside" ] && [ ! -L "$aside" ]; then
+        # A folder cannot be hard linked, so it moves back while the name is free.
+        { [ ! -e "$public" ] && [ ! -L "$public" ] && mv "$aside" "$public"; } ||
+          fail "another program wrote ${public} during the install; it is now at ${aside}."
+        rmdir "$aside_dir"
+      else
+        ln -P "$aside" "${bin_dir}/" 2>/dev/null ||
+          fail "another program wrote ${public} during the install; it is now at ${aside}."
+        rm -f "$aside" && rmdir "$aside_dir"
+      fi
       fail "another t3 was just written at ${public}. Remove it and run this again, or run ${target_dir}/t3 directly."
     fi
     ;;

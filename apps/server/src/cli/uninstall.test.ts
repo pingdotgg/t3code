@@ -64,6 +64,11 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       const borrowed = path.join(root, "bin/t3-borrowed");
       yield* fs.symlink(path.join(versionsDir, "2.0.0/t3"), borrowed);
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: borrowed, versionsDir }));
+      // A version folder that is a link to one of ours (versions/current) is not followed.
+      yield* fs.symlink(path.join(versionsDir, "1.0.0"), path.join(versionsDir, "current"));
+      const current = path.join(root, "bin/t3-current");
+      yield* fs.symlink(path.join(versionsDir, "current/t3"), current);
+      assert.isUndefined(yield* findOwnedLauncher({ launchedAs: current, versionsDir }));
       // A version folder link that leads nowhere is not missing; it may be another tool's.
       yield* fs.symlink(path.join(root, "unmounted"), path.join(versionsDir, "2.1.0"));
       const unmounted = path.join(root, "bin/t3-unmounted");

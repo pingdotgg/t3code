@@ -1,8 +1,21 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's readLink and symlink take strings, not the raw bytes a link may hold.
+import * as NodeFSP from "node:fs/promises";
+
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Random from "effect/Random";
+import * as Schema from "effect/Schema";
+
+/** An entry moved aside could not go back; it is still at `path`. */
+export class OwnedLinkError extends Schema.TaggedError<OwnedLinkError>()("OwnedLinkError", {
+  path: Schema.String,
+}) {
+  override get message(): string {
+    return `Could not put back the entry now at ${this.path}.`;
+  }
+}
 
 /**
  * Replaces `link` with a symlink to `target`, or removes it without a `target`, when `owns` holds
@@ -26,11 +39,22 @@ export const replaceOwnedLink = Effect.fn("ownedLink.replace")(function* <E, R>(
   yield* fs.writeFileString(aside, "", { flag: "wx" });
   const discard = fs.remove(aside);
   yield* fs.rename(input.link, aside).pipe(Effect.tapError(() => discard.pipe(Effect.ignore)));
-  // Exclusive, so it never overwrites anything written at `link` meanwhile.
-  const putBack = fs.readLink(aside).pipe(
+  // Exclusive, so it never overwrites anything written at `link` meanwhile. The link text is
+  // copied as bytes; a string would mangle a target that is not UTF-8.
+  const putBack = Effect.tryPromise({
+    try: () => NodeFSP.readlink(aside, { encoding: "buffer" }),
+    catch: () => new OwnedLinkError({ path: aside }),
+  }).pipe(
     Effect.option,
     Effect.flatMap((text) =>
-      Option.isSome(text) ? fs.symlink(text.value, input.link) : fs.link(aside, input.link),
+      Option.isSome(text)
+        ? Effect.tryPromise({
+            try: () => NodeFSP.symlink(text.value, input.link),
+            catch: () => new OwnedLinkError({ path: aside }),
+          })
+        : fs
+            .link(aside, input.link)
+            .pipe(Effect.mapError(() => new OwnedLinkError({ path: aside }))),
     ),
   );
   if (!(yield* input.owns(aside))) {
@@ -38,14 +62,11 @@ export const replaceOwnedLink = Effect.fn("ownedLink.replace")(function* <E, R>(
     return false;
   }
   if (input.target !== undefined) {
-    // On failure the old link goes back while the name is free, so the command keeps working.
+    // On failure the old link goes back while the name is free, so the command keeps working;
+    // if it cannot, it stays beside `link`.
     yield* fs
       .symlink(input.target, input.link)
-      .pipe(
-        Effect.tapError(() =>
-          putBack.pipe(Effect.ignore, Effect.andThen(discard.pipe(Effect.ignore))),
-        ),
-      );
+      .pipe(Effect.tapError(() => putBack.pipe(Effect.andThen(discard), Effect.ignore)));
   }
   yield* discard.pipe(Effect.ignore);
   return true;

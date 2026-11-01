@@ -10,6 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -399,8 +400,9 @@ export function launcherOwnsVersionsDir(
 
 /**
  * Where the symlink at `link` points, not following that target any further: the target with its
- * folder resolved on disk, which sees through a symlinked T3 home. Only when that folder is gone
- * (a pruned version) does the text count, and only without `.` or `..`. Empty for a non-link.
+ * folder resolved on disk, which sees through a symlinked T3 home. A folder that is itself a link
+ * (`versions/current`) is not followed. Only when the folder is missing (a pruned version) does
+ * the text count, and only without `.` or `..`. Empty for a non-link.
  */
 export const directLinkTargets = Effect.fn("cloud.pinned_runtime.direct_link_targets")(function* (
   link: string,
@@ -413,22 +415,19 @@ export const directLinkTargets = Effect.fn("cloud.pinned_runtime.direct_link_tar
   const raw = path.isAbsolute(text.value)
     ? text.value
     : `${path.dirname(link)}${path.sep}${text.value}`;
-  // Native and unnormalized, so `..` after a symlinked folder goes where the OS takes it.
-  const physical = yield* Effect.tryPromise(() => NodeFSP.realpath(path.dirname(raw))).pipe(
-    Effect.map((directory) => [path.join(directory, path.basename(raw))]),
-    Effect.orElseSucceed(() => []),
-  );
-  if (physical.length > 0) return physical;
-  // A folder that exists but cannot be resolved, or is a link, may be another program's.
   const folder = path.dirname(raw);
-  if (
-    Option.isSome(yield* fs.readLink(folder).pipe(Effect.option)) ||
-    (yield* fs.exists(folder).pipe(Effect.orElseSucceed(() => true)))
-  ) {
-    return [];
-  }
+  if (Option.isSome(yield* fs.readLink(folder).pipe(Effect.option))) return [];
+  // Native and unnormalized, so `..` after a symlinked folder goes where the OS takes it.
+  const physical = yield* Effect.tryPromise({
+    try: () => NodeFSP.realpath(folder),
+    catch: (error) => (error as NodeJS.ErrnoException).code,
+  }).pipe(
+    Effect.map((directory) => path.join(directory, path.basename(raw))),
+    Effect.result,
+  );
+  if (Result.isSuccess(physical)) return [physical.success];
   const plain = !text.value.split(/[\\/]/).some((part) => part === "." || part === "..");
-  return plain ? [path.resolve(raw)] : [];
+  return physical.failure === "ENOENT" && plain ? [path.resolve(raw)] : [];
 });
 
 /** Whether `candidate` is a version's own executable, `<versionsDir>/<version>/t3[.exe]`. */

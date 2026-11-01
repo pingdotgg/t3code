@@ -204,10 +204,19 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
     yield* fs
       .makeDirectory(binDir, { recursive: true })
       .pipe(Effect.mapError(failed(`Could not create ${binDir}.`)));
-    // The command link is replaced in place, which is safe only away from the public name.
-    const real = (directory: string) =>
-      fs.realPath(directory).pipe(Effect.orElseSucceed(() => directory));
-    if ((yield* real(binDir)) === (yield* real(runtimeDir))) {
+    // The command link is replaced in place, which is safe only away from the public name. Same
+    // device and inode, so an alias or a bind mount of the runtime folder counts too.
+    const identity = (directory: string) =>
+      fs.stat(directory).pipe(
+        Effect.map((info) =>
+          Option.match(info.ino, {
+            onSome: (ino) => `${info.dev}:${ino}`,
+            onNone: () => directory,
+          }),
+        ),
+        Effect.orElseSucceed(() => directory),
+      );
+    if ((yield* identity(binDir)) === (yield* identity(runtimeDir))) {
       return yield* new CliInstallError({
         reason: `T3CODE_INSTALL_BIN_DIR cannot be ${runtimeDir}. Choose another folder.`,
       });
@@ -216,6 +225,10 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
       Effect.catchTags({
         PlatformError: (cause) =>
           Effect.fail(new CliInstallError({ reason: `Could not link ${link}.`, cause })),
+        OwnedLinkError: (cause) =>
+          Effect.fail(
+            new CliInstallError({ reason: `Could not link ${link}. ${cause.message}`, cause }),
+          ),
       }),
     );
     if (!linked) {

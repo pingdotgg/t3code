@@ -186,6 +186,27 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
       expect(borrowed.code).not.toBe(0);
       expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/versions/0.9.0/t3"));
 
+      // A version folder that is a link (versions/current) is not followed, and a target that
+      // only ends in t3 before a newline is not ours either.
+      await NodeFSP.rm(link);
+      await NodeFSP.mkdir(NodePath.join(home, "runtime/versions/1.1.0"), { recursive: true });
+      await NodeFSP.writeFile(NodePath.join(home, "runtime/versions/1.1.0/t3"), "");
+      await NodeFSP.symlink(
+        NodePath.join(home, "runtime/versions/1.1.0"),
+        NodePath.join(home, "runtime/versions/current"),
+      );
+      for (const target of [
+        NodePath.join(home, "runtime/versions/current/t3"),
+        `${NodePath.join(home, "runtime/versions/1.0.0/t3")}\n`,
+      ]) {
+        await NodeFSP.rm(link, { force: true });
+        await NodeFSP.symlink(target, link);
+        const notOurs = await installOver({ script: "install.sh", home, binDir });
+        expect(notOurs.code).not.toBe(0);
+        expect(await NodeFSP.readlink(link)).toBe(target);
+      }
+      await NodeFSP.rm(NodePath.join(home, "runtime/versions/current"));
+
       // Only a link to a file is ever replaced at the command link, even inside the T3 home.
       await NodeFSP.rm(link);
       await NodeFSP.symlink(NodePath.join(home, "runtime/versions/1.0.0/t3"), link);

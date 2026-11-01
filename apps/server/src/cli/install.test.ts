@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's link calls take strings; this test needs raw bytes.
+import * as NodeFSP from "node:fs/promises";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -128,6 +131,28 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
         [],
       );
 
+      // When the old link cannot go back either, because another program took the name, it is
+      // kept beside the link rather than removed.
+      const taken = installCli().pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          symlink: (target, to) =>
+            to === link && target === commandLink
+              ? fs.writeFileString(link, "theirs\n").pipe(Effect.andThen(fs.symlink(target, to)))
+              : fs.symlink(target, to),
+        }),
+      );
+      yield* provide(taken).pipe(Effect.flip);
+      assert.equal(yield* fs.readFileString(link), "theirs\n");
+      const kept = (yield* fs.readDirectory(path.dirname(link))).filter((name) =>
+        name.startsWith(".t3."),
+      );
+      assert.equal(kept.length, 1);
+      assert.equal(yield* fs.readLink(path.join(path.dirname(link), kept[0]!)), older);
+      yield* fs.remove(path.join(path.dirname(link), kept[0]!));
+      yield* fs.remove(link);
+      yield* fs.symlink(older, link);
+
       // A relative older link still resolves the same once moved aside.
       const rootLink = path.join(root, "t3");
       yield* fs.symlink(`.t3/runtime/versions/${VERSION}/t3`, rootLink);
@@ -165,6 +190,31 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
             ).pipe(Effect.andThen(fs.symlink(target, to))),
         }),
       );
+      // A foreign link whose target is not UTF-8 goes back byte for byte.
+      const bytes = Buffer.from([0x2f, 0x74, 0x6d, 0x70, 0x2f, 0xff, 0x74, 0x33]);
+      let swapped = false;
+      const rawRace = installCli().pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          symlink: (target, to) =>
+            (swapped
+              ? Effect.void
+              : Effect.promise(async () => {
+                  await NodeFSP.symlink(bytes, `${link}.new`);
+                  await NodeFSP.rename(`${link}.new`, link);
+                  swapped = true;
+                })
+            ).pipe(Effect.andThen(fs.symlink(target, to))),
+        }),
+      );
+      yield* fs.remove(link);
+      yield* fs.symlink(older, link);
+      yield* provide(rawRace).pipe(Effect.flip);
+      assert.deepStrictEqual(
+        yield* Effect.promise(() => NodeFSP.readlink(link, { encoding: "buffer" })),
+        bytes,
+      );
+
       for (const before of [undefined, older, commandLink]) {
         fired = false;
         yield* fs.remove(link);
