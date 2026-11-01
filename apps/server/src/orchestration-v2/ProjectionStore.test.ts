@@ -850,6 +850,121 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
     nodeNames(yield* store.getThreadRecords(threadId, ["nodes"])),
     nodes.map(([name]) => name).toSorted(),
   );
+
+  const subagents = [
+    ["delivered", settledRun, "completed", "delivered"],
+    ["acknowledged", settledRun, "failed", "acknowledged"],
+    ["disposed", settledRun, "cancelled", "disposed"],
+    ["pending-delivery", settledRun, "completed", "pending"],
+    ["claimed", settledRun, "completed", "claimed"],
+    ["no-delivery", settledRun, "interrupted", null],
+    ["running", settledRun, "running", null],
+    ["active-run-delivered", activeRun, "completed", "delivered"],
+  ] as const;
+  for (const [index, [name, run, status, delivery]] of subagents.entries()) {
+    const id = NodeId.make(`node:settled-subagents:${name}`);
+    yield* store.apply({
+      id: EventId.make(`event:settled-subagents:item:${name}`),
+      type: "turn-item.updated",
+      threadId,
+      runId: run.id,
+      nodeId: id,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make(`item:settled-subagents:${name}`),
+        type: "subagent",
+        threadId,
+        runId: run.id,
+        nodeId: id,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 100 + index,
+        status: status === "running" ? "running" : "completed",
+        title: name,
+        startedAt: now,
+        completedAt: status === "running" ? null : now,
+        updatedAt: now,
+        subagentId: id,
+        origin: "app_owned",
+        driver,
+        providerInstanceId,
+        childThreadId: null,
+        prompt: "Do the work",
+        result: null,
+      },
+    });
+    yield* store.apply({
+      id: EventId.make(`event:settled-subagents:${name}`),
+      type: "subagent.updated",
+      threadId,
+      runId: run.id,
+      nodeId: id,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id,
+        threadId,
+        runId: run.id,
+        parentNodeId: run.rootNodeId!,
+        origin: "app_owned",
+        createdBy: "agent",
+        driver,
+        providerInstanceId,
+        providerThreadId: null,
+        childThreadId: null,
+        nativeTaskRef: null,
+        prompt: "Do the work",
+        title: name,
+        model: null,
+        ...(delivery === null
+          ? {}
+          : { completionDelivery: { state: delivery, observedByRunId: null } }),
+        status,
+        result: null,
+        startedAt: now,
+        completedAt: status === "running" ? null : now,
+        updatedAt: now,
+      },
+    });
+  }
+  const subagentNames = (records: {
+    readonly subagents: ReadonlyArray<{ readonly title: string | null }>;
+  }) => records.subagents.map((subagent) => subagent.title ?? "").toSorted();
+  assert.deepEqual(
+    subagentNames(
+      yield* store.getThreadRecords(threadId, ["subagents"], { omitSettledSubagents: true }),
+    ),
+    ["active-run-delivered", "claimed", "no-delivery", "pending-delivery", "running"],
+  );
+  assert.deepEqual(
+    subagentNames(yield* store.getThreadRecords(threadId, ["subagents"])),
+    subagents.map(([name]) => name).toSorted(),
+  );
+  // A command about one settled task keeps it, and reads only its node and turn item.
+  const deliveredId = NodeId.make("node:settled-subagents:delivered");
+  const forTask = yield* store.getThreadRecords(threadId, ["subagents", "nodes", "turnItems"], {
+    omitSettledSubagents: { except: [deliveredId] },
+    nodeIds: [NodeId.make("node:settled-leaf-nodes:settled-tool")],
+    turnItemNodeIds: [deliveredId],
+  });
+  assert.deepEqual(subagentNames(forTask), [
+    "active-run-delivered",
+    "claimed",
+    "delivered",
+    "no-delivery",
+    "pending-delivery",
+    "running",
+  ]);
+  assert.deepEqual(nodeNames(forTask), ["settled-tool"]);
+  assert.deepEqual(
+    forTask.turnItems.map((item) => item.title),
+    ["delivered"],
+  );
+  assert.strictEqual(yield* store.getSubagentCount(threadId), subagents.length);
 });
 
 const backgroundThreadUpdatesKeepTimestamp = Effect.gen(function* () {
@@ -3535,6 +3650,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const projection = yield* projectionStore.getThreadProjection(threadId);
       assert.deepEqual(projection.runs[0]?.delegatedCompletion, run.delegatedCompletion);
       assert.deepEqual(projection.subagents[0]?.completionDelivery, task.completionDelivery);
+      assert.deepEqual(
+        (yield* projectionStore.getThreadRecords(threadId, ["subagents"], {
+          omitSettledSubagents: true,
+        })).subagents,
+        [],
+      );
     }),
   );
 
@@ -4428,6 +4549,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           (row) => row.id === threadId,
         ),
       );
+      assert.strictEqual(yield* store.getLimitRecoveryWakeAt(now), DateTime.toEpochMillis(reset));
+      assert.isNull(yield* store.getLimitRecoveryWakeAt(reset));
       const due = (yield* store.getLimitRecoveryCandidates({
         ...recoveryOptions,
         now: reset,
@@ -4450,9 +4573,14 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           (row) => row.id === threadId,
         ),
       );
+      assert.strictEqual(
+        yield* store.getLimitRecoveryWakeAt(reset),
+        DateTime.toEpochMillis(DateTime.add(reset, { minutes: 1 })),
+      );
       yield* sql`UPDATE orchestration_v2_projection_threads
         SET payload_json = json_set(payload_json, '$.snoozedUntil', NULL, '$.limitRecovery.autoResume', json('false'))
         WHERE thread_id = ${threadId}`;
+      assert.isNull(yield* store.getLimitRecoveryWakeAt(now));
       assert.isUndefined(
         (yield* store.getLimitRecoveryCandidates({
           ...recoveryOptions,
@@ -4958,13 +5086,14 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
-  it.effect("counts imported runless history inherited by fork shells", () =>
+  it.effect("counts history inherited by fork shells, but not by side chats", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
       const projectId = ProjectId.make("project:projection-imported-fork-shell");
       const sourceThreadId = ThreadId.make("thread:projection-imported-fork-shell:source");
       const targetThreadId = ThreadId.make("thread:projection-imported-fork-shell:target");
+      const sideChatThreadId = ThreadId.make("thread:projection-imported-fork-shell:side-chat");
       const sourceRunId = RunId.make("run:projection-imported-fork-shell:source");
       const rootNodeId = NodeId.make("node:projection-imported-fork-shell:source");
 
@@ -5002,43 +5131,49 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           deletedAt: null,
         },
       });
-      yield* projectionStore.apply({
-        id: EventId.make("event:projection-imported-fork-shell:target-thread"),
-        type: "thread.created",
-        threadId: targetThreadId,
-        occurredAt: now,
-        payload: {
-          createdBy: "user",
-          creationSource: "web",
-          id: targetThreadId,
-          projectId,
-          title: "Imported fork target",
-          providerInstanceId,
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          activeProviderThreadId: null,
-          lineage: {
-            parentThreadId: sourceThreadId,
-            relationshipToParent: "fork",
-            rootThreadId: sourceThreadId,
+      for (const [threadId, sideChat] of [
+        [targetThreadId, false],
+        [sideChatThreadId, true],
+      ] as const) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:projection-imported-fork-shell:created:${threadId}`),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId,
+            title: "Imported fork target",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId: sourceThreadId,
+              relationshipToParent: "fork",
+              rootThreadId: sourceThreadId,
+              sideChat,
+            },
+            forkedFrom: {
+              type: "run",
+              threadId: sourceThreadId,
+              runId: sourceRunId,
+            },
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
           },
-          forkedFrom: {
-            type: "run",
-            threadId: sourceThreadId,
-            runId: sourceRunId,
-          },
-          createdAt: now,
-          updatedAt: now,
-          archivedAt: null,
-          settledOverride: null,
-          settledAt: null,
-          lastVisitedAt: null,
-          deletedAt: null,
-        },
-      });
+        });
+      }
       yield* projectionStore.apply({
         id: EventId.make("event:projection-imported-fork-shell:source-run"),
         type: "run.created",
@@ -5107,6 +5242,16 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.equal(targetShell.itemCount, 0);
       assert.equal(targetShell.visibleItemCount, 4);
       assert.equal(targetProjection.visibleTurnItems.length, 4);
+
+      const sideChatShell = shell.threads.find((thread) => thread.id === sideChatThreadId);
+      assert.equal(sideChatShell?.visibleItemCount, 0);
+      const sideChatProjection = yield* projectionStore.getThreadProjection(sideChatThreadId);
+      assert.deepEqual(sideChatProjection.visibleTurnItems, []);
+      const sideChatTimeline = yield* projectionStore.getTimelinePage(sideChatThreadId, {
+        limit: 20,
+        view: "activity",
+      });
+      assert.equal(sideChatTimeline.totalItems, 0);
     }),
   );
 
