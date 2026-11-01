@@ -3469,7 +3469,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         const routes = yield* makeClaudeCodeModelRoutes(
           Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
-          (cwd) => resolveClaudeModelSettingsKey(["project", "local"], cwd),
+          (cwd) =>
+            resolveClaudeModelSettingsKey(["project", "local"], cwd).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+            ),
           probeCwd,
         );
         yield* routes.record([
@@ -3508,6 +3512,31 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(yield* openedModel(project), "haiku");
         // Claude Code resolves `haiku` to Sonnet there, so the slug is the only safe id.
         assert.equal(yield* openedModel(overridden), "claude-haiku-4-5");
+
+        // A linked worktree and a repository subdirectory read the main checkout's local file.
+        const repo = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-repo-" });
+        const worktree = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-wt-" });
+        const worktreeGitDir = path.join(repo, ".git", "worktrees", "wt");
+        yield* fileSystem.makeDirectory(worktreeGitDir, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(worktreeGitDir, "commondir"), "../..\n");
+        yield* fileSystem.writeFileString(
+          path.join(worktree, ".git"),
+          `gitdir: ${worktreeGitDir}\n`,
+        );
+        yield* fileSystem.makeDirectory(path.join(repo, ".claude"));
+        yield* fileSystem.makeDirectory(path.join(repo, "packages", "app"), { recursive: true });
+        const rootLocal = (settings: object) =>
+          fileSystem.writeFileString(
+            path.join(repo, ".claude", "settings.local.json"),
+            JSON.stringify(settings),
+          );
+        yield* rootLocal({
+          env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: "global.anthropic.claude-sonnet-4-6" },
+        });
+        assert.equal(yield* openedModel(worktree), "claude-haiku-4-5");
+        assert.equal(yield* openedModel(path.join(repo, "packages", "app")), "claude-haiku-4-5");
+        yield* rootLocal({ env: { FOO: "1" } });
+        assert.equal(yield* openedModel(worktree), "haiku");
       }).pipe(
         Effect.scoped,
         Effect.provide(

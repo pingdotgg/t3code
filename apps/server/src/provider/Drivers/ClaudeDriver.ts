@@ -186,6 +186,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         resolveClaudeModelSettingsKey(
           customHome ? ["project", "local"] : ["user", "project", "local"],
           cwd,
+        ).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
         ),
       stateDir,
     );

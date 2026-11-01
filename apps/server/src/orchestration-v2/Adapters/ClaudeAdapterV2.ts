@@ -141,6 +141,7 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import {
+  claudeLocalSettingsDirectory,
   claudeSignedOutMessage,
   makeClaudeEnvironment,
   resolveClaudeHomePath,
@@ -4010,46 +4011,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       }),
       Effect.orElseSucceed(() => undefined),
     );
-  // A worktree's .git file points at <main>/.git/worktrees/<name>, whose commondir leads back to
-  // <main>/.git. A bare repository has no main checkout, so its worktree keeps its own file.
-  const mainCheckoutRoot = (checkout: string) =>
-    fileSystem.readFileString(path.join(checkout, ".git")).pipe(
-      Effect.flatMap((pointer) => {
-        const gitDir = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
-        if (gitDir === undefined) return Effect.succeed(checkout);
-        const worktreeGitDir = path.resolve(checkout, gitDir);
-        return fileSystem.readFileString(path.join(worktreeGitDir, "commondir")).pipe(
-          Effect.map((commonDir) => {
-            const common = path.resolve(worktreeGitDir, commonDir.trim());
-            return path.basename(common) === ".git" ? path.dirname(common) : checkout;
-          }),
-        );
-      }),
-      Effect.orElseSucceed(() => checkout),
-    );
-  // Claude Code keeps .claude/settings.local.json at the repository root, or in cwd outside a
-  // repository, on Windows, or when the root is home. Its owner check is skipped: missing it only
-  // leaves tool search on, Claude Code's default.
-  const localSettingsDirectory = Effect.fn("ClaudeAdapterV2.localSettingsDirectory")(function* (
-    cwd: string,
-  ) {
-    if ((yield* HostProcess.Platform) === "win32") return cwd;
-    for (let directory = cwd; ; directory = path.dirname(directory)) {
-      const isCheckout = yield* fileSystem
-        .exists(path.join(directory, ".git"))
-        .pipe(Effect.orElseSucceed(() => false));
-      if (isCheckout) {
-        const root = yield* mainCheckoutRoot(directory);
-        return root === (yield* HostProcess.HomeDirectory) ? cwd : root;
-      }
-      if (path.dirname(directory) === directory) return cwd;
-    }
-  });
   // Settings env beats the process env, local over project over user, and a local file an older
   // Claude Code left in cwd applies under the root one. resolveSettings reads local from cwd only.
+  // The root file's owner check is skipped: missing it only leaves tool search on, the default.
   const resolveToolSearchOverride = Effect.fn("ClaudeAdapterV2.resolveToolSearchOverride")(
     function* (cwd: string | null) {
-      const localDirectory = cwd === null ? null : yield* localSettingsDirectory(cwd);
+      const localDirectory =
+        cwd === null
+          ? null
+          : yield* claudeLocalSettingsDirectory(cwd).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+            );
       const settingsFiles = [
         ...(cwd === null || localDirectory === null
           ? []

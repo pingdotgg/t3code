@@ -7,6 +7,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 
+import { claudeLocalSettingsDirectory } from "./Drivers/ClaudeHome.ts";
 import {
   type ClaudeCodeReportedModel,
   type ClaudeModelCatalog,
@@ -35,10 +36,26 @@ function claudeModelSettingsKey(settings: ClaudeSdkSettings): string {
   ]);
 }
 
+const NO_MODEL_SETTINGS_KEY = claudeModelSettingsKey({});
+
 export const resolveClaudeModelSettingsKey = Effect.fn("resolveClaudeModelSettingsKey")(function* (
   settingSources: ReadonlyArray<SettingSource>,
   cwd: string | null,
 ) {
+  // The SDK reads the local file from cwd, Claude Code from the main checkout's root. No key, so
+  // no routes, when that root file touches model settings.
+  if (cwd !== null && settingSources.includes("local")) {
+    const localDirectory = yield* claudeLocalSettingsDirectory(cwd);
+    if (localDirectory !== cwd) {
+      const rootLocal = yield* Effect.tryPromise(() =>
+        resolveClaudeSettings({ cwd: localDirectory, settingSources: ["local"] }),
+      ).pipe(
+        Effect.map(({ sources }) => sources.find(({ source }) => source === "local")?.settings),
+        Effect.orElseSucceed(() => undefined),
+      );
+      if (claudeModelSettingsKey(rootLocal ?? {}) !== NO_MODEL_SETTINGS_KEY) return undefined;
+    }
+  }
   return yield* Effect.tryPromise(() =>
     resolveClaudeSettings({
       ...(cwd === null ? {} : { cwd }),
