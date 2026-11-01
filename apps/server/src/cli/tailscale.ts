@@ -224,16 +224,13 @@ const requireGrantCommand = Command.make("require-grant", {
           ...(scan !== null && scan.blocker === null
             ? [
                 "Devices with a grant get the scopes it names: read, standard, admin, or single scopes.",
-                ...(since === null
+                // Where only grants decide, a grant change moves no one, so no delay applies.
+                ...(since === null && !ownerless && !scan.noNode
                   ? [
                       "This is this shell's scan. The server notices a first grant within a minute",
-                      "(five if it cannot read that device).",
-                      ...(ownerless || scan.noNode
-                        ? []
-                        : [
-                            "After you remove the last grant, your own untagged devices can sign in again",
-                            "within five minutes, once the server can read every device.",
-                          ]),
+                      "(five if it cannot read that device). After you remove the last grant, your",
+                      "own untagged devices can sign in again within five minutes, once the server",
+                      "can read every device.",
                     ]
                   : []),
               ]

@@ -513,7 +513,7 @@ pairings; revoke a device's session to remove its existing access. A device that
 signed in through Tailscale signs in again at once, so to keep it out, block it
 or turn [Tailscale sign-in](#tailscale-sign-in) off. Removing its grant works
 too, but removing the last grant lets your untagged devices back in unless grants
-are required. Command-line
+are required or the machine is tagged with no owner. Command-line
 management is available through `t3 auth --help`.
 
 A session with an open connection stays listed after its access credential
