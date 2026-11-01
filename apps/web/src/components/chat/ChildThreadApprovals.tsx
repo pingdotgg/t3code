@@ -2,6 +2,10 @@ import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope, type ScopedThreadRef } from "@t3tools/contracts";
 import type { ChildThreadApproval } from "@t3tools/client-runtime/state/thread-requests";
 import { fullAccessOverrideExplanation } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { useState } from "react";
 import { useEnvironmentScope } from "../../state/session";
 import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads";
@@ -10,8 +14,9 @@ import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions
 
 function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
   const canRespond = useEnvironmentScope(entry.thread.environmentId, AuthOrchestrationOperateScope);
-  const respond = useAtomCommand(threadEnvironment.respondToApproval);
+  const respond = useAtomCommand(threadEnvironment.respondToApproval, { reportFailure: false });
   const [responding, setResponding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const { approval } = entry;
   return (
     <section
@@ -45,15 +50,27 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
           onRespondToApproval={async (requestId, decision) => {
             if (!canRespond || responding) return;
             setResponding(true);
+            setError(null);
             const result = await respond({
               environmentId: entry.thread.environmentId,
               input: { threadId: entry.thread.threadId, requestId, decision },
             });
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              const failure = squashAtomCommandFailure(result);
+              setError(
+                failure instanceof Error ? failure.message : "Failed to submit approval decision.",
+              );
+            }
             setResponding(false);
             return result;
           }}
         />
       </div>
+      {error !== null ? (
+        <p role="alert" className="mt-2 text-destructive">
+          {error}
+        </p>
+      ) : null}
     </section>
   );
 }

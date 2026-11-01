@@ -307,6 +307,8 @@ export interface ThreadDetailScreenProps {
   readonly showContent?: boolean;
 }
 
+// iOS questions overlay the controls; Android questions stack with child approvals.
+const ComposerPanels = Platform.OS === "android" ? Animated.ScrollView : Animated.View;
 const USAGE_LIMITS_PANEL_GAP = 12;
 const USAGE_LIMITS_PANEL_MIN_HEIGHT = 44;
 
@@ -961,6 +963,10 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
       composerOverlapHeight: composerBottomInset,
     }),
   );
+  const composerPanelsHeightStyle = useAnimatedStyle(() => ({
+    maxHeight: pendingUserInputMaxHeight.value,
+    flexGrow: 0,
+  }));
   // The usage panel stacks with the composer and any approval card, so it gets
   // whatever room they leave below the header. Measured only while it is open
   // so typing in the composer does not re-render the screen.
@@ -1471,7 +1477,15 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                 onLayout={handleComposerOverlayLayout}
                 className="w-full"
               >
-                <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
+                <ComposerPanels
+                  className="w-full self-center"
+                  style={[
+                    { maxWidth: contentMaxWidth },
+                    Platform.OS === "android" ? composerPanelsHeightStyle : undefined,
+                  ]}
+                  keyboardShouldPersistTaps="handled"
+                  nestedScrollEnabled
+                >
                   <FloatingWorkingControl
                     colorScheme={isDarkMode ? "dark" : "light"}
                     status={floatingStatus}
@@ -1633,7 +1647,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                       ) : null}
                     </Animated.View>
                   ) : null}
-                </View>
+                </ComposerPanels>
 
                 <View style={composerSlotHidden ? { display: "none" } : undefined}>
                   {isProviderSubagent ? (
