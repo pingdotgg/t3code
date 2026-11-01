@@ -412,6 +412,28 @@ describe("CloudManagedEndpointRuntime", () => {
     return { spawner, spawned, killed, exits, started, emit, observe };
   });
 
+  it.effect("restarts only the inspected connector and supervises its replacement", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeTransportSpawner();
+      const runtime = yield* buildCloudManagedEndpointRuntime(fixture.spawner);
+      expect(yield* runtime.restartConnector(800, Effect.succeed(true))).toBe(false);
+      yield* runtime.applyConfig(tunnelConfig);
+      yield* fixture.observe(runtime, 0);
+      expect(yield* runtime.inspectConnector).toMatchObject({ pid: 800 });
+      expect(yield* runtime.restartConnector(799, Effect.succeed(true))).toBe(false);
+      // A newer check saw the tunnel recover while this one waited for the lock.
+      expect(yield* runtime.restartConnector(800, Effect.succeed(false))).toBe(false);
+      expect(fixture.killed).toEqual([]);
+      expect(yield* runtime.restartConnector(800, Effect.succeed(true))).toBe(true);
+      expect(yield* Queue.take(fixture.started)).toBe(0);
+      expect(yield* Queue.take(fixture.started)).toBe(1);
+      yield* fixture.observe(runtime, 1);
+      expect(fixture.killed).toContain(800);
+      expect(yield* runtime.restartConnector(800, Effect.succeed(true))).toBe(false);
+      expect(yield* runtime.inspectConnector).toMatchObject({ pid: 801 });
+    }),
+  );
+
   it.effect("preserves an explicit transport choice despite repeated QUIC stalls", () =>
     Effect.gen(function* () {
       const fixture = yield* makeTransportSpawner({ transport: "quic" });
@@ -553,6 +575,39 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(yield* runtime.applyConfig(requested)).toMatchObject({ status: "running", pid: 802 });
       yield* fixture.observe(runtime, 2);
       expect(fixture.spawned[2]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
+    }),
+  );
+
+  it.effect("decides a restart only once it holds the reconcile lock", () =>
+    Effect.gen(function* () {
+      const checking = yield* Deferred.make<void>();
+      const releaseCheck = yield* Deferred.make<void>();
+      const fixture = yield* makeTransportSpawner({
+        isRunning: Deferred.succeed(checking, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseCheck)),
+          Effect.as(true),
+        ),
+      });
+      const runtime = yield* buildCloudManagedEndpointRuntime(fixture.spawner);
+      yield* runtime.applyConfig(tunnelConfig);
+      yield* fixture.observe(runtime, 0);
+
+      // Hold reconciliation in a process probe so the restart waits for the lock.
+      const probe = yield* runtime.applyConfig(tunnelConfig).pipe(Effect.forkChild);
+      yield* Deferred.await(checking);
+      let stillDead = true;
+      const restart = yield* runtime
+        .restartConnector(
+          800,
+          Effect.sync(() => stillDead),
+        )
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      stillDead = false;
+      yield* Deferred.succeed(releaseCheck, undefined);
+      yield* Fiber.join(probe);
+
+      expect(yield* Fiber.join(restart)).toBe(false);
+      expect(fixture.killed).toEqual([]);
     }),
   );
 

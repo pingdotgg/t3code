@@ -79,6 +79,7 @@ const layerOrchestration = Layer.mergeAll(
 const hostname = Ref.makeUnsafe<string | null>("env.t3.test");
 const layerConnect = Layer.mock(CloudManagedEndpointRuntime)({
   inspectConnector: Effect.map(Ref.get(hostname), (value) => ({
+    pid: 1,
     readyConnections: 1,
     hostname: value,
     protocol: "http2",
