@@ -375,13 +375,20 @@ export function selectThreadRelationshipShells(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
   const named = new Set<string>([threadId]);
+  const subagentAncestorIds = new Set<string>([threadId]);
   if (projection !== null) {
     const parentThreadId = shellParentThreadId(projection.thread);
     if (parentThreadId !== null) named.add(parentThreadId);
     for (const subagent of projection.subagents) {
-      if (subagent.childThreadId !== null) named.add(subagent.childThreadId);
+      if (subagent.childThreadId !== null) {
+        named.add(subagent.childThreadId);
+        subagentAncestorIds.add(subagent.childThreadId);
+      }
       for (const agent of subagent.workflow?.agents ?? []) {
-        if (agent.childThreadId !== undefined) named.add(agent.childThreadId);
+        if (agent.childThreadId !== undefined) {
+          named.add(agent.childThreadId);
+          subagentAncestorIds.add(agent.childThreadId);
+        }
       }
     }
     for (const transfer of projection.contextTransfers) {
@@ -392,6 +399,25 @@ export function selectThreadRelationshipShells(
   const current = threads.find((thread) => thread.id === threadId);
   const currentParentId = current === undefined ? null : shellParentThreadId(current);
   if (currentParentId !== null) named.add(currentParentId);
+  const subagentChildrenByParent = new Map<string, Array<OrchestrationV2ThreadShell>>();
+  for (const thread of threads) {
+    if (thread.lineage.relationshipToParent !== "subagent") continue;
+    const parentId = shellParentThreadId(thread);
+    if (parentId === null) continue;
+    const children = subagentChildrenByParent.get(parentId) ?? [];
+    children.push(thread);
+    subagentChildrenByParent.set(parentId, children);
+  }
+  const pendingSubagentParents = [...subagentAncestorIds];
+  while (pendingSubagentParents.length > 0) {
+    const parentId = pendingSubagentParents.pop()!;
+    for (const child of subagentChildrenByParent.get(parentId) ?? []) {
+      if (subagentAncestorIds.has(child.id)) continue;
+      named.add(child.id);
+      subagentAncestorIds.add(child.id);
+      pendingSubagentParents.push(child.id);
+    }
+  }
   return threads.filter(
     (thread) => named.has(thread.id) || shellParentThreadId(thread) === threadId,
   );

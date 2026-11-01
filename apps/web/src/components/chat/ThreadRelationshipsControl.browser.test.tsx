@@ -4,7 +4,11 @@ import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
-const state = vi.hoisted(() => ({ projection: null as unknown, commandSucceeds: false }));
+const state = vi.hoisted(() => ({
+  projection: null as unknown,
+  shells: [] as Array<unknown>,
+  commandSucceeds: false,
+}));
 
 vi.mock(import("@effect/atom-react"), async (original) => ({
   ...(await original()),
@@ -16,7 +20,9 @@ vi.mock(import("../../state/entities"), () => ({
   useThreadProjection: ((ref: unknown) =>
     ref === null ? null : { projection: state.projection }) as never,
   useThreadRelationshipShells: (() =>
-    state.projection === null ? [] : [(state.projection as { thread: unknown }).thread]) as never,
+    state.projection === null
+      ? []
+      : [(state.projection as { thread: unknown }).thread, ...state.shells]) as never,
   useProjects: (() => []) as never,
 }));
 vi.mock(import("../../state/environments"), () => ({
@@ -43,6 +49,7 @@ const threadId = ThreadId.make("fork");
 
 function setup() {
   state.commandSucceeds = false;
+  state.shells = [];
   state.projection = {
     thread: {
       id: threadId,
@@ -58,6 +65,73 @@ function setup() {
     providerSessions: [{ id: "session", status: "ready" }],
   };
 }
+
+it("expands a subagent thread to show nested subagents and their statuses", async () => {
+  setup();
+  const projection = state.projection as {
+    thread: { id: typeof threadId };
+    subagents: Array<unknown>;
+  };
+  const childId = ThreadId.make("reviewer");
+  const nestedId = ThreadId.make("nested-reviewer");
+  state.projection = {
+    ...projection,
+    subagents: [
+      {
+        id: NodeId.make("reviewer-agent"),
+        threadId,
+        runId: null,
+        parentNodeId: NodeId.make("parent"),
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: "codex",
+        providerInstanceId: "codex",
+        providerThreadId: null,
+        childThreadId: childId,
+        nativeTaskRef: null,
+        prompt: "Review the changes",
+        title: "Reviewer",
+        model: null,
+        status: "completed",
+        result: "Review complete",
+        startedAt: null,
+        completedAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      },
+    ],
+  };
+  state.shells = [
+    {
+      id: childId,
+      title: "Reviewer",
+      status: "completed",
+      activityRunStatus: null,
+      lineage: { parentThreadId: threadId, relationshipToParent: "subagent" },
+    },
+    {
+      id: nestedId,
+      title: "Nested reviewer",
+      status: "running",
+      activityRunStatus: "running",
+      lineage: { parentThreadId: childId, relationshipToParent: "subagent" },
+    },
+  ];
+
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats
+    />,
+  );
+  await screen.getByRole("button", { name: /Previous agents/ }).click();
+  await screen.getByRole("button", { name: "Expand subagents of Reviewer" }).click();
+  await expect
+    .element(screen.getByRole("button", { name: "Open subagent Nested reviewer" }))
+    .toBeVisible();
+  await expect.element(screen.getByText("Running", { exact: true })).toBeVisible();
+});
 
 it.each([
   ["merge", "Could not merge back"],

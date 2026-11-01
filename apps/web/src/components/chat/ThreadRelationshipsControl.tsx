@@ -95,6 +95,10 @@ import {
 
 const THREAD_LINEAGE_INITIAL_COUNT = 6;
 const THREAD_LINEAGE_PAGE_COUNT = 12;
+type SubagentThreadShell = Pick<
+  OrchestrationV2ThreadShell,
+  "id" | "title" | "status" | "activityRunStatus" | "lineage"
+>;
 
 function resolveThreadLineageWindow<Row>(
   rows: ReadonlyArray<Row>,
@@ -364,6 +368,17 @@ export function ThreadRelationshipsPanel(props: {
   const providersByEnvironment = useEnvironmentProviders();
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
   const relationshipShells = useThreadRelationshipShells(ref);
+  const subagentChildrenByParent = new Map<ThreadId, Array<SubagentThreadShell>>();
+  for (const thread of relationshipShells) {
+    const parentId = thread.lineage.parentThreadId;
+    if (thread.lineage.relationshipToParent !== "subagent" || parentId === null) continue;
+    const siblings = subagentChildrenByParent.get(parentId) ?? [];
+    siblings.push(thread);
+    subagentChildrenByParent.set(parentId, siblings);
+  }
+  const [expandedSubagentThreadIds, setExpandedSubagentThreadIds] = useState<ReadonlySet<ThreadId>>(
+    () => new Set(),
+  );
   const allProjects = useProjects();
   const archived = useArchivedThreadSnapshots([props.environmentId]);
   const archivedShells = archived.snapshots.find(
@@ -521,6 +536,64 @@ export function ThreadRelationshipsPanel(props: {
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(scopeThreadRef(props.environmentId, threadId)),
     });
+  };
+
+  const toggleSubagentThread = (threadId: ThreadId) => {
+    setExpandedSubagentThreadIds((current) => {
+      const next = new Set(current);
+      if (next.has(threadId)) next.delete(threadId);
+      else next.add(threadId);
+      return next;
+    });
+  };
+
+  const renderNestedSubagent = (thread: SubagentThreadShell): ReactNode => {
+    const children = subagentChildrenByParent.get(thread.id) ?? [];
+    const expanded = expandedSubagentThreadIds.has(thread.id);
+    const status = thread.activityRunStatus ?? thread.status;
+    return (
+      <li key={thread.id} className="list-none">
+        <div className="flex h-8 min-w-0 items-center gap-1">
+          {children.length > 0 ? (
+            <ThreadDetailsControl
+              size="icon-xs"
+              variant="ghost"
+              part="icon"
+              aria-label={`${expanded ? "Collapse" : "Expand"} subagents of ${thread.title}`}
+              aria-expanded={expanded}
+              onClick={() => toggleSubagentThread(thread.id)}
+            >
+              <ChevronDownIcon
+                aria-hidden
+                className={cn("size-3 transition-transform", !expanded && "-rotate-90")}
+              />
+            </ThreadDetailsControl>
+          ) : (
+            <span aria-hidden className="size-5 shrink-0" />
+          )}
+          <ThreadDetailsControl
+            size="sm"
+            variant="ghost"
+            part="row"
+            aria-label={`Open subagent ${formatSubagentDisplayTitle(thread.title)}`}
+            onClick={() => openThread(thread.id)}
+          >
+            <BotIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+            <span className="min-w-0 flex-1 truncate text-left">
+              {formatSubagentDisplayTitle(thread.title)}
+            </span>
+            <span className="shrink-0 text-2xs text-muted-foreground">
+              {threadRelationshipStatusLabel(status)}
+            </span>
+          </ThreadDetailsControl>
+        </div>
+        {expanded && children.length > 0 ? (
+          <ul className="m-0 list-none border-s border-border/60 p-0 ps-3 ms-2">
+            {children.map(renderNestedSubagent)}
+          </ul>
+        ) : null}
+      </li>
+    );
   };
 
   const merge = async () => {
@@ -682,6 +755,9 @@ export function ThreadRelationshipsPanel(props: {
     ) : (
       relationshipHint
     );
+    const nestedSubagents =
+      isSubagent && !isParent ? (subagentChildrenByParent.get(threadId) ?? []) : [];
+    const nestedExpanded = expandedSubagentThreadIds.has(threadId);
     const relationshipContent = (
       <>
         <ThreadRelationshipIcon
@@ -719,22 +795,30 @@ export function ThreadRelationshipsPanel(props: {
       </>
     );
     const relationshipLink = (
-      <Tooltip>
-        <TooltipTrigger
-          delay={200}
-          render={
-            <ThreadDetailsControl
-              size="sm"
-              variant="ghost"
-              part={workflowGroup ? "primary" : "row"}
-              onClick={() => openThread(threadId)}
-            />
-          }
-        >
-          {relationshipContent}
-        </TooltipTrigger>
-        <RelationshipPopup side="left">{relationshipTooltip}</RelationshipPopup>
-      </Tooltip>
+      <div
+        className={cn(
+          "min-w-0",
+          !workflowGroup && nestedSubagents.length > 0 && (canStop ? "pe-14" : "pe-8"),
+          !workflowGroup && nestedSubagents.length === 0 && canStop && "pe-8",
+        )}
+      >
+        <Tooltip>
+          <TooltipTrigger
+            delay={200}
+            render={
+              <ThreadDetailsControl
+                size="sm"
+                variant="ghost"
+                part={workflowGroup ? "primary" : "row"}
+                onClick={() => openThread(threadId)}
+              />
+            }
+          >
+            {relationshipContent}
+          </TooltipTrigger>
+          <RelationshipPopup side="left">{relationshipTooltip}</RelationshipPopup>
+        </Tooltip>
+      </div>
     );
     if (workflowGroup && agent) {
       return (
@@ -755,90 +839,121 @@ export function ThreadRelationshipsPanel(props: {
       );
     }
     return (
-      <li key={threadId} className="group relative flex h-8 items-center rounded-lg">
-        {isMergeTarget ? (
-          <div className={THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS}>
-            <Tooltip>
-              <TooltipTrigger
-                delay={200}
-                render={
-                  <ThreadDetailsControl
-                    size="sm"
-                    variant="ghost"
-                    part="primary"
-                    aria-label={`${threadTitle} ${threadRelationshipStatusLabel(rowStatus)}`}
-                    onClick={() => openThread(threadId)}
-                  />
-                }
-              >
-                {relationshipContent}
-              </TooltipTrigger>
-              <RelationshipPopup side="left">{relationshipTooltip}</RelationshipPopup>
-            </Tooltip>
-            <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <ThreadDetailsControl
-                    size="sm"
-                    variant="ghost"
-                    part="secondary"
-                    aria-label={
-                      parentTitle
-                        ? `Merge back to ${parentTitle}`
-                        : "Merge back to source conversation"
+      <li key={threadId} className="group relative list-none rounded-lg">
+        <div className="relative flex h-8 min-w-0 items-center rounded-lg">
+          <div className="min-w-0 flex-1">
+            {isMergeTarget ? (
+              <div className={THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS}>
+                <Tooltip>
+                  <TooltipTrigger
+                    delay={200}
+                    render={
+                      <ThreadDetailsControl
+                        size="sm"
+                        variant="ghost"
+                        part="primary"
+                        aria-label={`${threadTitle} ${threadRelationshipStatusLabel(rowStatus)}`}
+                        onClick={() => openThread(threadId)}
+                      />
                     }
-                    disabled={!canMerge || busyAction !== null}
-                    onClick={() => void merge()}
                   >
-                    {busyAction === "merge" ? (
-                      <Spinner size="xs" />
-                    ) : (
-                      <PullRequestGlyph.merged className="size-3" />
-                    )}
-                  </ThreadDetailsControl>
-                }
-              />
-              <TooltipPopup side="left">
-                {latestMergeBackRun === null
-                  ? "Complete a run in this fork before merging it back"
-                  : parentTitle
-                    ? `Merge this conversation back into ${parentTitle}`
-                    : "Merge this conversation back into its source"}
-              </TooltipPopup>
-            </Tooltip>
-            <span className="shrink-0 border border-transparent ps-1 pe-2.5 text-2xs font-medium text-muted-foreground">
-              {threadRelationshipStatusLabel(rowStatus)}
-            </span>
-          </div>
-        ) : (
-          relationshipLink
-        )}
-        {canStop && agent ? (
-          <div className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <ThreadDetailsControl
-                    size="icon-xs"
-                    variant="ghost"
-                    part="icon"
-                    tone="destructive"
-                    aria-label={`Stop subagent ${threadTitle}`}
-                    disabled={stoppingId !== null}
-                    onClick={() => void stopSubagent(threadId, agent)}
+                    {relationshipContent}
+                  </TooltipTrigger>
+                  <RelationshipPopup side="left">{relationshipTooltip}</RelationshipPopup>
+                </Tooltip>
+                <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <ThreadDetailsControl
+                        size="sm"
+                        variant="ghost"
+                        part="secondary"
+                        aria-label={
+                          parentTitle
+                            ? `Merge back to ${parentTitle}`
+                            : "Merge back to source conversation"
+                        }
+                        disabled={!canMerge || busyAction !== null}
+                        onClick={() => void merge()}
+                      >
+                        {busyAction === "merge" ? (
+                          <Spinner size="xs" />
+                        ) : (
+                          <PullRequestGlyph.merged className="size-3" />
+                        )}
+                      </ThreadDetailsControl>
+                    }
                   />
-                }
-              >
-                {stoppingId === threadId ? (
-                  <Spinner aria-hidden size="xs" />
-                ) : (
-                  <SquareIcon aria-hidden className="size-3 fill-current" />
-                )}
-              </TooltipTrigger>
-              <TooltipPopup side="left">Stop subagent</TooltipPopup>
-            </Tooltip>
+                  <TooltipPopup side="left">
+                    {latestMergeBackRun === null
+                      ? "Complete a run in this fork before merging it back"
+                      : parentTitle
+                        ? `Merge this conversation back into ${parentTitle}`
+                        : "Merge this conversation back into its source"}
+                  </TooltipPopup>
+                </Tooltip>
+                <span className="shrink-0 border border-transparent ps-1 pe-2.5 text-2xs font-medium text-muted-foreground">
+                  {threadRelationshipStatusLabel(rowStatus)}
+                </span>
+              </div>
+            ) : (
+              relationshipLink
+            )}
           </div>
+          {nestedSubagents.length > 0 ? (
+            <ThreadDetailsControl
+              size="icon-xs"
+              variant="ghost"
+              part="icon"
+              className={cn(
+                "absolute top-1/2 -translate-y-1/2",
+                canStop && agent ? "right-8" : "right-1",
+              )}
+              aria-label={`${nestedExpanded ? "Collapse" : "Expand"} subagents of ${threadTitle}`}
+              aria-expanded={nestedExpanded}
+              onClick={() => toggleSubagentThread(threadId)}
+            >
+              <ChevronDownIcon
+                aria-hidden
+                className={cn("size-3 transition-transform", !nestedExpanded && "-rotate-90")}
+              />
+            </ThreadDetailsControl>
+          ) : null}
+          {canStop && agent ? (
+            <div className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <ThreadDetailsControl
+                      size="icon-xs"
+                      variant="ghost"
+                      part="icon"
+                      tone="destructive"
+                      aria-label={`Stop subagent ${threadTitle}`}
+                      disabled={stoppingId !== null}
+                      onClick={() => void stopSubagent(threadId, agent)}
+                    />
+                  }
+                >
+                  {stoppingId === threadId ? (
+                    <Spinner aria-hidden size="xs" />
+                  ) : (
+                    <SquareIcon aria-hidden className="size-3 fill-current" />
+                  )}
+                </TooltipTrigger>
+                <TooltipPopup side="left">Stop subagent</TooltipPopup>
+              </Tooltip>
+            </div>
+          ) : null}
+        </div>
+        {nestedExpanded && nestedSubagents.length > 0 ? (
+          <ul
+            aria-label={`Subagents of ${threadTitle}`}
+            className="m-0 list-none border-s border-border/60 p-0 ps-3 ms-2"
+          >
+            {nestedSubagents.map(renderNestedSubagent)}
+          </ul>
         ) : null}
       </li>
     );

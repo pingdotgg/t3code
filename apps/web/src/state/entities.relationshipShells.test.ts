@@ -8,17 +8,24 @@ import { selectThreadRelationshipShells } from "./entities";
 
 type Projection = Parameters<typeof selectThreadRelationshipShells>[1];
 
-const shell = (id: string, parentThreadId: string | null = null) =>
+const shell = (
+  id: string,
+  parentThreadId: string | null = null,
+  relationshipToParent: "fork" | "subagent" = "fork",
+) =>
   ({
     id,
     forkedFrom: null,
-    lineage: { parentThreadId, relationshipToParent: parentThreadId === null ? null : "fork" },
+    lineage: {
+      parentThreadId,
+      relationshipToParent: parentThreadId === null ? null : relationshipToParent,
+    },
   }) as unknown as OrchestrationV2ThreadShell;
 
 const threadId = "current" as OrchestrationV2ThreadShell["id"];
 
 describe("selectThreadRelationshipShells", () => {
-  it("keeps the thread, its parent, its children and the threads its projection names", () => {
+  it("keeps the thread, its parent, its children and nested subagent descendants", () => {
     const threads = [
       shell("current", "parent"),
       shell("parent"),
@@ -27,7 +34,7 @@ describe("selectThreadRelationshipShells", () => {
       shell("workflow-member"),
       shell("transfer-source"),
       shell("unrelated"),
-      shell("grandchild", "child"),
+      shell("grandchild", "subagent-child", "subagent"),
     ];
     const projection = {
       thread: threads[0],
@@ -53,6 +60,7 @@ describe("selectThreadRelationshipShells", () => {
       "subagent-child",
       "workflow-member",
       "transfer-source",
+      "grandchild",
     ]);
   });
 
