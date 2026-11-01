@@ -253,15 +253,28 @@ it.effect.each([false, true])("honors PR URL repositories, context=%s", (withCon
   }).pipe(Effect.provide(layer));
 });
 
-it.effect.each([false, true])(
-  "reuses matching checkout remotes for numeric references, context=%s",
-  (withContext) => {
+it.effect.each([
+  { withContext: false, remoteUrl: "git@bitbucket.org:pingdotgg/t3code.git" },
+  { withContext: false, remoteUrl: "https://bitbucket.org/pingdotgg/t3code.git/" },
+  { withContext: true, remoteUrl: "git@bitbucket.org:PingDotGG/T3Code.git" },
+  { withContext: true, remoteUrl: "git@bitbucket.org:PingDotGG/T3Code.git/" },
+])(
+  "reuses matching checkout remotes for numeric references, context=$withContext $remoteUrl",
+  ({ withContext, remoteUrl }) => {
     const { git, layer } = makeLayer({
-      response: () =>
-        Response.json({
-          ...bitbucketPullRequest,
-          source: { ...bitbucketPullRequest.source, repository: { full_name: "pingdotgg/t3code" } },
-        }),
+      response: (request) =>
+        request.url.toLowerCase() ===
+        "https://api.test.local/2.0/repositories/pingdotgg/t3code/pullrequests/42"
+          ? Response.json({
+              ...bitbucketPullRequest,
+              source: {
+                ...bitbucketPullRequest.source,
+                repository: { full_name: "pingdotgg/t3code" },
+              },
+            })
+          : new Response(null, { status: 404 }),
+      remoteUrl,
+      git: { readConfigValue: () => Effect.succeed(remoteUrl) },
     });
     return Effect.gen(function* () {
       const bitbucket = yield* BitbucketApi.BitbucketApi;
@@ -277,7 +290,7 @@ it.effect.each([false, true])(
                   baseUrl: "https://bitbucket.org",
                 },
                 remoteName: "upstream",
-                remoteUrl: "git@bitbucket.org:PingDotGG/T3Code.git",
+                remoteUrl,
               },
             }
           : {}),
@@ -377,7 +390,7 @@ it.effect.each([false, true])(
 
     return Effect.gen(function* () {
       const bitbucket = yield* BitbucketApi.BitbucketApi;
-      for (const repository of ["t3code", "", " \t "]) {
+      for (const repository of ["t3code", "", " \t ", "pingdotgg/.git", "pingdotgg/.git/"]) {
         const error = yield* bitbucket
           .getRepositoryCloneUrls({
             cwd: "/repo",
@@ -428,18 +441,33 @@ it.effect("prefers an explicit repository and uses context when the repository i
       remoteName: "origin",
       remoteUrl: "git@bitbucket.org:another/context.git",
     };
-    for (const repository of ["pingdotgg/t3code", "https://bitbucket.org/pingdotgg/t3code.git"]) {
+    for (const repository of [
+      "pingdotgg/t3code",
+      "https://bitbucket.org/pingdotgg/t3code.git",
+      "pingdotgg/t3code.git/",
+      "https://bitbucket.org/pingdotgg/t3code.git/",
+      "pingdotgg/t3code.git.git/",
+    ]) {
       yield* bitbucket.getRepositoryCloneUrls({ cwd: "/repo", context, repository });
     }
     yield* bitbucket.getDefaultBranch({ cwd: "/repo", context });
+    yield* bitbucket.createRepository({
+      cwd: "/repo",
+      repository: "pingdotgg/created.git/",
+      visibility: "private",
+    });
 
     assert.deepStrictEqual(
-      execute.mock.calls.map(([request]) => request.url).toSorted(),
+      execute.mock.calls.map(([request]) => `${request.method} ${request.url}`).toSorted(),
       [
-        "https://api.test.local/2.0/repositories/pingdotgg/t3code",
-        "https://api.test.local/2.0/repositories/pingdotgg/t3code",
-        "https://api.test.local/2.0/repositories/another/context",
-        "https://api.test.local/2.0/repositories/another/context/branching-model",
+        "GET https://api.test.local/2.0/repositories/pingdotgg/t3code",
+        "GET https://api.test.local/2.0/repositories/pingdotgg/t3code",
+        "GET https://api.test.local/2.0/repositories/pingdotgg/t3code",
+        "GET https://api.test.local/2.0/repositories/pingdotgg/t3code",
+        "GET https://api.test.local/2.0/repositories/pingdotgg/t3code.git",
+        "GET https://api.test.local/2.0/repositories/another/context",
+        "GET https://api.test.local/2.0/repositories/another/context/branching-model",
+        "POST https://api.test.local/2.0/repositories/pingdotgg/created",
       ].toSorted(),
     );
     assert.strictEqual(resolve.mock.calls.length, 0);
