@@ -147,6 +147,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
       resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
+        maintenanceBinaryPath: config.maintenanceBinaryPath
+          ? expandHomePath(config.maintenanceBinaryPath, yield* HostProcess.HomeDirectory)
+          : null,
         env: processEnv,
       }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -305,6 +308,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           Effect.flatMap((maintenanceCapabilities) =>
             enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
               enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+              useMaintenanceVersion: true,
             }),
           ),
           Effect.provideService(HttpClient.HttpClient, httpClient),

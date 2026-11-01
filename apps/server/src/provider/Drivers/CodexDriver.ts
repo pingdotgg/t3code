@@ -182,6 +182,9 @@ export const CodexDriver: ProviderDriver<
         makeCodexMaintenanceResolver(homeLayout.sharedHomePath),
         {
           binaryPath: effectiveConfig.binaryPath,
+          maintenanceBinaryPath: config.maintenanceBinaryPath
+            ? expandHomePath(config.maintenanceBinaryPath, yield* HostProcess.HomeDirectory)
+            : null,
           env: processEnv,
         },
       ).pipe(
@@ -249,6 +252,7 @@ export const CodexDriver: ProviderDriver<
           Effect.flatMap((maintenanceCapabilities) =>
             enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
               enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+              useMaintenanceVersion: true,
             }),
           ),
           Effect.provideService(HttpClient.HttpClient, httpClient),

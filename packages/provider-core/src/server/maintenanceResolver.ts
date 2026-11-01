@@ -162,7 +162,7 @@ export function makeTargetedProviderUpdateAction(
   const packageName = capabilities.packageName;
   if (!update || !packageName) return null;
   if (
-    !/^(?:npm-global:|bun-global$|pnpm-global$|vite-plus-global$|yarn-global$|volta$)/.test(
+    !/^(?:npm-global:|bun-global:|pnpm-global$|vite-plus-global$|yarn-global$|volta$)/.test(
       update.lockKey,
     )
   )
@@ -551,13 +551,29 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     });
   }
   if (commandPaths.some(isBunGlobalCommandPath)) {
+    const path = yield* Path.Path;
+    const binDir = path.dirname(context.resolvedCommandPath);
+    if (!normalizeCommandPath(binDir).endsWith("/.bun/bin")) return manual;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const globalDir = yield* fileSystem
+      .realPath(path.join(binDir, "..", "install", "global"))
+      .pipe(Effect.orElseSucceed(() => null));
+    // A bin entry alone may be a wrapper or a link into a local project.
+    if (
+      !globalDir ||
+      !path
+        .relative(globalDir, context.realCommandPath)
+        .replaceAll("\\", "/")
+        .startsWith(`node_modules/${packageName}/`)
+    )
+      return manual;
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
       updateExecutable: "bun",
       updateArgs: ["i", "-g", `${packageName}@latest`],
-      updateLockKey: "bun-global",
-      env: context.env,
+      updateLockKey: `bun-global:${normalizeCommandPath(globalDir)}`,
+      env: { ...context.env, BUN_INSTALL_GLOBAL_DIR: globalDir, BUN_INSTALL_BIN: binDir },
     });
   }
   if (commandPaths.some(isPnpmGlobalCommandPath)) {
@@ -843,18 +859,29 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   resolver: ProviderMaintenanceCapabilitiesResolver,
   options?: {
     readonly binaryPath?: string | null;
+    readonly maintenanceBinaryPath?: string | null;
     readonly env?: NodeJS.ProcessEnv;
   },
 ) {
-  const binaryPath = nonEmptyString(options?.binaryPath);
+  const maintenanceBinaryPath = nonEmptyString(options?.maintenanceBinaryPath);
+  const binaryPath = maintenanceBinaryPath ?? nonEmptyString(options?.binaryPath);
+  const unresolved = resolver
+    .resolve(null)
+    .pipe(
+      Effect.map((capabilities) =>
+        maintenanceBinaryPath
+          ? { ...capabilities, lookupMaintenanceVersion: Effect.succeed(null) }
+          : capabilities,
+      ),
+    );
   if (!binaryPath) {
-    return yield* resolver.resolve(null);
+    return yield* unresolved;
   }
 
   const env = options?.env ?? (yield* readCommandLookupEnv);
   const resolvedCommandPath = yield* resolveCommandPath(binaryPath, { env });
   if (!resolvedCommandPath) {
-    return yield* resolver.resolve(null);
+    return yield* unresolved;
   }
 
   const fileSystem = yield* FileSystem.FileSystem;
@@ -862,15 +889,24 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
     .realPath(resolvedCommandPath)
     .pipe(Effect.orElseSucceed(() => null));
   if (!realCommandPath) {
-    return yield* resolver.resolve(null);
+    return yield* unresolved;
   }
-  return yield* resolver.resolve({
+  const capabilities = yield* resolver.resolve({
     binaryPath,
     resolvedCommandPath,
     realCommandPath,
     env,
     platform: yield* HostProcess.Platform,
   });
+  if (!maintenanceBinaryPath) return capabilities;
+  const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
+  return {
+    ...capabilities,
+    lookupMaintenanceVersion: runProbe(resolvedCommandPath, ["--version"], env).pipe(
+      Effect.map((output) => output?.match(/\bv?(\d+\.\d+\.\d+)\b/)?.[1] ?? null),
+      Effect.provideContext(services),
+    ),
+  };
 }, Effect.flatMap(withConfiguredNpmVersionLookup));
 
 export const makeCachedProviderMaintenanceResolution = Effect.fn(
@@ -1028,17 +1064,20 @@ export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
   maintenanceCapabilities?: ProviderMaintenanceCapabilities,
   options?: {
     readonly enableProviderUpdateChecks: boolean | undefined;
+    readonly useMaintenanceVersion?: boolean;
   },
 ) {
   const capabilities =
     maintenanceCapabilities ?? makeManualProviderMaintenanceCapabilities(snapshot.driver);
+  const shouldCheck =
+    options?.enableProviderUpdateChecks !== false && snapshot.enabled && snapshot.installed;
   const currentVersion =
-    snapshot.installedVersion !== undefined ? snapshot.installedVersion : snapshot.version;
-  const shouldResolveLatestVersion =
-    options?.enableProviderUpdateChecks !== false &&
-    snapshot.enabled &&
-    snapshot.installed &&
-    Boolean(currentVersion);
+    shouldCheck && options?.useMaintenanceVersion && capabilities.lookupMaintenanceVersion
+      ? yield* capabilities.lookupMaintenanceVersion
+      : snapshot.installedVersion !== undefined
+        ? snapshot.installedVersion
+        : snapshot.version;
+  const shouldResolveLatestVersion = shouldCheck && Boolean(currentVersion);
   if (!shouldResolveLatestVersion) {
     return {
       ...snapshot,

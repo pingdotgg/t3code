@@ -323,7 +323,22 @@ describe("providerMaintenanceRunner", () => {
     },
     { name: "installed behind", probe: { installedVersion: "2.1.309" }, skip: false },
     { name: "installed unknown", probe: { installedVersion: null }, skip: false },
-  ] as const)("only skips a successful fresh current probe: $name", ({ probe, skip }) => {
+    { name: "maintenance behind", probe: {}, maintenanceVersion: "2.1.309", skip: false },
+    {
+      name: "maintenance current",
+      probe: { version: "2.1.309" },
+      maintenanceVersion: "2.1.310",
+      skip: true,
+    },
+    {
+      name: "maintenance updated but session behind",
+      probe: { version: "2.1.309" },
+      maintenanceVersion: "2.1.309",
+      skip: false,
+    },
+  ] as const)("only skips a successful fresh current probe: $name", (fixture) => {
+    const { probe, skip } = fixture;
+    let maintenanceVersion = "maintenanceVersion" in fixture ? fixture.maintenanceVersion : null;
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     const refreshedInstanceIds: Array<ProviderInstanceId> = [];
     return Effect.gen(function* () {
@@ -358,20 +373,29 @@ describe("providerMaintenanceRunner", () => {
           );
         },
         getProviderMaintenanceCapabilitiesForInstance: () =>
-          Effect.succeed(
-            makeProviderMaintenanceCapabilities({
+          Effect.succeed({
+            ...makeProviderMaintenanceCapabilities({
               provider: CODEX_DRIVER,
               packageName: "@anthropic-ai/claude-code",
               updateExecutable: "claude",
               updateArgs: ["update"],
               updateLockKey: "claudeAgent-native",
             }),
-          ),
+            ...("maintenanceVersion" in fixture
+              ? { lookupMaintenanceVersion: Effect.sync(() => maintenanceVersion) }
+              : {}),
+          }),
       });
 
       const result = yield* updater.updateProvider(CODEX_DRIVER);
       assert.deepStrictEqual(refreshedInstanceIds, [CODEX_INSTANCE_ID]);
       assert.deepStrictEqual(calls, skip ? [] : [{ command: "claude", args: ["update"] }]);
+      if ("maintenanceVersion" in fixture && !skip) {
+        assert.strictEqual(
+          result.providers[0]?.updateState?.status,
+          fixture.name === "maintenance updated but session behind" ? "unchanged" : "succeeded",
+        );
+      }
       if (!skip) return;
       assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
       assert.strictEqual(result.providers[0]?.updateState?.message, "Already up to date.");
@@ -390,6 +414,7 @@ describe("providerMaintenanceRunner", () => {
           layerLatestVersionHttpClient("2.1.310"),
           layerMockSpawner((command, args) => {
             calls.push({ command, args });
+            maintenanceVersion = "2.1.310";
             return { stdout: "updated" };
           }),
         ),
