@@ -6,6 +6,7 @@ import {
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -248,7 +249,7 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
   readonly shell?: boolean;
 }): Effect.fn.Return<string, never, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const output = yield* Effect.scoped(
+  const fiber = yield* Effect.scoped(
     Effect.gen(function* () {
       const child = yield* spawner.spawn(
         ChildProcess.make(input.command, input.args, {
@@ -289,7 +290,12 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
       DesktopShellEnvironmentCommandError: (error) =>
         logShellEnvironmentCommandError(error).pipe(Effect.as("")),
     }),
+    Effect.forkDetach,
+  );
+  const output = yield* Fiber.join(fiber).pipe(
     Effect.timeoutOption(input.timeout),
+    // Interrupting awaits the child's exit, which a shell stuck in the kernel never reaches.
+    Effect.ensuring(Fiber.interrupt(fiber).pipe(Effect.forkDetach)),
   );
   if (Option.isSome(output)) {
     return output.value;
