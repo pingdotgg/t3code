@@ -161,6 +161,11 @@ const requireGrantCommand = Command.make("require-grant", {
       const since = (yield* fs.exists(file)) ? (yield* fs.readFileString(file)).trim() : null;
       const read = yield* readPolicyGrantedPeers;
       const scan = read === "changed" ? null : read;
+      // A tagged host with no owner set lets in only granted devices, policy or not.
+      const ownerless =
+        scan !== null &&
+        scan.tagged &&
+        !(yield* hasOwner(config.baseDir, config.tailscaleOwnerUserId));
       const granted = scan?.granted ?? [];
       const lines =
         scan !== null && scan.blocker !== null
@@ -198,7 +203,7 @@ const requireGrantCommand = Command.make("require-grant", {
                         "so T3 Code cannot tell whether your policy grants it here. It keeps the answer",
                         "from its last full check for up to five minutes, then requires a grant.",
                       ]
-                    : read.tagged && !(yield* hasOwner(config.baseDir, config.tailscaleOwnerUserId))
+                    : ownerless
                       ? [
                           "Grant required: no, but this tagged host has no owner, so only granted",
                           "devices get in. Name its owner with: t3 up --owner <login>",
@@ -218,8 +223,13 @@ const requireGrantCommand = Command.make("require-grant", {
                 ...(since === null
                   ? [
                       "This is this shell's scan. The server notices a first grant within a minute",
-                      "(five if it cannot read that device). After you remove the last grant, the",
-                      "owner rule returns within five minutes, once it can read every device.",
+                      "(five if it cannot read that device).",
+                      ...(ownerless
+                        ? []
+                        : [
+                            "After you remove the last grant, your own untagged devices can sign in again",
+                            "within five minutes, once the server can read every device.",
+                          ]),
                     ]
                   : []),
               ]
