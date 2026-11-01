@@ -4413,4 +4413,41 @@ describe("PiRpc early process exit", () => {
       assert.isFalse(error.message.includes("super-secret"));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("includes a redacted stderr excerpt when pi exits with an uncaught error", () =>
+    Effect.gen(function* () {
+      const bearer = "Bearer eyJhbGciOiJIUzI1NiJ9.stale-session-token";
+      const apiKey = "sk-ant-api03-abcdefghijklmnop";
+      const trace = [
+        "Error: This extension ctx is stale after session replacement",
+        "    at Timeout._onTimeout (/tmp/pi-extension/stale.ts:7:13)",
+        `request failed: Authorization: ${bearer} key=${apiKey}`,
+        "",
+      ].join("\n");
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          makeHandle({
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            stderr: Stream.fromIterable([new TextEncoder().encode(trace)]),
+          }),
+        ),
+      );
+      const connection = yield* makePiRpcConnection({
+        command: "pi",
+        args: ["--mode", "rpc"],
+        cwd: undefined,
+        env: {},
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+
+      const error = yield* Queue.take(connection.events).pipe(Effect.flip);
+      assert.equal(error._tag, "PiRpcError");
+      const detail = error.detail ?? "";
+      assert.include(detail, "pi process exited with code 1");
+      assert.include(detail, "This extension ctx is stale after session replacement");
+      for (const text of [detail, error.message]) {
+        assert.notInclude(text, "eyJhbGciOiJIUzI1NiJ9.stale-session-token");
+        assert.notInclude(text, apiKey);
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
