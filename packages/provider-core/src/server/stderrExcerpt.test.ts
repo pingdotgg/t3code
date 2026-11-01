@@ -177,4 +177,17 @@ describe("stderrExcerpt", () => {
       sanitizeStderrExcerpt('PASSWORD="first\nsecond-secret"\nError: boom', "/Users/ada", {}),
     ).toBe("PASSWORD=[REDACTED]\nError: boom");
   });
+
+  it("redacts AWS secret access keys and apostrophe-quoted URL query values", () => {
+    expect(
+      sanitizeStderrExcerpt(
+        [
+          "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENG",
+          "fetch https://example.test/?password='sensitive' failed",
+        ].join("\n"),
+        "/Users/ada",
+        {},
+      ),
+    ).toBe(["AWS_SECRET_ACCESS_KEY=[REDACTED]", "fetch https://example.test/' failed"].join("\n"));
+  });
 });

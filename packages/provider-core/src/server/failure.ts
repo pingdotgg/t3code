@@ -160,7 +160,7 @@ function stringField(value: unknown, key: "message" | "code"): string | undefine
 }
 
 function redactUrl(match: string): string {
-  const trailing = /[),.;!?]+$/u.exec(match)?.[0] ?? "";
+  const trailing = /[),.;!?']+$/u.exec(match)?.[0] ?? "";
   const candidate = trailing.length === 0 ? match : match.slice(0, -trailing.length);
   try {
     const url = new URL(candidate);
@@ -193,18 +193,18 @@ function replaceUnsafeControlCharacters(value: string): string {
 export function redactSecretAssignments(value: string): string {
   return value
     .replace(
-      /(["'][\w-]*(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)["']\s*:\s*(["']))(?:\\.|(?!\2)[^\\\n])*\2?/giu,
+      /(["'][\w-]*(?:access[_-]?(?:key|token)|api[_-]?key|authorization|credential|password|secret|token)["']\s*:\s*(["']))(?:\\.|(?!\2)[^\\\n])*\2?/giu,
       "$1[REDACTED]$2",
     )
     .replace(
-      /((?<![\w-])[\w-]*(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)\b\s*[:=]\s*)(?:(?:Bearer|Basic|Token)\s+)?(?:"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|"(?:\\.|[^"\\\n])*|'(?:\\.|[^'\\\n])*|[^\s,;]+)/giu,
+      /((?<![\w-])[\w-]*(?:access[_-]?(?:key|token)|api[_-]?key|authorization|credential|password|secret|token)\b\s*[:=]\s*)(?:(?:Bearer|Basic|Token)\s+)?(?:"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|"(?:\\.|[^"\\\n])*|'(?:\\.|[^'\\\n])*|[^\s,;]+)/giu,
       "$1[REDACTED]",
     );
 }
 
 export function redactUrls(value: string): string {
   return value
-    .replace(/\bhttps?:\/\/[^\s<>"']+/giu, redactUrl)
+    .replace(/\bhttps?:\/\/[^\s<>"]+/giu, redactUrl)
     .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/giu, "$1[REDACTED]@");
 }
 
