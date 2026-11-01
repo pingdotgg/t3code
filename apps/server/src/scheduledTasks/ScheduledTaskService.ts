@@ -971,23 +971,26 @@ export const layer = Layer.effect(
           if (reason !== null) return yield* new WebhookDeliverySkipped({ reason });
         }
 
-        if (webhook === undefined) yield* markRunning(active.id, startedAtIso);
-        else
-          yield* sql
-            .withTransaction(
-              Effect.gen(function* () {
-                yield* markRunning(active.id, startedAtIso, webhook.deliveryId);
-                // Recovery must distinguish this delivery from other windows waiting on the same task.
-                yield* sql`UPDATE scheduled_task_webhook_pending SET state = 'running' WHERE delivery_id = ${webhook.deliveryId}`;
-              }),
-            )
-            .pipe(
-              Effect.mapError((cause) =>
-                taskError("Could not start webhook run.", { taskId: task.id, cause }),
-              ),
-            );
+        // Persist ownership with the row so interruption cannot skip recovery.
+        yield* Effect.gen(function* () {
+          if (webhook === undefined) yield* markRunning(active.id, startedAtIso);
+          else
+            yield* sql
+              .withTransaction(
+                Effect.gen(function* () {
+                  yield* markRunning(active.id, startedAtIso, webhook.deliveryId);
+                  // Recovery must distinguish this delivery from other windows waiting on the same task.
+                  yield* sql`UPDATE scheduled_task_webhook_pending SET state = 'running' WHERE delivery_id = ${webhook.deliveryId}`;
+                }),
+              )
+              .pipe(
+                Effect.mapError((cause) =>
+                  taskError("Could not start webhook run.", { taskId: task.id, cause }),
+                ),
+              );
 
-        yield* Ref.set(markedAtIso, startedAtIso);
+          yield* Ref.set(markedAtIso, startedAtIso);
+        }).pipe(Effect.uninterruptible);
         yield* notifyChanged;
 
         const fireKey =
