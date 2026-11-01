@@ -1131,6 +1131,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "worktrees",
+    title: "Worktrees",
+    to: "/settings/worktrees",
+    scope: "environment-defaults",
+  },
+  {
     id: "linked-environments",
     peerLinksOnly: true,
     title: "Linked environments",

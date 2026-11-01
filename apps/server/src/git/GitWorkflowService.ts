@@ -29,6 +29,7 @@ import {
   type VcsStatusResult,
 } from "@t3tools/contracts";
 
+import * as WorktreeLifecycle from "../vcs/WorktreeLifecycle.ts";
 import * as GitManager from "./GitManager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -109,6 +110,7 @@ export class GitWorkflowService extends Context.Service<
       { readonly commitSha: string; readonly remoteRefName: string } | null,
       GitCommandError
     >;
+    /** Rollback only; other removals go through WorktreeService safeguards. */
     readonly removeWorktree: (
       input: VcsRemoveWorktreeInput,
     ) => Effect.Effect<void, GitCommandError>;
@@ -171,6 +173,7 @@ function nonRepositoryListRefs(): VcsListRefsResult {
 
 /** @public */
 export const make = Effect.gen(function* () {
+  const worktreeLifecycle = yield* WorktreeLifecycle.WorktreeLifecycle;
   const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
@@ -399,6 +402,7 @@ export const make = Effect.gen(function* () {
                 )
               : gitManager.preparePullRequestThread(input),
           ),
+          Effect.tap(() => worktreeLifecycle.markInventoryChanged),
         );
       },
     ),
@@ -412,6 +416,7 @@ export const make = Effect.gen(function* () {
     createWorktree: Effect.fn("GitWorkflowService.createWorktree")(function (input, options) {
       return ensureGitCommand("GitWorkflowService.createWorktree", input.cwd).pipe(
         Effect.andThen(gitManager.createWorktree(input, options)),
+        Effect.tap(() => worktreeLifecycle.markInventoryChanged),
       );
     }),
     listLocalBranchNames: Effect.fn("GitWorkflowService.listLocalBranchNames")(function (cwd) {
@@ -458,6 +463,7 @@ export const make = Effect.gen(function* () {
     removeWorktree: Effect.fn("GitWorkflowService.removeWorktree")(function (input) {
       return ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
         Effect.andThen(git.removeWorktree(input)),
+        Effect.tap(() => worktreeLifecycle.markInventoryChanged),
       );
     }),
     pruneWorktrees: Effect.fn("GitWorkflowService.pruneWorktrees")(function (input) {

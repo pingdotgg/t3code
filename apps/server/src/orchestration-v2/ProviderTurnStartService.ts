@@ -25,13 +25,9 @@ import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
-import * as ServerConfig from "../config.ts";
-import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
-import * as GitWorkflowService from "../git/GitWorkflowService.ts";
-import * as ProjectService from "../project/ProjectService.ts";
+import { resolveWorkspaceLeasePath, acquireWorkspaceLease } from "../workspace/workspaceLease.ts";
+import * as WorktreeRevivalService from "../vcs/WorktreeRevivalService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
-import * as ServerSettings from "../serverSettings.ts";
-import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { isActiveRun } from "./CommandPolicy.ts";
@@ -69,28 +65,6 @@ export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStart
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
-
-class WorktreeRecreateError extends Schema.TaggedError<WorktreeRecreateError>()(
-  "WorktreeRecreateError",
-  {
-    worktreePath: Schema.String,
-    branch: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Could not recreate the worktree for branch '${this.branch}' at ${this.worktreePath}.`;
-  }
-}
-
-class WorktreeRecreateNoBaseError extends Schema.TaggedError<WorktreeRecreateNoBaseError>()(
-  "WorktreeRecreateNoBaseError",
-  { worktreePath: Schema.String, branch: Schema.String },
-) {
-  override get message(): string {
-    return `Could not recreate branch '${this.branch}' at ${this.worktreePath}: the project workspace has no commit to start it from.`;
-  }
-}
 
 const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
 const isProviderAdapterOpenSessionError = Schema.is(
@@ -135,10 +109,7 @@ export const layer: Layer.Layer<
   | IdAllocator.IdAllocatorV2
   | FileSystem.FileSystem
   | Path.Path
-  | ServerConfig.ServerConfig
-  | ServerSettings.ServerSettingsService
-  | GitWorkflowService.GitWorkflowService
-  | ProjectService.ProjectService
+  | WorktreeRevivalService.WorktreeRevivalService
   | ProviderAuthService.ProviderAuthService
   | ProjectionStore.ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
@@ -151,78 +122,17 @@ export const layer: Layer.Layer<
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
-    const projects = yield* ProjectService.ProjectService;
+    const pathService = yield* Path.Path;
+    const worktreeRevival = yield* WorktreeRevivalService.WorktreeRevivalService;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
-    const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
-
-    const resolveRecreateBase = Effect.fn("ProviderTurnStartService.resolveRecreateBase")(
-      function* (cwd: string) {
-        // Recovery can follow an external checkout, before the status cache expires.
-        yield* gitWorkflow.invalidateLocalStatus(cwd);
-        const { refName: currentBranch } = yield* gitWorkflow.localStatus({ cwd });
-        if (currentBranch !== null) {
-          const refName = `refs/heads/${currentBranch}`;
-          return { refName, baseRefName: refName };
-        }
-        if (yield* gitWorkflow.hasCommit({ cwd, refName: "refs/remotes/origin/HEAD" })) {
-          const { commitSha } = yield* gitWorkflow.resolveRemoteTrackingCommit({
-            cwd,
-            refName: "HEAD",
-            fallbackRemoteName: "origin",
-          });
-          // Start from the commit so the thread branch does not track the default branch.
-          return { refName: commitSha, baseRefName: "refs/remotes/origin/HEAD" };
-        }
-        if (yield* gitWorkflow.hasCommit({ cwd, refName: "HEAD" })) {
-          return { refName: "HEAD", baseRefName: undefined };
-        }
-        return null;
-      },
-    );
-
-    const recreateMissingWorktree = Effect.fn("ProviderTurnStartService.recreateMissingWorktree")(
-      function* (input: {
-        readonly cwd: string;
-        readonly worktreePath: string;
-        readonly branch: string;
-      }) {
-        const { cwd, worktreePath, branch } = input;
-        yield* gitWorkflow.pruneWorktrees({ cwd });
-        const localBranchNames = yield* gitWorkflow.listLocalBranchNames(cwd);
-        if (localBranchNames.includes(branch)) {
-          yield* gitWorkflow.createWorktree({ cwd, refName: branch, path: worktreePath });
-          return;
-        }
-        // Push keeps the tracking ref current, so recovery reads it without fetching.
-        const pushedRef = `refs/remotes/origin/${branch}`;
-        if (yield* gitWorkflow.hasCommit({ cwd, refName: pushedRef })) {
-          yield* gitWorkflow.createWorktree({
-            cwd,
-            refName: pushedRef,
-            newRefName: branch,
-            path: worktreePath,
-          });
-          return;
-        }
-        const base = yield* resolveRecreateBase(cwd);
-        if (base === null) {
-          return yield* new WorktreeRecreateNoBaseError({ worktreePath, branch });
-        }
-        yield* gitWorkflow.createWorktree({
-          cwd,
-          refName: base.refName,
-          newRefName: branch,
-          ...(base.baseRefName === undefined ? {} : { baseRefName: base.baseRefName }),
-          path: worktreePath,
-        });
-      },
-    );
+    const worktreeGenerationBySession = new WeakMap<
+      ProviderAdapter.ProviderAdapterV2SessionRuntime,
+      { readonly path: string; readonly generation: number }
+    >();
 
     // Build draining callbacks outside startup scope so they cannot retain full thread history.
     const makeRunControls = (input: {
@@ -623,48 +533,6 @@ export const layer: Layer.Layer<
           return;
         }
       }
-      const { worktreePath, branch } = projection.thread;
-      if (worktreePath !== null && branch !== null) {
-        const exists = yield* fileSystem
-          .exists(worktreePath)
-          .pipe(Effect.orElseSucceed(() => true));
-        if (!exists && (yield* isManagedWorktreePath(worktreePath))) {
-          const project = yield* projects.getById(projection.thread.projectId).pipe(
-            Effect.map(Option.getOrUndefined),
-            Effect.orElseSucceed(() => undefined),
-          );
-          if (project !== undefined) {
-            yield* Effect.logWarning("provider turn start recreating missing worktree", {
-              threadId: projection.thread.id,
-              worktreePath,
-              branch,
-            });
-            const recreateResult = yield* Effect.result(
-              recreateMissingWorktree({
-                cwd: project.workspaceRoot,
-                worktreePath,
-                branch,
-              }).pipe(
-                Effect.mapError((cause) =>
-                  cause._tag === "WorktreeRecreateNoBaseError"
-                    ? cause
-                    : new WorktreeRecreateError({ worktreePath, branch, cause }),
-                ),
-              ),
-            );
-            if (recreateResult._tag === "Failure") {
-              if (input.willRetry === true) return yield* recreateResult.failure;
-              yield* settleStartFailure({
-                signal: "worktree-recreate-failure",
-                title: "Couldn't recreate thread workspace",
-                error: recreateResult.failure,
-                message: recreateResult.failure.message,
-              });
-              return;
-            }
-          }
-        }
-      }
       const selectInheritedBackgroundItems = (
         current: ProjectionStore.ProjectionRuntimeRecoveryState,
       ): ReturnType<typeof RunExecutionService.selectInheritedBackgroundTurnItems> =>
@@ -700,6 +568,98 @@ export const layer: Layer.Layer<
         modelSelection: run.modelSelection,
       });
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
+      let observedWorktreeGeneration:
+        | { readonly path: string; readonly generation: number }
+        | undefined;
+      if (projection.thread.worktreePath !== null && projection.thread.branch !== null) {
+        const worktreePath = projection.thread.worktreePath;
+        const revivalResult = yield* Effect.result(
+          worktreeRevival.reviveForThread({
+            threadId: projection.thread.id,
+            projectId: projection.thread.projectId,
+            worktreePath,
+            branch: projection.thread.branch,
+          }),
+        );
+        if (revivalResult._tag === "Failure") {
+          // A missing worktree that cannot be recreated, or a required setup
+          // script that failed, leaves nothing for the provider to run in.
+          // Settle the run with the reason; the next message tries again.
+          const revivalError = revivalResult.failure;
+          if (input.willRetry === true) return yield* revivalError;
+          yield* settleRunBeforeStart({
+            signal: "worktree-revival-failure",
+            status: "failed",
+            now: yield* DateTime.now,
+            providerInstanceId: run.providerInstanceId,
+            itemProviderThreadId: providerThread.id,
+            item: {
+              type: "error",
+              title: "Worktree could not be restored",
+              failure: makeProviderFailure({
+                cause: revivalError,
+                message: revivalError.message,
+                class: "validation_error",
+              }),
+            },
+          });
+          return;
+        }
+        const revival = revivalResult.success;
+        const leasePath = yield* resolveWorkspaceLeasePath(worktreePath).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, pathService),
+        );
+        yield* acquireWorkspaceLease(leasePath);
+        if (!(yield* fileSystem.exists(worktreePath))) return "retry" as const;
+        // Revival can recreate the worktree and wait for project setup, so the
+        // run may have been cancelled or superseded meanwhile.
+        if (!(yield* isCurrentAttemptInStatus("starting"))) return;
+        // The thread can also have been moved to another checkout during that
+        // wait. Nothing was prepared there, so the next message starts over.
+        const reboundThread = yield* projectionStore
+          .getThreadShell(projection.thread.id)
+          .pipe(Effect.orElseSucceed(() => null));
+        if (reboundThread !== null && reboundThread.worktreePath !== worktreePath) {
+          yield* settleRunBeforeStart({
+            signal: "worktree-rebound",
+            status: "failed",
+            now: yield* DateTime.now,
+            providerInstanceId: run.providerInstanceId,
+            itemProviderThreadId: providerThread.id,
+            item: {
+              type: "error",
+              title: "Workspace changed while the turn was starting",
+              failure: makeProviderFailure({
+                cause: "The thread's worktree changed before the provider started.",
+                message: "The thread moved to another worktree. Send the message again.",
+                class: "validation_error",
+              }),
+            },
+          });
+          return;
+        }
+        observedWorktreeGeneration = { path: worktreePath, generation: revival.generation };
+        const liveSession = yield* providerSessions.get(providerSessionId);
+        const previousWorktreeGeneration = Option.isSome(liveSession)
+          ? worktreeGenerationBySession.get(liveSession.value)
+          : undefined;
+        // Only a per-thread provider process holds the worktree as its cwd.
+        // A session shared across threads (Codex) passes cwd per native
+        // thread, and closing it would fail every sibling's running turn.
+        const holdsWorktreeAsCwd =
+          Option.isSome(liveSession) &&
+          !liveSession.value.providerSession.capabilities.sessions
+            .supportsMultipleProviderThreadsPerSession;
+        const worktreeChanged =
+          revival.revived ||
+          (previousWorktreeGeneration !== undefined &&
+            (previousWorktreeGeneration.path !== worktreePath ||
+              previousWorktreeGeneration.generation !== revival.generation));
+        if (holdsWorktreeAsCwd && worktreeChanged) {
+          yield* providerSessions.close(providerSessionId);
+        }
+      }
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );
@@ -803,6 +763,8 @@ export const layer: Layer.Layer<
         return;
       }
       const session = sessionResult.success;
+      if (observedWorktreeGeneration !== undefined)
+        worktreeGenerationBySession.set(session, observedWorktreeGeneration);
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
       const loadFromProvider = Effect.fn("ProviderTurnStartService.loadFromProvider")(function* (
         load: Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapter.ProviderAdapterV2Error>,
@@ -1686,13 +1648,12 @@ export const layer: Layer.Layer<
     return ProviderTurnStartServiceV2.of({
       start: Effect.fn("ProviderTurnStartService.start")(
         function* (input) {
-          // Storage cleanup removes worktrees under the same lease. Only startup
-          // holds it; the provider turn runs after it is released.
-          const { thread } = yield* projectionStore.getThreadRecords(input.threadId, []);
-          const providerTurn = yield* thread.worktreePath === null
-            ? start(input)
-            : withWorkspaceLease(path.resolve(thread.worktreePath), start(input));
-          if (providerTurn !== undefined) yield* providerTurn;
+          while (true) {
+            const providerTurn = yield* start(input).pipe(Effect.scoped);
+            if (providerTurn === "retry") continue;
+            if (providerTurn !== undefined) yield* providerTurn;
+            return;
+          }
         },
         (effect, input) =>
           effect.pipe(

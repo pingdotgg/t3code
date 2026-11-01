@@ -149,6 +149,15 @@ import {
   VcsStatusStreamEvent,
 } from "./git.ts";
 import {
+  VcsListWorktreesInput,
+  VcsListWorktreesResult,
+  WorktreeInventoryChange,
+  WorktreeInventoryError,
+  VcsPruneWorktreesInput,
+  VcsPruneWorktreesResult,
+  WorktreeMutationError,
+} from "./worktrees.ts";
+import {
   ReviewBranchCommitsInput,
   ReviewBranchCommitsResult,
   ReviewDiffFileContentsInput,
@@ -451,6 +460,9 @@ export const WS_METHODS = {
   vcsPull: "vcs.pull",
   vcsRefreshStatus: "vcs.refreshStatus",
   vcsListRefs: "vcs.listRefs",
+  vcsListWorktrees: "vcs.listWorktrees",
+  subscribeWorktreeInventory: "vcs.subscribeWorktreeInventory",
+  vcsPruneWorktrees: "vcs.pruneWorktrees",
   vcsCreateWorktree: "vcs.createWorktree",
   vcsRemoveWorktree: "vcs.removeWorktree",
   vcsCreateRef: "vcs.createRef",
@@ -1493,6 +1505,25 @@ const WsVcsListRefsRpc = Rpc.make(WS_METHODS.vcsListRefs, {
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
 
+const WsVcsListWorktreesRpc = Rpc.make(WS_METHODS.vcsListWorktrees, {
+  payload: VcsListWorktreesInput,
+  success: VcsListWorktreesResult,
+  error: Schema.Union([WorktreeInventoryError, EnvironmentAuthorizationError]),
+});
+
+const WsSubscribeWorktreeInventoryRpc = Rpc.make(WS_METHODS.subscribeWorktreeInventory, {
+  payload: Schema.Struct({}),
+  success: WorktreeInventoryChange,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsVcsPruneWorktreesRpc = Rpc.make(WS_METHODS.vcsPruneWorktrees, {
+  payload: VcsPruneWorktreesInput,
+  success: VcsPruneWorktreesResult,
+  error: Schema.Union([WorktreeMutationError, EnvironmentAuthorizationError]),
+});
+
 const WsVcsCreateWorktreeRpc = Rpc.make(WS_METHODS.vcsCreateWorktree, {
   // Worktrees use the managed folder; required null path preserves compatibility with older servers.
   payload: Schema.Struct({ ...VcsCreateWorktreeInput.fields, path: Schema.Null }),
@@ -2117,6 +2148,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitResolvePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,
   WsVcsListRefsRpc,
+  WsVcsListWorktreesRpc,
+  WsSubscribeWorktreeInventoryRpc,
+  WsVcsPruneWorktreesRpc,
   WsVcsCreateWorktreeRpc,
   WsVcsRemoveWorktreeRpc,
   WsVcsCreateRefRpc,

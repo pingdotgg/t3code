@@ -518,6 +518,10 @@
     "./provider-clients": {
       "types": "./src/providerClients.ts",
       "default": "./src/providerClients.ts"
+    },
+    "./state/worktrees": {
+      "types": "./src/state/worktrees.ts",
+      "default": "./src/state/worktrees.ts"
     }
   },
   "scripts": {

@@ -1,7 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto digest is effectful; a sync hash keeps historyPath a plain function.
 import * as NodeCrypto from "node:crypto";
 
-import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import { resolveWorkspaceLeasePath, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
   DEFAULT_TERMINAL_ID,
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
@@ -2985,11 +2985,45 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     return snapshot(liveSession);
   });
 
-  const openLocked = (input: TerminalOpenInput) =>
-    withWorkspaceLease(
-      path.resolve(input.worktreePath ?? input.cwd),
-      openWithWorkspaceLease(input),
+  // Raw terminal calls may name a subdirectory or nested repository. Lease all
+  // enclosing Git roots so checkout removal waits for PTY startup. Client calls
+  // that supply worktreePath already identify the enclosing checkout.
+  const workspaceLeasePaths = Effect.fn("terminal.workspaceLeasePaths")(
+    function* (input: { readonly cwd: string; readonly worktreePath?: string | null | undefined }) {
+      if (input.worktreePath != null) return [yield* resolveWorkspaceLeasePath(input.worktreePath)];
+      const cwd = yield* resolveWorkspaceLeasePath(input.cwd);
+      const roots: string[] = [];
+      let directory = cwd;
+      while (true) {
+        const marker = yield* fileSystem.stat(path.join(directory, ".git")).pipe(Effect.option);
+        if (
+          Option.isSome(marker) &&
+          (marker.value.type === "File" || marker.value.type === "Directory")
+        ) {
+          roots.push(directory);
+        }
+        const parent = path.dirname(directory);
+        if (parent === directory) return roots.length > 0 ? roots.sort() : [cwd];
+        directory = parent;
+      }
+    },
+    Effect.provideService(FileSystem.FileSystem, fileSystem),
+    Effect.provideService(Path.Path, path),
+  );
+
+  const withTerminalWorkspaceLease = <A, E, R>(
+    input: { readonly cwd: string; readonly worktreePath?: string | null | undefined },
+    effect: Effect.Effect<A, E, R>,
+  ) =>
+    workspaceLeasePaths(input).pipe(
+      // A consistent acquisition order prevents nested checkouts deadlocking.
+      Effect.flatMap((roots) =>
+        roots.reduceRight((locked, root) => withWorkspaceLease(root, locked), effect),
+      ),
     );
+
+  const openLocked = (input: TerminalOpenInput) =>
+    withTerminalWorkspaceLease(input, openWithWorkspaceLease(input));
 
   const open: TerminalManager["Service"]["open"] = (input) =>
     withThreadLock(

@@ -1,3 +1,4 @@
+import { WorktreeManagementSection } from "./SourceControlSettings";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
 import { AdvancedSettings } from "./AdvancedSettings";
@@ -67,6 +68,7 @@ export function WorktreesSettingsPanel() {
       <SettingsSection id="worktree-branches" title="Branches">
         <BranchNamingSettings />
       </SettingsSection>
+      <WorktreeManagementSection />
       <WorktreeCleanupSection />
     </SettingsPageContainer>
   );

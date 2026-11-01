@@ -1,3 +1,4 @@
+import * as WorktreeLifecycle from "../vcs/WorktreeLifecycle.ts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -37,6 +38,7 @@ it.layer(NodeServices.layer)("GitWorkflowService", (it) => {
       Effect.scoped,
       Effect.provide(
         GitWorkflowService.layer.pipe(
+          Layer.provide(WorktreeLifecycle.layer),
           Layer.provide(
             Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
               resolve: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),

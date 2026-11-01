@@ -61,6 +61,7 @@ export type ProjectSetupScriptRunnerResult =
   | ProjectSetupScriptRunnerResultStarted;
 
 export interface ProjectSetupScriptRunnerInput {
+  readonly preferredTerminalId?: string;
   readonly threadId: string;
   readonly projectId?: string;
   readonly projectCwd?: string;
@@ -431,7 +432,7 @@ export const make = Effect.gen(function* () {
     const terminalId =
       trigger === "settle"
         ? `settle-${script.id}-${(yield* crypto.randomUUIDv4().pipe(Effect.orDie)).slice(0, 8)}`
-        : `setup-${script.id}`;
+        : (input.preferredTerminalId ?? `setup-${script.id}`);
     const cwd = input.worktreePath;
     const env = {
       ...projectScriptRuntimeEnv({

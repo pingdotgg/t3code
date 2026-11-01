@@ -53,6 +53,7 @@ import {
 } from "../git/remoteRefs.ts";
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
 import * as ServerConfig from "../config.ts";
+import { parseGitWorktreeBranchPaths, parseGitWorktreeListPorcelain } from "./GitWorktree.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -89,6 +90,7 @@ const REVIEW_DIFF_ARGS = [
   "--no-textconv",
   ...PATCH_RENDER_PREFIX_ARGS,
 ];
+const WORKTREE_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 const STATUS_UPSTREAM_FETCH_TIMEOUT = Duration.minutes(5);
@@ -270,37 +272,6 @@ function paginateBranches(input: {
     nextCursor,
     totalCount,
   };
-}
-
-function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
-  const worktreePaths = new Map<string, string>();
-  let currentPath: string | null = null;
-  let currentBranch: string | null = null;
-  let currentPrunable = false;
-
-  const flush = () => {
-    if (currentPath !== null && currentBranch !== null && !currentPrunable) {
-      worktreePaths.set(currentBranch, currentPath);
-    }
-    currentPath = null;
-    currentBranch = null;
-    currentPrunable = false;
-  };
-
-  for (const field of stdout.split("\0")) {
-    if (field === "") {
-      flush();
-    } else if (field.startsWith("worktree ")) {
-      currentPath = field.slice("worktree ".length);
-    } else if (field.startsWith("branch refs/heads/")) {
-      currentBranch = field.slice("branch refs/heads/".length);
-    } else if (field === "prunable" || field.startsWith("prunable ")) {
-      currentPrunable = true;
-    }
-  }
-  flush();
-
-  return worktreePaths;
 }
 
 function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
@@ -1220,6 +1191,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (result.exitCode === 0) return result;
     const lineResult = yield* executeGit(operation, cwd, args, options);
     return { ...lineResult, stdout: lineResult.stdout.replaceAll("\n", "\0") };
+  });
+
+  const listWorkspaces: GitVcsDriver.GitVcsDriver["Service"]["listWorkspaces"] = Effect.fn(
+    "GitVcsDriver.listWorkspaces",
+  )(function* (cwd) {
+    const args = ["worktree", "list", "--porcelain", "-z"] as const;
+    const result = yield* executeWorktreeList("GitVcsDriver.listWorkspaces", cwd, [], {
+      timeoutMs: 30_000,
+      maxOutputBytes: WORKTREE_LIST_MAX_OUTPUT_BYTES,
+    });
+    if (result.stdoutTruncated) {
+      return yield* new GitCommandError({
+        ...gitCommandContext({ operation: "GitVcsDriver.listWorkspaces", cwd, args }),
+        detail: `Git worktree output exceeded ${WORKTREE_LIST_MAX_OUTPUT_BYTES} bytes.`,
+        stdoutLength: result.stdout.length,
+        stderrLength: result.stderr.length,
+      });
+    }
+    return parseGitWorktreeListPorcelain(result.stdout);
   });
 
   const runGitStdoutWithOptions = (
@@ -3851,7 +3841,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : null;
     const parsedWorktreeEntries =
       worktreeListResult.exitCode === 0
-        ? [...parseWorktreeBranchPaths(worktreeListResult.stdout)].map(
+        ? [...parseGitWorktreeBranchPaths(worktreeListResult.stdout)].map(
             ([branchName, worktreePath]) =>
               [branchName, path.normalize(path.resolve(worktreePath))] as const,
           )
@@ -4870,16 +4860,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
 
   const listWorktreePaths: GitVcsDriver.GitVcsDriver["Service"]["listWorktreePaths"] = (cwd) =>
-    executeWorktreeList("GitVcsDriver.listWorktreePaths", cwd, []).pipe(
-      // A `prunable` record's directory is gone; another checkout may now sit there.
-      Effect.map(({ stdout }) =>
-        stdout.split("\0\0").flatMap((record) => {
-          const fields = record.split("\0");
-          const worktree = fields.find((field) => field.startsWith("worktree "));
-          return worktree === undefined || fields.some((field) => field.startsWith("prunable"))
-            ? []
-            : [path.resolve(cwd, worktree.slice("worktree ".length))];
-        }),
+    // A prunable registration's directory is gone; another checkout may now sit there.
+    listWorkspaces(cwd).pipe(
+      Effect.map((entries) =>
+        entries.flatMap((entry) => (entry.prunable ? [] : [path.resolve(cwd, entry.path)])),
       ),
     );
 
@@ -4936,6 +4920,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     statusDetails,
     statusDetailsLocal,
     statusDetailsRemote,
+    listWorkspaces,
     prepareCommitContext,
     commit: Effect.fnUntraced(function* (cwd, subject, body, options) {
       return yield* withListRefsInvalidation(cwd, commit(cwd, subject, body, options));

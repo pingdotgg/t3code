@@ -44,6 +44,7 @@ vi.mock("../../state/preferences", () => ({
   mobilePreferencesAtom: {},
   updateMobilePreferencesAtom: {},
 }));
+vi.mock("./components/WorktreeInventorySection", () => ({ WorktreeInventorySection: () => null }));
 vi.mock("./components/AutoSettleDaysField", () => ({ AutoSettleDaysField: () => null }));
 vi.mock("./components/SourceControlSignInSection", () => ({
   SourceControlSignInSection: () => null,

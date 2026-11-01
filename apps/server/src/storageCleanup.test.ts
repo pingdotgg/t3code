@@ -1,3 +1,5 @@
+import * as WorktreeService from "./vcs/WorktreeService.ts";
+import * as WorktreeLifecycle from "./vcs/WorktreeLifecycle.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
@@ -348,10 +350,16 @@ const cleanupFixture = (
     let outboxStatus: string | null = null;
     let fullStatusCalls = 0;
     let snapshotReads = 0;
-    let terminalListener: ((event: TerminalMetadataStreamEvent) => Effect.Effect<void>) | undefined;
+    const terminalListeners: Array<(event: TerminalMetadataStreamEvent) => Effect.Effect<void>> =
+      [];
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
     const activated = yield* Deferred.make<void>();
-    const context = yield* Layer.build(StorageCleanup.layer).pipe(
+    const context = yield* Layer.build(
+      StorageCleanup.layer.pipe(
+        Layer.provide(WorktreeService.layer),
+        Layer.provide(WorktreeLifecycle.layer),
+      ),
+    ).pipe(
       Effect.provideService(GitVcsDriver.GitVcsDriver, {
         ...git,
         execute: (input) =>
@@ -461,7 +469,7 @@ const cleanupFixture = (
           listener: (event: TerminalMetadataStreamEvent) => Effect.Effect<void>,
         ) =>
           Effect.sync(() => {
-            terminalListener = listener;
+            terminalListeners.push(listener);
             return () => {};
           }),
       } as unknown as TerminalManager.TerminalManager["Service"]),
@@ -471,7 +479,9 @@ const cleanupFixture = (
       service: Context.get(context, StorageCleanup.StorageCleanup),
       repo,
       setTerminals: (terminals: TerminalSummary[]) =>
-        terminalListener?.({ type: "snapshot", terminals }) ?? Effect.void,
+        Effect.forEach(terminalListeners, (listener) => listener({ type: "snapshot", terminals }), {
+          discard: true,
+        }),
       editBeforeRemoval: () => {
         editBeforeRemoval = true;
       },
@@ -533,21 +543,26 @@ const cleanupFixture = (
         openSessionCwd = cwd;
       },
       openTerminal: (paths: { cwd: string; worktreePath: string | null }) =>
-        terminalListener?.({
-          type: "upsert",
-          terminal: {
-            threadId: "thread-1",
-            terminalId: "terminal-1",
-            status: "running",
-            pid: 1,
-            exitCode: null,
-            exitSignal: null,
-            hasRunningSubprocess: false,
-            label: "Terminal",
-            updatedAt: "2026-06-10T12:00:00.000Z",
-            ...paths,
-          },
-        }) ?? Effect.void,
+        Effect.forEach(
+          terminalListeners,
+          (listener) =>
+            listener({
+              type: "upsert",
+              terminal: {
+                threadId: "thread-1",
+                terminalId: "terminal-1",
+                status: "running",
+                pid: 1,
+                exitCode: null,
+                exitSignal: null,
+                hasRunningSubprocess: false,
+                label: "Terminal",
+                updatedAt: "2026-06-10T12:00:00.000Z",
+                ...paths,
+              },
+            }),
+          { discard: true },
+        ),
       fullStatusCalls: () => fullStatusCalls,
       snapshotReads: () => snapshotReads,
       activate: (domainEvents: Stream.Stream<OrchestrationV2DomainEvent>) => {

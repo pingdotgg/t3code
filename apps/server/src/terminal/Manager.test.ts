@@ -1,3 +1,4 @@
+import { resolveWorkspaceLeasePath, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -409,6 +410,49 @@ it.layer(
   Layer.merge(NodeServices.layer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
   { excludeTestServices: true },
 )("TerminalManager", (it) => {
+  it.effect.each(["plain", "nested", "symlink"])(
+    "holds the checkout lease during terminal startup (%s)",
+    (variant) =>
+      Effect.gen(function* () {
+        const ptyAdapter = new GatedPtyAdapter();
+        const { manager, baseDir } = yield* createManager(5, { ptyAdapter });
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const checkout = path.join(baseDir, "checkout");
+        let nestedCwd = path.join(checkout, "src");
+        yield* fs.makeDirectory(nestedCwd, { recursive: true });
+        yield* fs.writeFileString(path.join(checkout, ".git"), "gitdir: /repo/.git/worktrees/x\n");
+        if (variant === "nested")
+          yield* fs.makeDirectory(path.join(nestedCwd, ".git"), { recursive: true });
+        if (variant === "symlink") {
+          const alias = path.join(baseDir, "alias");
+          const target = path.join(checkout, "nested");
+          yield* fs.makeDirectory(target);
+          yield* fs.symlink(target, alias);
+          nestedCwd = `${alias}/../src`;
+        }
+        const spawnStarted = yield* Deferred.make<void>();
+        const releaseSpawn = yield* Deferred.make<void>();
+        ptyAdapter.gate = { spawning: spawnStarted, release: releaseSpawn };
+
+        const opening = yield* manager.open(openInput({ cwd: nestedCwd })).pipe(Effect.forkChild);
+        yield* Deferred.await(spawnStarted);
+        // Worktree removal leases the checkout root. Starting immediately, it would
+        // take a free lease before startup finishes, so it must find the lease held.
+        const checkoutLease = yield* resolveWorkspaceLeasePath(checkout);
+        const removal = yield* withWorkspaceLease(
+          checkoutLease,
+          Effect.sync(() => ptyAdapter.processes.length),
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.succeed(releaseSpawn, undefined);
+
+        const snapshot = yield* Fiber.join(opening);
+        assert.equal(yield* Fiber.join(removal), 1);
+        assert.equal(snapshot.cwd, nestedCwd);
+        assert.equal(ptyAdapter.spawnInputs[0]?.cwd, nestedCwd);
+      }),
+  );
+
   it.effect("spawns lazily and reuses running terminal per thread", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();

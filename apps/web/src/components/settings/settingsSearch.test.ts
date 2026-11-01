@@ -91,6 +91,7 @@ describe("searchSettings", () => {
       localeLowerCase.mockRestore();
     }
     expect(searchSettings("xyzzy")).toEqual([]);
+    expect(searchSettings("worktrees")[0]?.id).toBe("worktrees");
   });
 
   it("matches query words across fields and ranks the strongest result first", () => {

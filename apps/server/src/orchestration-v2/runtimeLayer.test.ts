@@ -57,6 +57,7 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as WorktreeRevivalServiceTestkit from "../vcs/WorktreeRevivalService.testkit.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -281,6 +282,7 @@ const layerTest = Layer.mergeAll(
   EffectOutbox.layer,
   ThreadCommandExecutor.layer,
 ).pipe(
+  Layer.provide(WorktreeRevivalServiceTestkit.layerNoop),
   Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provide(McpProviderSessions.layer),
   Layer.provide(SqlitePersistence.layerMemory),
@@ -294,6 +296,7 @@ const layerTest = Layer.mergeAll(
 );
 
 const layerLegacyImportTest = RuntimeLayer.layer.pipe(
+  Layer.provide(WorktreeRevivalServiceTestkit.layerNoop),
   Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provide(McpProviderSessions.layer),
   Layer.provideMerge(SqlitePersistence.layerMemory),
@@ -336,6 +339,7 @@ const layerProjectDeletionTest = Layer.mergeAll(
   RuntimeLayer.layerEventSink,
   ThreadCommandExecutor.layer,
 ).pipe(
+  Layer.provide(WorktreeRevivalServiceTestkit.layerNoop),
   Layer.provide(
     Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({
       peek: () =>
@@ -817,6 +821,7 @@ const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
   RuntimeLayer.layerEventSink,
   RuntimeLayer.layerEventInfrastructure,
 ).pipe(
+  Layer.provide(WorktreeRevivalServiceTestkit.layerNoop),
   Layer.provide(
     Layer.mock(WorkspacePaths.WorkspacePaths)({
       normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),
@@ -8387,6 +8392,7 @@ const layerQueueResumeDisabledInstanceTest = Layer.mergeAll(
   EffectOutbox.layer,
   ThreadCommandExecutor.layer,
 ).pipe(
+  Layer.provide(WorktreeRevivalServiceTestkit.layerNoop),
   Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provide(McpProviderSessions.layer),
   Layer.provide(SqlitePersistence.layerMemory),

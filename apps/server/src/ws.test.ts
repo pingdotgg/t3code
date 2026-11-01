@@ -1,3 +1,5 @@
+import * as WorktreeLifecycle from "./vcs/WorktreeLifecycle.ts";
+import * as WorktreeService from "./vcs/WorktreeService.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -512,6 +514,8 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
 
 // Build the production RPC layer; unrelated capabilities fail if this test calls them.
 const layerUnusedConfigRpcServices = Layer.mergeAll(
+  WorktreeLifecycle.layer,
+  Layer.mock(WorktreeService.WorktreeService)({}),
   Layer.mock(DocumentText.DocumentText)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(WorkspacePaths.WorkspacePaths)({}),

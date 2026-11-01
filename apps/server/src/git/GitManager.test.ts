@@ -1,3 +1,4 @@
+import * as WorktreeLifecycle from "../vcs/WorktreeLifecycle.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
@@ -768,6 +769,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           VcsStatusBroadcaster.layer.pipe(
             Layer.provide(
               GitWorkflowService.layer.pipe(
+                Layer.provide(WorktreeLifecycle.layer),
                 Layer.provide(Layer.succeed(GitManager.GitManager, manager)),
                 Layer.provide(
                   VcsDriverRegistry.layer.pipe(
@@ -4145,6 +4147,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const events: string[] = [];
         const workflows = yield* Effect.forEach([0, 1], () =>
           GitWorkflowService.make.pipe(
+            Effect.provide(WorktreeLifecycle.layer),
             // Cache the real filesystem result so startImmediately reaches lease acquisition.
             Effect.provideService(FileSystem.FileSystem, {
               ...fileSystem,

@@ -1,3 +1,5 @@
+import * as WorktreeService from "./vcs/WorktreeService.ts";
+import type { WorktreePruneSkipReason } from "@t3tools/contracts";
 import {
   GitCommandError,
   OrchestrationV2AppThreadJson,
@@ -47,7 +49,6 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
-import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { isNetworkPath } from "@t3tools/shared/path";
@@ -81,6 +82,24 @@ function cleanupFailureReason(error: { readonly message: string }) {
     ? `${error.command}: ${error.detail.split(/\r?\n/)[0]}${error.reason ? ` (${error.reason})` : ""}`
     : (error.message.split(/\r?\n/)[0] ?? error.message);
 }
+
+const REMOVAL_SKIP_REASON: Record<WorktreePruneSkipReason, string> = {
+  running: "thread is running or has pending work",
+  session: "provider session is still open",
+  terminal: "open terminal",
+  open_thread: "a linked thread is still open",
+  dirty: "has uncommitted changes",
+  submodules: "has submodule repositories",
+  unpushed: "has commits that are not pushed or merged",
+  unrestorable_thread: "a linked thread could not get this checkout back",
+  status_unavailable: "Git status could not be read",
+  ignored_files: "has ignored files",
+  protected_path: "not a removable managed worktree",
+  unknown_worktree: "Git does not register this worktree for the project",
+  changed: "repository, branch or commit changed since check",
+  policy_changed: "thread activity or cleanup settings changed since check",
+  remove_failed: "git worktree remove failed",
+};
 
 const worktreeCleanupEnabled = (rules: WorktreeCleanupRules) =>
   rules.worktreeAfterDays !== null ||
@@ -253,6 +272,7 @@ const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const sql = yield* SqlClient.SqlClient;
+  const worktreeService = yield* WorktreeService.WorktreeService;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
   const terminals = yield* TerminalManager.TerminalManager;
@@ -1060,30 +1080,80 @@ const make = Effect.gen(function* () {
           )
         )
           return keep("settings changed since check");
-        // Clean only untracked files. Ordinary worktrees retain Git's final tracked-edit check.
-        if (settings.worktreeKeepWhen === "tracked-changes")
-          yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
-        const submodules = yield* submoduleRemoval(worktreePath, settings);
-        if (submodules.reason !== null) return keep(submodules.reason);
-        if (submodules.force) {
-          const changes = yield* localChangesReason(worktreePath, settings);
-          if (changes !== null) return keep(changes);
-        }
-        yield* removeLinkedWorktree({
-          operation: "StorageCleanup.cleanupGit",
-          cwd: project.workspaceRoot,
-          worktreePath,
-          // Git requires force for submodules; recursive checks above cannot make removal atomic.
-          force: submodules.force,
-          execute: git.execute,
-          run: (args) => cleanupGit(project.workspaceRoot, [...args], "git worktree remove"),
+        const outcome = yield* worktreeService.removeIfSafe({
+          path: worktreePath,
+          workspaceRoot: project.workspaceRoot,
+          intent: "policy",
+          expected: { branch: thread.branch!, headSha: head.commitSha },
+          keepWhen: settings.worktreeKeepWhen,
+          recheck: Effect.gen(function* () {
+            if ((yield* blockedSinceCheck()) !== null) return false;
+            const latestSettings = yield* settingsService.getSettings;
+            return (
+              Equal.equals(resolveWorktreeCleanup(latestSettings, thread.projectId), settings) &&
+              latestSettings.autoResumeLimitedThreads === serverSettings.autoResumeLimitedThreads &&
+              latestSettings.snoozeLimitedThreads === serverSettings.snoozeLimitedThreads
+            );
+          }).pipe(Effect.orElseSucceed(() => false)),
+          policyRemoval: Effect.gen(function* () {
+            // Clean only untracked files. Ordinary worktrees retain Git's final tracked-edit check.
+            if (settings.worktreeKeepWhen === "tracked-changes")
+              yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
+            const submodules = yield* submoduleRemoval(worktreePath, settings);
+            if (submodules.reason !== null)
+              return {
+                outcome: "skipped",
+                reason: "submodules",
+                detail: submodules.reason,
+              } as const;
+            if (submodules.force) {
+              const changes = yield* localChangesReason(worktreePath, settings);
+              if (changes !== null)
+                return { outcome: "skipped", reason: "dirty", detail: changes } as const;
+            }
+            yield* removeLinkedWorktree({
+              operation: "StorageCleanup.cleanupGit",
+              cwd: project.workspaceRoot,
+              worktreePath,
+              // Git requires force for submodules; recursive checks above cannot make removal atomic.
+              force: submodules.force,
+              execute: git.execute,
+              run: (args) => cleanupGit(project.workspaceRoot, [...args], "git worktree remove"),
+            });
+
+            return { outcome: "removed" } as const;
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+            Effect.catch((error) =>
+              Effect.succeed({
+                outcome: "skipped",
+                reason: "remove_failed",
+                detail: cleanupFailureReason(error),
+              } as const),
+            ),
+          ),
         });
+        if (outcome.outcome === "skipped") {
+          if (outcome.reason === "remove_failed") {
+            entries.push({
+              ...entry,
+              outcome: "failed",
+              reason: outcome.detail ?? REMOVAL_SKIP_REASON[outcome.reason],
+              bytes: null,
+            });
+            if (deleted && settings.worktreeOnDelete) kept.push(worktreePath);
+            return;
+          }
+          const reason = outcome.detail ?? REMOVAL_SKIP_REASON[outcome.reason];
+          if (["running", "session", "terminal"].includes(outcome.reason)) waitForStop(reason);
+          return keep(reason);
+        }
         entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
         yield* gitManager.invalidateStatus(project.workspaceRoot);
         // Preserve branch/path so ProviderTurnStartService can recreate the checkout on resume.
         yield* Effect.logInfo("storage cleanup removed worktree", { threadId: thread.id });
       }).pipe(
-        (effect) => withWorkspaceLease(worktreePath, effect),
         Effect.catch((error) =>
           Effect.gen(function* () {
             entries.push({

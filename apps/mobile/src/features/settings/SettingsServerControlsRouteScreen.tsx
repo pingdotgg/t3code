@@ -1,3 +1,4 @@
+import { WorktreeInventorySection } from "./components/WorktreeInventorySection";
 import { useNavigation } from "@react-navigation/native";
 import { SettingsRow } from "./components/SettingsRow";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
@@ -259,6 +260,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
       setPendingWrites((count) => count - 1);
     });
   };
+  const worktreeTargets = targets.filter(
+    (target) =>
+      target.environment.serverConfig.environment.capabilities.worktreeManagement === true,
+  );
   const disabled = !canWriteSettings || pendingWrites > 0 || !hasConnectedSelection;
   const disabledFor = (key: string) =>
     disabled ||
@@ -449,6 +454,18 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       />
                     ))}
                   </SettingsSection>
+                  {worktreeTargets.map((target) => (
+                    <WorktreeInventorySection
+                      key={`${target.environment.environmentId}:${target.projectId}`}
+                      title={
+                        worktreeTargets.length > 1
+                          ? `Worktrees on ${target.environment.label}`
+                          : "Worktrees"
+                      }
+                      environmentId={target.environment.environmentId}
+                      projectId={target.projectId}
+                    />
+                  ))}
                   <BranchNamingSettings
                     key={targetsKey}
                     mode={uniform("branchNamingMode")}

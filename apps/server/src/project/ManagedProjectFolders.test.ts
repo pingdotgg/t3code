@@ -1,3 +1,4 @@
+import * as WorktreeLifecycle from "../vcs/WorktreeLifecycle.ts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, ProjectId, ThreadId, VcsProcessSpawnError } from "@t3tools/contracts";
@@ -30,6 +31,7 @@ import * as ManagedProjectFolders from "./ManagedProjectFolders.ts";
 
 const layerGitWorkflow = (vcsProcess?: Layer.Layer<VcsProcess.VcsProcess>) =>
   GitWorkflow.layer.pipe(
+    Layer.provide(WorktreeLifecycle.layer),
     Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(vcsProcess ?? VcsProcess.layer))),
     Layer.provide(Layer.mock(GitManager.GitManager)({})),
   );
