@@ -224,8 +224,8 @@ export const make = Effect.gen(function* () {
   const grantsSeen = yield* Ref.make<ReadonlyMap<string | null, number>>(new Map());
   const grantsSeenOn = (account: string | null) =>
     Ref.get(grantsSeen).pipe(Effect.map((counts) => counts.get(account) ?? 0));
-  // Bumped when the recheck sees a grant, before it knows the account: a scan already running
-  // then may not end on "no grants", as that grant may be this account's.
+  // Bumped when a sign-in or the recheck sees a grant, before it knows the account: a scan
+  // already running then may not end on "no grants", as that grant may be this account's.
   const grantsInDoubt = yield* Ref.make(0);
   /** Counts a grant seen on `account`; true when it is the first there. */
   const countGrant = (account: string | null) =>
@@ -319,6 +319,13 @@ export const make = Effect.gen(function* () {
     }),
     (exit) => (exit._tag === "Failure" ? FAILED_SCAN_TTL : exit.value.ttl),
   );
+  // A grant was seen, its account not yet known: no "no grants" stands from here, kept or
+  // from a scan running meanwhile.
+  const doubtNoGrants = Effect.gen(function* () {
+    yield* Ref.update(grantsInDoubt, (count) => count + 1);
+    yield* Ref.update(lastCleanScan, (last) => (last?.granted === false ? null : last));
+    yield* rescanPolicy;
+  });
   /**
    * Why the owner rule is off, or null while it applies. It is off once the policy grants
    * T3 Code here or the operator says so, and while the policy cannot be read.
@@ -438,6 +445,8 @@ export const make = Effect.gen(function* () {
         Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
         Effect.provideService(Crypto.Crypto, crypto),
       );
+      // Even if a check below refuses this sign-in, the grant it saw may be this account's.
+      if (tailnetGrantScopes(node.capabilities) !== null) yield* doubtNoGrants;
       // Decided on a status read now, as one kept from before an account switch names the
       // old tailnet's policy and owner. A switch also moves this host's tailnet address, so a
       // request that arrived on the old one fails the address check below.
@@ -562,13 +571,10 @@ export const make = Effect.gen(function* () {
     const node = lookup.value;
     knownUsers.set(stableNodeId, node.loginName ?? node.userId);
     const decision = yield* decide(node, status);
-    // A grant, usable or not, may be this account's, so no "no grants" stands from here, kept
-    // or from a scan running meanwhile. Once the host is shown still on this account, it
-    // counts as a grant sign-in does; unconfirmed, it may be another account's.
+    // A grant, usable or not, counts as a grant sign-in does once the host is shown still on
+    // this account; unconfirmed, it may be another account's.
     if (tailnetGrantScopes(node.capabilities) !== null) {
-      yield* Ref.update(grantsInDoubt, (count) => count + 1);
-      yield* Ref.update(lastCleanScan, (last) => (last?.granted === false ? null : last));
-      yield* rescanPolicy;
+      yield* doubtNoGrants;
       if (yield* stillOnAccount) yield* countGrant(status.selfNodeId);
     }
     if (decision._tag === "Refused") return { end: decision.reason, node } as const;
@@ -593,7 +599,10 @@ export const make = Effect.gen(function* () {
     const devices = new Map<
       string,
       {
-        sessions: Array<{ id: AuthSessionId; scopes: ReadonlyArray<AuthEnvironmentScope> }>;
+        sessions: Array<{
+          readonly sessionId: AuthSessionId;
+          readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+        }>;
         links: Array<ReadonlyArray<AuthEnvironmentScope>>;
         /** The sign-in label, "name" or "name (login)", for logs once Tailscale forgets the device. */
         label: string | null;
@@ -608,10 +617,7 @@ export const make = Effect.gen(function* () {
     };
     for (const session of yield* sessions.listActive()) {
       if (session.subject.startsWith(TAILNET_SUBJECT_PREFIX)) {
-        deviceOf(session.subject, session.client.label ?? null).sessions.push({
-          id: session.sessionId,
-          scopes: session.scopes,
-        });
+        deviceOf(session.subject, session.client.label ?? null).sessions.push(session);
       }
     }
     for (const link of yield* pairingLinks.listActive({ now })) {
@@ -657,16 +663,20 @@ export const make = Effect.gen(function* () {
         if (result === null) return;
         const name = nameOf(stableNodeId, "node" in result ? result.node : undefined);
         if ("end" in result) return yield* endAccess(stableNodeId, result.end, name);
-        const stale = held.sessions.filter(
-          (session) => !sameScopes(session.scopes, result.allowed),
-        );
-        yield* Effect.forEach(stale, (session) => sessions.revoke(session.id), { discard: true });
+        const subject = tailnetSubject(stableNodeId);
         const links = held.links.some((scopes) => !sameScopes(scopes, result.allowed))
-          ? yield* pairingLinks.revokeUnusedBySubject({
-              subject: tailnetSubject(stableNodeId),
-              revokedAt: now,
-            })
+          ? yield* pairingLinks.revokeUnusedBySubject({ subject, revokedAt: now })
           : 0;
+        // A code exchanged since the list above made its session in the same transaction, so
+        // with codes listed, sessions are read again once unused codes are revoked.
+        const current =
+          held.links.length === 0
+            ? held.sessions
+            : (yield* sessions.listActive()).filter((session) => session.subject === subject);
+        const stale = current.filter((session) => !sameScopes(session.scopes, result.allowed));
+        yield* Effect.forEach(stale, (session) => sessions.revoke(session.sessionId), {
+          discard: true,
+        });
         if (stale.length > 0 || links > 0) {
           yield* Effect.logInfo("Ended Tailscale sessions from an older grant.").pipe(
             Effect.annotateLogs({
