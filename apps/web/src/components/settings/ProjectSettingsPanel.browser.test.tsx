@@ -628,3 +628,36 @@ it("returns to the project overview after removal, clearing the selection but ke
     expect(screen.router.state.location.search).toEqual({ machine: remoteId });
   });
 });
+
+describe("project name composition", () => {
+  it.each([
+    { isComposing: true, keyCode: 13 },
+    { isComposing: false, keyCode: 229 },
+  ])("does not save a partial name for $isComposing/$keyCode", async (composition) => {
+    setup();
+    await using screen = await mountPanel();
+    const input = nameInput(screen);
+    await userEvent.fill(input, "日本");
+    await act(async () => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, ...composition }),
+      );
+    });
+    expect(state.update).not.toHaveBeenCalled();
+    await expect.element(input).toHaveFocus();
+
+    await userEvent.type(input, "語");
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(state.update).toHaveBeenCalledTimes(2));
+    expect(state.projects.map((project) => project.title)).toEqual(["日本語", "日本語"]);
+    await expect.element(nameInput(screen)).toHaveValue("日本語");
+
+    await userEvent.fill(nameInput(screen), "日本語の名前");
+    await userEvent.keyboard("{Tab}");
+    await vi.waitFor(() => expect(state.update).toHaveBeenCalledTimes(4));
+    expect(state.projects.map((project) => project.title)).toEqual([
+      "日本語の名前",
+      "日本語の名前",
+    ]);
+  });
+});
