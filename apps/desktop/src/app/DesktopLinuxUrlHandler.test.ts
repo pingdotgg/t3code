@@ -366,68 +366,70 @@ describe("DesktopLinuxUrlHandler", () => {
     });
   });
 
-  it.effect.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
-    "continues registration after a timed-out cache helper ignores SIGTERM",
-    () =>
-      Effect.gen(function* () {
-        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const nodeExecutable = yield* HostProcess.ExecutablePath;
-        const recorded = emptyRecording();
-        const spawned = yield* Deferred.make<ChildProcessSpawner.ChildProcessHandle>();
-        const ready = yield* Deferred.make<void>();
-        const processSpawner = ChildProcessSpawner.make((command) =>
-          Effect.gen(function* () {
-            if (!ChildProcess.isStandardCommand(command)) {
-              return yield* Effect.die("expected a single registration command");
-            }
-            recorded.commands.push({ command: command.command, args: command.args });
-            if (command.command !== "update-desktop-database") return mockProcess(0);
-            const child = yield* realSpawner.spawn(
-              ChildProcess.make(
-                nodeExecutable,
-                [
-                  "-e",
-                  // The watchdog makes the unfixed case exit with a distinguishable code.
-                  "process.on('SIGTERM', () => setTimeout(() => process.exit(99), 5000));" +
-                    "process.stdout.write('ready\\n'); setInterval(() => {}, 2147483647);",
-                ],
-                { ...command.options, stdout: "pipe" },
+  for (const stalledHelper of ["update-desktop-database", "xdg-mime"] as const) {
+    it.effect.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+      `finishes registration after a timed-out ${stalledHelper} ignores SIGTERM`,
+      () =>
+        Effect.gen(function* () {
+          const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const nodeExecutable = yield* HostProcess.ExecutablePath;
+          const recorded = emptyRecording();
+          const spawned = yield* Deferred.make<ChildProcessSpawner.ChildProcessHandle>();
+          const ready = yield* Deferred.make<void>();
+          const processSpawner = ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              if (!ChildProcess.isStandardCommand(command)) {
+                return yield* Effect.die("expected a single registration command");
+              }
+              recorded.commands.push({ command: command.command, args: command.args });
+              if (command.command !== stalledHelper) return mockProcess(0);
+              const child = yield* realSpawner.spawn(
+                ChildProcess.make(
+                  nodeExecutable,
+                  [
+                    "-e",
+                    // The watchdog makes the unfixed case exit with a distinguishable code.
+                    "process.on('SIGTERM', () => setTimeout(() => process.exit(99), 5000));" +
+                      "process.stdout.write('ready\\n'); setInterval(() => {}, 2147483647);",
+                  ],
+                  { ...command.options, stdout: "pipe" },
+                ),
+              );
+              yield* Deferred.succeed(spawned, child);
+              yield* Stream.runHead(child.stdout);
+              yield* Deferred.succeed(ready, undefined);
+              return child;
+            }),
+          );
+          const registration = yield* runRegister(recorded, { processSpawner }).pipe(
+            Effect.forkScoped,
+          );
+          const child = yield* Deferred.await(spawned);
+          yield* Effect.addFinalizer(() =>
+            child.isRunning.pipe(
+              Effect.flatMap((running) =>
+                running ? child.kill({ killSignal: "SIGKILL" }) : Effect.void,
               ),
-            );
-            yield* Deferred.succeed(spawned, child);
-            yield* Stream.runHead(child.stdout);
-            yield* Deferred.succeed(ready, undefined);
-            return child;
-          }),
-        );
-        const registration = yield* runRegister(recorded, { processSpawner }).pipe(
-          Effect.forkScoped,
-        );
-        const child = yield* Deferred.await(spawned);
-        yield* Effect.addFinalizer(() =>
-          child.isRunning.pipe(
-            Effect.flatMap((running) =>
-              running ? child.kill({ killSignal: "SIGKILL" }) : Effect.void,
+              Effect.ignore,
             ),
-            Effect.ignore,
-          ),
-        );
-        yield* Deferred.await(ready);
-        yield* TestClock.adjust("5 seconds");
-        yield* Fiber.join(registration);
+          );
+          yield* Deferred.await(ready);
+          yield* TestClock.adjust("5 seconds");
+          yield* Fiber.join(registration);
 
-        const exit = yield* Effect.exit(child.exitCode);
-        if (Exit.isFailure(exit)) {
-          assert.include(Cause.pretty(exit.cause), "SIGKILL");
-        } else {
-          assert.fail(`cache helper exited with ${exit.value} instead of being force-killed`);
-        }
-        assert.deepEqual(
-          recorded.commands.map(({ command }) => command),
-          ["update-desktop-database", "xdg-mime"],
-        );
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
+          const exit = yield* Effect.exit(child.exitCode);
+          if (Exit.isFailure(exit)) {
+            assert.include(Cause.pretty(exit.cause), "SIGKILL");
+          } else {
+            assert.fail(`${stalledHelper} exited with ${exit.value} instead of being force-killed`);
+          }
+          assert.deepEqual(
+            recorded.commands.map(({ command }) => command),
+            ["update-desktop-database", "xdg-mime"],
+          );
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  }
 });
 
 interface ThemeIconRun {

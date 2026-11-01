@@ -52,7 +52,7 @@ export function CliCommandSettingsRow() {
         <Button
           size="sm"
           variant="outline"
-          disabled={pending || query.isPending}
+          disabled={pending || query.isPending || (!installed && Boolean(state.shadowedBy))}
           onClick={() => change(installed ? "uninstall" : "install")}
         >
           {installed ? "Remove" : "Install"}

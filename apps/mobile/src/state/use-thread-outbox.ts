@@ -63,7 +63,7 @@ export const queuedThreadKeysAtom = Atom.make((get): ReadonlySet<string> => {
     }
   }
   return keys;
-}).pipe(Atom.withLabel("mobile:thread-outbox:queued-thread-keys"));
+}).pipe(Atom.keepAlive, Atom.withLabel("mobile:thread-outbox:queued-thread-keys"));
 
 export function useQueuedThreadKeys(): ReadonlySet<string> {
   return useAtomValue(queuedThreadKeysAtom);
