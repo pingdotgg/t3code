@@ -3,6 +3,7 @@
 // chat and settings routes, the sidebar and the right panel, through the same stores and
 // atoms the app reads. See renderScenarios.renders.tsx for the counting rules.
 import { createMemoryHistory } from "@tanstack/react-router";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
@@ -13,11 +14,13 @@ import "~/index.css";
 
 import { AppRoot } from "~/AppRoot";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter, type AppRouter } from "~/router";
 import {
   ENVIRONMENT_ID,
   assistantItem,
   emitThreadEvent,
+  emitVcsStatus,
   installFakeEnvironment,
   isThreadSubscribed,
   runningRun,
@@ -47,6 +50,7 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   trackRpcRequestSent: () => {},
 }));
 
+const GIT_STATUS_UPDATES = 20;
 const HISTORY_TURNS = 20;
 const STREAM_DELTAS = 30;
 const TYPED_TEXT = "fix the flaky tests!";
@@ -61,7 +65,9 @@ const [WARM, A, B, LIVE] = THREADS.map((thread) => thread.id) as [
   ThreadId,
 ];
 
-installFakeEnvironment(THREADS);
+const SIDE_CHAT = { ...threadWithHistory("thread-side", HISTORY_TURNS), sideChatOf: WARM };
+
+installFakeEnvironment([...THREADS, SIDE_CHAT]);
 // Desktop-sized, so the sidebar, composer and right panel lay out as they do in the app.
 await page.viewport(1400, 900);
 // A returning user: the first-run gate would otherwise wait on onboarding evidence.
@@ -286,4 +292,38 @@ it("app-switch-settings-section", async () => {
   await report("app-switch-settings-section", [
     await measure(openSettings(router, "/settings/appearance")),
   ]);
+});
+
+// ChatView reads only a few status fields, so changing file counts should not reach it.
+// Keep git scenarios last: the status they leave cached adds renders to later scenarios.
+it("app-git-file-counts-with-side-chat", async () => {
+  using _clock = frozenClock();
+  useRightPanelStore.getState().openSideChat(scopeThreadRef(ENVIRONMENT_ID, WARM), SIDE_CHAT.id);
+  await using _app = (await openThread(WARM)).screen;
+  await expect.element(lastAnswer(SIDE_CHAT.id)).toBeVisible();
+  const local = (insertions: number, refName = "main") => ({
+    isRepo: true,
+    hasPrimaryRemote: true,
+    isDefaultRef: true,
+    refName,
+    hasWorkingTreeChanges: true,
+    workingTree: {
+      files: [{ path: "src/app.ts", insertions, deletions: 0 }],
+      insertions,
+      deletions: 0,
+    },
+  });
+  await act(() => emitVcsStatus({ _tag: "snapshot", local: local(0), remote: null }));
+  const counted = await measure(async () => {
+    for (let update = 1; update <= GIT_STATUS_UPDATES; update++) {
+      await act(() => emitVcsStatus({ _tag: "localUpdated", local: local(update) }));
+    }
+  });
+  expect(counted.components.ChatView).toBeUndefined();
+  // A field the chat view does read still reaches both chats.
+  const branchSwitch = await measure(() =>
+    act(() => emitVcsStatus({ _tag: "localUpdated", local: local(0, "feature") })),
+  );
+  expect(branchSwitch.components.ChatView).toBe(2);
+  await report("app-git-file-counts-with-side-chat", [counted]);
 });
