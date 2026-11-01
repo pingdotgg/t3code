@@ -78,26 +78,13 @@ const badRequest = HttpServerResponse.json(
   { status: 400, headers: NO_STORE },
 );
 
-const sessionFor = (request: HttpServerRequest.HttpServerRequest, shareId: string | null) =>
-  shareId === null ? "" : (request.cookies[guestSessionCookieName(shareId)] ?? "");
-
-const searchParams = (request: HttpServerRequest.HttpServerRequest) =>
-  new URLSearchParams(request.url.split("?", 2)[1] ?? "");
-
-const requestedShareId = (request: HttpServerRequest.HttpServerRequest) =>
-  searchParams(request).get(GUEST_SHARE_PARAM);
-
-/** The session for the share the request names in `?share=`. */
-const sessionToken = Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
-  sessionFor(request, requestedShareId(request)),
-);
-
-/** The `?share=` session and the `?<name>=` value a per-resource route names. */
-const sessionAndParam = (name: string) =>
-  Effect.map(HttpServerRequest.HttpServerRequest, (request) => {
-    const params = searchParams(request);
-    return { session: sessionFor(request, params.get(GUEST_SHARE_PARAM)), value: params.get(name) };
-  });
+/** The request's query, and the session for the share it names in `?share=`. */
+const guestQuery = Effect.map(HttpServerRequest.HttpServerRequest, (request) => {
+  const query = new URLSearchParams(request.url.split("?", 2)[1] ?? "");
+  const shareId = query.get(GUEST_SHARE_PARAM);
+  const session = shareId === null ? "" : (request.cookies[guestSessionCookieName(shareId)] ?? "");
+  return { query, shareId, session };
+});
 
 /** Server-sent events with a heartbeat, never cached or buffered on the way. */
 const eventStreamResponse = <A>(
@@ -216,12 +203,10 @@ const submitRoute = HttpRouter.add(
   "POST",
   `${GUEST_ROUTE_PREFIX}/messages`,
   Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
     const guestShares = yield* GuestShareService;
     // The session is checked before the body is read, so only a guest can make the server parse
     // and store up to 10 MB.
-    const shareId = requestedShareId(request);
-    const session = sessionFor(request, shareId);
+    const { shareId, session } = yield* guestQuery;
     yield* guestShares.check(session);
     const submission = yield* readSubmission;
     if (submission === null || submission.fields.shareId !== shareId) return yield* badRequest;
@@ -239,7 +224,7 @@ const streamRoute = HttpRouter.add(
   `${GUEST_ROUTE_PREFIX}/stream`,
   Effect.gen(function* () {
     const guestShares = yield* GuestShareService;
-    return yield* guestShares.stream(yield* sessionToken).pipe(
+    return yield* guestShares.stream((yield* guestQuery).session).pipe(
       Effect.map((events) => eventStreamResponse(events, encodeStreamEvent)),
       Effect.catchTags({ GuestShareAccessError: errorResponse }),
     );
@@ -253,7 +238,7 @@ const sessionRoute = HttpRouter.add(
   Effect.gen(function* () {
     const guestShares = yield* GuestShareService;
     return yield* guestShares
-      .check(yield* sessionToken)
+      .check((yield* guestQuery).session)
       .pipe(
         Effect.as(HttpServerResponse.empty({ status: 204, headers: NO_STORE })),
         Effect.catchTags({ GuestShareAccessError: errorResponse }),
@@ -267,7 +252,8 @@ const renderRoute = HttpRouter.add(
   "GET",
   GUEST_RENDER_ROUTE,
   Effect.gen(function* () {
-    const { session, value: itemId } = yield* sessionAndParam("item");
+    const { query, session } = yield* guestQuery;
+    const itemId = query.get("item");
     if (!itemId) return yield* badRequest;
     const guestShares = yield* GuestShareService;
     return yield* guestShares.render(session, itemId).pipe(
@@ -285,7 +271,8 @@ const itemRoute = HttpRouter.add(
   "GET",
   GUEST_ITEM_ROUTE,
   Effect.gen(function* () {
-    const { session, value: itemId } = yield* sessionAndParam("item");
+    const { query, session } = yield* guestQuery;
+    const itemId = query.get("item");
     if (!itemId) return yield* badRequest;
     const guestShares = yield* GuestShareService;
     return yield* guestShares.item(session, itemId).pipe(
@@ -304,7 +291,8 @@ const historyRoute = HttpRouter.add(
   "GET",
   GUEST_HISTORY_ROUTE,
   Effect.gen(function* () {
-    const { session, value: cursor } = yield* sessionAndParam("cursor");
+    const { query, session } = yield* guestQuery;
+    const cursor = query.get("cursor");
     if (!cursor) return yield* badRequest;
     const guestShares = yield* GuestShareService;
     return yield* guestShares.history(session, cursor).pipe(
@@ -325,7 +313,8 @@ const commandOutputRoute = HttpRouter.add(
   "GET",
   GUEST_COMMAND_OUTPUT_ROUTE,
   Effect.gen(function* () {
-    const { session, value: itemId } = yield* sessionAndParam("item");
+    const { query, session } = yield* guestQuery;
+    const itemId = query.get("item");
     if (!itemId) return yield* badRequest;
     const guestShares = yield* GuestShareService;
     return yield* guestShares.commandOutput(session, itemId).pipe(
@@ -341,7 +330,8 @@ const attachmentRoute = HttpRouter.add(
   "GET",
   GUEST_ATTACHMENT_ROUTE,
   Effect.gen(function* () {
-    const { session, value: attachmentId } = yield* sessionAndParam("id");
+    const { query, session } = yield* guestQuery;
+    const attachmentId = query.get("id");
     if (!attachmentId) return yield* badRequest;
     const guestShares = yield* GuestShareService;
     return yield* guestShares.attachment(session, attachmentId).pipe(
@@ -370,7 +360,8 @@ const mediaRoute = HttpRouter.add(
   "GET",
   GUEST_MEDIA_ROUTE,
   Effect.gen(function* () {
-    const { session, value: path } = yield* sessionAndParam("path");
+    const { query, session } = yield* guestQuery;
+    const path = query.get("path");
     if (!path) return yield* badRequest;
     const guestShares = yield* GuestShareService;
     return yield* guestShares.media(session, path).pipe(
