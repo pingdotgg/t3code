@@ -4210,6 +4210,50 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* progress.onSubmodulesStarted();
       }
       const onSubmoduleLine = progress?.onSubmoduleLine;
+      const updateArgs = ["submodule", "update", "--init"];
+      if (submoduleMode.value === "recursive") updateArgs.push("--recursive");
+      const updateSubmodules = (args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
+        runGit(
+          "GitVcsDriver.createWorktree.updateSubmodules",
+          worktreePath,
+          args,
+          onSubmoduleLine
+            ? {
+                env: { ...env, LC_ALL: "C" },
+                progress: { onStdoutLine: onSubmoduleLine, onStderrLine: onSubmoduleLine },
+              }
+            : { env },
+        );
+      const borrowSubmodules = Effect.gen(function* () {
+        // Linked worktrees share the source object store; expose it as an alternate so Git
+        // can borrow from its modules. An empty primary store makes Git inspect the alternate;
+        // --dissociate copies borrowed objects before that temporary store is removed.
+        const sharedObjects = yield* runGitStdout(
+          "GitVcsDriver.createWorktree.objectsPath",
+          worktreePath,
+          ["rev-parse", "--git-path", "objects"],
+        );
+        const emptyObjects = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-submodule-objects-",
+        });
+        yield* updateSubmodules(
+          [
+            "-c",
+            "submodule.alternateLocation=superproject",
+            "-c",
+            "submodule.alternateErrorStrategy=ignore",
+            ...updateArgs,
+            "--dissociate",
+          ],
+          {
+            GIT_OBJECT_DIRECTORY: emptyObjects,
+            GIT_ALTERNATE_OBJECT_DIRECTORIES: path.resolve(worktreePath, sharedObjects.trim()),
+          },
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.catch(() => updateSubmodules(updateArgs)),
+      );
       // Registering submodule URLs writes the shared config; the clones that follow do not.
       yield* runGit(
         "GitVcsDriver.createWorktree.initSubmodules",
@@ -4217,21 +4261,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ["submodule", "init"],
         { writesSharedConfig: true },
       ).pipe(
-        Effect.andThen(
-          runGit(
-            "GitVcsDriver.createWorktree.updateSubmodules",
-            worktreePath,
-            submoduleMode.value === "recursive"
-              ? ["submodule", "update", "--init", "--recursive"]
-              : ["submodule", "update", "--init"],
-            onSubmoduleLine
-              ? {
-                  env: { LC_ALL: "C" },
-                  progress: { onStdoutLine: onSubmoduleLine, onStderrLine: onSubmoduleLine },
-                }
-              : {},
-          ),
-        ),
+        Effect.andThen(borrowSubmodules),
         Effect.matchEffect({
           onFailure: (cause) =>
             Effect.logWarning("worktree submodule checkout failed; submodule paths are empty", {
