@@ -87,6 +87,11 @@ the dialog.
 
 ## Track subscription limits
 
+For Devin accounts added through the ACP Registry, **Usage → Limits** links to Devin's
+**Usage & limits** dashboard. Devin does not report subscription allowances over ACP, so
+T3 does not estimate a remaining percentage from session statistics. Use the dashboard
+to check your allowance and on-demand credits; sign in with the account used on that environment.
+
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
 or Claude accounts across your enabled environments and hubs you read one number per window rather than a
 list. Each window card shows how much of the pool is left and a bar with one segment per account,

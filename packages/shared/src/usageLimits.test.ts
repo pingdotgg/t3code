@@ -1382,6 +1382,51 @@ describe("sameUsageLimitCommandCoverage", () => {
 });
 
 describe("external usage settings", () => {
+  it("shows an ACP dashboard with unknown sign-in but excludes unavailable providers", () => {
+    const devin = provider({
+      driver: ProviderDriverKind.make("acpRegistry"),
+      displayName: "Devin",
+      auth: { status: "unknown" },
+      usageLimits: {
+        checkedAt: "2026-10-28T09:00:00.000Z",
+        windows: [],
+        unavailable: { reason: "unsupported", message: "View usage in Devin." },
+        externalUsage: { label: "Devin usage", url: "https://app.devin.ai/settings/usage" },
+      },
+    });
+    for (const [overrides, visible] of [
+      [{}, true],
+      [{ auth: { status: "authenticated" } }, true],
+      [{ auth: { status: "unauthenticated" } }, false],
+      [{ enabled: false }, false],
+      [{ installed: false }, false],
+      [{ availability: "unavailable" }, false],
+    ] satisfies ReadonlyArray<readonly [Partial<ServerProvider>, boolean]>) {
+      const presentations = new Map([
+        [
+          EnvironmentId.make("a"),
+          {
+            entry: { target: { label: "A" } },
+            serverConfig: { providers: [{ ...devin, ...overrides }] },
+          },
+        ],
+      ]);
+      expect(collectExternalUsageLinks(presentations)).toEqual(
+        visible
+          ? [
+              {
+                ...devin.usageLimits!.externalUsage,
+                message: "View usage in Devin.",
+                accounts: ["Devin on A"],
+              },
+            ]
+          : [],
+      );
+      expect(collectLimitAccounts(presentations)).toEqual([]);
+      expect(collectLimitNotices(presentations)).toEqual([]);
+    }
+  });
+
   it("deduplicates destinations across accounts and environments without inventing quota pools", () => {
     const managed = provider({
       usageLimits: {
