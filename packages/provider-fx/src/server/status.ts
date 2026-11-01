@@ -14,6 +14,7 @@ import {
   FX_DEFAULT_MODEL_SLUG,
   FX_DRIVER_KIND,
   FX_EFFORT_OPTION_DESCRIPTOR,
+  FX_FULL_ACCESS_MODE_ID,
   FX_SUPPORTED_RUNTIME_MODES,
 } from "./acpSupport.ts";
 import {
@@ -29,11 +30,13 @@ import {
   spawnAndCollect,
 } from "@t3tools/provider-core/server/snapshotProbe";
 
-const FX_PRESENTATION = {
+const fxPresentation = (fullAccess: boolean) => ({
   displayName: "fx",
   showInteractionModeToggle: false,
-  supportedRuntimeModes: FX_SUPPORTED_RUNTIME_MODES,
-} as const;
+  supportedRuntimeModes: fullAccess
+    ? [...FX_SUPPORTED_RUNTIME_MODES, "full-access" as const]
+    : FX_SUPPORTED_RUNTIME_MODES,
+});
 const FX_MODEL_CAPABILITIES = createModelCapabilities({
   optionDescriptors: [FX_EFFORT_OPTION_DESCRIPTOR],
 });
@@ -74,16 +77,19 @@ const snapshot = (
   settings: FxSettings,
   checkedAt: string,
   probe: ProviderProbeResult,
-  defaultModel?: string,
-  listed?: ReadonlyArray<string>,
+  read: {
+    readonly defaultModel?: string | undefined;
+    readonly listed?: ReadonlyArray<string> | undefined;
+    readonly fullAccess?: boolean;
+  } = {},
 ): ServerProviderDraft => ({
   ...buildServerProvider({
     // Gives the snapshot its version advisory; fx runs no enrichment pass.
     driver: FX_DRIVER_KIND,
-    presentation: FX_PRESENTATION,
+    presentation: fxPresentation(read.fullAccess ?? false),
     enabled: settings.enabled,
     checkedAt,
-    models: fxModels(settings, defaultModel, listed),
+    models: fxModels(settings, read.defaultModel, read.listed),
     probe,
   }),
   // Every `fx acp` session is saved under `~/.fx` and ACP has no session
@@ -122,11 +128,15 @@ const runFxCli = Effect.fn("runFxCli")(function* (
   );
 });
 
-/** `fx status --json` on fx 0.0.13: `auth` names the login method, `missing` when signed out. */
+/**
+ * `fx status --json`: `auth` names the login method, `missing` when signed
+ * out. fx 0.0.14+ also lists the ACP session `modes`; 0.0.13 omits them.
+ */
 const FxStatus = Schema.fromJsonString(
   Schema.Struct({
     auth: Schema.optional(Schema.String),
     model: Schema.optional(Schema.String),
+    modes: Schema.optional(Schema.Array(Schema.Struct({ id: Schema.String }))),
   }),
 );
 const decodeFxStatus = Schema.decodeUnknownOption(FxStatus);
@@ -144,7 +154,7 @@ function fxAuth(auth: string | undefined): ServerProviderAuth {
 }
 
 /**
- * Reads `fx --version`, `fx status --json` (login and default model) and
+ * Reads `fx --version`, `fx status --json` (login, default model and modes) and
  * `fx models --json`. None of them opens an ACP session, which fx would save.
  */
 export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function* (
@@ -219,8 +229,13 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
     settings,
     checkedAt,
     { installed: true, version, auth, ...probe },
-    defaultModel,
-    Option.getOrUndefined(listed),
+    {
+      defaultModel,
+      listed: Option.getOrUndefined(listed),
+      fullAccess:
+        Option.getOrUndefined(status)?.modes?.some((mode) => mode.id === FX_FULL_ACCESS_MODE_ID) ??
+        false,
+    },
   );
 });
 

@@ -49,7 +49,7 @@ const NAMED_MODEL = "anthropic/claude-sonnet-5.5";
 const CUSTOM_MODEL = "openai/gpt-6.1-sol";
 const CODEX_MODEL = "gpt-6.1-sol";
 const FX_0_0_13_MODES = ["code", "ask"];
-/** fx `main` after vercel-labs/fx#1189. */
+/** fx 0.0.14+, after vercel-labs/fx#1189. */
 const FX_MAIN_MODES = ["auto", "ask", "full-access"];
 
 type Frame = Record<string, unknown>;
@@ -108,11 +108,15 @@ const fxConfig = (input: {
 const fxSession = (input: {
   readonly model: string;
   readonly modes: ReadonlyArray<string>;
+  readonly mode?: string;
   readonly models?: ReadonlyArray<string>;
 }) => ({
   sessionId: SESSION_ID,
   configOptions: fxConfig(input),
-  modes: { currentModeId: "ask", availableModes: input.modes.map((id) => ({ id, name: id })) },
+  modes: {
+    currentModeId: input.mode ?? "ask",
+    availableModes: input.modes.map((id) => ({ id, name: id })),
+  },
 });
 
 const initialize: ReadonlyArray<Frame> = [
@@ -261,16 +265,22 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
 });
 
 describe("FxAdapterV2", () => {
-  it.effect("runs Auto as fx's `code` mode on 0.0.13 and as `auto` where fx advertises it", () =>
+  it.effect("runs Auto as `code` on 0.0.13, and Auto and Full access as fx names them later", () =>
     Effect.forEach(
       [
-        { scenario: "auto-0-0-13", modes: FX_0_0_13_MODES, written: "code" },
-        { scenario: "auto-main", modes: FX_MAIN_MODES, written: "auto" },
-      ],
-      ({ scenario, modes, written }) =>
+        { scenario: "auto-0-0-13", runtimeMode: "auto", modes: FX_0_0_13_MODES, written: "code" },
+        { scenario: "auto-main", runtimeMode: "auto", modes: FX_MAIN_MODES, written: "auto" },
+        {
+          scenario: "full-access-main",
+          runtimeMode: "full-access",
+          modes: FX_MAIN_MODES,
+          written: "full-access",
+        },
+      ] as const,
+      ({ scenario, runtimeMode, modes, written }) =>
         openFxSession({
           scenario,
-          runtimeMode: "auto",
+          runtimeMode,
           frames: [
             ...initialize,
             outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
@@ -279,6 +289,47 @@ describe("FxAdapterV2", () => {
               "mode",
               written,
               fxConfig({ model: FX_DEFAULT_MODEL, modes, mode: written }),
+            ),
+          ],
+        }),
+      { discard: true },
+    ).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  // A permission mode change restarts fx and loads the same session, which
+  // still reports the mode it last ran in.
+  it.effect("loads the same session into and out of Full access", () =>
+    Effect.forEach(
+      [
+        {
+          scenario: "into-full-access",
+          runtimeMode: "full-access",
+          from: "ask",
+          to: "full-access",
+        },
+        {
+          scenario: "out-of-full-access",
+          runtimeMode: "approval-required",
+          from: "full-access",
+          to: "ask",
+        },
+      ] as const,
+      ({ scenario, runtimeMode, from, to }) =>
+        openFxSession({
+          scenario,
+          runtimeMode,
+          loadSessionId: SESSION_ID,
+          frames: [
+            ...initialize,
+            outbound("session/load"),
+            answer(
+              "session/load",
+              fxSession({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES, mode: from }),
+            ),
+            ...setConfig(
+              "mode",
+              to,
+              fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES, mode: to }),
             ),
           ],
         }),
