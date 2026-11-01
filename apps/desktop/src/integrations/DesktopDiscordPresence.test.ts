@@ -224,13 +224,19 @@ it.effect("reports connection status transitions the settings UI can show", () =
 it.effect("reports a disconnect when the socket closes", () =>
   Effect.gen(function* () {
     let close = () => {};
+    let attempts = 0;
     const connector: DiscordPresenceConnector = async (input) => {
+      attempts += 1;
       close = input.onClose;
+      if (attempts === 1) input.onClose();
       return fakeClient([]);
     };
     const service = yield* make({ connector, clientId: "42" });
 
     yield* service.set(presence);
+    expect(yield* service.getStatus()).toBe("disconnected");
+    yield* service.set(presence);
+    expect(attempts).toBe(2);
     expect(yield* service.getStatus()).toBe("connected");
     close();
     expect(yield* service.getStatus()).toBe("disconnected");

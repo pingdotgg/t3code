@@ -160,6 +160,7 @@ export const make = Effect.fn("DesktopDiscordPresence.make")(function* (
         // apply reconnects.
         onClose: () => {
           if (connectionToken !== token) return;
+          connectionToken = null;
           runSync(Ref.set(connection, null));
           runSync(setStatus("disconnected"));
         },
@@ -167,6 +168,10 @@ export const make = Effect.fn("DesktopDiscordPresence.make")(function* (
     ).pipe(Effect.option);
     if (Option.isNone(connected)) {
       yield* setStatus("disconnected");
+      return Option.none<DiscordPresenceClient>();
+    }
+    if (connectionToken !== token) {
+      connected.value.close();
       return Option.none<DiscordPresenceClient>();
     }
     yield* Ref.set(connection, connected.value);

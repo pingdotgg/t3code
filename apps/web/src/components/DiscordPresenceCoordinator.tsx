@@ -107,8 +107,8 @@ export function DiscordPresenceCoordinator() {
       attentionThreads += value.attention;
     }
     const presence: DesktopDiscordPresence = {
-      projectName: hasActiveEnvironment ? activeThread.projectName : null,
-      modelLabel: hasActiveEnvironment ? activeThread.modelLabel : null,
+      projectName: hasActiveEnvironment ? (activeThread.projectName?.slice(0, 64) ?? null) : null,
+      modelLabel: hasActiveEnvironment ? (activeThread.modelLabel?.slice(0, 64) ?? null) : null,
       workingThreads: Math.min(999, workingThreads),
       attentionThreads: Math.min(999, attentionThreads),
     };
