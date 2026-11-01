@@ -758,7 +758,14 @@ it.effect.each<{
         LOCALAPPDATA: home,
         PATH: path.join(home, "empty"),
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
-      }).pipe(Effect.provideService(HostProcess.Platform, platform));
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, platform),
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          stat: (file) =>
+            fs.stat(file.startsWith(`${home}${path.sep}`) ? file : path.join(home, "missing")),
+        }),
+      );
 
       assert.deepEqual(resolved, Option.some({ command: path.join(dir, expected), baseArgs: [] }));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
