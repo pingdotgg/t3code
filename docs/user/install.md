@@ -127,8 +127,9 @@ t3 app
 
 This opens a new thread for the current directory, adding the project if needed.
 Pass a path, such as `t3 app ../my-project`, to open another directory. It requires
-the desktop app, so a standalone server or an SSH session is not enough. If the
-command cannot reach the app, start or update the desktop app and try again.
+the desktop app with **Local environment** on in **Settings → Environments**. A
+standalone server or an SSH session is not enough. If the command cannot reach the
+app, start or update the desktop app, make sure that setting is on, and try again.
 
 ## Mobile app
 
