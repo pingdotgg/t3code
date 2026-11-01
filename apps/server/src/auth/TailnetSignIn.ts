@@ -564,6 +564,8 @@ export const make = Effect.gen(function* () {
     const peer = status.peers.find((candidate) => candidate.stableNodeId === stableNodeId);
     const address = peer?.tailnetIpv4Addresses[0] ?? peer?.tailnetIpv6Addresses[0];
     if (address === undefined) return { end: "not_on_tailnet" } as const;
+    // Off the tailnet until it signs in to Tailscale again; a LAN route could still reach here.
+    if (peer?.keyExpired === true) return { end: "key_expired" } as const;
     const lookup = yield* host.whois(address, { fromServer: true }).pipe(Effect.option);
     if (Option.isNone(lookup) || lookup.value.stableNodeId !== stableNodeId) {
       // A blocked device ends without a lookup, so its cleanup does not wait out the grace.

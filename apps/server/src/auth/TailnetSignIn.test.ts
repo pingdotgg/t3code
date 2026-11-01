@@ -842,17 +842,24 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
           "ServerAuthInvalidCredentialError",
         );
 
-        // So does leaving the tailnet, but a Tailscale that is starting proves nothing.
+        // So does leaving the tailnet, or a node key that expired, but a Tailscale that is
+        // starting proves nothing.
         tailnet.devices = {
           [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
         };
-        const last = yield* signInLaptop(laptopKey);
-        tailnet.status = hostStatus({ BackendState: "Starting" });
-        yield* service.recheckSessions;
-        expect(yield* revoked(last.access_token)).toBe(false);
-        tailnet.status = hostStatus({ Peer: { phone: peers.phone } });
-        yield* service.recheckSessions;
-        expect(yield* revoked(last.access_token)).toBe(true);
+        for (const gone of [
+          { phone: peers.phone },
+          { ...peers, laptop: { ...peers.laptop, Expired: true } },
+        ]) {
+          tailnet.status = hostStatus({ Peer: peers });
+          const last = yield* signInLaptop(laptopKey);
+          tailnet.status = hostStatus({ BackendState: "Starting" });
+          yield* service.recheckSessions;
+          expect(yield* revoked(last.access_token)).toBe(false);
+          tailnet.status = hostStatus({ Peer: gone });
+          yield* service.recheckSessions;
+          expect(yield* revoked(last.access_token)).toBe(true);
+        }
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 
