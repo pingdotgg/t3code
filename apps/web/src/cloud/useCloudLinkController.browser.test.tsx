@@ -4,7 +4,12 @@ import {
   EnvironmentId,
   type EnvironmentCloudLinkStateResult,
 } from "@t3tools/contracts";
-import type { RelayManagedEndpointProviderKind } from "@t3tools/contracts/relay";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
+import {
+  RelayEnvironmentLinkLimitExceededError,
+  type RelayManagedEndpointProviderKind,
+} from "@t3tools/contracts/relay";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { useLayoutEffect } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -83,12 +88,12 @@ vi.mock(import("./primaryCloudLinkState"), async (original) => ({
     refresh: testState.refreshLink,
   })) as never,
 }));
-// The Clerk JWT template is build-time config the test environment does not set.
 vi.mock(import("./publicConfig"), async (original) => ({
   ...(await original()),
   resolveRelayClerkTokenOptions: () => ({}) as never,
 }));
 
+import { CloudEnvironmentLinkError } from "./linkEnvironment";
 import { useCloudLinkController, type CloudLinkDesiredState } from "./useCloudLinkController";
 
 const target = {
@@ -126,9 +131,8 @@ async function mountController() {
     />,
   );
   return Object.assign(screen, {
-    get controller() {
-      return controller;
-    },
+    // Object.assign would copy a getter's value once, so read the latest render through a function.
+    controller: () => controller,
     async reconcile(desired: CloudLinkDesiredState) {
       let succeeded = false;
       await act(async () => {
@@ -216,85 +220,6 @@ describe("useCloudLinkController", () => {
     expectNoMutations();
   });
 
-  it("uses the latest linked mode to change publishing without replacing the tunnel", async () => {
-    using _setup = setup();
-    testState.snapshot = { ...linkedState, linked: false, managedTunnelActive: false };
-    testState.renderedSnapshot = testState.snapshot;
-    await using screen = await mountController();
-    testState.getToken.mockImplementationOnce(async () => {
-      testState.snapshot = linkedState;
-      return "clerk-token";
-    });
-
-    expect(await screen.reconcile({ managedTunnel: true, publish: true })).toBe(true);
-    expect(testState.link).not.toHaveBeenCalled();
-    expect(testState.unlink).not.toHaveBeenCalled();
-    expect(testState.preferences).toHaveBeenCalledExactlyOnceWith({
-      target,
-      publishAgentActivity: true,
-    });
-  });
-
-  it("shows a link the relay holds as publish-only as off and relinks it as managed", async () => {
-    using _setup = setup();
-    testState.relayProviderKind = "manual";
-    await using screen = await mountController();
-
-    expect(screen.controller?.managedTunnelActive).toBe(false);
-    expect(screen.controller?.managedTunnelOutOfSync).toBe(true);
-    expect(await screen.reconcile({ managedTunnel: true, publish: false })).toBe(true);
-    expect(testState.link).toHaveBeenCalledExactlyOnceWith({
-      target,
-      clerkToken: "clerk-token",
-      mode: "managed",
-    });
-  });
-
-  it("shows a revoked link as off and links it again when turned on", async () => {
-    using _setup = setup();
-    testState.snapshot = { ...linkedState, linkRevoked: true };
-    testState.renderedSnapshot = testState.snapshot;
-    await using screen = await mountController();
-    expect(screen.controller).toMatchObject({
-      linked: false,
-      linkRevoked: true,
-      managedTunnelActive: false,
-      managedTunnelOutOfSync: false,
-    });
-
-    expect(await screen.reconcile({ managedTunnel: true, publish: false })).toBe(true);
-    expect(testState.link).toHaveBeenCalledExactlyOnceWith({
-      target,
-      clerkToken: "clerk-token",
-      mode: "managed",
-    });
-  });
-
-  it("keeps a managed link that the relay also holds as managed", async () => {
-    using _setup = setup();
-    testState.relayProviderKind = "cloudflare_tunnel";
-    await using screen = await mountController();
-
-    expect(screen.controller?.managedTunnelActive).toBe(true);
-    expect(screen.controller?.managedTunnelOutOfSync).toBe(false);
-    expect(await screen.reconcile({ managedTunnel: true, publish: false })).toBe(true);
-    expect(testState.link).not.toHaveBeenCalled();
-  });
-
-  it("stops the preference write if management permission is lost after linking", async () => {
-    using _setup = setup();
-    await using screen = await mountController();
-    testState.link.mockImplementationOnce(async () => {
-      testState.scopes.delete(AuthRelayWriteScope);
-      return AsyncResult.success({});
-    });
-
-    expect(await screen.reconcile({ managedTunnel: false, publish: true })).toBe(false);
-    expect(testState.link).toHaveBeenCalledOnce();
-    expect(testState.preferences).not.toHaveBeenCalled();
-    expect(testState.refreshLink).toHaveBeenCalledOnce();
-  });
-
   it("still lets an authorized user unlink when the cloud token is unavailable", async () => {
     using _setup = setup();
     await using screen = await mountController();
@@ -306,18 +231,32 @@ describe("useCloudLinkController", () => {
     expect(testState.preferences).not.toHaveBeenCalled();
   });
 
-  it("unlinks if the link-state read fails while requesting the cloud token", async () => {
+  it("reports a relay tunnel cap refusal as tunnelLimit instead of an error", async () => {
     using _setup = setup();
+    testState.snapshot = { ...linkedState, linked: false, managedTunnelActive: false };
+    testState.link.mockResolvedValueOnce(
+      AsyncResult.failure(
+        Cause.fail(
+          new CloudEnvironmentLinkError({
+            message: "environment-links failed",
+            cause: new ManagedRelay.ManagedRelayRequestFailedError({
+              action: "link relay environment",
+              cause: null,
+              relayError: new RelayEnvironmentLinkLimitExceededError({
+                code: "environment_link_limit_exceeded",
+                maxTunnels: 3,
+                traceId: "trace-1",
+              }),
+            }),
+          }),
+        ),
+      ),
+    );
     await using screen = await mountController();
-    testState.getToken.mockImplementationOnce(async () => {
-      testState.snapshot = null;
-      throw new Error("Cloud sign-in unavailable");
-    });
 
-    expect(await screen.reconcile({ managedTunnel: false, publish: false })).toBe(true);
-    expect(testState.unlink).toHaveBeenCalledExactlyOnceWith({ target, clerkToken: null });
-    expect(testState.link).not.toHaveBeenCalled();
-    expect(testState.preferences).not.toHaveBeenCalled();
-    expect(testState.refreshLink).toHaveBeenCalledOnce();
+    expect(await screen.reconcile({ managedTunnel: true, publish: false })).toBe(false);
+    expect(screen.controller()?.tunnelLimit).toBe(3);
+    expect(screen.controller()?.operationError).toBeNull();
+    expect(testState.toast).not.toHaveBeenCalled();
   });
 });

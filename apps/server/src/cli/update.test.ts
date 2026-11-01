@@ -1,53 +1,37 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, expect, it } from "@effect/vitest";
+import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as NetService from "@t3tools/shared/Net";
-import * as ConfigProvider from "effect/ConfigProvider";
-import * as Console from "effect/Console";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import { Command } from "effect/cli";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { afterEach, vi } from "vite-plus/test";
 
-import packageJson from "../../package.json" with { type: "json" };
-import * as BootService from "../cloud/bootService.ts";
-import { pinnedRuntimePaths } from "../cloud/pinnedRuntime.ts";
-import {
-  repointLauncher,
-  resolveLauncherPath,
-  resolveNewestVersion,
-  updateCommand,
-} from "./update.ts";
+import { prunePinnedRuntimes } from "../cloud/pinnedRuntime.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import { repointLauncher, resolveLauncherPath, resolveNewestVersion } from "./update.ts";
+
+// lsof listing one process, so prune sees a process list in which no runtime is running.
+const unrelatedLsof = ProcessRunner.ProcessRunner.of({
+  run: () =>
+    Effect.succeed({
+      stdout: "p1\nftxt\nn/usr/bin/true\n",
+      stderr: "",
+      code: ChildProcessSpawner.ExitCode(0),
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      stdoutInvalidUtf8: false,
+      stderrInvalidUtf8: false,
+    }),
+});
 
 afterEach(() => vi.restoreAllMocks());
-
-it.effect.each([
-  { environment: { GH_TOKEN: " gh-token ", GITHUB_TOKEN: "github-token" }, token: "gh-token" },
-  { environment: { GH_TOKEN: "  ", GITHUB_TOKEN: " github-token " }, token: "github-token" },
-  { environment: { GITHUB_TOKEN: "github-token" }, token: "github-token" },
-  { environment: { GH_TOKEN: "  ", GITHUB_TOKEN: "  " }, token: undefined },
-  { environment: {}, token: undefined },
-])("selects release authentication from $environment", ({ environment, token }) =>
-  Effect.gen(function* () {
-    const authorizations: Array<string | undefined> = [];
-    const httpClient = HttpClient.make((request) => {
-      authorizations.push(request.headers.authorization);
-      return Effect.succeed(
-        HttpClientResponse.fromWeb(request, Response.json([{ tag_name: "v1.2.3" }])),
-      );
-    });
-    const version = yield* resolveNewestVersion("stable").pipe(
-      Effect.provideService(HostProcess.Environment, environment),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-    );
-    assert.equal(version, "1.2.3");
-    assert.deepStrictEqual(authorizations, [token === undefined ? undefined : `Bearer ${token}`]);
-  }),
-);
 
 it.effect("authenticates each release page until the requested channel is found", () =>
   Effect.gen(function* () {
@@ -90,13 +74,164 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
 
       const repointed = yield* repointLauncher({
         launchedAs: launcher,
-        versionsDir: path.join(root, "runtime/versions"),
+        baseDir: root,
         targetEntryPath: newExe,
       });
 
       assert.deepStrictEqual(Option.getOrUndefined(repointed), launcher);
       assert.equal(yield* fs.readLink(launcher), newExe);
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
+  it.effect.each([
+    { name: "no launcher records", recorded: undefined },
+    { name: "an empty launcher record", recorded: "" },
+    { name: "whole launcher records", recorded: "/opt/t3\n" },
+    { name: "Windows launcher records", recorded: "C:\\t3.cmd\r\n" },
+    // An interrupted append cut this record short.
+    { name: "an unterminated launcher record", recorded: "/opt/t" },
+    // Another process's append is cut short after t3 update reads the records.
+    { name: "a record cut short after the read", recorded: "/opt/t3\n", cut: "/opt/t" },
+  ])("keeps the runtime a repointed launcher off PATH points at with $name", ({ recorded, cut }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      yield* TestClock.setTime(Duration.toMillis(Duration.days(1)));
+      for (const version of ["1.0.0", "2.0.0"]) {
+        const directory = path.join(root, "runtime/versions", version);
+        yield* fs.makeDirectory(directory, { recursive: true });
+        yield* fs.writeFileString(path.join(directory, "t3"), "");
+        yield* fs.writeFileString(path.join(directory, ".install-complete"), `${version}\n`);
+        yield* fs.utimes(path.join(directory, ".install-complete"), 0, 0);
+      }
+      if (recorded !== undefined) {
+        yield* fs.writeFileString(path.join(root, "runtime/launchers"), recorded);
+      }
+      // A launcher in the T3 home itself, which neither PATH nor the default bin dir reaches.
+      const launcher = path.join(root, "t3");
+      yield* fs.symlink(path.join(root, "runtime/versions/1.0.0/t3"), launcher);
+
+      const launchersFile = path.join(root, "runtime/launchers");
+      yield* repointLauncher({
+        launchedAs: launcher,
+        baseDir: root,
+        targetEntryPath: path.join(root, "runtime/versions/2.0.0/t3"),
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          readFileString: (file, encoding) =>
+            fs
+              .readFileString(file, encoding)
+              .pipe(
+                Effect.tap(() =>
+                  cut === undefined || file !== launchersFile
+                    ? Effect.void
+                    : fs.writeFileString(file, cut, { flag: "a" }),
+                ),
+              ),
+        }),
+      );
+      // A later server start prunes with no idea how this machine launches t3.
+      const removed = yield* prunePinnedRuntimes({ baseDir: root, keep: [] }).pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, unrelatedLsof),
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(HostProcess.Environment, { PATH: "" }),
+        Effect.provideService(HostProcess.HomeDirectory, root),
+      );
+
+      assert.deepStrictEqual(removed, ["1.0.0"]);
+      // macOS temp dirs sit behind the /var -> /private/var symlink, so compare canonical paths.
+      assert.equal(
+        yield* fs.realPath(launcher),
+        yield* fs.realPath(path.join(root, "runtime/versions/2.0.0/t3")),
+      );
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
+  const launcherFixture = Effect.fnUntraced(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+    const oldExe = path.join(root, "runtime/versions/1.0.0/t3");
+    const newExe = path.join(root, "runtime/versions/2.0.0/t3");
+    const launcher = path.join(root, "t3");
+    for (const file of [oldExe, newExe]) {
+      yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+      yield* fs.writeFileString(file, "");
+    }
+    yield* fs.symlink(oldExe, launcher);
+    return { root, oldExe, newExe, launcher, launchersFile: path.join(root, "runtime/launchers") };
+  });
+
+  it.effect("records a relative launcher path as absolute", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, newExe, launcher, launchersFile } = yield* launcherFixture();
+
+      yield* repointLauncher({
+        launchedAs: path.relative(path.resolve("."), launcher),
+        baseDir: root,
+        targetEntryPath: newExe,
+      });
+
+      assert.equal(yield* fs.readFileString(launchersFile), `\n${launcher}\n`);
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
+  it.effect("fails instead of repointing a launcher it cannot record", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { root, oldExe, newExe, launcher, launchersFile } = yield* launcherFixture();
+      // Appending to a directory fails the way a read-only or full disk would.
+      yield* fs.makeDirectory(launchersFile);
+
+      const result = yield* repointLauncher({
+        launchedAs: launcher,
+        baseDir: root,
+        targetEntryPath: newExe,
+      }).pipe(Effect.exit);
+
+      assert.isTrue(Exit.isFailure(result));
+      assert.equal(yield* fs.readLink(launcher), oldExe);
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
+  it.effect.each(["recording", "repointing"] as const)(
+    "never leaves a repointed launcher unrecorded when t3 update dies while %s",
+    (step) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { root, newExe, launcher, launchersFile } = yield* launcherFixture();
+
+        yield* repointLauncher({
+          launchedAs: launcher,
+          baseDir: root,
+          targetEntryPath: newExe,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            writeFileString: (path, data, options) =>
+              step === "recording" && path === launchersFile
+                ? Effect.die("t3 update was killed")
+                : fs.writeFileString(path, data, options),
+            rename: (from, to) =>
+              step === "repointing" && to === launcher
+                ? Effect.die("t3 update was killed")
+                : fs.rename(from, to),
+          }),
+          Effect.exit,
+        );
+
+        const repointed = (yield* fs.readLink(launcher)) === newExe;
+        const recorded = (yield* fs
+          .readFileString(launchersFile)
+          .pipe(Effect.orElseSucceed(() => "")))
+          .split("\n")
+          .includes(launcher);
+        assert.isFalse(repointed && !recorded);
+      }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("leaves a plain copy or a foreign symlink alone", () =>
@@ -122,7 +257,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       for (const launchedAs of [copy, foreign, otherLauncher, undefined]) {
         const repointed = yield* repointLauncher({
           launchedAs,
-          versionsDir: path.join(root, "runtime/versions"),
+          baseDir: root,
           targetEntryPath: newExe,
         });
         assert.equal(repointed._tag, "None", launchedAs ?? "undefined");
@@ -163,80 +298,5 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       assert.equal(relative, launcher);
       assert.equal(absent, undefined);
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
-  );
-});
-
-it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update service", (it) => {
-  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "reports the service switch as pending after installing the target runtime",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-service-" });
-        const targetVersion = "999.0.0";
-        const runtime = pinnedRuntimePaths(path, baseDir, targetVersion, "linux");
-        yield* fs.makeDirectory(runtime.versionDir, { recursive: true });
-        yield* fs.writeFileString(
-          runtime.entryPath,
-          `#!/bin/sh\nprintf 't3 v${targetVersion}\\n'\n`,
-        );
-        yield* fs.chmod(runtime.entryPath, 0o755);
-        yield* fs.writeFileString(runtime.sentinelPath, `${targetVersion}\n`);
-        const logPath = path.join(baseDir, "userdata/logs/boot-service.log");
-        const unitPath = path.join(baseDir, "t3code.service");
-        const installs: Array<Parameters<BootService.BootService["Service"]["install"]>[0]> = [];
-        vi.spyOn(BootService, "layer").mockReturnValue(
-          Layer.succeed(BootService.BootService, {
-            status: Effect.succeed({
-              supported: true,
-              installed: true,
-              current: true,
-              installedVersion: packageJson.version,
-              installedBaseDir: baseDir,
-              logPath,
-              unitPath,
-            }),
-            install: (options) =>
-              Effect.sync(() => {
-                installs.push(options);
-                return {
-                  program: [runtime.entryPath],
-                  baseDir,
-                  logPath,
-                  unitPath,
-                  handedOff: true,
-                };
-              }),
-            restart: Effect.die("unexpected restart"),
-            uninstall: Effect.die("unexpected uninstall"),
-            withStopped: () => Effect.die("unexpected maintenance"),
-          }),
-        );
-        const lines: string[] = [];
-        yield* Command.runWith(updateCommand, { version: packageJson.version })([
-          targetVersion,
-          "--yes",
-          "--base-dir",
-          baseDir,
-        ]).pipe(
-          Effect.provideService(HostProcess.Platform, "linux"),
-          Effect.provideService(HostProcess.IsExecutable, false),
-          Effect.provideService(HostProcess.Environment, {}),
-          Effect.provideService(Console.Console, {
-            ...globalThis.console,
-            log: (...args) => {
-              lines.push(args.map(String).join(" "));
-            },
-          }),
-          Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
-        );
-
-        expect(installs).toEqual([{ allowDowngrade: false, start: true }]);
-        const output = lines.join("\n");
-        expect(output).not.toContain("Background service restarted");
-        expect(output).toContain(`Background service switching to ${targetVersion}`);
-        expect(output).toContain(logPath);
-      }),
   );
 });

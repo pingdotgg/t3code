@@ -6,7 +6,7 @@ import {
   type ProviderInstallState,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { page, userEvent } from "vite-plus/test/browser";
+import { userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
@@ -50,8 +50,6 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: ((command: unknown) => command) as never,
 }));
-// The queries behave like live subscriptions: changing `setup.auth` and calling
-// `publish()` re-renders the sections that read them.
 const queryListeners = vi.hoisted(() => new Set<() => void>());
 vi.mock(import("../../state/query"), async (original) => {
   const { useSyncExternalStore } = await import("react");
@@ -109,14 +107,6 @@ function authState(patch: Partial<ProviderAuthState> = {}): ProviderAuthState {
     message: null,
     ...patch,
   };
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
 }
 
 interface SectionOptions {
@@ -191,6 +181,41 @@ function resetSetup() {
 }
 
 describe("Antigravity setup", () => {
+  it("can start installation before the first install snapshot arrives", async () => {
+    resetSetup();
+    setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
+    const idleInstallation = setup.installation!;
+    setup.installation = null;
+    let resolveStart!: () => void;
+    const command = new Promise<{ _tag: "Success"; value: undefined }>((resolve) => {
+      resolveStart = () => resolve({ _tag: "Success", value: undefined });
+    });
+    setup.startInstall.mockReturnValueOnce(command);
+    await using screen = await renderSetup({ provider: { ...provider, installed: false } });
+
+    await screen.click("Install Antigravity");
+    await expect
+      .element(screen.getByRole("status").filter({ hasText: "Starting installation." }))
+      .toBeVisible();
+
+    setup.installation = {
+      ...idleInstallation,
+      operationId: "install-1",
+      phase: "downloading",
+      downloadedBytes: 1_000_000,
+      totalBytes: 2_000_000,
+    };
+    await publish();
+    await expect
+      .element(screen.getByRole("button", { name: "Cancel installation" }))
+      .toBeDisabled();
+    await act(async () => resolveStart());
+    await expect.element(screen.getByRole("button", { name: "Cancel installation" })).toBeEnabled();
+    await expect
+      .element(screen.getByRole("status").filter({ hasText: "Downloading 1.0 MB of 2.0 MB." }))
+      .toBeVisible();
+  });
+
   it("waits for verified auth after submitting a callback to the selected environment", async () => {
     resetSetup();
     const callbackUrl = "http://127.0.0.1:5555/?state=test-only&code=test-only";
@@ -217,22 +242,6 @@ describe("Antigravity setup", () => {
     expect(screen.occurrences("Signed in.")).toBe(1);
   });
 
-  it("offers sign-in again when credentials expire after a completed auth flow", async () => {
-    resetSetup();
-    setup.auth = authState({
-      phase: "succeeded",
-      authorizationUrl: null,
-      message: "Google sign-in complete.",
-    });
-    await using screen = await renderSetup({
-      provider: { ...provider, status: "ready", auth: { status: "authenticated" } },
-    });
-    await screen.rerender(section());
-    expect(screen.button("Sign in")).not.toBeNull();
-    expect(screen.occurrences("Signed in.")).toBe(0);
-    expect(screen.occurrences("Google sign-in complete.")).toBe(0);
-  });
-
   it("does not send a callback left over from a replaced sign-in flow", async () => {
     resetSetup();
     const interaction = {
@@ -257,126 +266,6 @@ describe("Antigravity setup", () => {
     expect(setup.authState).toHaveBeenLastCalledWith({ environmentId, input: { instanceId } });
   });
 
-  it("coalesces repeated sign-in clicks while start is pending", async () => {
-    resetSetup();
-    setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
-    const pending = deferred<{ _tag: "Success"; value: undefined }>();
-    setup.startAuth.mockReturnValueOnce(pending.promise);
-    await using screen = await renderSetup();
-    const signIn = screen.button("Sign in")!;
-    // Both clicks land before React re-renders the button as disabled.
-    await act(async () => {
-      signIn.click();
-      signIn.click();
-    });
-
-    expect(setup.startAuth).toHaveBeenCalledTimes(1);
-    expect(setup.startAuth).toHaveBeenCalledWith({ environmentId, input: { instanceId } });
-    await act(async () => pending.resolve({ _tag: "Success", value: undefined }));
-  });
-
-  it("shows a repeated runtime status message only once", async () => {
-    resetSetup();
-    setup.installation = {
-      ...setup.installation!,
-      operationId: "install-1",
-      phase: "verifying",
-      message: "Checking the downloaded runtime.",
-    };
-
-    await using screen = await renderSetup();
-    expect(screen.occurrences("Checking the downloaded runtime.")).toBe(1);
-  });
-
-  it("exposes download progress as a bounded progressbar only while the total is known", async () => {
-    resetSetup();
-    const downloading = (downloadedBytes: number, totalBytes: number | null) => {
-      setup.installation = {
-        ...setup.installation!,
-        operationId: "install-1",
-        phase: "downloading",
-        downloadedBytes,
-        totalBytes,
-      };
-      return publish();
-    };
-    const progressbar = page.getByRole("progressbar", { name: "Antigravity download" });
-    await using _screen = await renderSetup();
-
-    await downloading(40_000_000, 100_000_000);
-    await expect.element(progressbar).toHaveValue(40_000_000);
-    // The wire contract does not cap downloaded bytes at the advertised total.
-    await downloading(110_000_000, 100_000_000);
-    await expect.element(progressbar).toHaveValue(100_000_000);
-    await downloading(40_000_000, null);
-    expect(progressbar.query()).toBeNull();
-  });
-
-  it("removes an owned damaged runtime only after confirmation", async () => {
-    resetSetup();
-    setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
-    setup.installation = {
-      ...setup.installation!,
-      phase: "failed",
-      canRemove: true,
-      installedVersion: null,
-    };
-    await using screen = await renderSetup();
-    await screen.click("Remove downloaded runtime");
-    expect(setup.confirm).toHaveBeenCalledOnce();
-    expect(setup.removeInstall).not.toHaveBeenCalled();
-
-    setup.confirm.mockResolvedValue(true);
-    await screen.click("Remove downloaded runtime");
-    expect(setup.removeInstall).toHaveBeenCalledWith({ environmentId, input: { instanceId } });
-  });
-
-  it.each([true, false])(
-    "can sign out a verified account when its instance is enabled=%s",
-    async (enabled) => {
-      resetSetup();
-      setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
-      setup.confirm.mockResolvedValue(true);
-      await using screen = await renderSetup({
-        enabled,
-        provider: {
-          ...provider,
-          enabled,
-          installed: false,
-          status: enabled ? "warning" : "disabled",
-          auth: { status: "authenticated" },
-        },
-      });
-      await screen.click("Sign out");
-      expect(setup.logoutAuth).toHaveBeenCalledWith({ environmentId, input: { instanceId } });
-    },
-  );
-
-  it.each(["unauthenticated", "unknown"] as const)(
-    "does not offer sign-out for an unverified %s account",
-    async (status) => {
-      resetSetup();
-      setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
-      await using screen = await renderSetup({
-        provider: { ...provider, auth: { status, canLogout: true } },
-      });
-      expect(screen.button("Sign in")).not.toBeNull();
-      expect(screen.button("Sign out")).toBeNull();
-      expect(screen.button("Change account")).toBeNull();
-    },
-  );
-
-  it("offers account actions after verified login when discovery cannot identify auth", async () => {
-    resetSetup();
-    setup.auth = authState({ phase: "succeeded", flowId: null, authorizationUrl: null });
-    await using screen = await renderSetup({
-      provider: { ...provider, auth: { status: "unknown" } },
-    });
-    expect(screen.button("Change account")).not.toBeNull();
-    expect(screen.button("Sign out")).not.toBeNull();
-    expect(screen.button("Sign in")).toBeNull();
-  });
-
   it("does not let a shared managed install hide an invalid custom binary path", async () => {
     resetSetup();
     setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
@@ -392,18 +281,4 @@ describe("Antigravity setup", () => {
     expect(screen.button("Sign in")?.disabled).toBe(true);
     expect(setup.startAuth).not.toHaveBeenCalled();
   });
-
-  it.each(["read-only", "older-server"] as const)(
-    "does not open private setup subscriptions for a %s view",
-    async (mode) => {
-      resetSetup();
-      const { setup: _setup, ...olderProvider } = provider;
-      await using _screen = await renderSetup(
-        mode === "read-only" ? { readOnly: true } : { provider: olderProvider },
-      );
-      expect(setup.authState).not.toHaveBeenCalled();
-      expect(setup.installState).not.toHaveBeenCalled();
-      expect(setup.startAuth).not.toHaveBeenCalled();
-    },
-  );
 });

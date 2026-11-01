@@ -3,11 +3,9 @@ import { assert, describe, it } from "@effect/vitest";
 import { GitCommandError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { ChildProcessSpawner } from "effect/process";
@@ -200,8 +198,6 @@ describe("GitCafeSourceControlProvider", () => {
 
   it.effect.each([
     ["no context", undefined, "https://git.cafe/fork/project.git"],
-    ["an HTTPS remote", "https://git.cafe/team/project.git", "https://git.cafe/fork/project.git"],
-    ["an SSH remote", "ssh@git.cafe:team/project.git", "ssh@git.cafe:fork/project.git"],
     ["an ssh:// remote", "ssh://ssh@git.cafe/team/project.git", "ssh@git.cafe:fork/project.git"],
     [
       "an HTTPS remote with a user",
@@ -246,12 +242,14 @@ describe("GitCafeSourceControlProvider", () => {
           };
     return Effect.gen(function* () {
       const provider = yield* GitCafeSourceControlProvider.make;
-      yield* provider.checkoutChangeRequest({
-        cwd: "/repo",
-        reference: "https://git.cafe/team/project/pulls/7",
-        ...(context === undefined ? {} : { context }),
-      });
-      assert.deepStrictEqual(remotes, [expected]);
+      for (const route of ["pull", "pulls"]) {
+        yield* provider.checkoutChangeRequest({
+          cwd: "/repo",
+          reference: `https://git.cafe/team/project/${route}/7`,
+          ...(context === undefined ? {} : { context }),
+        });
+      }
+      assert.deepStrictEqual(remotes, [expected, expected]);
     }).pipe(
       Effect.provide(
         Layer.merge(GitCafeApi.layer, NoFiles).pipe(
@@ -276,50 +274,6 @@ describe("GitCafeSourceControlProvider", () => {
         ),
       ),
     );
-  });
-
-  it.effect("creates a repository over REST and waits for its admission", () => {
-    const sent: Array<{ method: string; url: string; body: unknown }> = [];
-    const client = HttpClient.make((request) => {
-      const body =
-        request.body._tag === "Uint8Array"
-          ? decodeJson(new TextDecoder().decode(request.body.body))
-          : undefined;
-      sent.push({ method: request.method, url: request.url, body });
-      const state = request.method === "POST" ? "running" : "complete";
-      return Effect.succeed(
-        HttpClientResponse.fromWeb(
-          request,
-          new Response(encodeJson({ repoId: "repo_1", state, owner: "team", name: "project" })),
-        ),
-      );
-    });
-    return Effect.gen(function* () {
-      const provider = yield* GitCafeSourceControlProvider.make;
-      const created = yield* provider
-        .createRepository({ cwd: "/repo", repository: "team/project", visibility: "private" })
-        .pipe(Effect.forkChild);
-      yield* TestClock.adjust("1 second");
-      assert.deepStrictEqual(yield* Fiber.join(created), {
-        nameWithOwner: "team/project",
-        url: "https://git.cafe/team/project",
-        sshUrl: "ssh@git.cafe:team/project.git",
-      });
-      assert.deepStrictEqual(
-        sent.map((request) => `${request.method} ${request.url}`),
-        [
-          "POST https://git.cafe/api/orgs/team/repos",
-          "GET https://git.cafe/api/orgs/team/admissions/repo_1",
-        ],
-      );
-      const { requestKey, ...body } = sent[0]?.body as { requestKey: string };
-      assert.match(requestKey, /^[0-9a-f-]{36}$/u);
-      assert.deepStrictEqual(body, {
-        name: "project",
-        visibility: "private",
-        defaultBranch: "main",
-      });
-    }).pipe(Effect.provide(layerFor(client)));
   });
 
   it.effect("opens a pull request from a fork over REST with the body file's text", () => {

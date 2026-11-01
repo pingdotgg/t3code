@@ -1,6 +1,6 @@
-export const PAGE_SCROLL_ANIMATION_MS = 150;
-export const PAGE_SCROLL_ACCELERATION_MS = 400;
-export const PAGE_SCROLL_MAX_MULTIPLIER = 2;
+const PAGE_SCROLL_ANIMATION_MS = 150;
+const PAGE_SCROLL_ACCELERATION_MS = 400;
+const PAGE_SCROLL_MAX_MULTIPLIER = 2;
 
 const PAGE_SCROLL_ALIGNMENT_OFFSET_PX = 36;
 const PAGE_SCROLL_BOUNDARY_EPSILON_PX = 1;
@@ -95,12 +95,12 @@ function getDefaultEnv(): PageScrollEnv {
   };
 }
 
-export function getPageScrollMultiplier(holdElapsedMs: number): number {
+function getPageScrollMultiplier(holdElapsedMs: number): number {
   const progress = Math.max(0, holdElapsedMs) / PAGE_SCROLL_ACCELERATION_MS;
   return 1 + Math.min(progress, 1) * (PAGE_SCROLL_MAX_MULTIPLIER - 1);
 }
 
-export function getPageScrollVelocityPxPerMs({
+function getPageScrollVelocityPxPerMs({
   holdElapsedMs,
   pageScrollDistancePx,
 }: {
@@ -110,7 +110,7 @@ export function getPageScrollVelocityPxPerMs({
   return (pageScrollDistancePx * getPageScrollMultiplier(holdElapsedMs)) / PAGE_SCROLL_ANIMATION_MS;
 }
 
-export function getPageScrollDistancePx({
+function getPageScrollDistancePx({
   containerHeightPx,
   scrollPaddingBottomPx,
 }: {

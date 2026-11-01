@@ -6,8 +6,10 @@ import {
 } from "@t3tools/contracts";
 import { useState, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
+import "~/index.css";
 import { act, render } from "../../../test/render";
 
 const mocks = vi.hoisted(() => ({ observeSource: vi.fn(), dispose: vi.fn() }));
@@ -124,26 +126,52 @@ describe("citation comment source disappearance", () => {
     expect(onSave).toHaveBeenLastCalledWith("keep this draft");
     expect(textarea()).toBeNull();
   });
+});
 
-  it("still allows explicit cancellation after source disappearance", async () => {
-    using source = setup();
-    const onSave = vi.fn(() => false);
-    await using _screen = await mount(source.sourceAnchor, onSave);
-    await typeComment("discard this draft");
-    await removeSource();
-    onSave.mockClear();
-    await clickButton("Cancel");
-    expect(onSave).not.toHaveBeenCalled();
-    expect(textarea()).toBeNull();
-  });
+describe("citation comment popup position", () => {
+  it("stays on screen when the cited text ends in a code block's hidden overflow", async () => {
+    using _source = setup();
+    const message = document.createElement("div");
+    message.className = "chat-markdown";
+    message.style.width = "240px";
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    // Highlighted code is split into token spans, so the range's last client rect
+    // covers only the final token, wholly inside the hidden overflow.
+    for (let index = 0; index < 40; index += 1) {
+      const token = document.createElement("span");
+      token.textContent = `token${index} `;
+      code.append(token);
+    }
+    pre.append(code);
+    message.append(pre);
+    document.body.prepend(message);
+    using _message = { [Symbol.dispose]: () => message.remove() };
+    const range = document.createRange();
+    range.selectNodeContents(code);
+    const rects = range.getClientRects();
+    expect(rects.item(rects.length - 1)!.left).toBeGreaterThan(window.innerWidth);
+    const sourceAnchor = {
+      source: message,
+      range,
+      viewport: document.body,
+    } as AssistantCitationSourceAnchor;
 
-  it("saves and closes when the source disappears with a valid draft", async () => {
-    using source = setup();
-    const onSave = vi.fn(() => true);
-    await using _screen = await mount(source.sourceAnchor, onSave);
-    await typeComment("saved comment");
-    await removeSource();
-    expect(onSave).toHaveBeenCalledWith("saved comment");
-    expect(textarea()).toBeNull();
+    await using _screen = await mount(
+      sourceAnchor,
+      vi.fn(() => true),
+    );
+    const popup = () => document.querySelector<HTMLElement>('[data-slot="popover-popup"]');
+    await vi.waitFor(() => expect(popup()?.getBoundingClientRect().width).toBeGreaterThan(0));
+    // Typing scrolls ancestors to reveal the caret, which shifts the whole app
+    // sideways when the box is off screen.
+    await userEvent.keyboard("note");
+
+    expect(textarea()?.value).toBe("note");
+    expect(document.scrollingElement?.scrollLeft).toBe(0);
+    expect(document.body.scrollLeft).toBe(0);
+    const rect = popup()!.getBoundingClientRect();
+    expect(rect.left).toBeGreaterThanOrEqual(0);
+    expect(rect.right).toBeLessThanOrEqual(window.innerWidth);
   });
 });

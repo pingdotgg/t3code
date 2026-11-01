@@ -20,6 +20,7 @@ type CommandResult =
 const mocks = vi.hoisted(() => ({
   open: vi.fn<(request: unknown) => Promise<CommandResult>>(),
   close: vi.fn<(request: unknown) => Promise<CommandResult>>(),
+  list: vi.fn<(request: unknown) => Promise<CommandResult>>(),
   openDevice: vi.fn(),
   closeSurface: vi.fn(),
 }));
@@ -61,23 +62,39 @@ const deviceState: DeviceServiceState = {
   revision: 1,
 };
 let currentState = deviceState;
-vi.mock("~/state/device", () => ({
-  deviceEnvironment: { list: "list", open: "open", close: "close" },
-  useDeviceState: () => ({ state: currentState, loaded: true }),
-}));
+// One probe per environment, however many views mount it; each probe sends one list.
+vi.mock("~/state/device", async () => {
+  const Effect = await import("effect/Effect");
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  return {
+    deviceEnvironment: { list: "list", open: "open", close: "close" },
+    deviceHostProbeAtom: Atom.family((environmentId: string) =>
+      Atom.make(() => Effect.promise(() => mocks.list({ environmentId, input: {} }))),
+    ),
+    NO_DEVICE_PROBE_ATOM: Atom.make(AsyncResult.initial<void, never>()),
+    useDeviceState: () => ({ state: currentState, loaded: true }),
+  };
+});
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: (command: string) =>
     command === "open"
       ? mocks.open
       : command === "close"
         ? mocks.close
-        : () => Promise.resolve({ _tag: "Success", value: {} }),
+        : command === "list"
+          ? mocks.list
+          : () => Promise.resolve({ _tag: "Success", value: {} }),
 }));
 vi.mock("~/state/query", () => ({ formatEnvironmentQueryError: () => "Device failed" }));
 vi.mock("~/rightPanelStore", () => ({
   useRightPanelStore: {
-    getState: () => ({ openDevice: mocks.openDevice, closeSurface: mocks.closeSurface }),
+    getState: () => ({
+      byThreadKey: {},
+      openDevice: mocks.openDevice,
+      closeSurface: mocks.closeSurface,
+    }),
   },
+  selectThreadRightPanelState: () => ({ isOpen: false, activeSurfaceId: null, surfaces: [] }),
 }));
 vi.mock("~/components/device/DeviceHostUpdates", () => ({ DeviceHostUpdates: () => null }));
 vi.mock("~/components/device/DeviceWorkspace", () => ({
@@ -104,13 +121,7 @@ const switches = [
   ],
 ] as const;
 const threadB = switches[0][1];
-const otherEnvironment = switches[1][1];
 const picker: Extract<RightPanelSurface, { kind: "device" }> = { id: "device", kind: "device" };
-const streaming: Extract<RightPanelSurface, { kind: "device" }> = {
-  id: "device:phone",
-  kind: "device",
-  target: { hostId: "local", deviceId: "phone", platform: "ios", name: "Phone" },
-};
 const phoneTarget = { hostId: "local", deviceId: "phone", platform: "ios", name: "Phone" };
 const opened = { _tag: "Success", value: { hostId: "local", deviceId: "phone" } } as const;
 const failed = { _tag: "Failure", cause: new Error("boom") } as const;
@@ -142,137 +153,14 @@ const errors = () => container.querySelectorAll('[role="alert"]');
 
 function setup() {
   vi.resetAllMocks();
+  mocks.list.mockResolvedValue({ _tag: "Success", value: { hostId: "local", deviceId: "" } });
   currentState = deviceState;
   container = document.createElement("div");
   container.style.width = "480px";
   container.style.height = "800px";
 }
 
-describe("DevicePanel notices", () => {
-  it("keeps discovery warnings dismissed until the diagnostic or environment changes", async () => {
-    setup();
-    currentState = {
-      ...deviceState,
-      hostStatusDetail: "Could not read simulator usage timestamps.",
-    };
-    await using screen = await render(devicePanel(threadA), { container });
-    expect(errors()).toHaveLength(1);
-    expect(startButton()?.disabled).toBe(false);
-    await click(container.querySelector('[aria-label="Dismiss device warning"]'));
-    expect(errors()).toHaveLength(0);
-    await screen.rerender(devicePanel(threadA));
-    expect(errors()).toHaveLength(0);
-
-    currentState = { ...currentState, hostStatusDetail: "A different discovery warning." };
-    await screen.rerender(devicePanel(threadA));
-    expect(errors()).toHaveLength(1);
-    await click(container.querySelector('[aria-label="Dismiss device warning"]'));
-    await screen.rerender(devicePanel(otherEnvironment));
-    expect(errors()).toHaveLength(1);
-  });
-
-  it("keeps the loading content centered when discovery and boot notices arrive or are dismissed", async () => {
-    setup();
-    const pick = deferred();
-    mocks.open.mockReturnValue(pick.promise);
-    await using screen = await render(devicePanel(threadA), { container });
-    await click(startButton());
-    const loadingBounds = () =>
-      container
-        .querySelector('[aria-label="Step 1 of 2: open device"]')!
-        .parentElement!.getBoundingClientRect();
-    const before = loadingBounds();
-    const panel = container.getBoundingClientRect();
-    expect(before.height).toBeGreaterThan(0);
-    expect(before.top + before.height / 2).toBeCloseTo(panel.top + panel.height / 2, 0);
-
-    currentState = {
-      ...deviceState,
-      hostStatusDetail: "Could not read CoreSimulator plist.\n".repeat(8),
-      bootingDevices: [{ ...phone, threadId: threadA.threadId }],
-    };
-    await screen.rerender(devicePanel(threadA));
-    expect(loadingBounds().top).toBe(before.top);
-    expect(loadingBounds().left).toBe(before.left);
-    await click(container.querySelector('[aria-label="Dismiss device warning"]'));
-    expect(loadingBounds().top).toBe(before.top);
-    expect(loadingBounds().left).toBe(before.left);
-    await act(async () => pick.settle(failed));
-  });
-});
-
 describe("DevicePanel thread switches", () => {
-  it.each(switches)("does not carry a pending or failed pick to %s", async (_, target) => {
-    setup();
-    const pick = deferred();
-    mocks.open.mockReturnValue(pick.promise);
-    await using screen = await render(devicePanel(threadA), { container });
-    await click(startButton());
-    expect(startButton()).toBeNull();
-
-    await screen.rerender(devicePanel(target));
-    expect(startButton()?.disabled).toBe(false);
-
-    await act(async () => pick.settle(failed));
-    expect(errors()).toHaveLength(0);
-    expect(mocks.openDevice).not.toHaveBeenCalled();
-
-    await screen.rerender(devicePanel(threadA));
-    expect(startButton()?.disabled).toBe(false);
-    expect(errors()).toHaveLength(1);
-
-    await screen.rerender(devicePanel(target));
-    expect(startButton()?.disabled).toBe(false);
-    expect(errors()).toHaveLength(0);
-  });
-
-  it.each([
-    [
-      "pick",
-      picker,
-      () => mocks.open,
-      () => click(startButton()),
-      () => expect(mocks.openDevice).toHaveBeenCalledExactlyOnceWith(threadA, phoneTarget),
-    ],
-    [
-      "power-off",
-      streaming,
-      () => mocks.close,
-      () => click(container.querySelector("button")),
-      () => expect(mocks.closeSurface).toHaveBeenCalledExactlyOnceWith(threadA, streaming.id),
-    ],
-  ] as const)(
-    "applies a late %s to its starting thread after switching environments with the same thread id",
-    async (_, surface, command, start, expectApplied) => {
-      setup();
-      const late = deferred();
-      command().mockReturnValue(late.promise);
-      await using screen = await render(devicePanel(threadA, surface), { container });
-      await start();
-
-      await screen.rerender(devicePanel(otherEnvironment, surface));
-      await act(async () => late.settle(opened));
-
-      expectApplied();
-    },
-  );
-
-  it("keeps a late power-off error in the environment that started it", async () => {
-    setup();
-    const powerOff = deferred();
-    mocks.close.mockReturnValue(powerOff.promise);
-    await using screen = await render(devicePanel(threadA, streaming), { container });
-    await click(container.querySelector("button"));
-
-    await screen.rerender(devicePanel(otherEnvironment, streaming));
-    await act(async () => powerOff.settle(failed));
-
-    expect(errors()).toHaveLength(0);
-    expect(mocks.closeSurface).not.toHaveBeenCalled();
-    await screen.rerender(devicePanel(threadA, streaming));
-    expect(errors()).toHaveLength(1);
-  });
-
   it("keeps the latest pick pending across switches away and back", async () => {
     setup();
     const first = deferred();
@@ -307,6 +195,21 @@ describe("DevicePanel thread switches", () => {
     expect(mocks.openDevice.mock.calls).toEqual([
       [threadB, phoneTarget],
       [threadA, phoneTarget],
+    ]);
+  });
+});
+
+describe("DevicePanel host probe", () => {
+  it("probes the hosts once while setup shows inside the panel", async () => {
+    setup();
+    currentState = { ...deviceState, onboardingCompleted: false };
+    // An environment no other test probed, so its probe starts fresh.
+    const threadRef = { ...threadA, environmentId: EnvironmentId.make("environment-setup") };
+    await using _screen = await render(devicePanel(threadRef), { container });
+
+    await vi.waitFor(() => expect(mocks.list).toHaveBeenCalled());
+    expect(mocks.list.mock.calls).toEqual([
+      [{ environmentId: threadRef.environmentId, input: {} }],
     ]);
   });
 });

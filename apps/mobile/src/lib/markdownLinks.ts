@@ -34,14 +34,6 @@ export type MarkdownLinkPresentation =
 
 export type MarkdownFileIcon = keyof typeof MARKDOWN_FILE_ICON_SOURCES;
 
-export type MarkdownLinkIcon = "github";
-
-export function resolveMarkdownLinkIcon(host: string): MarkdownLinkIcon | null {
-  const hostname = host.toLowerCase();
-  if (hostname === "github.com" || hostname.endsWith(".github.com")) return "github";
-  return null;
-}
-
 const FILE_ICON_BY_NAME: Readonly<Record<string, MarkdownFileIcon>> = {
   ".babelrc": "babel",
   ".babelrc.json": "babel",
