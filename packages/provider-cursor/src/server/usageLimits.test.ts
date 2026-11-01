@@ -62,6 +62,14 @@ describe("Cursor usage limits", () => {
     expect(cursorUsageResponseToLimits({ planUsage: {} }, checkedAt).unavailable?.reason).toBe(
       "unsupported",
     );
+    // Real Enterprise (token-based contract) response: no planUsage at all.
+    expect(
+      cursorUsageResponseToLimits({ billingCycleEnd: "1793495876373" }, checkedAt),
+    ).toMatchObject({
+      windows: [],
+      unavailable: { reason: "unsupported", message: expect.any(String) },
+      externalUsage: { label: "Cursor usage", url: "https://cursor.com/dashboard?tab=usage" },
+    });
     expect(
       cursorUsageResponseToLimits({ planUsage: { totalPercentUsed: 0 } }, checkedAt).windows,
     ).toEqual([{ id: "totalPercentUsed", kind: "monthly", label: "Overall", usedPercent: 0 }]);

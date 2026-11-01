@@ -56,9 +56,16 @@ export function cursorUsageResponseToLimits(
       });
     }
   }
-  return windows.length > 0
-    ? makeUsageLimits({ checkedAt, windows })
-    : makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
+  if (windows.length > 0) return makeUsageLimits({ checkedAt, windows });
+  // Usage-based plans such as Enterprise report no plan allowance; Cursor's CLI shows only spend.
+  return {
+    ...makeUnavailableUsageLimits({
+      checkedAt,
+      reason: "unsupported",
+      message: "Cursor reports no plan allowance for this account. View its spend on Cursor.",
+    }),
+    externalUsage: { label: "Cursor usage", url: "https://cursor.com/dashboard?tab=usage" },
+  };
 }
 
 export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function* (
