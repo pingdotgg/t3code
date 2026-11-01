@@ -1274,6 +1274,36 @@ function settleSupersededReasoning(
   return settled;
 }
 
+/**
+ * The fold key of the collapsed response that hides an entry, or null when no fold hides it.
+ * Runless prompts fold under a synthetic key, so an entry's own run id cannot open them.
+ */
+export function threadFeedFoldRunIdHiding(
+  feed: ReadonlyArray<ThreadFeedEntry>,
+  latestRun: ThreadFeedLatestRun | null,
+  activeWorkStartedAt: string | null,
+  runlessWorkActive: boolean,
+  entryId: string,
+): RunId | null {
+  const retainedFeed = feed.filter(
+    (entry) =>
+      entry.type !== "run-fold" && entry.type !== "work-toggle" && entry.type !== "thinking",
+  );
+  const sourceFeed = retainedFeed.map((entry, index) =>
+    settleSupersededReasoning(entry, index === retainedFeed.length - 1),
+  );
+  const isWorking = activeWorkStartedAt !== null && latestRun?.status !== "preparing";
+  for (const fold of deriveThreadFeedRunFolds(
+    sourceFeed,
+    latestRun,
+    isWorking && runlessWorkActive,
+    failedFeedRunIds(sourceFeed, latestRun),
+  ).values()) {
+    if (fold.hiddenEntryIds.has(entryId)) return fold.runId;
+  }
+  return null;
+}
+
 interface ThreadFeedPresentationBuild {
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly latestRun: ThreadFeedLatestRun | null;

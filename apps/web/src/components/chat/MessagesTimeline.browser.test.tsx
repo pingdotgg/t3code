@@ -1205,6 +1205,46 @@ it("renders automatic compaction as one live divider that finishes with its reas
   expect(container.textContent).not.toContain("Compacting before");
 });
 
+it.each(["agent", "automation"] as const)(
+  "opens a linked %s body and keeps it open after consuming the link",
+  async (attribution) => {
+    setup();
+    const props = baseProps();
+    const entries = [
+      message(
+        "Folded preview\n\nThe linked body must be visible.",
+        attribution === "agent"
+          ? { createdBy: "agent", senderThreadId: SENDER_THREAD_ID }
+          : { scheduledTaskId: TASK_ID },
+      ),
+    ];
+    const onLinkedMessageHandled = vi.fn();
+    const timeline = (key: string | null) => (
+      <MessagesTimeline
+        {...props}
+        timelineEntries={entries}
+        linkedMessageSynced
+        linkedMessage={key === null ? null : { messageId: MessageId.make("message-1"), key }}
+        onLinkedMessageHandled={onLinkedMessageHandled}
+      />
+    );
+    await using screen = await renderElement(timeline(null));
+    const heading = attribution === "agent" ? /^Agent/ : /^Automation/;
+    expect(screen.button(heading).getAttribute("aria-expanded")).toBe("false");
+    await screen.rerender(timeline("first-link"));
+    await vi.waitFor(() => expect(onLinkedMessageHandled).toHaveBeenCalledWith("first-link"));
+    expect(screen.button(heading).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.text()).toContain("The linked body must be visible.");
+    await screen.rerender(timeline(null));
+    expect(screen.button(heading).getAttribute("aria-expanded")).toBe("true");
+    await click(screen.button(heading));
+    expect(screen.button(heading).getAttribute("aria-expanded")).toBe("false");
+    await screen.rerender(timeline("second-link"));
+    await vi.waitFor(() => expect(onLinkedMessageHandled).toHaveBeenCalledWith("second-link"));
+    expect(screen.button(heading).getAttribute("aria-expanded")).toBe("true");
+  },
+);
+
 function TimelineChangedFilesCard() {
   const [expanded, setExpanded] = useState(true);
   return (

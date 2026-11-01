@@ -76,6 +76,8 @@ import { type AssistantCitationRequest } from "./AssistantCitationSource";
 import { useAssistantCitationTarget } from "./useAssistantCitationTarget";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveCitationPhase, type CitedHistory } from "./citationProcedure";
+import { useLinkedMessageTarget } from "./useLinkedMessageTarget";
+import type { LinkedMessageRequest } from "../promptLinks/ThreadLinkParams";
 import {
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
@@ -205,6 +207,7 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
 const CITED_HISTORY_LOADING: CitedHistory = { _tag: "loading" };
 
 export interface MessagesTimelineHistoryControls {
+  readonly historyCursor: string | null;
   readonly hasMoreHistory: boolean;
   readonly loading: boolean;
   readonly error: string | null;
@@ -218,6 +221,11 @@ interface MessagesTimelineProps {
   canOperateThread?: boolean;
   onRespondToApproval?: TimelineRowSharedState["onRespondToApproval"];
   citationRequest?: AssistantCitationRequest | null;
+  /** A thread link's message, scrolled to the top once it is found. */
+  linkedMessage?: LinkedMessageRequest | null;
+  linkedMessageSynced?: boolean;
+  onLinkedMessageHandled?: (key: string) => void;
+  linkedMessageHistoryLoading?: boolean;
   citationHistory?: CitedHistory;
   onCiteAssistantText?: (
     citation: AssistantCitation,
@@ -334,6 +342,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
   canOperateThread = false,
   onRespondToApproval,
   citationRequest = null,
+  linkedMessage = null,
+  linkedMessageSynced = false,
+  onLinkedMessageHandled,
+  linkedMessageHistoryLoading = false,
   citationHistory = CITED_HISTORY_LOADING,
   onCiteAssistantText,
   isWorking,
@@ -748,12 +760,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
       listIdentityKey,
       listOpenedOn,
       rememberedPosition,
-      citationPending: citationRequest !== null,
+      citationPending: citationRequest !== null || linkedMessage !== null,
       releaseForFind: findOpenAtOpening,
       onPositioned: setPositionedThreadKey,
     });
   }, [
     citationRequest,
+    linkedMessage,
     findOpenAtOpening,
     listIdentityKey,
     listOpenedOn,
@@ -785,6 +798,48 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onManualNavigation: navigateTimeline,
   });
   const [findListReady, setFindListReady] = useState(false);
+  // Imported turns fold under a synthetic key, so the message's own run id cannot open them.
+  const revealLinkedEntry = (entryId: string) => {
+    const runId =
+      (
+        findFoldRunIds ??
+        timelineTurnFoldRunIdsByEntryId({
+          timelineEntries,
+          latestRun,
+          runningRunId,
+          isWorking,
+          runlessWorkActive,
+        })
+      ).get(entryId) ?? null;
+    const attempt = timelineEntries.find((entry) => entry.id === entryId)?.attempt;
+    const attemptId = attempt?.status === "superseded" ? attempt.id : null;
+    if (runId !== null) {
+      setExpandedRunIds((previous) =>
+        previous.has(runId) ? previous : new Set(previous).add(runId),
+      );
+    }
+    if (attemptId !== null) {
+      setExpandedAttemptIds((previous) =>
+        previous.has(attemptId) ? previous : new Set(previous).add(attemptId),
+      );
+    }
+    return runId !== null || attemptId !== null;
+  };
+  const { positioning: linkedMessagePositioning, alwaysRender: linkedMessageAlwaysRender } =
+    useLinkedMessageTarget({
+      request: linkedMessage,
+      synced: linkedMessageSynced,
+      onHandled: onLinkedMessageHandled,
+      entries: timelineEntries,
+      rows,
+      listRef,
+      listReady: findListReady,
+      viewport: timelineViewportElement,
+      historyLoading: linkedMessageHistoryLoading,
+      historyControls,
+      onRevealEntry: revealLinkedEntry,
+      onManualNavigation: navigateTimeline,
+    });
   const handleListLoad = () => {
     onCitationListLoad();
     setFindListReady(true);
@@ -804,6 +859,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     ...(firstMessageRow ? [firstMessageRow.id] : []),
     ...(lastMessageRow && lastMessageRow !== firstMessageRow ? [lastMessageRow.id] : []),
     ...(citationAlwaysRender?.keys ?? []),
+    ...(linkedMessageAlwaysRender?.keys ?? []),
     ...(fullscreenAppRowId === null ? [] : [fullscreenAppRowId]),
     ...new Set(
       [...playingAudioRows].filter(([audio]) => audio.isConnected).map(([, rowId]) => rowId),
@@ -1025,6 +1081,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     canOperateThread,
     onRespondToApproval,
     citationRequest: readyCitationRequest,
+    linkedMessage,
     listRef,
     timestampFormat,
     routeThreadKey,
@@ -1326,7 +1383,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
               renderItem={renderItem}
               estimatedItemSize={90}
               initialScrollAtEnd={
-                !findActive && citationRequest === null && rememberedPosition?.atEnd !== false
+                !findActive &&
+                citationRequest === null &&
+                linkedMessage === null &&
+                rememberedPosition?.atEnd !== false
               }
               // Legend needs a data refresh to mount new pins without a scroll event.
               dataVersion={`${readyCitationRequest?.key ?? listIdentityKey}:${alwaysRenderKeys.join(",")}`}
@@ -1336,6 +1396,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
               maintainScrollAtEnd={
                 citationPositioning ||
+                linkedMessagePositioning ||
                 (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
                 anchoredEndSpace ||
                 !liveFollowEnabled ||
@@ -1349,6 +1410,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               maintainVisibleContentPosition={
                 findActive ||
                 citationPositioning ||
+                linkedMessagePositioning ||
                 (restoringThreadPosition && rememberedPosition?.atEnd === false)
                   ? false
                   : maintainVisibleContentPosition
