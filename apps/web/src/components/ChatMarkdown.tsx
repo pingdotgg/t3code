@@ -168,6 +168,7 @@ import { filesystemEnvironment } from "../state/filesystem";
 import {
   claimWorkspaceBasenameLookup,
   needsWorkspaceBasenameLookup,
+  pickNestedWorkspaceMatch,
   pickStrippedWorkspaceMatch,
   pickWorkspaceBasenameMatch,
   stripRepeatedWorkspacePrefix,
@@ -771,7 +772,17 @@ function useChatMarkdownState({
     const strippedPath = isBasename
       ? null
       : stripRepeatedWorkspacePrefix(workspaceRelativePath, cwd);
-    if (!isBasename && strippedPath === null) return null;
+    // Search can be truncated or still scanning, so it cannot rule out the
+    // literal path. Check the host before redirecting to another match.
+    const literalPathMissing = async () => {
+      const metadata = await getFilesystemMetadata({
+        environmentId,
+        input: { paths: [resolveWorkspaceFilePath(workspaceRelativePath, cwd)] },
+      });
+      return metadata._tag === "Success" && metadata.value.entries[0] === null;
+    };
+    const isNested = !isBasename && strippedPath === null;
+    if (isNested && !(await literalPathMissing())) return null;
     const result = await searchProjectEntries({
       environmentId,
       input: {
@@ -782,18 +793,15 @@ function useChatMarkdownState({
       },
     });
     if (result._tag !== "Success") return null;
-    if (strippedPath === null) {
+    if (isBasename) {
       return pickWorkspaceBasenameMatch(workspaceRelativePath, result.value.entries);
+    }
+    if (strippedPath === null) {
+      return pickNestedWorkspaceMatch(workspaceRelativePath, cwd, result.value.entries);
     }
     const match = pickStrippedWorkspaceMatch(strippedPath, cwd, result.value.entries);
     if (match === null) return null;
-    // Search can be truncated or still scanning, so it cannot rule out the
-    // literal path. Check the host before redirecting to the stripped match.
-    const metadata = await getFilesystemMetadata({
-      environmentId,
-      input: { paths: [resolveWorkspaceFilePath(workspaceRelativePath, cwd)] },
-    });
-    return metadata._tag === "Success" && metadata.value.entries[0] === null ? match : null;
+    return (await literalPathMissing()) ? match : null;
   };
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
     if (!threadRef) return;
@@ -801,12 +809,7 @@ function useChatMarkdownState({
     const isLatestLookup = claimWorkspaceBasenameLookup();
     const openAt = (path: string) =>
       useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line);
-    if (
-      fileLinkMeta.workspaceLookupPath === null ||
-      !cwd ||
-      (!needsWorkspaceBasenameLookup(panelPath) &&
-        stripRepeatedWorkspacePrefix(panelPath, cwd) === null)
-    ) {
+    if (fileLinkMeta.workspaceLookupPath === null || !cwd) {
       openAt(panelPath);
       return;
     }
