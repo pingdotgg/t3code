@@ -170,10 +170,14 @@ export function markdownWithDirection(markdown: string, direction: TextDirection
   const offsets: number[] = [];
   const visit = (node: Root | RootContent, parent?: Root | RootContent): void => {
     if (node.type === "paragraph" || node.type === "heading") {
+      const child = node.children.length === 1 ? node.children[0] : undefined;
+      const media =
+        (child?.type === "link" || child?.type === "linkReference") && child.children.length === 1
+          ? child.children[0]
+          : child;
       if (
         node.type === "paragraph" &&
-        node.children.length === 1 &&
-        (node.children[0]?.type === "image" || node.children[0]?.type === "imageReference")
+        (media?.type === "image" || media?.type === "imageReference")
       ) {
         return;
       }
