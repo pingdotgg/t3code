@@ -422,32 +422,34 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       >
         {props.effortColumn ? (
           <DockedPickerContext value={{ modelLabel: triggerTitle }}>
-            <AnimatedHeight anchor="bottom">
-              <div className="flex max-h-(--available-height) flex-col">
-                <div className="flex max-h-86.5 min-h-0 max-sm:max-h-none max-sm:flex-col">
-                  {picker}
-                  <div
-                    data-model-picker-effort
-                    className="flex min-h-0 w-48 flex-col sm:shrink-0 border-l border-border/70 bg-muted/40 max-sm:max-h-64 max-sm:w-full max-sm:border-t max-sm:border-l-0"
-                    onKeyDown={(event) => {
-                      if (
-                        event.key !== "ArrowLeft" ||
-                        event.altKey ||
-                        event.ctrlKey ||
-                        event.metaKey
-                      )
-                        return;
-                      event.preventDefault();
-                      event.stopPropagation();
-                      searchInputRef.current?.focus();
-                    }}
-                  >
-                    {props.effortColumn}
+            <div className="flex max-h-(--available-height) flex-col">
+              <div className="min-h-0 overflow-y-auto">
+                <AnimatedHeight>
+                  <div className="flex max-h-86.5 max-sm:max-h-none max-sm:flex-col">
+                    {picker}
+                    <div
+                      data-model-picker-effort
+                      className="flex min-h-0 w-48 flex-col sm:shrink-0 border-l border-border/70 bg-muted/40 max-sm:max-h-64 max-sm:w-full max-sm:border-t max-sm:border-l-0"
+                      onKeyDown={(event) => {
+                        if (
+                          event.key !== "ArrowLeft" ||
+                          event.altKey ||
+                          event.ctrlKey ||
+                          event.metaKey
+                        )
+                          return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        searchInputRef.current?.focus();
+                      }}
+                    >
+                      {props.effortColumn}
+                    </div>
                   </div>
-                </div>
-                {props.footer}
+                </AnimatedHeight>
               </div>
-            </AnimatedHeight>
+              {props.footer}
+            </div>
           </DockedPickerContext>
         ) : (
           picker
