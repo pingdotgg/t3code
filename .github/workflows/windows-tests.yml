@@ -68,12 +68,16 @@ jobs:
       # so file-scoped runs call `vp test run` inside the package instead.
       - name: Test
         shell: pwsh
+        env:
+          PACKAGE: ${{ inputs.package }}
+          FILES: ${{ inputs.files }}
         run: |
-          $package = '${{ inputs.package }}'
-          $files = '${{ inputs.files }}'
-          if ($package -eq '') {
+          $package = $env:PACKAGE
+          $files = $env:FILES
+          # An empty input may arrive unset, and `$null -eq ''` is false.
+          if (-not $package) {
             vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' test
-          } elseif ($files -eq '') {
+          } elseif (-not $files) {
             vp run --filter "./$package" test
           } else {
             Set-Location $package
