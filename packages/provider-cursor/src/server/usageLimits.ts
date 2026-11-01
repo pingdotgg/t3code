@@ -20,6 +20,8 @@ import * as CursorKeychain from "./CursorKeychain.ts";
 
 const CursorCredentials = Schema.Struct({ accessToken: Schema.optional(Schema.String) });
 const DEFAULT_CURSOR_API_ENDPOINT = "https://api2.cursor.sh";
+const NO_LIMITS_MESSAGE =
+  "Cursor doesn't report usage limits for this account. Open Cursor's dashboard with the same account to see its spend.";
 const decodeCredentials = Schema.decodeEffect(Schema.fromJsonString(CursorCredentials));
 const CursorUsageResponse = Schema.Struct({
   billingCycleEnd: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
@@ -57,13 +59,9 @@ export function cursorUsageResponseToLimits(
     }
   }
   if (windows.length > 0) return makeUsageLimits({ checkedAt, windows });
-  // Usage-based plans such as Enterprise report no plan allowance; Cursor's CLI shows only spend.
+  // Usage-based plans such as Enterprise report no percentages; Cursor's CLI shows only spend.
   return {
-    ...makeUnavailableUsageLimits({
-      checkedAt,
-      reason: "unsupported",
-      message: "Cursor reports no plan allowance for this account. View its spend on Cursor.",
-    }),
+    ...makeUnavailableUsageLimits({ checkedAt, reason: "unsupported", message: NO_LIMITS_MESSAGE }),
     externalUsage: { label: "Cursor usage", url: "https://cursor.com/dashboard?tab=usage" },
   };
 }

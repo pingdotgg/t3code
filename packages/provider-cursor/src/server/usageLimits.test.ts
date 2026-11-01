@@ -59,17 +59,21 @@ describe("Cursor usage limits", () => {
   });
 
   it("does not invent unused allowance for absent buckets", () => {
-    expect(cursorUsageResponseToLimits({ planUsage: {} }, checkedAt).unavailable?.reason).toBe(
-      "unsupported",
-    );
-    // Real Enterprise (token-based contract) response: no planUsage at all.
-    expect(
-      cursorUsageResponseToLimits({ billingCycleEnd: "1793495876373" }, checkedAt),
-    ).toMatchObject({
+    const linkOnly = {
+      checkedAt,
       windows: [],
-      unavailable: { reason: "unsupported", message: expect.any(String) },
+      unavailable: {
+        reason: "unsupported",
+        message:
+          "Cursor doesn't report usage limits for this account. Open Cursor's dashboard with the same account to see its spend.",
+      },
       externalUsage: { label: "Cursor usage", url: "https://cursor.com/dashboard?tab=usage" },
-    });
+    };
+    expect(cursorUsageResponseToLimits({ planUsage: {} }, checkedAt)).toEqual(linkOnly);
+    // Real Enterprise (token-based contract) response: no planUsage at all.
+    expect(cursorUsageResponseToLimits({ billingCycleEnd: "1793495876373" }, checkedAt)).toEqual(
+      linkOnly,
+    );
     expect(
       cursorUsageResponseToLimits({ planUsage: { totalPercentUsed: 0 } }, checkedAt).windows,
     ).toEqual([{ id: "totalPercentUsed", kind: "monthly", label: "Overall", usedPercent: 0 }]);

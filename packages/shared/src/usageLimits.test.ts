@@ -1415,6 +1415,14 @@ describe("external usage settings", () => {
     ]);
     expect(collectLimitAccounts(presentations)).toEqual([]);
     expect(collectLimitNotices(presentations)).toEqual([]);
+    expect(withUsageLimitsCommands([managed], [])[0]!.slashCommands).toContainEqual(
+      expect.objectContaining({ name: "usage-limits" }),
+    );
+    expect(
+      collectProviderUsageLimits(managed.instanceId, [managed], [], now)?.accounts.map(
+        (account) => account.limits,
+      ),
+    ).toEqual([managed.usageLimits]);
   });
 });
 
