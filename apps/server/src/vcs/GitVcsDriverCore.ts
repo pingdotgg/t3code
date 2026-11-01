@@ -4135,19 +4135,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
       worktreePath = path.join(parentDir, repoName, directoryName);
     }
-    if (input.newRefName) {
-      // Kept apart from the checkout so the shared-config lock only covers the tracking write.
-      yield* createBranchAt(
-        "GitVcsDriver.createWorktree.createBranch",
-        { cwd: input.cwd, branch: input.newRefName, startPoint: input.refName },
-        "git worktree add failed",
-      );
-    }
     const args = ["worktree", "add", "--", worktreePath, input.newRefName ?? input.refName];
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
 
     const checkoutWorkers = (yield* readConfigValue(input.cwd, "checkout.workers")) ?? "0";
+    const newRefName = input.newRefName;
+    if (newRefName) {
+      // Kept apart from the checkout so the shared-config lock only covers the tracking write.
+      yield* createBranchAt(
+        "GitVcsDriver.createWorktree.createBranch",
+        { cwd: input.cwd, branch: newRefName, startPoint: input.refName },
+        "git worktree add failed",
+      );
+    }
     yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.createWorktree",
       input.cwd,
@@ -4171,6 +4172,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             }
           : {}),
       },
+    ).pipe(
+      Effect.onError(() =>
+        newRefName
+          ? deleteLocalBranch({ cwd: input.cwd, refName: newRefName, force: true }).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("could not remove the branch of a failed worktree", { cause }),
+              ),
+            )
+          : Effect.void,
+      ),
     );
 
     if (progress?.onWorktreeClaimed) {
@@ -4252,7 +4263,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     }
 
-    const newRefName = input.newRefName;
     if (newRefName && input.baseRefName) {
       const base = yield* resolveBranchBase(input.cwd, input.baseRefName);
       if (base) {
