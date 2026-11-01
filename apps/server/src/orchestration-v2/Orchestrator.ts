@@ -634,7 +634,7 @@ function cancelledAppOwnedTask(
   };
 }
 
-// Provider wakes can start follow-up work; monitor updates only report progress.
+// Provider wakes and delegated completions can start follow-ups; monitor updates only report progress.
 // Dispatch takes the parent's lock for follow-ups because intake writes the parent.
 function mayStartSubagentFollowup(
   command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
@@ -642,6 +642,7 @@ function mayStartSubagentFollowup(
   if (command.scheduledTaskId !== undefined || command.restartContinuationOfRunId !== undefined)
     return false;
   if (command.notification !== undefined) return command.notification.source.kind !== "monitor";
+  if (command.delegatedCompletion !== undefined) return true;
   return command.createdBy === "user" || command.creationSource === "mcp";
 }
 
@@ -7776,6 +7777,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       child.lineage.relationshipToParent !== "subagent" ||
       parentThreadId === null ||
       (command.notification === undefined &&
+        command.delegatedCompletion === undefined &&
         command.createdBy !== "user" &&
         command.senderThreadId !== parentThreadId)
     )
