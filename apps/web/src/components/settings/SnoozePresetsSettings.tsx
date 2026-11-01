@@ -339,7 +339,7 @@ function SnoozePresetFields(props: {
   // misclick on "When" can be undone without retyping it.
   const [memory, setMemory] = useState<KindMemory>({ minutes: 60, time: "09:00" });
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
       <Select
         value={when}
         items={WHEN_LABELS}
