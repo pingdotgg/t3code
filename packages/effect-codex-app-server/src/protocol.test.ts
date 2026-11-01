@@ -1,8 +1,10 @@
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -418,6 +420,75 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
     }),
   );
 
+  it.effect("releases a waiting request handler when Codex resolves its request", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        onRequest: (request) =>
+          request.id === 33 ? Effect.succeed({ decision: "accept" }) : Effect.never,
+      });
+
+      const messages = Array.from({ length: 32 }, (_, index) =>
+        encodeUnknownJsonString({
+          id: index + 1,
+          method: "item/commandExecution/requestApproval",
+          params: {},
+        }),
+      );
+      for (let requestId = 1; requestId <= 32; requestId++) {
+        messages.push(
+          encodeUnknownJsonString({
+            method: "serverRequest/resolved",
+            params: { threadId: "thread-1", requestId },
+          }),
+        );
+      }
+      messages.push(
+        encodeUnknownJsonString({
+          id: 33,
+          method: "item/commandExecution/requestApproval",
+          params: {},
+        }),
+      );
+      yield* Queue.offer(input, encoder.encode(`${messages.join("\n")}\n`));
+
+      assert.deepEqual(yield* decodeJson(yield* Queue.take(output)), {
+        id: 33,
+        result: { decision: "accept" },
+      });
+    }),
+  );
+
+  it.effect("keeps numeric and string request ids apart when Codex resolves one", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const interrupted: Array<string | number> = [];
+      yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        onRequest: (request) =>
+          request.id === 2
+            ? Effect.sync(() => ({ interrupted }))
+            : Effect.never.pipe(
+                Effect.onInterrupt(() => Effect.sync(() => interrupted.push(request.id))),
+              ),
+      });
+
+      const messages = [
+        { id: 1, method: "item/commandExecution/requestApproval", params: {} },
+        { id: "1", method: "item/commandExecution/requestApproval", params: {} },
+        { method: "serverRequest/resolved", params: { threadId: "thread-1", requestId: "1" } },
+        { id: 2, method: "item/commandExecution/requestApproval", params: {} },
+      ].map((message) => encodeUnknownJsonString(message));
+      yield* Queue.offer(input, encoder.encode(`${messages.join("\n")}\n`));
+
+      assert.deepEqual(yield* decodeJson(yield* Queue.take(output)), {
+        id: 2,
+        result: { interrupted: ["1"] },
+      });
+    }),
+  );
+
   it.effect("interrupts pending request handlers when the protocol terminates", () =>
     Effect.gen(function* () {
       const { stdio, input } = yield* makeInMemoryStdio();
@@ -668,6 +739,43 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
         }),
       );
       assert.instanceOf(failure, CodexError.CodexAppServerInputStreamEndedError);
+    }),
+  );
+
+  it.effect("fails pending requests when a write fails while input stays open", () =>
+    Effect.gen(function* () {
+      const { stdio: baseStdio } = yield* makeInMemoryStdio();
+      const writeFailure = PlatformError.systemError({
+        _tag: "Unknown",
+        module: "Stdio",
+        method: "stdout",
+        cause: new Error("EPIPE"),
+      });
+      const terminated = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio: Stdio.make({
+          args: baseStdio.args,
+          stdin: baseStdio.stdin,
+          stdout: () => Sink.forEach(() => Effect.fail(writeFailure)),
+          stderr: baseStdio.stderr,
+        }),
+        onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
+      });
+      const pending = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
+
+      const failure = yield* Deferred.await(terminated);
+      assert.instanceOf(failure, CodexError.CodexAppServerTransportError);
+      assert.equal(failure.operation, "write-output-stream");
+      assert.strictEqual(failure.cause, writeFailure);
+      for (const request of [Fiber.join(pending), transport.request("thread/read", {})]) {
+        const requestFailure = yield* request.pipe(
+          Effect.match({
+            onFailure: (error) => error,
+            onSuccess: () => assert.fail("Expected the broken transport to reject the request"),
+          }),
+        );
+        assert.strictEqual(requestFailure, failure);
+      }
     }),
   );
 
