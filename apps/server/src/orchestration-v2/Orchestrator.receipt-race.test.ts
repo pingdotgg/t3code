@@ -1,3 +1,4 @@
+import { vi } from "vite-plus/test";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -108,6 +109,50 @@ it.effect("a command id reused concurrently for two threads succeeds for only on
     );
     assert.equal(models[winner], "gpt-6");
     assert.equal(models[loser], "gpt-5.1-codex");
+
+    const noOpArrived = yield* Ref.make(0);
+    const bothNoOpsArrived = yield* Deferred.make<void>();
+    const getThreadRecords = projections.getThreadRecords;
+    using _records = vi.spyOn(projections, "getThreadRecords").mockImplementation((...args) =>
+      Effect.gen(function* () {
+        if ((yield* Ref.updateAndGet(noOpArrived, (count) => count + 1)) === 2) {
+          yield* Deferred.succeed(bothNoOpsArrived, undefined);
+        }
+        yield* Deferred.await(bothNoOpsArrived);
+        return yield* getThreadRecords(...args);
+      }),
+    );
+    const closeShare = (threadId: ThreadId) =>
+      orchestrator.dispatch({
+        type: "thread.guest-share.close",
+        commandId: CommandId.make("command:shared-noop"),
+        threadId,
+      });
+    const noOpExits = yield* Effect.forEach(
+      threadIds,
+      (threadId) => Effect.exit(closeShare(threadId)),
+      {
+        concurrency: "unbounded",
+      },
+    );
+    const noOpWinner = noOpExits.findIndex(Exit.isSuccess);
+    const noOpLoser = noOpExits.findIndex(Exit.isFailure);
+    assert.isAtLeast(noOpWinner, 0);
+    assert.isAtLeast(noOpLoser, 0);
+    const noOpFailure = noOpExits[noOpLoser]!;
+    if (Exit.isFailure(noOpFailure)) {
+      const error = Cause.findErrorOption(noOpFailure.cause);
+      assert.isTrue(error._tag === "Some");
+      if (error._tag === "Some") {
+        assert.equal(error.value._tag, "OrchestratorCommandIdConflictError");
+      }
+    }
+    const noOpReplay = yield* closeShare(threadIds[noOpWinner]!);
+    const noOpSuccess = noOpExits[noOpWinner]!;
+    if (Exit.isSuccess(noOpSuccess)) {
+      assert.equal(noOpReplay.sequence, noOpSuccess.value.sequence);
+      assert.deepEqual(noOpReplay.storedEvents, []);
+    }
 
     // The winner's own thread still replays its receipt.
     const replay = yield* setModel(threadIds[winner]!);
