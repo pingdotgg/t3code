@@ -4,16 +4,26 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { expect } from "vite-plus/test";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Option from "effect/Option";
 import { assert, describe, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 
-import { defaultConcurrency, gitLines, runSteps, type Step } from "./check-changed.ts";
+import {
+  comparisonBase,
+  defaultConcurrency,
+  docReaderTests,
+  gitLines,
+  runSteps,
+  type Step,
+} from "./check-changed.ts";
+import { decide, readWorkspace } from "../.github/scripts/ci-changes.cjs";
 
 const GiB = 1024 ** 3;
 
@@ -24,6 +34,17 @@ describe("check:changed", () => {
     assert.strictEqual(defaultConcurrency(4, 15 * GiB), 2);
     assert.strictEqual(defaultConcurrency(4, 2 * GiB), 1);
     assert.strictEqual(defaultConcurrency(1, 64 * GiB), 1);
+  });
+
+  it("runs the server tests for the one guide they read and leaves other docs inert", () => {
+    const packages = readWorkspace();
+    assert.isTrue(
+      decide(["docs/user/t3-connect-troubleshooting.md"], packages, false).outputs.test_server,
+    );
+    assert.deepStrictEqual(docReaderTests(["docs/user/t3-connect-troubleshooting.md"]), [
+      "apps/server/src/cloud/ConnectReachability.test.ts",
+    ]);
+    assert.deepStrictEqual(decide(["docs/user/install.md"], packages, false).affected, []);
   });
 
   it.effect(
@@ -159,7 +180,93 @@ describe("check:changed", () => {
   });
 });
 
-function fixture() {
+// Hooks export GIT_DIR and GIT_INDEX_FILE, and user config or the default
+// ~/.config/git/ignore can ignore or sign fixture files.
+const fixtureConfig = {
+  "core.excludesFile": NodeOS.devNull,
+  "user.name": "Fixture",
+  "user.email": "fixture@example.invalid",
+};
+const env = {
+  ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))),
+  GIT_CONFIG_GLOBAL: NodeOS.devNull,
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_CONFIG_COUNT: String(Object.keys(fixtureConfig).length),
+  ...Object.fromEntries(
+    Object.entries(fixtureConfig).flatMap(([key, value], index) => [
+      [`GIT_CONFIG_KEY_${index}`, key],
+      [`GIT_CONFIG_VALUE_${index}`, value],
+    ]),
+  ),
+};
+
+// History A -> B -> C, with HEAD at C. Each remote's main points at A or B.
+function fixture(remotes: Record<string, "A" | "B">) {
+  const root = NodeFS.realpathSync(
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-check-changed-")),
+  );
+  const commits: Record<string, string> = {};
+  try {
+    const write = (file: string, content: string) => {
+      const path = NodePath.join(root, file);
+      NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
+      NodeFS.writeFileSync(path, content);
+    };
+    const git = (...args: Array<string>) =>
+      NodeChildProcess.execFileSync("git", args, { cwd: root, encoding: "utf8", env }).trim();
+    git("init");
+    for (const name of ["A", "B", "C"]) {
+      write(`${name}.txt`, name);
+      git("add", ".");
+      git("commit", "-m", name);
+      commits[name] = git("rev-parse", "HEAD");
+    }
+    for (const [remote, commit] of Object.entries(remotes)) {
+      git("remote", "add", remote, NodePath.join(root, "missing"));
+      git("update-ref", `refs/remotes/${remote}/main`, commits[commit]!);
+    }
+  } catch (error) {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
+  return {
+    commits,
+    root,
+    [Symbol.dispose]() {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+const compare = (root: string, ref: Option.Option<string>) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    return yield* comparisonBase(root, ref).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => spawner.spawn(ChildProcess.setEnv(command, env))),
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.runPromise);
+
+it.each(["upstream", "team/upstream"])(
+  "compares against %s/main when the fork's origin/main lags it",
+  async (remote) => {
+    using project = fixture({ origin: "A", [remote]: "B" });
+    const result = await compare(project.root, Option.none());
+    assert.strictEqual(result.base, project.commits.B);
+    assert.strictEqual(result.ref, remote + "/main");
+  },
+);
+
+it("compares against an explicit ref instead of the closest remote main", async () => {
+  using project = fixture({ origin: "A", upstream: "B" });
+  const result = await compare(project.root, Option.some("origin/main"));
+  assert.strictEqual(result.base, project.commits.A);
+  assert.strictEqual(result.ref, "origin/main");
+});
+
+function launcherFixture() {
   const root = NodeFS.realpathSync(
     NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3 checks & (fixture) ")),
   );
@@ -218,7 +325,7 @@ function fixture() {
     );
   }
   const git = (...args: Array<string>) =>
-    NodeChildProcess.execFileSync("git", args, { cwd: root, stdio: "pipe" });
+    NodeChildProcess.execFileSync("git", args, { cwd: root, stdio: "pipe", env });
   git("init");
   git("add", ".");
   git(
@@ -244,7 +351,7 @@ function fixture() {
       return NodeChildProcess.spawnSync(process.execPath, ["scripts/check-changed.ts", "HEAD"], {
         cwd: root,
         encoding: "utf8",
-        env: { ...process.env, TEMP: NodeOS.tmpdir(), RECORDS: records, FAIL_STEP: failStep },
+        env: { ...env, TEMP: NodeOS.tmpdir(), RECORDS: records, FAIL_STEP: failStep },
       });
     },
     calls: (): Array<{ args: Array<string>; cwd: string }> =>
@@ -258,7 +365,7 @@ function fixture() {
 }
 
 it("checks changed source paths through the Windows launcher", () => {
-  using project = fixture();
+  using project = launcherFixture();
   project.write(project.source, "export const value = 2;\n");
   const result = project.run();
   expect(result.status, result.stdout + result.stderr).toBe(0);
@@ -275,7 +382,7 @@ it("checks changed source paths through the Windows launcher", () => {
 });
 
 it.each(["install", "lint"])("reports a failing %s step with its output", (step) => {
-  using project = fixture();
+  using project = launcherFixture();
   project.write(project.source, "export const value = 2;\n");
   project.write(
     "packages/example/package.json",
