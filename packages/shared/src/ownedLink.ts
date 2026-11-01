@@ -38,36 +38,42 @@ export const replaceOwnedLink = Effect.fn("ownedLink.replace")(function* <E, R>(
   );
   yield* fs.writeFileString(aside, "", { flag: "wx" });
   const discard = fs.remove(aside);
-  yield* fs.rename(input.link, aside).pipe(Effect.tapError(() => discard.pipe(Effect.ignore)));
-  // Exclusive, so it never overwrites anything written at `link` meanwhile. The link text is
-  // copied as bytes; a string would mangle a target that is not UTF-8.
-  const putBack = Effect.tryPromise({
-    try: () => NodeFSP.readlink(aside, { encoding: "buffer" }),
-    catch: () => new OwnedLinkError({ path: aside }),
-  }).pipe(
-    Effect.option,
-    Effect.flatMap((text) =>
-      Option.isSome(text)
-        ? Effect.tryPromise({
-            try: () => NodeFSP.symlink(text.value, input.link),
-            catch: () => new OwnedLinkError({ path: aside }),
-          })
-        : fs
-            .link(aside, input.link)
-            .pipe(Effect.mapError(() => new OwnedLinkError({ path: aside }))),
-    ),
+  // Not interrupted between moving the entry aside and putting a link back, so a cancelled
+  // install never leaves the name empty.
+  return yield* Effect.uninterruptible(
+    Effect.gen(function* () {
+      yield* fs.rename(input.link, aside).pipe(Effect.tapError(() => discard.pipe(Effect.ignore)));
+      // Exclusive, so it never overwrites anything written at `link` meanwhile. The link text is
+      // copied as bytes; a string would mangle a target that is not UTF-8.
+      const putBack = Effect.tryPromise({
+        try: () => NodeFSP.readlink(aside, { encoding: "buffer" }),
+        catch: () => new OwnedLinkError({ path: aside }),
+      }).pipe(
+        Effect.option,
+        Effect.flatMap((text) =>
+          Option.isSome(text)
+            ? Effect.tryPromise({
+                try: () => NodeFSP.symlink(text.value, input.link),
+                catch: () => new OwnedLinkError({ path: aside }),
+              })
+            : fs
+                .link(aside, input.link)
+                .pipe(Effect.mapError(() => new OwnedLinkError({ path: aside }))),
+        ),
+      );
+      if (!(yield* input.owns(aside))) {
+        yield* putBack.pipe(Effect.andThen(discard));
+        return false;
+      }
+      if (input.target !== undefined) {
+        // On failure the old link goes back while the name is free, so the command keeps working;
+        // if it cannot, it stays beside `link`.
+        yield* fs
+          .symlink(input.target, input.link)
+          .pipe(Effect.tapError(() => putBack.pipe(Effect.andThen(discard.pipe(Effect.ignore)))));
+      }
+      yield* discard.pipe(Effect.ignore);
+      return true;
+    }),
   );
-  if (!(yield* input.owns(aside))) {
-    yield* putBack.pipe(Effect.andThen(discard));
-    return false;
-  }
-  if (input.target !== undefined) {
-    // On failure the old link goes back while the name is free, so the command keeps working;
-    // if it cannot, it stays beside `link`.
-    yield* fs
-      .symlink(input.target, input.link)
-      .pipe(Effect.tapError(() => putBack.pipe(Effect.andThen(discard.pipe(Effect.ignore)))));
-  }
-  yield* discard.pipe(Effect.ignore);
-  return true;
 });

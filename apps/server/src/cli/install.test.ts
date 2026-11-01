@@ -66,6 +66,20 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       assert.isFalse(installed.onPath);
       assert.include(installed.pathCommand, "$HOME/bin");
 
+      // The links name the T3 home as it is set, not the executable's real path, so released t3
+      // still owns them through a symlinked home.
+      const configured = path.join(root, "configured");
+      yield* fs.symlink(path.join(root, ".t3"), configured);
+      yield* fs.remove(link);
+      yield* provide(installCli(), { T3CODE_HOME: configured });
+      assert.equal(yield* fs.readLink(link), path.join(configured, "runtime/versions/current/t3"));
+      assert.equal(
+        yield* fs.readLink(commandLink),
+        path.join(configured, "runtime/versions", VERSION, "t3"),
+      );
+      yield* provide(installCli());
+      assert.equal(yield* fs.readLink(commandLink), executable);
+
       // A link written through a symlinked T3 home is still ours.
       const alias = path.join(root, "alias");
       yield* fs.symlink(path.join(root, ".t3"), alias);

@@ -200,6 +200,8 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
       );
       for (const target of [
         NodePath.join(home, "runtime/versions/latest/t3"),
+        `${home}/runtime/versions/latest/./t3`,
+        `${home}/runtime/versions/latest//t3`,
         `${NodePath.join(home, "runtime/versions/1.0.0/t3")}\n`,
       ]) {
         await NodeFSP.rm(link, { force: true });
@@ -272,6 +274,28 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         cwd: root,
       });
       expect(relativeHome.code, relativeHome.output).toBe(0);
+      // Resolved against the real working folder, as t3 itself resolves a relative T3 home.
+      await NodeFSP.mkdir(NodePath.join(root, "a/b"), { recursive: true });
+      await NodeFSP.symlink(NodePath.join(root, "a/b"), NodePath.join(root, "cwd"));
+      const physicalHome = NodePath.join(root, "a/home");
+      await NodeFSP.mkdir(NodePath.join(physicalHome, "runtime/versions/1.2.3"), {
+        recursive: true,
+      });
+      await NodeFSP.writeFile(
+        NodePath.join(physicalHome, "runtime/versions/1.2.3/.install-complete"),
+        "1.2.3\n",
+      );
+      const fromLink = await installOver({
+        script: "install.sh",
+        home: "../home",
+        binDir: NodePath.join(root, "bin-cwd"),
+        env: { PWD: NodePath.join(root, "cwd") },
+        cwd: NodePath.join(root, "cwd"),
+      });
+      expect(fromLink.code, fromLink.output).toBe(0);
+      expect(await NodeFSP.readlink(NodePath.join(root, "bin-cwd/t3"))).toBe(
+        NodePath.join(physicalHome, "runtime/versions/current/t3"),
+      );
       expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/versions/current/t3"));
 
       await NodeFSP.rm(link);

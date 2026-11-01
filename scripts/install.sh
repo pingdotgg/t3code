@@ -191,10 +191,10 @@ case "$version" in
     ;;
 esac
 
-# Spelled as Node's path.resolve gives it, which is the T3 home every t3 compares links against:
-# absolute, without `.`, `..`, or `//`, but keeping a symlinked home's own name.
-t3_home="$(
-  case "$t3_home" in /*) rest="$t3_home" ;; *) rest="$PWD/$t3_home" ;; esac
+# A path as Node's path.resolve spells it: absolute against the real working folder, with `.`,
+# `..`, and `//` collapsed as text, keeping the names of symlinked folders.
+resolve_path() (
+  case "$1" in /*) rest="$1" ;; *) rest="$(pwd -P)/$1" ;; esac
   out=
   IFS=/
   set -f
@@ -202,7 +202,9 @@ t3_home="$(
     case "$part" in "" | .) ;; ..) out="${out%/*}" ;; *) out="$out/$part" ;; esac
   done
   printf '%s' "${out:-/}"
-)"
+)
+# Spelled as every t3 spells its T3 home, so released t3 still owns the links made from it.
+t3_home="$(resolve_path "$t3_home")"
 stem="t3-${version}-${platform}-${arch}"
 archive="${stem}.tar.gz"
 versions_dir="${t3_home}/runtime/versions"
@@ -287,10 +289,11 @@ link_kind() {
   existing="${existing%x}"
   existing="${existing%"$newline"}"
   # `..` can mean another folder once a link is followed, and a target naming a folder (`t3/`,
-  # `t3/.`) never runs the file it would resolve to. Other spellings resolve on disk below.
+  # `t3/.`) never runs the file it would resolve to. `//` and `/./` collapse as text.
   case "/${existing}/" in */../*) return 0 ;; esac
-  case "$existing" in */ | */. | .) return 0 ;; esac
+  case "$existing" in */ | */. | . | *"$newline"*) return 0 ;; esac
   case "$existing" in /*) ;; *) existing="${bin_dir}/${existing}" ;; esac
+  existing="$(resolve_path "$existing")"
   # A folder that is itself a link (another versions/<name>) is not followed.
   folder="$(dirname -- "$existing")"
   [ ! -L "$folder" ] || return 0
@@ -338,6 +341,9 @@ case "$kind" in
     # name t3, so it goes back with `ln -P ... "${bin_dir}/"`, which never overwrites anything.
     aside_dir="$(mktemp -d "${bin_dir}/.t3.XXXXXX")" || fail "could not replace ${public}"
     aside="${aside_dir}/t3"
+    # Not stopped between moving the old link aside and putting a link back, so a cancelled
+    # install never leaves the name empty.
+    trap '' INT TERM HUP
     mv "$public" "$aside" || { rmdir "$aside_dir"; fail "could not replace ${public}"; }
     if [ -n "$(link_kind "$aside")" ]; then
       if ! ln -s "$command_link" "${bin_dir}/"; then
@@ -348,6 +354,7 @@ case "$kind" in
         fail "could not link ${public}"
       fi
       rm -f "$aside" && rmdir "$aside_dir"
+      trap - INT TERM HUP
     else
       # Another program wrote it after the check: put it back without overwriting anything newer.
       # A folder cannot be hard linked; it stays where it is, and the message says where.

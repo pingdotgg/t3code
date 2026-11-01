@@ -20,6 +20,7 @@ import {
   pinnedRuntimeCommandLink,
   pinnedRuntimeVersionsDir,
 } from "../cloud/pinnedRuntime.ts";
+import { resolveBaseDir } from "../os-jank.ts";
 import { detectCliRunner, resolveCliCommand, resolveEntryPath } from "./invocation.ts";
 
 export class CliInstallError extends Schema.TaggedError<CliInstallError>()("CliInstallError", {
@@ -62,7 +63,8 @@ const classifyCommandLink = Effect.fn("cli.install.classify_command_link")(funct
     );
   const commandLink = pinnedRuntimeCommandLink(path, baseDir);
   const realCommandLink = yield* real(commandLink);
-  // The command link itself, whatever its folder is called (an alias or a bind mount).
+  // The command link itself, through any alias of its folder. A bind mount shows the same folder
+  // under another real path, where it may be a shared bin folder, so it is refused.
   const folderId = (file: string) =>
     fs.stat(path.dirname(file)).pipe(
       Effect.map((info) => Option.map(info.ino, (ino) => `${info.dev}:${ino}`)),
@@ -74,7 +76,7 @@ const classifyCommandLink = Effect.fn("cli.install.classify_command_link")(funct
     Option.isSome(linkFolder) &&
     Option.getOrUndefined(yield* folderId(commandLink)) === linkFolder.value
   ) {
-    return "current";
+    return (yield* real(link)) === realCommandLink ? "current" : "foreign";
   }
   // Only the direct target: a chain through another tool's link is that tool's.
   const targets = yield* directLinkTargets(link);
@@ -226,7 +228,17 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
       .pipe(Effect.mapError(failed(`Could not create ${binDir}.`)));
     // The command link is replaced in place, which is safe only away from the public name. Same
     // device and inode, so an alias or a bind mount of its folder counts too.
-    const commandFolder = path.dirname(pinnedRuntimeCommandLink(path, path.dirname(runtimeDir)));
+    // Spelled as the T3 home this t3 is set up with, which every t3 compares links against; the
+    // executable's own path names a symlinked home by its real path.
+    const configured = yield* resolveBaseDir(environment.T3CODE_HOME);
+    const realHome = (directory: string) =>
+      fs.realPath(directory).pipe(Effect.orElseSucceed(() => directory));
+    const baseDir =
+      (yield* realHome(configured)) === (yield* realHome(path.dirname(runtimeDir)))
+        ? configured
+        : path.dirname(runtimeDir);
+    const spelled = path.join(baseDir, path.relative(path.dirname(runtimeDir), executable));
+    const commandFolder = path.dirname(pinnedRuntimeCommandLink(path, baseDir));
     const folderId = (directory: string) =>
       fs.stat(directory).pipe(
         Effect.map((info) => Option.map(info.ino, (ino) => `${info.dev}:${ino}`)),
@@ -242,7 +254,7 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
         reason: `T3CODE_INSTALL_BIN_DIR cannot be ${commandFolder}. Choose another folder.`,
       });
     }
-    const linked = yield* linkCommand({ link, baseDir: path.dirname(runtimeDir), executable }).pipe(
+    const linked = yield* linkCommand({ link, baseDir, executable: spelled }).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
           Effect.fail(new CliInstallError({ reason: `Could not link ${link}.`, cause })),

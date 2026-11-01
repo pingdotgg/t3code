@@ -342,10 +342,19 @@ export const make = Effect.gen(function* () {
         link === replaced
           ? replaceOurLink({ link, target: launcher })
           : fs.symlink(launcher, link).pipe(Effect.as(true))
-      ).pipe(Effect.orElseSucceed(() => false));
+      ).pipe(
+        // A moved-aside entry that could not go back is reported, not left for another folder.
+        Effect.catchTags({ OwnedLinkError: (error) => Effect.fail(fail(error.message)) }),
+        Effect.catchTags({ PlatformError: () => Effect.succeed(false) }),
+      );
       if (!linked) continue;
       if (replaced !== undefined && replaced !== link) {
-        yield* replaceOurLink({ link: replaced }).pipe(Effect.ignore);
+        yield* replaceOurLink({ link: replaced }).pipe(
+          Effect.catchTags({
+            OwnedLinkError: (error) => Effect.fail(fail(error.message)),
+            PlatformError: () => Effect.void,
+          }),
+        );
       }
       return yield* state;
     }
