@@ -1854,6 +1854,31 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("status still reports work to ship for a commit added after a squash merge", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const branch = "feature/squash-follow-up";
+      const headSha = yield* squashMergeIntoRemoteMain(repoDir, branch);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "follow-up.txt"), "after merge\n");
+      yield* runGit(repoDir, ["add", "follow-up.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Follow-up work"]);
+      yield* runGit(repoDir, ["fetch", "--prune", "origin"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: { prListSequence: [[squashMergedPr(branch, headSha)]] },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr?.state).toBe("merged");
+      expect(status.aheadCount).toBe(1);
+      expect(status.aheadOfDefaultCount).toBe(2);
+    }),
+  );
+
   it.each([
     [
       "https://github.example.com/team/repository/pull/42?tab=files",

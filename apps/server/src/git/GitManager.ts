@@ -1317,12 +1317,12 @@ export const make = Effect.gen(function* () {
     }
     return yield* getPrLookup(cacheKey).pipe(
       Effect.map(({ latest, headContext }) => {
-        if (!latest) return { pr: null, headContext };
+        if (!latest) return { pr: null, headSha: null, headContext };
         // Merged/closed matches are usually reverse-merge history, not the thread's PR context.
         if (details.isDefaultBranch && latest.state !== "open") {
-          return { pr: null, headContext };
+          return { pr: null, headSha: null, headContext };
         }
-        return { pr: toStatusPr(latest), headContext };
+        return { pr: toStatusPr(latest), headSha: latest.headSha ?? null, headContext };
       }),
       Effect.tap(({ pr, headContext }) =>
         Effect.sync(() =>
@@ -1335,7 +1335,7 @@ export const make = Effect.gen(function* () {
           }),
         ),
       ),
-      Effect.map(({ pr }) => pr),
+      Effect.map(({ pr, headSha }) => ({ pr, headSha })),
       Effect.catch((error) => {
         const fallback = lastKnownPrByBranchKey.get(branchKey)?.pr
           ? resolveLookupHeadContext(cwd, details).pipe(
@@ -1367,6 +1367,7 @@ export const make = Effect.gen(function* () {
               : {}),
           }),
           Effect.andThen(fallback),
+          Effect.map((pr) => ({ pr, headSha: null })),
         );
       }),
     );
@@ -1382,7 +1383,7 @@ export const make = Effect.gen(function* () {
       return null;
     }
 
-    const pr =
+    const { pr, headSha } =
       details.branch !== null
         ? yield* lookupStatusPr(
             cwd,
@@ -1394,13 +1395,21 @@ export const make = Effect.gen(function* () {
             },
             options?.refreshMissingPullRequest,
           )
-        : null;
+        : { pr: null, headSha: null };
+    // Squash and rebase merges land new commits, so HEAD never becomes reachable from the base.
+    const shippedByMergedPr =
+      pr?.state === "merged" &&
+      headSha !== null &&
+      (yield* gitCore.resolveCommit({ cwd, revision: "HEAD" }).pipe(
+        Effect.map(({ commitSha }) => commitSha === headSha),
+        Effect.orElseSucceed(() => false),
+      ));
 
     return {
       hasUpstream: details.hasUpstream,
-      aheadCount: details.aheadCount,
+      aheadCount: shippedByMergedPr ? 0 : details.aheadCount,
       behindCount: details.behindCount,
-      aheadOfDefaultCount: details.aheadOfDefaultCount,
+      aheadOfDefaultCount: shippedByMergedPr ? 0 : details.aheadOfDefaultCount,
       pr,
     } satisfies VcsStatusRemoteResult;
   });
