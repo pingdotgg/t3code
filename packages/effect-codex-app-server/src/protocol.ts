@@ -2,6 +2,7 @@ import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FiberMap from "effect/FiberMap";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -18,6 +19,7 @@ const isCodexAppServerError = Schema.is(CodexError.CodexAppServerError);
 const MAX_BUFFERED_RAW_MESSAGES = 32;
 // Bound JSONL lines before joining and parsing; the LF delimiter is excluded.
 const MAX_INCOMING_MESSAGE_BYTES = 128 * 1024 * 1024;
+const EXIT_STATUS_GRACE = "250 millis";
 
 export interface CodexAppServerProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";
@@ -175,6 +177,9 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     const terminationFailure = yield* Ref.make(Option.none<CodexError.CodexAppServerError>());
     const terminationSignal = yield* Deferred.make<void>();
     const activeRequestHandlers = yield* Ref.make(0);
+    const requestHandlers = yield* FiberMap.make<string | number>().pipe(
+      Scope.provide(requestHandlerScope),
+    );
 
     const logProtocol = (event: CodexAppServerProtocolLogEvent) => {
       if (event.direction === "incoming" && !options.logIncoming) {
@@ -342,7 +347,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
                     Effect.asVoid,
                   ),
                 ),
-                Effect.forkIn(requestHandlerScope, { startImmediately: true }),
+                FiberMap.run(requestHandlers, request.id),
                 Effect.asVoid,
               );
             }),
@@ -351,8 +356,17 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
         Effect.asVoid,
       );
 
+    // Codex settles requests itself when their turn ends; a handler still waiting would hold its slot.
+    const releaseResolvedRequest = (notification: CodexAppServerIncomingNotification) =>
+      notification.method === "serverRequest/resolved" &&
+      isObject(notification.params) &&
+      isJsonRpcId(notification.params.requestId)
+        ? FiberMap.remove(requestHandlers, notification.params.requestId)
+        : Effect.void;
+
     const handleNotification = (notification: CodexAppServerIncomingNotification) =>
-      Queue.offer(incomingNotifications, notification).pipe(
+      releaseResolvedRequest(notification).pipe(
+        Effect.andThen(Queue.offer(incomingNotifications, notification)),
         Effect.andThen(options.onNotification ? options.onNotification(notification) : Effect.void),
         Effect.asVoid,
       );
@@ -445,11 +459,20 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             Effect.matchEffect({
               onFailure: (error) => handleTermination(() => Effect.succeed(error)),
               onSuccess: () =>
-                handleTermination(
-                  () =>
-                    options.terminationError ??
-                    Effect.succeed(new CodexError.CodexAppServerInputStreamEndedError({})),
-                ),
+                handleTermination(() => {
+                  const ended = new CodexError.CodexAppServerInputStreamEndedError({});
+                  // Node ends stdout before it reports the exit of a crashed process, so
+                  // wait briefly for the exit status. stdout can also close while the
+                  // process keeps running, so the wait must not hang pending requests.
+                  return options.terminationError === undefined
+                    ? Effect.succeed(ended)
+                    : options.terminationError.pipe(
+                        Effect.timeoutOrElse({
+                          duration: EXIT_STATUS_GRACE,
+                          orElse: () => Effect.succeed(ended),
+                        }),
+                      );
+                }),
             }),
           ),
       }),

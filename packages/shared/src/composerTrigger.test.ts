@@ -41,6 +41,25 @@ describe("detectComposerTrigger", () => {
       rangeEnd: text.length,
     });
   });
+
+  it.each([
+    "budget $9.99",
+    "only $.99",
+    "about €20",
+    "raise $10k",
+    "$1,000",
+    "£2e6",
+    "raise $10k.",
+  ])("does not open the skill menu for the amount in %j", (text) =>
+    expect(detectComposerTrigger(text, text.length)).toBeNull(),
+  );
+
+  it.each(["$", "$1password", "$2fa"])("still detects the skill prefix %j", (text) => {
+    expect(detectComposerTrigger(text, text.length)).toMatchObject({
+      kind: "skill",
+      query: text.slice(1),
+    });
+  });
 });
 
 describe("serializeComposerFileLink", () => {
