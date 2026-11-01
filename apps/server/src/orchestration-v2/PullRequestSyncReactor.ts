@@ -187,6 +187,12 @@ const referenceOf = ({ thread, link }: LinkEntry) => ({
   number: link.number,
 });
 
+/** Pauses and batching both belong to a project's host. */
+const pauseKeyOf = (entry: LinkEntry) => {
+  const { projectId, host } = referenceOf(entry);
+  return `${projectId}\0${host}`;
+};
+
 /** Another layer of the stack `url` belongs to, in its host's canonical shape. */
 function siblingChangeRequestUrl(url: string, number: number): string | null {
   if (!Number.isSafeInteger(number) || number < 1) return null;
@@ -573,10 +579,10 @@ export const make = Effect.gen(function* () {
           return Effect.void;
         }),
       );
-    const readIfDue = ([key, entries]: readonly [string, ReadonlyArray<LinkEntry>]) => {
+    const readIfDue = (key: string) => {
+      const entries = groups.get(key)!;
       if (!isDue(key, entries, nowMs)) return Effect.void;
-      const first = entries[0]!;
-      const pauseKey = `${first.thread.projectId}\0${normalizeThreadPullRequestKey(first.link).host}`;
+      const pauseKey = pauseKeyOf(entries[0]!);
       // Check pauses at each read so changes during the sweep apply immediately.
       return Clock.currentTimeMillis.pipe(
         Effect.flatMap((startedAtMs) =>
@@ -586,12 +592,19 @@ export const make = Effect.gen(function* () {
         ),
       );
     };
-    const batched: Array<readonly [string, ReadonlyArray<LinkEntry>]> = [];
-    const unbatched: Array<readonly [string, ReadonlyArray<LinkEntry>]> = [];
+    const batchesByHost = new Map<string, boolean>();
+    const batched: Array<string> = [];
+    const unbatched: Array<string> = [];
     for (const [key, entries] of groups) {
       if (scope === "requested" && !requested.has(key)) continue;
-      const batches = yield* pullRequests.batchesReads(referenceOf(entries[0]!));
-      (batches ? batched : unbatched).push([key, entries]);
+      const first = entries[0]!;
+      const pauseKey = pauseKeyOf(first);
+      let batches = batchesByHost.get(pauseKey);
+      if (batches === undefined) {
+        batches = yield* pullRequests.batchesReads(referenceOf(first));
+        batchesByHost.set(pauseKey, batches);
+      }
+      (batches ? batched : unbatched).push(key);
     }
     yield* Effect.all(
       [
