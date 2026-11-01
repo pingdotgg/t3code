@@ -311,6 +311,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     const winner = fresher ? next : previous;
     const creditSource = creditSources.get(key);
     const atLimitReset = atLimitSources.get(key)?.limits.atLimitReset;
+    const nativeEmpty =
+      atLimitReset &&
+      !creditSource?.limits.atLimitReset &&
+      creditSource?.limits.resetCredits?.availableCount === 0;
     accounts.set(key, {
       ...previous,
       displayName: previous.displayName ?? next.displayName,
@@ -318,15 +322,14 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
-      redeem:
-        hubRedeems.get(key)?.redeem ??
-        (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
+      redeem: nativeEmpty
+        ? null
+        : (hubRedeems.get(key)?.redeem ??
+          (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem))),
       limits: {
         ...winner.limits,
         ...(atLimitReset ? { atLimitReset } : {}),
-        ...(creditSource?.limits.resetCredits
-          ? { resetCredits: creditSource.limits.resetCredits }
-          : { resetCredits: undefined }),
+        resetCredits: nativeEmpty ? undefined : creditSource?.limits.resetCredits,
       },
     });
   };
@@ -831,7 +834,9 @@ export function collectProviderUsageLimits(
           Date.parse(credits.limits.checkedAt));
     const shownCredits = showHubCredits
       ? hubCredits.account.usageLimits.resetCredits
-      : credits?.limits.resetCredits;
+      : atLimitReset && !hubCredits && credits?.limits.resetCredits?.availableCount === 0
+        ? undefined
+        : credits?.limits.resetCredits;
     accounts.push({
       id: provider.instanceId,
       driver: provider.driver,
@@ -846,7 +851,7 @@ export function collectProviderUsageLimits(
               creditId: hubCreditId,
             },
           }
-        : showHubCredits
+        : showHubCredits || (atLimitReset && !shownCredits)
           ? {}
           : {
               resetCreditInput: { instanceId: credits?.provider.instanceId ?? provider.instanceId },
@@ -856,7 +861,7 @@ export function collectProviderUsageLimits(
       ...(provider.auth.email ? { email: provider.auth.email } : {}),
       limits: {
         ...limits,
-        ...(shownCredits ? { resetCredits: shownCredits } : {}),
+        resetCredits: shownCredits,
         ...(atLimitReset ? { atLimitReset } : {}),
       },
     });
