@@ -1597,9 +1597,13 @@ export const THEME_PREVIEW_ID = "__preview";
 
 /** `error` doubles as destructive text, so it must read on the surfaces that text sits on. */
 export function withReadableThemeText(colors: ThemeColors): ThemeColors {
+  const surfaces = [colors.canvas, colors.surface];
+  const readable = themeAccentWithContrast(colors.error, surfaces);
+  const minimumContrast = (color: string) =>
+    Math.min(...surfaces.map((surface) => themeColorContrastRatio(color, surface)));
   return {
     ...colors,
-    error: themeAccentWithContrast(colors.error, [colors.canvas, colors.surface]),
+    error: minimumContrast(readable) >= minimumContrast(colors.error) ? readable : colors.error,
   };
 }
 
