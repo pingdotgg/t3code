@@ -1618,43 +1618,46 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 
-    it.effect.each([{ change: "require-grant turned on" }, { change: "the host tagged" }])(
-      "an owner-rule sign-in refuses when $change after its scan",
-      ({ change }) => {
-        const tailnet = withLaptop();
-        return Effect.gen(function* () {
-          // The third read is sign-in's last: after its own first and its scan's final one.
-          const last = (tailnet.freshReads ?? 0) + 3;
-          if (change === "the host tagged") {
-            tailnet.onFreshRead = (count) => {
-              if (count === last) {
-                tailnet.status = hostStatus({
-                  Peer: peers,
-                  Self: { ...hostStatus().Self, Tags: ["tag:server"] },
-                });
-              }
-            };
-            const error = yield* Effect.flip(signIn(makeDpopKey()));
-            expect(
-              isRefusal(error) ? [error.reason, error.suggestedGrant !== undefined] : error,
-            ).toEqual(["policy_unknown", true]);
-          } else {
-            const started = yield* Deferred.make<void>();
-            const release = yield* Deferred.make<void>();
-            tailnet.holdFreshRead = { at: last, started, release };
-            const phone = yield* Effect.flip(signIn(makeDpopKey())).pipe(Effect.forkChild);
-            yield* Deferred.await(started);
-            yield* requireGrantOn;
-            yield* Deferred.succeed(release, undefined);
-            // Refused as any no-grant refusal is, with the grant to add.
-            const error = yield* Fiber.join(phone);
-            expect(
-              isRefusal(error) ? [error.reason, error.suggestedGrant !== undefined] : error,
-            ).toEqual(["no_grant", true]);
-          }
-        }).pipe(Effect.provide(layerTest(tailnet)));
-      },
-    );
+    it.effect.each([
+      { change: "require-grant turned on" },
+      { change: "the host tagged" },
+      { change: "the device blocked" },
+    ])("an owner-rule sign-in refuses when $change after its scan", ({ change }) => {
+      const tailnet = withLaptop();
+      return Effect.gen(function* () {
+        // The third read is sign-in's last: after its own first and its scan's final one.
+        const last = (tailnet.freshReads ?? 0) + 3;
+        if (change === "the host tagged") {
+          tailnet.onFreshRead = (count) => {
+            if (count === last) {
+              tailnet.status = hostStatus({
+                Peer: peers,
+                Self: { ...hostStatus().Self, Tags: ["tag:server"] },
+              });
+            }
+          };
+          const error = yield* Effect.flip(signIn(makeDpopKey()));
+          expect(
+            isRefusal(error) ? [error.reason, error.suggestedGrant !== undefined] : error,
+          ).toEqual(["policy_unknown", true]);
+        } else {
+          const started = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          tailnet.holdFreshRead = { at: last, started, release };
+          const phone = yield* Effect.flip(signIn(makeDpopKey())).pipe(Effect.forkChild);
+          yield* Deferred.await(started);
+          yield* requireGrantOn;
+          const blocked = change === "the device blocked";
+          if (blocked) yield* (yield* TailnetSignIn.TailnetSignIn).blockDevice("nPhone");
+          yield* Deferred.succeed(release, undefined);
+          // Refused as any no-grant refusal is, with the grant to add; a block answers first.
+          const error = yield* Fiber.join(phone);
+          expect(
+            isRefusal(error) ? [error.reason, error.suggestedGrant !== undefined] : error,
+          ).toEqual(blocked ? ["blocked", false] : ["no_grant", true]);
+        }
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
 
     it.effect("a host tagged during a scan does not admit its former owner", () => {
       const tailnet = withLaptop();
