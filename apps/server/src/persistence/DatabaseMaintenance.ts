@@ -1,4 +1,5 @@
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -63,7 +64,7 @@ export class LegacyDatabaseRemoveError extends Schema.TaggedError<LegacyDatabase
   { path: Schema.String, cause: Schema.Defect() },
 ) {
   override get message() {
-    return "Could not delete the database from before 0.1.0. Check that this user can write to the data directory.";
+    return "Could not delete the database from before 0.1.0. Check that no other process has it open and that this user can write to the data directory.";
   }
 }
 
@@ -220,13 +221,19 @@ const make = Effect.gen(function* () {
     function* (databasePath: string) {
       const legacy = legacyPath(databasePath);
       if (!(yield* fs.exists(legacy))) return;
-      // Older servers may use this file; hold its lock and delete the database before WAL to preserve commits on failure.
-      yield* Effect.gen(function* () {
-        yield* lockExclusively(legacy);
+      const windows = yield* HostProcess.isWindows;
+      // Delete the database first so a failed unlink never discards its WAL.
+      const removeFiles = Effect.gen(function* () {
         for (const suffix of ["", "-wal", "-shm"]) {
           yield* fs.remove(legacy + suffix, { force: true });
         }
-      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: legacy })));
+      });
+      // Windows denies unlinking open SQLite files; POSIX can keep the lock through deletion.
+      yield* lockExclusively(legacy).pipe(
+        Effect.andThen(windows ? Effect.void : removeFiles),
+        Effect.provide(NodeSqliteClient.layer({ filename: legacy })),
+      );
+      if (windows) yield* removeFiles;
     },
     (effect, databasePath) =>
       effect.pipe(

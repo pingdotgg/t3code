@@ -1,12 +1,15 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeSqlite from "node:sqlite";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as DatabaseMaintenance from "./DatabaseMaintenance.ts";
@@ -18,6 +21,65 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))(
   "DatabaseMaintenance",
   (it) => {
+    it.effect("releases doctor's SQLite lock before Windows removes the legacy database", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-legacy-windows-" });
+        const legacy = path.join(directory, "state.sqlite");
+        const current = path.join(directory, "statev2.sqlite");
+        yield* fs.writeFileString(current, "keep current database");
+        yield* Effect.sync(() => {
+          using database = new NodeSqlite.DatabaseSync(legacy);
+          database.exec("PRAGMA journal_mode = WAL; CREATE TABLE retained_data (value TEXT)");
+          database.exec("INSERT INTO retained_data VALUES ('keep')");
+        });
+        const windowsFs = FileSystem.FileSystem.of({
+          ...fs,
+          remove: (file, options) =>
+            Effect.gen(function* () {
+              if (file === legacy) {
+                // A real second SQLite connection detects doctor's exclusive lock on any OS.
+                // Windows also refuses the unlink while that first connection remains open.
+                yield* Effect.try({
+                  try: () => {
+                    using probe = new NodeSqlite.DatabaseSync(legacy);
+                    probe.exec("PRAGMA busy_timeout = 0");
+                    assert.deepEqual(probe.prepare("SELECT value FROM retained_data").all(), [
+                      { value: "keep" },
+                    ]);
+                  },
+                  catch: (cause) =>
+                    new PlatformError.PlatformError(
+                      new PlatformError.SystemError({
+                        _tag: "Busy",
+                        module: "FileSystem",
+                        method: "remove",
+                        cause,
+                      }),
+                    ),
+                });
+              }
+              yield* fs.remove(file, options);
+            }),
+        });
+        yield* Effect.flatMap(DatabaseMaintenance.DatabaseMaintenance, (maintenance) =>
+          maintenance.removeLegacyDatabase(current),
+        ).pipe(
+          Effect.provide(
+            Layer.fresh(DatabaseMaintenance.layer).pipe(
+              Layer.provide(Layer.succeed(FileSystem.FileSystem, windowsFs)),
+            ),
+          ),
+          Effect.provideService(HostProcess.Platform, "win32"),
+        );
+        assert.isFalse(yield* fs.exists(legacy));
+        assert.isFalse(yield* fs.exists(`${legacy}-wal`));
+        assert.isFalse(yield* fs.exists(`${legacy}-shm`));
+        assert.equal(yield* fs.readFileString(current), "keep current database");
+      }).pipe(Effect.scoped),
+    );
+
     it.effect("reports an unreadable database as an inspection failure", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -33,42 +95,104 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
       }).pipe(Effect.scoped),
     );
 
-    it.effect("reports and deletes only the database from before 0.1.0", () =>
+    it.effect("preserves the legacy WAL if another Windows opener prevents deletion", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const maintenance = yield* DatabaseMaintenance.DatabaseMaintenance;
-        const userdata = yield* fs.makeTempDirectoryScoped({ prefix: "t3-legacy-" });
-        const dbPath = path.join(userdata, "statev2.sqlite");
-        const legacy = path.join(userdata, "state.sqlite");
-        yield* Effect.gen(function* () {
-          const sql = yield* SqlClient.SqlClient;
-          yield* sql`CREATE TABLE retained_data (value TEXT)`;
-        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
-        assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
-
-        const openLegacy = NodeSqliteClient.layer({ filename: legacy });
-        yield* Effect.gen(function* () {
-          const sql = yield* SqlClient.SqlClient;
-          yield* sql`PRAGMA journal_mode = WAL`;
-          yield* sql`CREATE TABLE v1_data (value TEXT)`;
-        }).pipe(Effect.provide(openLegacy));
-        assert.isAbove((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes ?? 0, 0);
-
-        const refused = yield* Effect.gen(function* () {
-          const sql = yield* SqlClient.SqlClient;
-          yield* sql`SELECT value FROM v1_data`;
-          return yield* Effect.flip(maintenance.removeLegacyDatabase(dbPath));
-        }).pipe(Effect.provide(openLegacy));
-        assert.equal(refused._tag, "DatabaseInUseError");
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-legacy-race-" });
+        const legacy = path.join(directory, "state.sqlite");
+        const current = path.join(directory, "statev2.sqlite");
+        yield* Effect.sync(() => {
+          using database = new NodeSqlite.DatabaseSync(legacy);
+          database.exec("PRAGMA journal_mode = WAL; CREATE TABLE retained_data (value TEXT)");
+        });
+        let competingDatabase: NodeSqlite.DatabaseSync | undefined;
+        yield* Effect.addFinalizer(() => Effect.sync(() => competingDatabase?.close()));
+        const busy = new PlatformError.PlatformError(
+          new PlatformError.SystemError({ _tag: "Busy", module: "FileSystem", method: "remove" }),
+        );
+        const windowsFs = FileSystem.FileSystem.of({
+          ...fs,
+          remove: (file, options) =>
+            file === legacy
+              ? Effect.gen(function* () {
+                  yield* Effect.sync(() => {
+                    competingDatabase = new NodeSqlite.DatabaseSync(legacy);
+                    competingDatabase.exec("PRAGMA busy_timeout = 0");
+                    competingDatabase.exec("INSERT INTO retained_data VALUES ('committed in WAL')");
+                  });
+                  return yield* busy;
+                })
+              : fs.remove(file, options),
+        });
+        const failure = yield* Effect.flatMap(
+          DatabaseMaintenance.DatabaseMaintenance,
+          (maintenance) => maintenance.removeLegacyDatabase(current),
+        ).pipe(
+          Effect.provide(
+            Layer.fresh(DatabaseMaintenance.layer).pipe(
+              Layer.provide(Layer.succeed(FileSystem.FileSystem, windowsFs)),
+            ),
+          ),
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.flip,
+        );
+        assert.equal(failure._tag, "LegacyDatabaseRemoveError");
         assert.isTrue(yield* fs.exists(legacy));
-
-        yield* maintenance.removeLegacyDatabase(dbPath);
-        assert.isFalse(yield* fs.exists(legacy));
-        assert.isFalse(yield* fs.exists(`${legacy}-wal`));
-        assert.isTrue(yield* fs.exists(dbPath));
-        assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
+        assert.isAbove(Number((yield* fs.stat(`${legacy}-wal`)).size), 0);
+        assert.isTrue(yield* fs.exists(`${legacy}-shm`));
+        assert.deepEqual(competingDatabase?.prepare("SELECT value FROM retained_data").all(), [
+          { value: "committed in WAL" },
+        ]);
       }).pipe(Effect.scoped),
+    );
+
+    it.effect.each([{ platform: "host" }, { platform: "win32" }] as const)(
+      "reports and deletes only the legacy database on $platform",
+      ({ platform }) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const maintenance = yield* DatabaseMaintenance.DatabaseMaintenance;
+          const userdata = yield* fs.makeTempDirectoryScoped({ prefix: "t3-legacy-" });
+          const dbPath = path.join(userdata, "statev2.sqlite");
+          const legacy = path.join(userdata, "state.sqlite");
+          yield* Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            yield* sql`CREATE TABLE retained_data (value TEXT)`;
+          }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+          assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
+
+          const openLegacy = NodeSqliteClient.layer({ filename: legacy });
+          yield* Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            yield* sql`PRAGMA journal_mode = WAL`;
+            yield* sql`CREATE TABLE v1_data (value TEXT)`;
+          }).pipe(Effect.provide(openLegacy));
+          assert.isAbove((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes ?? 0, 0);
+
+          // A version before 0.1.0 still running against it keeps it.
+          const refused = yield* Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            yield* sql`SELECT value FROM v1_data`;
+            return yield* Effect.flip(maintenance.removeLegacyDatabase(dbPath));
+          }).pipe(Effect.provide(openLegacy));
+          assert.equal(refused._tag, "DatabaseInUseError");
+          assert.isTrue(yield* fs.exists(legacy));
+
+          yield* maintenance.removeLegacyDatabase(dbPath);
+          assert.isFalse(yield* fs.exists(legacy));
+          assert.isFalse(yield* fs.exists(`${legacy}-wal`));
+          assert.isFalse(yield* fs.exists(`${legacy}-shm`));
+          assert.isTrue(yield* fs.exists(dbPath));
+          assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
+        }).pipe(
+          (effect) =>
+            platform === "host"
+              ? effect
+              : Effect.provideService(effect, HostProcess.Platform, platform),
+          Effect.scoped,
+        ),
     );
 
     it.effect("compacts an existing database offline only once its server has stopped", () =>
