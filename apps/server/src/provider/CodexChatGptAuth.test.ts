@@ -10,11 +10,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
+import * as TestClock from "effect/testing/TestClock";
 import { subscribeChatGptHandoff } from "./CodexChatGptHandoff.ts";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
@@ -67,6 +69,7 @@ const makeHarnessFor = Effect.fnUntraced(function* (
   let codeError: string | undefined;
   const revocations: URLSearchParams[] = [];
   let transient = false;
+  let transientStatus: number | "connection-reset" = 503;
   let invalidNonce = false;
   let identityFailure: "issuer" | "audience" | "signature" | undefined;
   let mismatchedState = false;
@@ -126,7 +129,11 @@ const makeHarnessFor = Effect.fnUntraced(function* (
               if (body.get("grant_type") === "refresh_token") {
                 refreshes++;
                 if (transient) {
-                  response.statusCode = 503;
+                  if (transientStatus === "connection-reset") {
+                    request.socket.destroy();
+                    return;
+                  }
+                  response.statusCode = transientStatus;
                   response.end(JSON.stringify({ error: "temporarily_unavailable" }));
                   return;
                 }
@@ -272,13 +279,20 @@ const makeHarnessFor = Effect.fnUntraced(function* (
         callbackResponses.push({ body: await response.text(), headers: response.headers });
       });
     });
-  const seedExpired = Effect.gen(function* () {
+  const seedExpiry = Effect.fn("CodexChatGptAuth.test.seedExpiry")(function* (remainingMs: number) {
     const stored = yield* auth.read;
     const record = Option.getOrThrow(stored);
     const store = yield* ProviderCredentialStore.make("codex-chatgpt", instanceId).pipe(
       Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
     );
-    yield* store.set(new TextEncoder().encode(JSON.stringify({ ...record, expiresAt: 0 })));
+    yield* store.set(
+      new TextEncoder().encode(
+        JSON.stringify({
+          ...record,
+          expiresAt: (yield* Clock.currentTimeMillis) + remainingMs,
+        }),
+      ),
+    );
   });
   return {
     auth,
@@ -348,7 +362,8 @@ const makeHarnessFor = Effect.fnUntraced(function* (
     changeAccount: signInWithMethod("chatgpt-change-account"),
     reconnectProfile: (clientId: string) => signInWithMethod(`chatgpt-profile:${clientId}`),
     phase,
-    seedExpired,
+    seedExpired: seedExpiry(0),
+    seedExpiring: seedExpiry(30_000),
     exchanges,
     authorizationRequests,
     callbackResponses,
@@ -375,8 +390,9 @@ const makeHarnessFor = Effect.fnUntraced(function* (
     setRevoked: () => {
       revoked = true;
     },
-    setTransient: (value: boolean) => {
+    setTransient: (value: boolean, status: number | "connection-reset" = 503) => {
       transient = value;
+      transientStatus = status;
     },
     setInvalidNonce: () => {
       invalidNonce = true;
@@ -706,7 +722,7 @@ it.effect(
         yield* h.phase("succeeded");
         assert.strictEqual(Option.getOrThrow(yield* h.auth.read).subject, "user-test");
         assert.strictEqual(h.exchanges[0]?.get("client_id"), "oaiapp_test");
-        yield* h.seedExpired;
+        yield* h.seedExpiring;
         const records = yield* Effect.all([h.auth.access, h.auth.access], {
           concurrency: "unbounded",
         });
@@ -714,6 +730,9 @@ it.effect(
         assert.strictEqual(records[0].accessToken, "access-1");
         assert.strictEqual(records[1].refreshToken, "refresh-1");
         assert.isNull(h.exchanges[1]?.get("scope"));
+        yield* h.seedExpired;
+        assert.strictEqual((yield* h.auth.access).refreshToken, "refresh-2");
+        assert.strictEqual(h.exchanges[2]?.get("refresh_token"), "refresh-1");
         yield* h.auth.controller.logout(Effect.void);
         assert.isTrue(Option.isNone(yield* h.auth.read));
       }),
@@ -760,17 +779,17 @@ it.effect("clears revoked refresh credentials and does not replay them", () =>
   ),
 );
 
-it.effect(
-  "preserves credentials through temporary renewal failure and retries the latest refresh",
-  () =>
+it.effect.each([429, 500, 502, 503, 504, "connection-reset"] as const)(
+  "preserves credentials through temporary renewal failure and retries the latest refresh: %s",
+  (status) =>
     provision(
       Effect.gen(function* () {
         const h = yield* makeHarness;
         yield* h.signIn;
         yield* h.phase("succeeded");
         yield* h.seedExpired;
-        h.setTransient(true);
-        yield* h.auth.access.pipe(Effect.result);
+        h.setTransient(true, status);
+        assert.equal((yield* h.auth.access.pipe(Effect.result))._tag, "Failure");
         assert.strictEqual(Option.getOrThrow(yield* h.auth.read).refreshToken, "initial-refresh");
         h.setTransient(false);
         const renewed = yield* h.auth.access;
@@ -1766,6 +1785,24 @@ const provideBroker = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       ),
     ),
   );
+
+it.effect("an OAuth timeout retains the saved refresh token for a later successful renewal", () =>
+  provideBroker(
+    Effect.gen(function* () {
+      const h = yield* makeRenewalBroker;
+      h.pause();
+      const renewal = yield* h.auth.access.pipe(Effect.flip, Effect.forkChild);
+      yield* Deferred.await(h.oauthEntered);
+      yield* TestClock.adjust("20 seconds");
+      assert.equal((yield* Fiber.join(renewal)).operation, "refresh");
+      assert.equal(Option.getOrThrow(yield* h.auth.read).refreshToken, "single-use-refresh");
+      yield* Deferred.succeed(h.oauthRelease, undefined);
+      assert.equal((yield* h.auth.access).accessToken, "renewed-access");
+      assert.equal(Option.getOrThrow(yield* h.auth.read).refreshToken, "rotated-refresh");
+      assert.deepEqual(h.refreshTokens, ["single-use-refresh", "single-use-refresh"]);
+    }),
+  ),
+);
 
 // regression: #16132 a renewal must outlive the Codex helper that asked for it, because the
 // refresh token it spends is single-use.

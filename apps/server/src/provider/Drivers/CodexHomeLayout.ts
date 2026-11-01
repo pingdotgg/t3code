@@ -33,6 +33,9 @@ const KNOWN_SHARED_DIRECTORIES = [
 const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "auth.lock", "models_cache.json"]);
 // Finder maintains metadata separately for each directory, including shadow homes.
 const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp", ".DS_Store"]);
+// SQLite can create WAL/SHM beside the link on Windows. Route databases through
+// CODEX_SQLITE_HOME instead; never replace existing databases or live sidecars.
+const SQLITE_ENTRY_NAME = /\.sqlite(?:-(?:shm|wal|journal))?$/u;
 // Shadow homes may create local runtime locks first; replace them with shared links because they guard shared state.
 const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set([
   "mcp-oauth-locks",
@@ -129,13 +132,102 @@ export class CodexShadowHomePrivateEntrySymlinkError extends Schema.TaggedError<
   }
 }
 
+export class CodexShadowHomeSqliteConflictError extends Schema.TaggedError<CodexShadowHomeSqliteConflictError>()(
+  "CodexShadowHomeSqliteConflictError",
+  {
+    ...CodexShadowHomeContext,
+    entryName: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Codex shadow home '${this.effectiveHomePath}' contains linked SQLite entry '${this.entryName}' that cannot safely share database journals with '${this.sharedHomePath}'. Stop all Codex processes using these directories, back up both directories including SQLite sidecars, and recover the databases into one directory before retrying. No SQLite files were changed.`;
+  }
+}
+
 export const CodexShadowHomeError = Schema.Union([
   CodexShadowHomeFileSystemError,
   CodexShadowHomePathConflictError,
   CodexShadowHomeEntryConflictError,
   CodexShadowHomePrivateEntrySymlinkError,
+  CodexShadowHomeSqliteConflictError,
 ]);
 export type CodexShadowHomeError = typeof CodexShadowHomeError.Type;
+
+export const codexHomeEnvironment = Effect.fn("codexHomeEnvironment")(function* (
+  layout: CodexHomeLayout,
+  environment: NodeJS.ProcessEnv,
+) {
+  const effectiveHomePath = layout.effectiveHomePath;
+  if (layout.mode !== "authOverlay" || !effectiveHomePath) return environment;
+  const override = environment.CODEX_SQLITE_HOME?.trim();
+  if (override) return { ...environment, CODEX_SQLITE_HOME: override };
+
+  const fileSystem = yield* FileSystem.FileSystem;
+  const entries = yield* fileSystem.readDirectory(effectiveHomePath).pipe(
+    Effect.catchTags({
+      PlatformError: (cause) =>
+        cause.reason._tag === "NotFound"
+          ? Effect.succeed([])
+          : new CodexShadowHomeFileSystemError({
+              sharedHomePath: layout.sharedHomePath,
+              effectiveHomePath,
+              operation: "readDirectory",
+              path: effectiveHomePath,
+              cause,
+            }),
+    }),
+  );
+  const sqliteEntries = entries.filter((entry) => SQLITE_ENTRY_NAME.test(entry));
+  // Unix SQLite resolves database symlinks before choosing journals; retain existing overlays.
+  if (!(yield* HostProcess.isWindows)) {
+    return {
+      ...environment,
+      CODEX_SQLITE_HOME: sqliteEntries.length > 0 ? effectiveHomePath : layout.sharedHomePath,
+    };
+  }
+
+  const path = yield* Path.Path;
+  let hasLocalSqlite = false;
+  let linkedEntry: string | undefined;
+  for (const entryName of sqliteEntries) {
+    const linkPath = path.join(effectiveHomePath, entryName);
+    const state = yield* readLinkState({
+      fileSystem,
+      sharedHomePath: layout.sharedHomePath,
+      effectiveHomePath,
+      entryName,
+      linkPath,
+    });
+    if (state._tag === "NotSymlink") {
+      hasLocalSqlite = true;
+    } else if (state._tag === "Symlink") {
+      linkedEntry ??= entryName;
+      if (
+        path.resolve(effectiveHomePath, state.target).toLowerCase() !==
+        path.join(layout.sharedHomePath, entryName).toLowerCase()
+      ) {
+        return yield* new CodexShadowHomeSqliteConflictError({
+          sharedHomePath: layout.sharedHomePath,
+          effectiveHomePath,
+          entryName,
+        });
+      }
+    }
+  }
+  // Windows cannot preserve private journals and safely open linked databases in one SQLite home.
+  if (linkedEntry && hasLocalSqlite) {
+    return yield* new CodexShadowHomeSqliteConflictError({
+      sharedHomePath: layout.sharedHomePath,
+      effectiveHomePath,
+      entryName: linkedEntry,
+    });
+  }
+  // Private databases retain their WAL path; clean legacy links use the shared path directly.
+  return {
+    ...environment,
+    CODEX_SQLITE_HOME: hasLocalSqlite ? effectiveHomePath : layout.sharedHomePath,
+  };
+});
 
 type LinkState =
   | {
@@ -402,7 +494,11 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
   );
   const entries = new Set<string>(KNOWN_SHARED_DIRECTORIES);
   for (const entryName of sharedEntryNames) {
-    if (!PRIVATE_ENTRY_NAMES.has(entryName) && !SHADOW_LOCAL_ENTRY_NAMES.has(entryName)) {
+    if (
+      !PRIVATE_ENTRY_NAMES.has(entryName) &&
+      !SHADOW_LOCAL_ENTRY_NAMES.has(entryName) &&
+      !SQLITE_ENTRY_NAME.test(entryName)
+    ) {
       entries.add(entryName);
     }
   }
