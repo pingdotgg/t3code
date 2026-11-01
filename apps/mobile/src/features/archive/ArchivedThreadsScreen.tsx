@@ -391,14 +391,16 @@ export function ArchivedThreadsScreen(props: {
     }
 
     return (
-      <EmptyState
-        detail={
-          isFiltered
-            ? "Try another search or environment."
-            : "Threads you archive will appear here."
-        }
-        title={isFiltered ? "No matching threads" : "No archived threads"}
-      />
+      <View className="pt-4">
+        <EmptyState
+          detail={
+            isFiltered
+              ? "Try another search or environment."
+              : "Threads you archive will appear here."
+          }
+          title={isFiltered ? "No matching threads" : "No archived threads"}
+        />
+      </View>
     );
   }, [isFiltered, isInitialLoad]);
 
