@@ -3,6 +3,7 @@ package expo.modules.t3agentnotifications
 import android.app.Activity
 import android.app.AlarmManager
 import android.app.Application
+import android.app.NotificationChannel
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.ComponentName
@@ -276,7 +277,7 @@ class AgentNotificationsTest {
   }
 
   @Test
-  fun finishedCardIsRetainedSilentlyWithoutOngoingFlagAndExpiresAtTheOriginalDeadline() {
+  fun finishedCardIsRetainedSilentlyAndExpiresAtTheOriginalDeadline() {
     lifecycle.currentState = Lifecycle.State.RESUMED
     val expiresAt = System.currentTimeMillis() + 15 * 60 * 1000L
     val finished = update("finished", false) + mapOf(
@@ -287,7 +288,7 @@ class AgentNotificationsTest {
     AgentNotifications.receive(context, finished)
     val card = manager.activeNotifications.single().notification
     assertEquals("Agent work failed", card.extras.getString(Notification.EXTRA_TITLE))
-    assertFalse(card.flags and Notification.FLAG_ONGOING_EVENT != 0)
+    assertEquals(Build.VERSION.SDK_INT >= 36, card.flags and Notification.FLAG_ONGOING_EVENT != 0)
     assertTimeout(card, 1..15 * 60 * 1000L)
     AgentNotifications.receive(
       context,
@@ -440,10 +441,22 @@ class AgentNotificationsTest {
         "android.app.Notification\$BigTextStyle",
         card.extras.getString(Notification.EXTRA_TEMPLATE)
       )
-      assertEquals(active, NotificationCompat.isRequestPromotedOngoing(card))
+      assertEquals(
+        active || Build.VERSION.SDK_INT >= 36,
+        NotificationCompat.isRequestPromotedOngoing(card)
+      )
       if (!active) {
-        assertEquals(null, card.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT))
-        assertEquals(0, card.actions?.size ?: 0)
+        assertEquals(
+          if (Build.VERSION.SDK_INT < 36) {
+            null
+          } else if (phase == "failed") {
+            "Failed"
+          } else {
+            "Done"
+          },
+          card.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT)
+        )
+        assertEquals(if (Build.VERSION.SDK_INT >= 36) 1 else 0, card.actions?.size ?: 0)
       }
     }
   }
@@ -593,7 +606,7 @@ class AgentNotificationsTest {
   }
 
   @Test
-  fun liveUpdateChipChangesWithActivityAndClearsOnCompletion() {
+  fun liveUpdateChipChangesWithActivityAndShowsDoneOnCompletion() {
     lifecycle.currentState = Lifecycle.State.RESUMED
     AgentNotifications.receive(context, update("work", true))
     assertEquals(
@@ -617,9 +630,13 @@ class AgentNotificationsTest {
       )
     )
     val finishedCard = manager.activeNotifications.single().notification
-    assertEquals(null, finishedCard.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT))
-    assertFalse(NotificationCompat.isRequestPromotedOngoing(finishedCard))
-    assertFalse(finishedCard.flags and Notification.FLAG_ONGOING_EVENT != 0)
+    val promoted = Build.VERSION.SDK_INT >= 36
+    assertEquals(
+      if (promoted) "Done" else null,
+      finishedCard.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT)
+    )
+    assertEquals(promoted, NotificationCompat.isRequestPromotedOngoing(finishedCard))
+    assertEquals(promoted, finishedCard.flags and Notification.FLAG_ONGOING_EVENT != 0)
   }
 
   @Test
@@ -659,5 +676,91 @@ class AgentNotificationsTest {
     shadowOf(manager).setNotificationsEnabled(true)
     AgentNotifications.receive(context, message)
     assertEquals(2, manager.activeNotifications.size)
+  }
+}
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [26, 33, 36], manifest = Config.NONE)
+class AgentNotificationChannelsTest {
+  @Test
+  fun mutedAlertChannelKeepsTheSameActivityThroughCompletionUntilDismissedOrExpired() {
+    val context = RuntimeEnvironment.getApplication()
+    val manager = context.getSystemService(NotificationManager::class.java)
+    shadowOf(manager).setNotificationsEnabled(true)
+    AgentNotifications.clear(context)
+    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    val running = mapOf(
+      "device_id" to "device",
+      "user_id" to "user",
+      "updated_at" to System.currentTimeMillis().toString(),
+      "active" to "true",
+      "activity_title" to "Agent activity"
+    )
+    manager.createNotificationChannel(
+      NotificationChannel("agent-alerts", "Agent alerts", NotificationManager.IMPORTANCE_NONE)
+    )
+    AgentNotifications.receive(context, running)
+    val initialCard = manager.activeNotifications.single()
+    assertEquals("t3-agent-activity", initialCard.tag)
+
+    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    AgentNotifications.receive(
+      context,
+      running + mapOf(
+        "activity_phase" to "waiting_for_approval",
+        "activity_attention_count" to "1"
+      )
+    )
+    val card = manager.activeNotifications.single().notification
+    assertEquals("Approve", card.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT))
+
+    val finished = running + mapOf(
+      "active" to "false",
+      "activity_phase" to "completed",
+      "activity_line_0" to "Done\tTest thread\tTest project",
+      "activity_expires_at" to (System.currentTimeMillis() + 900000).toString()
+    )
+    AgentNotifications.receive(context, finished)
+    AgentNotifications.receive(context, finished)
+    val completedCard = manager.activeNotifications.single()
+    assertEquals(initialCard.id, completedCard.id)
+    assertEquals(initialCard.tag, completedCard.tag)
+    assertEquals("agent-activity", completedCard.notification.channelId)
+    assertEquals(
+      "Test thread",
+      completedCard.notification.extras.getString(Notification.EXTRA_TITLE)
+    )
+    assertEquals(
+      "Done Test project",
+      completedCard.notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString()
+    )
+    val promoted = Build.VERSION.SDK_INT >= 36
+    assertEquals(promoted, NotificationCompat.isRequestPromotedOngoing(completedCard.notification))
+    assertEquals(
+      promoted,
+      completedCard.notification.flags and Notification.FLAG_ONGOING_EVENT != 0
+    )
+    assertEquals(
+      if (promoted) "Done" else null,
+      completedCard.notification.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT)
+    )
+
+    if (promoted) {
+      val dismiss = completedCard.notification.actions.single()
+      assertEquals("Dismiss", dismiss.title.toString())
+      AgentActivityDismissReceiver().onReceive(context, shadowOf(dismiss.actionIntent).savedIntent)
+    } else {
+      AgentNotifications.dismiss(context)
+    }
+    AgentNotifications.receive(context, finished)
+    assertTrue(manager.activeNotifications.isEmpty())
+
+    AgentNotifications.receive(context, running)
+    assertEquals("t3-agent-activity", manager.activeNotifications.single().tag)
+    AgentNotifications.receive(
+      context,
+      finished + ("activity_expires_at" to (System.currentTimeMillis() - 1).toString())
+    )
+    assertTrue(manager.activeNotifications.isEmpty())
   }
 }
