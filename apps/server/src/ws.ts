@@ -266,6 +266,7 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isNetworkPath } from "@t3tools/shared/path";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
@@ -1813,6 +1814,12 @@ export const layerWsRpc = (
           settingsClient,
         );
         const environment = yield* serverEnvironment.getDescriptor;
+        // A desktop launch can learn a shell opt-out after startup; report it like AnalyticsService applies it.
+        const telemetryEnabledByEnvironment =
+          config.telemetryEnabledByEnvironment === false ||
+          (yield* AnalyticsService.environmentOptsOut(yield* HostProcess.Environment))
+            ? false
+            : config.telemetryEnabledByEnvironment;
         const auth = yield* serverAuth.getDescriptor();
         const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
         const lastEventLoopStall = yield* eventLoopMonitor.latestNoticeableStall;
@@ -1863,9 +1870,9 @@ export const layerWsRpc = (
                 }
               : {}),
             otlpLogsEnabled: config.otlpLogsUrl !== undefined,
-            ...(config.telemetryEnabledByEnvironment === undefined
+            ...(telemetryEnabledByEnvironment === undefined
               ? {}
-              : { telemetryEnabledByEnvironment: config.telemetryEnabledByEnvironment }),
+              : { telemetryEnabledByEnvironment }),
           },
           settings,
           ...(serverSettings.managedPolicy === undefined
