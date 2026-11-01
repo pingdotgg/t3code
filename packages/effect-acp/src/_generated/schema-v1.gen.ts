@@ -946,8 +946,25 @@ export const EnumOption = Schema.Struct({
   identifier: "EnumOption",
 });
 
-export type TitledMultiSelectItems = never;
-export const TitledMultiSelectItems = Schema.Never.annotate({
+export type TitledMultiSelectItems = {
+  readonly anyOf: ReadonlyArray<EnumOption>;
+  readonly _meta?: { readonly [x: string]: Schema.Json } | null;
+} & { readonly [x: string]: Schema.Json };
+export const TitledMultiSelectItems = Schema.StructWithRest(
+  Schema.Struct({
+    anyOf: Schema.Array(EnumOption).annotate({ description: "Titled enum options." }),
+    _meta: Schema.optionalKey(
+      Schema.Union([
+        Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
+          description:
+            "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
+        }),
+        Schema.Null,
+      ]),
+    ),
+  }),
+  [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+).annotate({
   description: "Items definition for titled multi-select enum properties.",
   identifier: "TitledMultiSelectItems",
 });
