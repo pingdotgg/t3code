@@ -1,5 +1,6 @@
 package expo.modules.t3composereditor
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -16,6 +17,7 @@ import android.text.TextUtils
 import android.text.TextWatcher
 import android.text.style.ReplacementSpan
 import android.util.TypedValue
+import android.view.DragEvent
 import android.view.Gravity
 import android.view.GestureDetector
 import android.view.MotionEvent
@@ -39,7 +41,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   // React Native ignores the editor's requestLayout(), which makes TextView defer caret scrolls.
   override val shouldUseAndroidLayout = true
 
-  private val editor = SelectionAwareEditText(context)
+  private val editor = SelectionAwareEditText(context) { appContext.currentActivity }
   private val defaultHighlightColor = editor.highlightColor
   private val defaultSelectionColor = context.resolveThemeColor(
     android.R.attr.colorAccent,
@@ -574,7 +576,10 @@ private fun parseTokens(value: String): List<ComposerToken> = try {
   emptyList()
 }
 
-internal class SelectionAwareEditText(context: Context) : EditText(context) {
+internal class SelectionAwareEditText(
+  context: Context,
+  private val currentActivity: () -> Activity? = { context as? Activity }
+) : EditText(context) {
   var readOnly = false
   var selectionListener: ((Int, Int) -> Unit)? = null
   var pasteImagesListener: ((List<String>) -> Unit)? = null
@@ -585,10 +590,8 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
   var clipboardFragment = ""
 
   /**
-   * Placeholder shown while the draft is empty. An editable TextView never ellipsizes its hint,
-   * so a long placeholder wraps once a wide system font or a large font scale (Samsung defaults)
-   * runs out of width, and the resting composer grows to two lines. The hint is instead cut to
-   * one line with an ellipsis for whatever width the editor is measured at.
+   * Editable TextView hints do not ellipsize, so long placeholders wrap and grow the composer.
+   * Truncate the hint to the measured width instead.
    */
   var placeholder = ""
     set(value) {
@@ -669,6 +672,39 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
   override fun onSelectionChanged(selStart: Int, selEnd: Int) {
     super.onSelectionChanged(selStart, selEnd)
     selectionListener?.invoke(selStart, selEnd)
+  }
+
+  override fun onDragEvent(event: DragEvent): Boolean = when {
+    readOnly || !isEnabled -> false
+    event.action == DragEvent.ACTION_DROP && event.clipDescription?.hasMimeType(
+      "image/*"
+    ) == true ->
+      dropImages(event)
+    else -> super.onDragEvent(event)
+  }
+
+  private fun dropImages(event: DragEvent): Boolean {
+    val clip = event.clipData
+    val activity = currentActivity()
+    val listener = pasteImagesListener
+    if (clip == null || activity == null || listener == null) return false
+    val imageUris = try {
+      // Keep the activity-scoped grant while JavaScript asynchronously reads the dropped images.
+      activity.requestDragAndDropPermissions(event)
+      (0 until clip.itemCount).mapNotNull { index ->
+        clip.getItemAt(index).uri?.takeIf { uri ->
+          context.contentResolver.getType(uri)?.startsWith("image/") == true
+        }?.toString()
+      }
+    } catch (_: SecurityException) {
+      emptyList()
+    }
+    return if (imageUris.size == clip.itemCount) {
+      listener(imageUris)
+      true
+    } else {
+      false
+    }
   }
 
   override fun onTextContextMenuItem(id: Int): Boolean {

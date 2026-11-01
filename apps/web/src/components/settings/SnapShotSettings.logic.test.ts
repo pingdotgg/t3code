@@ -88,7 +88,7 @@ it("distinguishes saved shortcuts from observed delivery without making users re
       { ...state, linuxBackend: "picker", gnomeExtension: undefined, shortcutVerified: true },
       true,
     ),
-  ).toBe("Manual capture only — you'll choose a window each time");
+  ).toBe("Manual capture only. You'll choose a window each time");
   expect(
     snapShotSetupSummary(
       {

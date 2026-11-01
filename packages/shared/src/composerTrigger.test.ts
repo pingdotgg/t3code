@@ -18,6 +18,16 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it.each(["/Model opus", "/MODEL opus"])(
+    "opens the model picker for capitalized %j the same as /model",
+    (text) => {
+      expect(detectComposerTrigger(text, text.length)).toMatchObject({
+        kind: "slash-model",
+        query: "opus",
+      });
+    },
+  );
+
   it.each(["Use /", "Use /review"])("detects the inline slash token in %j", (text) => {
     expect(detectComposerTrigger(text, text.length)).toEqual({
       kind: "slash-command",
@@ -39,6 +49,25 @@ describe("detectComposerTrigger", () => {
       query: "review",
       rangeStart: 4,
       rangeEnd: text.length,
+    });
+  });
+
+  it.each([
+    "budget $9.99",
+    "only $.99",
+    "about €20",
+    "raise $10k",
+    "$1,000",
+    "£2e6",
+    "raise $10k.",
+  ])("does not open the skill menu for the amount in %j", (text) =>
+    expect(detectComposerTrigger(text, text.length)).toBeNull(),
+  );
+
+  it.each(["$", "$1password", "$2fa"])("still detects the skill prefix %j", (text) => {
+    expect(detectComposerTrigger(text, text.length)).toMatchObject({
+      kind: "skill",
+      query: text.slice(1),
     });
   });
 });

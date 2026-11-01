@@ -1,10 +1,12 @@
 import {
   boundAttachmentIds,
-  findRecordedWorktreeSetup,
+  buildExpiredTerminalContextToastCopy,
   mergeDirectPreviewAnnotation,
   planComposerTurn,
   snapshotComposerSend,
   withMessageContext,
+  deriveAvailableRevertTurnCounts,
+  deriveWorkspaceMutationId,
 } from "./ChatView.logic";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
@@ -43,14 +45,12 @@ import {
   rememberReadyThreadTimeline,
   resetHeldThreadTimeline,
   resolveThreadSwitchTimeline,
-  threadKeysShareEnvironment,
   timelineHasEphemeralPreviewUrls,
   createLocalDispatchSnapshot,
   deriveCommittedServerUserMessageIds,
   deriveComposerSendState,
   deriveLockedProvider,
   hasServerAcknowledgedLocalDispatch,
-  resolveDraftPromotionNavigationTarget,
   waitForRevertedMessage,
 } from "./ChatView.logic";
 
@@ -103,51 +103,6 @@ const readySession = {
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
 
-describe("resolveDraftPromotionNavigationTarget", () => {
-  const serverThreadRef = { environmentId, threadId };
-  const preparingRun = {
-    ...completedTurn,
-    status: "preparing" as const,
-    startedAt: null,
-    completedAt: null,
-  };
-
-  it("stays on the draft until the server owns the send", () => {
-    expect(
-      resolveDraftPromotionNavigationTarget({
-        serverThreadRef,
-        serverThread: makeThread({ latestRun: preparingRun }),
-        backgroundSubmissionPending: false,
-      }),
-    ).toBeNull();
-    expect(
-      resolveDraftPromotionNavigationTarget({
-        serverThreadRef,
-        serverThread: makeThread(),
-        backgroundSubmissionPending: false,
-      }),
-    ).toBeNull();
-  });
-
-  it("promotes a persisted send while its worktree is still preparing", () => {
-    const serverThread = makeThread({ latestRun: preparingRun, latestUserMessageAt: now });
-    expect(
-      resolveDraftPromotionNavigationTarget({
-        serverThreadRef,
-        serverThread,
-        backgroundSubmissionPending: false,
-      }),
-    ).toBe(serverThreadRef);
-    expect(
-      resolveDraftPromotionNavigationTarget({
-        serverThreadRef,
-        serverThread,
-        backgroundSubmissionPending: true,
-      }),
-    ).toBeNull();
-  });
-});
-
 describe("deriveComposerSendState", () => {
   it("keeps text sendable while excluding expired terminal pills", () => {
     const state = deriveComposerSendState({
@@ -170,6 +125,22 @@ describe("deriveComposerSendState", () => {
     expect(state.trimmedPrompt).toBe("yoo  waddup");
     expect(state.expiredTerminalContextCount).toBe(1);
     expect(state.hasSendableContent).toBe(true);
+  });
+});
+
+describe("buildExpiredTerminalContextToastCopy", () => {
+  it("refers to several expired contexts as them", () => {
+    expect(buildExpiredTerminalContextToastCopy(2, "empty")).toEqual({
+      title: "Expired terminal contexts won't be sent",
+      description: "Remove them or re-add them to include terminal output.",
+    });
+    expect(buildExpiredTerminalContextToastCopy(2, "omitted")).toEqual({
+      title: "Expired terminal contexts omitted from message",
+      description: "Re-add them if you want that terminal output included.",
+    });
+    expect(buildExpiredTerminalContextToastCopy(1, "omitted").description).toBe(
+      "Re-add it if you want that terminal output included.",
+    );
   });
 });
 
@@ -220,6 +191,40 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         threadError: null,
       }),
     ).toBe(false);
+  });
+
+  it.each([
+    ["queued", "message-queued", true],
+    ["queued", "message-before-send", false],
+    ["preparing", "message-queued", false],
+    ["starting", "message-queued", false],
+  ] as const)("acknowledges %s with latest message %s: %s", (status, messageId, acknowledged) => {
+    const localDispatch = createLocalDispatchSnapshot(
+      makeThread({ latestRun: completedTurn, runtime: readySession }),
+      { latestUserMessageId: MessageId.make("message-before-send") },
+    );
+    // The shell hides the silent compaction run, so its runtime reports the queued message's run.
+    const queuedRun = {
+      ...completedTurn,
+      runId: RunId.make("turn-queued"),
+      status: "queued" as const,
+      requestedAt: "2026-03-29T00:01:00.000Z",
+      startedAt: null,
+      completedAt: null,
+    };
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestRun: queuedRun,
+        latestUserMessageId: MessageId.make(messageId),
+        runtime: { ...readySession, status },
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(acknowledged);
   });
 
   it("waits for the matching running turn before acknowledging", () => {
@@ -415,19 +420,18 @@ describe("resolveThreadSwitchTimeline", () => {
         activeThreadKey: "env-1:thread-a",
         nextEntries: [],
       }),
-    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "env-1:thread-a" });
+    ).toEqual(["a1", "a2"]);
   });
 
-  it("does not hold another environment's timeline across a jump", () => {
-    expect(threadKeysShareEnvironment("env-1:thread-a", "env-2:thread-b")).toBe(false);
+  it("does not paint the last-viewed thread for a destination with nothing remembered", () => {
+    rememberReadyThreadTimeline(held);
     expect(
       resolveThreadSwitchTimeline({
         loading: true,
         activeThreadKey: "env-2:thread-b",
         nextEntries: [],
-        lastReady: held,
       }),
-    ).toEqual({ entries: [], displayThreadKey: "env-2:thread-b" });
+    ).toEqual([]);
   });
 
   it("does not remember a timeline that still has handoff blob previews", () => {
@@ -720,16 +724,6 @@ describe("worktree setup visibility", () => {
     expect(resolve(base, newest)).toEqual({ snapshot: newest, isPreparingWorktree: false });
     const other = { ...base, threadId: ThreadId.make("another-thread") };
     expect(resolve(other, other)).toEqual({ snapshot: null, isPreparingWorktree: false });
-  });
-
-  it("reads the settled snapshot back from the thread's activities", () => {
-    const activities = [
-      { kind: "setup-script.started", payload: {} },
-      { kind: "worktree-setup", payload: settledDone },
-      { kind: "worktree-setup", payload: { not: "a snapshot" } },
-    ];
-    expect(findRecordedWorktreeSetup(activities, threadId)).toEqual(settledDone);
-    expect(findRecordedWorktreeSetup(activities, ThreadId.make("other"))).toBeNull();
   });
 });
 
@@ -1060,6 +1054,7 @@ describe("snapshotComposerSend", () => {
       previewAnnotations: [],
       reviewComments: [],
       threadContexts: [],
+      environmentContexts: [],
     });
 
     expect(snapshot.terminalContexts).toEqual([live]);
@@ -1100,14 +1095,21 @@ describe("planComposerTurn", () => {
   });
 
   it("queues behind a compaction of a stale session, except for /compact itself", () => {
-    expect(planComposerTurn({ ...base, resumeCompactionTokens: 120_000 })).toMatchObject({
-      compactBeforeSend: true,
-      turnDispatchMode: "queue",
-      shouldQueueBehindActiveRun: true,
-    });
-    expect(
-      planComposerTurn({ ...base, resumeCompactionTokens: 120_000, messageText: "/COMPACT" }),
-    ).toMatchObject({ compactBeforeSend: false, turnDispatchMode: "auto" });
+    const stale = { ...base, resumeCompactionTokens: 120_000 };
+    for (const messageText of ["hello", "/compactfoo"]) {
+      expect(planComposerTurn({ ...stale, messageText })).toMatchObject({
+        compactBeforeSend: true,
+        turnDispatchMode: "queue",
+        shouldQueueBehindActiveRun: true,
+      });
+    }
+    for (const messageText of ["/COMPACT", "/compact keep the API notes", "/compact\n  tests"]) {
+      expect(planComposerTurn({ ...stale, messageText })).toMatchObject({
+        compactBeforeSend: false,
+        turnDispatchMode: "auto",
+        shouldQueueBehindActiveRun: false,
+      });
+    }
   });
 
   it("queues behind a running turn only when asked to", () => {
@@ -1132,22 +1134,12 @@ describe("withMessageContext", () => {
     Parameters<typeof withMessageContext>[0]["context"]
   >;
 
-  it("sends the context inline when the server supports it", () => {
-    expect(withMessageContext({ text: "hi", context, supportsInlineMessageContext: true })).toEqual(
-      { text: "hi", context },
-    );
-  });
-
-  it("folds the context into the text for older servers", () => {
-    const result = withMessageContext({ text: "hi", context, supportsInlineMessageContext: false });
-    expect(result.context).toBeUndefined();
-    expect(result.text).toContain("hi");
+  it("sends the context inline", () => {
+    expect(withMessageContext({ text: "hi", context })).toEqual({ text: "hi", context });
   });
 
   it("sends the text alone without context", () => {
-    expect(
-      withMessageContext({ text: "hi", context: undefined, supportsInlineMessageContext: false }),
-    ).toEqual({ text: "hi" });
+    expect(withMessageContext({ text: "hi", context: undefined })).toEqual({ text: "hi" });
   });
 });
 
@@ -1156,5 +1148,84 @@ describe("boundAttachmentIds", () => {
     expect(
       boundAttachmentIds([{ id: "upload-1" }, {}], [{ id: "local-1" }, { id: "local-2" }]),
     ).toEqual(["upload-1", "local-2"]);
+  });
+});
+
+describe("deriveAvailableRevertTurnCounts", () => {
+  const providerThreadId = ProviderThreadId.make("provider-thread");
+  const otherProviderThreadId = ProviderThreadId.make("other-provider-thread");
+
+  function projection(input: { readonly providerSessionId: ProviderSessionId | null }) {
+    const base = makeThreadProjectionFixture();
+    const run = (ordinal: number) => ({
+      id: RunId.make(`run-${ordinal}`),
+      ordinal,
+      activeAttemptId: `attempt-${ordinal}`,
+    });
+    const turn = (ordinal: number, attempt: number, threadId: ProviderThreadId) => ({
+      id: `turn-${attempt}-${ordinal}`,
+      runAttemptId: `attempt-${attempt}`,
+      ordinal,
+      providerThreadId: threadId,
+    });
+    return {
+      ...base,
+      thread: { ...base.thread, activeProviderThreadId: providerThreadId },
+      providerThreads: [
+        {
+          id: providerThreadId,
+          providerInstanceId: base.thread.modelSelection.instanceId,
+          providerSessionId: input.providerSessionId,
+        },
+      ],
+      runs: [run(1), run(2), run(3)],
+      attempts: [1, 2, 3].map((ordinal) => ({ id: `attempt-${ordinal}`, providerTurnId: null })),
+      // Run 2's latest turn moved to another provider thread, so its checkpoint cannot restore
+      // this conversation.
+      providerTurns: [
+        turn(1, 1, providerThreadId),
+        turn(1, 2, providerThreadId),
+        turn(2, 2, otherProviderThreadId),
+        turn(1, 3, providerThreadId),
+      ],
+    } as unknown as ReturnType<typeof makeThreadProjectionFixture>;
+  }
+
+  it("offers the thread start and runs whose latest turn is on the active provider thread", () => {
+    const available = deriveAvailableRevertTurnCounts(
+      projection({ providerSessionId: ProviderSessionId.make("session") }),
+    );
+    expect([...available].toSorted()).toEqual([0, 1, 3]);
+  });
+
+  it("offers nothing without a provider session to rewind", () => {
+    expect(deriveAvailableRevertTurnCounts(projection({ providerSessionId: null })).size).toBe(0);
+    expect(deriveAvailableRevertTurnCounts(null).size).toBe(0);
+  });
+});
+
+describe("deriveWorkspaceMutationId", () => {
+  const item = (id: string, type: string, status: string) =>
+    ({
+      item: { id: TurnItemId.make(id), type, status },
+    }) as unknown as OrchestrationV2ProjectedTurnItem;
+
+  it("keys on the latest finished command or file change and the latest checkpoint", () => {
+    expect(
+      deriveWorkspaceMutationId(
+        [
+          item("edit", "file_change", "completed"),
+          item("reply", "assistant_message", "completed"),
+          item("command", "command_execution", "running"),
+        ],
+        "2026-01-01T00:00:00.000Z",
+      ),
+    ).toBe(JSON.stringify(["edit", "2026-01-01T00:00:00.000Z"]));
+  });
+
+  it("is null before anything could have touched the workspace", () => {
+    expect(deriveWorkspaceMutationId([item("reply", "assistant_message", "completed")], null)).toBe(
+      null,
+    );
   });
 });

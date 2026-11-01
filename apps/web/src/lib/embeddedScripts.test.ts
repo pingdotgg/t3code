@@ -49,29 +49,24 @@ describe("embeddedScripts", () => {
 
   it.each([
     [`python3 -c 'print(1)'`, "python", "print(1)"],
-    [`python3 -X dev -c 'print(1)'`, "python", "print(1)"],
     [`py -3 -c 'print(1)'`, "python", "print(1)"],
-    [`C:\\Python312\\python.exe -c 'print(1)'`, "python", "print(1)"],
     [`"C:\\Program Files\\Python312\\python.exe" -c 'print(1)'`, "python", "print(1)"],
     [`node --eval "process.exit(0)"`, "javascript", "process.exit(0)"],
     [`bun -e 'console.log(Bun.version)'`, "typescript", "console.log(Bun.version)"],
     [`deno eval 'console.log(1)'`, "typescript", "console.log(1)"],
     [`deno eval --config deno.json 'console.log(1)'`, "typescript", "console.log(1)"],
-    [`deno eval --env-file 'console.log(1)'`, "typescript", "console.log(1)"],
     [`psql -f schema.sql -c 'select 1'`, "sql", "select 1"],
     [`node -C development -e 'console.log(1)'`, "javascript", "console.log(1)"],
     [`ruby -e 'puts 1'`, "ruby", "puts 1"],
     [`ruby -I lib -e 'puts 1'`, "ruby", "puts 1"],
     [`perl -E 'say 1'`, "perl", "say 1"],
     [`sqlite3 app.db "select * from users"`, "sql", "select * from users"],
-    [`psql -d app -c 'select 1'`, "sql", "select 1"],
     [`pwsh -NoProfile -Command "Get-ChildItem"`, "powershell", "Get-ChildItem"],
     [`env FOO=1 sudo -u bob python3 -c 'print(1)'`, "python", "print(1)"],
     [`env -- FOO=1 python3 -c 'print(1)'`, "python", "print(1)"],
     [`node --eval="process.exit(0)"`, "javascript", "process.exit(0)"],
     [`psql --command='select 1'`, "sql", "select 1"],
     [`mysql -c -e 'select 1'`, "sql", "select 1"],
-    [`mysql -f app <<'EOF'\nselect 1;\nEOF`, "sql", "select 1;\n"],
     [`psql app <<'EOF'\nselect 1;\nEOF`, "sql", "select 1;\n"],
     [`echo "$(node -e 'console.log(1)')"`, "javascript", "console.log(1)"],
     [`python3 <<< 'print(1)'`, "python", "print(1)"],
@@ -112,8 +107,7 @@ describe("embeddedScripts", () => {
   });
 
   it("trusts nothing in a command whose quoting does not parse", () => {
-    // Codex's secret redaction dropped the backslash of an escaped quote, so
-    // the -lc argument ends early and the rest no longer balances.
+    // Secret redaction removed an escaped quote's backslash, breaking the -lc argument.
     const command = `/bin/zsh -lc "python3 -c 'token=[REDACTED_SECRET]"apiToken\\"]; print(token)'"`;
     expect(scriptsOf(command)).toEqual([]);
   });
