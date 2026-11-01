@@ -9848,6 +9848,39 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }),
             ),
           );
+          // An aborted signal means Claude withdrew the request, e.g. a PermissionRequest hook answered
+          // first. Claiming the decision tells that apart from a user answer the orchestrator already resolved.
+          if (
+            callbackOptions.signal.aborted &&
+            (yield* Deferred.succeed(decision, resolvedDecision))
+          ) {
+            const now = yield* DateTime.now;
+            yield* Effect.all(
+              [
+                emitProviderEvent({
+                  type: "node.updated",
+                  driver: CLAUDE_PROVIDER,
+                  node: { ...artifacts.node, status: "cancelled", completedAt: now },
+                }),
+                emitProviderEvent({
+                  type: "runtime_request.updated",
+                  driver: CLAUDE_PROVIDER,
+                  runtimeRequest: { ...artifacts.request, status: "cancelled", resolvedAt: now },
+                }),
+                emitProviderEvent({
+                  type: "turn_item.updated",
+                  driver: CLAUDE_PROVIDER,
+                  turnItem: {
+                    ...artifacts.turnItem,
+                    status: "cancelled",
+                    completedAt: now,
+                    updatedAt: now,
+                  },
+                }),
+              ],
+              { concurrency: 1 },
+            );
+          }
 
           return permissionResultFromDecision({
             toolName,

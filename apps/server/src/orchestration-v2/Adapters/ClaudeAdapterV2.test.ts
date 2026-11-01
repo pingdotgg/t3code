@@ -10009,6 +10009,126 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // regression: #24690 a PermissionRequest hook that answers first withdraws the approval card
+  it.effect("cancels a pending approval when Claude withdraws its permission request", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const bashToolUseId = "toolu_01WithdrawnApprovalBash";
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-withdrawn-approval"),
+            text: "Clean up.",
+            attachments: [],
+            runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+          }),
+        );
+        const controller = new AbortController();
+        const permission = yield* Effect.promise(() =>
+          harness.getOpenedOptions()!.canUseTool!(
+            "Bash",
+            { command: "rm -f $F/*" },
+            {
+              signal: controller.signal,
+              toolUseID: bashToolUseId,
+              requestId: "request-withdrawn-approval",
+            },
+          ),
+        ).pipe(Effect.forkScoped);
+        const pending = yield* Queue.take(harness.runtimeRequestReceipts);
+        assert.equal(pending.runtimeRequest.status, "pending");
+
+        // The CLI sends control_cancel_request, which the SDK turns into this abort.
+        controller.abort();
+        assert.notEqual((yield* Fiber.join(permission))?.behavior, "allow");
+
+        const cancelled = yield* Queue.take(harness.runtimeRequestReceipts);
+        assert.equal(cancelled.runtimeRequest.id, pending.runtimeRequest.id);
+        assert.equal(cancelled.runtimeRequest.status, "cancelled");
+        assert.isNotNull(cancelled.runtimeRequest.resolvedAt);
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nodeId === pending.runtimeRequest.nodeId &&
+              event.turnItem.status === "cancelled",
+          ),
+        );
+        const node = harness.events.findLast(
+          (event) =>
+            event.type === "node.updated" && event.node.id === pending.runtimeRequest.nodeId,
+        );
+        assert.equal(node?.type === "node.updated" ? node.node.status : undefined, "cancelled");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps a user-cancelled approval resolved when Claude aborts afterwards", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-user-cancelled-approval"),
+            text: "Clean up.",
+            attachments: [],
+            runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+          }),
+        );
+        const controller = new AbortController();
+        const permission = yield* Effect.promise(() =>
+          harness.getOpenedOptions()!.canUseTool!(
+            "Bash",
+            { command: "rm -f $F/*" },
+            {
+              signal: controller.signal,
+              toolUseID: "toolu_01UserCancelledApprovalBash",
+              requestId: "request-user-cancelled-approval",
+            },
+          ),
+        ).pipe(Effect.forkScoped);
+        const pending = yield* Queue.take(harness.runtimeRequestReceipts);
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: pending.runtimeRequest.id,
+          decision: "cancel",
+        });
+        // The SDK aborts the signal when an interrupting deny ends the turn, racing the answer.
+        controller.abort();
+        assert.equal((yield* Fiber.join(permission))?.behavior, "deny");
+
+        yield* Effect.promise(() =>
+          harness.getOpenedOptions()!.canUseTool!(
+            "Bash",
+            { command: "rm -f $G/*" },
+            {
+              signal: new AbortController().signal,
+              toolUseID: "toolu_01UserCancelledApprovalNext",
+              requestId: "request-user-cancelled-approval-next",
+            },
+          ),
+        ).pipe(Effect.forkScoped);
+        // Events are ordered, so a withdrawal update for the answered request would arrive first.
+        const next = yield* Queue.take(harness.runtimeRequestReceipts);
+        assert.notEqual(next.runtimeRequest.id, pending.runtimeRequest.id);
+        assert.equal(next.runtimeRequest.status, "pending");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("releases output held for a prompt echo when the stream ends", () =>
     Effect.scoped(
       Effect.gen(function* () {
