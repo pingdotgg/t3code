@@ -128,19 +128,16 @@ const sampleThermalState = Effect.fn("LinuxHostPower.sampleThermalState")(functi
       };
     }),
   );
-  for (const preferred of PREFERRED_THERMAL_TYPES) {
+  for (const preferred of [...PREFERRED_THERMAL_TYPES, null]) {
     const states = yield* Effect.forEach(
-      zones.filter((zone) => zone.type === preferred),
+      zones.filter((zone) =>
+        preferred === null ? !zone.type.startsWith("iwlwifi") : zone.type === preferred,
+      ),
       (zone) => thermalStateFromZone(fileSystem, path, zone.zonePath),
     );
     for (const state of ["critical", "serious", "fair", "nominal"] as const) {
       if (states.includes(state)) return state;
     }
-  }
-  for (const zone of zones) {
-    if (zone.type.startsWith("iwlwifi")) continue;
-    const state = yield* thermalStateFromZone(fileSystem, path, zone.zonePath);
-    if (state !== null) return state;
   }
   return "unknown" as const;
 });
@@ -163,6 +160,7 @@ export const sample = Effect.fnUntraced(
       { concurrency: "unbounded" },
     );
   },
+  Effect.withTracerEnabled(false),
   Effect.catchCauseIf(
     (cause) => !Cause.hasInterrupts(cause),
     () => Effect.succeed(unknownSample),

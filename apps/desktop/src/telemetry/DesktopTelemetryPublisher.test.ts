@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Queue from "effect/Queue";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
@@ -61,6 +63,78 @@ function layerElectronApp(
 }
 
 describe("DesktopTelemetryPublisher", () => {
+  it.effect("constrains diagnostics for Linux thermal pressure and recovers", () =>
+    Effect.gen(function* () {
+      let temperature = "100000";
+      const fileSystem = FileSystem.makeNoop({
+        readDirectory: (directory) =>
+          Effect.succeed(directory === "/sys/class/thermal" ? ["thermal_zone0"] : []),
+        readFileString: (filePath) =>
+          Effect.succeed(
+            filePath.endsWith("/type")
+              ? "x86_pkg_temp"
+              : filePath.endsWith("/temp")
+                ? temperature
+                : filePath.endsWith("/trip_point_0_type")
+                  ? "critical"
+                  : filePath.endsWith("/trip_point_0_temp")
+                    ? "95000"
+                    : "",
+          ),
+      });
+      const layer = DesktopTelemetryPublisher.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            layerElectronApp([]),
+            layerHistory,
+            NodeServices.layer,
+            Layer.succeed(FileSystem.FileSystem, fileSystem),
+            Layer.succeed(HostProcess.Platform, "linux"),
+            Layer.succeed(ElectronPowerMonitor.ElectronPowerMonitor, {
+              isOnBatteryPower: Effect.succeed(false),
+              getSystemIdleTime: Effect.succeed(0),
+              getSystemIdleState: () => Effect.succeed("active"),
+              getCurrentThermalState: Effect.succeed("unknown"),
+              onSimpleEvent: () => Effect.void,
+              onThermalStateChange: () => Effect.void,
+              onSpeedLimitChange: () => Effect.void,
+            }),
+            Layer.succeed(DesktopShellEnvironment.DesktopShellEnvironment, {
+              installIntoProcess: Effect.succeed(true),
+              awaitDiscovery: Effect.succeed(true),
+              updates: Stream.empty,
+            }),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
+        const samples = yield* Queue.unbounded<string>();
+        yield* publisher.encoded.pipe(
+          Stream.map((bytes) => new TextDecoder().decode(bytes)),
+          Stream.filter((text) => text.includes('"type":"desktopTelemetry"')),
+          Stream.runForEach((text) => Queue.offer(samples, text)),
+          Effect.forkScoped,
+        );
+        assert.include(yield* Queue.take(samples), '"thermalState":"critical"');
+        yield* publisher.handleControlForSource("test", {
+          type: "setDiagnosticsDemand",
+          enabled: true,
+        });
+        yield* Queue.take(samples);
+        yield* TestClock.adjust(Duration.seconds(1));
+        assert.equal(yield* Queue.size(samples), 0);
+        yield* TestClock.adjust(Duration.seconds(14));
+        assert.include(yield* Queue.take(samples), '"thermalState":"critical"');
+        temperature = "40000";
+        yield* TestClock.adjust(Duration.seconds(15));
+        assert.include(yield* Queue.take(samples), '"thermalState":"nominal"');
+        yield* TestClock.adjust(Duration.seconds(1));
+        assert.include(yield* Queue.take(samples), '"thermalState":"nominal"');
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "forwards shell discovery while a telemetry sample is pending and stops on scope close",
     () =>

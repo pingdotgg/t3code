@@ -173,6 +173,17 @@ it.layer(NodeServices.layer)("LinuxHostPower", (it) => {
         trips: [{ type: "passive", tempMilli: 50_000 }],
       });
       assert.equal((yield* LinuxHostPower.sample(sysRoot)).thermalState, "nominal");
+      yield* writeZone(sysRoot, "thermal_zone0", {
+        type: "cpu-thermal",
+        tempMilli: 40_000,
+        trips: [{ type: "passive", tempMilli: 50_000 }],
+      });
+      yield* writeZone(sysRoot, "thermal_zone9", {
+        type: "soc-thermal",
+        tempMilli: 100_000,
+        trips: [{ type: "critical", tempMilli: 95_000 }],
+      });
+      assert.equal((yield* LinuxHostPower.sample(sysRoot)).thermalState, "critical");
     }).pipe(Effect.scoped),
   );
 
