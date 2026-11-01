@@ -9,7 +9,6 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useState } from "react";
 
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isLoopbackHostname } from "~/environments/primary/target";
@@ -60,8 +59,7 @@ export function resolveRemoteOpenState(input: {
     return LOCAL_EXEC;
   }
   if (target._tag === "PrimaryConnectionTarget") {
-    // The desktop app manages its own primary backend, so it is always on this machine even
-    // when its URL is not loopback (wsl-only mode binds the WSL2 NAT address).
+    // Desktop owns its primary even at a non-loopback WSL2 NAT address.
     if (input.isDesktopRenderer) {
       return LOCAL_EXEC;
     }
@@ -106,9 +104,7 @@ function remoteOpenStatesEqual(previous: RemoteOpenState, next: RemoteOpenState)
   );
 }
 
-// The presentation changes with every server config push and reconnect. This
-// keeps the previous resolution while it is equal, so subscribers re-render only
-// when where files open actually changes.
+// Config pushes recreate presentations; preserve equal resolutions to avoid re-rendering file links.
 const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): RemoteOpenResolution => {
     const presentation = get(environmentPresentations.presentationAtom(environmentId));
@@ -150,48 +146,24 @@ export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteO
 
 const REMOTE_FALLBACK_EDITORS: ReadonlyArray<EditorId> = ["vscode"];
 
-let cachedProbedEditors: ReadonlyArray<EditorId> | null = null;
+// Probed once per page: installed editors rarely change, and the probe spawns processes.
+const remoteCapableEditorsAtom = Atom.make((get): ReadonlyArray<EditorId> => {
+  const probe = window.desktopBridge?.probeRemoteEditors;
+  probe?.().then(
+    (ids) => {
+      const remoteCapable = ids.filter((id) => REMOTE_CAPABLE_EDITOR_IDS.includes(id));
+      if (remoteCapable.length > 0) get.setSelf(remoteCapable);
+    },
+    () => undefined,
+  );
+  return REMOTE_FALLBACK_EDITORS;
+}).pipe(Atom.keepAlive, Atom.withLabel("remote-capable-editors"));
 
 export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
-  const [editors, setEditors] = useState<ReadonlyArray<EditorId>>(
-    () => cachedProbedEditors ?? REMOTE_FALLBACK_EDITORS,
-  );
-
-  useEffect(() => {
-    if (cachedProbedEditors !== null) {
-      return;
-    }
-    const probe = window.desktopBridge?.probeRemoteEditors;
-    if (probe === undefined) {
-      cachedProbedEditors = REMOTE_FALLBACK_EDITORS;
-      return;
-    }
-    let cancelled = false;
-    probe().then(
-      (ids) => {
-        const remoteCapable = ids.filter((id) => REMOTE_CAPABLE_EDITOR_IDS.includes(id));
-        cachedProbedEditors = remoteCapable.length > 0 ? remoteCapable : REMOTE_FALLBACK_EDITORS;
-        if (!cancelled) {
-          setEditors(cachedProbedEditors);
-        }
-      },
-      () => {
-        cachedProbedEditors = REMOTE_FALLBACK_EDITORS;
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return editors;
+  return useAtomValue(remoteCapableEditorsAtom);
 }
 
-/**
- * Resolves false when the desktop shell refused the URL (e.g. an older build whose protocol
- * allowlist predates editor schemes) so callers do not record a successful open that never
- * happened.
- */
+/** Resolves false when the desktop refuses the URL, including unsupported editor schemes. */
 export async function openRemoteEditorUrl(url: string): Promise<boolean> {
   const bridge = window.desktopBridge;
   if (bridge !== undefined) {
