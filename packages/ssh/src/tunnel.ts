@@ -19,7 +19,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/http";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as SshAuth from "./auth.ts";
@@ -150,6 +151,10 @@ const RemoteLaunchResult = Schema.Struct({
 
 const RemotePairingResult = Schema.Struct({
   credential: Schema.String,
+});
+
+const RemotePairingServerDescriptor = Schema.Struct({
+  serverVersion: Schema.String,
 });
 
 const decodeRemoteLaunchResult = Schema.decodeEffect(fromLenientJson(RemoteLaunchResult));
@@ -725,7 +730,7 @@ printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGE
 const REMOTE_PAIRING_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
 DEFAULT_SERVER_HOME="$HOME/.t3"
-RUNNER_FILE="$STATE_DIR/run-t3.sh"
+RUNNER_FILE="$STATE_DIR/pair-t3.sh"
 mkdir -p "$STATE_DIR"
 cat >"$RUNNER_FILE" <<'SH'
 @@T3_RUNNER_SCRIPT@@
@@ -846,6 +851,41 @@ function buildRemotePairingScript(stateKey: string, input?: RemoteT3RunnerOption
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
   });
 }
+
+const resolveRemotePairingRunner = Effect.fn("ssh/tunnel.resolveRemotePairingRunner")(function* (
+  httpBaseUrl: string,
+  runner: RemoteT3RunnerOptions | undefined,
+) {
+  if (isNodeScriptRunner(runner)) {
+    return runner;
+  }
+  const client = HttpClient.withScope(yield* HttpClient.HttpClient);
+  const descriptor = yield* client
+    .get(new URL("/.well-known/t3/environment", httpBaseUrl).toString())
+    .pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap(HttpClientResponse.schemaBodyJson(RemotePairingServerDescriptor)),
+      Effect.scoped,
+      Effect.timeout(SSH_READY_TIMEOUT_MS),
+      Effect.mapError(
+        (cause) =>
+          new SshPairingError({
+            message: "Failed to discover the running SSH server version for pairing.",
+            stdout: "",
+            cause,
+          }),
+      ),
+    );
+  if (!EXACT_ARCHIVE_VERSION.test(descriptor.serverVersion)) {
+    return yield* new SshPairingError({
+      message: "The running SSH server did not report a valid release version for pairing.",
+      stdout: "",
+    });
+  }
+  // A reused server can predate the desktop's runner. Its own CLI must mint
+  // the grant so scopes and persistence formats agree with the consumer.
+  return { ...runner, archiveVersion: descriptor.serverVersion };
+});
 
 function buildRemoteStopScript(stateKey: string): string {
   return applyScriptPlaceholders(REMOTE_STOP_SCRIPT, {
@@ -1703,16 +1743,17 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       key,
       Effect.gen(function* () {
         const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner);
-
-        const pairingResult = requestOptions?.issuePairingToken
-          ? yield* runWithSshAuth({
-              key,
-              target: entry.target,
-              operation: (authOptions) =>
-                issueRemotePairingToken(entry.target, authOptions, runner),
-            })
-          : null;
-        const pairingToken = pairingResult?.credential ?? null;
+        let pairingToken: string | null = null;
+        if (requestOptions?.issuePairingToken) {
+          const pairingRunner = yield* resolveRemotePairingRunner(entry.httpBaseUrl, runner);
+          const pairingResult = yield* runWithSshAuth({
+            key,
+            target: entry.target,
+            operation: (authOptions) =>
+              issueRemotePairingToken(entry.target, authOptions, pairingRunner),
+          });
+          pairingToken = pairingResult.credential;
+        }
 
         yield* Effect.logInfo("ssh.environment.ensure.succeeded", {
           ...sshTargetLogFields(entry.target),
