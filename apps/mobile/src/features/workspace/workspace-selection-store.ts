@@ -38,16 +38,25 @@ const REMEMBERS = Platform.OS === "ios";
 let selections: WorkspaceSelections = {};
 let saved = selections;
 let hydration: Promise<void> | null = null;
+let saving: Promise<void> | null = null;
 
 function save() {
   const writing = selections;
-  if (saved === writing) return;
-  // Marked saved only once written, so a failed write is retried on the next background.
-  void savePreferencesPatch({ workspaceSelections: writing })
-    .then(() => {
-      saved = writing;
-    })
-    .catch(() => undefined);
+  const write = () => {
+    if (saved === writing) return;
+    // Check after the preceding request settles: its failure must leave this retry queued.
+    return savePreferencesPatch({ workspaceSelections: writing })
+      .then(() => {
+        saved = writing;
+      })
+      .catch(() => undefined);
+  };
+  const pending = saving ? saving.then(write) : write();
+  if (!pending) return;
+  saving = pending;
+  void pending.then(() => {
+    if (saving === pending) saving = null;
+  });
 }
 
 // Route keys only name routes of the session that wrote them; a saved one would make a tab rebuild
