@@ -32,6 +32,7 @@ import { OtlpTracer, OtlpSerialization } from "effect/observability";
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, readMcpAppHtml, resolveAsset } from "./assets/AssetAccess.ts";
 import { sourceControlMediaResponse } from "./assets/sourceControlMediaResponse.ts";
+import * as AzureDevOpsMedia from "./assets/AzureDevOpsMedia.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
@@ -430,6 +431,34 @@ export const layerAssetRoute = HttpRouter.add(
         contentType: asset.mimeType,
         headers: { "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" },
       });
+    }
+    if (asset.kind === "azure-devops-media") {
+      const media = yield* AzureDevOpsMedia.AzureDevOpsMedia;
+      return yield* media.get(asset).pipe(
+        Effect.flatMap((file) =>
+          assetFileResponse(
+            file,
+            request.method === "GET" ? request.headers.range : undefined,
+            request.headers["if-range"],
+            request.method === "HEAD" ? "HEAD" : "GET",
+          ),
+        ),
+        Effect.tapError((cause) =>
+          Effect.logWarning("Failed to fetch Azure DevOps media.", {
+            origin: new URL(asset.url).origin,
+            errorType:
+              cause._tag === "AzureDevOpsMediaFetchError"
+                ? "AzureDevOpsMediaFetchError"
+                : "FileResponseError",
+          }),
+        ),
+        Effect.orElseSucceed(() =>
+          HttpServerResponse.empty({
+            status: 502,
+            headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" },
+          }),
+        ),
+      );
     }
     if (asset.kind === "source-control-media") {
       return yield* sourceControlMediaResponse(asset, request.headers).pipe(

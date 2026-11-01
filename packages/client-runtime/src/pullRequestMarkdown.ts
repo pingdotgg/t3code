@@ -1,4 +1,17 @@
+import { SOURCE_CONTROL_MEDIA_ASSET, type AssetResource } from "@t3tools/contracts";
 import { sourceControlClients, type ReferenceAutolink } from "./sourceControlClients.ts";
+import { azureDevOpsMediaLocation } from "@t3tools/shared/azureDevOpsMedia";
+
+export function pullRequestMediaResource(url: string, cwd: string) {
+  if (url.startsWith("//")) url = `https:${url}`;
+  const azure = azureDevOpsMediaLocation(url);
+  if (azure)
+    return { _tag: "azure-devops-media", cwd, url: azure.fetchUrl } satisfies AssetResource;
+  const media = sourceControlClients.mediaUrl(url);
+  return media
+    ? ({ _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd, url: media.fetchUrl } satisfies AssetResource)
+    : null;
+}
 
 /** `id` is positional on purpose: the same attachment can be embedded twice in one body. */
 export type PullRequestBodySegment =

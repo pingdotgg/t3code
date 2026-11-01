@@ -10,6 +10,7 @@ import type {
 } from "@t3tools/contracts";
 import { videoMimeType } from "@t3tools/shared/video";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
+import { pullRequestMediaResource } from "@t3tools/client-runtime/pull-request-markdown";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import {
   squashAtomCommandFailure,
@@ -43,6 +44,8 @@ export async function resolveMarkdownMediaPreview(input: {
   resolvedFilePath?: string | undefined;
   cwd?: string | undefined;
   threadRef?: ScopedThreadRef | undefined;
+  environmentId?: EnvironmentId | undefined;
+  sourceControlMedia?: boolean | undefined;
   httpBaseUrl?: string | undefined;
   onOpenFile?: ((relativePath: string) => void) | undefined;
   createAssetUrl: (input: {
@@ -61,13 +64,20 @@ export async function resolveMarkdownMediaPreview(input: {
 
   let src: string;
   let asset: MediaActionSource["asset"];
-  if (media.access === "direct") {
+  const resource =
+    media.access === "environment"
+      ? media.resource
+      : media.access === "direct" && input.sourceControlMedia && input.cwd
+        ? pullRequestMediaResource(media.uri, input.cwd)
+        : null;
+  const environmentId = input.threadRef?.environmentId ?? input.environmentId;
+  if (media.access === "direct" && resource === null) {
     src = resolveProtocolRelativeMediaUrl(media.uri);
   } else {
-    if (media.access === "unavailable" || !input.threadRef || !input.httpBaseUrl) {
+    if (resource === null || environmentId === undefined || !input.httpBaseUrl) {
       throw new Error("Reconnect to this environment and open the media again.");
     }
-    asset = { environmentId: input.threadRef.environmentId, resource: media.resource };
+    asset = { environmentId, resource };
     const result = await input.createAssetUrl({
       environmentId: asset.environmentId,
       input: { resource: asset.resource },
