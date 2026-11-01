@@ -6,6 +6,8 @@ import {
   type SourceControlProviderInfo,
   type SourceControlProviderKind,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -58,10 +60,7 @@ export type SourceControlApiDiscoverySpec = SourceControlDiscoverySpecBase & {
 export type SourceControlManagedCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly type: "managed-cli";
   readonly probe: (cwd: string) => Effect.Effect<SourceControlProviderDiscoveryItem>;
-  /**
-   * `null` when the integration holds nothing for the remote, which includes its CLI not being
-   * installed. A failure means it could not tell, and the registry does not keep that answer.
-   */
+  /** Null includes missing CLIs. Failure means unknown and must not be cached by the registry. */
   readonly refineUnknownRemote: (input: {
     readonly cwd: string;
     readonly context: SourceControlProvider.SourceControlProviderContext;
@@ -78,6 +77,8 @@ type SourceControlCliRemoteRefinementSpec = SourceControlCliDiscoverySpec & {
 };
 
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
+/** An API host that stalls must not hold the whole discovery answer behind it. */
+const API_PROBE_TIMEOUT = "3 seconds";
 
 function probeTimeoutMs(spec: SourceControlCliDiscoverySpec): number {
   return spec.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
@@ -218,15 +219,22 @@ function probeCli(input: {
           }) satisfies DiscoveryProbeResult,
       ),
       Effect.catch((cause) =>
-        Effect.succeed({
-          kind: input.spec.kind,
-          label: input.spec.label,
-          executable: input.spec.executable,
-          status: "missing" as const,
-          version: Option.none<string>(),
-          installHint: input.spec.installHint,
-          detail: detailFromCause(cause),
-        } satisfies DiscoveryProbeResult),
+        Effect.gen(function* () {
+          const installHint = yield* unavailableInstallHint(
+            input.spec.executable,
+            input.spec.installHint,
+            cause,
+          );
+          return {
+            kind: input.spec.kind,
+            label: input.spec.label,
+            executable: input.spec.executable,
+            status: "missing" as const,
+            version: Option.none<string>(),
+            installHint,
+            detail: detailFromCause(cause),
+          } satisfies DiscoveryProbeResult;
+        }),
       ),
     );
 }
@@ -239,6 +247,12 @@ export function probeSourceControlProvider(input: {
   if (input.spec.type === "managed-cli") return input.spec.probe(input.cwd);
   if (input.spec.type === "api") {
     return input.spec.probeAuth.pipe(
+      Effect.timeoutOption(API_PROBE_TIMEOUT),
+      Effect.map(
+        Option.getOrElse(() =>
+          unknownAuth("The hosting service did not answer in time. Refresh to try again."),
+        ),
+      ),
       Effect.map(
         (auth) =>
           ({
@@ -256,20 +270,15 @@ export function probeSourceControlProvider(input: {
 
   const spec = input.spec;
 
-  return probeCli({
-    spec,
-    process: input.process,
-    cwd: input.cwd,
-  }).pipe(
-    Effect.flatMap((item) => {
-      if (item.status !== "available") {
-        return Effect.succeed({
-          ...item,
-          auth: unknownAuth("Hosting integration command was not found on the server PATH."),
-        } satisfies SourceControlProviderDiscoveryItem);
-      }
-
-      return input.process
+  // The auth check does not depend on the version output, so both spawn at once.
+  return Effect.all(
+    [
+      probeCli({
+        spec,
+        process: input.process,
+        cwd: input.cwd,
+      }),
+      input.process
         .run({
           operation: "source-control.discovery.auth",
           command: spec.executable,
@@ -281,30 +290,30 @@ export function probeSourceControlProvider(input: {
           appendTruncationMarker: true,
         })
         .pipe(
-          Effect.map(
-            (result) =>
-              ({
-                ...item,
-                auth: spec.parseAuth(result),
-              }) satisfies SourceControlProviderDiscoveryItem,
-          ),
+          Effect.map(spec.parseAuth),
           Effect.catch((cause) =>
-            Effect.succeed({
-              ...item,
-              auth: unknownAuth(Option.getOrUndefined(detailFromCause(cause))),
-            } satisfies SourceControlProviderDiscoveryItem),
+            Effect.succeed(unknownAuth(Option.getOrUndefined(detailFromCause(cause)))),
           ),
-        );
-    }),
+        ),
+    ],
+    { concurrency: "unbounded" },
+  ).pipe(
+    Effect.map(
+      ([item, auth]) =>
+        ({
+          ...item,
+          auth:
+            item.status === "available"
+              ? auth
+              : unknownAuth("Hosting integration command was not found on the server PATH."),
+        }) satisfies SourceControlProviderDiscoveryItem,
+    ),
   );
 }
 
 const isVcsProcessSpawnError = Schema.is(VcsProcessSpawnError);
 
-/**
- * A hosting CLI that is not installed claims no remote. The spawner checks the cwd before the
- * executable, so only the executable's own ENOENT comes from `ChildProcess`.
- */
+/** The spawner checks cwd first, so ChildProcess NotFound identifies the executable. */
 export function isMissingExecutable(error: unknown): boolean {
   return (
     isVcsProcessSpawnError(error) &&
@@ -313,6 +322,31 @@ export function isMissingExecutable(error: unknown): boolean {
     error.cause.reason.module === "ChildProcess"
   );
 }
+
+// macOS's EBADARCH, which Node has no name for: the binary is built for another CPU, such as an
+// Intel-only `gh` on Apple Silicon without Rosetta.
+const BAD_CPU_TYPE_ERRNO = -86;
+
+export const unavailableInstallHint = Effect.fn("discovery.unavailableInstallHint")(function* (
+  executable: string,
+  installHint: string,
+  cause: unknown,
+) {
+  const platform = yield* HostProcess.Platform;
+  if (
+    platform !== "darwin" ||
+    !isVcsProcessSpawnError(cause) ||
+    !(cause.cause instanceof Error) ||
+    !("errno" in cause.cause) ||
+    cause.cause.errno !== BAD_CPU_TYPE_ERRNO
+  ) {
+    return installHint;
+  }
+  const resolveExecutable = yield* SpawnExecutableResolution;
+  const path = resolveExecutable(executable, platform, yield* HostProcess.Environment);
+  const architecture = yield* HostProcess.Architecture;
+  return `\`${path ?? executable}\` is built for another CPU architecture, so this ${architecture} machine cannot run it. Remove or replace it. ${installHint}`;
+});
 
 class UnknownRemoteUnanswered extends Schema.TaggedError<UnknownRemoteUnanswered>()(
   "UnknownRemoteUnanswered",
@@ -368,8 +402,7 @@ export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvide
     const results = yield* Effect.forEach(input.specs, (spec) =>
       refineWithSpec({ ...input, spec }).pipe(Effect.result),
     );
-    // A claim reached after another integration could not answer is not settled: that one might
-    // have claimed the host first.
+    // An earlier integration that could not answer might have claimed this host.
     let settled = true;
     for (const result of results) {
       if (Result.isFailure(result)) settled = false;

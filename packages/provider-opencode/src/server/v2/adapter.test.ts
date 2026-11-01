@@ -216,20 +216,20 @@ it.layer(NodeServices.layer)("OpenCode2Adapter MCP server names", (it) => {
 
 describe("T3 orchestration instructions", () => {
   it("names the session's registered namespace when the server is thread-suffixed", () => {
-    const prompt = orchestrationInstructions.t3OrchestrationSystemPrompt(true, "t3-code-490f020d");
+    const prompt = orchestrationInstructions.t3OrchestrationSystemPrompt(true, false, "t3-code-490f020d");
     assert.isString(prompt);
     assert.include(prompt!, 'tools["t3-code-490f020d"].');
     assert.include(prompt!, 'search({ query: "orchestrator_capabilities" })');
   });
 
   it("keeps the shared instructions unchanged when the server has its plain name", () => {
-    const base = orchestrationInstructions.t3OrchestrationSystemPrompt(true);
+    const base = orchestrationInstructions.t3OrchestrationSystemPrompt(true, false);
     assert.strictEqual(base, orchestrationInstructions.T3_CODE_ORCHESTRATION_INSTRUCTIONS);
     assert.strictEqual(
-      orchestrationInstructions.t3OrchestrationSystemPrompt(true, "t3-code"),
+      orchestrationInstructions.t3OrchestrationSystemPrompt(true, false, "t3-code"),
       base,
     );
-    assert.strictEqual(orchestrationInstructions.t3OrchestrationSystemPrompt(false), undefined);
+    assert.strictEqual(orchestrationInstructions.t3OrchestrationSystemPrompt(false, false), undefined);
   });
 
   it("documents the thread-suffixed OpenCode pattern for discovery", () => {
