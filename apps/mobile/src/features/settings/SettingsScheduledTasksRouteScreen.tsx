@@ -714,6 +714,7 @@ function TaskForm({
     }
   };
 
+  const offersMissedRun = config?.environment.capabilities.missedRunSchedules === true;
   const offersOnce =
     config?.environment.capabilities.oneTimeSchedules === true ||
     draft.task?.schedule.type === "once";
@@ -1092,18 +1093,20 @@ function TaskForm({
                   setDraft({ ...draft, schedule: { ...draft.schedule, weekdays } });
                 }}
               />
-              <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
-                <Text textRole="body" className="min-w-0 flex-1 text-foreground">
-                  Run once if missed
-                </Text>
-                <ThemedSwitch
-                  accessibilityLabel="Run once if missed"
-                  value={draft.schedule.runMissedOnce}
-                  onValueChange={(runMissedOnce) =>
-                    setDraft({ ...draft, schedule: { ...draft.schedule, runMissedOnce } })
-                  }
-                />
-              </View>
+              {offersMissedRun ? (
+                <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
+                  <Text textRole="body" className="min-w-0 flex-1 text-foreground">
+                    Run once if missed
+                  </Text>
+                  <ThemedSwitch
+                    accessibilityLabel="Run once if missed"
+                    value={draft.schedule.runMissedOnce}
+                    onValueChange={(runMissedOnce) =>
+                      setDraft({ ...draft, schedule: { ...draft.schedule, runMissedOnce } })
+                    }
+                  />
+                </View>
+              ) : null}
             </>
           ) : draft.schedule.mode === "once" ? (
             (["date", "time"] as const).map((field) => {
