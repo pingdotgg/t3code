@@ -8,5 +8,5 @@ export const ANDROID_PLAY_STORE_URL =
 
 export const MARKETING_STATS = {
   githubStars: "31k+",
-  users: "500,000",
+  users: "600,000",
 } as const;
