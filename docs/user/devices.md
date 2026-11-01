@@ -30,8 +30,10 @@ Simulators run on the machine that hosts the environment server. iOS needs
 macOS with Xcode. Android needs the SDK Platform-Tools, Android Emulator,
 and Command-line Tools (latest), plus a virtual device created in Android
 Studio's Device Manager. T3 Code detects standard SDK locations; set
-`ANDROID_HOME` for a custom location. The panel explains missing dependencies.
-After installing SDK tools, restart the environment server and refresh devices.
+`ANDROID_HOME` for a custom location. The Command-line Tools need Java 17 or
+newer: T3 Code uses `JAVA_HOME`, `java` on PATH, or the JDK bundled with
+Android Studio. The panel explains missing dependencies.
+After installing them, restart the environment server and refresh devices.
 
 Android emulator video also needs `ffmpeg` with the libx264 encoder on the device
 host's PATH, or an executable selected by `SERVE_EMU_FFMPEG` on that host. If

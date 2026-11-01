@@ -15,7 +15,7 @@ import {
   type NodeRuntimeUnavailableError,
 } from "@t3tools/shared/nodeRuntime";
 import * as NetService from "@t3tools/shared/Net";
-import { isCommandAvailable } from "@t3tools/shared/shell";
+import { isCommandAvailable, resolveCommandPath } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -102,7 +102,11 @@ interface RunningHost {
 
 const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
   platform: DevicePlatform,
-): Effect.fn.Return<string | null, never, FileSystem.FileSystem | Path.Path> {
+): Effect.fn.Return<
+  string | null,
+  never,
+  FileSystem.FileSystem | Path.Path | ProcessRunner.ProcessRunner
+> {
   const hostPlatform = yield* HostProcess.Platform;
   if (platform === "ios") {
     if (hostPlatform !== "darwin") return "iOS Simulators need macOS with Xcode.";
@@ -120,6 +124,90 @@ const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
     if (sdk.legacyAvdmanager)
       return `The Android SDK command-line tools in ${sdk.root} appear to be an older, unsupported version. Install Android SDK Command-line Tools (latest) in Android Studio's SDK Manager under SDK Tools.`;
     return `Android SDK Command-line Tools (latest) are missing from ${sdk.root}. Install them in Android Studio's SDK Manager.`;
+  }
+  if ((yield* androidJava) === null)
+    return "Android SDK Command-line Tools need Java 17 or later, which was not found. Install Android Studio, or set JAVA_HOME for the T3 Code server.";
+  return null;
+});
+
+/**
+ * The hub lists AVDs with avdmanager, a Java program. GUI-launched servers
+ * rarely inherit a JDK, so fall back to the one bundled with Android Studio.
+ * Keep the candidates in step with `remoteDeviceEnvironment`.
+ * `undefined` means a working `java` is already on PATH.
+ */
+const androidJava = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const environment = yield* HostProcess.Environment;
+  const platform = yield* HostProcess.Platform;
+  // JDK release metadata avoids spawning Java on every device command.
+  const supported = Effect.fn("LocalDeviceHost.supportedJava")(function* (directory: string) {
+    const executable = path.join(directory, "bin", platform === "win32" ? "java.exe" : "java");
+    if (!(yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false)))) return false;
+    const release = yield* fs
+      .readFileString(path.join(directory, "release"))
+      .pipe(Effect.orElseSucceed(() => ""));
+    return Number(/^JAVA_VERSION="(\d+)/m.exec(release)?.[1] ?? 0) >= 17;
+  });
+  const javaHome = environment.JAVA_HOME?.trim();
+  if (javaHome) return (yield* supported(javaHome)) ? javaHome : null;
+  const home = environment.HOME ?? environment.USERPROFILE ?? "";
+  const java = yield* resolveCommandPath("java");
+  if (java && !(platform === "darwin" && java === "/usr/bin/java")) {
+    const resolved = yield* fs.realPath(java).pipe(Effect.orElseSucceed(() => java));
+    const directory = path.dirname(path.dirname(resolved));
+    if (yield* supported(directory)) return undefined;
+    if (
+      !(yield* fs.exists(path.join(directory, "release")).pipe(Effect.orElseSucceed(() => false)))
+    ) {
+      const runner = yield* ProcessRunner.ProcessRunner;
+      const result = yield* runner
+        .run({ command: java, args: ["-version"], env: environment, timeout: Duration.seconds(5) })
+        .pipe(Effect.orElseSucceed(() => null));
+      if (
+        result?.code === 0 &&
+        Number(/version\s+"(\d+)/.exec(`${result.stdout}\n${result.stderr}`)?.[1] ?? 0) >= 17
+      )
+        return undefined;
+    }
+  }
+  if (platform === "darwin") {
+    // /usr/bin/java is a launcher stub that fails unless a JDK is registered here.
+    for (const directory of [
+      "/Library/Java/JavaVirtualMachines",
+      path.join(home, "Library", "Java", "JavaVirtualMachines"),
+    ]) {
+      const installed = yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
+      for (const name of installed) {
+        const candidate = path.join(directory, name, "Contents", "Home");
+        if (yield* supported(candidate)) return candidate;
+      }
+    }
+  }
+  const candidates =
+    platform === "win32"
+      ? [
+          path.join(
+            environment.ProgramFiles ?? "C:\\Program Files",
+            "Android",
+            "Android Studio",
+            "jbr",
+          ),
+        ]
+      : platform === "darwin"
+        ? [
+            "/Applications/Android Studio.app/Contents/jbr/Contents/Home",
+            path.join(home, "Applications/Android Studio.app/Contents/jbr/Contents/Home"),
+          ]
+        : [
+            path.join(home, ".local", "opt", "android-studio", "jbr"),
+            "/opt/android-studio/jbr",
+            "/usr/local/android-studio/jbr",
+            "/snap/android-studio/current/jbr",
+          ];
+  for (const candidate of candidates) {
+    if (yield* supported(candidate)) return candidate;
   }
   return null;
 });
@@ -181,6 +269,7 @@ const androidSdk = Effect.gen(function* () {
 const deviceHostEnvironment = (
   environment: NodeJS.ProcessEnv,
   sdkRoot: string | null,
+  javaHome: string | null | undefined,
   hostPlatform: NodeJS.Platform,
   path: Path.Path,
 ): NodeJS.ProcessEnv => {
@@ -188,6 +277,7 @@ const deviceHostEnvironment = (
     ? {
         ...environment,
         ANDROID_HOME: sdkRoot,
+        ...(javaHome ? { JAVA_HOME: javaHome } : {}),
         PATH: [
           path.join(sdkRoot, "platform-tools"),
           path.join(sdkRoot, "emulator"),
@@ -268,8 +358,19 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
   const hostPlatform = yield* HostProcess.Platform;
-  const sdk = yield* androidSdk;
-  const hostEnvironment = deviceHostEnvironment(environment, sdk.root, hostPlatform, path);
+  // Resolved on use: the SDK or a JDK may be installed while the server runs.
+  const androidTools = Effect.all([androidSdk, androidJava]).pipe(
+    Effect.map(([sdk, javaHome]) => ({
+      sdk,
+      environment: deviceHostEnvironment(environment, sdk.root, javaHome, hostPlatform, path),
+    })),
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+    Effect.provideService(ProcessRunner.ProcessRunner, runner),
+    Effect.provideService(HostProcess.Environment, environment),
+    Effect.provideService(HostProcess.Platform, hostPlatform),
+  );
+  const hostEnvironment = Effect.map(androidTools, (tools) => tools.environment);
   const startLock = yield* Semaphore.make(1);
   const runningRef = yield* Ref.make<RunningHost | null>(null);
   const restartDelayRef = yield* Ref.make(0);
@@ -281,6 +382,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     const reason = yield* platformReason(platform).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
     );
     return reason === null ? { platform, available: true } : { platform, available: false, reason };
   });
@@ -431,7 +533,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
               shell: false,
               stdout: "pipe",
               stderr: "pipe",
-              env: yield* hubEnvironment(hostEnvironment).pipe(
+              env: yield* hubEnvironment(yield* hostEnvironment).pipe(
                 Effect.provideService(FileSystem.FileSystem, fs),
                 Effect.provideService(Path.Path, path),
                 Effect.provideService(ProcessRunner.ProcessRunner, runner),
@@ -534,7 +636,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     yield* fs.makeDirectory(stateDir, { recursive: true }).pipe(Effect.ignore);
     const existing = yield* readDaemonFile().pipe(Effect.option);
     const daemonEnvironment: NodeJS.ProcessEnv = {
-      ...hostEnvironment,
+      ...(yield* hostEnvironment),
       AGENT_DEVICE_STATE_DIR: stateDir,
       AGENT_DEVICE_DAEMON_SERVER_MODE: "http",
       // Disable the five-minute idle timeout; the server owns shutdown.
@@ -628,21 +730,24 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     agentTool: { readonly entryPath: string; readonly nodePath: string } | null,
   ) =>
     agentTool
-      ? runner
-          .run({
-            command: agentTool.nodePath,
-            args: [
-              agentTool.entryPath,
-              "daemon",
-              "stop",
-              "--state-dir",
-              agentDeviceStateDir(path, config.stateDir),
-            ],
-            env: { ...hostEnvironment, AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1" },
-            timeout: Duration.seconds(10),
-            timeoutBehavior: "timedOutResult",
-          })
-          .pipe(Effect.ignore)
+      ? hostEnvironment.pipe(
+          Effect.flatMap((env) =>
+            runner.run({
+              command: agentTool.nodePath,
+              args: [
+                agentTool.entryPath,
+                "daemon",
+                "stop",
+                "--state-dir",
+                agentDeviceStateDir(path, config.stateDir),
+              ],
+              env: { ...env, AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1" },
+              timeout: Duration.seconds(10),
+              timeoutBehavior: "timedOutResult",
+            }),
+          ),
+          Effect.ignore,
+        )
       : Effect.void;
 
   let agentToolRef: { readonly entryPath: string; readonly nodePath: string } | null = null;
@@ -657,7 +762,10 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       const alive = yield* running.hub.child.isRunning.pipe(Effect.orElseSucceed(() => false));
       if (alive) return running;
     }
-    const nodePath = yield* resolveNodeExecutable("Local device support", hostEnvironment).pipe(
+    const nodePath = yield* resolveNodeExecutable(
+      "Local device support",
+      yield* hostEnvironment,
+    ).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.provideService(HostProcess.Platform, hostPlatform),
@@ -790,31 +898,32 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   };
 
   const run: DeviceHost.DeviceHostReady["run"] = (command, args, options) =>
-    runner
-      .run({
-        command:
-          command === "emulator" && sdk.root
-            ? path.join(
-                sdk.root,
-                "emulator",
-                hostPlatform === "win32" ? "emulator.exe" : "emulator",
-              )
-            : command,
-        args,
-        cwd: workingDirectory,
-        env: hostEnvironment,
-        timeout: Duration.millis(options?.timeoutMs ?? 20_000),
-        timeoutBehavior: "timedOutResult",
-        ...(options?.stdin === undefined ? {} : { stdin: options.stdin }),
-      })
-      .pipe(
-        Effect.map((result) => ({
-          stdout: result.stdout,
-          stderr: result.stderr,
-          code: result.timedOut ? 124 : Number(result.code ?? 127),
-        })),
-        Effect.catch((cause) => Effect.succeed({ stdout: "", stderr: String(cause), code: 127 })),
-      );
+    androidTools.pipe(
+      Effect.flatMap(({ sdk, environment: env }) =>
+        runner.run({
+          command:
+            command === "emulator" && sdk.root
+              ? path.join(
+                  sdk.root,
+                  "emulator",
+                  hostPlatform === "win32" ? "emulator.exe" : "emulator",
+                )
+              : command,
+          args,
+          cwd: workingDirectory,
+          env,
+          timeout: Duration.millis(options?.timeoutMs ?? 20_000),
+          timeoutBehavior: "timedOutResult",
+          ...(options?.stdin === undefined ? {} : { stdin: options.stdin }),
+        }),
+      ),
+      Effect.map((result) => ({
+        stdout: result.stdout,
+        stderr: result.stderr,
+        code: result.timedOut ? 124 : Number(result.code ?? 127),
+      })),
+      Effect.catch((cause) => Effect.succeed({ stdout: "", stderr: String(cause), code: 127 })),
+    );
 
   const toReady = (running: RunningHost): DeviceHost.DeviceHostReady => ({
     hub: { origin: running.hub.origin } satisfies DeviceHost.DeviceHubEndpoint,
@@ -878,6 +987,7 @@ export const layer = Layer.effect(DeviceHost.DeviceHost, make());
 export const __testing = {
   AgentDeviceDaemonFile,
   androidSdk,
+  androidJava,
   platformReason,
   deviceHostEnvironment,
   hubEnvironment,
