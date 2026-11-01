@@ -1462,6 +1462,37 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("ignores a stale macOS Keychain login when Cursor is not installed", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const cursor = makeFakeCursor();
+      cursor.state.error = "Sign in to Cursor again to read account usage.";
+      const readCursorSource = Effect.gen(function* () {
+        const service = yield* makeWithCursor(cursor.read);
+        const summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        return cursorSource(summary);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cursor-keychain-uninstalled",
+            home,
+            settings: { ...settings, cursorKeychainUsageEnabled: true },
+            platform: "darwin",
+            environment: {},
+          }),
+        ),
+      );
+
+      assert.isUndefined(yield* readCursorSource);
+      assert.lengthOf(cursor.state.calls, 0);
+
+      yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(home, ".cursor")));
+      const installed = yield* readCursorSource;
+      assert.strictEqual(installed?.message, "Sign in to Cursor again to read account usage.");
+      assert.lengthOf(cursor.state.calls, 1);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("ignores stale Cursor file logins when the active credential store differs", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
