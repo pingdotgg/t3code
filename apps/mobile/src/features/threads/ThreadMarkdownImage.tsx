@@ -19,6 +19,7 @@ import { PresentationSource } from "../../components/ui/NativePresentation";
 import { useMediaActions } from "../../state/mediaActions";
 import type { MediaActionsSource } from "../../lib/mediaActionsSource";
 import { useAssetUrlState } from "../../state/assets";
+import { assetImageCacheKey } from "../../lib/assetImageSource";
 import {
   MARKDOWN_IMAGE_MAX_WIDTH,
   type MarkdownImageDisplaySize,
@@ -84,6 +85,7 @@ const noSvgDocumentAtom = Atom.make(AsyncResult.initial<SvgDocument, SvgLoadErro
 export function ThreadMarkdownImageView(props: {
   readonly uri: string | null;
   readonly sourceKey: string;
+  readonly cacheKey?: string | undefined;
   readonly unavailable: boolean;
   readonly unavailableDetail?: string | undefined;
   readonly alt: string | null;
@@ -189,7 +191,17 @@ export function ThreadMarkdownImageView(props: {
                   <ThreadMarkdownImageRequest
                     key={props.sourceKey}
                     uri={props.uri}
-                    onLoad={(size) => setDecoded({ sourceKey: props.sourceKey, size })}
+                    cacheKey={props.cacheKey}
+                    onLoad={(size) =>
+                      // Only the first decode counts: later loads report the bitmap
+                      // downsampled for the current frame (969 vs 970 wide), so keeping
+                      // them resizes the frame, which reloads the image, and so on.
+                      setDecoded((current) =>
+                        current?.sourceKey === props.sourceKey
+                          ? current
+                          : { sourceKey: props.sourceKey, size },
+                      )
+                    }
                     onError={() => setFailure({ uri: props.uri, failed: true })}
                   />
                 )}
@@ -209,6 +221,7 @@ export function ThreadMarkdownImageView(props: {
 
 function ThreadMarkdownImageRequest(props: {
   readonly uri: string;
+  readonly cacheKey: string | undefined;
   readonly onLoad: (sourceSize: ImageSize) => void;
   readonly onError: () => void;
 }) {
@@ -217,7 +230,7 @@ function ThreadMarkdownImageRequest(props: {
   return (
     <>
       <Image
-        source={{ uri: props.uri }}
+        source={{ uri: props.uri, cacheKey: props.cacheKey }}
         contentFit="contain"
         cachePolicy="memory-disk"
         accessible={false}
@@ -265,17 +278,28 @@ export function ThreadMarkdownImage(props: {
 }) {
   const withGallery = useFilePreviewGallery();
   const assetUrl = useAssetUrlState(props.environmentId, props.resource);
+  const resourceKey =
+    props.resource._tag === "attachment"
+      ? `attachment:${props.resource.attachmentId}`
+      : props.resource._tag === "tool-output-image"
+        ? `tool-output:${props.resource.itemId}:${props.resource.index}`
+        : `workspace:${props.resource.path}`;
+  // The view keeps the first decoded size per key, so a file edited in place needs a
+  // new key; a re-signed URL for the same revision must not get one.
+  const sourceKey =
+    assetUrl._tag === "Success" && assetUrl.fileRevision !== undefined
+      ? `${resourceKey}@${assetUrl.fileRevision}`
+      : resourceKey;
 
   return (
     <ThreadMarkdownImageView
       uri={assetUrl._tag === "Success" ? assetUrl.url + (props.srcFragment ?? "") : null}
-      sourceKey={
-        props.resource._tag === "attachment"
-          ? `attachment:${props.resource.attachmentId}`
-          : props.resource._tag === "tool-output-image"
-            ? `tool-output:${props.resource.itemId}:${props.resource.index}`
-            : `workspace:${props.resource.path}`
+      cacheKey={
+        assetUrl._tag === "Success"
+          ? assetImageCacheKey(props.environmentId, props.resource, assetUrl.fileRevision)
+          : undefined
       }
+      sourceKey={sourceKey}
       unavailable={assetUrl._tag === "Failure"}
       unavailableDetail={
         assetUrl._tag === "Failure" && assetUrl.reason === "missing-file-access"

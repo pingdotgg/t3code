@@ -9,6 +9,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as Stream from "effect/Stream";
 import type * as Tracer from "effect/Tracer";
 import { vi } from "vite-plus/test";
 
@@ -192,6 +194,34 @@ it.effect("keeps another connection from committing between a transaction's read
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("waits for another process's lock while the database opens", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-open-" });
+    const filename = path.join(directory, "state.sqlite");
+    const seed = new NodeSqlite.DatabaseSync(filename);
+    seed.exec("PRAGMA journal_mode = WAL; CREATE TABLE entries(name TEXT NOT NULL)");
+    seed.close();
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const holder = yield* spawner.spawn(
+      ChildProcess.make(process.execPath, [
+        "-e",
+        `const db = new (require("node:sqlite").DatabaseSync)(process.argv[1]);
+        db.exec("PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE");
+        console.log("held");
+        setTimeout(() => db.close(), 300);`,
+        filename,
+      ]),
+    );
+    yield* Stream.runHead(holder.stdout);
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      assert.deepEqual(yield* sql`SELECT COUNT(*) FROM entries`.values, [[0]]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename, checkpointWorker: true })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("reports a transaction blocked by another writer as a lock timeout", () =>
   Effect.gen(function* () {
     const { filename, other } = yield* makeTempDatabase;
@@ -234,6 +264,27 @@ it.effect("lets the writer commit while a read-only transaction is open", () =>
 
       assert.deepEqual(counts, { before: 1, after: 1 });
       assert.equal(yield* countEntries(sql).pipe(SqliteClient.readOnly), 2);
+    }),
+  ),
+);
+
+it.effect("serves another read while a read-only transaction is open", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const opened = yield* Deferred.make<void>();
+      const other = yield* Effect.forkChild(
+        Deferred.await(opened).pipe(Effect.andThen(countEntries(sql).pipe(SqliteClient.readOnly))),
+      );
+      yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* countEntries(sql);
+            yield* Deferred.succeed(opened, undefined);
+            // One shared reader would make this join wait on the transaction forever.
+            assert.equal(yield* Fiber.join(other), 1);
+          }),
+        )
+        .pipe(SqliteClient.readOnly);
     }),
   ),
 );
@@ -333,6 +384,25 @@ it.effect("uses the writer when the reader cannot open the database", () =>
 
       assert.equal(yield* sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly), 1);
       assert.equal(yield* sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly), 1);
+
+      // A read beside an open read transaction must not start a worker on the next slot.
+      const held = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const holder = yield* sql
+        .withTransaction(
+          countEntries(sql).pipe(
+            Effect.andThen(Deferred.succeed(held, undefined)),
+            Effect.andThen(Deferred.await(release)),
+          ),
+        )
+        .pipe(SqliteClient.readOnly, Effect.forkChild);
+      yield* Deferred.await(held);
+      const other = yield* countEntries(sql).pipe(SqliteClient.readOnly, (effect) =>
+        Effect.forkChild(effect, { startImmediately: true }),
+      );
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(holder);
+      assert.equal(yield* Fiber.join(other), 1);
       assert.equal(startedWorkers.length, startedBefore + 1);
     }),
   ),

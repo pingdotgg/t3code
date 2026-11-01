@@ -2,11 +2,15 @@ import { useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
+  acceptsSecretReference,
+  isSecretReference,
   isSecretSetting,
+  type EnvironmentId,
   type ProviderSettingsFormAnnotation,
   type ProviderSettingsFormControl,
   type ProviderSettingsFormOption,
   type ProviderSettingsFormSchemaAnnotation,
+  type SecretReference,
 } from "@t3tools/contracts";
 import { PlusIcon, XIcon } from "lucide-react";
 
@@ -15,6 +19,7 @@ import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
 import { SecretInput } from "./SecretInput";
+import { SecretSourceInput, useSecretSources } from "./SecretSourceInput";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
@@ -34,6 +39,8 @@ export interface ProviderSettingsFieldModel {
   readonly clearWhenEmpty: "omit" | "persist";
   /** Kept in the server's secret store: a saved value arrives as `SECRET_REDACTED` and never shows. */
   readonly secret?: boolean | undefined;
+  /** Typed `SettingsSecretValue`: may name a secret provider reference instead of a value. */
+  readonly acceptsSecretReference?: boolean | undefined;
   readonly defaultBooleanValue?: boolean | undefined;
 
   readonly options?: ReadonlyArray<ProviderSettingsFormOption> | undefined;
@@ -131,6 +138,7 @@ export function deriveProviderSettingsFields(
               : {}),
           clearWhenEmpty: formAnnotation.clearWhenEmpty ?? "omit",
           ...(isSecretSetting(fieldSchema) ? { secret: true } : {}),
+          ...(acceptsSecretReference(fieldSchema) ? { acceptsSecretReference: true } : {}),
           ...(formAnnotation.control === "switch"
             ? { defaultBooleanValue: readFieldBooleanDefault(fieldSchema) }
             : {}),
@@ -198,7 +206,10 @@ function configuredCommandArgs(value: ProviderSettingsFormProps["value"]) {
 function ProviderCommandArguments({
   value,
   onChange,
-}: Pick<ProviderSettingsFormProps, "value" | "onChange">) {
+  managedReason,
+}: Pick<ProviderSettingsFormProps, "value" | "onChange"> & {
+  readonly managedReason: string | undefined;
+}) {
   const args = configuredCommandArgs(value);
   const [storedDraft, setDraft] = useState(() => seedRowsDraft(args, toCommandArgumentRows));
   const draft = reconcileRowsDraft(storedDraft, args, commandArgumentsEqual, toCommandArgumentRows);
@@ -217,6 +228,7 @@ function ProviderCommandArguments({
     <SettingsRow
       title="Arguments"
       description="One literal argument per row, in launch order."
+      managed={managedReason}
       control={
         <Button
           type="button"
@@ -231,35 +243,41 @@ function ProviderCommandArguments({
     >
       {rows.length > 0 ? (
         <div className="mt-3 min-w-0 space-y-2 pb-2">
-          {rows.map((argument, index) => (
-            <div key={argument.id} className="flex min-w-0 items-center gap-1.5">
-              <DraftInput
-                size="sm"
-                font="mono"
-                value={argument.value}
-                onCommit={(next) =>
-                  updateArguments(
-                    rows.map((current) =>
-                      current.id === argument.id ? { ...current, value: next } : current,
-                    ),
-                  )
-                }
-                aria-label={`Argument ${index + 1}`}
-                spellCheck={false}
-              />
-              <Button
-                type="button"
-                size="icon-micro"
-                variant="ghost-destructive"
-                onClick={() =>
-                  updateArguments(rows.filter((current) => current.id !== argument.id))
-                }
-                aria-label={`Remove argument ${index + 1}`}
-              >
-                <XIcon />
-              </Button>
-            </div>
-          ))}
+          {rows.map((argument, index) =>
+            managedReason !== undefined ? (
+              <code key={argument.id} className="block min-w-0 truncate text-xs">
+                {argument.value}
+              </code>
+            ) : (
+              <div key={argument.id} className="flex min-w-0 items-center gap-1.5">
+                <DraftInput
+                  size="sm"
+                  font="mono"
+                  value={argument.value}
+                  onCommit={(next) =>
+                    updateArguments(
+                      rows.map((current) =>
+                        current.id === argument.id ? { ...current, value: next } : current,
+                      ),
+                    )
+                  }
+                  aria-label={`Argument ${index + 1}`}
+                  spellCheck={false}
+                />
+                <Button
+                  type="button"
+                  size="icon-micro"
+                  variant="ghost-destructive"
+                  onClick={() =>
+                    updateArguments(rows.filter((current) => current.id !== argument.id))
+                  }
+                  aria-label={`Remove argument ${index + 1}`}
+                >
+                  <XIcon />
+                </Button>
+              </div>
+            ),
+          )}
         </div>
       ) : null}
     </SettingsRow>
@@ -281,10 +299,15 @@ function readProviderConfigBoolean(config: unknown, key: string, defaultValue = 
 export function nextProviderConfigWithFieldValue(
   config: unknown,
   field: ProviderSettingsFieldModel,
-  value: string | boolean,
+  value: string | boolean | SecretReference,
 ): Record<string, unknown> | undefined {
   const base: Record<string, unknown> =
     config !== null && typeof config === "object" ? { ...(config as Record<string, unknown>) } : {};
+
+  if (typeof value === "object") {
+    base[field.key] = value;
+    return base;
+  }
 
   if (typeof value === "boolean") {
     const emptyBooleanValue = field.defaultBooleanValue ?? false;
@@ -311,6 +334,63 @@ interface ProviderSettingsFormProps {
   readonly idPrefix: string;
   readonly variant: "card" | "dialog" | "settings";
   readonly onChange: (nextConfig: Record<string, unknown> | undefined) => void;
+  /** Config keys an administrator's policy pins, shown inert with the reason. */
+  readonly managed?: { readonly keys: ReadonlySet<string>; readonly reason: string } | undefined;
+  /** Where the secret providers offered for `SettingsSecretValue` fields are configured. */
+  readonly environmentId?: EnvironmentId | undefined;
+}
+
+function SecretSettingsControl({
+  field,
+  value,
+  inputId,
+  descriptionId,
+  environmentId,
+  onChange,
+}: {
+  readonly field: ProviderSettingsFieldModel;
+  readonly value: unknown;
+  readonly inputId: string;
+  readonly descriptionId: string | undefined;
+  readonly environmentId: EnvironmentId;
+  readonly onChange: ProviderSettingsFormProps["onChange"];
+}) {
+  const sources = useSecretSources(environmentId);
+  const saved =
+    value !== null && typeof value === "object"
+      ? (value as Record<string, unknown>)[field.key]
+      : undefined;
+  const reference = isSecretReference(saved) ? saved : undefined;
+  const configured = reference !== undefined || (typeof saved === "string" && saved.length > 0);
+  return (
+    <div className="flex w-full min-w-0 items-start gap-2 @min-[32rem]/settings-row:w-80">
+      <SecretSourceInput
+        id={inputId}
+        aria-describedby={descriptionId}
+        aria-label={field.label}
+        size="sm"
+        className="min-w-0 flex-1"
+        value={reference ?? ""}
+        configured={reference === undefined && configured}
+        sources={sources}
+        onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
+        onSecretChange={(secret) =>
+          onChange(nextProviderConfigWithFieldValue(value, field, secret ?? ""))
+        }
+      />
+      {configured ? (
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost-destructive"
+          onClick={() => onChange(nextProviderConfigWithFieldValue(value, field, ""))}
+          aria-label={`Clear ${field.label}`}
+        >
+          <XIcon className="size-3.5" />
+        </Button>
+      ) : null}
+    </div>
+  );
 }
 
 function ProviderSettingsSelect({
@@ -370,6 +450,8 @@ interface ProviderSettingsFieldRowProps {
   readonly idPrefix: string;
   readonly variant: ProviderSettingsFormProps["variant"];
   readonly onChange: ProviderSettingsFormProps["onChange"];
+  readonly managedReason?: string | undefined;
+  readonly environmentId: EnvironmentId | undefined;
 }
 
 function ProviderSettingsFieldRow({
@@ -378,6 +460,8 @@ function ProviderSettingsFieldRow({
   idPrefix,
   variant,
   onChange,
+  managedReason,
+  environmentId,
 }: ProviderSettingsFieldRowProps) {
   const inputId = `${idPrefix}-${field.key}`;
   const descriptionClassName =
@@ -423,6 +507,15 @@ function ProviderSettingsFieldRow({
           }
           placeholder={field.placeholder}
           spellCheck={false}
+        />
+      ) : field.acceptsSecretReference && environmentId !== undefined ? (
+        <SecretSettingsControl
+          field={field}
+          value={value}
+          inputId={inputId}
+          descriptionId={descriptionId}
+          environmentId={environmentId}
+          onChange={onChange}
         />
       ) : field.secret ? (
         <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
@@ -473,6 +566,7 @@ function ProviderSettingsFieldRow({
           field.description ? <span id={descriptionId}>{field.description}</span> : undefined
         }
         control={control}
+        managed={managedReason}
       />
     );
   }
@@ -581,6 +675,8 @@ export function ProviderSettingsForm({
   idPrefix,
   variant,
   onChange,
+  managed,
+  environmentId,
 }: ProviderSettingsFormProps) {
   const fields = deriveProviderSettingsFields(definition, value);
   const isLocalAcp =
@@ -601,9 +697,17 @@ export function ProviderSettingsForm({
           idPrefix={idPrefix}
           variant={variant}
           onChange={onChange}
+          managedReason={managed?.keys.has(field.key) ? managed.reason : undefined}
+          environmentId={environmentId}
         />
       ))}
-      {isLocalAcp ? <ProviderCommandArguments value={value} onChange={onChange} /> : null}
+      {isLocalAcp ? (
+        <ProviderCommandArguments
+          value={value}
+          onChange={onChange}
+          managedReason={managed?.keys.has("commandArgs") ? managed.reason : undefined}
+        />
+      ) : null}
     </>
   );
 }

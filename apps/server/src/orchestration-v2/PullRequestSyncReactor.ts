@@ -214,6 +214,23 @@ function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
   };
 }
 
+// GitHub briefly returns unknown after base pushes; other hosts may mean a lasting condition.
+function withKnownMergeability(
+  previous: ThreadPullRequestSnapshot | null,
+  fields: SnapshotFields,
+  provider: PullRequestSummary["provider"],
+): SnapshotFields {
+  if (
+    provider !== "github" ||
+    fields.state !== "open" ||
+    fields.mergeability !== "unknown" ||
+    previous?.updatedAt !== fields.updatedAt
+  )
+    return fields;
+  const known = previous?.state === "open" ? previous.mergeability : undefined;
+  return known === undefined || known === "unknown" ? fields : { ...fields, mergeability: known };
+}
+
 // Rotating ghe.com avatar tokens should not make otherwise identical snapshots differ.
 function avatarIdentity(avatarUrl: string | null | undefined): string | null {
   if (avatarUrl === null || avatarUrl === undefined) return null;
@@ -392,12 +409,16 @@ export const make = Effect.gen(function* () {
     const stacksReadThisSweep = new Map<string, ThreadPullRequestStack | null>();
     const persistence = yield* Semaphore.make(1);
 
-    const syncEntry = Effect.fn("PullRequestSyncReactor.syncEntry")(function* (
+    // Effect.fn's stack frames close over these sweep-scoped bodies and their arguments, and a
+    // cache lookup forked inside keeps those frames, so a plain span leaves the sweep collectable.
+    const syncEntry = Effect.fnUntraced(function* (
       entry: LinkEntry,
-      fields: SnapshotFields,
+      hostFields: SnapshotFields,
       fetchedStack: { readonly stack: ThreadPullRequestStack | null } | null,
+      provider: PullRequestSummary["provider"],
     ) {
       const { thread, link } = entry;
+      const fields = withKnownMergeability(link.snapshot, hostFields, provider);
       const nextStack = fetchedStack === null ? link.stack : fetchedStack.stack;
       const changed =
         link.snapshot === null ||
@@ -446,12 +467,9 @@ export const make = Effect.gen(function* () {
           stack: nextStack,
         });
       }
-    });
+    }, Effect.withSpan("PullRequestSyncReactor.syncEntry"));
 
-    const syncGroup = Effect.fn("PullRequestSyncReactor.syncGroup")(function* (
-      key: string,
-      entries: ReadonlyArray<LinkEntry>,
-    ) {
+    const syncGroup = Effect.fnUntraced(function* (key: string, entries: ReadonlyArray<LinkEntry>) {
       const first = entries[0]!;
       const ref = {
         projectId: first.thread.projectId,
@@ -476,7 +494,10 @@ export const make = Effect.gen(function* () {
         entries.some(
           (entry) =>
             entry.link.snapshot === null ||
-            !snapshotFieldsEqual(entry.link.snapshot, fields) ||
+            !snapshotFieldsEqual(
+              entry.link.snapshot,
+              withKnownMergeability(entry.link.snapshot, fields, summary.provider),
+            ) ||
             (summary.stack !== undefined &&
               (entry.link.stack?.number ?? null) !== (summary.stack?.number ?? null)),
         );
@@ -543,7 +564,7 @@ export const make = Effect.gen(function* () {
       yield* Effect.forEach(
         entries,
         (entry) =>
-          syncEntry(entry, fields, fetchedStack).pipe(
+          syncEntry(entry, fields, fetchedStack, summary.provider).pipe(
             persistence.withPermits(1),
             Effect.catchCause((cause) => {
               if (!Cause.hasInterruptsOnly(cause)) retryStacks.add(key);
@@ -554,7 +575,7 @@ export const make = Effect.gen(function* () {
           ),
         { discard: true },
       );
-    });
+    }, Effect.withSpan("PullRequestSyncReactor.syncGroup"));
 
     const skips = new Map<string, { count: number; readonly key: string }>();
     const readGroup = (key: string, entries: ReadonlyArray<LinkEntry>, pauseKey: string) =>
@@ -600,7 +621,7 @@ export const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker((scope: "all" | "requested") =>
     Effect.suspend(() => {
       if (scope === "requested") requestedSweepQueued = false;
-      return sweep(scope);
+      return pullRequests.withSharedProjectReads(sweep(scope));
     }).pipe(Effect.catchCause(logSkipped("pull request sync sweep failed", {}))),
   );
 
