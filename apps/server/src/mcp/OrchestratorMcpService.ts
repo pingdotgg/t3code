@@ -79,6 +79,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -2152,6 +2153,11 @@ const make = Effect.gen(function* () {
 
       const readError = (error: unknown) =>
         failure("orchestration_error", `Unable to read the secret request: ${errorMessage(error)}`);
+      const watchError = (error: unknown) =>
+        failure(
+          "orchestration_error",
+          `Unable to watch the secret request: ${errorMessage(error)}`,
+        );
       const readAnswer = Effect.gen(function* () {
         const projection = yield* threadManagement
           .getThreadRecords(threadId, ["runs", "turnItems"], {
@@ -2161,24 +2167,24 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError(readError));
         const item = projection.turnItems.find((candidate) => candidate.id === turnItemId);
         if (item?.type === "secret_request" && item.secretStatus !== "pending") {
-          return Option.some(item.secretStatus);
+          return item.secretStatus;
         }
         const current = projection.runs.find((candidate) => candidate.id === runId);
         if (current === undefined || ThreadManagementService.isTerminalRunStatus(current.status)) {
           yield* record("cancelled");
-          return Option.some("cancelled" as const);
+          return "cancelled" as const;
         }
-        return Option.none();
+        return undefined;
       });
 
       const answered = yield* Effect.gen(function* () {
         // Taken after the pending record: earlier answers show in the first read, later ones replay.
         const afterSequence = yield* threadManagement
           .getThreadEventSequence(threadId)
-          .pipe(Effect.mapError(readError));
+          .pipe(Effect.mapError(watchError));
         const initial = yield* readAnswer;
-        if (Option.isSome(initial)) return initial;
-        const next = yield* Stream.merge(
+        if (initial !== undefined) return Option.some(initial);
+        return yield* Stream.merge(
           threadManagement
             .streamStoredEventsFrom({ threadId, afterSequence, eventType: "turn-item.updated" })
             .pipe(
@@ -2195,12 +2201,11 @@ const make = Effect.gen(function* () {
               ),
             ),
         ).pipe(
-          Stream.mapError(readError),
+          Stream.mapError(watchError),
           Stream.mapEffect(() => readAnswer),
-          Stream.filter(Option.isSome),
+          Stream.filter(Predicate.isNotUndefined),
           Stream.runHead,
         );
-        return Option.flatten(next);
       }).pipe(
         Effect.timeoutOption(
           Duration.millis(
