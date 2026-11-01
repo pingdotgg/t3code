@@ -1369,8 +1369,40 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           ...(options.spawn.env ? { env: options.spawn.env } : {}),
           extendEnv: options.spawn.extendEnv ?? true,
         });
+  const agentScope = yield* AgentScope;
+  const scopedLaunch = spawnCommand.shell
+    ? undefined
+    : yield* agentScope.wrap({
+        command: spawnCommand.command,
+        args: spawnCommand.args,
+        name: "acp",
+        threadId: yield* AgentScopeThreadId,
+        env: { ...process.env, ...options.spawn.env },
+      });
+  const scopedSpawnCommand =
+    scopedLaunch === undefined ? spawnCommand : { ...scopedLaunch, shell: false };
+  // Finalizers run in reverse order: reap detached work after terminating the agent.
+  const scopeUnit = scopedLaunch?.unit;
+  const stopScope =
+    scopeUnit === undefined
+      ? Effect.void
+      : yield* Effect.cached(
+          agentScope.stop(scopeUnit).pipe(
+            Effect.mapError(
+              (cause) =>
+                new AcpProcessGroupTerminationError({
+                  detail: "Failed to stop ACP agent scope",
+                  cause,
+                }),
+            ),
+            Effect.uninterruptible,
+          ),
+        );
+  yield* Scope.addFinalizer(runtimeScope, stopScope.pipe(Effect.ignoreCause({ log: true })));
   const linuxCgroupLease =
-    options.ownDescendantProcessGroups === true && options.processGroupPlatform === "linux"
+    scopeUnit === undefined &&
+    options.ownDescendantProcessGroups === true &&
+    options.processGroupPlatform === "linux"
       ? yield* Effect.sync(() => {
           try {
             if (options.linuxCgroupController === null) return undefined;
@@ -1405,24 +1437,6 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             cause: new Error("Contained ACP command was not found on PATH"),
           });
         });
-  const agentScope = yield* AgentScope;
-  const scopedLaunch =
-    linuxCgroupLease !== undefined || spawnCommand.shell
-      ? undefined
-      : yield* agentScope.wrap({
-          command: spawnCommand.command,
-          args: spawnCommand.args,
-          name: "acp",
-          threadId: yield* AgentScopeThreadId,
-          env: { ...process.env, ...options.spawn.env },
-        });
-  const scopedSpawnCommand =
-    scopedLaunch === undefined ? spawnCommand : { ...scopedLaunch, shell: false };
-  // Finalizers run in reverse order: reap detached work after terminating the agent.
-  const scopeUnit = scopedLaunch?.unit;
-  const stopScope =
-    scopeUnit === undefined ? Effect.void : yield* Effect.cached(agentScope.stop(scopeUnit));
-  yield* Scope.addFinalizer(runtimeScope, stopScope);
   const containedSpawnCommand =
     linuxCgroupLease === undefined
       ? scopedSpawnCommand
@@ -1461,10 +1475,26 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       ),
     );
 
+  const terminateScopedProcess = Effect.gen(function* () {
+    yield* child.isRunning.pipe(
+      Effect.flatMap((running) =>
+        running ? child.kill({ forceKillAfter: "1 second" }) : Effect.void,
+      ),
+      Effect.ignore,
+    );
+    if (yield* child.isRunning.pipe(Effect.orElseSucceed(() => true))) {
+      return yield* new AcpProcessGroupTerminationError({
+        detail: "ACP scope launcher is still running",
+      });
+    }
+    yield* stopScope;
+  });
+
   // Detached children can keep stdout open, delaying protocol termination.
   if (scopeUnit !== undefined) {
     yield* child.exitCode.pipe(
       Effect.matchEffect({ onFailure: () => stopScope, onSuccess: () => stopScope }),
+      Effect.ignoreCause({ log: true }),
       Effect.forkIn(runtimeScope),
     );
   }
@@ -1474,7 +1504,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   const posixOwnershipChildQueues = new Map<number, Array<number>>();
   const posixOwnershipRoot: AcpPosixOwnershipRoot = { value: undefined };
   const posixController =
-    options.ownDescendantProcessGroups === true
+    scopeUnit === undefined && options.ownDescendantProcessGroups === true
       ? yield* Effect.try({
           try: () => {
             if (options.posixProcessTreeController !== undefined) {
@@ -1536,12 +1566,14 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         return cause?.code === "ESRCH" ? Effect.succeed(false) : Effect.fail(error);
       }),
     );
+  const terminateWindowsProcessTreeWithTaskkillOnce = yield* Effect.cached(
+    terminateWindowsProcessTreeWithTaskkill(Number(child.pid)).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.uninterruptible,
+    ),
+  );
   const terminateWindowsProcessTree =
-    options.windowsProcessTreeTerminator ??
-    ((pid: number) =>
-      terminateWindowsProcessTreeWithTaskkill(pid).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      ));
+    options.windowsProcessTreeTerminator ?? (() => terminateWindowsProcessTreeWithTaskkillOnce);
   const terminatePosixProcessTree = Effect.fn("AcpSessionRuntime.terminatePosixProcessTree")(
     function* (grace: Duration.Input, platformOverride?: NodeJS.Platform) {
       const platform = platformOverride ?? options.processGroupPlatform;
@@ -1571,6 +1603,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   );
   const terminateOwnedProcessGroupImpl = Effect.gen(function* () {
     if (options.ownDetachedProcessGroup !== true) return;
+    if (scopeUnit !== undefined) return yield* terminateScopedProcess;
     if (options.processGroupPlatform === undefined) {
       return yield* new AcpProcessGroupTerminationError({
         detail: "Detached ACP process-group ownership requires a host platform",
@@ -1610,15 +1643,15 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   if (options.ownDetachedProcessGroup === true) {
     const hostPlatform = yield* HostProcess.Platform;
     const forceTerminateOwnedProcessGroup =
-      hostPlatform === "win32"
-        ? terminateWindowsProcessTreeWithTaskkill(Number(child.pid)).pipe(
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          )
-        : linuxCgroupLease !== undefined
-          ? terminateLinuxCgroupLease(linuxCgroupLease)
-          : options.ownDescendantProcessGroups === true
-            ? terminatePosixProcessTree(0, hostPlatform)
-            : signalOwnedProcessGroup("SIGKILL").pipe(Effect.asVoid);
+      scopeUnit !== undefined
+        ? terminateScopedProcess
+        : hostPlatform === "win32"
+          ? terminateWindowsProcessTreeWithTaskkillOnce
+          : linuxCgroupLease !== undefined
+            ? terminateLinuxCgroupLease(linuxCgroupLease)
+            : options.ownDescendantProcessGroups === true
+              ? terminatePosixProcessTree(0, hostPlatform)
+              : signalOwnedProcessGroup("SIGKILL").pipe(Effect.asVoid);
     yield* Scope.addFinalizer(
       runtimeScope,
       Effect.uninterruptible(forceTerminateOwnedProcessGroup).pipe(

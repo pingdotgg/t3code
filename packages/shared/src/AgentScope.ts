@@ -1,5 +1,15 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+
+export class AgentScopeStopError extends Schema.TaggedError<AgentScopeStopError>()(
+  "AgentScopeStopError",
+  { unit: Schema.String, detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
 
 export interface AgentScopeShape {
   readonly wrap: (input: {
@@ -21,7 +31,7 @@ export interface AgentScopeShape {
    * Reaps processes left after the owning agent exits, including setsid
    * descendants outside its process group. Preserves systemd OOM diagnosis.
    */
-  readonly stop: (unit: string) => Effect.Effect<void>;
+  readonly stop: (unit: string) => Effect.Effect<void, AgentScopeStopError>;
   /**
    * SIGKILLs every process in the thread's own scope, which works even while
    * the kernel throttles them. Shared scopes serve other threads and are never

@@ -1683,7 +1683,11 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         // Finalizers run in reverse order: reap detached work after closing the host.
         const scopeUnit = launch.unit;
         const stopScope =
-          scopeUnit === undefined ? Effect.void : yield* Effect.cached(agentScope.stop(scopeUnit));
+          scopeUnit === undefined
+            ? Effect.void
+            : yield* Effect.cached(
+                agentScope.stop(scopeUnit).pipe(Effect.ignoreCause({ log: true })),
+              );
         yield* Scope.addFinalizer(scope, stopScope);
         const processExited = yield* Deferred.make<ProcessExit>();
         // Observe raw exit before acquisition: inherited stdout can also block startup cleanup.

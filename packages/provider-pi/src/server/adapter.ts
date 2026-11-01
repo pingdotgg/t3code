@@ -478,7 +478,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       // Finalizers run in reverse order: reap detached work after terminating Pi.
       const scopeUnit = scopedLaunch.unit;
       const stopScope =
-        scopeUnit === undefined ? Effect.void : yield* Effect.cached(agentScope.stop(scopeUnit));
+        scopeUnit === undefined
+          ? Effect.void
+          : yield* Effect.cached(
+              agentScope.stop(scopeUnit).pipe(Effect.ignoreCause({ log: true })),
+            );
       yield* Effect.addFinalizer(() => stopScope);
       const connection: PiRpcConnection = yield* makePiRpcConnection({
         command: scopedLaunch.command,

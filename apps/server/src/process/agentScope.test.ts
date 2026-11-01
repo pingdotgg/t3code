@@ -10,7 +10,9 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../config.ts";
@@ -50,6 +52,7 @@ const withFakeSystemd = <A, E>(
     readonly calls: ReadonlyArray<ReadonlyArray<string>>;
     readonly stateDir: string;
     readonly cgroupRoot: string;
+    readonly handlers: Map<string, () => Effect.Effect<void>>;
   }) => Effect.Effect<A, E>,
   // A user manager older than systemd 253 rejects OOMPolicy on scopes.
   {
@@ -65,6 +68,7 @@ const withFakeSystemd = <A, E>(
     const cgroupRoot = NodePath.join(bin, "cgroup");
     const units = new Map<string, FakeUnit>();
     const calls: Array<ReadonlyArray<string>> = [];
+    const handlers = new Map<string, () => Effect.Effect<void>>();
     const output = (stdout: string, code = 0): ProcessRunner.ProcessRunOutput => ({
       stdout,
       stderr: "",
@@ -77,7 +81,8 @@ const withFakeSystemd = <A, E>(
     });
     const runner = ProcessRunner.ProcessRunner.of({
       run: ({ args }) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
+          yield* handlers.get(args[1] ?? "")?.() ?? Effect.void;
           calls.push(args);
           if (!oomPolicy && args.some((arg) => arg.startsWith("--property=OOMPolicy="))) {
             return output("", 1);
@@ -90,7 +95,7 @@ const withFakeSystemd = <A, E>(
               code: ChildProcessSpawner.ExitCode(5),
             };
           }
-          if (verb === "reset-failed") units.delete(unit);
+          if (verb === "reset-failed" || verb === "stop") units.delete(unit);
           if (verb !== "show") return output("");
           const state = units.get(unit);
           return output(
@@ -115,7 +120,7 @@ const withFakeSystemd = <A, E>(
       }),
     );
     const { stateDir } = yield* ServerConfig.ServerConfig;
-    return yield* body({ scope, units, calls, stateDir, cgroupRoot }).pipe(
+    return yield* body({ scope, units, calls, stateDir, cgroupRoot, handlers }).pipe(
       Effect.ensuring(Effect.sync(() => NodeFS.rmSync(bin, { recursive: true, force: true }))),
     );
   }).pipe(
@@ -326,82 +331,96 @@ describe("AgentScope service", () => {
     ),
   );
 
-  it.effect("stops leftover processes only in an active agent scope", () =>
-    withFakeSystemd(({ scope, units, calls, cgroupRoot }) =>
-      Effect.gen(function* () {
-        const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
-        const unit = unitOf(agent);
-        expect(agent.unit).toBe(unit);
-
-        yield* scope.stop("session-2.scope");
-        expect(calls.some((args) => args.includes("session-2.scope"))).toBe(false);
-        yield* scope.stop(unit);
-        exitedAgent(units, cgroupRoot, unit, { populated: false, oomKills: 0 });
-        yield* scope.stop(unit);
-        exitedAgent(units, cgroupRoot, unit, { populated: true, oomKills: 0 });
-        units.get(unit)!.activeState = "deactivating";
-        yield* scope.stop(unit);
-        expect(stopsOf(calls)).toEqual([]);
-
-        units.get(unit)!.activeState = "active";
-        yield* scope.stop(unit);
-        expect(stopsOf(calls)).toEqual([["--user", "stop", "--no-block", unit]]);
-        expect(yield* scope.oomKilled("a")).toBe(false);
-      }),
-    ),
-  );
-
-  it.effect.each([true, false])(
-    "cleans up an OOM exit without losing its diagnosis (OOMPolicy=%s)",
-    (oomPolicy) =>
-      withFakeSystemd(
-        ({ scope, units, calls, cgroupRoot }) =>
-          Effect.gen(function* () {
-            const agent = yield* scope.wrap({
-              command: "agent",
-              args: [],
-              name: "t",
-              threadId: "a",
-            });
-            const unit = unitOf(agent);
-            exitedAgent(units, cgroupRoot, unit, { populated: true, oomKills: undefined });
-            yield* scope.stop(unit);
-            expect(stopsOf(calls)).toEqual(
-              oomPolicy ? [] : [["--user", "stop", "--no-block", unit]],
-            );
-
-            // The kernel records the kill before systemd records the OOM result.
-            exitedAgent(units, cgroupRoot, unit, { populated: true, oomKills: 1 });
-            yield* scope.stop(unit);
-            expect(stopsOf(calls)).toHaveLength(oomPolicy ? 0 : 2);
-
-            if (oomPolicy) {
-              units.set(unit, { activeState: "failed", result: "oom-kill" });
-              expect(yield* scope.oomKilled("a")).toBe(true);
-              units.delete(unit);
-              expect(yield* scope.oomKilled("a")).toBe(true);
-            }
-          }),
-        { oomPolicy },
+  it.effect.each([0])(
+    "stops populated work with OOM counter %s and waits for completion",
+    (oomKills) =>
+      withFakeSystemd(({ scope, units, calls, cgroupRoot, handlers }) =>
+        Effect.gen(function* () {
+          const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+          const unit = unitOf(agent);
+          exitedAgent(units, cgroupRoot, unit, { populated: true, oomKills });
+          const stopping = yield* Deferred.make<void>();
+          const stopped = yield* Deferred.make<void>();
+          handlers.set("stop", () =>
+            Deferred.succeed(stopping, undefined).pipe(Effect.andThen(Deferred.await(stopped))),
+          );
+          const fiber = yield* scope.stop(unit).pipe(Effect.forkChild);
+          yield* Deferred.await(stopping);
+          expect(fiber.pollUnsafe()).toBeUndefined();
+          yield* Deferred.succeed(stopped, undefined);
+          yield* Fiber.join(fiber);
+          expect(stopsOf(calls)).toEqual([["--user", "stop", unit]]);
+        }),
       ),
   );
 
-  it.effect("reports failed daemon cleanup without failing session teardown", () => {
-    const warnings: Array<unknown> = [];
-    const logger = Logger.make(({ message }) => {
-      warnings.push(message);
-    });
-    return withFakeSystemd(
-      ({ scope, units, cgroupRoot }) =>
+  it.effect.each([1, undefined])(
+    "waits for pending OOM cleanup with counter %s without replacing its diagnosis",
+    (oomKills) =>
+      withFakeSystemd(({ scope, units, calls, cgroupRoot, handlers }) =>
         Effect.gen(function* () {
           const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+          const unit = unitOf(agent);
+          exitedAgent(units, cgroupRoot, unit, { populated: true, oomKills });
+          const waiting = yield* Deferred.make<void>();
+          const stopped = yield* Deferred.make<void>();
+          let reads = 0;
+          handlers.set("show", () =>
+            ++reads === 2
+              ? Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Deferred.await(stopped)))
+              : Effect.void,
+          );
+          const fiber = yield* scope.stop(unit).pipe(Effect.forkChild);
+          yield* Deferred.await(waiting);
+          expect(fiber.pollUnsafe()).toBeUndefined();
+          expect(stopsOf(calls)).toEqual([]);
+          units.set(unit, { activeState: "failed", result: "oom-kill" });
+          yield* Deferred.succeed(stopped, undefined);
+          yield* Fiber.join(fiber);
+          expect(yield* scope.oomKilled("a")).toBe(true);
+        }),
+      ),
+  );
+
+  it.effect.each([1, undefined])(
+    "bounds pending cleanup with counter %s even for an uninterruptible caller",
+    (oomKills) =>
+      withFakeSystemd(({ scope, units, cgroupRoot, handlers }) =>
+        Effect.gen(function* () {
+          const agent = yield* scope.wrap({ command: "agent", args: [], name: "t" });
+          const unit = unitOf(agent);
+          exitedAgent(units, cgroupRoot, unit, { populated: true, oomKills });
+          const waiting = yield* Deferred.make<void>();
+          let reads = 0;
+          handlers.set("show", () =>
+            ++reads === 2
+              ? Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Effect.never))
+              : Effect.void,
+          );
+          const fiber = yield* scope.stop(unit).pipe(Effect.uninterruptible, Effect.forkChild);
+          yield* Deferred.await(waiting);
+          yield* TestClock.adjust("15 seconds");
+          expect(yield* Effect.flip(Fiber.join(fiber))).toMatchObject({
+            _tag: "AgentScopeStopError",
+            detail: "Agent scope did not finish stopping",
+          });
+        }),
+      ),
+  );
+
+  it.effect("reports failed scope cleanup", () =>
+    withFakeSystemd(
+      ({ scope, units, cgroupRoot }) =>
+        Effect.gen(function* () {
+          const agent = yield* scope.wrap({ command: "agent", args: [], name: "t" });
           exitedAgent(units, cgroupRoot, unitOf(agent), { populated: true, oomKills: 0 });
-          yield* scope.stop(unitOf(agent));
-          expect(warnings.flat()).toContain("Could not stop an exited agent's scope");
-        }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false }))),
+          expect(yield* Effect.flip(scope.stop(unitOf(agent)))).toMatchObject({
+            _tag: "AgentScopeStopError",
+          });
+        }),
       { stopFails: true },
-    );
-  });
+    ),
+  );
 
   it.effect("leaves a quiet slice alone", () =>
     withFakeSystemd(({ scope, calls }) =>
