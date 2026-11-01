@@ -181,6 +181,42 @@ describe("pools", () => {
   };
   const laptop = { entry: { target: { label: "Laptop" } } };
 
+  it("merges Codex usage by its ChatGPT account id when only one report has an email", () => {
+    const native = provider({
+      auth: {
+        status: "authenticated",
+        email: "codex@example.com",
+        workspaceId: "chatgpt-account-1",
+      },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [native],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [
+                  {
+                    id: "codex-auth.json",
+                    driver: ProviderDriverKind.make("codex"),
+                    workspaceId: "chatgpt-account-1",
+                    usageLimits: { checkedAt, windows: [window] },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    expect(collectLimitAccounts(input)).toHaveLength(1);
+  });
+
   it("merges one account reported natively on two environments and by a hub into one entry", () => {
     const native = provider({
       driver: claude,

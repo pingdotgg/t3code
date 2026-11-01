@@ -190,10 +190,16 @@ export function collectExternalUsageLinks(presentations: LimitPresentations) {
 function accountKey(
   driver: ServerProvider["driver"],
   email: string | undefined,
+  workspaceId: string | undefined,
   limits?: ServerProviderUsageLimits,
 ): string | null {
   const normalizedEmail = email?.trim().toLowerCase();
   if (normalizedEmail) return `${driver}:${normalizedEmail}`;
+  // Codex exposes the ChatGPT account id as workspaceId, even when a CLIProxy
+  // auth file has no email. It is stable across the native provider and hub.
+  if (driver === "codex" && workspaceId?.trim()) {
+    return `${driver}:workspace:${workspaceId.trim()}`;
+  }
   return limits?.credentialFingerprint
     ? `${driver}:credential:${limits.credentialFingerprint}`
     : null;
@@ -216,14 +222,29 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
 // Include every enabled login, even unreadable workspaces.
 function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
-  for (const report of reports) {
-    const key = accountKey(report.driver, report.email, report.usageLimits);
+  const workspaceEmails = new Map<string, Set<string>>();
+  const allReports = [...reports];
+  for (const report of allReports) {
+    const key = accountKey(report.driver, report.email, report.workspaceId, report.usageLimits);
     if (key && report.workspaceId) {
       workspaces.set(key, (workspaces.get(key) ?? new Set()).add(report.workspaceId));
     }
+    const email = report.email?.trim().toLowerCase();
+    if (report.driver === "codex" && email && report.workspaceId?.trim()) {
+      const workspaceKey = `${report.driver}:${report.workspaceId.trim()}`;
+      workspaceEmails.set(
+        workspaceKey,
+        (workspaceEmails.get(workspaceKey) ?? new Set()).add(email),
+      );
+    }
   }
   return (report: AccountReport): string | null => {
-    const key = accountKey(report.driver, report.email, report.usageLimits);
+    let key = accountKey(report.driver, report.email, report.workspaceId, report.usageLimits);
+    const email = report.email?.trim().toLowerCase();
+    if (report.driver === "codex" && !email && report.workspaceId?.trim()) {
+      const matches = workspaceEmails.get(`${report.driver}:${report.workspaceId.trim()}`);
+      if (matches?.size === 1) key = `${report.driver}:${[...matches][0]}`;
+    }
     if (!key) return null;
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
     const known = workspaces.get(key);
