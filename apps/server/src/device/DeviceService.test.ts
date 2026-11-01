@@ -55,6 +55,7 @@ it.effect.each([400, 500])(
           ),
         ),
         run: () => Effect.die("Screenshot does not run a command"),
+        iosAvailable: Effect.succeed(false),
         androidAvailable: Effect.succeed(false),
       });
       const result = yield* operations
@@ -201,6 +202,7 @@ const fixture = Effect.fn("fixture")(function* (
         origin: "http://device.test",
         http,
         run,
+        iosAvailable: Effect.succeed(false),
         androidAvailable: Ref.get(androidAvailable),
       }),
       ...(options.endsDevices ? { endsDevices: true } : {}),
@@ -824,6 +826,7 @@ it.effect.each(["shutdown", "close"] as const)(
           origin: "http://device.test",
           http,
           run,
+          iosAvailable: Effect.succeed(false),
           androidAvailable: Effect.succeed(true),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
@@ -986,6 +989,7 @@ it.effect("leaves a session its host leases to every thread open when one thread
           origin: "http://device.test",
           http,
           run,
+          iosAvailable: Effect.succeed(false),
           androidAvailable: Effect.succeed(true),
         }),
         agentEndpoint: () =>
@@ -1108,6 +1112,7 @@ it.effect.each([
           origin: "http://device.test",
           http,
           run,
+          iosAvailable: Effect.succeed(false),
           androidAvailable: Effect.succeed(true),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
@@ -1180,6 +1185,7 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
           origin: "http://device.test",
           http,
           run,
+          iosAvailable: Effect.succeed(false),
           androidAvailable: Effect.succeed(true),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
