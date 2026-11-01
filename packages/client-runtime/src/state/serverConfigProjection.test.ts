@@ -79,3 +79,36 @@ describe("applyServerConfigProjection settingsUpdated", () => {
     expect(Option.getOrThrow(next).config).toBe(Option.getOrThrow(current).config);
   });
 });
+
+describe("applyServerConfigProjection memoryPressureUpdated", () => {
+  it("keeps pressure across a reconnect snapshot from a server that sends it, and drops it once pressure ends", () => {
+    const pressure = (level: "none" | "severe") =>
+      ({
+        type: "memoryPressureUpdated",
+        version: 1,
+        payload: { level, heaviestAgents: [] },
+      }) as ServerConfigStreamEvent;
+    const snapshotFrom = (memoryPressure: boolean) =>
+      ({
+        type: "snapshot",
+        version: 1,
+        config: { environment: { capabilities: { memoryPressure } } },
+      }) as ServerConfigStreamEvent;
+    const snapshot = snapshotFrom(true);
+    const calm = applyServerConfigProjection(
+      applyServerConfigProjection(Option.none(), snapshot),
+      pressure("none"),
+    );
+    expect(Option.isNone(calm)).toBe(true);
+    const severe = applyServerConfigProjection(
+      applyServerConfigProjection(Option.none(), snapshot),
+      pressure("severe"),
+    );
+    const reconnected = applyServerConfigProjection(severe, snapshot);
+    expect(Option.getOrThrow(reconnected).config.memoryPressure?.level).toBe("severe");
+    const olderServer = applyServerConfigProjection(severe, snapshotFrom(false));
+    expect(Option.getOrThrow(olderServer).config.memoryPressure).toBeUndefined();
+    const ended = applyServerConfigProjection(reconnected, pressure("none"));
+    expect(Option.getOrThrow(ended).config.memoryPressure).toBeUndefined();
+  });
+});
