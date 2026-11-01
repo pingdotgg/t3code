@@ -3,7 +3,6 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import * as NodeURL from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 
 // Windows without Developer Mode or admin rights rejects every symlink this way.
@@ -38,14 +37,13 @@ describe("setup-worktree", () => {
       NodeFS.writeFileSync(NodePath.join(worktree, "scripts", "package.json"), '{"type":"module"}');
       // A no-op install keeps the run on the env-file step.
       NodeFS.writeFileSync(NodePath.join(bin, "vp"), "#!/bin/sh\n", { mode: 0o755 });
+      NodeFS.writeFileSync(NodePath.join(bin, "vp.cmd"), "@exit /b 0\r\n");
       NodeFS.writeFileSync(NodePath.join(worktree, "node_modules", ".modules.yaml"), "{}");
-      const denySymlinks = NodePath.join(root, "deny-symlinks.mjs");
-      NodeFS.writeFileSync(denySymlinks, DENY_SYMLINKS);
 
-      const setup = () =>
-        NodeChildProcess.spawnSync(
+      const setup = () => {
+        const run = NodeChildProcess.spawnSync(
           process.execPath,
-          ["--import", NodeURL.pathToFileURL(denySymlinks).href, script],
+          ["--import", `data:text/javascript,${encodeURIComponent(DENY_SYMLINKS)}`, script],
           {
             cwd: worktree,
             encoding: "utf8",
@@ -56,27 +54,30 @@ describe("setup-worktree", () => {
             },
           },
         );
+        expect(run.status, run.stderr).toBe(0);
+      };
       const envFiles = () =>
         [".env", NodePath.join("infra", "relay", ".env")].map((file) => {
           const target = NodePath.join(worktree, file);
-          return [NodeFS.lstatSync(target).isSymbolicLink(), NodeFS.readFileSync(target, "utf8")];
+          return {
+            symlink: NodeFS.lstatSync(target).isSymbolicLink(),
+            text: NodeFS.readFileSync(target, "utf8"),
+          };
         });
 
-      const first = setup();
-      expect(first.status, first.stderr).toBe(0);
+      setup();
       expect(NodeFS.existsSync(NodePath.join(worktree, ".t3", "setup-done"))).toBe(true);
       expect(envFiles()).toEqual([
-        [false, "ROOT=1\n"],
-        [false, "RELAY=1\n"],
+        { symlink: false, text: "ROOT=1\n" },
+        { symlink: false, text: "RELAY=1\n" },
       ]);
 
       NodeFS.writeFileSync(NodePath.join(main, ".env"), "ROOT=2\n");
       NodeFS.writeFileSync(NodePath.join(worktree, "infra", "relay", ".env"), "LOCAL=1\n");
-      const second = setup();
-      expect(second.status, second.stderr).toBe(0);
+      setup();
       expect(envFiles()).toEqual([
-        [false, "ROOT=1\n"],
-        [false, "LOCAL=1\n"],
+        { symlink: false, text: "ROOT=1\n" },
+        { symlink: false, text: "LOCAL=1\n" },
       ]);
     } finally {
       NodeFS.rmSync(root, { recursive: true, force: true });
