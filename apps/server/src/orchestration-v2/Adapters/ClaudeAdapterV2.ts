@@ -4826,6 +4826,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         >();
         // Buffered idle outcomes must not settle a resumed child again.
         const appliedSubagentOutcomes = new WeakSet<SDKMessage>();
+        // A user turn ends any native wake turn buffered before it; replaying those frames must not hold a continuation open.
+        const wakeFramesAnsweredByUserTurn = new WeakSet<SDKMessage>();
         // Subagent frames can precede the task_started that registers their owner.
         const pendingSubagentFramesByToolUseId = yield* Ref.make(
           new Map<string, ReadonlyArray<SDKMessage>>(),
@@ -9485,7 +9487,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (
             context?.promptUuid === null &&
             liveQuery?.query === input.query &&
-            isClaudeRootTurnFrame(message)
+            isClaudeRootTurnFrame(message) &&
+            !wakeFramesAnsweredByUserTurn.has(message)
           ) {
             context.nativeWakeStarted = true;
           }
@@ -10576,6 +10579,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (userMessage !== null) {
               yield* attachTurn;
               yield* startUserTurnForWakeReports(nativeThreadId);
+              const buffered = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
+              for (const message of buffered) wakeFramesAnsweredByUserTurn.add(message);
               yield* Effect.uninterruptibleMask((restore) =>
                 restore(
                   querySession.query.offer(userMessage, () => {

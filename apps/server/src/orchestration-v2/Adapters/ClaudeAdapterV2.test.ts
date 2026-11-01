@@ -10678,6 +10678,87 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect.each(["live in the user turn", "buffered before the user turn"] as const)(
+    "settles a continuation whose opened wake turn a user turn already answered: assistant %s",
+    (assistantFrame) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
+
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-answered-1"),
+              text: "Run the build in the background.",
+              attachments: [],
+            }),
+          );
+          yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+          yield* Queue.offer(harness.sdkMessages, turnOneResult);
+          yield* harness.awaitTerminal(1);
+          yield* harness.offerAndWait(wakeNotification);
+          yield* harness.offerAndWait(wakeTurnInit);
+          if (assistantFrame === "buffered before the user turn") {
+            yield* harness.offerAndWait(wakeAssistant);
+          }
+          assert.lengthOf(harness.continuationRequests, 1);
+
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-answered-2"),
+              text: "How is the build going?",
+              attachments: [],
+              providerTurnOrdinal: 2,
+            }),
+          );
+          yield* harness.until(() => harness.offeredMessages.length === 2);
+          if (assistantFrame === "live in the user turn") {
+            yield* Queue.offer(harness.sdkMessages, wakeAssistant);
+          }
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000105",
+              result: "The build passed; nothing else pending.",
+            }),
+          );
+          yield* harness.awaitTerminal(2);
+          assert.equal(harness.terminalEvents()[1]?.status, "completed");
+
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-answered-3"),
+              text: "Background task completed.",
+              attachments: [],
+              providerTurnOrdinal: 3,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          yield* TestClock.adjust("3 minutes");
+          assert.lengthOf(
+            harness.terminalEvents(),
+            3,
+            "the continuation for an already-answered wake never settled",
+          );
+          assert.equal(harness.terminalEvents()[2]?.status, "completed");
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
   it.effect("ignores a zero-turn task-notification origin result during a normal user turn", () =>
     Effect.scoped(
       Effect.gen(function* () {
