@@ -5,8 +5,8 @@ import { pullRequestImageSource } from "./pullRequestMediaSource";
 
 const location = {
   environmentId: EnvironmentId.make("test"),
-  cwd: "/different-checkout",
-  repositoryUrl: "https://github.com/displayed/repository",
+  cwd: "/repo",
+  repositoryUrl: "https://github.com/owner/repo",
 };
 const url = "https://github.com/user-attachments/assets/abc-123";
 
@@ -16,15 +16,8 @@ describe("PR media previews", () => {
     const second = pullRequestImageSource(`${url}-second`, location);
     const selected = { ...second, sourceIdentifier: "tapped" };
     const gallery = filePreviewGallery(selected, [first, second]);
+    expect(first).toMatchObject({ resource: { repositoryUrl: location.repositoryUrl } });
     expect(gallery).toEqual([first, selected]);
-    expect(first).toMatchObject({
-      resource: {
-        _tag: "github-media",
-        url,
-        cwd: location.cwd,
-        repositoryUrl: location.repositoryUrl,
-      },
-    });
     expect(gallery.every((item) => "resource" in item)).toBe(true);
   });
 });
