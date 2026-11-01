@@ -444,12 +444,7 @@ export class VoiceInputController {
         ? { phase: "error", error, errorAction: "retry" }
         : { phase: "idle", error: null, errorAction: null },
     );
-    try {
-      await this.dependencies.recorder.stop();
-    } catch {
-    } finally {
-      await this.releaseResources();
-    }
+    await this.releaseResources();
   }
 
   private async releaseResources(): Promise<void> {
