@@ -12,6 +12,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as References from "effect/References";
@@ -27,8 +28,8 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderMaintenance from "@t3tools/provider-core/server/maintenanceResolver";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
-import { OPENCODE_2_RESPONSES, replayOpenCodeServer } from "./probeResponses.fixture.ts";
 import { OpenCodeDriver, openCodeUpdateFor } from "./driver.ts";
+import { OPENCODE_2_RESPONSES, replayOpenCodeServer } from "./probeResponses.fixture.ts";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
 const serverStarts: Array<string> = [];
@@ -72,7 +73,97 @@ const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient) 
 
 const noHttp = HttpClient.make(() => Effect.die("A local binary must not be probed over HTTP"));
 
+const nativeInstall = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-opencode-update-owner-" });
+  const directory = NodePath.join(root, ".opencode", "bin");
+  yield* fileSystem.makeDirectory(directory, { recursive: true });
+  const binaryPath = NodePath.join(
+    directory,
+    HostProcess.Platform.defaultValue() === "win32" ? "opencode.exe" : "opencode",
+  );
+  yield* fileSystem.writeFileString(binaryPath, "fixture");
+  yield* fileSystem.chmod(binaryPath, 0o755);
+  return binaryPath;
+});
+
 it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
+  it.effect.each(["http://127.0.0.1:4096", "https://server.example.test"])(
+    "keeps updates owned by the configured server at %s",
+    (serverUrl) =>
+      Effect.gen(function* () {
+        const binaryPath = yield* nativeInstall;
+        const cliProbes: string[] = [];
+        const runtime = {
+          ...openCode2Runtime,
+          runOpenCodeCommand: () => {
+            cliProbes.push("--version");
+            return Effect.succeed({ stdout: "opencode v2.1.3\n", stderr: "", code: 0 });
+          },
+        } as OpenCodeRuntime.OpenCodeRuntime["Service"];
+        const responses = {
+          ...OPENCODE_2_RESPONSES,
+          "/api/info": {
+            ...OPENCODE_2_RESPONSES["/api/info"],
+            body: OPENCODE_2_RESPONSES["/api/info"].body.replace("2.0.18", "2.0.32"),
+          },
+        };
+        const latestVersions = yield* ProviderLatestVersions.make([["@opencode/cli", "2.1.3"]]);
+        const instance = yield* create(
+          { binaryPath, serverUrl },
+          replayOpenCodeServer(responses, ""),
+        ).pipe(
+          Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime),
+          Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+        );
+        const maintenance = yield* instance.snapshot.resolveMaintenance({ fresh: true });
+        assert.strictEqual(maintenance.packageName, "@opencode/cli");
+        assert.isNull(maintenance.update);
+
+        for (const runningVersion of ["2.0.32", "2.0.32", "2.1.3"]) {
+          responses["/api/info"].body = OPENCODE_2_RESPONSES["/api/info"].body.replace(
+            "2.0.18",
+            runningVersion,
+          );
+          const enriched = yield* instance.snapshot.streamChanges.pipe(
+            Stream.filter(
+              (snapshot) => snapshot.versionAdvisory?.currentVersion === runningVersion,
+            ),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* instance.snapshot.refresh;
+          const [snapshot] = yield* Fiber.join(enriched);
+          assert.ok(snapshot);
+          assert.strictEqual(snapshot.version, runningVersion);
+          assert.strictEqual(snapshot.versionAdvisory?.canUpdate, false);
+          assert.strictEqual(snapshot.versionAdvisory?.canInstallVersion, false);
+          assert.isNull(snapshot.versionAdvisory?.updateCommand);
+          assert.strictEqual(
+            snapshot.versionAdvisory?.status,
+            runningVersion === "2.1.3" ? "current" : "behind_latest",
+          );
+          if (runningVersion !== "2.1.3") {
+            assert.include(snapshot.versionAdvisory?.message ?? "", "Version 2.1.3 is out.");
+            assert.include(snapshot.versionAdvisory?.message ?? "", "configured OpenCode server");
+            assert.include(snapshot.versionAdvisory?.message ?? "", "refresh provider status");
+          }
+        }
+        assert.deepStrictEqual(cliProbes, []);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("still offers native CLI updates when T3 manages the local server", () =>
+    Effect.gen(function* () {
+      const binaryPath = yield* nativeInstall;
+      const instance = yield* create({ binaryPath, serverUrl: " " }, noHttp);
+      const maintenance = yield* instance.snapshot.resolveMaintenance({ fresh: true });
+      assert.strictEqual(maintenance.update?.executable, binaryPath);
+      assert.deepStrictEqual(maintenance.update?.args, ["upgrade"]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("never starts a 1.x server for an OpenCode 2 instance", () =>
     Effect.gen(function* () {
       serverStarts.length = 0;
