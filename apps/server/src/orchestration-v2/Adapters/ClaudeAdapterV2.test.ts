@@ -4839,6 +4839,38 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("keeps reading Claude's messages while the MCP app catalog loads", () =>
+    Effect.gen(function* () {
+      const releaseStatus = yield* Deferred.make<void>();
+      const apps = weatherMcpApps();
+      const harness = yield* makeWakeHarnessWithOptions({
+        mcpApps: {
+          ...apps,
+          serverStatus: Deferred.await(releaseStatus).pipe(Effect.andThen(apps.serverStatus)),
+        },
+      });
+      yield* callWeatherTool(harness, "mcp-app-slow-catalog");
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "mcp-app-slow-catalog-terminal", result: "Here it is." }),
+      );
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      assert.lengthOf(settledWeatherRows(harness.events), 0);
+
+      yield* Deferred.succeed(releaseStatus, undefined);
+      yield* harness.until(() => settledWeatherRows(harness.events).length > 0);
+      const rows = settledWeatherRows(harness.events);
+      assert.lengthOf(rows, 1);
+      assert.equal(rows[0]!.toolName, "weather.get_weather");
+      assert.isDefined(mcpAppFromToolItem(rows[0]!));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect.each(["the turn is interrupted", "Claude exits after the turn"] as const)(
     "shows the plain row of an MCP app that is still loading when %s",
     (ending) =>

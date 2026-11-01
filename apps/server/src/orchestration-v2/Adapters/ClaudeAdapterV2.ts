@@ -7256,20 +7256,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             return undefined;
           }
-          // Bounded: a load waits at most the lookup timeout.
-          const read =
-            mcpAppCatalogs.get(queryMcpApps)?.targets?.has(toolCall.toolName) === true
-              ? false
-              : yield* loadMcpAppCatalog(queryMcpApps, {
-                  refresh: mcpAppCatalogs.get(queryMcpApps)?.targets !== undefined,
-                });
+          const known = mcpAppCatalogs.get(queryMcpApps)?.targets?.get(toolCall.toolName);
+          // An unknown tool is looked up by the capture, off the message reader.
+          return known === null ? undefined : { queryMcpApps, known };
+        });
+
+        /** Bounded: a load waits at most the lookup timeout. */
+        const lookupMcpApp = Effect.fn("ClaudeAdapterV2.lookupMcpApp")(function* (
+          queryMcpApps: ClaudeAgentSdkQueryMcpApps,
+          toolName: string,
+        ) {
+          const read = yield* loadMcpAppCatalog(queryMcpApps, {
+            refresh: mcpAppCatalogs.get(queryMcpApps)?.targets !== undefined,
+          });
           const catalog = mcpAppCatalogs.get(queryMcpApps);
-          const target = catalog?.targets?.get(toolCall.toolName);
+          const target = catalog?.targets?.get(toolName);
           if (read && target === undefined && catalog?.targets !== undefined) {
             // Still unknown after a fresh read: do not read again for every call of it.
             catalog.retryAt = (yield* Clock.currentTimeMillis) + CLAUDE_MCP_APP_LOOKUP_RETRY_MS;
           }
-          return target == null ? undefined : { queryMcpApps, ...target };
+          return target ?? undefined;
         });
 
         const captureMcpApp = Effect.fn("ClaudeAdapterV2.captureMcpApp")(function* (input: {
@@ -7288,32 +7294,42 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               // Only the read and the write are cancellable; once stored, the app is attached or deleted.
               Effect.uninterruptibleMask((restore) =>
                 Effect.gen(function* () {
-                  const reference = yield* restore(
-                    app.queryMcpApps.readResource(app.server, app.resourceUri).pipe(
-                      Effect.timeout(CLAUDE_MCP_APP_CAPTURE_TIMEOUT),
-                      Effect.flatMap((response) =>
-                        snapshotMcpApp({
-                          attachmentsDir,
-                          threadId: toolCall.threadId,
-                          server: app.server,
-                          tool: app.tool,
-                          resourceUri: app.resourceUri,
-                          contents: response.contents,
-                        }),
-                      ),
-                      Effect.provideService(FileSystem.FileSystem, fileSystem),
-                      // MCP connection errors can echo server headers, so log names only.
-                      Effect.catchCauseIf(
-                        (cause) => !Cause.hasInterruptsOnly(cause),
-                        () =>
-                          Effect.logWarning(
-                            "Failed to capture an MCP app; showing a plain tool row.",
-                            { server: app.server, tool: app.tool, resourceUri: app.resourceUri },
-                          ).pipe(Effect.as(undefined)),
-                      ),
-                      Effect.orDie,
-                    ),
-                  );
+                  const target =
+                    app.known ??
+                    (yield* restore(lookupMcpApp(app.queryMcpApps, toolCall.toolName)));
+                  const reference =
+                    target === undefined
+                      ? undefined
+                      : yield* restore(
+                          app.queryMcpApps.readResource(target.server, target.resourceUri).pipe(
+                            Effect.timeout(CLAUDE_MCP_APP_CAPTURE_TIMEOUT),
+                            Effect.flatMap((response) =>
+                              snapshotMcpApp({
+                                attachmentsDir,
+                                threadId: toolCall.threadId,
+                                server: target.server,
+                                tool: target.tool,
+                                resourceUri: target.resourceUri,
+                                contents: response.contents,
+                              }),
+                            ),
+                            Effect.provideService(FileSystem.FileSystem, fileSystem),
+                            // MCP connection errors can echo server headers, so log names only.
+                            Effect.catchCauseIf(
+                              (cause) => !Cause.hasInterruptsOnly(cause),
+                              () =>
+                                Effect.logWarning(
+                                  "Failed to capture an MCP app; showing a plain tool row.",
+                                  {
+                                    server: target.server,
+                                    tool: target.tool,
+                                    resourceUri: target.resourceUri,
+                                  },
+                                ).pipe(Effect.as(undefined)),
+                            ),
+                            Effect.orDie,
+                          ),
+                        );
                   if (!mcpAppCaptures.delete(toolCall.nativeItemId)) {
                     const filePath =
                       reference === undefined
@@ -7328,13 +7344,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     return;
                   }
                   yield* emitToolCallArtifacts(
-                    reference === undefined || artifacts.turnItem.type !== "dynamic_tool"
+                    reference === undefined ||
+                      target === undefined ||
+                      artifacts.turnItem.type !== "dynamic_tool"
                       ? artifacts
                       : {
                           ...artifacts,
                           turnItem: {
                             ...artifacts.turnItem,
-                            toolName: `${app.server}.${app.tool}`,
+                            toolName: `${target.server}.${target.tool}`,
                             output: { [MCP_APP_OUTPUT_KEY]: reference, result: input.result },
                           },
                         },
