@@ -621,8 +621,12 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const cache = yield* fileSystem
         .readFileString(cachePath)
-        .pipe(Effect.flatMap(decodeCache), Effect.option);
-      if (Option.isSome(cache) && cache.value.key === key) {
+        .pipe(
+          Effect.flatMap(decodeCache),
+          Effect.option,
+          Effect.map(Option.filter((entry) => entry.key === key)),
+        );
+      if (Option.isSome(cache)) {
         const cached = Object.fromEntries(
           CACHED_ENV_NAMES.flatMap((name) => {
             const value = cache.value.environment[name];
@@ -648,7 +652,7 @@ export const make = Effect.gen(function* () {
         );
       }
       yield* Effect.forkIn(refresh, scope);
-      return true;
+      return Option.isSome(cache);
     }).pipe(Effect.withSpan("desktop.shellEnvironment.installIntoProcess")),
   );
   const updates = Stream.unwrap(
