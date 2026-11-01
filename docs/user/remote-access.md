@@ -261,8 +261,9 @@ device connected to that machine, and **Block** it under **Tailscale devices on
 rejoins Tailscale gets a new ID, so block it again or remove it from your tailnet.
 
 To turn Tailscale sign-in off, run `t3 up --no-tailscale` or turn it off in
-**Settings → Sharing & access**. T3 Code restarts and ends every Tailscale
-session and unused Tailscale sign-in code.
+**Settings → Sharing & access**. The background service or the desktop app
+restarts and ends every Tailscale session and unused Tailscale sign-in code. A
+server you started by hand keeps its access until you stop it.
 
 On an untagged machine the owner is its own Tailscale user. On a tagged machine,
 `t3 up` asks for the owner's login, or takes `--owner <login>`; with
@@ -502,8 +503,10 @@ fails with that reason.
 On the host, **Settings → Sharing & access** lets authorized administrators create
 pairing links and revoke client sessions. Revoking an unused link prevents new
 pairings; revoke a device's session to remove its existing access. A device that
-signed in through Tailscale signs in again at once, so to keep it out, block it,
-change its grant, or turn [Tailscale sign-in](#tailscale-sign-in) off. Command-line
+signed in through Tailscale signs in again at once, so to keep it out, block it
+or turn [Tailscale sign-in](#tailscale-sign-in) off. Removing its grant works
+too, but removing the last grant lets your untagged devices back in unless grants
+are required. Command-line
 management is available through `t3 auth --help`.
 
 A session with an open connection stays listed after its access credential

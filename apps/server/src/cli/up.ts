@@ -605,8 +605,10 @@ const setUp = Effect.fn("cli.up")(function* (
     );
   }
   // An explicit off is written even when the file says nothing, since the service may
-  // inherit the setting, and a restart applies it.
-  const tailscaleOffChosen = Option.getOrUndefined(flags.tailscale) === false;
+  // inherit the setting, and a restart applies it. Unchecking Tailscale is one too.
+  const tailscaleOffChosen =
+    Option.getOrUndefined(flags.tailscale) === false ||
+    (interactive && plan.ask.includes("tailscale") && !routes.tailscale);
   const serveOffChosen = Option.getOrUndefined(flags.tailscaleServe) === false;
   // Nothing to run in the background, but a route left on still gets turned off.
   if (!before.service.installed && !routes.connect && !routes.lan && !routes.tailscale) {
@@ -618,7 +620,18 @@ const setUp = Effect.fn("cli.up")(function* (
       ...(current.tailscale || tailscaleOffChosen ? TAILSCALE_OFF : {}),
       ...(serveOffChosen ? { T3CODE_TAILSCALE_SERVE: "false" } : {}),
     });
-    return yield* Console.log(formatNextSteps(routes, false));
+    // service.env is read only by the background service, so a server started by hand
+    // keeps the access it started with.
+    const runtime = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+    const handStarted = Option.exists(
+      runtime,
+      (state) => state.serviceManaged !== true && isProcessAlive(state.pid),
+    );
+    return yield* Console.log(
+      handStarted
+        ? "T3 Code is running here outside the background service, with the access it started with. Stop it to end that access."
+        : formatNextSteps(routes, false),
+    );
   }
   // Tailscale left on while it is down here keeps its settings; turning it on needs it.
   const tailscaleKept = routes.tailscale && current.tailscale && Option.isNone(flags.tailscale);

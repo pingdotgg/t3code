@@ -20,6 +20,7 @@ import * as TailscaleServe from "./tailscaleServe.ts";
 
 const encoder = new TextEncoder();
 const SERVE_PORT = 18443;
+const OTHER_PORT = 18444;
 const LOCAL_TARGET = "http://127.0.0.1:18638";
 
 interface FakeOptions {
@@ -35,6 +36,10 @@ interface FakeOptions {
   readonly statusFailures?: number;
   /** `serve status` fails once right after the daemon takes the mapping. */
   readonly statusFailsAfterServe?: boolean;
+  /** The Serve root on OTHER_PORT, as a run on that port left it. */
+  readonly heldOnOtherPort?: string;
+  /** The claim record a previous run left. */
+  readonly recorded?: string;
 }
 
 // Stands in for the tailscale CLI and keeps the Serve root like the daemon does.
@@ -44,19 +49,28 @@ const makeFakeTailscale = (options: FakeOptions) => {
     statusCalls: 0,
     releases: 0,
     root: options.heldBy ?? null,
+    otherRoot: options.heldOnOtherPort ?? null,
     statusFailurePending: false,
   };
   // Completes when the daemon takes the mapping, before the CLI exits.
   const mappingApplied = Deferred.makeUnsafe<void>();
-  const serveStatus = () =>
-    state.root === null
+  const serveStatus = () => {
+    const roots = [
+      [SERVE_PORT, state.root],
+      [OTHER_PORT, state.otherRoot],
+    ].filter(([, root]) => root !== null);
+    return roots.length === 0
       ? "null\n"
       : JSON.stringify({
-          TCP: { [SERVE_PORT]: { HTTPS: true } },
-          Web: {
-            [`desktop.tail.ts.net:${SERVE_PORT}`]: { Handlers: { "/": { Proxy: state.root } } },
-          },
+          TCP: Object.fromEntries(roots.map(([port]) => [port, { HTTPS: true }])),
+          Web: Object.fromEntries(
+            roots.map(([port, root]) => [
+              `desktop.tail.ts.net:${port}`,
+              { Handlers: { "/": { Proxy: root } } },
+            ]),
+          ),
         });
+  };
   const handle = (
     args: ReadonlyArray<string>,
   ): { code: number; stdout?: string; stderr?: string; ackDelay?: Duration.Input } | undefined => {
@@ -81,6 +95,10 @@ const makeFakeTailscale = (options: FakeOptions) => {
       state.statusFailurePending = options.statusFailsAfterServe === true;
       Deferred.doneUnsafe(mappingApplied, Effect.void);
       return { code: 0, ...(options.ackDelay === undefined ? {} : { ackDelay: options.ackDelay }) };
+    }
+    if (command === `serve --https=${OTHER_PORT} --set-path=/ off`) {
+      state.otherRoot = null;
+      return { code: 0 };
     }
     if (command === `serve --https=${SERVE_PORT} --set-path=/ off`) {
       state.releases += 1;
@@ -143,7 +161,7 @@ const fakeLayers = (fake: ReturnType<typeof makeFakeTailscale>, files: Map<strin
 
 const startTailscaleServe = Effect.fn(function* (options: FakeOptions = {}) {
   const fake = makeFakeTailscale(options);
-  const files = new Map<string, string>();
+  const files = new Map(options.recorded === undefined ? [] : [[CLAIM_PATH, options.recorded]]);
   const parked = yield* Deferred.make<void>();
   const settled = yield* Deferred.make<void>();
   const scope = yield* Scope.make();
@@ -220,6 +238,20 @@ describe("TailscaleServe", () => {
       assert.equal(state.releases, 1);
       assert.equal(state.root, null);
       assert.isFalse(files.has(CLAIM_PATH));
+    }),
+  );
+
+  it.effect("removes the mapping a run on another Serve port left, then claims its own", () =>
+    Effect.gen(function* () {
+      const { state, settled, files } = yield* startTailscaleServe({
+        heldOnOtherPort: LOCAL_TARGET,
+        recorded: `{"localPort":18638,"localHost":"127.0.0.1","servePort":${OTHER_PORT}}`,
+      });
+      yield* Deferred.await(settled);
+
+      assert.equal(state.otherRoot, null);
+      assert.equal(state.root, LOCAL_TARGET);
+      assert.include(files.get(CLAIM_PATH), `"servePort":${SERVE_PORT}`);
     }),
   );
 

@@ -196,6 +196,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     readonly restartFails?: boolean;
     /** What Tailscale reports here. Without it, Tailscale does not answer. */
     readonly tailscale?: Tailscale.TailscaleStatus;
+    /** A server started by hand runs for this T3 home. */
+    readonly handStarted?: boolean;
     /** `t3 up` exits with an error. */
     readonly fails?: boolean;
     /** Runs as if in a terminal, answering each question with this text. */
@@ -374,6 +376,30 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
     },
     {
+      // Only the background service reads service.env.
+      label: "a server started by hand is named, not called off",
+      prints: "T3 Code is running here outside the background service",
+      installed: false,
+      handStarted: true,
+      env: "",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      // The service may inherit sign-in, so leaving it unchecked writes the off.
+      label: "leaving Tailscale unchecked pins it off",
+      installed: true,
+      tailscale: { ...TAGGED_HOST, selfTags: [], selfUserId: "123" },
+      answer: "enter",
+      env: "T3CODE_LAN=false\n",
+      args: [],
+      installs: 0,
+      restarts: 1,
+      envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
       // With no saved owner and no terminal, choosing Tailscale would fail with "Pass --owner".
       label: "--no-tailscale-serve on a tagged host asks for no owner",
       installed: true,
@@ -399,6 +425,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-up-test-" });
       yield* fs.writeFileString(`${baseDir}/service.env`, input.env);
+      if (input.handStarted === true) {
+        yield* fs.makeDirectory(`${baseDir}/userdata`);
+        yield* fs.writeFileString(
+          `${baseDir}/userdata/server-runtime.json`,
+          `{"version":1,"pid":${process.pid},"port":3773,"origin":"http://127.0.0.1:3773","startedAt":"2026-10-31T00:00:00.000Z"}`,
+        );
+      }
       if (input.tailscale !== undefined) {
         vi.spyOn(Tailscale, "readTailscaleStatus").mockReturnValue(Effect.succeed(input.tailscale));
       }
