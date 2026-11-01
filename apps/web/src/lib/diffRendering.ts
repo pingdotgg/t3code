@@ -290,38 +290,75 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
   );
   --diffs-bg-buffer-override: color-mix(in srgb, var(--code-background) 90%, var(--code-foreground));
 
-  --diffs-bg-addition-override: light-dark(
-    color-mix(in srgb, var(--code-background) 50%, var(--diff-addition)),
-    color-mix(in srgb, var(--code-background) 70%, var(--diff-addition))
-  );
-  --diffs-bg-addition-number-override: light-dark(
-    color-mix(in srgb, var(--code-background) 35%, var(--diff-addition)),
-    color-mix(in srgb, var(--code-background) 60%, var(--diff-addition))
-  );
-  --diffs-bg-addition-hover-override: color-mix(in srgb, var(--code-background) 85%, var(--diff-addition));
-  --diffs-bg-addition-emphasis-override: color-mix(
+  /* Row tints fade toward the code surface below default contrast and toward the
+     pure diff color above it, like the contrast text tokens. */
+  --diffs-bg-addition-override: color-mix(
     in srgb,
-    var(--code-background) 80%,
-    var(--diff-addition)
+    color-mix(
+      in srgb,
+      light-dark(
+        color-mix(in srgb, var(--code-background) 50%, var(--diff-addition)),
+        color-mix(in srgb, var(--code-background) 70%, var(--diff-addition))
+      )
+      var(--appearance-contrast-base),
+      var(--code-background)
+    ),
+    var(--diff-addition) var(--appearance-contrast-boost)
+  );
+  --diffs-bg-addition-number-override: color-mix(
+    in srgb,
+    color-mix(
+      in srgb,
+      light-dark(
+        color-mix(in srgb, var(--code-background) 35%, var(--diff-addition)),
+        color-mix(in srgb, var(--code-background) 60%, var(--diff-addition))
+      )
+      var(--appearance-contrast-base),
+      var(--code-background)
+    ),
+    var(--diff-addition) var(--appearance-contrast-boost)
   );
 
-  --diffs-bg-deletion-override: light-dark(
-    color-mix(in srgb, var(--code-background) 50%, var(--diff-deletion)),
-    color-mix(in srgb, var(--code-background) 70%, var(--diff-deletion))
-  );
-  --diffs-bg-deletion-number-override: light-dark(
-    color-mix(in srgb, var(--code-background) 35%, var(--diff-deletion)),
-    color-mix(in srgb, var(--code-background) 60%, var(--diff-deletion))
-  );
-  --diffs-bg-deletion-hover-override: color-mix(
+  --diffs-bg-deletion-override: color-mix(
     in srgb,
-    var(--code-background) 85%,
-    var(--diff-deletion)
+    color-mix(
+      in srgb,
+      light-dark(
+        color-mix(in srgb, var(--code-background) 50%, var(--diff-deletion)),
+        color-mix(in srgb, var(--code-background) 70%, var(--diff-deletion))
+      )
+      var(--appearance-contrast-base),
+      var(--code-background)
+    ),
+    var(--diff-deletion) var(--appearance-contrast-boost)
   );
-  --diffs-bg-deletion-emphasis-override: color-mix(
+  --diffs-bg-deletion-number-override: color-mix(
     in srgb,
-    var(--code-background) 80%,
-    var(--diff-deletion)
+    color-mix(
+      in srgb,
+      light-dark(
+        color-mix(in srgb, var(--code-background) 35%, var(--diff-deletion)),
+        color-mix(in srgb, var(--code-background) 60%, var(--diff-deletion))
+      )
+      var(--appearance-contrast-base),
+      var(--code-background)
+    ),
+    var(--diff-deletion) var(--appearance-contrast-boost)
+  );
+
+  /* Pierre resolves the emphasis overrides on :host, beyond this sheet, so set the word
+     highlight itself: Pierre's alpha (.15 light, .2 dark) times 0.5 to 1.5 with contrast,
+     capped there so syntax colors stay readable. Halving it first keeps the default exact. */
+  --diff-emphasis-alpha: calc(
+    var(--appearance-contrast-base) / 2 + var(--appearance-contrast-boost) / 4
+  );
+  --diffs-bg-addition-emphasis: light-dark(
+    rgb(from color-mix(in srgb, var(--diffs-addition-base) var(--diff-emphasis-alpha), transparent) r g b / calc(alpha * 0.3)),
+    rgb(from color-mix(in srgb, var(--diffs-addition-base) var(--diff-emphasis-alpha), transparent) r g b / calc(alpha * 0.4))
+  );
+  --diffs-bg-deletion-emphasis: light-dark(
+    rgb(from color-mix(in srgb, var(--diffs-deletion-base) var(--diff-emphasis-alpha), transparent) r g b / calc(alpha * 0.3)),
+    rgb(from color-mix(in srgb, var(--diffs-deletion-base) var(--diff-emphasis-alpha), transparent) r g b / calc(alpha * 0.4))
   );
 
   background-color: var(--diffs-bg) !important;
