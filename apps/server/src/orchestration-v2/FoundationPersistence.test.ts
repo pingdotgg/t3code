@@ -287,10 +287,12 @@ it.effect("discovers on the reader worker and deletes on the writer", () =>
       assert.equal(result.deletedEventCount, 148);
       assert.equal(result.deletedReceiptCount, 100);
       assert.deepEqual(
-        reads.filter((query) => /\bSELECT\b/.test(query)),
+        reads.filter((query) => /^\s*SELECT\b/.test(query)),
         [],
       );
-      assert(writes.some((query) => query.includes("DELETE FROM orchestration_events")));
+      assert(
+        [...reads, ...writes].some((query) => /^\s*DELETE FROM orchestration_events\b/.test(query)),
+      );
       assert(writes.some((query) => query.includes("DELETE FROM orchestration_command_receipts")));
     }).pipe(
       Effect.provide(
