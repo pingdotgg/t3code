@@ -13,6 +13,8 @@ const FOCUS_OR_SKIP_MODIFIERS = new Set(["only", "skip", "todo"]);
 const FOCUS_OR_SKIP_FUNCTIONS = new Set(["fdescribe", "fit", "xdescribe", "xit", "xtest"]);
 const TIMEOUT_OPTIONS = new Set(["retry", "timeout"]);
 const SET_CONFIG_OPTIONS = new Set(["hookTimeout", "retry", "testTimeout"]);
+const NUMERIC_BINARY_OPERATORS = new Set(["+", "-", "*", "/", "%", "**"]);
+const NUMERIC_UNARY_OPERATORS = new Set(["+", "-"]);
 const QUARANTINE_PATTERN =
   /quarantine:\s*#\d+|https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/issues\/\d+/u;
 
@@ -60,12 +62,6 @@ const hasOption = (node: unknown, names: ReadonlySet<string>) => {
   );
 };
 
-const isNumericLiteral = (node: unknown) =>
-  Option.exists(
-    unwrapExpression(node),
-    (expression) => expression.type === "Literal" && typeof expression.value === "number",
-  );
-
 const isStringLiteral = (node: unknown) =>
   Option.exists(
     unwrapExpression(node),
@@ -92,6 +88,42 @@ export default defineRule({
     if (!TEST_FILE_PATTERN.test(context.filename)) return {};
     const checkTimeouts = !LIVE_TEST_FILE_PATTERN.test(context.filename);
 
+    const initializerOf = (identifier: Extract<ESTree.Node, { type: "Identifier" }>) => {
+      let scope = context.sourceCode.getScope(identifier);
+      while (true) {
+        const variable = scope.set.get(identifier.name);
+        if (variable !== undefined) {
+          const [def] = variable.defs;
+          return def?.node.type === "VariableDeclarator" ? def.node.init : undefined;
+        }
+        if (scope.upper === null) return undefined;
+        scope = scope.upper;
+      }
+    };
+
+    // Vitest reads a number after the body as the timeout whatever the second argument is, so
+    // judge the value rather than its position; a body or options object is never a number.
+    const isNumberValued = (node: unknown, followBinding = true): boolean =>
+      Option.exists(unwrapExpression(node), (expression) => {
+        switch (expression.type) {
+          case "Literal":
+            return typeof expression.value === "number";
+          case "BinaryExpression":
+            return NUMERIC_BINARY_OPERATORS.has(expression.operator);
+          case "UnaryExpression":
+            return NUMERIC_UNARY_OPERATORS.has(expression.operator);
+          case "ConditionalExpression":
+            return (
+              isNumberValued(expression.consequent, followBinding) ||
+              isNumberValued(expression.alternate, followBinding)
+            );
+          case "Identifier":
+            return followBinding && isNumberValued(initializerOf(expression), false);
+          default:
+            return false;
+        }
+      });
+
     const reportUnlessQuarantined = (node: ESTree.Node) => {
       const comments = context.sourceCode.getCommentsBefore(enclosingStatement(node));
       if (comments.some((comment) => QUARANTINE_PATTERN.test(comment.value))) return;
@@ -115,7 +147,7 @@ export default defineRule({
         }
 
         if (callee.value.type === "Identifier" && HOOK_FUNCTIONS.has(callee.value.name)) {
-          if (checkTimeouts && isNumericLiteral(node.arguments[1])) {
+          if (checkTimeouts && isNumberValued(node.arguments[1])) {
             context.report({ node, message: TIMEOUT_MESSAGE });
           }
           return;
@@ -126,7 +158,7 @@ export default defineRule({
         // `test(name, { timeout }, fn)` is the options-first spelling of the same override.
         if (
           checkTimeouts &&
-          (isNumericLiteral(third) ||
+          (isNumberValued(third) ||
             hasOption(third, TIMEOUT_OPTIONS) ||
             hasOption(second, TIMEOUT_OPTIONS))
         ) {
