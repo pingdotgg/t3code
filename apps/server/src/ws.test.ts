@@ -830,6 +830,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         snapshotFor("/b", "2026-10-25T00:00:00.000Z"),
       ],
     };
+    let scansCwd = true;
     const providerChanges = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
     const pulled = yield* Queue.unbounded<void>();
     const responses = yield* Queue.unbounded<unknown>();
@@ -848,8 +849,10 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         refreshWorkspaceSnapshot: () => Effect.succeed([provider]),
       }),
       Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-        listInstances: Effect.succeed([
-          { instanceId, snapshotForCwd: () => Effect.die("unused") } as never,
+        listInstances: Effect.sync(() => [
+          (scansCwd
+            ? { instanceId, snapshotForCwd: () => Effect.die("unused") }
+            : { instanceId }) as never,
         ]),
       }),
       Layer.mock(UsageLimitSources.UsageLimitSources)({
@@ -949,6 +952,15 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     assert.equal(update.payload.providers[0]?.status, "warning");
     assert.isUndefined(update.payload.providers[0]?.workspaceSnapshots);
     assert.deepEqual(update.payload.providers[0]?.slashCommands, [USAGE_LIMITS_COMMAND]);
+    yield* server.write(0, { _tag: "Ack", requestId: configRequest });
+    // A replacement that cannot scan a cwd sends its machine catalog again.
+    scansCwd = false;
+    yield* Queue.offer(providerChanges, [{ ...provider, status: "warning" }]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    const replaced = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (replaced.type !== "providerStatuses") return yield* Effect.die("Expected provider update");
+    assert.deepEqual(replaced.payload.providers[0]?.slashCommands, provider.slashCommands);
 
     yield* server.write(0, {
       _tag: "Request",
