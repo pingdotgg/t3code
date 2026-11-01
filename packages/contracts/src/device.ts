@@ -173,6 +173,8 @@ export const DeviceSummary = Schema.Struct({
   id: DeviceId,
   platform: DevicePlatform,
   name: TrimmedNonEmptyString,
+  /** Hardware product name, such as "iPhone 18 Pro", which a renamed simulator keeps. */
+  model: Schema.optional(Schema.String),
   version: Schema.String,
   booted: Schema.Boolean,
   physical: Schema.Boolean,
