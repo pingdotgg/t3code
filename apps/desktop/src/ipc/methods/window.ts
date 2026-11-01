@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { PROJECT_FAVICON_EXTENSIONS } from "@t3tools/shared/projectFavicon";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
+import { wslEnvironmentLabel } from "@t3tools/shared/environmentLabel";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
 import * as FileSystem from "effect/FileSystem";
@@ -134,7 +135,10 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
       const runningDistro = config.value.runningDistro ?? null;
       bootstraps.push({
         id: instance.id,
-        label: runningDistro === null ? yield* instance.label : `WSL (${runningDistro})`,
+        label:
+          runningDistro === null
+            ? yield* instance.label
+            : wslEnvironmentLabel(yield* HostProcess.Hostname, runningDistro),
         runningDistro,
         httpBaseUrl: httpBaseUrl.href,
         wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),

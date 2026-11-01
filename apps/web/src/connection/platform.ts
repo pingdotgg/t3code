@@ -466,7 +466,7 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   // Desktop operations need the pool backend id to reach the owning instance; RPC uses the environment id.
   const connectionId = desktopLocalConnectionId(entry.id);
-  const label = entry.label || descriptor.label;
+  const label = descriptor.label || entry.label;
   return {
     registration: new BearerConnectionRegistration({
       target: new BearerConnectionTarget({

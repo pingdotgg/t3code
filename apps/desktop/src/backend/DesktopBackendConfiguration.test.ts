@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -989,8 +990,12 @@ describe("DesktopBackendConfiguration", () => {
         DesktopBackendConfiguration.DesktopBackendConfiguration,
       );
       // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Same reason: this is the synchronous resolution the IPC handler performs.
-      const label = Effect.runSync(configuration.resolvePrimaryLabel);
-      assert.equal(typeof label, "string");
+      const label = Effect.runSync(
+        configuration.resolvePrimaryLabel.pipe(
+          Effect.provideService(HostProcess.Hostname, "DESKTOP-PC"),
+        ),
+      );
+      assert.equal(label, "DESKTOP-PC");
     } finally {
       await runtime.dispose();
     }

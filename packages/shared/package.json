@@ -75,6 +75,10 @@
       "types": "./src/observability.ts",
       "import": "./src/observability.ts"
     },
+    "./environmentLabel": {
+      "types": "./src/environmentLabel.ts",
+      "import": "./src/environmentLabel.ts"
+    },
     "./otelEnvironment": {
       "types": "./src/otelEnvironment.ts",
       "import": "./src/otelEnvironment.ts"
