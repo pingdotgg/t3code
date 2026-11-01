@@ -5,14 +5,38 @@ const path = require("node:path");
 
 const root = path.resolve(__dirname, "../..");
 
+// Workflows no test reads. ci.yml defines the CI jobs, tests read release.yml
+// and web-preview.yml, and a workflow missing from this list runs everything.
+const INERT_WORKFLOWS = [
+  "agent-context-budget",
+  "deploy-relay",
+  "desktop-macos-preview",
+  "desktop-macos-preview-publish",
+  "issue-labels",
+  "mobile-android-apk",
+  "mobile-eas-preview",
+  "mobile-eas-preview-fork",
+  "mobile-eas-production",
+  "mobile-fingerprint-check",
+  "mobile-fingerprint-label",
+  "mobile-showcase-screenshots",
+  "pr-size",
+  "pr-vouch",
+  "publish-aur",
+  "relay-preview",
+  "relay-preview-cleanup",
+  "release-desktop",
+  "stale-needs-more-info",
+  "thread-transfer-report",
+  "windows-tests",
+];
+
 const INERT = [
   /^docs\//,
   /^\.(agents|cursor|vscode|devcontainer|macroscope|repos)\//,
   /^[^/]+\.md$/,
   /^LICENSE$/,
-  // Package tests read no other workflow. ci.yml defines these jobs, and the
-  // .github/scripts tests read release.yml and web-preview.yml.
-  /^\.github\/workflows\/(?!(ci|release|web-preview)\.yml$)/,
+  new RegExp(`^\\.github/workflows/(${INERT_WORKFLOWS.join("|")})\\.yml$`),
 ];
 
 // Shared test setup and vendored mobile dependencies affect every package.

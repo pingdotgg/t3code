@@ -59,7 +59,9 @@ describe("check:changed", () => {
       ".github/workflows/ci.yml",
       ".github/workflows/release.yml",
       ".github/workflows/web-preview.yml",
-      ".github/actions/setup-ci-deps/action.yml",
+      ".github/workflows/new-workflow.yml",
+      ".github/scripts/ci-changes.cjs",
+      ".github/actions/ci-changes/action.yml",
     ]) {
       assert.lengthOf(decide([file], packages, false).affected, packages.length, file);
     }
