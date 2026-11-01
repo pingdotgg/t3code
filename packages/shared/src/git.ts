@@ -170,6 +170,21 @@ export function normalizeGitRemoteUrl(value: string): string {
   return repository === null ? lowerCaseRemote(value) : `${repository.host}/${repository.path}`;
 }
 
+/** The `name url (fetch|push)` lines of `git remote -v`, in output order. */
+export function parseGitRemoteEntries(output: string): ReadonlyArray<{
+  readonly name: string;
+  readonly url: string;
+  readonly direction: "fetch" | "push";
+}> {
+  return output.split("\n").flatMap((line) => {
+    // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
+    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(line.trim());
+    return match
+      ? [{ name: match[1]!, url: match[2]!, direction: match[3] === "push" ? "push" : "fetch" }]
+      : [];
+  });
+}
+
 function parseGitConfigValue(raw: string): string {
   let out = "";
   let quoted = false;
