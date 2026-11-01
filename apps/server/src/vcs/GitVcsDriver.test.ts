@@ -15,6 +15,7 @@ import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
 import * as Metric from "effect/Metric";
 import { assert, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
 import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -267,31 +268,38 @@ it.effect("checkpoint capture keeps the shared index a split index still uses", 
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
-it.effect("checkpoint recovery discovers nested HEAD independently of inherited GIT_DIR", () =>
+it.effect("checkpoint capture ignores repository selectors inherited by the server", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
     const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-git-dir-" });
+    const other = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-other-" });
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    const otherFixture = yield* makeCheckpointFixture(driver, other);
     yield* git(["init", "empty"]);
+    const bare = path.join(other, "bare.git");
+    yield* git(["clone", "--bare", cwd, bare]);
     const originalIndex = yield* fs.readFile(path.join(cwd, ".git", "index"));
-    yield* Effect.acquireUseRelease(
-      Effect.sync(() => {
-        const previous = process.env.GIT_DIR;
-        process.env.GIT_DIR = path.join(cwd, ".git");
-        return previous;
-      }),
-      () => driver.checkpoints.captureCheckpoint({ cwd, checkpointRef }),
-      (previous) =>
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env.GIT_DIR;
-          else process.env.GIT_DIR = previous;
-        }),
-    );
+    const otherIndex = yield* fs.readFile(path.join(other, ".git", "index"));
+    yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
+    vi.stubEnv("GIT_DIR", path.join(other, ".git"));
+    vi.stubEnv("GIT_WORK_TREE", other);
+    vi.stubEnv("GIT_INDEX_FILE", path.join(other, ".git", "index"));
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
     assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
     assert.strictEqual((yield* git(["ls-tree", "-r", checkpointRef, "--", "empty"])).stdout, "");
     assert.deepEqual(yield* fs.readFile(path.join(cwd, ".git", "index")), originalIndex);
+    const otherRefs = yield* otherFixture.git(["for-each-ref", "refs/t3"]);
+    assert.strictEqual(otherRefs.stdout, "");
+    assert.deepEqual(yield* fs.readFile(path.join(other, ".git", "index")), otherIndex);
+    const explicitBare = yield* driver.execute({
+      operation: "checkpoint-test",
+      cwd: bare,
+      args: ["rev-parse", "--is-bare-repository"],
+      env: { GIT_DIR: bare },
+    });
+    assert.strictEqual(explicitBare.stdout, "true\n");
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 

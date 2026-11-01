@@ -5,6 +5,7 @@ import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it, describe } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -548,6 +549,35 @@ it.effect.each(["bare", "unborn"] as const)(
         assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 1);
       }),
     ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("ignores repository selectors inherited by the server", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const cwd = yield* makeTmpDir();
+      const other = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      yield* initRepoWithCommit(other);
+      yield* git(other, ["switch", "-c", "other-repository"]);
+      yield* writeTextFile(cwd, "selected.txt", "selected content\n");
+      const bare = path.join(yield* makeTmpDir(), "bare.git");
+      yield* git(cwd, ["clone", "--bare", cwd, bare]);
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
+      vi.stubEnv("GIT_DIR", path.join(other, ".git"));
+      vi.stubEnv("GIT_WORK_TREE", other);
+      vi.stubEnv("GIT_INDEX_FILE", path.join(other, ".git", "index"));
+      assert.equal((yield* driver.statusDetailsLocal(cwd)).branch, initialBranch);
+      const context = yield* driver.prepareCommitContext(cwd, ["selected.txt"]);
+      assert.include(context?.stagedPatch ?? "", "+selected content");
+      assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "");
+      const explicitBare = yield* git(bare, ["rev-parse", "--is-bare-repository"], {
+        GIT_DIR: bare,
+      });
+      assert.equal(explicitBare, "true");
+    }),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
