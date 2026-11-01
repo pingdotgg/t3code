@@ -2831,20 +2831,30 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       verb: "roll back" | "fork",
     ) {
       const state = threads.get(sessionId);
+      // A stopped turn whose end was lost with the stream stays active here,
+      // so OpenCode's own list decides whether it still runs.
+      const stopped = state?.active?.interrupted === true ? state.active : undefined;
       const busyHere =
         state !== undefined &&
-        (state.active !== undefined ||
-          busy.has(sessionId) ||
+        ((stopped === undefined && (state.active !== undefined || busy.has(sessionId))) ||
           (verb === "roll back" && hasBackground(state)));
       const busyThere =
         !busyHere &&
-        (state === undefined || state.unsettled) &&
+        (state === undefined || state.unsettled || stopped !== undefined) &&
         sessionId in (yield* client.session.active().pipe(Effect.timeout(ACTIVE_CHECK_TIMEOUT)));
       if (busyHere || busyThere) {
         return yield* new ProviderAdapter.ProviderAdapterProtocolError({
           driver: OPENCODE_PROVIDER,
           detail: `Cannot ${verb} OpenCode session ${sessionId} while it is still working`,
         });
+      }
+      if (state !== undefined && stopped !== undefined) {
+        busy.delete(sessionId);
+        yield* lock.withPermit(
+          Effect.suspend(() =>
+            state.active === stopped ? finishTurn(state, { status: "interrupted" }) : Effect.void,
+          ),
+        );
       }
     });
 
