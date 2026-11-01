@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { Atom } from "effect/reactivity";
 import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  restoreAttachmentOnlyBootstrapPrompt,
+} from "@t3tools/shared/composerContextReferences";
+import {
   ChatAttachmentId,
   ComposerContextId,
   MessageId,
@@ -112,6 +116,30 @@ describe("resolveQueuedEditPayload", () => {
 });
 
 describe("beginQueuedRunEdit", () => {
+  it.each(["", "Ultrathink:\n"])(
+    "opens attachment-only edits without the placeholder and treats them as untouched (%j)",
+    (prefix) => {
+      const threadKey = `env-exit:attachment-only-${prefix.length}`;
+      const original = {
+        ...edit([image("kept")]),
+        originalText: prefix + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+      };
+      const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>(
+        [{ id: original.runId, status: "queued" }],
+      );
+      beginQueuedRunEdit(threadKey, original, runs);
+      const draft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, original.runId));
+      expect(draft.text).toBe(prefix.trimEnd());
+      expect(
+        restoreAttachmentOnlyBootstrapPrompt(draft.text, original.existingAttachments.length > 0),
+      ).toBe(original.originalText);
+      expect(getQueuedRunEdit(threadKey)).toEqual({ ...original, originalText: prefix.trimEnd() });
+      appAtomRegistry.set(runs, [{ id: original.runId, status: "running" }]);
+      expect(getQueuedRunEdit(threadKey)).toBeNull();
+      expect(appAtomRegistry.get(threadComposerErrorsAtom)[threadKey]?.message).toBeUndefined();
+    },
+  );
+
   it("silently drops an untouched edit when its run starts", () => {
     const threadKey = "env-exit:thread-untouched";
     const runId = RunId.make("run-1");

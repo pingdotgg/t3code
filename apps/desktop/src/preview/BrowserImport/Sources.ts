@@ -109,7 +109,8 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     keychainAccount: "Vivaldi",
     macSegments: ["Vivaldi"],
     linuxSegments: ["vivaldi"],
-    linuxSecretApplication: "vivaldi",
+    // Vivaldi stores its Linux libsecret key under Chrome's application name.
+    linuxSecretApplication: "chrome",
   }),
   chromiumSource({
     id: "opera",
