@@ -8,6 +8,7 @@ import {
   WS_METHODS,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
+import { splitSocketFrame } from "@t3tools/shared/socketFrameParts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -21,6 +22,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Socket from "effect/socket/Socket";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -275,6 +277,56 @@ const publishConfigEvents = Effect.fn("TestRpcSessionFactory.publishConfigEvents
 });
 
 describe("RpcSessionFactory", () => {
+  it.effect("connects while a large config snapshot downloads at 4000 bytes per second", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      const request = yield* awaitRequest(socket);
+      const config = { ...SERVER_CONFIG, cwd: "/" + "x".repeat(320 * 1024) };
+      const frame = encodeJson({
+        _tag: "Chunk",
+        requestId: request.id,
+        values: [{ version: 1, type: "snapshot", config: encodeServerConfig(config) }],
+      });
+      const parts = new URL(socket.url).searchParams.has("frameParts")
+        ? splitSocketFrame(frame)
+        : [frame];
+      expect(parts.length).toBeGreaterThan(1);
+      expect(yield* session.inboundFrames).toBe(0);
+
+      for (const [index, part] of parts.entries()) {
+        yield* TestClock.adjust((new TextEncoder().encode(part).length / 4000) * 1000);
+        socket.serverMessage(part);
+        expect(yield* session.inboundFrames).toBe(index + 1);
+      }
+      yield* Fiber.join(readyFiber);
+
+      expect(yield* session.initialConfig).toEqual(config);
+      expect(yield* session.inboundFrames).toBe(parts.length);
+    }),
+  );
+
+  it.effect("times out a config transfer that stops after its first part", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const closed = yield* session.closed.pipe(Effect.flip, Effect.forkChild);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* awaitRequest(socket);
+      socket.serverMessage('\u001e{"_tag":"Chunk",');
+      yield* TestClock.adjust("30 seconds");
+      expect(yield* Fiber.join(closed)).toMatchObject({
+        reason: "transport",
+        message: expect.stringContaining("stopped responding for 15s"),
+      });
+      expect(socket.readyState).toBe(TestWebSocket.CLOSED);
+    }),
+  );
+
   it.effect("owns one scoped websocket attempt and exposes readiness and closure", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
@@ -282,7 +334,7 @@ describe("RpcSessionFactory", () => {
       const readyFiber = yield* Effect.forkChild(session.ready);
       const socket = yield* awaitSocket(sockets);
 
-      expect(socket.url).toBe(PREPARED.socketUrl);
+      expect(socket.url).toBe(`${PREPARED.socketUrl}&frameParts=1`);
       socket.open();
       yield* completeInitialConfig(socket);
       yield* Fiber.join(readyFiber);
