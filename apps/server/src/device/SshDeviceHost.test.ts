@@ -1,5 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Net from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -26,6 +28,8 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     let forwards = 0;
     let failForward = true;
     let rejectConfig = true;
+    const nativeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const platform = yield* HostProcess.Platform;
     const releases: Array<string | undefined> = [];
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
@@ -68,6 +72,17 @@ it.effect("preserves installed status after probes and cleans failed agent activ
             ),
           );
           const mode = /const mode = "([^"]+)"/.exec(script)?.[1] ?? "";
+          if (!mode && script.includes("readFileSync")) {
+            return yield* nativeSpawner.spawn(
+              ChildProcess.make(
+                platform === "win32" ? "powershell.exe" : "sh",
+                platform === "win32"
+                  ? ["-NoProfile", "-NonInteractive", "-Command", command.args.slice(-2).join(" ")]
+                  : ["-c", command.args.slice(-2).join(" ")],
+                { stdin, env: { ...process.env, HOME: home } },
+              ),
+            );
+          }
           modes.push(mode);
           owners.push(/const owner = "([^"]+)"/.exec(script)?.[1] ?? "");
           output = JSON.stringify({
@@ -128,7 +143,23 @@ it.effect("preserves installed status after probes and cleans failed agent activ
         ),
       ),
     );
-    yield* host.ensureReady(() => Effect.void);
+    const initial = yield* host.ensureReady(() => Effect.void);
+    const owner = owners[0]!;
+    yield* fs.makeDirectory(home + "/.t3/device/hosts/" + owner, { recursive: true });
+    const value = "quotes ' \" $HOME \nno trailing newline";
+    const input = value + "\r\nCR\rNUL\0backslash \\";
+    const code =
+      "process.stdout.write(JSON.stringify({args:process.argv.slice(1),input:require('node:fs').readFileSync(0,'utf8'),cwd:process.cwd()}))";
+    const exact = yield* initial.run(process.execPath.replaceAll("\\", "/"), ["-e", code, value], {
+      stdin: input,
+    });
+    expect(exact.code).toBe(0);
+    const received = JSON.parse(exact.stdout);
+    expect(received.args).toEqual([value]);
+    expect(received.input).toBe(input);
+    expect(received.cwd.replaceAll("\\", "/")).toBe(
+      (home + "/.t3/device/hosts/" + owner).replaceAll("\\", "/"),
+    );
     yield* SshDeviceHost.probe({
       kind: "ssh",
       id: "test",
