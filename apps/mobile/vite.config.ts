@@ -31,6 +31,7 @@ const reactTests = [
   "src/native/V5StackHeader.ios.test.tsx",
   "src/native/useRestingTopOffset.test.tsx",
   "src/native/useRetryingImageSource.test.tsx",
+  "src/native/useEnrichedLinkVariants.test.tsx",
   "src/state/queries.debounce.test.tsx",
   "src/state/use-selected-thread-git-actions.test.tsx",
   "src/state/use-selected-thread-git-state.test.tsx",
