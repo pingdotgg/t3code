@@ -18,7 +18,7 @@ export function installSubscriptionUsageRefresh(): () => void {
     runAtomCommand(
       appAtomRegistry,
       serverEnvironment.refreshProviders,
-      { environmentId, input: {} },
+      { environmentId, input: { skipMaintenance: true } },
       { label: serverEnvironment.refreshProviders.label, reportFailure: false },
     ),
   );
