@@ -1206,6 +1206,63 @@ function sortMessagesByTurnItemOrder(
   });
 }
 
+interface FamilyPageThread {
+  readonly id: ThreadId;
+  readonly deleted: boolean;
+  /**
+   * Ordinal of the source run a fork copied history through; null when that run is gone.
+   * Null for side chats, which show only their own rows (`inheritedRunFork`).
+   */
+  readonly forkedFrom: { readonly threadId: ThreadId; readonly runOrdinal: number | null } | null;
+}
+
+interface FamilyPageItem {
+  readonly threadId: ThreadId;
+  readonly runOrdinal: number | null;
+  readonly toolName: string | null;
+  readonly output?: unknown;
+}
+
+/** Forks show their source's pages without copying the item, so a page outlives its owner. */
+function unreferencedThreadPageIds(input: {
+  readonly threadId: ThreadId;
+  readonly threads: ReadonlyArray<FamilyPageThread>;
+  readonly items: ReadonlyArray<FamilyPageItem>;
+}): Array<string> {
+  const threads = new Map(input.threads.map((thread) => [thread.id, thread]));
+  const pagesByThread = new Map<ThreadId, Array<{ id: string; runOrdinal: number | null }>>();
+  for (const item of input.items) {
+    for (const id of threadHtmlRenderAttachmentIds(item.threadId, [item])) {
+      const pages = pagesByThread.get(item.threadId) ?? [];
+      pages.push({ id, runOrdinal: item.runOrdinal });
+      pagesByThread.set(item.threadId, pages);
+    }
+  }
+  const shownBy = (threadId: ThreadId) => {
+    const shown = new Set<string>();
+    const seen = new Set<ThreadId>();
+    let thread = threads.get(threadId);
+    let cutoff = Number.POSITIVE_INFINITY;
+    while (thread !== undefined && !seen.has(thread.id)) {
+      seen.add(thread.id);
+      for (const page of pagesByThread.get(thread.id) ?? []) {
+        if (page.runOrdinal === null || page.runOrdinal <= cutoff) shown.add(page.id);
+      }
+      const source = thread.forkedFrom;
+      if (source === null || source.runOrdinal === null) break;
+      cutoff = source.runOrdinal;
+      thread = threads.get(source.threadId);
+    }
+    return shown;
+  };
+  const kept = new Set(
+    input.threads.flatMap((thread) =>
+      thread.deleted || thread.id === input.threadId ? [] : [...shownBy(thread.id)],
+    ),
+  );
+  return [...shownBy(input.threadId)].filter((id) => !kept.has(id));
+}
+
 function activeLocalTurnItems(
   projection: OrchestrationV2ThreadProjection,
 ): Array<OrchestrationV2ProjectedTurnItem> {
@@ -5338,20 +5395,58 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(controlReadError(threadId)),
       );
 
-    const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = (threadId) =>
-      Effect.all([
+    const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = (threadId) => {
+      const isFamilyMember = sql`thread_id = ${threadId}
+        OR json_extract(payload_json, '$.lineage.rootThreadId') = (
+          SELECT json_extract(member.payload_json, '$.lineage.rootThreadId')
+          FROM orchestration_v2_projection_threads AS member
+          WHERE member.thread_id = ${threadId}
+        )`;
+      return Effect.all([
         sql<{ id: string }>`
       SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
       FROM orchestration_v2_projection_messages AS message,
         json_each(message.payload_json, '$.attachments') AS attachment
       WHERE message.thread_id = ${threadId}
     `,
-        sql<{ payload_json: string }>`
-      SELECT payload_json
-      FROM orchestration_v2_projection_turn_items
-      WHERE thread_id = ${threadId}
-        AND type = 'dynamic_tool'
-        AND (payload_json LIKE '%htmlRender%' OR payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`})
+        sql<{
+          thread_id: ThreadId;
+          deleted_at: string | null;
+          forked_from_thread_id: ThreadId | null;
+          forked_from_run_ordinal: number | null;
+        }>`
+      WITH family AS (
+        SELECT thread_id, deleted_at, payload_json
+        FROM orchestration_v2_projection_threads
+        WHERE ${isFamilyMember}
+      )
+      SELECT
+        family.thread_id,
+        family.deleted_at,
+        source.thread_id AS forked_from_thread_id,
+        run.ordinal AS forked_from_run_ordinal
+      FROM family
+      LEFT JOIN family AS source
+        ON json_extract(family.payload_json, '$.forkedFrom.type') = 'run'
+        AND json_extract(family.payload_json, '$.lineage.sideChat') IS NOT 1
+        AND source.thread_id = json_extract(family.payload_json, '$.forkedFrom.threadId')
+      LEFT JOIN orchestration_v2_projection_runs AS run
+        ON run.thread_id = source.thread_id
+        AND run.run_id = json_extract(family.payload_json, '$.forkedFrom.runId')
+    `,
+        sql<{ thread_id: ThreadId; run_ordinal: number | null; payload_json: string }>`
+      SELECT item.thread_id, run.ordinal AS run_ordinal, item.payload_json
+      FROM orchestration_v2_projection_turn_items AS item
+      LEFT JOIN orchestration_v2_projection_runs AS run
+        ON run.run_id = item.run_id AND run.thread_id = item.thread_id
+      WHERE item.thread_id IN (
+          SELECT thread_id FROM orchestration_v2_projection_threads WHERE ${isFamilyMember}
+        )
+        AND item.type = 'dynamic_tool'
+        AND (
+          item.payload_json LIKE '%htmlRender%'
+          OR item.payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
+        )
     `,
         sql<{ id: string }>`
       SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
@@ -5371,25 +5466,39 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         AND json_extract(message.value, '$.status') = 'pending'
     `,
       ]).pipe(
-        Effect.map(([messages, renders, answerFiles, guestFiles]) => [
+        Effect.map(([messages, family, renders, answerFiles, guestFiles]) => [
           ...new Set([
             ...messages.map((row) => row.id),
             ...guestFiles.map((row) => row.id),
             ...answerFiles.map((row) => row.id),
-            ...threadHtmlRenderAttachmentIds(
+            ...unreferencedThreadPageIds({
               threadId,
-              renders.map((row) => {
+              threads: family.map((row) => ({
+                id: row.thread_id,
+                deleted: row.deleted_at !== null,
+                forkedFrom:
+                  row.forked_from_thread_id === null
+                    ? null
+                    : {
+                        threadId: row.forked_from_thread_id,
+                        runOrdinal: row.forked_from_run_ordinal,
+                      },
+              })),
+              items: renders.map((row) => {
                 const item = parseEncodedPayload(row.payload_json);
                 return {
+                  threadId: row.thread_id,
+                  runOrdinal: row.run_ordinal,
                   toolName: typeof item.toolName === "string" ? item.toolName : null,
                   output: item.output,
                 };
               }),
-            ),
+            }),
           ]),
         ]),
         Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
       );
+    };
 
     const getThreadRecords: ProjectionStoreV2Shape["getThreadRecords"] = (
       threadId,

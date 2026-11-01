@@ -36,6 +36,7 @@ import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 
+import { createAttachmentId } from "../attachmentStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -1458,6 +1459,209 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
       payload: { ...payloadOf({ name: "root", worktreePath }), deletedAt: now },
     });
     assert.sameMembers([...(yield* family(id("root")))], [id("child"), id("grandchild")]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("SQL delete a fork family's pages once no live thread shows them", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const projectId = ProjectId.make("project:fork-pages");
+    const createFamily = Effect.fnUntraced(function* (family: string) {
+      const id = (name: string) => ThreadId.make(`thread:fork-pages:${family}:${name}`);
+      const runId = (thread: string, ordinal: number) =>
+        RunId.make(`run:fork-pages:${family}:${thread}:${ordinal}`);
+      const createThread = (
+        name: string,
+        forkedFrom?: { thread: string; ordinal: number },
+        sideChat?: true,
+      ) =>
+        store.apply({
+          id: EventId.make(`event:fork-pages:${family}:${name}`),
+          type: "thread.created",
+          threadId: id(name),
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: id(name),
+            projectId,
+            title: name,
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId: forkedFrom === undefined ? null : id(forkedFrom.thread),
+              relationshipToParent: forkedFrom === undefined ? null : "fork",
+              rootThreadId: id("source"),
+              ...(sideChat ? { sideChat } : {}),
+            },
+            forkedFrom:
+              forkedFrom === undefined
+                ? null
+                : {
+                    type: "run",
+                    threadId: id(forkedFrom.thread),
+                    runId: runId(forkedFrom.thread, forkedFrom.ordinal),
+                  },
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+      const createRun = (thread: string, ordinal: number) =>
+        store.apply({
+          id: EventId.make(`event:fork-pages:${family}:${thread}:run:${ordinal}`),
+          type: "run.created",
+          threadId: id(thread),
+          occurredAt: now,
+          payload: {
+            id: runId(thread, ordinal),
+            threadId: id(thread),
+            ordinal,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make(`message:fork-pages:${family}:${thread}:${ordinal}`),
+            rootNodeId: NodeId.make(`node:fork-pages:${family}:${thread}:${ordinal}`),
+            activeAttemptId: null,
+            status: "completed",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        });
+      const publish = Effect.fnUntraced(function* (
+        thread: string,
+        ordinal: number,
+        kind: "html_render" | "mcp_app",
+      ) {
+        const attachmentId = createAttachmentId(id(thread), "html")!;
+        const itemId = TurnItemId.make(`item:fork-pages:${family}:${thread}:${ordinal}:${kind}`);
+        yield* store.apply({
+          id: EventId.make(`event:${itemId}`),
+          type: "turn-item.updated",
+          threadId: id(thread),
+          runId: runId(thread, ordinal),
+          driver,
+          occurredAt: now,
+          payload: {
+            id: itemId,
+            threadId: id(thread),
+            runId: runId(thread, ordinal),
+            nodeId: NodeId.make(`node:fork-pages:${family}:${thread}:${ordinal}`),
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: ordinal * 10 + (kind === "mcp_app" ? 1 : 0),
+            status: "completed",
+            title: kind,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "dynamic_tool",
+            input: {},
+            ...(kind === "html_render"
+              ? {
+                  toolName: "mcp__t3-code__html_render",
+                  output: [
+                    {
+                      type: "text",
+                      text: JSON.stringify({
+                        htmlRender: { attachmentId, title: "Page", height: 300 },
+                      }),
+                    },
+                  ],
+                }
+              : {
+                  toolName: "weather.get_weather",
+                  output: {
+                    t3McpApp: {
+                      attachmentId,
+                      server: "weather",
+                      tool: "get_weather",
+                      resourceUri: "ui://weather/dashboard",
+                    },
+                    result: { content: [] },
+                  },
+                }),
+          },
+        });
+        return attachmentId;
+      });
+
+      // source: run 1 (page + MCP App), run 2 (page). fork: run 1 of source, then its own
+      // runs 1 and 2. nested: run 1 of fork. side: a side chat from run 1 of source, which
+      // shows only its own rows.
+      yield* createThread("source");
+      yield* createRun("source", 1);
+      yield* createRun("source", 2);
+      const sourcePage = yield* publish("source", 1, "html_render");
+      const sourceApp = yield* publish("source", 1, "mcp_app");
+      const sourceLater = yield* publish("source", 2, "html_render");
+      yield* createThread("fork", { thread: "source", ordinal: 1 });
+      yield* createRun("fork", 1);
+      yield* createRun("fork", 2);
+      const forkPage = yield* publish("fork", 1, "html_render");
+      const forkLater = yield* publish("fork", 2, "mcp_app");
+      yield* createThread("nested", { thread: "fork", ordinal: 1 });
+      yield* createThread("side", { thread: "source", ordinal: 1 }, true);
+      const pages = { sourcePage, sourceApp, sourceLater, forkPage, forkLater };
+      const deleteThread = (name: string) =>
+        Effect.gen(function* () {
+          const ids = yield* store.getThreadAttachmentIds(id(name));
+          const projection = yield* store.getThreadProjection(id(name));
+          yield* store.apply({
+            id: EventId.make(`event:fork-pages:${family}:${name}:deleted`),
+            type: "thread.deleted",
+            threadId: id(name),
+            occurredAt: now,
+            payload: { ...projection.thread, deletedAt: now },
+          });
+          return ids;
+        });
+      return { pages, deleteThread };
+    });
+
+    // Source first: pages shown before the cutoff stay until the last fork that shows them goes.
+    const sourceFirst = yield* createFamily("source-first");
+    assert.sameMembers(
+      [...(yield* sourceFirst.deleteThread("source"))],
+      [sourceFirst.pages.sourceLater],
+    );
+    assert.sameMembers(
+      [...(yield* sourceFirst.deleteThread("fork"))],
+      [sourceFirst.pages.forkLater],
+    );
+    assert.sameMembers(
+      [...(yield* sourceFirst.deleteThread("nested"))],
+      [sourceFirst.pages.sourcePage, sourceFirst.pages.sourceApp, sourceFirst.pages.forkPage],
+    );
+    assert.sameMembers([...(yield* sourceFirst.deleteThread("side"))], []);
+
+    // Forks first: each thread's own pages go with the last thread that shows them.
+    const forksFirst = yield* createFamily("forks-first");
+    assert.sameMembers([...(yield* forksFirst.deleteThread("side"))], []);
+    assert.sameMembers([...(yield* forksFirst.deleteThread("nested"))], []);
+    assert.sameMembers(
+      [...(yield* forksFirst.deleteThread("fork"))],
+      [forksFirst.pages.forkPage, forksFirst.pages.forkLater],
+    );
+    assert.sameMembers(
+      [...(yield* forksFirst.deleteThread("source"))],
+      [forksFirst.pages.sourcePage, forksFirst.pages.sourceApp, forksFirst.pages.sourceLater],
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 

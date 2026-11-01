@@ -44,6 +44,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { createAttachmentId } from "../attachmentStore.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ServerConfig from "../config.ts";
@@ -336,6 +337,7 @@ const layerProjectDeletionTest = Layer.mergeAll(
   RuntimeLayer.layer.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
   RuntimeLayer.layerProjectService,
   RuntimeLayer.layerEventSink,
+  ProjectionStore.layer,
   ThreadCommandExecutor.layer,
 ).pipe(
   Layer.provide(
@@ -810,6 +812,304 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
         assert.isNotNull((yield* orchestrator.getThreadProjection(sideChatId)).thread.deletedAt);
       }).pipe(Effect.ensuring(Effect.sync(() => lockSpy.mockRestore())));
     }),
+  );
+
+  // Deleting a thread reads whether other threads still show its pages, so a second
+  // deletion must not plan against a first one that has not committed yet.
+  it.effect("plans a thread deletion only after an in-flight deletion commits", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const threadProjectId = ProjectId.make("runtime-delete-serial-thread-project");
+      const deletedProjectId = ProjectId.make("runtime-delete-serial-project");
+      const threadId = ThreadId.make("runtime-delete-serial-thread");
+      const projectThreadId = ThreadId.make("runtime-delete-serial-project-thread");
+      const threadDeleteId = CommandId.make("runtime-delete-serial-thread-delete");
+      for (const [projectId, threadIdInProject] of [
+        [threadProjectId, threadId],
+        [deletedProjectId, projectThreadId],
+      ] as const) {
+        yield* projects.create({
+          commandId: CommandId.make(`runtime-delete-serial-create:${projectId}`),
+          projectId,
+          title: "Serial deletion",
+          workspaceRoot: `/work/serial-deletion/${projectId}`,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`runtime-delete-serial-create:${threadIdInProject}`),
+          createdBy: "user",
+          creationSource: "web",
+          threadId: threadIdInProject,
+          projectId,
+          title: "Serial deletion",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+      }
+
+      const threadDeleteReady = yield* Deferred.make<void>();
+      const releaseThreadDelete = yield* Deferred.make<void>();
+      const projectDeleteQueued = yield* Deferred.make<void>();
+      const projectDeletePlanning = yield* Deferred.make<void>();
+      let threadDeleteCommitted = false;
+      const projectDeletePlannedAfterCommit: Array<boolean> = [];
+      const commitCommand = eventSink.commitCommand;
+      const commitSpy = vi.spyOn(eventSink, "commitCommand").mockImplementation((input) =>
+        input.commandId === threadDeleteId
+          ? Deferred.succeed(threadDeleteReady, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseThreadDelete)),
+              Effect.andThen(commitCommand(input)),
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  threadDeleteCommitted = true;
+                }),
+              ),
+            )
+          : commitCommand(input),
+      );
+      const getThreadAttachmentIds = projectionStore.getThreadAttachmentIds;
+      const readSpy = vi
+        .spyOn(projectionStore, "getThreadAttachmentIds")
+        .mockImplementation((id) =>
+          id === projectThreadId
+            ? Effect.sync(() => projectDeletePlannedAfterCommit.push(threadDeleteCommitted)).pipe(
+                Effect.andThen(Deferred.succeed(projectDeletePlanning, undefined)),
+                Effect.andThen(getThreadAttachmentIds(id)),
+              )
+            : getThreadAttachmentIds(id),
+        );
+      const withDeletionLock = executor.withDeletionLock;
+      let deletionLockRequests = 0;
+      const observeDeletionLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withDeletionLock"] =
+        (effect) =>
+          ++deletionLockRequests === 2
+            ? Deferred.succeed(projectDeleteQueued, undefined).pipe(
+                Effect.andThen(withDeletionLock(effect)),
+              )
+            : withDeletionLock(effect);
+      const lockSpy = vi
+        .spyOn(executor, "withDeletionLock")
+        .mockImplementation(observeDeletionLock);
+      yield* Effect.gen(function* () {
+        const threadDeleteFiber = yield* orchestrator
+          .dispatch({ type: "thread.delete", commandId: threadDeleteId, threadId })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.raceFirst(
+          Deferred.await(threadDeleteReady),
+          Fiber.join(threadDeleteFiber).pipe(
+            Effect.andThen(Effect.die("The thread deletion completed before its commit barrier.")),
+          ),
+        );
+        const projectDeleteFiber = yield* projects
+          .delete({
+            commandId: CommandId.make("runtime-delete-serial-project-delete"),
+            projectId: deletedProjectId,
+            force: true,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.raceFirst(
+          Deferred.await(projectDeleteQueued),
+          Deferred.await(projectDeletePlanning),
+        );
+        yield* Deferred.succeed(releaseThreadDelete, undefined);
+        yield* Fiber.join(threadDeleteFiber);
+        yield* Fiber.join(projectDeleteFiber);
+        assert.deepEqual(projectDeletePlannedAfterCommit, [true]);
+        assert.isNotNull(
+          (yield* orchestrator.getThreadProjection(projectThreadId)).thread.deletedAt,
+        );
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            commitSpy.mockRestore();
+            readSpy.mockRestore();
+            lockSpy.mockRestore();
+          }),
+        ),
+      );
+    }),
+  );
+
+  it.effect.each(["fork", "delete"] as const)(
+    "preserves page ownership when %s commits before a concurrent fork or deletion",
+    (first) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        const now = yield* DateTime.now;
+        const sourceThreadId = ThreadId.make(`fork-delete-source:${first}`);
+        const targetThreadId = ThreadId.make(`fork-delete-target:${first}`);
+        const runId = RunId.make(`fork-delete-run:${first}`);
+        const forkCommandId = CommandId.make(`fork-delete-fork:${first}`);
+        const deleteCommandId = CommandId.make(`fork-delete-delete:${first}`);
+        const attachmentId = createAttachmentId(sourceThreadId, "html")!;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`fork-delete-create:${first}`),
+          threadId: sourceThreadId,
+          projectId: ProjectId.make(`fork-delete-project:${first}`),
+          title: "Page source",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`fork-delete-run:${first}`),
+              type: "run.created",
+              threadId: sourceThreadId,
+              runId,
+              occurredAt: now,
+              payload: {
+                id: runId,
+                threadId: sourceThreadId,
+                ordinal: 1,
+                providerInstanceId: modelSelection.instanceId,
+                modelSelection,
+                providerThreadId: null,
+                userMessageId: MessageId.make(`fork-delete-message:${first}`),
+                rootNodeId: null,
+                activeAttemptId: null,
+                status: "completed",
+                requestedAt: now,
+                startedAt: now,
+                completedAt: now,
+                checkpointId: null,
+                contextHandoffId: null,
+              },
+            },
+            {
+              id: EventId.make(`fork-delete-page:${first}`),
+              type: "turn-item.updated",
+              threadId: sourceThreadId,
+              runId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`fork-delete-page:${first}`),
+                threadId: sourceThreadId,
+                runId,
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "completed",
+                title: "Shared page",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                type: "dynamic_tool",
+                toolName: "mcp__t3-code__html_render",
+                input: {},
+                output: { htmlRender: { attachmentId, title: "Shared page", height: 300 } },
+              },
+            },
+          ],
+        });
+        const firstReady = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const secondQueued = yield* Deferred.make<void>();
+        const cleanupIds: Array<string> = [];
+        const commitCommand = eventSink.commitCommand;
+        const commitSpy = vi.spyOn(eventSink, "commitCommand").mockImplementation((input) => {
+          if (input.commandId === deleteCommandId) {
+            for (const effect of input.effects ?? []) {
+              if (effect.request.type === "attachment.cleanup")
+                cleanupIds.push(...effect.request.attachmentIds);
+            }
+          }
+          return input.commandId === (first === "fork" ? forkCommandId : deleteCommandId)
+            ? Deferred.succeed(firstReady, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseFirst)),
+                Effect.andThen(commitCommand(input)),
+              )
+            : commitCommand(input);
+        });
+        const withDeletionLock = executor.withDeletionLock;
+        let lockRequests = 0;
+        const observeLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withDeletionLock"] =
+          (effect) =>
+            ++lockRequests === 2
+              ? Deferred.succeed(secondQueued, undefined).pipe(
+                  Effect.andThen(withDeletionLock(effect)),
+                )
+              : withDeletionLock(effect);
+        const lockSpy = vi.spyOn(executor, "withDeletionLock").mockImplementation(observeLock);
+        yield* Effect.gen(function* () {
+          const fork = orchestrator
+            .dispatch({
+              type: "thread.fork",
+              commandId: forkCommandId,
+              sourceThreadId,
+              targetThreadId,
+              sourcePoint: { type: "run", runId },
+              createdBy: "user",
+              creationSource: "web",
+            })
+            .pipe(Effect.result);
+          const deletion = orchestrator
+            .dispatch({
+              type: "thread.delete",
+              commandId: deleteCommandId,
+              threadId: sourceThreadId,
+            })
+            .pipe(Effect.result);
+          const firstFiber = yield* (first === "fork" ? fork : deletion).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Effect.raceFirst(
+            Deferred.await(firstReady),
+            Fiber.join(firstFiber).pipe(Effect.andThen(Effect.die("Missing commit barrier"))),
+          );
+          const secondFiber = yield* (first === "fork" ? deletion : fork).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Effect.raceFirst(Deferred.await(secondQueued), Fiber.await(secondFiber));
+          yield* Deferred.succeed(releaseFirst, undefined);
+          const firstResult = yield* Fiber.join(firstFiber);
+          const secondResult = yield* Fiber.join(secondFiber);
+          assert.equal(firstResult._tag, "Success");
+          if (first === "fork") {
+            assert.equal(secondResult._tag, "Success");
+            assert.deepEqual(cleanupIds, []);
+            const forkProjection = yield* orchestrator.getThreadProjection(targetThreadId);
+            assert.isNull(forkProjection.thread.deletedAt);
+            assert.isTrue(
+              forkProjection.visibleTurnItems.some(
+                (row) => row.item.id === TurnItemId.make(`fork-delete-page:${first}`),
+              ),
+            );
+          } else {
+            assert.equal(secondResult._tag, "Failure");
+            assert.deepEqual(cleanupIds, [attachmentId]);
+            const target = yield* orchestrator
+              .getThreadProjection(targetThreadId)
+              .pipe(Effect.result);
+            assert.equal(target._tag, "Failure");
+          }
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              commitSpy.mockRestore();
+              lockSpy.mockRestore();
+            }),
+          ),
+        );
+      }),
   );
 });
 
