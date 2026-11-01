@@ -57,7 +57,7 @@ export const hasClaudeManagedMcpConfig = Effect.fn("hasClaudeManagedMcpConfig")(
 
 // A worktree's .git file points at <main>/.git/worktrees/<name>, whose commondir leads back to
 // <main>/.git. A bare repository has no main checkout, so its worktree keeps its own file.
-const mainCheckoutRoot = Effect.fn("mainCheckoutRoot")(function* (checkout: string) {
+const mainCheckoutRoot = Effect.fnUntraced(function* (checkout: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   return yield* fileSystem.readFileString(path.join(checkout, ".git")).pipe(

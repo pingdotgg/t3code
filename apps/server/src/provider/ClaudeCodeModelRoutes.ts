@@ -44,17 +44,15 @@ export const resolveClaudeModelSettingsKey = Effect.fn("resolveClaudeModelSettin
 ) {
   // The SDK reads the local file from cwd, Claude Code from the main checkout's root. No key, so
   // no routes, when that root file touches model settings.
-  if (cwd !== null && settingSources.includes("local")) {
-    const localDirectory = yield* claudeLocalSettingsDirectory(cwd);
-    if (localDirectory !== cwd) {
-      const rootLocal = yield* Effect.tryPromise(() =>
-        resolveClaudeSettings({ cwd: localDirectory, settingSources: ["local"] }),
-      ).pipe(
-        Effect.map(({ sources }) => sources.find(({ source }) => source === "local")?.settings),
-        Effect.orElseSucceed(() => undefined),
-      );
-      if (claudeModelSettingsKey(rootLocal ?? {}) !== NO_MODEL_SETTINGS_KEY) return undefined;
-    }
+  const localDirectory = cwd === null ? null : yield* claudeLocalSettingsDirectory(cwd);
+  if (localDirectory !== null && localDirectory !== cwd) {
+    const rootLocal = yield* Effect.tryPromise(() =>
+      resolveClaudeSettings({ cwd: localDirectory, settingSources: ["local"] }),
+    ).pipe(
+      Effect.map(({ sources }) => sources.find(({ source }) => source === "local")?.settings),
+      Effect.orElseSucceed(() => undefined),
+    );
+    if (claudeModelSettingsKey(rootLocal ?? {}) !== NO_MODEL_SETTINGS_KEY) return undefined;
   }
   return yield* Effect.tryPromise(() =>
     resolveClaudeSettings({
