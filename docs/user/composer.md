@@ -27,7 +27,7 @@ included, and `#1234` without a space still looks up a pull request.
 
 Enter sends. In a list or quote, **Shift+Enter** continues it, and Shift+Enter
 on an empty line moves out one level, then leaves it; **Tab** nests a list item
-under the one above. In a code block, Enter
+under the one above and **Shift+Tab** moves it back out. In a code block, Enter
 starts a new line at the current indentation, **Tab** and **Shift+Tab** indent
 the selected lines, and a closing ` ``` ` followed by Enter, or two blank lines
 at the end, leave the block. **Backspace** at the start of a code block turns it
@@ -51,6 +51,8 @@ You can drag or paste images into the web or desktop composer. HEIC and HEIF
 photos are converted to JPEG there and when selected from the mobile photo
 library; photos over the image limit are also resized to fit. On mobile, you can
 also send files to T3 Code through another app's system share sheet.
+On Android, you can also drag images from another app into the message input
+in split screen.
 
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
@@ -215,8 +217,8 @@ images. **Send now** sends a message right away, into the running turn if there 
 also edit or remove it.
 
 If you stop the agent or the server restarts, queued messages keep their order and are held.
-Press **Resume** in an empty composer on web and desktop, or **Resume queue** on mobile, to
-continue. Sending a new message also resumes the queue, unless it steers a turn that is already
+Press **Resume** in an empty composer to continue. **Resume** also continues a stopped
+run or one that hit a usage limit, even with nothing queued. Sending a new message also resumes the queue, unless it steers a turn that is already
 running. You can edit or remove held messages without starting them.
 
 The pencil on a queued message opens it in the composer for editing. The original message
@@ -244,7 +246,12 @@ Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.
 
 Send `/compact` in an existing conversation to reduce context usage when the
-provider supports it. Web and desktop also offer compaction from the context meter.
+provider supports it, even with the context meter turned off.
+
+On web and desktop, turn on **Settings → Labs → Legacy → Context
+window indicator (legacy)** to see context usage. The meter is off by default
+and appears once the provider reports usage. Open it for usage details and
+**Compact context** when the provider supports compaction.
 
 Claude instances can also compact idle threads for you. See
 [compact long conversations](./providers-claude.md#compact-long-conversations).
