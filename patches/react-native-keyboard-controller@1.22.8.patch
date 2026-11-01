@@ -233,6 +233,36 @@ index 11e81a9..de39eac 100644
  }
  //# sourceMappingURL=index.js.map
 \ No newline at end of file
+diff --git a/lib/commonjs/hooks/useKeyboardState/index.js b/lib/commonjs/hooks/useKeyboardState/index.js
+index a4b287006a47011a58c8a16f19b31a479087f44e..4084025d644c8555b269f9d496266e2cb3234024 100644
+--- a/lib/commonjs/hooks/useKeyboardState/index.js
++++ b/lib/commonjs/hooks/useKeyboardState/index.js
+@@ -7,7 +7,7 @@ exports.useKeyboardState = useKeyboardState;
+ var _react = require("react");
+ var _bindings = require("../../bindings");
+ var _module = require("../../module");
+-const EVENTS = ["keyboardWillShow", "keyboardDidHide"];
++const EVENTS = ["keyboardWillShow", "keyboardDidShow", "keyboardDidHide"];
+ const getLatestState = () => ({
+   ..._module.KeyboardController.state(),
+   isVisible: _module.KeyboardController.isVisible()
+diff --git a/lib/commonjs/module.js b/lib/commonjs/module.js
+index f27c5a095129cf60831088a73ce94d44f3ba52cd..3c2f7569510d0a56fd937b6e91a6adc0d5ff6f59 100644
+--- a/lib/commonjs/module.js
++++ b/lib/commonjs/module.js
+@@ -22,6 +22,12 @@ _bindings.KeyboardEvents.addListener("keyboardWillShow", e => {
+   isClosed = false;
+   lastState = e;
+ });
++// Android re-syncs an IME inset that changes without an animation with keyboardDidShow
++// alone. Drop with kirillzyusko/react-native-keyboard-controller#1698.
++_bindings.KeyboardEvents.addListener("keyboardDidShow", e => {
++  isClosed = false;
++  lastState = e;
++});
+ const dismiss = async options => {
+   const keepFocus = (options === null || options === void 0 ? void 0 : options.keepFocus) ?? false;
+   const animated = (options === null || options === void 0 ? void 0 : options.animated) ?? true;
 diff --git a/lib/module/components/KeyboardChatScrollView/index.js b/lib/module/components/KeyboardChatScrollView/index.js
 index e0c8391..8df802a 100644
 --- a/lib/module/components/KeyboardChatScrollView/index.js
@@ -481,6 +511,36 @@ index cdca47b..3ea3a7f 100644
  export { useExtraContentPadding };
  //# sourceMappingURL=index.js.map
 \ No newline at end of file
+diff --git a/lib/module/hooks/useKeyboardState/index.js b/lib/module/hooks/useKeyboardState/index.js
+index 8da7c09fbb398253420d7bfcd9a85abdb981065b..31b1ff4370d8328a0569e559e3bbfa4b201f5a9d 100644
+--- a/lib/module/hooks/useKeyboardState/index.js
++++ b/lib/module/hooks/useKeyboardState/index.js
+@@ -1,7 +1,7 @@
+ import { useEffect, useState } from "react";
+ import { KeyboardEvents } from "../../bindings";
+ import { KeyboardController } from "../../module";
+-const EVENTS = ["keyboardWillShow", "keyboardDidHide"];
++const EVENTS = ["keyboardWillShow", "keyboardDidShow", "keyboardDidHide"];
+ const getLatestState = () => ({
+   ...KeyboardController.state(),
+   isVisible: KeyboardController.isVisible()
+diff --git a/lib/module/module.js b/lib/module/module.js
+index 01aad2effee498a8daec55e1d4644a5fbc723765..1140b706265d6c4295581c96b82b27bbf9e6d020 100644
+--- a/lib/module/module.js
++++ b/lib/module/module.js
+@@ -16,6 +16,12 @@ KeyboardEvents.addListener("keyboardWillShow", e => {
+   isClosed = false;
+   lastState = e;
+ });
++// Android re-syncs an IME inset that changes without an animation with keyboardDidShow
++// alone. Drop with kirillzyusko/react-native-keyboard-controller#1698.
++KeyboardEvents.addListener("keyboardDidShow", e => {
++  isClosed = false;
++  lastState = e;
++});
+ const dismiss = async options => {
+   const keepFocus = (options === null || options === void 0 ? void 0 : options.keepFocus) ?? false;
+   const animated = (options === null || options === void 0 ? void 0 : options.animated) ?? true;
 diff --git a/lib/typescript/components/KeyboardChatScrollView/types.d.ts b/lib/typescript/components/KeyboardChatScrollView/types.d.ts
 index eba1514..6597d80 100644
 --- a/lib/typescript/components/KeyboardChatScrollView/types.d.ts
@@ -908,3 +968,34 @@ index 99cc6c6..d883e76 100644
    );
  }
  
+diff --git a/src/hooks/useKeyboardState/index.ts b/src/hooks/useKeyboardState/index.ts
+index e5fe38dd8e7b8370bfb575296259933094857ca5..d0b98f60a6d7ad7f72ebd70b22e1ce6b7fb56874 100644
+--- a/src/hooks/useKeyboardState/index.ts
++++ b/src/hooks/useKeyboardState/index.ts
+@@ -5,7 +5,7 @@ import { KeyboardController } from "../../module";
+ 
+ import type { IKeyboardState } from "../../types";
+ 
+-const EVENTS = ["keyboardWillShow", "keyboardDidHide"] as const;
++const EVENTS = ["keyboardWillShow", "keyboardDidShow", "keyboardDidHide"] as const;
+ 
+ const getLatestState = () => ({
+   ...KeyboardController.state(),
+diff --git a/src/module.ts b/src/module.ts
+index f74941914c9ecebbd0a6c2ba55c5436378de79d4..b7223cff162d18be11f8de248a7bb8f32e694658 100644
+--- a/src/module.ts
++++ b/src/module.ts
+@@ -26,6 +26,13 @@ KeyboardEvents.addListener("keyboardWillShow", (e) => {
+   lastState = e;
+ });
+ 
++// Android re-syncs an IME inset that changes without an animation with keyboardDidShow
++// alone. Drop with kirillzyusko/react-native-keyboard-controller#1698.
++KeyboardEvents.addListener("keyboardDidShow", (e) => {
++  isClosed = false;
++  lastState = e;
++});
++
+ const dismiss = async (options?: Partial<DismissOptions>): Promise<void> => {
+   const keepFocus = options?.keepFocus ?? false;
+   const animated = options?.animated ?? true;
