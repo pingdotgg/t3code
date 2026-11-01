@@ -211,6 +211,30 @@ describe("getChangeRequestSummary", () => {
       ).toMatchObject([{ reason: "rate-limited" }, { reason: "rate-limited" }]);
     }),
   );
+
+  it.effect("reads each pull request on its own when the listing fails for its own reasons", () =>
+    Effect.gen(function* () {
+      const exits = yield* readTogether(
+        {
+          listPullRequests: () =>
+            Effect.fail(
+              new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
+                command: "az",
+                cwd: "/w",
+                operation: "listPullRequests",
+                cause: "unreadable listing",
+              }),
+            ),
+          getPullRequest: (input) => Effect.succeed({ ...PULL_REQUEST, number: input.number }),
+        },
+        [7, 8],
+      );
+
+      expect(exits.map((exit) => (exit._tag === "Success" ? exit.value.number : null))).toEqual([
+        7, 8,
+      ]);
+    }),
+  );
 });
 
 describe("getChangeRequest", () => {

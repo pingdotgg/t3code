@@ -163,7 +163,7 @@ export const make = Effect.gen(function* () {
    */
   const summaryResolver = RequestResolver.makeGrouped<SummaryRead, string>({
     key: ({ request }) => `${request.cwd}\0${request.repository}`,
-    resolver: (entries) => {
+    resolver: Effect.fn("AzureDevOpsPullRequestProvider.summaryResolver")((entries) => {
       const read = (entry: Request.Entry<SummaryRead>) =>
         Request.completeEffect(
           entry,
@@ -179,6 +179,8 @@ export const make = Effect.gen(function* () {
           },
           { concurrency: "unbounded", discard: true },
         );
+      const failAll = (error: AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError) =>
+        Effect.forEach(entries, (entry) => Request.fail(entry, error), { discard: true });
       const { cwd, repository } = entries[0].request;
       return cli
         .listPullRequests({
@@ -190,18 +192,19 @@ export const make = Effect.gen(function* () {
           limit: SUMMARY_LISTING_LIMIT,
         })
         .pipe(
-          Effect.matchEffect({
-            onSuccess: (listing) =>
-              answer(new Map(listing.items.map((item) => [item.number, item]))),
-            onFailure: (error) =>
-              error._tag === "AzureDevOpsCliUnavailableError" ||
-              error._tag === "AzureDevOpsCliAuthenticationError" ||
-              error._tag === "AzureDevOpsCliRateLimitError"
-                ? Effect.forEach(entries, (entry) => Request.fail(entry, error), { discard: true })
-                : answer(new Map()),
-          }),
+          Effect.flatMap((listing) =>
+            answer(new Map(listing.items.map((item) => [item.number, item]))),
+          ),
+          Effect.catchTags(
+            {
+              AzureDevOpsCliUnavailableError: failAll,
+              AzureDevOpsCliAuthenticationError: failAll,
+              AzureDevOpsCliRateLimitError: failAll,
+            },
+            () => answer(new Map()),
+          ),
         );
-    },
+    }),
   }).pipe(RequestResolver.setDelay(SUMMARY_BATCH_WINDOW));
 
   // PR locations are immutable; caching avoids full PR reads for viewed-file checks.
