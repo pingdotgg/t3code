@@ -82,6 +82,19 @@ layer("GitLabCli.layer", (it) => {
           args: ["mr", "view", "--output", "json", "--", "42"],
         }),
       );
+      const classifyFailure = mockedRun.mock.calls.at(-1)?.[0].classifyFailure;
+      assert.strictEqual(
+        classifyFailure?.(
+          "x gitlab.example.test has not been authenticated with glab. Run `glab auth login`",
+        ),
+        "authentication",
+      );
+      assert.strictEqual(
+        classifyFailure?.(
+          'Failed to get merge request 42: oauth2: "invalid_grant" "The provided authorization grant is invalid, expired, revoked, does not match the redirection URI used in the authorization request, or was issued to another client."',
+        ),
+        "authentication",
+      );
     }),
   );
 
