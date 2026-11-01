@@ -4272,13 +4272,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const pathService = yield* Path.Path;
         const worktreesDirectory = yield* makeTmpDir("custom-worktrees-");
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        const repos: Array<{ readonly cwd: string; readonly initialBranch: string }> = [];
-        for (const prefix of ["git-one-", "git-two-"]) {
+        const makeRepo = Effect.fn(function* (prefix: string) {
           const cwd = pathService.join(yield* makeTmpDir(prefix), "api");
           yield* fileSystem.makeDirectory(cwd);
-          repos.push({ cwd, ...(yield* initRepoWithCommit(cwd)) });
-        }
-        const [one, two] = repos as [(typeof repos)[0], (typeof repos)[0]];
+          return { cwd, ...(yield* initRepoWithCommit(cwd)) };
+        });
+        const one = yield* makeRepo("git-one-");
+        const two = yield* makeRepo("git-two-");
         const projectFolder = pathService.join(worktreesDirectory, "api");
         yield* writeTextFile(projectFolder, "taken/notes.txt", "keep\n");
 
