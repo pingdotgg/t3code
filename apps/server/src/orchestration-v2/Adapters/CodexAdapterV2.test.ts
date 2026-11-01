@@ -1767,15 +1767,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ],
         });
         const harness = yield* makeCodexReplayHarness(transcript);
-        yield* harness.runtime.startTurn(
-          makeCodexTestTurnInput({
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
             threadId: harness.threadId,
             providerThread: harness.providerThread,
             now: yield* DateTime.now,
             attemptId: RunAttemptId.make("async-question-attempt"),
             text: "Continue while I decide.",
           }),
-        );
+          runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, approvalPolicy: "never" },
+        });
         yield* harness.firstTerminal;
         const requests = harness.events.flatMap((event) =>
           event.type === "runtime_request.updated" ? [event.runtimeRequest] : [],
@@ -1836,6 +1837,129 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           });
         }
         assert.isEmpty(assistantMessages(harness.events));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("denies every approval protocol under never without publishing a human request", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "never-approval-thread";
+        const nativeTurnId = "never-approval-turn";
+        const modern = {
+          threadId: nativeThreadId,
+          turnId: nativeTurnId,
+          itemId: "blocked",
+          startedAtMs: 1,
+        };
+        const denied = {
+          decision: {
+            denied: { rejection: "Tool approval is disabled. Retry within the inherited sandbox." },
+          },
+        };
+        const calls = [
+          {
+            method: "item/commandExecution/requestApproval",
+            params: { ...modern, command: "touch /outside" },
+            result: { decision: "decline" },
+          },
+          {
+            method: "item/fileChange/requestApproval",
+            params: modern,
+            result: { decision: "decline" },
+          },
+          {
+            method: "item/permissions/requestApproval",
+            params: {
+              ...modern,
+              cwd: "/workspace",
+              permissions: {
+                fileSystem: {
+                  entries: [{ access: "write", path: { type: "path", path: "/outside" } }],
+                },
+              },
+            },
+            result: { permissions: {}, scope: "turn" },
+          },
+          {
+            method: "execCommandApproval",
+            params: {
+              conversationId: nativeThreadId,
+              callId: "exec",
+              command: ["touch", "/outside"],
+              cwd: "/workspace",
+              parsedCmd: [],
+            },
+            result: denied,
+          },
+          {
+            method: "applyPatchApproval",
+            params: { conversationId: nativeThreadId, callId: "patch", fileChanges: {} },
+            result: denied,
+          },
+          {
+            method: "mcpServer/elicitation/request",
+            params: {
+              threadId: nativeThreadId,
+              turnId: nativeTurnId,
+              serverName: "test",
+              message: "Approve access",
+              mode: "form",
+              requestedSchema: { type: "object", properties: {} },
+            },
+            result: { action: "decline" },
+          },
+        ];
+        const transcript = makeCodexReplayTranscript({
+          scenario: "never-approvals",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" }),
+            ...calls.flatMap((call, index): CodexReplay.CodexAppServerReplayEntry[] => [
+              {
+                type: "emit_inbound",
+                label: call.method,
+                frame: { id: 100 + index, method: call.method, params: call.params },
+              },
+              {
+                type: "expect_outbound",
+                label: call.method,
+                frame: { id: 100 + index, result: call.result },
+              },
+            ]),
+            {
+              type: "emit_inbound",
+              label: "complete",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("never-approval-attempt"),
+            text: "work",
+          }),
+          runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, approvalPolicy: "never" },
+        });
+        yield* harness.firstTerminal;
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+        assert.lengthOf(
+          harness.events.filter((event) => event.type === "runtime_request.updated"),
+          0,
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

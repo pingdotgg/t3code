@@ -466,3 +466,34 @@ it.effect("refuses a linked environment to a tool that acts as its calling threa
     expect(Exit.isFailure(built) && Cause.hasDies(built.cause)).toBe(true);
   }),
 );
+
+it.effect("bounded credentials cannot escape through other T3 tools", () =>
+  Effect.gen(function* () {
+    const scope: McpInvocationContext.McpInvocationScope = {
+      environmentId: EnvironmentId.make("bounded-test"),
+      requestNamespace: "bounded",
+      issuedAt: 0,
+      client: undefined,
+      capabilities: new Set(["orchestration"]),
+      thread: {
+        threadId: ThreadId.make("bounded"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerSessionId: "bounded",
+        boundedExecution: true,
+      },
+    };
+    for (const tool of ["delegate_task", "task_status", "task_cancel", "orchestrator_capabilities"])
+      yield* McpToolAccess.assertBoundedToolAccess(scope, tool);
+    for (const tool of [
+      "t3_thread_launch",
+      "create_threads",
+      "t3_thread_send",
+      "schedule_task",
+      "t3_terminal_send",
+      "request_secret",
+    ]) {
+      const error = yield* McpToolAccess.assertBoundedToolAccess(scope, tool).pipe(Effect.flip);
+      expect(error.code).toBe("capability_denied");
+    }
+  }),
+);

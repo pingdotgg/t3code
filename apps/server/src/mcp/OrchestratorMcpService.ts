@@ -2284,6 +2284,10 @@ const make = Effect.gen(function* () {
             provider.supportedRuntimeModes.length === 0
               ? {}
               : { runtimeModes: [...provider.supportedRuntimeModes] }),
+            delegatedApprovalPolicies:
+              provider.driver === "codex"
+                ? (["inherit", "never"] as const)
+                : (["inherit"] as const),
             canRunChildTask: constraints.length === 0,
             canRunCrossProviderChildTask: constraints.length === 0,
             constraints: [...constraints],
@@ -2302,6 +2306,18 @@ const make = Effect.gen(function* () {
       };
     }),
     delegateTask: Effect.fn("OrchestratorMcpService.delegateTask")(function* (callerScope, input) {
+      yield* requireCapability(callerScope);
+      const parentCeiling =
+        callerScope.thread === undefined
+          ? undefined
+          : (yield* loadProjection(callerScope.thread.threadId)).thread.delegatedExecution;
+      const bounded = input.approvalPolicy === "never" || parentCeiling !== undefined;
+      if (bounded && input.target?.environmentId !== undefined) {
+        return yield* failure(
+          "invalid_request",
+          "Bounded delegation does not support remote environments.",
+        );
+      }
       const environmentId =
         input.target === undefined
           ? undefined
@@ -2364,6 +2380,19 @@ const make = Effect.gen(function* () {
         parent.thread.interactionMode,
         input.interactionMode,
       );
+      if (
+        bounded &&
+        (input.isolation === "worktree" ||
+          target.modelSelection.instanceId !== parent.thread.providerInstanceId ||
+          providers.find((provider) => provider.instanceId === target.modelSelection.instanceId)
+            ?.driver !== "codex" ||
+          runtimeMode !== parent.thread.runtimeMode)
+      ) {
+        return yield* failure(
+          "invalid_request",
+          "Bounded delegation requires Codex, the same provider instance, runtime mode and shared directory. No child was dispatched.",
+        );
+      }
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
       if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
         const project = yield* requireProject(parent.thread.projectId);
@@ -2400,6 +2429,7 @@ const make = Effect.gen(function* () {
       const result = yield* threadManagement
         .dispatch({
           type: "delegated_task.request",
+          ...(bounded ? { approvalPolicy: "never" as const } : {}),
           createdBy: "agent",
           creationSource: "mcp",
           commandId,

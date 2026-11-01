@@ -1630,6 +1630,58 @@ describe("OrchestratorMcpService provider resolution", () => {
     );
   });
 
+  it.effect.each(["worktree", "provider", "remote"] as const)(
+    "rejects unsupported bounded %s before dispatch",
+    (kind) =>
+      Effect.gen(function* () {
+        const grokId = ProviderInstanceId.make("grok");
+        const parent = parentProjection([]);
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            getThreadRecords: () => Effect.succeed(parent),
+            dispatch: () => Effect.die("Unsupported bounded request reached dispatch"),
+          }),
+          ServerSettings.layerTest(),
+          providerRegistryLayer([
+            providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+            providerSnapshot({
+              instanceId: grokId,
+              driver: ProviderDriverKind.make("grok"),
+              model: "grok-test",
+            }),
+          ]),
+          adapterRegistryLayer([codexInstanceId, grokId]),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const error = yield* service
+            .delegateTask(scope, {
+              task: "Bounded test",
+              approvalPolicy: "never",
+              ...(kind === "worktree" ? { isolation: "worktree" } : {}),
+              ...(kind === "provider"
+                ? { target: { providerInstanceId: grokId, model: "grok-test" } }
+                : {}),
+              ...(kind === "remote"
+                ? { target: { environmentId: EnvironmentId.make("remote") } }
+                : {}),
+            })
+            .pipe(Effect.flip);
+          assert.equal(error.code, "invalid_request");
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+      }),
+  );
+
   it.effect("rejects delegation to a provider without a registered adapter", () =>
     Effect.gen(function* () {
       const forkOnlyInstanceId = ProviderInstanceId.make("forkOnly");
