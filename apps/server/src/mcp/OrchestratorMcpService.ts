@@ -131,7 +131,6 @@ const TASK_WAKE_EVENTS = [
   { thread: "child", eventType: "provider-thread.updated" },
   { thread: "child", eventType: "runtime-request.updated" },
 ] as const;
-const SECRET_REQUEST_POLL_INTERVAL_MS = 500;
 const DEFAULT_THREAD_LIST_LIMIT = 50;
 const DEFAULT_THREAD_READ_LIMIT = 50;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
@@ -2151,41 +2150,64 @@ const make = Effect.gen(function* () {
         ),
       );
 
-      const answered = yield* Effect.gen(function* () {
-        while (true) {
-          const projection = yield* threadManagement
-            .getThreadRecords(threadId, ["runs", "turnItems"], {
-              turnItemTypes: ["secret_request"],
-              messageRoles: [],
-            })
-            .pipe(
-              Effect.mapError((error) =>
-                failure(
-                  "orchestration_error",
-                  `Unable to read the secret request: ${errorMessage(error)}`,
-                ),
-              ),
-            );
-          const item = projection.turnItems.find((candidate) => candidate.id === turnItemId);
-          if (item?.type === "secret_request" && item.secretStatus !== "pending") {
-            return item.secretStatus;
-          }
-          const current = projection.runs.find((candidate) => candidate.id === runId);
-          if (
-            current === undefined ||
-            ThreadManagementService.isTerminalRunStatus(current.status)
-          ) {
-            yield* record("cancelled");
-            return "cancelled" as const;
-          }
-          yield* Effect.sleep(Duration.millis(SECRET_REQUEST_POLL_INTERVAL_MS));
+      const readError = (error: unknown) =>
+        failure("orchestration_error", `Unable to read the secret request: ${errorMessage(error)}`);
+      const readAnswer = Effect.gen(function* () {
+        const projection = yield* threadManagement
+          .getThreadRecords(threadId, ["runs", "turnItems"], {
+            turnItemTypes: ["secret_request"],
+            messageRoles: [],
+          })
+          .pipe(Effect.mapError(readError));
+        const item = projection.turnItems.find((candidate) => candidate.id === turnItemId);
+        if (item?.type === "secret_request" && item.secretStatus !== "pending") {
+          return Option.some(item.secretStatus);
         }
+        const current = projection.runs.find((candidate) => candidate.id === runId);
+        if (current === undefined || ThreadManagementService.isTerminalRunStatus(current.status)) {
+          yield* record("cancelled");
+          return Option.some("cancelled" as const);
+        }
+        return Option.none();
+      });
+
+      const answered = yield* Effect.gen(function* () {
+        // Taken after the pending record: earlier answers show in the first read, later ones replay.
+        const afterSequence = yield* threadManagement
+          .getThreadEventSequence(threadId)
+          .pipe(Effect.mapError(readError));
+        const initial = yield* readAnswer;
+        if (Option.isSome(initial)) return initial;
+        const next = yield* Stream.merge(
+          threadManagement
+            .streamStoredEventsFrom({ threadId, afterSequence, eventType: "turn-item.updated" })
+            .pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "turn-item.updated" && event.payload.id === turnItemId,
+              ),
+            ),
+          threadManagement
+            .streamStoredEventsFrom({ threadId, afterSequence, eventType: "run.updated" })
+            .pipe(
+              Stream.filter(
+                ({ event }) => event.type === "run.updated" && event.payload.id === runId,
+              ),
+            ),
+        ).pipe(
+          Stream.mapError(readError),
+          Stream.mapEffect(() => readAnswer),
+          Stream.filter(Option.isSome),
+          Stream.runHead,
+        );
+        return Option.flatten(next);
       }).pipe(
         Effect.timeoutOption(
           Duration.millis(
             Math.min(input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS, MAX_WAIT_TIMEOUT_MS),
           ),
         ),
+        Effect.map(Option.flatten),
         Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : closeCard)),
       );
       if (Option.isNone(answered)) yield* closeCard;

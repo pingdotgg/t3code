@@ -18,6 +18,7 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   RunId,
+  SecretRef,
   ThreadId,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2StoredEvent,
@@ -34,6 +35,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
@@ -1275,6 +1277,99 @@ describe("OrchestratorMcpService provider resolution", () => {
               runId: childRunId,
             });
           }
+        }
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+    }),
+  );
+
+  it.effect.each([
+    "saved",
+    "declined",
+    "the run ending",
+    "an answer before the wait",
+    "no answer",
+  ] as const)("a secret request returns on %s", (outcome) =>
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+      const subscribed = yield* Deferred.make<void>();
+      const secretRef = SecretRef.make("secret-ref:mcp-secret");
+      const eventType = outcome === "the run ending" ? "run.updated" : "turn-item.updated";
+      let runStatus = "running";
+      let card: { readonly id: string; secretStatus: string } | undefined;
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () =>
+            Effect.sync(() => {
+              const projection = parentProjection([]);
+              return {
+                ...projection,
+                runs: projection.runs.map((run) => ({ ...run, status: runStatus })),
+                turnItems: card === undefined ? [] : [{ ...card, type: "secret_request" }],
+              } as unknown as OrchestrationV2ThreadProjection;
+            }),
+          getThreadEventSequence: () => Effect.succeed(0),
+          streamStoredEventsFrom: (input) =>
+            input?.eventType === eventType
+              ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                  Stream.drain,
+                  Stream.concat(Stream.fromQueue(events)),
+                )
+              : Stream.never,
+          dispatch: (command) =>
+            Effect.sync(() => {
+              if (command.type === "secret_request.record") {
+                card = {
+                  id: command.turnItemId,
+                  secretStatus:
+                    outcome === "an answer before the wait" ? "saved" : command.secretStatus,
+                };
+              }
+              return { sequence: 1, storedEvents: [] } as never;
+            }),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({
+          savedRef: () => Effect.succeedSome(secretRef),
+        }),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const waiting = yield* service
+          .requestSecret(scope, { label: "API key", reason: "Deploy." })
+          .pipe(Effect.forkChild);
+        if (outcome !== "an answer before the wait") yield* Deferred.await(subscribed);
+        if (outcome === "saved" || outcome === "declined") {
+          card = { id: card!.id, secretStatus: outcome };
+          yield* Queue.offer(events, {
+            sequence: 2,
+            event: { type: "turn-item.updated", threadId: parentThreadId, payload: card },
+          } as unknown as OrchestrationV2StoredEvent);
+        } else if (outcome === "the run ending") {
+          runStatus = "interrupted";
+          yield* Queue.offer(events, {
+            sequence: 2,
+            event: { type: "run.updated", threadId: parentThreadId, payload: { id: parentRunId } },
+          } as unknown as OrchestrationV2StoredEvent);
+        } else if (outcome === "no answer") {
+          yield* TestClock.adjust("10 minutes");
+        }
+        const result = yield* Fiber.join(waiting);
+        assert.deepEqual(
+          result,
+          outcome === "saved" || outcome === "an answer before the wait"
+            ? { status: "saved", secretRef }
+            : outcome === "declined"
+              ? { status: "declined" }
+              : { status: outcome === "no answer" ? "timed_out" : "cancelled" },
+        );
+        if (outcome === "the run ending" || outcome === "no answer") {
+          assert.equal(card?.secretStatus, "cancelled");
         }
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
     }),
