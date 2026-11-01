@@ -221,8 +221,6 @@ const sharingPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
   },
 ];
 
-// Match iOS PostScript names on Android so RN and the native composer share fonts before runtime loading.
-
 const config: ExpoConfig = {
   name: variant.appName,
   slug: "t3-code",
@@ -315,6 +313,7 @@ const config: ExpoConfig = {
         ios: {
           fonts: [dmSansFonts.regular, dmSansFonts.medium, dmSansFonts.bold],
         },
+        // Match iOS PostScript names on Android so RN and the native composer share fonts before runtime loading.
         android: {
           fonts: [
             {
