@@ -262,27 +262,6 @@ function refusedToApp<A>(answer: GitHubAnswer<A>): boolean {
 
 // undici is external to the server bundle; single executables can load it only with require.
 const requireUndici = NodeModule.createRequire(import.meta.url);
-const unixSocketDispatchers = new Map<string, Undici.Dispatcher>();
-
-/**
- * Sends over gh's `http_unix_socket` the way gh does: plain HTTP on the socket even for an https
- * URL, so whatever listens there (a proxy that adds the credential) reads the host and path.
- */
-function unixSocketDispatcher(path: string): Undici.Dispatcher {
-  let dispatcher = unixSocketDispatchers.get(path);
-  if (dispatcher === undefined) {
-    const undici = requireUndici("undici") as typeof Undici;
-    dispatcher = new undici.Agent({
-      connect: (_options, callback) => {
-        const socket = NodeNet.connect(path);
-        socket.once("connect", () => callback(null, socket));
-        socket.once("error", (error) => callback(error, null));
-      },
-    });
-    unixSocketDispatchers.set(path, dispatcher);
-  }
-  return dispatcher;
-}
 
 /** @public */
 export const make = Effect.gen(function* () {
@@ -291,6 +270,32 @@ export const make = Effect.gen(function* () {
   const quota = yield* GitHubQuota.GitHubQuota;
   const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
   const slots = yield* Semaphore.make(CONCURRENCY);
+  const unixSocketDispatchers = new Map<string, Undici.Dispatcher>();
+  yield* Effect.addFinalizer(() =>
+    Effect.promise(() =>
+      Promise.allSettled(Array.from(unixSocketDispatchers.values(), (agent) => agent.close())),
+    ),
+  );
+
+  /**
+   * Sends over gh's `http_unix_socket` the way gh does: plain HTTP on the socket even for an https
+   * URL, so whatever listens there (a proxy that adds the credential) reads the host and path.
+   */
+  const unixSocketDispatcher = (path: string): Undici.Dispatcher => {
+    let dispatcher = unixSocketDispatchers.get(path);
+    if (dispatcher === undefined) {
+      const undici = requireUndici("undici") as typeof Undici;
+      dispatcher = new undici.Agent({
+        connect: (_options, callback) => {
+          const socket = NodeNet.connect(path);
+          socket.once("connect", () => callback(null, socket));
+          socket.once("error", (error) => callback(error, null));
+        },
+      });
+      unixSocketDispatchers.set(path, dispatcher);
+    }
+    return dispatcher;
+  };
 
   const personalCredential = (host: string) =>
     credentials.get(host).pipe(

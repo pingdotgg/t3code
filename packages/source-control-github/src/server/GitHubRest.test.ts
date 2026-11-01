@@ -19,6 +19,7 @@ import {
   type HttpClientRequest,
 } from "effect/http";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
@@ -111,7 +112,12 @@ describe("environmentToken", () => {
 describe("GitHubRest", () => {
   it.live("sends through gh's http_unix_socket as plain HTTP for GitHub's API host", () =>
     Effect.gen(function* () {
-      const socket = `${NodeOS.tmpdir()}/gh-${yield* Random.nextInt}.sock`;
+      const id = yield* Random.nextInt;
+      // Node listens on and connects to named pipes, not socket files, on Windows.
+      const socket =
+        (yield* HostProcess.Platform) === "win32"
+          ? `\\\\.\\pipe\\gh-${id}`
+          : `${NodeOS.tmpdir()}/gh-${id}.sock`;
       const seen: Array<Record<string, string | undefined>> = [];
       const server = NodeHttp.createServer((request, response) => {
         const { host, authorization } = request.headers;
