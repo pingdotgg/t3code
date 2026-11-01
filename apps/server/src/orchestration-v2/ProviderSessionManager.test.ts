@@ -34,6 +34,7 @@ import { HttpServer } from "effect/http";
 
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ServerConfig from "../config.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -492,6 +493,7 @@ function layerTest(input: {
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly serverConfigLayer?: Layer.Layer<ServerConfig.ServerConfig>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -574,6 +576,7 @@ function layerTest(input: {
           layerTestStores,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
+          ...(input.serverConfigLayer === undefined ? [] : [input.serverConfigLayer]),
         ),
       ),
     ),
@@ -3734,6 +3737,137 @@ it.effect.each(["missing", "file"] as const)(
         );
       }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
     }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const openInScratchRoot = (input: {
+  readonly baseDir: string;
+  readonly cwd: string;
+  readonly threadId: string;
+}) =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const result = yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadId = ThreadId.make(input.threadId);
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+        ],
+      });
+      return yield* manager
+        .open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy: { ...runtimePolicy, cwd: input.cwd },
+        })
+        .pipe(Effect.exit);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60_000,
+          serverConfigLayer: ServerConfig.ServerConfig.layerTest(process.cwd(), input.baseDir).pipe(
+            Layer.provide(NodeServices.layer),
+            Layer.orDie,
+          ),
+        }),
+      ),
+    );
+    return { result, openCount: (yield* Ref.get(state)).openCount };
+  });
+
+it.effect("recreates a deleted scratch workspace and opens the session", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const base = yield* fileSystem.makeTempDirectoryScoped();
+    const scratchRoot = `${base}/scratch`;
+    yield* fileSystem.makeDirectory(scratchRoot);
+    const cwd = `${scratchRoot}/2026-10-18-deleted-thread-27ab489d`;
+    const { result, openCount } = yield* openInScratchRoot({
+      baseDir: base,
+      cwd,
+      threadId: "thread-deleted-scratch-workspace",
+    });
+    assert.isTrue(Exit.isSuccess(result));
+    assert.equal(openCount, 1);
+    assert.equal((yield* fileSystem.stat(cwd)).type, "Directory");
+    assert.deepEqual(yield* fileSystem.readDirectory(cwd), []);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps rejecting a deleted workspace outside the scratch root", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const base = yield* fileSystem.makeTempDirectoryScoped();
+    const scratchRoot = `${base}/scratch`;
+    yield* fileSystem.makeDirectory(scratchRoot);
+    const cwd = `${base}/repo-worktree`;
+    const { result, openCount } = yield* openInScratchRoot({
+      baseDir: base,
+      cwd,
+      threadId: "thread-deleted-repo-workspace",
+    });
+    assert.isTrue(Exit.isFailure(result));
+    if (Exit.isFailure(result)) {
+      assert.instanceOf(Cause.squash(result.cause), ProviderWorkspaceMissingError);
+    }
+    assert.equal(openCount, 0);
+    assert.isFalse(yield* fileSystem.exists(cwd));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each(["nested/child", "../escaped", "child/../../escaped", "./child"] as const)(
+  "keeps rejecting a deleted scratch path that is not a direct child: %s",
+  (suffix) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const base = yield* fileSystem.makeTempDirectoryScoped();
+      const scratchRoot = `${base}/scratch`;
+      yield* fileSystem.makeDirectory(scratchRoot);
+      const cwd = `${scratchRoot}/${suffix}`;
+      const { result, openCount } = yield* openInScratchRoot({
+        baseDir: base,
+        cwd,
+        threadId: "thread-traversal-scratch-workspace",
+      });
+      assert.isTrue(Exit.isFailure(result));
+      if (Exit.isFailure(result)) {
+        assert.instanceOf(Cause.squash(result.cause), ProviderWorkspaceMissingError);
+      }
+      assert.equal(openCount, 0);
+      assert.deepEqual(yield* fileSystem.readDirectory(scratchRoot), []);
+      assert.isFalse(yield* fileSystem.exists(`${base}/escaped`));
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("does not follow a dangling symlink left at a scratch workspace path", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const base = yield* fileSystem.makeTempDirectoryScoped();
+    const scratchRoot = `${base}/scratch`;
+    yield* fileSystem.makeDirectory(scratchRoot);
+    const target = `${base}/outside`;
+    const cwd = `${scratchRoot}/linked-thread`;
+    yield* fileSystem.symlink(target, cwd);
+    const { result, openCount } = yield* openInScratchRoot({
+      baseDir: base,
+      cwd,
+      threadId: "thread-symlinked-scratch-workspace",
+    });
+    assert.isTrue(Exit.isFailure(result));
+    if (Exit.isFailure(result)) {
+      assert.instanceOf(Cause.squash(result.cause), ProviderWorkspaceMissingError);
+    }
+    assert.equal(openCount, 0);
+    assert.isFalse(yield* fileSystem.exists(target));
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect(

@@ -201,6 +201,10 @@ const isGitMissing = (error: GitManagerServiceError) =>
   PlatformError.isPlatformError(error.cause.cause) &&
   error.cause.cause.reason._tag === "NotFound";
 
+/** Scratch thread folders live directly under this directory of the T3 home. */
+export const scratchRootFor = (path: Path.Path, baseDir: string) =>
+  path.resolve(baseDir, "scratch");
+
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -235,7 +239,7 @@ const make = Effect.gen(function* () {
     gitWorkflow.isRepository(config.baseDir).pipe(
       Effect.catchIf(isGitMissing, () => Effect.succeed(false)),
       Effect.map((isRepository) =>
-        isRepository ? Option.none<string>() : Option.some(path.resolve(config.baseDir, "scratch")),
+        isRepository ? Option.none<string>() : Option.some(scratchRootFor(path, config.baseDir)),
       ),
       Effect.catchCause((cause) =>
         Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
@@ -469,3 +473,40 @@ const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ManagedProjectFolders, make);
+
+/**
+ * Recreates a deleted thread folder, empty, when `cwd` is a direct child of
+ * the scratch root. Scratch folders are server-owned and disposable, so a
+ * missing one should not strand every queued message on that thread. Any
+ * other path (a repository, a worktree, a nested or non-normalized path) is
+ * left alone and reported as not restored.
+ *
+ * The folder is created non-recursively under the scratch root's real path,
+ * so an existing entry of any kind, including a dangling symlink, is never
+ * replaced or followed.
+ */
+export const restoreMissingScratchFolder = Effect.fn(
+  "ManagedProjectFolders.restoreMissingScratchFolder",
+)(function* (input: { readonly scratchRoot: string; readonly cwd: string }) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = path.resolve(input.scratchRoot);
+  const { cwd } = input;
+  if (!path.isAbsolute(cwd) || path.resolve(cwd) !== cwd || path.dirname(cwd) !== root) {
+    return false;
+  }
+  const name = path.basename(cwd);
+  if (name === "" || name === "." || name === "..") return false;
+  return yield* Effect.gen(function* () {
+    yield* fileSystem.makeDirectory(root, { recursive: true });
+    const realRoot = yield* fileSystem.realPath(root);
+    yield* fileSystem.makeDirectory(path.join(realRoot, name));
+    return true;
+  }).pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning("managed-project-folders.scratch-restore-failed", { cwd, cause }).pipe(
+        Effect.as(false),
+      ),
+    ),
+  );
+});
