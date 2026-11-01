@@ -30,7 +30,7 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 
 /**
  * The composer's key handling inside the editor: send shortcuts, the slash/mention menu,
- * prompt history on ArrowUp/ArrowDown, plan-mode toggle, and list continuation.
+ * prompt history on ArrowUp/ArrowDown, plan-mode toggle, prompt suggestions on Tab, and list continuation.
  * Returns the editor's key handler; it reads the inputs captured by the render that built it.
  */
 export function composerCommandKeyHandler(input: {
@@ -84,6 +84,9 @@ export function composerCommandKeyHandler(input: {
     dispatchMode: ComposerDispatchMode,
     submissionIntent: ComposerSubmissionIntent,
   ) => void;
+  /** Predicted next prompt that Tab fills into an empty composer; Escape dismisses it. */
+  readonly promptSuggestion: string | null;
+  readonly dismissPromptSuggestion: () => void;
 }) {
   const {
     keybindings,
@@ -121,6 +124,8 @@ export function composerCommandKeyHandler(input: {
     readComposerSnapshot,
     applyPromptReplacement,
     submitComposer,
+    promptSuggestion,
+    dismissPromptSuggestion,
   } = input;
 
   // The composer persists across threads. A recall from thread A must not
@@ -128,7 +133,7 @@ export function composerCommandKeyHandler(input: {
   // otherwise turn B's own draft into a browsing position.
   const promptHistoryTargetKey = composerTargetKey(composerDraftTarget);
 
-  const replacePromptFromHistory = (nextPrompt: string) => {
+  const replacePrompt = (nextPrompt: string) => {
     promptRef.current = nextPrompt;
     setComposerDraftPrompt(composerDraftTarget, nextPrompt);
     setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
@@ -175,7 +180,7 @@ export function composerCommandKeyHandler(input: {
     promptHistoryPositionRef.current = step.position
       ? { targetKey: promptHistoryTargetKey, position: step.position }
       : null;
-    replacePromptFromHistory(step.prompt);
+    replacePrompt(step.prompt);
     return true;
   };
 
@@ -218,7 +223,12 @@ export function composerCommandKeyHandler(input: {
     const menuIsActive =
       !isLiteralPendingAnswer && (composerMenuOpenRef.current || trigger !== null);
     if (key === "Escape") {
-      if (!menuIsActive || event.isComposing || event.keyCode === 229) return false;
+      if (event.isComposing || event.keyCode === 229) return false;
+      if (!menuIsActive && promptSuggestion !== null && promptRef.current.length === 0) {
+        dismissPromptSuggestion();
+        return true;
+      }
+      if (!menuIsActive) return false;
       dismissComposerTrigger(trigger);
       composerMenuOpenRef.current = false;
       return true;
@@ -238,6 +248,20 @@ export function composerCommandKeyHandler(input: {
         onSelectComposerItem(selectedItem);
         return true;
       }
+    }
+    if (
+      key === "Tab" &&
+      promptSuggestion !== null &&
+      promptRef.current.length === 0 &&
+      !menuIsActive &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.isComposing
+    ) {
+      replacePrompt(promptSuggestion);
+      return true;
     }
     if ((key === "ArrowUp" || key === "ArrowDown") && submissionIntent === null) {
       return navigatePromptHistory(key === "ArrowUp" ? "backward" : "forward", event);

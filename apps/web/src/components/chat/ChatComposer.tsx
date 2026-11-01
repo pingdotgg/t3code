@@ -31,6 +31,7 @@ import type {
   ResolvedKeybindingsConfig,
   RuntimeMode,
   RuntimeRequestId,
+  RunId,
   ScopedThreadRef,
   ServerProvider,
   ThreadId,
@@ -278,6 +279,7 @@ import {
 } from "./preparingComposerImages";
 import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
+import { usePromptSuggestion } from "./usePromptSuggestion";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   const armed = Date.now() <= deadline.current;
@@ -2202,6 +2204,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const expandMobileComposerStable = useStableCallback(expandMobileComposer);
 
+  const promptSuggestion = usePromptSuggestion(environmentId, activeThread);
+  // Escape hides this run's suggestion so Tab moves focus again.
+  const [dismissedSuggestionRunId, setDismissedSuggestionRunId] = useState<RunId | null>(null);
+  const suggestionRunId = activeThread?.latestRun?.runId ?? null;
+  // Tab is the only way to accept one, so touch-only screens skip it.
+  const coarsePointer = useMediaQuery({ pointer: "coarse" });
+  // Offered only where the default placeholder would show, so it never hides a pending question.
+  const offeredPromptSuggestion =
+    phase !== "running" &&
+    suggestionRunId !== dismissedSuggestionRunId &&
+    !coarsePointer &&
+    composerContextRecords.size === 0 &&
+    !isComposerApprovalState &&
+    !activePendingProgress &&
+    !(showPlanFollowUpPrompt && activeProposedPlan) &&
+    !projectSelectionRequired &&
+    !showProviderUnavailable
+      ? promptSuggestion
+      : null;
+
   const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) =>
     composerCommandKeyHandler({
       keybindings,
@@ -2239,6 +2261,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       readComposerSnapshot,
       applyPromptReplacement,
       submitComposer,
+      promptSuggestion: offeredPromptSuggestion,
+      dismissPromptSuggestion: () => setDismissedSuggestionRunId(suggestionRunId),
     })(key, event, isTaskItem);
 
   const {
@@ -3428,7 +3452,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               ? "Choose a project above to start a thread"
                               : showProviderUnavailable
                                 ? "Enable a provider in Settings to send a message"
-                                : DEFAULT_COMPOSER_PLACEHOLDER
+                                : offeredPromptSuggestion !== null
+                                  ? `${offeredPromptSuggestion}  ⇥ Tab`
+                                  : DEFAULT_COMPOSER_PLACEHOLDER
                     }
                     disabled={
                       projectSelectionRequired ||
