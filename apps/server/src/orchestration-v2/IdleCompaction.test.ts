@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
   EventId,
+  IDLE_COMPACTION_TEXT,
   MessageId,
   type OrchestrationV2ThreadProjection,
   NodeId,
@@ -221,6 +222,14 @@ describe("IdleCompactionService", () => {
     { mode: "onReturn", usageLimit: true, usedPercent: 94, reads: 0, dispatches: 0 },
     { mode: "onReturn", usageLimit: true, usedPercent: 95, reads: 1, dispatches: 1 },
     { mode: "off", usageLimit: true, usedPercent: 95, reads: 0, dispatches: 0 },
+    {
+      mode: "onReturn",
+      override: "off",
+      usageLimit: true,
+      usedPercent: 95,
+      reads: 0,
+      dispatches: 0,
+    },
     { mode: "off", reads: 0 },
     { mode: "off", usageLimit: true, reads: 0 },
     { mode: "beforeCacheExpires", reads: 1 },
@@ -249,7 +258,9 @@ describe("IdleCompactionService", () => {
             "instance" in test ? test.instance : "claudeAgent",
           );
           const driver = ProviderDriverKind.make("driver" in test ? test.driver : "claudeAgent");
-          const base = records({ cacheExpiresInMs: (test.mode === "onReturn" ? 60 : 2) * MINUTE_MS });
+          const base = records({
+            cacheExpiresInMs: (test.usageLimit ? 60 : 2) * MINUTE_MS,
+          });
           const data: OrchestrationV2ThreadProjection = {
             ...base,
             thread: {
@@ -303,8 +314,13 @@ describe("IdleCompactionService", () => {
                 occurredAt: at(),
                 payload: data.runs[0]!,
               }),
-              dispatch: () =>
+              dispatch: (command) =>
                 Effect.sync(() => {
+                  expect(command).toMatchObject({
+                    type: "message.dispatch",
+                    text: IDLE_COMPACTION_TEXT,
+                    threadId,
+                  });
                   dispatches++;
                   return { sequence: 1, storedEvents: [] };
                 }),
@@ -318,13 +334,28 @@ describe("IdleCompactionService", () => {
                 }),
             }),
             Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-              getInstance: () => Effect.succeed("usedPercent" in test ? {
-                snapshot: {
-                  getSnapshot: Effect.succeed({
-                    usageLimits: { windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: test.usedPercent, resetsAt: DateTime.formatIso(at(90 * MINUTE_MS)) }] },
-                  }),
-                },
-              } as ProviderInstance : undefined),
+              getInstance: () =>
+                Effect.succeed(
+                  "usedPercent" in test
+                    ? ({
+                        snapshot: {
+                          getSnapshot: Effect.succeed({
+                            usageLimits: {
+                              windows: [
+                                {
+                                  id: "five_hour",
+                                  kind: "session",
+                                  label: "Session",
+                                  usedPercent: test.usedPercent,
+                                  resetsAt: DateTime.formatIso(at(90 * MINUTE_MS)),
+                                },
+                              ],
+                            },
+                          }),
+                        },
+                      } as unknown as ProviderInstance)
+                    : undefined,
+                ),
             }),
             Layer.mock(ServerSettings.ServerSettingsService)({
               getSettings: Effect.succeed({

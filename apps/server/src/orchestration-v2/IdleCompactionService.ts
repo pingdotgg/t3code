@@ -16,7 +16,11 @@ import * as Stream from "effect/Stream";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { idleCompactionAction, idleCompactionWindow } from "./IdleCompaction.ts";
+import {
+  idleCompactionAction,
+  idleCompactionWindow,
+  usageLimitOutlastsCache,
+} from "./IdleCompaction.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -52,6 +56,17 @@ export const make = Effect.gen(function* () {
           )
         )
           return;
+        // The instance snapshot, not the registry list: the registry applies the
+        // run's last usage update asynchronously and can still be behind here.
+        const instance = current.compactBeforeUsageLimit
+          ? yield* providerInstances.getInstance(thread.providerInstanceId)
+          : undefined;
+        const usageWindows =
+          instance === undefined
+            ? []
+            : ((yield* instance.snapshot.getSnapshot).usageLimits?.windows ?? []);
+        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+        if (mode === "onReturn" && !usageLimitOutlastsCache(usageWindows, nowMs)) return;
         const records = yield* projections.getThreadRecords(
           threadId,
           [
@@ -65,22 +80,13 @@ export const make = Effect.gen(function* () {
           ],
           { messageRunIds: [runId], turnItemStatuses: ["pending", "running", "waiting"] },
         );
-        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
         const window = idleCompactionWindow(records, nowMs);
         if (window?.runId !== runId) return;
-        // The instance snapshot, not the registry list: the registry applies the
-        // run's last usage update asynchronously and can still be behind here.
-        const instance = current.compactBeforeUsageLimit
-          ? yield* providerInstances.getInstance(thread.providerInstanceId)
-          : undefined;
         const action = idleCompactionAction({
           mode,
           compactBeforeUsageLimit: current.compactBeforeUsageLimit,
           window,
-          usageWindows:
-            instance === undefined
-              ? []
-              : ((yield* instance.snapshot.getSnapshot).usageLimits?.windows ?? []),
+          usageWindows,
           nowMs,
         });
         if (action === "skip") return;

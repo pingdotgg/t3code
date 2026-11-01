@@ -123,16 +123,20 @@ export function idleCompactionAction(input: {
 }): "compact" | "wait" | "skip" {
   const { mode, window, nowMs } = input;
   if (mode === "off") return "skip";
-  if (
-    input.compactBeforeUsageLimit &&
-    input.usageWindows.some(
-      (usage) =>
-        usage.usedPercent >= NEAR_USAGE_LIMIT_PERCENT &&
-        usage.resetsAt !== undefined &&
-        Date.parse(usage.resetsAt) > window.endMs,
-    )
-  )
+  if (input.compactBeforeUsageLimit && usageLimitOutlastsCache(input.usageWindows, window.endMs))
     return "compact";
   if (mode !== "beforeCacheExpires") return "skip";
   return nowMs < window.startMs ? "wait" : "compact";
+}
+
+export function usageLimitOutlastsCache(
+  usageWindows: ReadonlyArray<ServerProviderUsageWindow>,
+  cacheExpiresAt: number,
+): boolean {
+  return usageWindows.some(
+    (usage) =>
+      usage.usedPercent >= NEAR_USAGE_LIMIT_PERCENT &&
+      usage.resetsAt !== undefined &&
+      Date.parse(usage.resetsAt) > cacheExpiresAt,
+  );
 }
