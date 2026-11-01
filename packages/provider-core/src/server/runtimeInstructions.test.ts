@@ -7,7 +7,7 @@ describe("buildRuntimeInstructions", () => {
     const instructions = buildRuntimeInstructions({ harness: "Codex" });
 
     assert.include(instructions, "Link each PR you create, take over, or push to");
-    assert.include(instructions, "one link_pull_request per PR");
+    assert.include(instructions, "every stack layer");
     assert.include(instructions, "Skip PRs you only read or review");
     assert.include(instructions, "If linking fails, say so.");
     assert.notInclude(instructions, "git log -1");
