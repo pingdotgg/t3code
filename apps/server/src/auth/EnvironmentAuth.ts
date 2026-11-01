@@ -628,9 +628,9 @@ const mapSessionVerificationErrors = <A, R>(
     ),
   );
 
-function parseBearerToken(request: HttpServerRequest.HttpServerRequest): string | null {
+export function parseBearerToken(request: HttpServerRequest.HttpServerRequest): string | null {
   const header = request.headers["authorization"];
-  if (typeof header !== "string" || !header.startsWith(AUTHORIZATION_PREFIX)) {
+  if (typeof header !== "string" || !/^Bearer /i.test(header)) {
     return null;
   }
   const token = header.slice(AUTHORIZATION_PREFIX.length).trim();
