@@ -829,7 +829,7 @@ describe("subagent worktree ownership", () => {
       const child = shell({
         id: ThreadId.make("child"),
         branch:
-          scenario === "null-branch" || scenario === "branchless"
+          scenario === "null-branch"
             ? null
             : scenario === "stale-branch"
               ? "t3/15a6e5ae"
