@@ -17,8 +17,9 @@ interface Run {
 type Line = ReadonlyArray<Run>;
 
 interface TerminalScreen {
-  /** Scrolled-out lines, each ending in newline. */
-  readonly settled: string;
+  /** Scrolled-out lines, each ending in newline, as head + tail. Only the tail grows, so a cut
+   * usually slices the head instead of copying all scrollback on every chunk. */
+  readonly settled: readonly [head: string, tail: string];
   /** Never empty. */
   readonly lines: ReadonlyArray<Line>;
   readonly row: number;
@@ -31,7 +32,7 @@ export const EMPTY_TERMINAL_OUTPUT: TerminalOutputState = {
   text: "",
   truncated: false,
   pending: "",
-  screen: { settled: "", lines: [[]], row: 0, col: 0, pen: "", saved: null },
+  screen: { settled: ["", ""], lines: [[]], row: 0, col: 0, pen: "", saved: null },
 };
 
 /** Default command tail, in UTF-16 code units. */
@@ -289,7 +290,8 @@ function csiParams(params: string): Array<number> {
 }
 
 class Terminal {
-  settled: string;
+  settledHead: string;
+  settledTail: string;
   lines: Array<Line>;
   row: number;
   col: number;
@@ -303,7 +305,7 @@ class Terminal {
 
   constructor(screen: TerminalScreen, maxChars: number) {
     this.maxChars = maxChars;
-    this.settled = screen.settled;
+    [this.settledHead, this.settledTail] = screen.settled;
     this.lines = screen.lines.slice();
     this.row = screen.row;
     this.col = screen.col;
@@ -374,9 +376,12 @@ class Terminal {
   }
 
   settle(line: Line): void {
-    this.settled += `${serializeLine(line)}\n`;
-    if (this.settled.length > 2 * this.maxChars) {
-      this.settled = terminalOutputTail(this.settled, this.maxChars).text;
+    this.settledTail += `${serializeLine(line)}\n`;
+    if (this.settledHead.length + this.settledTail.length > 2 * this.maxChars) {
+      [this.settledHead, this.settledTail = ""] = terminalOutputTailParts(
+        [this.settledHead, this.settledTail],
+        this.maxChars,
+      ).parts;
       this.dropped = true;
     }
   }
@@ -435,8 +440,9 @@ class Terminal {
           for (let row = 0; row < this.row; row += 1) this.lines[row] = [];
           this.lines[this.row] = eraseLine(this.lines[this.row]!, this.col, 1);
         } else if (mode === 3) {
-          if (this.settled !== "") this.dropped = true;
-          this.settled = "";
+          if (this.settledHead !== "" || this.settledTail !== "") this.dropped = true;
+          this.settledHead = "";
+          this.settledTail = "";
         } else {
           this.lines = [[]];
           this.row = 0;
@@ -541,6 +547,33 @@ export function terminalOutputTail(
   return { text: style.prefix + text.slice(start), truncated: true };
 }
 
+/**
+ * terminalOutputTail of the parts' concatenation, kept as parts. V8 copies a concatenated string
+ * the first time it is searched or sliced, so a newline cut slices only the part it lands in.
+ */
+function terminalOutputTailParts(
+  parts: readonly [string, ...Array<string>],
+  maxChars: number,
+): { readonly parts: readonly [string, ...Array<string>]; readonly truncated: boolean } {
+  let total = 0;
+  for (const part of parts) total += part.length;
+  if (total <= maxChars) return { parts, truncated: false };
+  const start = total - maxChars;
+  let offset = 0;
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index]!;
+    if (offset + part.length > start) {
+      const newline = part.indexOf("\n", Math.max(0, start - offset));
+      if (newline !== -1) {
+        if (offset + newline - start >= maxChars / 4) break;
+        return { parts: [part.slice(newline + 1), ...parts.slice(index + 1)], truncated: true };
+      }
+    }
+    offset += part.length;
+  }
+  return { parts: [terminalOutputTail(parts.join(""), maxChars).text], truncated: true };
+}
+
 export function appendTerminalOutput(
   state: TerminalOutputState,
   chunk: string,
@@ -575,15 +608,15 @@ export function appendTerminalOutput(
     }
   }
   if (terminal.dropped) truncated = true;
-  const settled = terminalOutputTail(terminal.settled, maxChars);
+  const settled = terminalOutputTailParts([terminal.settledHead, terminal.settledTail], maxChars);
   const window = terminal.lines.map(serializeLine).join("\n");
-  const tail = terminalOutputTail(settled.text + window, maxChars);
+  const tail = terminalOutputTailParts([...settled.parts, window], maxChars);
   return {
-    text: tail.text,
+    text: tail.parts.reduce((text, part) => text + part, ""),
     truncated: truncated || settled.truncated || tail.truncated,
     pending,
     screen: {
-      settled: settled.text,
+      settled: [settled.parts[0], settled.parts[1] ?? ""],
       lines: terminal.lines,
       row: terminal.row,
       col: terminal.col,
