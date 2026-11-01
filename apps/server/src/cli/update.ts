@@ -22,6 +22,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  generatedWindowsShimTarget,
   launcherOwnsVersionsDir,
   pinnedRuntimeCommand,
   PinnedRuntimeInstallError,
@@ -119,7 +120,8 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     const shimPath = yield* findWindowsShim(input.launchedAs);
     if (shimPath === undefined) return Option.none<string>();
     const current = yield* fs.readFileString(shimPath).pipe(Effect.option);
-    const quoted = Option.isSome(current) ? windowsShimTarget(current.value) : undefined;
+    // Only an unedited shim; rewriting a user's wrapper would drop what it sets.
+    const quoted = Option.isSome(current) ? generatedWindowsShimTarget(current.value) : undefined;
     if (quoted === undefined || !ownsTarget(quoted)) return Option.none<string>();
     yield* remember(shimPath);
     yield* fs
