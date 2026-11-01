@@ -8,12 +8,14 @@ import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
 import { useRef } from "react";
 
+import { classifyThreadActionFailure } from "./threadActionFailure";
 import { withThreadDismissal } from "./thread-dismissal";
 import * as Dialog from "../../components/ui/Dialog";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
 import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { forgetThread } from "../../state/forgotten-threads";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { connectedEnvironmentIdsAtom } from "../../state/presentation";
 import { readEnvironmentScope } from "../../state/session";
@@ -57,12 +59,65 @@ const ACTION_VERBS: Record<ThreadListAction, string> = {
   unsettle: "un-settled",
 };
 
-function actionFailureMessage(action: ThreadListAction, cause: Cause.Cause<unknown>): string {
-  const error = Cause.squash(cause);
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
+const ACTION_INFINITIVES: Record<ThreadListAction, string> = {
+  archive: "archive",
+  unarchive: "unarchive",
+  delete: "delete",
+  settle: "settle",
+  unsettle: "un-settle",
+};
+
+/** Explains a rejected action and offers what the user can do about it. */
+function showActionFailure(
+  action: ThreadListAction,
+  thread: EnvironmentThreadShell,
+  cause: Cause.Cause<unknown>,
+  run: ((action: ThreadListAction) => void) | null,
+): void {
+  const failure = classifyThreadActionFailure(cause);
+  if (failure.kind === "missing") {
+    Dialog.alert(
+      "Thread no longer exists",
+      `“${thread.title}” is no longer on its server, so it can't be ${ACTION_VERBS[action]}. It was probably deleted on another device, and this list is showing an old copy.`,
+      run === null
+        ? [{ text: "OK", style: "cancel" }]
+        : [
+            { text: "Keep", style: "cancel" },
+            {
+              text: "Remove from list",
+              style: "destructive",
+              onPress: () => {
+                forgetThread(thread.environmentId, thread.id);
+                // Archive rows come from the server's archived snapshot, which reloads without it.
+                if (thread.archivedAt != null)
+                  refreshArchivedThreadsForEnvironment(thread.environmentId);
+              },
+            },
+          ],
+    );
+    return;
   }
-  return `The thread could not be ${ACTION_VERBS[action]}.`;
+  if (failure.kind === "archived" && action !== "unarchive" && run !== null) {
+    Dialog.alert(
+      "Thread is archived",
+      `“${thread.title}” is archived, so it is already out of your active list. Unarchive it first to ${ACTION_INFINITIVES[action]} it.`,
+      [
+        { text: "OK", style: "cancel" },
+        { text: "Unarchive", onPress: () => run("unarchive") },
+      ],
+    );
+    return;
+  }
+  Dialog.alert(
+    actionFailureTitle(action),
+    failure.message ?? `The thread could not be ${ACTION_VERBS[action]}.`,
+    run === null
+      ? [{ text: "OK", style: "cancel" }]
+      : [
+          { text: "OK", style: "cancel" },
+          { text: "Try again", onPress: () => run(action) },
+        ],
+  );
 }
 
 function selectionHaptic(): void {
@@ -83,6 +138,8 @@ function checkThreadOperationPermission(thread: EnvironmentThreadShell, title: s
   return false;
 }
 
+type ThreadActionRerun = (action: ThreadListAction, thread: EnvironmentThreadShell) => void;
+
 function useThreadActionExecutor(
   onCompleted?: (action: ThreadListAction, thread: EnvironmentThreadShell) => void,
 ) {
@@ -97,6 +154,10 @@ function useThreadActionExecutor(
     action: ThreadListAction,
     thread: EnvironmentThreadShell,
     onStarted?: () => void,
+    // Sends the dialog's retry or Unarchive through the caller's full handler, so Undo
+    // bookkeeping such as settle's still runs; without it the bare executor runs them.
+    // null offers no retry: retrying one compound step would skip the rest of its plan.
+    rerun?: ThreadActionRerun | null,
   ) => {
     if (!checkThreadOperationPermission(thread, actionFailureTitle(action))) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
@@ -154,7 +215,17 @@ function useThreadActionExecutor(
         (result) => result._tag === "Success",
       );
       if (result._tag === "Failure") {
-        Dialog.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
+        showActionFailure(
+          action,
+          thread,
+          result.cause,
+          rerun === null
+            ? null
+            : (next) => {
+                if (rerun) rerun(next, thread);
+                else void executeAction(next, thread);
+              },
+        );
         return false;
       }
       if (action === "archive" || action === "unarchive" || action === "delete") {
@@ -240,7 +311,7 @@ export function useThreadListActions(): {
             async (step) => {
               switch (step.action) {
                 case "unsettle":
-                  return unsettleThread(thread);
+                  return (await executeAction("unsettle", thread, undefined, null)) === true;
                 case "unsnooze":
                   return unsnoozeThread(thread);
                 case "pin":
@@ -279,11 +350,17 @@ export function useThreadListActions(): {
     const key = scopedThreadKey(thread.environmentId, thread.id);
     const plan = ThreadUndo.planThreadUndo("settle", thread);
     let claim: ReturnType<typeof ThreadUndo.begin> | undefined;
-    const succeeded = await executeAction("settle", thread, () => {
-      ThreadUndo.invalidate("pin", key);
-      ThreadUndo.invalidate("snooze", key);
-      claim = ThreadUndo.begin("settle", key);
-    });
+    const succeeded = await executeAction(
+      "settle",
+      thread,
+      () => {
+        ThreadUndo.invalidate("pin", key);
+        ThreadUndo.invalidate("snooze", key);
+        claim = ThreadUndo.begin("settle", key);
+      },
+      (next, target) =>
+        void (next === "settle" ? settleThread(target) : executeAction(next, target)),
+    );
     if (claim) {
       if (succeeded) offerUndo(thread, "Settled", claim, plan);
       else claim.finish();
@@ -665,7 +742,8 @@ export function useThreadListActions(): {
           }
         } else {
           if (lifecycle.unpin && !(await unpinThread(thread))) return false;
-          if (lifecycle.unsettle && !(await unsettleThread(thread))) return false;
+          if (lifecycle.unsettle && !(await executeAction("unsettle", thread, undefined, null)))
+            return false;
           if (lifecycle.unsnooze && !(await unsnoozeThread(thread))) return false;
         }
       }
