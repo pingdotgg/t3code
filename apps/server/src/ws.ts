@@ -265,6 +265,7 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 import { isTelemetryIdHash } from "@t3tools/shared/telemetryId";
 import {
   sameUsageLimitCommandCoverage,
+  USAGE_LIMITS_COMMAND,
   withUsageLimitsCommands,
 } from "@t3tools/shared/usageLimits";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
@@ -405,8 +406,22 @@ export const resolveOpenDiscoveryForConfig = <T, D, E1, R1, E2, R2, E3, R3, E4, 
     },
     { concurrency: "unbounded" },
   ).pipe(Effect.map(({ editorConfig, ...endpoints }) => ({ ...editorConfig, ...endpoints })));
-function withoutWorkspaceSnapshots(providers: ReadonlyArray<ServerProvider>): ServerProvider[] {
-  return providers.map(({ workspaceSnapshots: _workspaceSnapshots, ...provider }) => provider);
+function withoutWorkspaceSnapshots(
+  providers: ReadonlyArray<ServerProvider>,
+  catalogsPerCwd: ReadonlySet<string> = new Set(),
+): ServerProvider[] {
+  return providers.map(({ workspaceSnapshots: _workspaceSnapshots, ...provider }) =>
+    catalogsPerCwd.has(provider.instanceId)
+      ? {
+          ...provider,
+          // Late /usage-limits discovery must still change the config, so clients refetch the cwd.
+          slashCommands: provider.slashCommands.filter(
+            (command) => command.name === USAGE_LIMITS_COMMAND.name,
+          ),
+          skills: [],
+        }
+      : provider,
+  );
 }
 
 function unexpectedCompatibilityError(error: never): never {
@@ -1768,6 +1783,7 @@ export const layerWsRpc = (
         readonly usageLimitsCommand: boolean;
         readonly workspaceSnapshotsOnDemand: boolean;
         readonly deferRemoteOpenTargets: boolean;
+        readonly catalogsPerCwd?: ReadonlySet<string>;
       }) {
         const keybindingsConfig = yield* keybindings.loadConfigState;
         const currentProviders = yield* providerRegistry.getProviders;
@@ -1775,7 +1791,7 @@ export const layerWsRpc = (
           ? withUsageLimitsCommands(currentProviders, yield* usageLimitSources.current)
           : currentProviders;
         const providers = options.workspaceSnapshotsOnDemand
-          ? withoutWorkspaceSnapshots(commandProviders)
+          ? withoutWorkspaceSnapshots(commandProviders, options.catalogsPerCwd)
           : commandProviders;
         const settings = ServerSettings.redactServerSettingsForClient(
           yield* serverSettings.getSettings,
@@ -3143,6 +3159,14 @@ export const layerWsRpc = (
             Effect.gen(function* () {
               const usageLimitsCommand = input.usageLimitsCommand === true;
               const workspaceSnapshotsOnDemand = input.workspaceSnapshotsOnDemand === true;
+              // Only providers that can scan a cwd answer the client's on-demand catalog fetch.
+              const catalogsPerCwd = new Set(
+                workspaceSnapshotsOnDemand && input.providerCatalogsOnDemand === true
+                  ? (yield* providerInstances.listInstances)
+                      .filter((instance) => instance.snapshotForCwd !== undefined)
+                      .map((instance) => instance.instanceId)
+                  : [],
+              );
               // Buffer changes through discovery and the initial snapshot's RPC ACK wait.
               const keybindingsChanges = yield* keybindings.subscribeChanges;
               const settingsChanges = yield* serverSettings.subscribeChanges;
@@ -3153,6 +3177,7 @@ export const layerWsRpc = (
                 usageLimitsCommand,
                 workspaceSnapshotsOnDemand,
                 deferRemoteOpenTargets: true,
+                catalogsPerCwd,
               });
               const keybindingsUpdates = keybindingsChanges.pipe(
                 Stream.map((event) => ({
@@ -3181,7 +3206,7 @@ export const layerWsRpc = (
                     : providers;
                   // Stripped before the de-dupe below, so snapshot-only changes send nothing.
                   return workspaceSnapshotsOnDemand
-                    ? withoutWorkspaceSnapshots(commandProviders)
+                    ? withoutWorkspaceSnapshots(commandProviders, catalogsPerCwd)
                     : commandProviders;
                 },
               ).pipe(
