@@ -3777,18 +3777,37 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               arguments: { persistent: true, command: "tail -f" },
             },
           });
-        // Replies fence notification handling on the same protocol reader.
+        // Replies fence notification handling on the same protocol reader. Codex
+        // builds without background terminal cleanup leave closure to thread/closed.
         const unsubscribe = (id: number, notifications: ReturnType<typeof notification>[] = []) => [
           {
             type: "expect_outbound" as const,
+            label: `clean-${id}`,
+            frame: {
+              id,
+              method: "thread/backgroundTerminals/clean",
+              params: { threadId: BG_NATIVE_THREAD },
+            },
+          },
+          {
+            type: "emit_inbound" as const,
+            label: `clean-error-${id}`,
+            frame: { id, error: { code: -32601, message: "method not found" } },
+          },
+          {
+            type: "expect_outbound" as const,
             label: `unsubscribe-${id}`,
-            frame: { id, method: "thread/unsubscribe", params: { threadId: BG_NATIVE_THREAD } },
+            frame: {
+              id: id + 1,
+              method: "thread/unsubscribe",
+              params: { threadId: BG_NATIVE_THREAD },
+            },
           },
           ...notifications,
           {
             type: "emit_inbound" as const,
             label: `unsubscribe-result-${id}`,
-            frame: { id, result: { status: "notSubscribed" } },
+            frame: { id: id + 1, result: { status: "notSubscribed" } },
           },
         ];
         const closed = notification("thread/closed", { threadId: BG_NATIVE_THREAD });
@@ -3799,9 +3818,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ...(retainContext ? [monitor("inProgress")] : []),
             backgroundExecTranscript.entries.at(-2)!,
             ...unsubscribe(4),
-            ...unsubscribe(5, [notification("thread/closed", { threadId: "unrelated-thread" })]),
-            ...unsubscribe(6, [closed]),
-            ...unsubscribe(7, [
+            ...unsubscribe(6, [notification("thread/closed", { threadId: "unrelated-thread" })]),
+            ...unsubscribe(8, [closed]),
+            ...unsubscribe(10, [
               closed,
               notification("item/completed", {
                 threadId: BG_NATIVE_THREAD,
@@ -3875,6 +3894,98 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.isFalse(
           yield* harness.runtime.hasPendingBackgroundWorkForThread!(harness.providerThread),
         );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  // Codex never closes an unsubscribed thread on its own, so its background
+  // terminals outlive the settle unless unloading cleans them.
+  // Codex may report the killed command before or after it answers the clean,
+  // and an older Codex without the clean method still unsubscribes.
+  it.effect.each(["before-clean-result", "after-unsubscribe", "before-clean-failure"] as const)(
+    "cleans the thread's background terminals when unloading it (completion %s)",
+    (completionAt) =>
+      Effect.gen(function* () {
+        const cleanedCompletion = {
+          type: "emit_inbound" as const,
+          label: "item/completed/command-cleaned",
+          frame: {
+            method: "item/completed",
+            params: {
+              item: backgroundCommandItem("completed"),
+              threadId: BG_NATIVE_THREAD,
+              turnId: BG_NATIVE_TURN,
+            },
+          },
+        };
+        const transcript = makeCodexReplayTranscript({
+          scenario: `codex-background-unload-clean-${completionAt}`,
+          entries: [
+            ...backgroundExecTranscript.entries.slice(0, -1),
+            {
+              type: "expect_outbound",
+              label: "clean-background-terminals",
+              frame: {
+                id: 4,
+                method: "thread/backgroundTerminals/clean",
+                params: { threadId: BG_NATIVE_THREAD },
+              },
+            },
+            ...(completionAt === "after-unsubscribe" ? [] : [cleanedCompletion]),
+            {
+              type: "emit_inbound",
+              label: "clean-background-terminals-result",
+              frame:
+                completionAt === "before-clean-failure"
+                  ? { id: 4, error: { code: -32601, message: "method not found" } }
+                  : { id: 4, result: {} },
+            },
+            {
+              type: "expect_outbound",
+              label: "unsubscribe",
+              frame: {
+                id: 5,
+                method: "thread/unsubscribe",
+                params: { threadId: BG_NATIVE_THREAD },
+              },
+            },
+            ...(completionAt === "after-unsubscribe" ? [cleanedCompletion] : []),
+            {
+              type: "emit_inbound",
+              label: "unsubscribe-result",
+              frame: { id: 5, result: { status: "unsubscribed" } },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-unload-clean"),
+            text: BG_PROMPT,
+          }),
+        );
+        yield* harness.firstTerminal;
+        yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === BG_COMMAND_ITEM
+              ? [event.turnItem.status]
+              : [],
+          ),
+          completionAt === "after-unsubscribe"
+            ? ["running", "interrupted"]
+            : ["running", "completed"],
+        );
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        assert.equal(harness.continuationRequests.length, 0);
       }).pipe(
         Effect.scoped,
         Effect.provide(
