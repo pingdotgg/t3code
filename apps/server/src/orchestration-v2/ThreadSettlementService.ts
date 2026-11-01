@@ -199,6 +199,10 @@ export function resolveAutoSettlementAt(input: {
   // An open link means the pull request has not finished, so only inactivity
   // can settle the thread, never a merged or closed lookup.
   const hasOpenLink = links.some((link) => link.snapshot?.state === "open");
+  // A watched merge has not woken the agent yet; its watch clears in the same command as that wake.
+  const awaitsMergeWake = links.some(
+    (link) => link.snapshot?.state === "merged" && link.watch !== undefined,
+  );
   if (hasOpenLink) {
     pullRequest = null;
   } else if (links.length > 0) {
@@ -222,7 +226,11 @@ export function resolveAutoSettlementAt(input: {
       toMillis(thread.latestRunStartedAt),
       toMillis(thread.latestRunCompletedAt),
     ]) ?? DateTime.toEpochMillis(thread.createdAt);
-  if (pullRequest !== null && pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) {
+  if (
+    pullRequest !== null &&
+    !awaitsMergeWake &&
+    pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)
+  ) {
     return DateTime.makeUnsafe(activityAtMs);
   }
   const hasPullRequest =
