@@ -3989,6 +3989,14 @@ function claudeFastModeNotice(message: SDKMessage): string | null | undefined {
   if (!(message.type === "result" || (message.type === "system" && message.subtype === "init"))) {
     return undefined;
   }
+  if (
+    message.type === "result" &&
+    (message.subtype !== "success" ||
+      message.is_error ||
+      terminalResultError(message.terminal_reason) !== undefined)
+  ) {
+    return undefined;
+  }
   const state = message.fast_mode_state;
   const reason = message.fast_mode_disabled_reason;
   if (message.type === "result" && message.usage.speed === "standard") {
