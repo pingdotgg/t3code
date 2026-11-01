@@ -10,6 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
+import type { ShellEnvironmentPatch } from "@t3tools/contracts";
 import * as HostProcess from "./HostProcess.ts";
 import * as Context from "effect/Context";
 const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
@@ -965,3 +966,11 @@ export const resolveWindowsEnvironment = Effect.fn("shell.resolveWindowsEnvironm
     ? { ...baselinePatch, ...profiledPatch }
     : baselinePatch;
 });
+
+export function applyShellEnvironment(env: NodeJS.ProcessEnv, patch: ShellEnvironmentPatch): void {
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete env[key];
+    else if (key === "PATH") setWindowsPath(env, value);
+    else env[key] = value;
+  }
+}

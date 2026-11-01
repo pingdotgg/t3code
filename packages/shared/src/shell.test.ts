@@ -2,6 +2,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { DesktopHostTelemetryMessage } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -14,6 +16,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  applyShellEnvironment,
   CommandAvailability,
   CommandResolutionCache,
   type CommandAvailabilityChecker,
@@ -34,6 +37,8 @@ import {
   type WindowsShellEnvironmentReader,
   XcodeGitLocation,
 } from "./shell.ts";
+
+const decodeDesktopHostMessage = Schema.decodeUnknownSync(DesktopHostTelemetryMessage);
 
 const nativeProbe = vi.hoisted(() => ({
   execFile: vi.fn<typeof import("node:child_process").execFile>(),
@@ -1044,4 +1049,31 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
       expect(commandAvailable).toHaveBeenCalledTimes(1);
     }),
   );
+});
+
+describe("desktop shell environment updates", () => {
+  it("decodes the update, replaces Windows PATH casing and removes withdrawn values", () => {
+    const message = decodeDesktopHostMessage({
+      version: 1,
+      type: "shellEnvironment",
+      platform: "win32",
+      environment: {
+        PATH: "C:\\fresh",
+        FNM_DIR: null,
+        __MISE_DIFF: null,
+        SSH_AUTH_SOCK: "/current.sock",
+        NODE_OPTIONS: "--bad",
+      },
+    });
+    expect(message.type).toBe("shellEnvironment");
+    if (message.type !== "shellEnvironment") throw new Error("Expected shell environment update");
+    const env: NodeJS.ProcessEnv = {
+      Path: "C:\\stale",
+      FNM_DIR: "stale",
+      __MISE_DIFF: "stale",
+      UNRELATED: "keep",
+    };
+    applyShellEnvironment(env, message.environment);
+    expect(env).toEqual({ PATH: "C:\\fresh", SSH_AUTH_SOCK: "/current.sock", UNRELATED: "keep" });
+  });
 });

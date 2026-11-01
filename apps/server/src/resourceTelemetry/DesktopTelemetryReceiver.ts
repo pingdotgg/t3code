@@ -13,6 +13,8 @@ import {
   type ResourceTelemetrySourceStatus,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { applyShellEnvironment } from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -328,6 +330,8 @@ export function requireDesktopTelemetryWriteProgress(
 /** @public */
 export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")(function* () {
   const config = yield* ServerConfig.ServerConfig;
+  const environment = yield* HostProcess.Environment;
+  const platform = yield* HostProcess.Platform;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const latest = yield* Ref.make(Option.none<DesktopHostTelemetrySnapshot>());
   const receiverStartedAt = yield* DateTime.now;
@@ -519,6 +523,17 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
                 status: "healthy",
                 lastError: Option.none(),
               })),
+            ),
+          );
+        }
+
+        if (message.type === "shellEnvironment") {
+          return recordContact.pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                if (message.platform === platform)
+                  applyShellEnvironment(environment, message.environment);
+              }),
             ),
           );
         }

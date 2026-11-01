@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -22,6 +23,8 @@ import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
 const layerShellEnvironment = (prepared = true) =>
   Layer.succeed(DesktopShellEnvironment.DesktopShellEnvironment, {
     installIntoProcess: Effect.succeed(prepared),
+    awaitDiscovery: Effect.succeed(prepared),
+    updates: Stream.empty,
   });
 
 const layerBackendConfiguration = (prepared = true) =>
