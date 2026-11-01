@@ -4,6 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
+  type ManagedPolicyDocument,
   ScheduledTaskUpsertInput,
   ScheduledTaskWebhookDeliveryId,
   SecretRequestError,
@@ -23,6 +24,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -173,6 +175,7 @@ const withService = <A, E>(
     readonly relayHookBaseUrl?: string;
     readonly sql?: SqlClient.SqlClient;
     readonly workers?: Map<string, Effect.Effect<void>>;
+    readonly policy?: ManagedPolicyDocument;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -249,6 +252,7 @@ const withService = <A, E>(
         ScheduledTaskService.ScheduledTaskWebhookOrigin,
         Effect.succeed({ relayHookBaseUrl: options.relayHookBaseUrl ?? null }),
       ),
+      ManagedPolicy.layerTest(options.policy),
     );
     return yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
@@ -423,6 +427,62 @@ it.effect("checks the configured signature and keeps the secret write-only", () 
         ["accepted", true],
         ["rejected_signature", false],
       ]);
+    }),
+  ),
+);
+
+it.effect("a policy without webhook tasks keeps existing ones but refuses saves and requests", () =>
+  withService(({ service, sql }) =>
+    Effect.gen(function* () {
+      const { task } = yield* service.upsert(yield* webhookTaskInput());
+      const timer = yield* webhookTaskInput({
+        id: "scheduled-task:timer",
+        schedule: { type: "interval", everyMs: 3_600_000 },
+      });
+      yield* withService(
+        ({ service, launches }) =>
+          Effect.gen(function* () {
+            const blocked = "Example Corp's policy does not allow webhook tasks.";
+            const listed = (yield* service.list()).tasks.find(({ id }) => id === task.id);
+            assert.equal(listed?.blockedByPolicy, blocked);
+            assert.isTrue(listed?.enabled);
+
+            const refused = yield* service.upsert(yield* webhookTaskInput()).pipe(Effect.flip);
+            assert.equal(refused.message, blocked);
+            const created = yield* service
+              .upsert(yield* webhookTaskInput({ id: "scheduled-task:new-hook" }))
+              .pipe(Effect.flip);
+            assert.equal(created.message, blocked);
+
+            // Turned off, it can still be edited, but not turned back on.
+            yield* service.setEnabled({ id: task.id, enabled: false });
+            yield* service.upsert(yield* webhookTaskInput({ enabled: false }));
+            const reenabled = yield* service
+              .setEnabled({ id: task.id, enabled: true })
+              .pipe(Effect.flip);
+            assert.equal(reenabled.message, blocked);
+
+            const result = yield* service.triggerWebhook(requestFor(task));
+            assert.equal(result._tag, "blocked_by_policy");
+            assert.equal(yield* Queue.size(launches), 0);
+            assert.equal((yield* sql`SELECT * FROM scheduled_task_webhook_deliveries`).length, 0);
+
+            // Timer tasks are unaffected, including a webhook task switched to a timer.
+            assert.isUndefined((yield* service.upsert(timer)).task.blockedByPolicy);
+            const switched = yield* service.upsert(
+              yield* webhookTaskInput({ schedule: { type: "interval", everyMs: 3_600_000 } }),
+            );
+            assert.isUndefined(switched.task.blockedByPolicy);
+          }),
+        {
+          sql,
+          policy: {
+            schemaVersion: 1,
+            organization: "Example Corp",
+            limits: { webhookTasks: false },
+          },
+        },
+      );
     }),
   ),
 );
