@@ -82,11 +82,8 @@ export function goalNowItem(input: {
   return {
     id: `goal:${input.threadId}`,
     icon: <TargetIcon />,
-    title:
-      presentation.usage === null
-        ? presentation.title
-        : `${presentation.title} · ${presentation.usage}`,
-    description: presentation.objective,
+    title: `${presentation.title}: ${presentation.objective}`,
+    description: presentation.usage ?? undefined,
     // Clear stops goal work; Resume would stop unrelated work, so it waits.
     actions: (
       <>

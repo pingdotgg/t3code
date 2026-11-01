@@ -34,6 +34,38 @@ import {
 
 const now = DateTime.makeUnsafe("2026-07-28T10:00:00.000Z");
 
+describe("provider goal usage", () => {
+  it("labels goal tokens as excluding cache and identifies the elapsed duration", () => {
+    expect(
+      presentProviderGoal(
+        {
+          objective: "keep going",
+          status: "active",
+          tokensUsed: 30_072_613,
+          timeUsedSeconds: 230_271,
+        },
+        true,
+      ).usage,
+    ).toBe("30.1m uncached tokens · 63h 57m 51s elapsed");
+  });
+
+  it("uses the same token accounting label for a goal budget", () => {
+    expect(
+      presentProviderGoal(
+        { objective: "Ship it", status: "paused", tokensUsed: 12_000, tokenBudget: 50_000 },
+        false,
+      ).usage,
+    ).toBe("12k / 50k uncached tokens");
+  });
+
+  it("keeps Claude checks and goals without usage independent of token accounting", () => {
+    expect(
+      presentProviderGoal({ objective: "Ship it", status: "active", checks: 2 }, true).usage,
+    ).toBe("2 checks");
+    expect(presentProviderGoal({ objective: "Ship it", status: "active" }, false).usage).toBeNull();
+  });
+});
+
 function run(id: string, ordinal: number, status: OrchestrationV2RunStatus) {
   return {
     id: RunId.make(id),
@@ -479,10 +511,10 @@ describe("presentProviderGoal", () => {
         { objective: "Ship the feature", status: "active", tokensUsed, tokenBudget: 2_000_000 },
         true,
       ).usage;
-    expect(usage(999_499)).toBe("999k / 2m tokens");
-    expect(usage(999_500)).toBe("1m / 2m tokens");
-    expect(usage(999_999)).toBe("1m / 2m tokens");
-    expect(usage(1_000_000)).toBe("1m / 2m tokens");
+    expect(usage(999_499)).toBe("999k / 2m uncached tokens");
+    expect(usage(999_500)).toBe("1m / 2m uncached tokens");
+    expect(usage(999_999)).toBe("1m / 2m uncached tokens");
+    expect(usage(1_000_000)).toBe("1m / 2m uncached tokens");
     expect(
       presentProviderGoal(
         {
@@ -493,7 +525,7 @@ describe("presentProviderGoal", () => {
         },
         false,
       ).usage,
-    ).toBe("1m / 1m tokens");
+    ).toBe("1m / 1m uncached tokens");
   });
 });
 

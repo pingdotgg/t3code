@@ -460,14 +460,15 @@ export function presentProviderGoal(
 ): ProviderGoalPresentation {
   const usage: Array<string> = [];
   if (goal.tokensUsed !== undefined && goal.tokensUsed > 0) {
+    // Codex goal accounting excludes cached input, unlike total thread usage.
     usage.push(
       goal.tokenBudget == null
-        ? `${formatGoalTokens(goal.tokensUsed)} tokens`
-        : `${formatGoalTokens(goal.tokensUsed)} / ${formatGoalTokens(goal.tokenBudget)} tokens`,
+        ? `${formatGoalTokens(goal.tokensUsed)} uncached tokens`
+        : `${formatGoalTokens(goal.tokensUsed)} / ${formatGoalTokens(goal.tokenBudget)} uncached tokens`,
     );
   }
   if (goal.timeUsedSeconds !== undefined && goal.timeUsedSeconds >= 60) {
-    usage.push(formatDuration(goal.timeUsedSeconds * 1_000));
+    usage.push(`${formatDuration(goal.timeUsedSeconds * 1_000)} elapsed`);
   }
   if (goal.checks !== undefined && goal.checks > 0) {
     usage.push(`${goal.checks} ${goal.checks === 1 ? "check" : "checks"}`);
