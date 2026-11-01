@@ -18,6 +18,7 @@ const reactTests = [
   "src/features/pull-requests/usePullRequestDiff.test.tsx",
   "src/components/ProjectFavicon.test.tsx",
   "src/components/ui/Dialog.android.test.tsx",
+  "src/components/ui/DialogHost.test.tsx",
   "src/features/pull-requests/usePullRequestList.test.tsx",
   "src/features/files/ZipArchiveView.test.tsx",
   "src/features/pull-requests/guide/useReviewGuide.test.tsx",

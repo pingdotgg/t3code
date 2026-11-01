@@ -22,7 +22,7 @@ import { pipe } from "effect/Function";
 import { RegistryContext } from "@effect/atom-react";
 import { ProjectChipIconRasterizer } from "./native/ProjectChipIconImages";
 import { ThreadArrangementHost } from "./features/threads/ThreadArrangementSheet";
-import * as Dialog from "./components/ui/Dialog";
+import { DialogHost } from "./components/ui/DialogHost";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
 import { prepareNativeShowcaseCapture } from "./features/showcase/nativeShowcaseScene";
 import { installShowcaseCapture } from "./features/showcase/ShowcaseCaptureCoordinator";
@@ -240,7 +240,7 @@ function AppContent() {
                   theme={navigationTheme}
                   onStateChange={handleNavigationStateChange}
                 />
-                <Dialog.Host />
+                <DialogHost />
                 <ThreadArrangementHost />
                 <ProjectChipIconRasterizer />
               </NativeLayoutMetricsProvider>

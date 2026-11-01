@@ -1,4 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
+import { DialogSheetHost } from "../../components/ui/DialogHost";
 import { useRememberThreadProject } from "./useRememberThreadProject";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
@@ -1148,6 +1149,7 @@ export function FullscreenThreadRouteScreen(
         route={props.route}
         inspectorPresentation={{ onClose: () => navigation.goBack() }}
       />
+      <DialogSheetHost />
     </InspectorContentScope>
   );
 }
