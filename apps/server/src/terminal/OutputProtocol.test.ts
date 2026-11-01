@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
+  ORCHESTRATION_V2_WS_METHODS,
   type TerminalAttachStreamEvent,
   TerminalAttachStreamEvent as TerminalAttachStreamEventSchema,
   WS_METHODS,
@@ -21,6 +22,9 @@ describe("terminal output window", () => {
     { tag: WS_METHODS.terminalObserve, size: 1, limit: 8 },
     { tag: WS_METHODS.terminalAttach, size: 64 * 1024, limit: 1 },
     { tag: WS_METHODS.terminalObserve, size: 64 * 1024, limit: 1 },
+    { tag: WS_METHODS.subscribeServerConfig, size: 1, limit: 8 },
+    { tag: ORCHESTRATION_V2_WS_METHODS.subscribeShell, size: 1, limit: 8 },
+    { tag: ORCHESTRATION_V2_WS_METHODS.subscribeThread, size: 1, limit: 8 },
     { tag: WS_METHODS.subscribeTerminalMetadata, size: 1, limit: 1 },
   ])("limits $tag with $size-byte values to $limit pending chunks", ({ tag, size, limit }) =>
     Effect.gen(function* () {

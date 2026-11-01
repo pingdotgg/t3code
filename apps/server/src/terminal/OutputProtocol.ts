@@ -1,4 +1,9 @@
-import { type TerminalAttachStreamEvent, type TerminalEvent, WS_METHODS } from "@t3tools/contracts";
+import {
+  ORCHESTRATION_V2_WS_METHODS,
+  type TerminalAttachStreamEvent,
+  type TerminalEvent,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import type * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -11,6 +16,15 @@ const MAX_PENDING_BYTES = 64 * 1024;
 const isFull = (sizes: number[]) =>
   sizes.length >= MAX_PENDING_CHUNKS ||
   sizes.reduce((total, size) => total + size, 0) >= MAX_PENDING_BYTES;
+// One ACK round trip per chunk stalls sync on high-latency links, so these
+// streams also keep a bounded window in flight.
+const WINDOWED_STREAMS: ReadonlySet<string> = new Set([
+  WS_METHODS.terminalAttach,
+  WS_METHODS.terminalObserve,
+  WS_METHODS.subscribeServerConfig,
+  ORCHESTRATION_V2_WS_METHODS.subscribeShell,
+  ORCHESTRATION_V2_WS_METHODS.subscribeThread,
+]);
 
 export function withTerminalOutputWindow(
   protocol: RpcServer.Protocol["Service"],
@@ -23,11 +37,7 @@ export function withTerminalOutputWindow(
       receive = write;
       return protocol.run((clientId, message) =>
         Effect.suspend(() => {
-          if (
-            message._tag === "Request" &&
-            (message.tag === WS_METHODS.terminalAttach ||
-              message.tag === WS_METHODS.terminalObserve)
-          ) {
+          if (message._tag === "Request" && WINDOWED_STREAMS.has(message.tag)) {
             const key = `${clientId}:${message.id}`;
             if (!windows.has(key)) windows.set(key, []);
           } else if (message._tag === "Ack") {
