@@ -1,3 +1,4 @@
+import { useLegendListRef } from "~/hooks/useLegendListRef";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { CheckIcon } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -104,6 +105,12 @@ export function FontFamilyPicker({
     if (openAfterMount) setOpen(true);
   }, [openAfterMount]);
   const listRef = useRef<LegendListRef | null>(null);
+  const [listHeight, setListHeight] = useState(288);
+  const handleMetricsChange = () => {
+    const metrics = listRef.current?.getState();
+    if (metrics) setListHeight(Math.min(metrics.contentLength, 288));
+  };
+  const scrollRef = useLegendListRef(listRef, handleMetricsChange);
   const enumeration = useFontEnumeration();
 
   const handleOpenChange = (nextOpen: boolean) => {
@@ -162,6 +169,8 @@ export function FontFamilyPicker({
     );
   };
 
+  const extraData = { items, selectedValue, defaultFamily };
+
   return (
     <Combobox
       items={items}
@@ -193,16 +202,21 @@ export function FontFamilyPicker({
           <div className="relative min-h-0 max-h-72 w-full flex-1 overflow-hidden">
             <ComboboxListVirtualized>
               <LegendList<string>
-                ref={listRef}
+                ref={scrollRef}
                 data={items}
+                dataKey={query}
+                initialScrollOffset={0}
                 // Base UI selects virtualized rows by index; rerender surviving items when filtering changes
                 // their indices.
-                extraData={items}
+                extraData={extraData}
                 keyExtractor={(item) => item}
                 renderItem={({ item, index }) => renderItem(item, index)}
                 estimatedItemSize={30}
                 drawDistance={360}
-                style={{ height: Math.min(items.length * 30, 288) }}
+                onScroll={handleMetricsChange}
+                onLayout={handleMetricsChange}
+                onReady={handleMetricsChange}
+                style={{ height: listHeight }}
               />
             </ComboboxListVirtualized>
           </div>

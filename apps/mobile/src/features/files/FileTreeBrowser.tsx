@@ -213,16 +213,15 @@ export function FileTreeBrowser(props: {
 
   const extraData = { expandedPaths, loadingDirectories, selectedPath };
 
-  // Keep the list as direct screen content so UIKit can apply header insets.
   return (
     <LegendList
       renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
-      contentInsetStartAdjustment={headerInset}
+      contentInset={Platform.OS === "ios" ? { top: headerInset } : undefined}
       alwaysBounceVertical
       className="flex-1"
       data={visibleNodes}
       keyExtractor={(item) => item.node.path}
-      contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+      contentInsetAdjustmentBehavior="never"
       automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
