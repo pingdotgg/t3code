@@ -95,7 +95,7 @@ describe("HTML in native Markdown", () => {
     expect(table.children).toHaveLength(2);
     expect(table.children[1]?.children[1]?.children).toMatchObject([
       { type: "link", url: "https://commit.example.com", children: [{ value: "Commit" }] },
-      { type: "text", value: " " },
+      { type: "text", value: "\n" },
       { type: "link", url: "https://branch.example.com", children: [{ value: "Branch" }] },
     ]);
   });
