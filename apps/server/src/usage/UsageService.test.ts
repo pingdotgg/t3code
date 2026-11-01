@@ -2121,6 +2121,70 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("prices a Codex turn above 272K prompt tokens at the long-context rates", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const dir = NodePath.join(home, "codex", "sessions");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(dir, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(dir, "rollout.jsonl"),
+          [
+            { type: "turn_context", payload: { model: "gpt-6-sol" } },
+            {
+              type: "event_msg",
+              timestamp: "2026-08-01T10:00:00Z",
+              payload: {
+                type: "token_count",
+                info: {
+                  last_token_usage: {
+                    input_tokens: 300_000,
+                    cached_input_tokens: 280_000,
+                    output_tokens: 1_000,
+                    reasoning_output_tokens: 0,
+                    total_tokens: 301_000,
+                  },
+                },
+              },
+            },
+          ]
+            .map((line) => encodeUnknownJsonString(line))
+            .join("\n") + "\n",
+        );
+      });
+      // The restart reads the persisted scan and rate caches while the rates endpoint fails.
+      for (const ratesStatus of [200, 500]) {
+        const summary = yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          return yield* service.readSummary(WINDOW);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            layerService({
+              prefix: "usage-service-long-context-test",
+              home,
+              settings,
+              ratesStatus: () => ratesStatus,
+              ratesDocument: {
+                "gpt-6-sol": {
+                  input_cost_per_token: 2e-6,
+                  cache_read_input_token_cost: 2e-7,
+                  output_cost_per_token: 1e-5,
+                  input_cost_per_token_above_272k_tokens: 4e-6,
+                  cache_read_input_token_cost_above_272k_tokens: 4e-7,
+                  output_cost_per_token_above_272k_tokens: 1.5e-5,
+                },
+              },
+            }),
+          ),
+        );
+        const bucket = summary.buckets.find((bucket) => bucket.model === "gpt-6-sol");
+        assert.strictEqual(bucket?.costSource, "modelPriced");
+        assert.closeTo(bucket?.costUsd ?? NaN, 0.207, 1e-9);
+      }
+    }).pipe(Effect.scoped),
+  );
+
   it.live(
     "retains Codex reconciliation and partial coverage through persisted restart, append and repair",
     () =>

@@ -195,6 +195,126 @@ describe("usage pricing", () => {
     expect(cost("gpt-6-sol", "ultrafast")).toBe(cost("gpt-6-sol", "standard"));
   });
 
+  it("prices a request above the model's long-context threshold at its above-tier rates", () => {
+    const table = parseRateTable({
+      "claude-haiku-5-5": {
+        input_cost_per_token: 1e-6,
+        output_cost_per_token: 5e-6,
+        cache_read_input_token_cost: 1e-7,
+        cache_creation_input_token_cost: 1.25e-6,
+        input_cost_per_token_above_100k_tokens: 2e-6,
+        output_cost_per_token_above_100k_tokens: 7.5e-6,
+        cache_read_input_token_cost_above_100k_tokens: 2e-7,
+        cache_creation_input_token_cost_above_100k_tokens: 2.5e-6,
+      },
+      "gpt-6-sol": {
+        ...rate(2e-6, 2e-7),
+        input_cost_per_token_priority: 4e-6,
+        output_cost_per_token_priority: 2e-5,
+        cache_read_input_token_cost_priority: 4e-7,
+        input_cost_per_token_above_272k_tokens_priority: 8e-6,
+        output_cost_per_token_above_272k_tokens_priority: 3e-5,
+        cache_read_input_token_cost_above_272k_tokens_priority: 8e-7,
+      },
+    });
+    const longRequest = (
+      model: string,
+      speed: UsageSpeed,
+      totals: { uncached: number; cacheRead: number; cacheWrite: number; output: number },
+    ) => ({
+      model,
+      speed,
+      reportedCostUsd: null,
+      totals: {
+        uncachedInputTokens: totals.uncached,
+        cachedInputTokens: totals.cacheRead,
+        cacheCreationTokens: totals.cacheWrite,
+        outputTokens: totals.output,
+        reasoningTokens: 0,
+      },
+    });
+
+    // The Claude prompt is input + cache read + cache write: 120K, above the 100K tier.
+    expect
+      .soft(
+        priceUsage(
+          table,
+          longRequest("claude-haiku-5-5", "standard", {
+            uncached: 10_000,
+            cacheRead: 100_000,
+            cacheWrite: 10_000,
+            output: 1_000,
+          }),
+        ).costUsd,
+      )
+      .toBeCloseTo(10_000 * 2e-6 + 100_000 * 2e-7 + 10_000 * 2.5e-6 + 1_000 * 7.5e-6, 12);
+    expect(
+      priceUsage(
+        table,
+        longRequest("gpt-6-sol", "fast", {
+          uncached: 20_000,
+          cacheRead: 280_000,
+          cacheWrite: 0,
+          output: 1_000,
+        }),
+      ).costUsd,
+    ).toBeCloseTo(20_000 * 8e-6 + 280_000 * 8e-7 + 1_000 * 3e-5, 12);
+  });
+
+  it("bills the long-context tier only above its threshold, filling missing tier fields from base", () => {
+    const table = parseRateTable({
+      "gpt-6-sol": {
+        input_cost_per_token: 2e-6,
+        output_cost_per_token: 1e-5,
+        cache_read_input_token_cost: 2e-7,
+        input_cost_per_token_priority: 4e-6,
+        output_cost_per_token_priority: 2e-5,
+        input_cost_per_token_above_272k_tokens: 4e-6,
+      },
+    });
+    const cost = (prompt: number, speed: UsageSpeed = "standard") =>
+      priceUsage(table, {
+        model: "gpt-6-sol",
+        speed,
+        reportedCostUsd: null,
+        totals: {
+          uncachedInputTokens: prompt - 200_000,
+          cachedInputTokens: 200_000,
+          cacheCreationTokens: 0,
+          outputTokens: 1_000,
+          reasoningTokens: 0,
+        },
+      }).costUsd;
+
+    expect(cost(272_000)).toBeCloseTo(72_000 * 2e-6 + 200_000 * 2e-7 + 1_000 * 1e-5, 12);
+    // Output keeps the base rate; cache reads keep the base discount relative to input.
+    expect(cost(272_001)).toBeCloseTo(72_001 * 4e-6 + 200_000 * 4e-7 + 1_000 * 1e-5, 12);
+    // Without a priority long-context rate, priority requests keep the priority rate.
+    expect(cost(272_001, "fast")).toBeCloseTo(72_001 * 4e-6 + 200_000 * 4e-7 + 1_000 * 2e-5, 12);
+  });
+
+  it("leaves price overrides and models without above-tier rates at their flat rates", () => {
+    const table = parseRateTable({ "gpt-6-sol": rate(2e-6) });
+    const overrides = createOverrideRateTable({
+      "claude-haiku-5-5": { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 5 },
+    });
+    const long = (model: string) => ({
+      model,
+      speed: "standard" as const,
+      reportedCostUsd: null,
+      totals: {
+        uncachedInputTokens: 500_000,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+      },
+    });
+
+    expect(priceUsage(table, long("gpt-6-sol")).costUsd).toBeCloseTo(1, 12);
+    expect(priceUsage(table, long("claude-haiku-5-5"), overrides).costUsd).toBeCloseTo(0.5, 12);
+  });
+
   it("keeps the canonical Fable rate separate from DeepInfra in either order", () => {
     const canonical = ["claude-fable-5", rate(1e-5, 1e-6)] as const;
     const deepInfra = ["deepinfra/anthropic/claude-fable-5", rate(1e-5)] as const;
