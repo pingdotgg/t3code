@@ -31,6 +31,11 @@ import "./pdfViewer.css";
 const MAX_PAGES = 2000;
 const MAX_FIND_TEXT = 4 * 1024 * 1024;
 
+const MAX_POSITIONS = 50;
+type PdfPosition = PdfViewState & { width: number; ratios: readonly number[] };
+// Thread switches unmount the preview; retain only the most recent documents.
+const positions = new Map<string, PdfPosition>();
+
 export type PdfViewState = {
   page: number;
   offset: number;
@@ -126,16 +131,20 @@ function PdfPage(props: {
 export default function PdfViewer(props: {
   src: string;
   title: string;
+  positionKey?: string;
   initialView?: PdfViewState;
   onViewChange?: (view: PdfViewState) => void;
 }) {
+  const [savedPosition] = useState(() =>
+    props.positionKey === undefined ? undefined : positions.get(props.positionKey),
+  );
   const [initialView] = useState<PdfViewState>(
-    () => props.initialView ?? { page: 0, offset: 0, zoom: null, left: 0 },
+    () => savedPosition ?? props.initialView ?? { page: 0, offset: 0, zoom: null, left: 0 },
   );
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
-  const [ratios, setRatios] = useState<number[]>([]);
+  const [ratios, setRatios] = useState<readonly number[]>([]);
   const [zoom, setZoom] = useState(initialView.zoom);
   const [pageWidth, setPageWidth] = useState(612);
   const [viewport, setViewport] = useState({ width: 600, height: 800 });
@@ -181,10 +190,12 @@ export default function PdfViewer(props: {
         if (controller.signal.aborted) return;
         setPageWidth(first.width);
         setRatios(
-          Array.from(
-            { length: document.numPages },
-            (_, index) => sizes[index] ?? first.height / first.width,
-          ),
+          savedPosition?.ratios.length === document.numPages
+            ? savedPosition.ratios
+            : Array.from(
+                { length: document.numPages },
+                (_, index) => sizes[index] ?? first.height / first.width,
+              ),
         );
         setPdf(document);
       })
@@ -199,7 +210,7 @@ export default function PdfViewer(props: {
       clearTimeout(timeout);
       void task?.destroy();
     };
-  }, [props.src, revision, initialPage]);
+  }, [props.src, revision, initialPage, savedPosition]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure the PDF viewport before paint and observe resizes for fit-width sizing and visible-page selection.
   useLayoutEffect(() => {
     const node = scroll.current;
@@ -222,14 +233,22 @@ export default function PdfViewer(props: {
   const jumpToPage = useEffectEvent((index: number) => {
     scroll.current?.scrollTo({ top: pdfPageScrollTop(offsets, index) });
   });
-  const saveView = (node: HTMLDivElement) => {
+  const saveView = (node: HTMLDivElement, notify = true) => {
     const page = currentPdfPage(offsets, ratios.length, node.scrollTop);
-    props.onViewChange?.({
+    if (!pdf) return;
+    const view = {
       page,
       offset: Math.max(0, node.scrollTop - (offsets[page]! - 16)),
       zoom,
       left: node.scrollLeft,
-    });
+    };
+    if (notify) props.onViewChange?.(view);
+    if (props.positionKey !== undefined) {
+      positions.delete(props.positionKey);
+      positions.set(props.positionKey, { ...view, width, ratios });
+      const oldest = positions.keys().next();
+      if (positions.size > MAX_POSITIONS && !oldest.done) positions.delete(oldest.value);
+    }
   };
   const restoreView = useEffectEvent(() => {
     const node = scroll.current;
@@ -237,9 +256,15 @@ export default function PdfViewer(props: {
     const page = Math.min(initialPage, pdf.numPages - 1);
     node.scrollTo({
       top:
-        offsets[page]! - 16 + Math.min(initialView.offset, Math.max(0, width * ratios[page]! - 1)),
+        offsets[page]! -
+        16 +
+        Math.min(
+          initialView.offset * (savedPosition ? width / savedPosition.width : 1),
+          Math.max(0, width * ratios[page]! - 1),
+        ),
       left: initialView.left,
     });
+    setScrollTop(node.scrollTop);
     saveView(node);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the saved PDF scroll position after the loaded document's page layout commits.
@@ -262,13 +287,13 @@ export default function PdfViewer(props: {
     const anchor = zoomAnchor.current;
     zoomAnchor.current = null;
     const node = scroll.current;
-    if (!anchor || !node) return;
-    if (anchor.width !== width) {
+    if (!node || !pdf) return;
+    if (anchor && anchor.width !== width) {
       node.scrollTo({
         top: offsets[anchor.page]! - 16 + (anchor.offset * width) / anchor.width,
       });
     }
-    saveView(node);
+    saveView(node, anchor !== null);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Scroll to the first asynchronous search result after its measured page offsets have committed.
   useLayoutEffect(() => {

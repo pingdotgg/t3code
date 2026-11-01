@@ -2468,6 +2468,7 @@ async function workspacePdfPreview() {
         [original, updated, shorter, shrunk, single].forEach(URL.revokeObjectURL),
     };
   })();
+  const threadId = ThreadId.make(urls.original);
   const preview = (src: string, mutation: string, path = "/repo/planning.pdf") => {
     assetUrlState.mockReturnValue({
       _tag: "Success",
@@ -2478,7 +2479,7 @@ async function workspacePdfPreview() {
       <div className="flex h-[600px] w-[320px]">
         <WorkspaceBrowserPreview
           environmentId={EnvironmentId.make("test")}
-          threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+          threadRef={{ environmentId: EnvironmentId.make("test"), threadId }}
           draft={false}
           absolutePath={path}
           workspaceRoot="/repo"
