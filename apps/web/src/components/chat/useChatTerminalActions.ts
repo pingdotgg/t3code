@@ -1,3 +1,4 @@
+import { encodeTerminalScriptPaste } from "../../terminal/scriptPaste";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -206,6 +207,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       worktreePath?: string | null;
       preferNewTerminal?: boolean;
       rememberAsLastInvoked?: boolean;
+      pasteScript?: boolean;
       shellHistory?: "preserve" | "suppress";
     },
   ) => {
@@ -271,11 +273,28 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       return;
     }
 
-    const writeResult = await terminalActions.writeToTerminal(
-      targetTerminalId,
+    let data =
       options?.shellHistory === "preserve"
         ? `${script.command}\r`
-        : projectScriptTerminalInput(script.command),
+        : projectScriptTerminalInput(script.command);
+    if (options?.pasteScript) {
+      try {
+        data = await encodeTerminalScriptPaste(
+          { environmentId, threadId: activeThreadId, terminalId: targetTerminalId },
+          script.command,
+        );
+      } catch (error) {
+        setThreadError(
+          activeThreadId,
+          error instanceof Error ? error.message : "Failed to prepare script paste.",
+        );
+        return;
+      }
+    }
+    const writeResult = await terminalActions.writeToTerminal(
+      targetTerminalId,
+      data,
+      activeThreadRef,
     );
     if (!writeResult) return;
     if (writeResult._tag === "Failure") {
@@ -317,7 +336,11 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         icon: "play",
         runOnWorktreeCreate: false,
       },
-      { rememberAsLastInvoked: false, shellHistory: "preserve" },
+      {
+        rememberAsLastInvoked: false,
+        shellHistory: "preserve",
+        pasteScript: command.includes("\n"),
+      },
     );
   };
   const runShellCommandStable = useStableCallback(runShellCommand);

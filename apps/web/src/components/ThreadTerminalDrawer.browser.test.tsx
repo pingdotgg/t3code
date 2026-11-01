@@ -11,7 +11,7 @@ const fixture = vi.hoisted(() => ({
 
 // Every surface method is a no-op; `then` stays undefined so awaiting the surface resolves to it.
 const fakeSurface: object = new Proxy(
-  { input: document.createElement("textarea") },
+  { input: document.createElement("textarea"), subscribeOutput: () => () => {} },
   {
     get: (target, key) =>
       key === "then" ? undefined : key in target ? Reflect.get(target, key) : () => undefined,

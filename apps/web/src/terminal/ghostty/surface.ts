@@ -608,6 +608,7 @@ export class GhosttyTerminalSurface {
   // App capture can hide keydowns, so only encoded presses qualify for Kitty releases.
   private readonly encodedKeyCodes = new Set<string>();
   private pasteShortcutToken = 0;
+  private readonly outputListeners = new Set<() => void>();
   // Chromium can deliver native paste after the clipboard read resolves.
   // Suppress its duplicate only for the current shortcut gesture.
   private pasteShortcutGesture: { code: string; readText: string } | null = null;
@@ -755,6 +756,7 @@ export class GhosttyTerminalSurface {
         ? undefined
         : () => this.cancelSynchronizedRenderTimer(),
     );
+    for (const listener of this.outputListeners) listener();
     this.synchronizeMouseTrackingState();
     this.cursorOn = true;
     this.scrollbarDirty = true;
@@ -766,11 +768,25 @@ export class GhosttyTerminalSurface {
     this.cancelSynchronizedRenderTimer();
     this.lastMouseMotionData = "";
     this.core.resetAndWrite(data);
+    for (const listener of this.outputListeners) listener();
     this.synchronizeMouseTrackingState();
     this.cursorOn = true;
     this.forceFullRender = true;
     this.scrollbarDirty = true;
     this.requestRender();
+  }
+
+  subscribeOutput(listener: () => void): () => void {
+    this.outputListeners.add(listener);
+    return () => {
+      this.outputListeners.delete(listener);
+    };
+  }
+
+  encodeScriptPaste(text: string): string | null {
+    if (this.disposed || !this.core.isBracketedPasteMode()) return null;
+    const encoded = this.core.encodePaste(text);
+    return encoded.length > 0 ? `${encoded}\r` : null;
   }
 
   setTheme(theme: GhosttyTheme): void {

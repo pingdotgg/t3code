@@ -294,6 +294,39 @@ describe("GhosttyTerminalCore snapshots", () => {
     expect({ type: update.type, replies }).toEqual({ type: "append", replies: ["\x1b[0n"] });
   });
 
+  it("clears paste readiness when a capped replay discards a disable sequence", async () => {
+    const core = await createCore();
+    let state = createSession("\x1b[?2004hprompt$ ");
+    let update = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
+    writeTerminalOutputUpdate(core, update);
+    let cursor = update.cursor;
+    expect(core.isBracketedPasteMode()).toBe(true);
+
+    state = applyTerminalAttachStreamEvent(
+      state,
+      {
+        type: "output",
+        threadId: "terminal-stream-test",
+        terminalId: "term-1",
+        data: `\x1b[?2004l${"foreground output\r\n".repeat(10)}`,
+      },
+      64,
+    );
+    expect(readTerminalOutputUpdate(state.output, cursor).type).toBe("reset");
+    expect(terminalOutputText(state.output)).not.toContain("\x1b[?2004l");
+    expect(terminalOutputText(state.output)).not.toContain("\x1b[?2004h");
+
+    update = readTerminalOutputUpdate(state.output, cursor);
+    writeTerminalOutputUpdate(core, update);
+    cursor = update.cursor;
+    expect(core.isBracketedPasteMode()).toBe(false);
+
+    state = append(state, "\x1b[?2004hprompt$ ");
+    writeTerminalOutputUpdate(core, readTerminalOutputUpdate(state.output, cursor));
+    expect(core.isBracketedPasteMode()).toBe(true);
+    expect(core.encodePaste("a\nb")).toBe("\x1b[200~a\nb\x1b[201~");
+  });
+
   it("recovers a lagging renderer once from bounded output and resumes appending", async () => {
     const [core, reference] = await Promise.all([createCore(), createCore()]);
     let state = createSession("\x1b[31mold");

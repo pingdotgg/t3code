@@ -234,12 +234,11 @@ describe("ChatMarkdown streaming", () => {
     }
 
     for (const text of [
-      "```bash\necho one\necho two\n```",
       "```typescript\necho hello\n```",
       "```bash\n\n```",
-      "```bash\necho hello\n\n```",
       "```bash\necho hello\\\n```",
       "```bash\necho safe \u202e#\n```",
+      "```bash\necho\tone\n```",
       "```bash\necho incomplete",
       "~~~bash\necho incomplete",
       "````bash\necho incomplete\n```",
@@ -248,6 +247,35 @@ describe("ChatMarkdown streaming", () => {
       await rerender(message(text));
       expect(runButtons()).toHaveLength(0);
     }
+  });
+
+  it("confirms scripts, cancels them, and clears stale confirmations", async () => {
+    setup();
+    const onRunShellCommand = vi.fn();
+    const script = "echo one\necho two";
+    const message = (command: string) => (
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={`\`\`\`bash\n${command}\n\`\`\``}
+        isStreaming={false}
+        onRunShellCommand={onRunShellCommand}
+      />
+    );
+    await using screen = await render(message(script));
+    await userEvent.click(screen.getByRole("button", { name: "Run 2 lines in terminal" }));
+    await expect.element(page.getByRole("alertdialog")).toBeVisible();
+    expect(onRunShellCommand).not.toHaveBeenCalled();
+    await userEvent.click(page.getByRole("button", { name: "Cancel", exact: true }));
+    await expect.element(page.getByRole("alertdialog")).not.toBeInTheDocument();
+    expect(onRunShellCommand).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Run 2 lines in terminal" }));
+    await screen.rerender(message("echo one\necho three"));
+    await expect.element(page.getByRole("alertdialog")).not.toBeInTheDocument();
+    await screen.rerender(message(script));
+    await expect.element(page.getByRole("alertdialog")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Run 2 lines in terminal" }));
+    await userEvent.click(page.getByRole("button", { name: "Run", exact: true }));
+    expect(onRunShellCommand).toHaveBeenCalledExactlyOnceWith(script);
   });
 
   it("edits the current task text and marker after reusing a renderer", async () => {

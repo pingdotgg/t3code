@@ -132,11 +132,12 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     })();
   };
 
-  const writeToTerminal = (terminalId: string, data: string) => {
-    if (!threadRef || !canWrite()) return null;
+  const writeToTerminal = (terminalId: string, data: string, target = threadRef) => {
+    if (!target || !readEnvironmentScope(target.environmentId, AuthTerminalOperateScope))
+      return null;
     return writeTerminal({
-      environmentId: threadRef.environmentId,
-      input: { threadId: threadRef.threadId, terminalId, data },
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, terminalId, data },
     });
   };
 
