@@ -8392,7 +8392,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     );
 
   it.effect(
-    "uses task_started as an incremental roster fallback and clears on empty snapshot",
+    "uses task_started as an incremental roster fallback, keeps its tool call, and clears on empty snapshot",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -8424,11 +8424,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (event) => (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
           );
           assert.isAtLeast(afterStart.length, 1);
-          assert.equal(
-            (afterStart.at(-1)?.providerThread.pendingBackgroundTasks ?? [])[0]?.taskId,
-            WAKE_TASK_ID,
-          );
+          const started = (afterStart.at(-1)?.providerThread.pendingBackgroundTasks ?? [])[0];
+          assert.equal(started?.taskId, WAKE_TASK_ID);
+          assert.equal(started?.nativeItemId, WAKE_TOOL_USE_ID);
 
+          // A foreground command that later moves to the background keeps its tool call too.
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: "moved-shell",
+              tool_use_id: "toolu_moved_shell",
+              description: "Foreground build",
+              is_backgrounded: false,
+              task_type: "local_bash",
+              uuid: "00000000-0000-4000-8000-000000000204",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
           yield* Queue.offer(
             harness.sdkMessages,
             claudeSdkFrame({
@@ -8441,6 +8455,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   description: "sleep 150",
                   parent_task_id: "agent-1",
                 },
+                {
+                  task_id: WAKE_TASK_ID,
+                  task_type: "local_bash",
+                  description: WAKE_TASK_DESCRIPTION,
+                },
+                {
+                  task_id: "moved-shell",
+                  task_type: "local_bash",
+                  description: "Foreground build",
+                },
               ],
               uuid: "00000000-0000-4000-8000-000000000203",
               session_id: WAKE_NATIVE_SESSION,
@@ -8449,7 +8473,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* harness.until(() =>
             providerThreadRosterEvents(harness.events).some(
               (event) =>
-                event.providerThread.pendingBackgroundTasks?.[0]?.parentTaskId === "agent-1",
+                event.providerThread.pendingBackgroundTasks?.[0]?.parentTaskId === "agent-1" &&
+                event.providerThread.pendingBackgroundTasks[1]?.nativeItemId === WAKE_TOOL_USE_ID &&
+                event.providerThread.pendingBackgroundTasks[2]?.nativeItemId ===
+                  "toolu_moved_shell",
             ),
           );
 
@@ -8722,7 +8749,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const roster = providerThreadRosterEvents(harness.events).at(-1)?.providerThread
           .pendingBackgroundTasks;
         assert.deepEqual(roster, [
-          { taskId: longRunning.taskId, kind: "monitor", description: "Monitor 0" },
+          {
+            taskId: longRunning.taskId,
+            kind: "monitor",
+            description: "Monitor 0",
+            nativeItemId: "toolu_monitor_0",
+          },
         ]);
       }).pipe(
         Effect.provide(
@@ -9372,7 +9404,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (event) => event.providerThread.id === providerThreadA.id,
           )?.providerThread.pendingBackgroundTasks;
           assert.deepEqual(rosterAAfterSettle ?? [], [
-            { taskId: taskA, description: "work on A", kind: "command" },
+            {
+              taskId: taskA,
+              description: "work on A",
+              kind: "command",
+              nativeItemId: "toolu-roster-a",
+            },
           ]);
           assert.isTrue(yield* hasPendingBackgroundWork);
           assert.isTrue(yield* hasPendingBackgroundWorkForThread(providerThreadA));
