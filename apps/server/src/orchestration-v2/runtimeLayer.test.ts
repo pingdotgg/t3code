@@ -5602,6 +5602,107 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("queues a background wake behind a usage limit instead of starting it", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-limited-wake");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        createdBy: "user",
+        creationSource: "web",
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Limited wake",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${threadId}:prompt`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:prompt`),
+        text: "Prompt",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        dispatchMode: { type: "start_immediately" },
+      });
+      const [limited] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      assert.isDefined(limited);
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:error`),
+            type: "turn-item.updated",
+            threadId,
+            runId: limited.id,
+            nodeId: limited.rootNodeId!,
+            providerInstanceId: limited.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`${threadId}:error`),
+              type: "error",
+              threadId,
+              runId: limited.id,
+              nodeId: limited.rootNodeId!,
+              providerThreadId: limited.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "failed",
+              title: "Usage limit reached",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: "usage_limit",
+                message: "Usage limit reached",
+                code: "usage_limit",
+                retryable: null,
+              },
+            },
+          },
+          {
+            id: EventId.make(`${threadId}:failed`),
+            type: "run.updated",
+            threadId,
+            runId: limited.id,
+            providerInstanceId: limited.providerInstanceId,
+            occurredAt: now,
+            payload: { ...limited, status: "failed", completedAt: now },
+          },
+        ],
+      });
+
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${threadId}:wake`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:wake`),
+        text: "Subagent finished",
+        attachments: [],
+        createdBy: "agent",
+        creationSource: "provider",
+        notification: {
+          source: { kind: "background_task" },
+          outcome: "completed",
+          summary: "Subagent finished",
+        },
+        dispatchMode: { type: "queue_after_active" },
+      });
+      const { runs } = yield* orchestrator.getThreadProjection(threadId);
+      const wake = runs.find((run) => run.userMessageId === `${threadId}:wake`);
+      assert.equal(wake?.status, "queued");
+    }),
+  );
+
   it.effect.each([
     ["server", modelSelection],
     ["provider", modelSelection],
