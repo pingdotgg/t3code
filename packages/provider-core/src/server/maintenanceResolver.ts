@@ -972,6 +972,7 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
  */
 function installerLatestVersionKey(capabilities: ProviderMaintenanceCapabilities) {
   if (!capabilities.lookupLatestVersion) return null;
+  if (capabilities.latestVersionCacheKey) return capabilities.latestVersionCacheKey;
   const update = capabilities.update;
   if (update) return [update.lockKey, update.executable, ...update.args].join("\0");
   return capabilities.installPath
