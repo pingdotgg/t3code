@@ -33,6 +33,7 @@ import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import { MobileAppSettingsRow } from "./MobileAppSettingsRow";
 import {
   canCheckForUpdate,
+  getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateDisabledReason,
   getDesktopUpdateInstallConfirmationMessage,
@@ -193,15 +194,18 @@ function AboutVersionSection() {
     const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
 
     if (action === "download") {
-      void bridge.downloadUpdate().catch((error: unknown) => {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not download update",
-            description: error instanceof Error ? error.message : "Download failed.",
-          }),
-        );
-      });
+      void bridge
+        .downloadUpdate()
+        .then(
+          (result) => getDesktopUpdateActionError(result),
+          (error: unknown) => (error instanceof Error ? error.message : "Download failed."),
+        )
+        .then((description) => {
+          if (!description) return;
+          toastManager.add(
+            stackedThreadToast({ type: "error", title: "Could not download update", description }),
+          );
+        });
       return;
     }
 
