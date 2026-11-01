@@ -585,10 +585,11 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     if (result === null) return null;
     if (result.exitCode === 0) return result.stdout;
     // Git before 2.38 answers "false" for a bare repo, then fails on --show-toplevel.
+    // Match message prefixes only: a path inside a diagnostic may contain the same words.
     if (
       result.stdout.startsWith("false") ||
-      result.stderr.includes("not a git repository") ||
-      result.stderr.includes("cannot use bare repository") ||
+      result.stderr.startsWith("fatal: not a git repository") ||
+      result.stderr.startsWith("fatal: cannot use bare repository") ||
       !(yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true)))
     ) {
       return null;
@@ -836,8 +837,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       allowNonZeroExit: true,
     }).pipe(
       Effect.flatMap((result) => {
-        // --quiet reports an absent ref as exit 1; anything else means Git could not answer.
-        if (result.exitCode === 1) return Effect.succeed(null);
+        // --quiet reports an absent ref as a silent exit 1; an unreadable object also exits 1 but
+        // says why on stderr.
+        if (result.exitCode === 1 && result.stderr.trim().length === 0) return Effect.succeed(null);
         if (result.exitCode !== 0) {
           return Effect.fail(
             new VcsProcessExitError({
