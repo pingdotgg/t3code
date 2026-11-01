@@ -73,7 +73,9 @@ import {
   ComposerBoldSelectionOnlyExtension,
   convertBulletItemToTask,
   ComposerCodeExtension,
+  ComposerBoldExtension,
   ComposerItalicExtension,
+  ComposerStrikeExtension,
   ComposerTaskItemExtension,
   ComposerTaskListExtension,
   flatToMarkdown,
@@ -831,7 +833,8 @@ function createComposerExtensions(richText: boolean) {
       listKeymap: false,
       undoRedo: { newGroupDelay: COMPOSER_UNDO_GROUP_DELAY },
       italic: false,
-      ...(richText ? {} : { bold: false, strike: false }),
+      bold: false,
+      strike: false,
     }),
     ComposerUndoGroupingExtension,
     ComposerTextDirectionExtension,
@@ -844,6 +847,8 @@ function createComposerExtensions(richText: boolean) {
       ? [
           ComposerBoldSelectionOnlyExtension,
           ComposerItalicExtension,
+          ComposerBoldExtension,
+          ComposerStrikeExtension,
           ComposerCodeExtension,
           ComposerCodeBlockExtension.extend({
             addNodeView() {
@@ -1013,7 +1018,7 @@ function ComposerPromptEditorTiptapInner(
 
   const handleEditorChange = (updated: TiptapEditor) => {
     const map = serializeEditorDoc(updated.state.doc);
-    const contextIds = literalText ? [] : map.contextIds;
+    const contextIds = literalText ? [] : [...map.contextIds];
     const { from, to } = updated.state.selection;
     const fromFlat = pmToFlat(map, from);
     const toFlat = pmToFlat(map, to);
@@ -1468,7 +1473,7 @@ function ComposerPromptEditorTiptapInner(
       value: map.value,
       cursor: collapseExpandedComposerCursor(map.value, expandedCursor, literalText),
       expandedCursor,
-      contextIds: literalText ? [] : map.contextIds,
+      contextIds: literalText ? [] : [...map.contextIds],
     };
     const toFlat = pmToFlat(map, to);
     selectionRangeRef.current = {

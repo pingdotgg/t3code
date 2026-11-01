@@ -119,7 +119,8 @@ function claudeManagedSettingsPath(
   return "/etc/claude-code/managed-settings.json";
 }
 
-function skillOverrideSettingsPaths(
+/** Claude Code settings files, lowest precedence first. */
+function claudeSettingsPaths(
   path: Path.Path,
   configDirPath: string,
   cwd: string | undefined,
@@ -247,7 +248,7 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
   const enabledPlugins = new Map<string, boolean>();
   const repositoryRoot = cwd === undefined ? undefined : yield* findRepositoryRoot(cwd);
 
-  for (const settingsPath of skillOverrideSettingsPaths(
+  for (const settingsPath of claudeSettingsPaths(
     path,
     configDirPath,
     cwd,
@@ -425,6 +426,43 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
     return cwd ? path.resolve(cwd, environmentConfigDir) : path.resolve(environmentConfigDir);
   }
   return path.join(home, ".claude");
+});
+
+const SettingsBaseUrl = fromLenientJson(
+  Schema.Struct({
+    env: Schema.optional(Schema.Struct({ ANTHROPIC_BASE_URL: Schema.optional(Schema.String) })),
+  }),
+);
+const decodeSettingsBaseUrl = Schema.decodeUnknownEffect(SettingsBaseUrl);
+
+/** ANTHROPIC_BASE_URL from Claude's settings `env`, which Claude Code applies over the process env. */
+export const readClaudeSettingsBaseUrl = Effect.fn("readClaudeSettingsBaseUrl")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  cwd: string | undefined,
+  environment: NodeJS.ProcessEnv,
+): Effect.fn.Return<string | undefined, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const platform = yield* HostProcess.Platform;
+  const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
+  let baseUrl: string | undefined;
+  for (const settingsPath of claudeSettingsPaths(
+    path,
+    configDirPath,
+    undefined,
+    platform,
+    environment,
+  )) {
+    const contents = yield* fileSystem
+      .readFileString(settingsPath)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (contents === undefined) continue;
+    const parsed = yield* decodeSettingsBaseUrl(contents).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+    baseUrl = parsed?.env?.ANTHROPIC_BASE_URL ?? baseUrl;
+  }
+  return baseUrl;
 });
 
 // Claude's --add-dir is repeatable and variadic; parseCliArgs keeps only one value.

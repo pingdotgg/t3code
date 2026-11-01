@@ -806,7 +806,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
                 : Effect.logWarning(
                     `[dev-runner] could not remove the tailnet mapping for port ${String(sharedWebPort)}${
                       result.explanation ? `: ${result.explanation}` : ""
-                    }. Remove it with \`tailscale serve --https=${String(sharedWebPort)} off\`.`,
+                    }. Remove it with \`tailscale serve --https=${String(sharedWebPort)} --set-path=/ off\`.`,
                   ),
             ),
           ),

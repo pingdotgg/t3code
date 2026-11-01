@@ -18,6 +18,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command, CliError } from "effect/cli";
 
@@ -262,6 +263,50 @@ describe("t3 pair", () => {
         const output = yield* captureStdout(runCli(["pair", "--base-dir", baseDir]));
 
         assert.include(output, "Pairing URL: http://localhost:5733/pair#token=");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses --tailscale before turning on Serve when the policy keeps clients local", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-policy-test-"));
+        const policyPath = NodePath.join(baseDir, "policy.json");
+        NodeFS.writeFileSync(
+          policyPath,
+          JSON.stringify({
+            schemaVersion: 1,
+            organization: "Example Corp",
+            limits: { clients: ["desktop", "local-browser"] },
+          }),
+        );
+        yield* persistServerRuntimeState({
+          path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+          state: yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: Number(new URL(origin).port),
+          }),
+        });
+
+        const error = yield* provideCliTestLayers(
+          runCli(["pair", "--base-dir", baseDir, "--tailscale"]).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make(() => Effect.die("tailscale must not run")),
+            ),
+            Effect.provide(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({ env: { T3CODE_DEV_MANAGED_POLICY_PATH: policyPath } }),
+              ),
+            ),
+            Effect.flip,
+          ),
+        );
+
+        assert.include(
+          String(error),
+          "Example Corp's policy does not allow remote clients, so Tailscale Serve cannot be turned on.",
+        );
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -546,5 +591,44 @@ describe("auth pairing create --base-url", () => {
 
         assert.equal(issued.pairUrl, `${new URL(baseUrl).origin}/pair#token=${issued.credential}`);
       }),
+  );
+});
+
+describe("scripted auth output", () => {
+  it.effect.each(
+    [
+      ["auth", "session", "issue", "--token-only"],
+      ["auth", "session", "list", "--json"],
+      ["auth", "pairing", "list", "--json"],
+    ].map((command) => ({ command, label: command.join(" ") })),
+  )("prints only the result for $label after removing an abandoned upload", ({ command }) =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-quiet-test-"));
+      const attachmentsDir = NodePath.join(baseDir, "userdata", "attachments");
+      NodeFS.mkdirSync(attachmentsDir, { recursive: true });
+      // An abandoned upload makes config resolution log that it removed it.
+      const abandoned = NodePath.join(attachmentsDir, "abandoned.part");
+      NodeFS.writeFileSync(abandoned, "");
+      const jan2020Seconds = 1_577_836_800;
+      NodeFS.utimesSync(abandoned, jan2020Seconds, jan2020Seconds);
+      // The sweep reads Clock, so a week past the upload's mtime makes it expired.
+      yield* TestClock.setTime((jan2020Seconds + 7 * 24 * 60 * 60) * 1000);
+
+      const lines = yield* provideCliTestLayers(
+        Effect.gen(function* () {
+          yield* runCli([...command, "--base-dir", baseDir]);
+          return yield* TestConsole.logLines;
+        }),
+      );
+
+      assert.isFalse(NodeFS.existsSync(abandoned));
+      assert.lengthOf(lines, 1);
+      const output = String(lines[0]);
+      if (command.includes("--json")) {
+        assert.deepEqual(JSON.parse(output), []);
+      } else {
+        assert.match(output.trim(), /^[\w-]+\.[\w-]+/);
+      }
+    }),
   );
 });

@@ -150,8 +150,10 @@ export class RotatingFileSink {
       const baseName = NodePath.basename(this.filePath);
       for (const entry of NodeFS.readdirSync(dir)) {
         if (!entry.startsWith(`${baseName}.`)) continue;
-        const suffix = Number(entry.slice(baseName.length + 1));
-        if (!Number.isInteger(suffix) || suffix <= this.maxFiles) continue;
+        const suffixText = entry.slice(baseName.length + 1);
+        const suffix = Number(suffixText);
+        if (!Number.isInteger(suffix) || String(suffix) !== suffixText || suffix <= this.maxFiles)
+          continue;
         NodeFS.rmSync(NodePath.join(dir, entry), { force: true });
       }
     } catch (cause) {
@@ -212,8 +214,10 @@ export const makeAsyncRotatingFileSink = Effect.fnUntraced(function* (
   yield* Effect.gen(function* () {
     for (const entry of yield* fs.readDirectory(directory)) {
       if (!entry.startsWith(`${basename}.`)) continue;
-      const suffix = Number(entry.slice(basename.length + 1));
-      if (!Number.isInteger(suffix) || suffix <= options.maxFiles) continue;
+      const suffixText = entry.slice(basename.length + 1);
+      const suffix = Number(suffixText);
+      if (!Number.isInteger(suffix) || String(suffix) !== suffixText || suffix <= options.maxFiles)
+        continue;
       yield* fs.remove(path.join(directory, entry), { force: true });
     }
   }).pipe(Effect.mapError(failure("prune")));
