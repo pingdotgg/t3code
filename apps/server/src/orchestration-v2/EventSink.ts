@@ -230,10 +230,8 @@ const layerBase: Layer.Layer<
       Effect.fnUntraced(function* (events: ReadonlyArray<OrchestrationV2StoredEvent>) {
         yield* PubSub.publishAll(liveEvents, events);
         for (const [type, pubsub] of liveEventsByType) {
-          yield* PubSub.publishAll(
-            pubsub,
-            events.filter((stored) => stored.event.type === type),
-          );
+          const typed = events.filter((stored) => stored.event.type === type);
+          if (typed.length > 0) yield* PubSub.publishAll(pubsub, typed);
         }
       });
     const runOutcomes = makeRunOutcomeRecorder((threadId) =>
