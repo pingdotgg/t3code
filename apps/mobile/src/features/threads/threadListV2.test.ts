@@ -124,6 +124,21 @@ describe("resolveThreadListV2Status", () => {
     );
   });
 
+  it("shows a run still preparing its worktree as Preparing, not Working", () => {
+    const thread = presentThreadShell(
+      environmentId,
+      decodeThreadShell(
+        makeRawThreadShell({
+          status: "preparing",
+          activeRunId: RunId.make("run-prepare"),
+          latestRunId: RunId.make("run-prepare"),
+        }),
+      ),
+    );
+
+    expect(resolveThreadListV2Status(thread)).toBe("preparing");
+  });
+
   it("shows a waiting guest message as Request, after the agent's own requests", () => {
     const thread = presentThreadShell(
       environmentId,
