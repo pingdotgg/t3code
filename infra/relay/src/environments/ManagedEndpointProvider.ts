@@ -185,6 +185,8 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly environmentId: string;
       readonly expectedTunnelId?: string;
       readonly expectedInactiveBefore?: string;
+      readonly expectedRecoveryEnabled?: boolean;
+      readonly expectedGeneration?: number;
       readonly expectedStatus?: "inactive" | "down";
       readonly markReleased?: boolean;
     }) => Effect.Effect<boolean, ManagedEndpointDeprovisioningFailed>;
@@ -1006,6 +1008,29 @@ const make = Effect.gen(function* () {
       }
       if (input.expectedTunnelId !== undefined && input.expectedTunnelId !== tunnelId) {
         return false;
+      }
+      // Recovery may become usable after the reaper lists the allocation.
+      if (
+        input.expectedGeneration !== undefined &&
+        input.expectedGeneration !== allocation.generation
+      ) {
+        return false;
+      }
+      // Cloudflare reports old inactivity while a registered host is reconnecting.
+      if (
+        input.expectedInactiveBefore !== undefined &&
+        input.expectedRecoveryEnabled !== false &&
+        allocation.recoveryEnabledAt !== null
+      ) {
+        const registeredAt = DateTime.make(allocation.recoveryEnabledAt);
+        const cutoff = DateTime.make(input.expectedInactiveBefore);
+        if (
+          Option.isSome(registeredAt) &&
+          Option.isSome(cutoff) &&
+          registeredAt.value.epochMilliseconds > cutoff.value.epochMilliseconds
+        ) {
+          return false;
+        }
       }
       // Claim before deleting: concurrent provisioning can advance the generation and reuse the tunnel.
       const claimedGeneration = yield* allocations
