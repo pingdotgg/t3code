@@ -8,7 +8,15 @@ import {
   deriveAvailableRevertTurnCounts,
   deriveWorkspaceMutationId,
 } from "./ChatView.logic";
-import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
+import {
+  countDraftSendStatesForTests,
+  draftSendState,
+  recallCheckoutIsRepo,
+  releaseDraftSendStateIfIdle,
+  rememberCheckoutIsRepo,
+  retainDraftSendState,
+  routeSendInFlight,
+} from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { ensureInlineContextReferences } from "../lib/composerContextReferences";
@@ -674,6 +682,91 @@ describe("checkout Git memory", () => {
   it("does not confuse an environment id containing the separator with a path", () => {
     rememberCheckoutIsRepo(EnvironmentId.make("env"), "a:b", false);
     expect(recallCheckoutIsRepo(EnvironmentId.make("env:a"), "b")).toBeUndefined();
+  });
+});
+
+describe("route send state", () => {
+  const mountRoute = (routeKey: string) => {
+    const state = draftSendState(routeKey);
+    return { state, unmount: retainDraftSendState(routeKey, state) };
+  };
+
+  it("drops idle routes once they unmount", () => {
+    const before = countDraftSendStatesForTests();
+    for (let index = 0; index < 50; index += 1) {
+      mountRoute(`route-idle-${index}`).unmount();
+    }
+    expect(countDraftSendStatesForTests()).toBe(before);
+  });
+
+  it("registers nothing for a render that never commits", () => {
+    const before = countDraftSendStatesForTests();
+    draftSendState("route-abandoned");
+    expect(countDraftSendStatesForTests()).toBe(before);
+
+    const committed = mountRoute("route-abandoned");
+    expect(draftSendState("route-abandoned")).toBe(committed.state);
+    committed.unmount();
+    expect(countDraftSendStatesForTests()).toBe(before);
+  });
+
+  it("keeps the same state across a remount while a send is in flight", () => {
+    const first = mountRoute("route-in-flight");
+    first.state.sendInFlight.current = true;
+    first.unmount();
+
+    const second = mountRoute("route-in-flight");
+    expect(second.state).toBe(first.state);
+    expect(second.state.sendInFlight.current).toBe(true);
+    second.unmount();
+
+    const before = countDraftSendStatesForTests();
+    first.state.sendInFlight.current = false;
+    expect(countDraftSendStatesForTests()).toBe(before - 1);
+    expect(draftSendState("route-in-flight")).not.toBe(first.state);
+  });
+
+  it("keeps an uncertain submission until its retry is allowed", () => {
+    const first = mountRoute("route-uncertain");
+    const pendingStarts = retainDraftSendState("route-uncertain", first.state);
+    first.state.sendInFlight.current = true;
+    first.state.sendInFlight.current = false;
+    first.unmount();
+    first.state.uncertainSubmissions.current.set("retry-key", threadId);
+    pendingStarts();
+
+    const second = mountRoute("route-uncertain");
+    expect(second.state).toBe(first.state);
+    expect(second.state.uncertainSubmissions.current.get("retry-key")).toBe(threadId);
+    second.unmount();
+
+    const before = countDraftSendStatesForTests();
+    first.state.uncertainSubmissions.current.delete("retry-key");
+    releaseDraftSendStateIfIdle("route-uncertain", first.state);
+    expect(countDraftSendStatesForTests()).toBe(before - 1);
+  });
+
+  it("restores a state released by a double-invoked effect", () => {
+    const { state, unmount } = mountRoute("route-strict");
+    unmount();
+    const remount = retainDraftSendState("route-strict", state);
+    expect(draftSendState("route-strict")).toBe(state);
+    remount();
+  });
+
+  it("reports a newer send after the earlier state was released", () => {
+    const first = mountRoute("route-restore");
+    first.state.sendInFlight.current = true;
+    first.unmount();
+    first.state.sendInFlight.current = false;
+
+    const second = mountRoute("route-restore");
+    second.state.sendInFlight.current = true;
+    expect(second.state).not.toBe(first.state);
+    expect(routeSendInFlight("route-restore")).toBe(true);
+    second.state.sendInFlight.current = false;
+    expect(routeSendInFlight("route-restore")).toBe(false);
+    second.unmount();
   });
 });
 

@@ -10,7 +10,9 @@ import {
   deriveAvailableRevertTurnCounts,
   deriveThreadPendingBackgroundTasks,
   deriveWorkspaceMutationId,
+  draftSendState,
   presentThreadShellFromProjection,
+  retainDraftSendState,
 } from "./ChatView.logic";
 import { usePullRequestDraftThread } from "./chat/usePullRequestDraftThread";
 import { useComposerSelection } from "./chat/useComposerSelection";
@@ -366,7 +368,7 @@ import {
 } from "./chat/useSystemComposerBanners";
 import { useDraftHeroLayoutTransition } from "./chat/useDraftHeroLayoutTransition";
 import { useLocalDispatchState } from "./chat/useLocalDispatchState";
-import { draftFanoutSelectionsAtom, draftSendState } from "./chat/chatViewSend";
+import { draftFanoutSelectionsAtom } from "./chat/chatViewSend";
 import {
   isCompactCommandMessage,
   type LocalThreadErrorEntry,
@@ -716,7 +718,13 @@ export default function ChatView(props: ChatViewProps) {
   const composerExpandedHeightRef = useRef(0);
   const [scrollToEndClearance, setScrollToEndClearance] = useState(0);
   const fanoutSelectionsAtom = draftFanoutSelectionsAtom(routeThreadKey);
-  const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
+  const routeSendState = draftSendState(routeThreadKey);
+  const { sendInFlight: sendInFlightRef } = routeSendState;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds this route's module-level send state registry entry while mounted, releasing it on unmount once idle
+  useEffect(
+    () => retainDraftSendState(routeThreadKey, routeSendState),
+    [routeSendState, routeThreadKey],
+  );
   const multipleModelSelections = useAtomValue(fanoutSelectionsAtom);
   const setMultipleModelSelections = (
     selections: SetStateAction<ReadonlyArray<ModelSelection> | null>,
@@ -2852,6 +2860,7 @@ export default function ChatView(props: ChatViewProps) {
   const { onResume, isResuming } = useComposerResume({
     environmentId,
     routeThreadKey,
+    routeSendState,
     currentRouteThreadKeyRef,
     activeThread,
     resumableRunId,
@@ -2871,7 +2880,7 @@ export default function ChatView(props: ChatViewProps) {
   });
   const onImplementPlanInNewThread = useImplementPlanInNewThread({
     environmentId,
-    routeThreadKey,
+    routeSendState,
     activeThread,
     activeThreadBranch,
     activeProposedPlan,
@@ -2887,6 +2896,7 @@ export default function ChatView(props: ChatViewProps) {
   const { onSend } = useComposerSend({
     environmentId,
     routeThreadKey,
+    routeSendState,
     currentRouteThreadKeyRef,
     draftId,
     draftThread,
