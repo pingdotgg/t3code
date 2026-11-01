@@ -90,7 +90,9 @@ export const makeThreadLiveEventCoalescer = Effect.fn(
     E | LiveStreamBufferError | Cause.Done
   >();
   const mutex = yield* Semaphore.make(1);
-  let pendingUpdates: Array<RetainedLiveItem<ThreadLiveEvent>> = [];
+  const pendingUpdates = new Set<RetainedLiveItem<ThreadLiveEvent>>();
+  const latestUpdates = new Map<string, RetainedLiveItem<ThreadLiveEvent>>();
+  const pendingKeys = new Map<ThreadLiveEvent["event"]["type"], string>();
   let windowGeneration = 0;
   let windowFiber: Fiber.Fiber<void, never> | null = null;
   let closed = false;
@@ -105,11 +107,13 @@ export const makeThreadLiveEventCoalescer = Effect.fn(
   });
 
   const flushPending = Effect.fn("ThreadLiveEventCoalescer.flushPending")(function* () {
-    if (pendingUpdates.length === 0) {
+    if (pendingUpdates.size === 0) {
       return;
     }
-    const items = pendingUpdates;
-    pendingUpdates = [];
+    const items = Array.from(pendingUpdates);
+    pendingUpdates.clear();
+    latestUpdates.clear();
+    pendingKeys.clear();
     yield* Queue.offerAll(output, items);
   }, Effect.uninterruptible);
 
@@ -140,28 +144,28 @@ export const makeThreadLiveEventCoalescer = Effect.fn(
         (input) =>
           Effect.gen(function* () {
             yield* budget.check;
-            const startsWindow = pendingUpdates.length === 0;
-            if (input.kind === "event") {
-              yield* budget
-                .replace(
-                  pendingUpdates,
-                  coalesceLiveUpdatedEvents([...pendingUpdates.map((item) => item.value), input]),
-                )
-                .pipe(
-                  Effect.tap((items) =>
-                    Effect.sync(() => {
-                      pendingUpdates = items;
-                    }),
-                  ),
-                  Effect.uninterruptible,
-                );
-            }
-            if (input.kind === "event" && coalescibleUpdateKey(input) !== null) {
+            const startsWindow = pendingUpdates.size === 0;
+            const key = input.kind === "event" ? coalescibleUpdateKey(input) : null;
+            if (input.kind === "event" && key !== null) {
+              const pendingKey = pendingKeys.get(input.event.type);
+              if (pendingKey !== undefined && pendingKey !== key) latestUpdates.clear();
+              pendingKeys.set(input.event.type, key);
+              const previous = latestUpdates.get(key);
+              yield* budget.replace(previous ? [previous] : [], [input]).pipe(
+                Effect.tap(([item]) =>
+                  Effect.sync(() => {
+                    if (previous) pendingUpdates.delete(previous);
+                    pendingUpdates.add(item!);
+                    latestUpdates.set(key, item!);
+                  }),
+                ),
+                Effect.uninterruptible,
+              );
               if (startsWindow) {
                 const generation = ++windowGeneration;
                 windowFiber = yield* Effect.forkIn(flushWindow(generation), coalescerScope);
               }
-              if (pendingUpdates.length >= MAX_PENDING_UPDATES) {
+              if (pendingUpdates.size >= MAX_PENDING_UPDATES) {
                 yield* cancelWindow();
                 windowGeneration += 1;
                 yield* flushPending();
@@ -169,6 +173,12 @@ export const makeThreadLiveEventCoalescer = Effect.fn(
               return;
             }
 
+            if (input.kind === "event") {
+              yield* budget.retain(input).pipe(
+                Effect.tap((item) => Effect.sync(() => pendingUpdates.add(item))),
+                Effect.uninterruptible,
+              );
+            }
             yield* cancelWindow();
             windowGeneration += 1;
             yield* flushPending();
@@ -194,7 +204,9 @@ export const makeThreadLiveEventCoalescer = Effect.fn(
         windowGeneration += 1;
         yield* cancelWindow();
         budget.release(pendingUpdates);
-        pendingUpdates = [];
+        pendingUpdates.clear();
+        latestUpdates.clear();
+        pendingKeys.clear();
         budget.release(yield* Queue.clear(output).pipe(Effect.orElseSucceed(() => [])));
         if (cause) {
           yield* Queue.failCause(output, cause);
