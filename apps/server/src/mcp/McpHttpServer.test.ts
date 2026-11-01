@@ -980,6 +980,7 @@ it.effect("accepts case-insensitive MCP bearer schemes and diagnoses rejected cr
       const oauth = yield* auth.issueMcpClientSession({
         label: "MCP header test",
         access: "read-only",
+        peerLink: false,
         client: { deviceType: "bot" },
       });
       yield* HttpRouter.serve(
