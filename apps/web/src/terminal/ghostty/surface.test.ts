@@ -127,6 +127,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       canvas,
       beginPath() {},
       clip() {},
+      getTransform: () => ({ d: 1 }),
       rect() {},
       resetTransform() {},
       restore() {},
