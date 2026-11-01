@@ -200,8 +200,8 @@ prepared earlier instead of checking out every file. The desktop app includes it
 another way, the setting shows the command to install it. Prepare commits with
 `git worktree-fast prepare` or `git worktree-fast auto enable` in the repository, then turn on
 **Settings → Worktrees → Use git-worktree-fast** under Advanced. The setting is per machine. Commits
-you have not prepared, and any failure, use Git's normal checkout, and the worktrees it makes are
-ordinary Git worktrees.
+you have not prepared use Git's normal checkout, and so does a failed fast clone that left nothing
+behind. The worktrees it makes are ordinary Git worktrees.
 
 ## Storage cleanup
 

@@ -4200,9 +4200,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         },
       );
     if (options?.worktreeFast === true && hostPlatform === "darwin") {
+      const resolvedWorktreePath = path.resolve(input.cwd, worktreePath);
       // git-worktree-fast hands a missing parent folder to Git's slow checkout.
       yield* fileSystem
-        .makeDirectory(path.dirname(worktreePath), { recursive: true })
+        .makeDirectory(path.dirname(resolvedWorktreePath), { recursive: true })
         .pipe(Effect.ignore);
       yield* addWorktree(
         "worktree-fast",
@@ -4215,7 +4216,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         Effect.catch((error) =>
           Effect.gen(function* () {
             // A worktree left behind by the failed add would make Git's retry fail for the wrong reason.
-            if (yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true))) {
+            if (
+              yield* fileSystem.exists(resolvedWorktreePath).pipe(Effect.orElseSucceed(() => true))
+            ) {
               return yield* error;
             }
             yield* Effect.logWarning(
