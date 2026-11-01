@@ -20,6 +20,7 @@ import * as CursorKeychain from "./CursorKeychain.ts";
 
 const CursorCredentials = Schema.Struct({ accessToken: Schema.optional(Schema.String) });
 const DEFAULT_CURSOR_API_ENDPOINT = "https://api2.cursor.sh";
+const CURSOR_USAGE_URL = "https://cursor.com/dashboard?tab=usage";
 const decodeCredentials = Schema.decodeEffect(Schema.fromJsonString(CursorCredentials));
 const CursorUsageResponse = Schema.Struct({
   billingCycleEnd: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
@@ -56,9 +57,16 @@ export function cursorUsageResponseToLimits(
       });
     }
   }
-  return windows.length > 0
-    ? makeUsageLimits({ checkedAt, windows })
-    : makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
+  if (windows.length > 0) return makeUsageLimits({ checkedAt, windows });
+  // Enterprise (token-based) accounts answer without plan percentages.
+  return {
+    ...makeUnavailableUsageLimits({
+      checkedAt,
+      reason: "unsupported",
+      message: "Cursor does not report plan limits for this account.",
+    }),
+    externalUsage: { label: "Cursor usage", url: CURSOR_USAGE_URL },
+  };
 }
 
 export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function* (
