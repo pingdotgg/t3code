@@ -32,7 +32,10 @@ import { AgentScope, AgentScopeThreadId, RAISE_OOM_SCORE_LINE } from "@t3tools/s
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
-import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./stderr.ts";
+import {
+  appendStderrTail,
+  sanitizeStderrExcerpt,
+} from "@t3tools/provider-core/server/stderrExcerpt";
 import {
   collectSessionConfigOptionValues,
   decideToolCallUpdateEmission,
@@ -1296,7 +1299,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           Effect.ignore,
           Effect.andThen(Ref.get(stderrTailRef)),
           Effect.map((tail) => {
-            const stderr = sanitizeAcpStderrExcerpt(tail, homeDirectory);
+            const stderr = sanitizeStderrExcerpt(tail, homeDirectory);
             return stderr.length === 0
               ? error
               : new EffectAcpErrors.AcpProcessExitedError({
@@ -1629,7 +1632,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   yield* child.stderr.pipe(
     Stream.decodeText(),
     Stream.runForEach((chunk) =>
-      Ref.update(stderrTailRef, (current) => appendAcpStderrTail(current, chunk)).pipe(
+      Ref.update(stderrTailRef, (current) => appendStderrTail(current, chunk)).pipe(
         Effect.andThen(
           options.onStderr ? options.onStderr(chunk.slice(-maxStderrChunkLength)) : Effect.void,
         ),

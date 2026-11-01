@@ -135,7 +135,10 @@ optional-service layer. Don't route around the layer with an imperative runtime.
   lives only in `cause`. Expose a category, length, count, or a URL's protocol and host instead.
   `DeviceBootError.diagnostics` is a deliberate exception: authorized device users and agents
   need the device hub's launch command and failure text to diagnose host setup. It is capped at
-  2,000 characters and included in the error message; other service errors keep the rule above.
+  2,000 characters and included in the error message. Provider process-exit stderr
+  (`PiRpcError.stderr`, `AcpProcessExitedError.stderr`) is the other: a crashed provider or
+  extension leaves its cause nowhere else. It is the last 4,096 characters passed through
+  `sanitizeStderrExcerpt`. Other service errors keep the rule above.
 - **Translation.** Construct the error where the failure happens, and map it to a transport error
   only in the transport. A translation boundary passes through domain errors already in the target
   channel and wraps only unknown or lower-level failures. Map each failure where its context is

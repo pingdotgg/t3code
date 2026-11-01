@@ -34,10 +34,6 @@
     "./server/sessionConfig": {
       "types": "./src/server/sessionConfig.ts",
       "import": "./src/server/sessionConfig.ts"
-    },
-    "./server/stderr": {
-      "types": "./src/server/stderr.ts",
-      "import": "./src/server/stderr.ts"
     }
   },
   "scripts": {
