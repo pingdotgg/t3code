@@ -530,23 +530,42 @@ const GIT_FAILURE_QUOTED_URL_QUERY = /(['"])([a-z][a-z0-9+.-]*:\/\/[^\s?]*)\?.*\
 const GIT_FAILURE_URL_QUERY = /\b([a-z][a-z0-9+.-]*:\/\/[^\s?]*)\?[^\s]*/gi;
 
 function redactGitFailureText(text: string, args: readonly string[]): string {
-  let redacted = text;
-  // Redact complete argv values before shorter values or credential patterns can split them.
-  const values = args
-    .map((arg) =>
-      arg.startsWith("-") ? (arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : "") : arg,
-    )
-    .filter((value) => value.length > 0)
-    .sort((left, right) => right.length - left.length);
-  for (const value of values) {
-    redacted = redacted.split(value).join("[redacted]");
+  // Find every sensitive span before replacements can hide overlapping credentials or argv.
+  const spans: Array<{ start: number; end: number }> = [];
+  for (const pattern of [
+    GIT_FAILURE_QUOTED_URL_QUERY,
+    GIT_FAILURE_URL_QUERY,
+    GIT_FAILURE_URL_WITH_USERINFO,
+    /\b(Bearer|Basic)\s+[^\s,;]+/gi,
+    /\bsk-[A-Za-z0-9_-]{16,}\b/g,
+  ]) {
+    for (const match of text.matchAll(pattern)) {
+      spans.push({ start: match.index, end: match.index + match[0].length });
+    }
   }
-  return redacted
-    .replace(GIT_FAILURE_QUOTED_URL_QUERY, "$1$2$1")
-    .replace(GIT_FAILURE_URL_QUERY, "$1")
-    .replace(GIT_FAILURE_URL_WITH_USERINFO, "$1")
-    .replace(/\b(Bearer|Basic)\s+[^\s,;]+/gi, "$1 [redacted]")
-    .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/g, "[redacted]");
+  for (const arg of args) {
+    const value = arg.startsWith("-")
+      ? arg.includes("=")
+        ? arg.slice(arg.indexOf("=") + 1)
+        : ""
+      : arg;
+    if (value.length === 0) continue;
+    let start = text.indexOf(value);
+    while (start !== -1) {
+      spans.push({ start, end: start + value.length });
+      start = text.indexOf(value, start + 1);
+    }
+  }
+  spans.sort((left, right) => left.start - right.start);
+  let redacted = "";
+  let end = 0;
+  for (const span of spans) {
+    if (span.start >= end) {
+      redacted += text.slice(end, span.start) + "[redacted]";
+    }
+    end = Math.max(end, span.end);
+  }
+  return redacted + text.slice(end);
 }
 
 function gitFailureExcerpt(

@@ -1601,27 +1601,32 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
-    it.effect("surfaces a rejected commit hook's output in the failure detail", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        yield* initRepoWithCommit(cwd);
-        yield* writeTextFile(cwd, "README.md", "changed\n");
-        yield* git(cwd, ["add", "README.md"]);
-        yield* writeTextFile(
-          cwd,
-          ".git/hooks/pre-commit",
-          "#!/bin/sh\necho 'lint: fix formatting in README.md' >&2\nexit 1\n",
-        );
-        yield* fs.chmod(path.join(cwd, ".git/hooks/pre-commit"), 0o755);
+    it.effect.each(["https", "Bearer"])(
+      "surfaces a rejected commit hook safely (subject: %s)",
+      (subject) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* initRepoWithCommit(cwd);
+          yield* writeTextFile(cwd, "README.md", "changed\n");
+          yield* git(cwd, ["add", "README.md"]);
+          yield* writeTextFile(
+            cwd,
+            ".git/hooks/pre-commit",
+            "#!/bin/sh\necho 'error: lint: fix formatting in README.md; https://user:private-secret@host/repo?token=query-secret; Authorization: Bearer TOKEN123' >&2\nexit 1\n",
+          );
+          yield* fs.chmod(path.join(cwd, ".git/hooks/pre-commit"), 0o755);
 
-        const error = yield* driver.commit(cwd, "hooked", "").pipe(Effect.flip);
+          const error = yield* driver.commit(cwd, subject, "").pipe(Effect.flip);
 
-        assert.notProperty(error, "reason");
-        assert.include(error.detail, "lint: fix formatting in README.md");
-      }),
+          assert.notProperty(error, "reason");
+          assert.include(error.detail, "lint: fix formatting in README.md");
+          for (const secret of ["private-secret", "query-secret", "TOKEN123"]) {
+            assert.notInclude(error.message, secret);
+          }
+        }),
     );
 
     // regression: #8645 name the cause of a failed git command
