@@ -4,6 +4,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -145,7 +146,7 @@ function runShellEnvironment(input: {
 }
 
 describe("DesktopShellEnvironment", () => {
-  it.effect("does not wait for discovery when the cache is missing", () =>
+  it.effect("does not wait for discovery and reports unprepared when the cache is missing", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
@@ -164,6 +165,7 @@ describe("DesktopShellEnvironment", () => {
             const startup = yield* service.installIntoProcess.pipe(Effect.forkChild);
             yield* Deferred.await(started);
             assert.isDefined(startup.pollUnsafe());
+            assert.isFalse(yield* Fiber.join(startup));
             yield* Deferred.succeed(release, undefined);
             return yield* service.awaitDiscovery;
           }),
@@ -267,37 +269,40 @@ describe("DesktopShellEnvironment", () => {
     "not json",
     '{"version":2,"key":"old","environment":{"PATH":"/bad/bin"}}',
     '{"version":1,"key":"other-shell","environment":{"PATH":"/bad/bin"}}',
-  ])("ignores an unusable cache and still starts before discovery: %s", (contents) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const stateDir = yield* fs.makeTempDirectoryScoped();
-      yield* fs.writeFileString(`${stateDir}/shell-environment-cache.json`, contents);
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
-      yield* runShellEnvironment({
-        env,
-        stateDir,
-        platform: "darwin",
-        handler: () => "",
-        processSpawner: ChildProcessSpawner.make(() =>
-          Deferred.succeed(started, undefined).pipe(
-            Effect.andThen(Deferred.await(release)),
-            Effect.as(makeProcess(envOutput({ PATH: "/fresh/bin" }))),
+  ])(
+    "ignores an unusable cache, reports unprepared and still starts before discovery: %s",
+    (contents) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const stateDir = yield* fs.makeTempDirectoryScoped();
+        yield* fs.writeFileString(`${stateDir}/shell-environment-cache.json`, contents);
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+        yield* runShellEnvironment({
+          env,
+          stateDir,
+          platform: "darwin",
+          handler: () => "",
+          processSpawner: ChildProcessSpawner.make(() =>
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.as(makeProcess(envOutput({ PATH: "/fresh/bin" }))),
+            ),
           ),
-        ),
-        use: (service) =>
-          Effect.gen(function* () {
-            const startup = yield* service.installIntoProcess.pipe(Effect.forkChild);
-            yield* Deferred.await(started);
-            assert.isDefined(startup.pollUnsafe());
-            assert.equal(env.PATH, "/usr/bin");
-            yield* Deferred.succeed(release, undefined);
-            return yield* service.awaitDiscovery;
-          }),
-      });
-      assert.equal(env.PATH, "/fresh/bin:/usr/bin");
-    }).pipe(Effect.provide(NodeServices.layer)),
+          use: (service) =>
+            Effect.gen(function* () {
+              const startup = yield* service.installIntoProcess.pipe(Effect.forkChild);
+              yield* Deferred.await(started);
+              assert.isDefined(startup.pollUnsafe());
+              assert.isFalse(yield* Fiber.join(startup));
+              assert.equal(env.PATH, "/usr/bin");
+              yield* Deferred.succeed(release, undefined);
+              return yield* service.awaitDiscovery;
+            }),
+        });
+        assert.equal(env.PATH, "/fresh/bin:/usr/bin");
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -338,7 +343,7 @@ describe("DesktopShellEnvironment", () => {
           handler: () => "",
           use: (service) =>
             Effect.gen(function* () {
-              yield* service.installIntoProcess;
+              assert.isTrue(yield* service.installIntoProcess);
               const replay = yield* Stream.runHead(service.updates);
               assert.isTrue(Option.isSome(replay));
               if (Option.isSome(replay)) {
