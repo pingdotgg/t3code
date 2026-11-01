@@ -1934,15 +1934,14 @@ const make = Effect.gen(function* () {
       readonly interactionMode: ProviderInteractionMode;
     },
   ): Effect.fn.Return<ScheduledTask, OrchestratorMcpFailure> {
-    const { tasks } = yield* scheduledTasks
-      .list()
+    const task = yield* scheduledTasks
+      .find(scheduledTaskId)
       .pipe(
         Effect.mapError((error) =>
           failure("orchestration_error", `Could not load scheduled task: ${error.message}`),
         ),
       );
-    const task = tasks.find((candidate) => candidate.id === scheduledTaskId);
-    if (task === undefined) {
+    if (task === null) {
       return yield* failure("task_not_found", `Scheduled task ${scheduledTaskId} was not found.`);
     }
     for (const modes of yield* scheduledTaskRunModes(task)) {

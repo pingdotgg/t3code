@@ -230,6 +230,7 @@ export class ScheduledTaskService extends Context.Service<
   ScheduledTaskService,
   {
     readonly list: () => Effect.Effect<ScheduledTaskListResult, ScheduledTaskError>;
+    readonly find: (id: ScheduledTaskId) => Effect.Effect<ScheduledTask | null, ScheduledTaskError>;
     readonly subscribeList: () => Stream.Stream<ScheduledTaskListResult, ScheduledTaskError>;
     readonly upsert: (
       input: ScheduledTaskUpsertInput,
@@ -2335,6 +2336,7 @@ export const layer = Layer.effect(
 
     return ScheduledTaskService.of({
       list,
+      find: findTask,
       subscribeList,
       upsert,
       setEnabled,

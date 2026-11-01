@@ -430,17 +430,13 @@ it("readThread and sendToThread reach threads in other projects", async () => {
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
-          list: () =>
+          find: () =>
             Effect.succeed({
-              tasks: [
-                {
-                  id: "task-foreign",
-                  projectId: foreignProjectId,
-                  runtimeMode: "approval-required",
-                  interactionMode: "default",
-                } as never,
-              ],
-            }),
+              id: "task-foreign",
+              projectId: foreignProjectId,
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+            } as never),
         } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
