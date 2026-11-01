@@ -7,8 +7,13 @@ import { describe, expect, it } from "@effect/vitest";
 import { classifyReachability, type ReachabilityFacts } from "./ConnectReachability.ts";
 
 const checkedAt = "2026-10-19T00:00:00.000Z";
-const connected = { readyConnections: 4, hostname: "env.example.test", protocol: "quic" };
-const notConnected = { readyConnections: 0, hostname: null, protocol: null };
+const connected = {
+  readyConnections: 4,
+  hostname: "env.example.test",
+  origin: null,
+  protocol: "quic",
+};
+const notConnected = { readyConnections: 0, hostname: null, origin: null, protocol: null };
 const facts = (overrides: Partial<ReachabilityFacts>): ReachabilityFacts => ({
   managedTunnelConfigured: true,
   connector: connected,
@@ -40,7 +45,12 @@ describe("classifyReachability", () => {
     expect(
       classifyReachability(
         facts({
-          connector: { readyConnections: null, hostname: "env.example.test", protocol: null },
+          connector: {
+            readyConnections: null,
+            hostname: "env.example.test",
+            origin: null,
+            protocol: null,
+          },
           endpoint: { kind: "status", status: 502 },
           edgeReachable: false,
         }),
@@ -51,7 +61,12 @@ describe("classifyReachability", () => {
     expect(
       classifyReachability(
         facts({
-          connector: { readyConnections: null, hostname: "env.example.test", protocol: null },
+          connector: {
+            readyConnections: null,
+            hostname: "env.example.test",
+            origin: null,
+            protocol: null,
+          },
           endpoint: { kind: "dns_failed" },
           edgeReachable: false,
         }),

@@ -162,6 +162,7 @@ import {
   managedTunnelStartupAction,
   retryDesiredLinkReconcile,
   retryManagedTunnelRegistration,
+  watchManagedTunnelOrigin,
 } from "./cloud/managedTunnelStartup.ts";
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as CloudCliState from "./cloud/CliState.ts";
@@ -937,6 +938,28 @@ const layerMakeServer = Layer.unwrap(
               Stream.runForEach(recoverManagedTunnel),
               Effect.forkScoped,
             );
+            yield* watchManagedTunnelOrigin({
+              localOrigin,
+              readIngressOrigin: endpointRuntime.inspectConnector.pipe(
+                Effect.map((connector) => connector?.origin ?? null),
+              ),
+              // Like startup, a publish-only link never routes the tunnel to this host.
+              register: CloudCliState.readCliDesiredLinkMode.pipe(
+                Effect.flatMap((mode) =>
+                  mode === "publish_only"
+                    ? Effect.void
+                    : cloudLink
+                        .registerManagedTunnelRecovery(localOrigin)
+                        .pipe(
+                          Effect.flatMap((registration) =>
+                            registration.status === "recovery_required"
+                              ? endpointRuntime.requestRecovery(registration.config)
+                              : Effect.void,
+                          ),
+                        ),
+                ),
+              ),
+            }).pipe(Effect.forkScoped);
             const wantsCliLink = hasCloudPublicConfig
               ? yield* CloudCliState.readCliDesiredCloudLink.pipe(
                   Effect.catch((cause) =>

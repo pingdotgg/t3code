@@ -50,6 +50,8 @@ export interface ConnectorFacts {
   readonly readyConnections: number | null;
   /** The public tunnel hostname from the remote config cloudflared receives once it connects. */
   readonly hostname: string | null;
+  /** The local origin that remote config routes the public hostname to. */
+  readonly origin: string | null;
   readonly protocol: string | null;
 }
 
@@ -103,7 +105,14 @@ const ConnectorReadyBody = Schema.Struct({ readyConnections: Schema.Number });
 const ConnectorConfigBody = Schema.Struct({
   config: Schema.Struct({
     ingress: Schema.optional(
-      Schema.NullOr(Schema.Array(Schema.Struct({ hostname: Schema.optional(Schema.String) }))),
+      Schema.NullOr(
+        Schema.Array(
+          Schema.Struct({
+            hostname: Schema.optional(Schema.String),
+            service: Schema.optional(Schema.String),
+          }),
+        ),
+      ),
     ),
   }),
 });
@@ -774,7 +783,12 @@ export const make = Effect.gen(function* () {
     }
     const protocol = yield* Ref.get(active.protocol);
     if (!(yield* Deferred.isDone(active.metricsAddress))) {
-      return { readyConnections: null, hostname: null, protocol } satisfies ConnectorFacts;
+      return {
+        readyConnections: null,
+        hostname: null,
+        origin: null,
+        protocol,
+      } satisfies ConnectorFacts;
     }
     const metricsUrl = `http://${yield* Deferred.await(active.metricsAddress)}`;
     const [ready, config] = yield* Effect.all(
@@ -784,9 +798,11 @@ export const make = Effect.gen(function* () {
       ],
       { concurrency: 2 },
     );
+    const hostnameRule = config?.config.ingress?.find((rule) => rule.hostname);
     return {
       readyConnections: ready?.readyConnections ?? null,
-      hostname: config?.config.ingress?.find((rule) => rule.hostname)?.hostname ?? null,
+      hostname: hostnameRule?.hostname ?? null,
+      origin: hostnameRule?.service ?? null,
       protocol,
     } satisfies ConnectorFacts;
   });
