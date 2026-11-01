@@ -376,6 +376,44 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("hides synced plugins from local settings but not shared project settings", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const workspace = path.join(tempDir, "workspace");
+      const bucketName =
+        "11111111-2222-4333-8444-555555555555_66666666-7777-4888-9999-aaaaaaaaaaaa";
+      const synced = path.join(configDir, "plugins", "synced");
+      yield* writeSkill(path.join(synced, bucketName, "pstack", "skills"), "poteto-mode", "# S");
+      yield* fs.writeFileString(
+        path.join(synced, bucketName, "manifest.json"),
+        '{"plugins":[{"name":"pstack"}]}',
+      );
+      yield* fs.writeFileString(path.join(synced, `.bucket-${bucketName}`), "");
+      yield* fs.makeDirectory(path.join(workspace, ".claude"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workspace, ".claude", "settings.json"),
+        '{"syncClaudeAiPlugins":false}',
+      );
+      const environment = {
+        CLAUDE_CODE_ORGANIZATION_UUID: "11111111-2222-4333-8444-555555555555",
+        CLAUDE_CODE_ACCOUNT_UUID: "66666666-7777-4888-9999-AAAAAAAAAAAA",
+      };
+      const names = Effect.map(
+        discoverClaudeSkills({ homePath: configDir }, workspace, environment),
+        (skills) => skills.map((skill) => skill.name),
+      );
+      assert.deepEqual(yield* names, ["pstack:poteto-mode"]);
+      yield* fs.writeFileString(
+        path.join(workspace, ".claude", "settings.local.json"),
+        '{"syncClaudeAiPlugins":false}',
+      );
+      assert.deepEqual(yield* names, []);
+    }),
+  );
+
   it.effect("discovers user and project skills with frontmatter metadata", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
