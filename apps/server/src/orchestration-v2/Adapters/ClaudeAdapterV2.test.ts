@@ -12499,13 +12499,60 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("resolves a subagent's model and effort against the instance's custom models", () =>
+  it.effect.each([
+    {
+      route: "bare",
+      reportedModel: "gateway-route",
+      tagged: false,
+      selection: { model: "gateway-route", options: [{ id: "effort", value: "high" }] },
+      contextWindow: undefined,
+    },
+    {
+      route: "expanded",
+      reportedModel: "gateway-route[1m]",
+      tagged: false,
+      selection: {
+        model: "gateway-route",
+        options: [
+          { id: "contextWindow", value: "1m" },
+          { id: "effort", value: "high" },
+        ],
+      },
+      contextWindow: 1_000_000,
+    },
+    {
+      route: "explicitly tagged",
+      reportedModel: "gateway-route[1m]",
+      tagged: true,
+      selection: { model: "gateway-route[1m]", options: [{ id: "effort", value: "high" }] },
+      contextWindow: 1_000_000,
+    },
+    {
+      route: "unconfigured",
+      reportedModel: "unconfigured-route[1m]",
+      tagged: false,
+      selection: { model: "unconfigured-route[1m]" },
+      contextWindow: undefined,
+    },
+  ])("resolves custom subagent models, effort, and $route context", (testCase) =>
     Effect.scoped(
       Effect.gen(function* () {
         const TUNED_TOOL_USE_ID = "toolu-effort-custom-tuned";
         const SHADOW_TOOL_USE_ID = "toolu-effort-custom-shadow";
+        const CONTEXT_TOOL_USE_ID = "toolu-context-custom";
         const harness = yield* makeWakeHarnessWithOptions({
-          settings: CUSTOM_MODEL_CLAUDE_SETTINGS,
+          settings: {
+            ...CUSTOM_MODEL_CLAUDE_SETTINGS,
+            customModels: [
+              ...CUSTOM_MODEL_CLAUDE_SETTINGS.customModels,
+              ...CUSTOM_CONTEXT_CLAUDE_SETTINGS.customModels,
+              ...(testCase.tagged
+                ? CUSTOM_CONTEXT_CLAUDE_SETTINGS.customModels.flatMap((entry) =>
+                    typeof entry === "string" ? [] : [{ ...entry, slug: "gateway-route[1m]" }],
+                  )
+                : []),
+            ],
+          },
         });
         const now = yield* DateTime.now;
         yield* harness.runtime.startTurn(
@@ -12551,12 +12598,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     prompt: "Check another thing.",
                   },
                 },
+                {
+                  type: "tool_use",
+                  id: CONTEXT_TOOL_USE_ID,
+                  name: "Agent",
+                  input: {
+                    description: "Context",
+                    subagent_type: "general-purpose",
+                    model: "gateway-route",
+                    effort: "high",
+                    prompt: "Check the context window.",
+                  },
+                },
               ],
             },
             uuid: "00000000-0000-4000-8000-000000000231",
             session_id: WAKE_NATIVE_SESSION,
           }),
-          ...[TUNED_TOOL_USE_ID, SHADOW_TOOL_USE_ID].map((id, index) =>
+          ...[TUNED_TOOL_USE_ID, SHADOW_TOOL_USE_ID, CONTEXT_TOOL_USE_ID].map((id, index) =>
             claudeSdkFrame({
               type: "system",
               subtype: "task_started",
@@ -12568,8 +12627,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               session_id: WAKE_NATIVE_SESSION,
             }),
           ),
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: CONTEXT_TOOL_USE_ID,
+            message: {
+              model: testCase.reportedModel,
+              id: "msg_custom_context_observed",
+              type: "message",
+              role: "assistant",
+              content: [{ type: "text", text: "Checking." }],
+            },
+            uuid: "00000000-0000-4000-8000-000000000235",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
           makeResultFrame({
-            uuid: "00000000-0000-4000-8000-000000000234",
+            uuid: "00000000-0000-4000-8000-000000000236",
             result: "Spawned the subagents.",
           }),
         ]) {
@@ -12592,7 +12664,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             options: [{ id: "effort", value: "brutal" }],
           },
           [`task-${SHADOW_TOOL_USE_ID}`]: { instanceId, model: "opus" },
+          [`task-${CONTEXT_TOOL_USE_ID}`]: { instanceId, ...testCase.selection },
         });
+        assert.strictEqual(
+          harness.runtime.getModelContextWindow?.(selections[`task-${CONTEXT_TOOL_USE_ID}`]),
+          testCase.contextWindow,
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

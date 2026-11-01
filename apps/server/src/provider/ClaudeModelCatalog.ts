@@ -144,6 +144,28 @@ export function resolveClaudeModelSlug(catalog: ClaudeModelCatalog, slugOrAlias:
   return resolveClaudeCatalogModel(catalog, slugOrAlias)?.model.slug ?? slugOrAlias;
 }
 
+export function resolveClaudeCatalogModelSelection(
+  catalog: ClaudeModelCatalog,
+  instanceId: ModelSelection["instanceId"],
+  model: string,
+): ModelSelection {
+  const exact = resolveClaudeCatalogModel(catalog, model);
+  if (exact) return { instanceId, model: exact.model.slug };
+
+  for (const entry of catalog.models) {
+    for (const [id, suffixes] of Object.entries(entry.runtime.modelSuffixes ?? {})) {
+      for (const [value, suffix] of Object.entries(suffixes)) {
+        if (!suffix || !model.toLowerCase().endsWith(suffix.toLowerCase())) continue;
+        const base = resolveClaudeCatalogModel(catalog, model.slice(0, -suffix.length));
+        if (base !== entry) continue;
+        return { instanceId, model: entry.model.slug, options: [{ id, value }] };
+      }
+    }
+  }
+
+  return { instanceId, model };
+}
+
 export function getClaudeCatalogModelCapabilities(
   catalog: ClaudeModelCatalog,
   slugOrAlias: string | null | undefined,

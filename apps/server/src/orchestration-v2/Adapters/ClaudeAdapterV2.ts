@@ -160,6 +160,7 @@ import {
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   resolveClaudeCatalogContextWindowTokens,
+  resolveClaudeCatalogModelSelection,
   type ClaudeModelCatalog,
   getClaudeCatalogModelCapabilities,
   resolveClaudeModelSlug,
@@ -4147,14 +4148,24 @@ function claudeSubagentModelSelection(
   model: string,
   effort: string | undefined,
 ): ModelSelection {
-  const descriptor = getClaudeCatalogModelCapabilities(catalog, model).optionDescriptors?.find(
-    (candidate) => candidate.id === "effort",
-  );
+  const selection = resolveClaudeCatalogModelSelection(catalog, instanceId, model);
+  const descriptor = getClaudeCatalogModelCapabilities(
+    catalog,
+    selection.model,
+  ).optionDescriptors?.find((candidate) => candidate.id === "effort");
   const offered =
     effort !== undefined &&
     descriptor?.type === "select" &&
     descriptor.options.some((option) => option.id === effort);
-  return { instanceId, model, ...(offered ? { options: [{ id: "effort", value: effort }] } : {}) };
+  return offered
+    ? {
+        ...selection,
+        options: [
+          ...(selection.options?.filter((option) => option.id !== "effort") ?? []),
+          { id: "effort", value: effort },
+        ],
+      }
+    : selection;
 }
 
 const PENDING_CLAUDE_SUBAGENT_CAP = 64;
