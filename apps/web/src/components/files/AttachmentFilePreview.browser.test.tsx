@@ -2468,7 +2468,7 @@ async function workspacePdfPreview() {
         [original, updated, shorter, shrunk, single].forEach(URL.revokeObjectURL),
     };
   })();
-  const threadId = ThreadId.make(crypto.randomUUID());
+  const threadId = ThreadId.make(urls.original);
   const preview = (src: string, mutation: string, path = "/repo/planning.pdf") => {
     assetUrlState.mockReturnValue({
       _tag: "Success",
