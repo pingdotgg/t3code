@@ -1677,6 +1677,74 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("prices OpenCode Z.AI subscriptions with qualified rates and keeps explicit costs", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const directory = NodePath.join(home, "opencode", "storage", "message", "session-1");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(directory, { recursive: true });
+        for (const [index, cost] of [0, 0.25].entries()) {
+          await NodeFSP.writeFile(
+            NodePath.join(directory, `msg-${index}.json`),
+            encodeUnknownJsonString({
+              id: `msg-${index}`,
+              sessionID: "session-1",
+              role: "assistant",
+              providerID: "zai-coding-plan",
+              modelID: "glm-5.3",
+              time: { created: Date.parse("2026-08-01T10:00:00Z") },
+              tokens: { input: 100, output: 20, cache: { read: 30 } },
+              cost,
+            }),
+          );
+        }
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const summary = yield* service.readSummary(WINDOW);
+        const bucket = summary.buckets.find((bucket) => bucket.provider === "opencode");
+        assert.strictEqual(bucket?.model, "glm-5.3");
+        assert.strictEqual(bucket?.records, 2);
+        assert.closeTo(bucket?.costUsd ?? -1, 0.250215, 1e-12);
+        assert.strictEqual(bucket?.unpricedRecords, 0);
+        yield* service.awaitPersisted;
+        const restarted = yield* UsageService.make;
+        assert.deepStrictEqual((yield* restarted.readSummary(WINDOW)).buckets, summary.buckets);
+        const settingsService = yield* ServerSettings.ServerSettingsService;
+        yield* settingsService.updateSettings({
+          usagePriceOverrides: {
+            "glm-5.3": {
+              inputCostPerMillionTokens: 2,
+              outputCostPerMillionTokens: 8,
+              cacheReadCostPerMillionTokens: 0.5,
+            },
+          },
+        });
+        const overridden = yield* restarted.readSummary(WINDOW);
+        const custom = overridden.buckets.find((bucket) => bucket.provider === "opencode");
+        assert.closeTo(custom?.costUsd ?? -1, 0.00075, 1e-12);
+        assert.strictEqual(custom?.costSource, "modelPriced");
+        assert.deepStrictEqual(custom?.totals, bucket?.totals);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-opencode-zai",
+            home,
+            settings,
+            ratesDocument: {
+              "zai/glm-5.3": {
+                input_cost_per_token: 1e-6,
+                output_cost_per_token: 5e-6,
+                cache_read_input_token_cost: 0.5e-6,
+              },
+              "other/glm-5.3": { input_cost_per_token: 10e-6, output_cost_per_token: 50e-6 },
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("counts aliased OpenCode and Antigravity directories once", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
