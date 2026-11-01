@@ -105,8 +105,8 @@ export const layer: Layer.Layer<ShellSnapshotLoader, never, HttpClient.HttpClien
       RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
     );
     return ShellSnapshotLoader.of({
-      load: (prepared, options) =>
-        fetchEnvironmentShellSnapshot({
+      load: Effect.fn("ShellSnapshotLoader.load")(function (prepared, options) {
+        return fetchEnvironmentShellSnapshot({
           prepared,
           signer,
           remoteAuthorization,
@@ -123,7 +123,8 @@ export const layer: Layer.Layer<ShellSnapshotLoader, never, HttpClient.HttpClien
               Effect.as(Option.none<DeferredShellSnapshot>()),
             ),
           ),
-        ),
+        );
+      }),
     });
   }),
 );

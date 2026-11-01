@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.remove cannot remove an empty directory nonrecursively.
+import * as NodeFSP from "node:fs/promises";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import type {
@@ -16,7 +18,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
+import type * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -24,7 +26,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { isWindowsRenameLock } from "./atomicWrite.ts";
 import * as HostProcess from "./HostProcess.ts";
 
-export const CLOUDFLARED_VERSION = "2026.10.0";
+export const CLOUDFLARED_VERSION = "2026.10.4";
 // Minimum for --output support; older connectors exit on that flag.
 export const CLOUDFLARED_MIN_VERSION = "2025.6.1";
 const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
@@ -81,41 +83,42 @@ const CLOUDFLARED_RELEASE_ASSETS: Readonly<
   Partial<Record<`${NodeJS.Platform}-${string}`, CloudflaredReleaseAsset>>
 > = {
   "darwin-arm64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-darwin-arm64.tgz",
-    sha256: "a2f79ff7b9420aa537d74af239f376da170bbabeb529aec416002adac6a72e70",
+    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.4/cloudflared-darwin-arm64.tgz",
+    sha256: "68b6bc4080ac1330234db2a9002d07f98b000537a1bd531a687b660d4160fa7f",
     archive: "tgz",
   },
   "darwin-x64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-darwin-amd64.tgz",
-    sha256: "903845b81828c8cb3c5d13d816a2de71c06a3da5785469df8eb0e1b736d92f9f",
+    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.4/cloudflared-darwin-amd64.tgz",
+    sha256: "f11fbef4207d715892331917dafd437f032cf4b7137ed64dea3008338c1c613d",
     archive: "tgz",
   },
   "linux-arm64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-linux-arm64",
-    sha256: "e6422b9d4f72d3194bc5a38676f13667c06666523217b842a877d72a80b5ac08",
+    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.4/cloudflared-linux-arm64",
+    sha256: "2b7203b4fb0ba28a0c1e12f8855ce2c25f76d266a8d5edafac5540b6812acff6",
     archive: "binary",
   },
   "linux-x64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-linux-amd64",
-    sha256: "d33ff2d14475178d2012c2c56beba87389ac5ded27649519f198a7d3134a99db",
+    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.4/cloudflared-linux-amd64",
+    sha256: "ae5e8add7884b0531d66bbca4570d1de491ff6da51e4ebe7eb160cdf241d9e42",
     archive: "binary",
   },
   "win32-x64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-windows-amd64.exe",
-    sha256: "86aee4017b26625cee8484c113558f48effa4cd47f7aa05fcf425604e5d2b23c",
+    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.4/cloudflared-windows-amd64.exe",
+    sha256: "411b16d40c8d872243efeb52c550053d00af0a8a97fbb32e730fb8aba429eaa8",
     archive: "binary",
   },
   // Cloudflare publishes no Windows ARM64 build; Windows 11 on ARM runs x64 under emulation.
   "win32-arm64": {
-    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-windows-amd64.exe",
-    sha256: "86aee4017b26625cee8484c113558f48effa4cd47f7aa05fcf425604e5d2b23c",
+    url: "https://github.com/cloudflare/cloudflared/releases/download/2026.10.4/cloudflared-windows-amd64.exe",
+    sha256: "411b16d40c8d872243efeb52c550053d00af0a8a97fbb32e730fb8aba429eaa8",
     archive: "binary",
   },
 };
 
 const INSTALL_LOCK_RETRY_COUNT = 100;
 const INSTALL_LOCK_RETRY_DELAY = "100 millis";
-const INSTALL_LOCK_STALE_MS = 5 * 60 * 1_000;
+// Legacy locks have no owner; allow both ten-minute download stages and the install tail.
+const INSTALL_LOCK_LEGACY_STALE_MS = 30 * 60 * 1_000;
 const VERSION_PROBE_TIMEOUT = "10 seconds";
 
 const ACTIVATE_RETRY_COUNT = 40;
@@ -194,8 +197,30 @@ class VersionProbeKey extends Data.Class<{
   readonly mtimeMillis: number;
 }> {}
 
-function isAlreadyExists(error: PlatformError.PlatformError): boolean {
-  return error.reason._tag === "AlreadyExists";
+function isLockContention(error: PlatformError.PlatformError): boolean {
+  const code = (error.reason.cause as NodeJS.ErrnoException | undefined)?.code;
+  return (
+    error.reason._tag === "AlreadyExists" ||
+    error.reason._tag === "BadResource" ||
+    code === "ENOTEMPTY" ||
+    isWindowsRenameLock(error)
+  );
+}
+
+function parseLockOwnerPid(owner: string): number | null {
+  const separator = owner.indexOf("-");
+  if (separator <= 0) return null;
+  const pid = Number(owner.slice(0, separator));
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as { readonly code?: unknown }).code !== "ESRCH";
+  }
 }
 
 const wrapInstallFailure =
@@ -456,25 +481,65 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     return bytes;
   });
 
+  const removeEmptyLock = (lockPath: string) =>
+    Effect.tryPromise(() => NodeFSP.rmdir(lockPath)).pipe(Effect.ignore);
+
+  const releaseOwnedLock = Effect.fn("cloudflared.releaseOwnedLock")(function* (
+    lockPath: string,
+    owner: string,
+  ) {
+    yield* fileSystem.remove(path.join(lockPath, owner), { force: true }).pipe(Effect.ignore);
+    // A replacement contains a different owner entry, so rmdir cannot remove it.
+    yield* removeEmptyLock(lockPath);
+  });
+
   const acquireInstallLock = Effect.fn("cloudflared.acquireInstallLock")(function* (
     lockPath: string,
   ) {
+    const owner = `${process.pid}-${yield* crypto.randomUUIDv4()}`;
+    const candidate = yield* Effect.acquireRelease(
+      fileSystem.makeTempDirectory({ directory: path.dirname(lockPath), prefix: ".lock-" }),
+      (directory) =>
+        fileSystem.remove(directory, { recursive: true, force: true }).pipe(Effect.ignore),
+    );
+    yield* fileSystem.writeFileString(path.join(candidate, owner), "");
     for (let attempt = 0; attempt < INSTALL_LOCK_RETRY_COUNT; attempt += 1) {
       const acquired = yield* Effect.acquireRelease(
-        fileSystem.writeFileString(lockPath, "", { flag: "wx" }),
-        () => fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore),
+        // Publish a populated directory atomically, with no ownerless acquisition window.
+        fileSystem.rename(candidate, lockPath),
+        () => releaseOwnedLock(lockPath, owner),
       ).pipe(
         Effect.as(true),
-        Effect.catchIf(isAlreadyExists, () => Effect.succeed(false)),
+        Effect.catchIf(isLockContention, () => Effect.succeed(false)),
       );
       if (acquired) return;
 
-      const now = yield* Clock.currentTimeMillis;
       const lockInfo = yield* fileSystem.stat(lockPath).pipe(Effect.option);
-      const mtime = Option.flatMap(lockInfo, (info) => info.mtime);
-      if (Option.isSome(mtime) && now - mtime.value.getTime() > INSTALL_LOCK_STALE_MS) {
-        yield* fileSystem.remove(lockPath, { force: true });
-        continue;
+      if (Option.isNone(lockInfo)) continue;
+      if (lockInfo.value.type === "Directory") {
+        const owners = yield* fileSystem
+          .readDirectory(lockPath)
+          .pipe(Effect.orElseSucceed(() => []));
+        let recovered = owners.length === 0;
+        for (const entry of owners) {
+          const pid = parseLockOwnerPid(entry);
+          if (pid !== null && !processIsAlive(pid)) {
+            yield* releaseOwnedLock(lockPath, entry);
+            recovered = true;
+          }
+        }
+        if (recovered) {
+          yield* removeEmptyLock(lockPath);
+          continue;
+        }
+      } else {
+        const now = yield* Clock.currentTimeMillis;
+        const mtime = lockInfo.value.mtime;
+        if (Option.isSome(mtime) && now - mtime.value.getTime() > INSTALL_LOCK_LEGACY_STALE_MS) {
+          // Nonrecursive removal also refuses a populated directory that replaced this file.
+          yield* fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore);
+          continue;
+        }
       }
       yield* Effect.sleep(INSTALL_LOCK_RETRY_DELAY);
     }

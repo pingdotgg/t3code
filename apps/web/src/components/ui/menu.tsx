@@ -4,6 +4,7 @@ import type * as React from "react";
 
 import { cn } from "~/lib/utils";
 import { buttonVariants } from "./button";
+import { renderClosingPositioner } from "./closing-positioner";
 import { Input, type InputProps } from "./input";
 import { Spinner } from "./spinner";
 
@@ -24,6 +25,7 @@ function MenuPopup({
   align = "center",
   alignOffset,
   side = "bottom",
+  collisionAvoidance,
   anchor,
   keepMounted = false,
   width = "default",
@@ -33,6 +35,7 @@ function MenuPopup({
   sideOffset?: MenuPrimitive.Positioner.Props["sideOffset"];
   alignOffset?: MenuPrimitive.Positioner.Props["alignOffset"];
   side?: MenuPrimitive.Positioner.Props["side"];
+  collisionAvoidance?: MenuPrimitive.Positioner.Props["collisionAvoidance"];
   anchor?: MenuPrimitive.Positioner.Props["anchor"];
   keepMounted?: boolean;
   width?: "default" | "content";
@@ -43,8 +46,10 @@ function MenuPopup({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
+        collisionAvoidance={collisionAvoidance}
         className="z-[130]"
         data-slot="menu-positioner"
+        render={renderClosingPositioner}
         side={side}
         sideOffset={sideOffset}
       >
@@ -163,7 +168,7 @@ function MenuCheckboxItem({
   variant = "default",
   ...props
 }: MenuPrimitive.CheckboxItem.Props & {
-  variant?: "default" | "switch";
+  variant?: "default" | "icon" | "switch";
 }) {
   return (
     <MenuPrimitive.CheckboxItem
@@ -173,6 +178,7 @@ function MenuCheckboxItem({
         variant === "switch"
           ? "grid-cols-[1fr_auto] gap-4 pe-1.5"
           : "grid-cols-[1rem_minmax(0,1fr)] pe-4",
+        variant === "icon" && "grid-cols-[0.625rem_minmax(0,1fr)]",
         className,
       )}
       data-slot="menu-checkbox-item"
@@ -190,14 +196,17 @@ function MenuCheckboxItem({
         </>
       ) : (
         <>
-          <MenuPrimitive.CheckboxItemIndicator className="col-start-1">
+          <MenuPrimitive.CheckboxItemIndicator
+            className={cn("col-start-1", variant === "icon" && "-mx-0.5")}
+          >
             <svg
+              className={variant === "icon" ? "size-3.5" : undefined}
               fill="none"
               height="24"
               stroke="currentColor"
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth="2"
+              strokeWidth="1.75"
               viewBox="0 0 24 24"
               width="24"
               xmlns="http://www.w3.org/2000/svg"

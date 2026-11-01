@@ -45,7 +45,6 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
@@ -57,6 +56,7 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 import * as OpenCode2Server from "./OpenCode2Server.ts";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
+import { readableProviderErrorMessage } from "../providerErrorMessage.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
@@ -1074,7 +1074,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           retryDelayMs: Math.max(0, Math.trunc(delayMs)),
         },
         failure: makeProviderFailure({
-          message: error.message,
+          message: readableProviderErrorMessage(error.message, error.status, error.response?.body),
           code: error.type,
           class: "provider_error",
           retryable: true,
@@ -1504,7 +1504,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         messageId: wake.messageId,
         ...(notification === null ? {} : { notification }),
         dispatchIfCurrent: (dispatch) =>
-          wake.dropped ? Effect.succeed(Option.none()) : Effect.map(dispatch, Option.some),
+          wake.dropped ? Effect.succeedNone : Effect.asSome(dispatch),
       });
     });
 
@@ -2126,7 +2126,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         case "session.execution.interrupted":
           return yield* endExecution(state, turn, { status: "interrupted" });
         case "session.execution.failed": {
-          const { type, message, status } = event.data.error;
+          const { type, message, status, response } = event.data.error;
           // OpenCode types an empty balance as provider.quota too, but it answers
           // that with HTTP 402 and it never resets. Usage windows and budgets are 429.
           const usageLimit =
@@ -2134,7 +2134,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* endExecution(state, turn, {
             status: "failed",
             failure: makeProviderFailure({
-              message,
+              message: readableProviderErrorMessage(message, status, response?.body),
               code: type,
               class: usageLimit ? "usage_limit" : "provider_error",
             }),
@@ -2494,10 +2494,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       for (const message of recent.toReversed()) {
         if (message.type !== "assistant" || state.active !== turn) continue;
         const ordinals = { text: 0, reasoning: 0 };
-        for (const part of message.content) {
+        for (const [index, part] of message.content.entries()) {
           if (part.type === "text" || part.type === "reasoning") {
             const block = { assistantMessageID: message.id, ordinal: ordinals[part.type]++ };
-            yield* emitText(state, turn, block, part.type, () => part.text, true);
+            // OpenCode saves a block's text only when the block ends, so the last block of a
+            // response still streaming stays open and keeps the text that already arrived.
+            const open =
+              message.time.streamed === undefined && index === message.content.length - 1;
+            yield* emitText(
+              state,
+              turn,
+              block,
+              part.type,
+              (text) => (open && !part.text.startsWith(text) ? text : part.text),
+              !open,
+            );
             continue;
           }
           if (part.type !== "tool") continue;
@@ -2963,12 +2974,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       };
     });
 
-    const promptText = (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =>
-      providerMessageTextWithAttachmentPaths({
+    const promptText = Effect.fnUntraced(function* (
+      turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+    ) {
+      return (yield* providerMessageTextWithAttachmentPaths({
         text: turnInput.message.text,
         attachments: turnInput.message.attachments,
         resolveAttachmentPath: host.resolveAttachmentPath,
-      }).trim();
+        resolveExtractedTextPath: host.resolveExtractedTextPath,
+      })).trim();
+    });
 
     const promptFiles = Effect.fnUntraced(function* (attachments: ReadonlyArray<ChatAttachment>) {
       const files: Array<{ uri: string; name: string }> = [];
@@ -3048,7 +3063,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       const instructions = [
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
-        t3OrchestrationSystemPrompt(mcpAvailable),
+        t3OrchestrationSystemPrompt(mcpAvailable, mcpSession?.capabilities?.has("device") === true),
       ]
         .filter((part) => part !== undefined && part.length > 0)
         .join("\n\n");
@@ -3312,12 +3327,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           )
         : [];
       const files = yield* promptFiles(turnInput.message.attachments);
+      const messageText = yield* promptText(turnInput);
       if (!sending()) return;
       return yield* client.session
         .prompt({
           sessionID,
           id,
-          text: promptText(turnInput),
+          text: messageText,
           ...(files.length === 0 ? {} : { files }),
           ...(skills.length === 0
             ? {}
@@ -3641,7 +3657,26 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           if (turn.settledInbox.has(inboxID)) return;
           turn.steers.add(inboxID);
           state.strandedSteers.delete(inboxID);
-          const files = yield* promptFiles(steerInput.message.attachments);
+          const { files, messageText } = yield* Effect.gen(function* () {
+            const files = yield* promptFiles(steerInput.message.attachments);
+            const messageText = (yield* providerMessageTextWithAttachmentPaths({
+              text: steerInput.message.text,
+              attachments: steerInput.message.attachments,
+              resolveAttachmentPath: host.resolveAttachmentPath,
+              resolveExtractedTextPath: host.resolveExtractedTextPath,
+            })).trim();
+            return { files, messageText };
+          }).pipe(
+            Effect.onInterrupt(() =>
+              lock.withPermit(
+                Effect.gen(function* () {
+                  turn.steers.delete(inboxID);
+                  state.strandedSteers.delete(inboxID);
+                  if (state.active === turn) yield* endIfSettled(state, turn);
+                }),
+              ),
+            ),
+          );
           if (state.active !== turn || turn.interrupted) {
             yield* lock.withPermit(
               Effect.gen(function* () {
@@ -3665,11 +3700,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             .prompt({
               sessionID: Session.ID.make(sessionId),
               id: inboxID,
-              text: providerMessageTextWithAttachmentPaths({
-                text: steerInput.message.text,
-                attachments: steerInput.message.attachments,
-                resolveAttachmentPath: host.resolveAttachmentPath,
-              }).trim(),
+              text: messageText,
               ...(files.length === 0 ? {} : { files }),
               delivery: "steer",
             })
@@ -4015,8 +4046,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId,
     driver,
-    getCapabilities: () => Effect.succeed(OpenCode2ProviderCapabilities),
-    planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
+    getCapabilities: Effect.fn("OpencodeAdapter.getCapabilities")(function () {
+      return Effect.succeed(OpenCode2ProviderCapabilities);
+    }),
+    planSelectionTransition: Effect.fn("OpencodeAdapter.planSelectionTransition")(function () {
+      return Effect.succeed(turnScopedSelectionTransition());
+    }),
     // The session borrows the instance's server for as long as it is open, so a
     // spawned server is not idle-stopped under a long tool call.
     openSession: Effect.fn("OpenCode2Adapter.borrowAndOpenSession")(

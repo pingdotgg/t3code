@@ -456,12 +456,31 @@ describe("GitCafePullRequestProvider", () => {
     );
     return Effect.gen(function* () {
       const provider = yield* GitCafePullRequestProvider.make;
-      const summary = yield* provider.getChangeRequestSummary!({
+      const input = {
         ...target,
         host: "staging.git.cafe",
+      };
+      const preview = yield* provider.getChangeRequestPreview!(input);
+      assert.deepInclude(preview, {
+        number: 7,
+        title: "Change",
+        url: "https://staging.git.cafe/owner/repo/pulls/7",
+        author: { login: "alice", name: null, avatarUrl: "https://staging.git.cafe/avatars/one" },
+        state: "open",
+        isDraft: false,
+        createdAt: timestamp,
       });
+      const summary = yield* provider.getChangeRequestSummary!(input);
       assert.strictEqual(summary.url, "https://staging.git.cafe/owner/repo/pulls/7");
       assert.isTrue(server.sent.every((request) => request.host === "staging.git.cafe"));
+      assert.deepStrictEqual(
+        server.sent.map((request) => `${request.method} ${request.path}`),
+        [
+          "GET /repos/owner/repo/pulls/7",
+          "GET /repos/owner/repo/pulls/7",
+          "GET /repos/owner/repo/pulls/7/changes",
+        ],
+      );
     }).pipe(Effect.provide(server.layer));
   });
 
@@ -514,6 +533,41 @@ describe("GitCafePullRequestProvider", () => {
       Effect.provide(server.layer),
     );
   });
+
+  it.effect("follows a renumbered pull request's redirect only within the host's API", () =>
+    Effect.gen(function* () {
+      const moved = (location: string) =>
+        new Response(null, { status: 301, headers: { location } });
+      const renumbered = fakeGitCafe({
+        "GET /repos/owner/repo/pulls/7/stack": moved("/api/repos/owner/repo/pulls/8/stack"),
+        "GET /repos/owner/repo/pulls/8/stack": { stack: null },
+      });
+      yield* GitCafePullRequestProvider.make.pipe(
+        Effect.flatMap((provider) => provider.getChangeRequestStack!(target)),
+        Effect.provide(renumbered.layer),
+      );
+      assert.deepStrictEqual(
+        renumbered.sent.map((r) => `${r.host}${r.path}`),
+        ["git.cafe/repos/owner/repo/pulls/7/stack", "git.cafe/repos/owner/repo/pulls/8/stack"],
+      );
+
+      for (const location of [
+        "https://evil.example/api/repos/owner/repo/pulls/8/stack",
+        "//evil.example/api/repos/owner/repo/pulls/8/stack",
+        "https://staging.git.cafe/api/repos/owner/repo/pulls/8/stack",
+        "/repos/owner/repo/pulls/8/stack",
+      ]) {
+        const elsewhere = fakeGitCafe({ "GET /repos/owner/repo/pulls/7/stack": moved(location) });
+        const error = yield* GitCafePullRequestProvider.make.pipe(
+          Effect.flatMap((provider) => provider.getChangeRequestStack!(target)),
+          Effect.flip,
+          Effect.provide(elsewhere.layer),
+        );
+        assert.strictEqual(error.detail, "GitCafe answered HTTP 301.");
+        assert.strictEqual(elsewhere.sent.length, 1);
+      }
+    }),
+  );
 
   it.effect("reads the stack a pull request belongs to, with each open layer's head", () => {
     const { "GET /repos/owner/repo/pulls/6": _merged, ...routes } = stack([
@@ -1172,43 +1226,70 @@ describe("GitCafePullRequestProvider", () => {
 
   it.effect("recounts summary lines only when the compared commits move", () => {
     const landedBase = "fedcba9876543210fedcba9876543210fedcba98";
+    const mainTip = "0123012301230123012301230123012301230123";
     let comparisonBaseOid = baseOid;
+    let tips = { targetBranch: "main", observedBaseOid: baseOid };
     let pullReads = 0;
+    let listingCut = true;
+    let hunksDown = false;
+    const hunks = (request: SentRequest) => ({
+      version: 4,
+      headOid,
+      comparisonBaseOid,
+      items: (request.body as { paths: ReadonlyArray<string> }).paths.map((path) => ({
+        path,
+        additions: comparisonBaseOid === baseOid ? 3 : 1,
+        deletions: 1,
+      })),
+    });
     const server = fakeGitCafe({
       // A comment moves the version without moving the compared commits.
-      "GET /repos/owner/repo/pulls/7": () => ({ ...pull, version: 4 + pullReads++ }),
-      "GET /repos/owner/repo/pulls/7/changes": () => ({
+      "GET /repos/owner/repo/pulls/7": () => ({ ...pull, ...tips, version: 4 + pullReads++ }),
+      "GET /repos/owner/repo/pulls/7/changes": (request: SentRequest) => ({
         version: 4,
         headOid,
         comparisonBaseOid,
-        items: [{ path: "a.ts" }, { path: "b.ts" }],
-        next: null,
+        ...(!listingCut
+          ? { items: [{ path: "a.ts" }, { path: "b.ts" }], next: null }
+          : request.query.has("after")
+            ? { items: [], next: "more" }
+            : { items: [{ path: "a.ts" }], next: "more" }),
       }),
-      "POST /repos/owner/repo/pulls/7/diff-files": (request: SentRequest) => ({
-        version: 4,
-        headOid,
-        comparisonBaseOid,
-        items: (request.body as { paths: ReadonlyArray<string> }).paths.map((path) => ({
-          path,
-          additions: comparisonBaseOid === baseOid ? 3 : 1,
-          deletions: 1,
-        })),
-      }),
+      get "POST /repos/owner/repo/pulls/7/diff-files"() {
+        return hunksDown
+          ? new Response(encodeJson({ type: "https://cafe.sh/errors/conflict" }), { status: 409 })
+          : hunks;
+      },
     });
-    const hunkReads = () =>
-      server.sent.filter((request) => request.path.endsWith("/diff-files")).length;
+    const reads = (suffix: string) =>
+      server.sent.filter((request) => request.path.endsWith(suffix)).length;
     return Effect.gen(function* () {
       const provider = yield* GitCafePullRequestProvider.make;
+      // A listing that stops before its last page holds nothing for its commits.
+      yield* provider.getChangeRequestSummary!(target);
+      listingCut = false;
+      hunksDown = true;
+      // Unread hunks leave the lines unknown, and are read again next time.
+      const unread = yield* provider.getChangeRequestSummary!(target);
+      assert.strictEqual(unread.additions, undefined);
+      hunksDown = false;
       const first = yield* provider.getChangeRequestSummary!(target);
       const second = yield* provider.getChangeRequestSummary!(target);
       assert.deepInclude(first, { additions: 6, deletions: 2, changedFiles: 2 });
       assert.deepInclude(second, { additions: 6, deletions: 2, changedFiles: 2 });
-      assert.strictEqual(hunkReads(), 1);
-      // A landed parent layer moves the comparison base under the same head.
-      comparisonBaseOid = landedBase;
+      // Neither the head nor the target tip moved, so the file list is not read again.
+      assert.deepStrictEqual([reads("/changes"), reads("/diff-files")], [4, 3]);
+      // The target branch advancing keeps the merge base, so only the file list is read.
+      tips = { ...tips, observedBaseOid: mainTip };
       const third = yield* provider.getChangeRequestSummary!(target);
-      assert.deepInclude(third, { additions: 2, deletions: 2, changedFiles: 2 });
-      assert.strictEqual(hunkReads(), 2);
+      assert.deepInclude(third, { additions: 6, deletions: 2, changedFiles: 2 });
+      assert.deepStrictEqual([reads("/changes"), reads("/diff-files")], [5, 3]);
+      // A landed parent layer retargets the pull and moves the comparison base under the same head.
+      comparisonBaseOid = landedBase;
+      tips = { targetBranch: "trunk", observedBaseOid: mainTip };
+      const fourth = yield* provider.getChangeRequestSummary!(target);
+      assert.deepInclude(fourth, { additions: 2, deletions: 2, changedFiles: 2 });
+      assert.deepStrictEqual([reads("/changes"), reads("/diff-files")], [6, 4]);
     }).pipe(Effect.provide(server.layer));
   });
 

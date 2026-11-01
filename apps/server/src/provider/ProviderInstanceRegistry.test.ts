@@ -12,17 +12,26 @@ import {
   type CodexSettings,
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
+  type ResolvedProviderInstanceEnvironment,
   ProviderInstanceId,
+  SecretProviderId,
+  SettingsSecretValue,
+  type SecretReference,
 } from "@t3tools/contracts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Scope from "effect/Scope";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Stream from "effect/Stream";
+import * as PubSub from "effect/PubSub";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
@@ -35,8 +44,12 @@ import * as ModelManifest from "./ModelManifest.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
+import { ProviderDriverError } from "./Errors.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
+import * as PortScanner from "../preview/PortScanner.ts";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import type { AnyProviderDriver, ProviderInstance } from "@t3tools/provider-core/server/driver";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
@@ -55,7 +68,6 @@ const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 const layerBackgroundPolicyAlwaysRun = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
   reportClientActivity: () => Effect.void,
   removeRpcClient: () => Effect.void,
-  reportHostPowerState: () => Effect.void,
   snapshot: Effect.succeed({
     hostPower: {
       source: "unknown",
@@ -75,8 +87,6 @@ const layerBackgroundPolicyAlwaysRun = Layer.mock(BackgroundPolicy.BackgroundPol
     shouldRunOpportunisticWork: true,
     updatedAt: TEST_EPOCH,
   }),
-  streamChanges: Stream.empty,
-  hasDemand: () => Effect.succeed(true),
   shouldRunScopeWork: () => Effect.succeed(true),
   shouldRunOpportunisticWork: Effect.succeed(true),
 });
@@ -167,6 +177,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       }),
     ),
     Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
+    Layer.provideMerge(Layer.mock(SecretResolver.SecretResolver)({})),
     Layer.provideMerge(
       Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
         getEnvironmentId: Effect.succeed(
@@ -191,7 +202,138 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
   );
   const layerBase = ProviderHostLive.layer.pipe(Layer.provideMerge(layerBaseDeps));
   const layerTest = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
+    Layer.provide(PortScanner.layerTest),
     Layer.provideMerge(layerBase),
+  );
+
+  it.effect.each(["replacement", "removal", "creation failure"] as const)(
+    "detaches retired provider scopes after repeated %s",
+    (scenario) =>
+      Effect.gen(function* () {
+        const parent = yield* Scope.make();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const homePath = yield* fileSystem.makeTempDirectoryScoped();
+        let creates = 0;
+        let closes = 0;
+        const driver: typeof CodexDriver = {
+          ...CodexDriver,
+          create: Effect.fn("ProviderInstanceRegistry.test.create")(function* (
+            input: Parameters<typeof CodexDriver.create>[0],
+          ) {
+            creates++;
+            yield* Effect.addFinalizer(() =>
+              Effect.sync(() => {
+                closes++;
+              }),
+            );
+            if (input.config.binaryPath === "creation-failure") {
+              return yield* new ProviderDriverError({
+                driver: CodexDriver.driverKind,
+                instanceId: input.instanceId,
+                detail: "fixture creation failed",
+              });
+            }
+            return yield* CodexDriver.create(input);
+          }),
+        };
+        const siblingId = ProviderInstanceId.make("sibling");
+        const retiredId = ProviderInstanceId.make("retired");
+        const entry = {
+          driver: CodexDriver.driverKind,
+          enabled: false,
+          config: makeCodexConfig({ homePath }),
+        };
+        yield* Effect.gen(function* () {
+          const { registry, mutator } = yield* makeProviderInstanceRegistry({
+            drivers: [driver],
+            configMap: { [siblingId]: entry },
+          });
+          const sibling = yield* registry.getInstance(siblingId);
+          const finalizerCount = () => {
+            const state = parent.state;
+            return state._tag === "Open" ? (state.finalizers?.size ?? 1) : 0;
+          };
+          const baseline = finalizerCount();
+          for (let index = 0; index < 20; index++) {
+            yield* mutator.reconcile({
+              [siblingId]: entry,
+              [retiredId]: {
+                ...entry,
+                config: makeCodexConfig({
+                  homePath,
+                  binaryPath: scenario === "creation failure" ? "creation-failure" : "unused-codex",
+                  customModels: [`revision-${index}`],
+                }),
+              },
+            });
+            if (scenario === "removal") yield* mutator.reconcile({ [siblingId]: entry });
+          }
+          yield* mutator.reconcile({ [siblingId]: entry });
+          expect(yield* registry.getInstance(siblingId)).toBe(sibling);
+          expect(closes).toBe(creates - 1);
+          expect(parent.state._tag).toBe("Open");
+          expect(finalizerCount()).toBe(baseline);
+        }).pipe(
+          Effect.provideService(Scope.Scope, parent),
+          Effect.ensuring(Scope.close(parent, Exit.void)),
+        );
+        expect(closes).toBe(creates);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["replacement", "removal"] as const)(
+    "hides retired instances during reconcile (%s)",
+    (scenario) =>
+      Effect.gen(function* () {
+        let closed = 0;
+        const replacementStarted = yield* Deferred.make<void>();
+        const releaseReplacement = yield* Deferred.make<void>();
+        const driver: typeof CodexDriver = {
+          ...CodexDriver,
+          create: (input) =>
+            Effect.gen(function* () {
+              if (input.displayName === "Second") {
+                yield* Deferred.succeed(replacementStarted, undefined);
+                yield* Deferred.await(releaseReplacement);
+              }
+              const instance = yield* CodexDriver.create(input);
+              yield* Effect.addFinalizer(() => Effect.sync(() => closed++));
+              return instance;
+            }),
+        };
+        const retiredId = ProviderInstanceId.make("retired");
+        const siblingId = ProviderInstanceId.make("sibling");
+        const nextId = scenario === "replacement" ? retiredId : ProviderInstanceId.make("new");
+        const entry = {
+          driver: CodexDriver.driverKind,
+          enabled: false,
+          config: makeCodexConfig({}),
+        };
+        const { registry, mutator } = yield* makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: { [retiredId]: entry, [siblingId]: entry },
+        });
+        const sibling = yield* registry.getInstance(siblingId);
+        const reconcile = yield* mutator
+          .reconcile({
+            [siblingId]: entry,
+            [nextId]: {
+              ...entry,
+              displayName: "Second",
+              config: makeCodexConfig({ customModels: ["replacement-model"] }),
+            },
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(replacementStarted);
+        expect(closed).toBe(1);
+        expect(yield* registry.getInstance(retiredId)).toBeUndefined();
+        expect(yield* registry.listInstances).toEqual([sibling]);
+        yield* Deferred.succeed(releaseReplacement, undefined);
+        yield* Fiber.join(reconcile);
+        expect((yield* registry.getInstance(nextId))?.displayName).toBe("Second");
+        expect(yield* registry.getInstance(siblingId)).toBe(sibling);
+        expect(closed).toBe(1);
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
@@ -644,4 +786,193 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect(ghost.unavailableReason).toMatch(/ghostDriver/);
       }).pipe(Effect.provide(layerTest)),
   );
+});
+
+const DisabledByDefaultConfig = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+
+describe("ProviderInstanceRegistry secret environment", () => {
+  const driverKind = ProviderDriverKind.make("fake");
+  const instanceId = ProviderInstanceId.make("fake_main");
+  const secret: SecretReference = {
+    provider: SecretProviderId.make("personal"),
+    reference: "op://Private/OpenAI/credential",
+  };
+
+  function setup(
+    initial: Record<string, string>,
+    configSchema: AnyProviderDriver["configSchema"] = Schema.Unknown,
+    config: unknown = {},
+  ) {
+    const vault = new Map(Object.entries(initial));
+    const reads: Array<ReadonlyArray<string>> = [];
+    const invalidated: Array<ReadonlyArray<string>> = [];
+    const created: Array<ResolvedProviderInstanceEnvironment> = [];
+    const configs: Array<unknown> = [];
+    const driver: AnyProviderDriver = {
+      driverKind,
+      metadata: { displayName: "Fake" },
+      configSchema,
+      defaultConfig: () => ({}),
+      create: (input) =>
+        Effect.sync(() => {
+          created.push(input.environment);
+          configs.push(input.config);
+          return { instanceId: input.instanceId, enabled: input.enabled } as ProviderInstance;
+        }),
+    };
+    const gate = Deferred.makeUnsafe<void>();
+    const resolver = Layer.succeed(SecretResolver.SecretResolver, {
+      read: (references) =>
+        Deferred.await(gate).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              reads.push(references.map((reference) => reference.reference));
+              return references.map((reference) => vault.get(reference.reference));
+            }),
+          ),
+        ),
+      invalidate: (references = []) =>
+        Effect.sync(() => {
+          invalidated.push(references.map((reference) => reference.reference));
+        }),
+    });
+    const configMap: ProviderInstanceConfigMap = {
+      [instanceId]: {
+        driver: driverKind,
+        config,
+        environment: [
+          { name: "OPENAI_API_KEY", value: secret, sensitive: true },
+          { name: "BASE_URL", value: "https://example.test", sensitive: false },
+        ],
+      },
+    };
+    const makeGated = makeProviderInstanceRegistry({ drivers: [driver], configMap }).pipe(
+      Effect.provide(resolver),
+    );
+    // Secrets are read after startup, so wait for the change that applies them.
+    const make = Effect.gen(function* () {
+      const built = yield* makeGated;
+      const changes = yield* built.registry.subscribeChanges;
+      yield* Deferred.succeed(gate, undefined);
+      yield* PubSub.take(changes);
+      return built;
+    });
+    return { vault, reads, invalidated, created, configs, make, makeGated, gate };
+  }
+
+  it.effect("starts an instance with the secret its environment points at", () => {
+    const fixture = setup({ [secret.reference]: "sk-live" });
+    return Effect.gen(function* () {
+      const { registry } = yield* fixture.make;
+
+      expect(yield* registry.getInstance(instanceId)).toBeDefined();
+      expect(fixture.created).toEqual([
+        [
+          { name: "OPENAI_API_KEY", value: "sk-live", sensitive: true },
+          { name: "BASE_URL", value: "https://example.test", sensitive: false },
+        ],
+      ]);
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect("marks an instance unavailable and names the variable it could not read", () => {
+    const fixture = setup({});
+    return Effect.gen(function* () {
+      const { registry } = yield* fixture.make;
+
+      expect(yield* registry.getInstance(instanceId)).toBeUndefined();
+      expect(fixture.created).toEqual([]);
+      const [unavailable] = yield* registry.listUnavailable;
+      expect(unavailable?.instanceId).toBe(instanceId);
+      expect(unavailable?.unavailableReason).toContain("OPENAI_API_KEY");
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect("does not read the secrets of an instance its config decodes as disabled", () => {
+    const fixture = setup({ [secret.reference]: "sk-live" }, DisabledByDefaultConfig);
+    return Effect.gen(function* () {
+      const { mutator } = yield* fixture.makeGated;
+      yield* mutator.reloadSecrets();
+
+      expect(fixture.reads).toEqual([]);
+      expect(fixture.invalidated).toEqual([]);
+      expect(fixture.created).toHaveLength(1);
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect("re-reads secrets on reload and rebuilds only when they changed", () => {
+    const fixture = setup({});
+    return Effect.gen(function* () {
+      const { registry, mutator } = yield* fixture.make;
+
+      fixture.vault.set(secret.reference, "sk-live");
+      yield* mutator.reloadSecrets();
+      expect(fixture.invalidated).toEqual([[secret.reference]]);
+      expect(yield* registry.getInstance(instanceId)).toBeDefined();
+      expect(yield* registry.listUnavailable).toEqual([]);
+
+      yield* mutator.reloadSecrets(instanceId);
+      expect(fixture.created).toHaveLength(1);
+
+      fixture.vault.set(secret.reference, "sk-rotated");
+      yield* mutator.reloadSecrets(instanceId);
+      expect(fixture.created.map((environment) => environment[0]?.value)).toEqual([
+        "sk-live",
+        "sk-rotated",
+      ]);
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect("reads a config field typed SettingsSecretValue and rebuilds when it rotates", () => {
+    const apiKey: SecretReference = { ...secret, reference: "op://Private/Gateway/key" };
+    const fixture = setup(
+      { [secret.reference]: "sk-live", [apiKey.reference]: "gw-live" },
+      Schema.Struct({ apiKey: SettingsSecretValue, model: Schema.String }),
+      { apiKey, model: "m" },
+    );
+    return Effect.gen(function* () {
+      const { mutator } = yield* fixture.make;
+      expect(fixture.reads.at(-1)).toEqual([secret.reference, apiKey.reference]);
+
+      fixture.vault.set(apiKey.reference, "gw-rotated");
+      yield* mutator.reloadSecrets();
+      expect(fixture.configs).toEqual([
+        { apiKey: "gw-live", model: "m" },
+        { apiKey: "gw-rotated", model: "m" },
+      ]);
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect("keeps a working instance live when a reload cannot read its secret", () => {
+    const fixture = setup({ [secret.reference]: "sk-live" });
+    return Effect.gen(function* () {
+      const { registry, mutator } = yield* fixture.make;
+
+      fixture.vault.delete(secret.reference);
+      yield* mutator.reloadSecrets();
+
+      expect(yield* registry.getInstance(instanceId)).toBeDefined();
+      expect(yield* registry.listUnavailable).toEqual([]);
+      expect(fixture.created).toHaveLength(1);
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect("starts without waiting for secrets to be read", () => {
+    const fixture = setup({ [secret.reference]: "sk-live" });
+    return Effect.gen(function* () {
+      const { registry } = yield* fixture.makeGated;
+      const changes = yield* registry.subscribeChanges;
+
+      expect(yield* registry.getInstance(instanceId)).toBeUndefined();
+      const [pending] = yield* registry.listUnavailable;
+      expect(pending?.unavailableReason).toBe("Reading secrets…");
+
+      yield* Deferred.succeed(fixture.gate, undefined);
+      yield* PubSub.take(changes);
+      expect(yield* registry.getInstance(instanceId)).toBeDefined();
+      expect(yield* registry.listUnavailable).toEqual([]);
+    }).pipe(Effect.scoped);
+  });
 });

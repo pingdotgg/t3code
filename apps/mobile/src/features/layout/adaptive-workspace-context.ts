@@ -20,7 +20,6 @@ interface AdaptiveWorkspaceContextValue {
   readonly fileInspector: FileInspectorPaneLayout;
   readonly primarySidebarSearchQuery: string;
   readonly startNewTask: () => void;
-  readonly deferThreadSelectionUntil: (operation: Promise<unknown>) => void;
   /** Use `useSelectWorkspaceDetail`, which also works outside the layout. */
   readonly selectDetail?: (detail: WorkspaceDetail, sheet?: WorkspaceDetailSheet) => void;
   readonly activateAuxiliaryPaneRole: (role: WorkspaceAuxiliaryPaneRole) => () => void;
@@ -41,6 +40,11 @@ interface AdaptiveWorkspaceContextValue {
    * sidebar and rail step aside and the thread header drops to one line.
    */
   readonly composerKeyboardActive: boolean;
+  /**
+   * Whether the sidebar shows in each orientation, where it floats over the content in portrait
+   * (the unfolded Duo). The native split switches between them as a rotation starts.
+   */
+  readonly sidebarByOrientation: { readonly landscape: boolean; readonly portrait: boolean } | null;
   /** The thread composer reports its focus so the layout can make room for typing. */
   readonly setComposerEditing: (editing: boolean) => void;
 }
@@ -62,7 +66,6 @@ export const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextVa
   fileInspector: compactFileInspector,
   primarySidebarSearchQuery: "",
   startNewTask: () => undefined,
-  deferThreadSelectionUntil: () => undefined,
   activateAuxiliaryPaneRole: () => () => undefined,
   registerWorkspaceInspector: () => () => undefined,
   setPrimarySidebarSearchQuery: () => undefined,
@@ -73,6 +76,7 @@ export const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextVa
   openWorkspaceTab: () => undefined,
   setAuxiliaryPaneWidth: () => undefined,
   composerKeyboardActive: false,
+  sidebarByOrientation: null,
   setComposerEditing: () => undefined,
 });
 
