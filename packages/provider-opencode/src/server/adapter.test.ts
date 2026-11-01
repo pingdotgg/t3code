@@ -5,7 +5,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
+import { createOpencodeClient, type OpencodeClient, type ToolPart } from "@opencode-ai/sdk/v2";
 import {
   CheckpointId,
   NodeId,
@@ -30,9 +30,11 @@ import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
@@ -191,6 +193,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     text = "hello",
     startProviderThread: OrchestrationV2ProviderThread = providerThread,
     turnPolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy = policy,
+    ordinal = 1,
   ) =>
     runtime.startTurn({
       appThread: {
@@ -217,16 +220,20 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
         deletedAt: null,
       },
       threadId,
-      runId: RunId.make(`run-opencode-${suffix}`),
-      runOrdinal: 1,
-      providerTurnOrdinal: 1,
-      attemptId: RunAttemptId.make(`attempt-opencode-${suffix}`),
-      rootNodeId: NodeId.make(`node-opencode-${suffix}`),
+      runId: RunId.make(`run-opencode-${suffix}${ordinal === 1 ? "" : `-${ordinal}`}`),
+      runOrdinal: ordinal,
+      providerTurnOrdinal: ordinal,
+      attemptId: RunAttemptId.make(
+        `attempt-opencode-${suffix}${ordinal === 1 ? "" : `-${ordinal}`}`,
+      ),
+      rootNodeId: NodeId.make(`node-opencode-${suffix}${ordinal === 1 ? "" : `-${ordinal}`}`),
       providerThread: startProviderThread,
       message: {
         createdBy: "user",
         creationSource: "web",
-        messageId: MessageId.make(`message-opencode-${suffix}`),
+        messageId: MessageId.make(
+          `message-opencode-${suffix}${ordinal === 1 ? "" : `-${ordinal}`}`,
+        ),
         text,
         attachments: [],
       },
@@ -724,6 +731,424 @@ describe("OpenCodeAdapterV2", () => {
       Effect.scoped,
     ),
   );
+
+  describe("unroutable requests", () => {
+    const makeHarness = Effect.fnUntraced(function* (
+      client: { session?: object; permission?: object; question?: object } = {},
+    ) {
+      const nativeEvents = asyncEventStream();
+      const rejections: unknown[] = [];
+      const warnings: unknown[] = [];
+      const received: ProviderAdapter.ProviderAdapterV2Event[] = [];
+      const reject = async (input: unknown) => {
+        rejections.push(input);
+        return { data: true };
+      };
+      const harness = yield* makeOpenCodeRuntimeHarness("unroutable", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          get: async ({ sessionID }: { sessionID: string }) => ({
+            data: { id: sessionID, ...(sessionID === "child" ? { parentID: "root" } : {}) },
+          }),
+          messages: async () => ({ data: [] }),
+          promptAsync: async () => ({ data: true }),
+          summarize: async () => ({ data: true }),
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+          ...client.session,
+        },
+        permission: client.permission ?? { reply: reject },
+        question: client.question ?? { reject },
+      }).pipe(
+        Effect.provide(
+          Logger.layer(
+            [
+              Logger.make(({ logLevel, message }) => {
+                if (logLevel === "Warn") warnings.push(message);
+              }),
+            ],
+            { mergeWithExisting: false },
+          ),
+        ),
+      );
+      yield* harness.runtime.events.pipe(
+        Stream.runForEach((event) => Effect.sync(() => received.push(event))),
+        Effect.forkScoped,
+      );
+      const ask = (kind: "permission" | "question", id = "request", sessionID = "child") =>
+        Effect.promise(() =>
+          nativeEvents.push({
+            type: `${kind}.asked`,
+            properties:
+              kind === "permission"
+                ? { id, sessionID, permission: "bash", patterns: ["*"], always: [], metadata: {} }
+                : {
+                    id,
+                    sessionID,
+                    questions: [
+                      {
+                        header: "Choice",
+                        question: "Which?",
+                        options: [{ label: "Yes", description: "Proceed" }],
+                      },
+                    ],
+                  },
+          }),
+        );
+      return {
+        ...harness,
+        nativeEvents,
+        ask,
+        rejections,
+        warnings,
+        received,
+        errors: () =>
+          received
+            .filter((event) => event.type === "provider_session.updated")
+            .filter((event) => event.providerSession.status === "error"),
+      };
+    });
+
+    it.effect.each(["permission", "question"] as const)(
+      "reports an unknown-owner %s after five seconds without rejecting it",
+      (kind) =>
+        Effect.gen(function* () {
+          const harness = yield* makeHarness({
+            session: {
+              get: async () => {
+                throw new Error("Owner unavailable");
+              },
+            },
+          });
+          yield* harness.startTurn();
+          yield* harness.ask(kind);
+          yield* harness.ask(kind);
+          yield* TestClock.adjust("4999 millis");
+          assert.isEmpty(harness.errors());
+          assert.isEmpty(harness.warnings);
+          yield* TestClock.adjust("1 milli");
+          yield* TestClock.adjust("0 millis");
+          assert.lengthOf(harness.errors(), 1);
+          assert.include(harness.errors()[0]!.providerSession.lastError, `${kind} request request`);
+          assert.lengthOf(harness.warnings, 1);
+          assert.include(encodeUnknownJson(harness.warnings), `${kind} request request`);
+          assert.isEmpty(harness.rejections);
+          assert.isFalse(
+            harness.received.some((event) => event.type === "runtime_request.updated"),
+          );
+        }).pipe(
+          Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+          Effect.scoped,
+        ),
+    );
+
+    it.effect.each(["success", "404", "failure", "timeout"] as const)(
+      "settles only delivered local question rejections: %s",
+      (outcome) =>
+        Effect.gen(function* () {
+          const rejections: unknown[] = [];
+          let signal: AbortSignal | undefined;
+          const sdk = createOpencodeClient({
+            baseUrl: "http://test.invalid",
+            throwOnError: true,
+            fetch: async () =>
+              Response.json(
+                { _tag: "QuestionNotFoundError", requestID: "request" },
+                { status: 404 },
+              ),
+          });
+          const harness = yield* makeHarness({
+            question: {
+              reject: async (input: { requestID: string }, options: { signal: AbortSignal }) => {
+                rejections.push(input);
+                signal = options.signal;
+                if (outcome === "404") return sdk.question.reject(input);
+                if (outcome === "failure") return { error: { message: "Rejected delivery" } };
+                if (outcome === "timeout") return new Promise<never>(() => {});
+                return { data: true };
+              },
+            },
+          });
+          yield* harness.ask("question");
+          yield* TestClock.adjust("4999 millis");
+          assert.isEmpty(rejections);
+          assert.isEmpty(harness.errors());
+          yield* TestClock.adjust("1 milli");
+          yield* TestClock.adjust("0 millis");
+          assert.deepEqual(rejections, [{ requestID: "request" }]);
+          if (outcome === "timeout") {
+            yield* TestClock.adjust("9999 millis");
+            assert.isFalse(signal!.aborted);
+            assert.isEmpty(harness.errors());
+            yield* TestClock.adjust("1 milli");
+            yield* TestClock.adjust("0 millis");
+            assert.isTrue(signal!.aborted);
+          }
+          assert.lengthOf(harness.warnings, 1);
+          assert.lengthOf(harness.errors(), outcome === "404" ? 0 : 1);
+          if (outcome !== "404") {
+            assert.include(
+              harness.errors()[0]!.providerSession.lastError,
+              "question request request",
+            );
+            assert.equal(
+              harness.errors()[0]!.providerSession.lastError?.endsWith("Native rejection failed."),
+              outcome === "failure" || outcome === "timeout",
+            );
+          }
+          yield* harness.startTurn();
+          yield* harness.ask("question");
+          const snapshot = yield* harness.runtime.readThreadSnapshot({
+            providerThread: harness.providerThread,
+          });
+          assert.lengthOf(
+            snapshot.runtimeRequests,
+            outcome === "failure" || outcome === "timeout" ? 1 : 0,
+          );
+          assert.lengthOf(rejections, 1);
+        }).pipe(
+          Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+          Effect.scoped,
+        ),
+    );
+
+    it.effect("retains orphan permissions and their same-session siblings for a newer turn", () =>
+      Effect.gen(function* () {
+        const pending = new Set(["old-permission", "sibling-permission"]);
+        const cancelled: string[] = [];
+        let promptId = "";
+        const harness = yield* makeHarness({
+          session: {
+            promptAsync: async (input: { messageID: string }) => {
+              promptId = input.messageID;
+              return { data: true };
+            },
+          },
+          permission: {
+            reply: async () => {
+              // Native permission rejection cancels every sibling in the asking session.
+              cancelled.push(...pending);
+              pending.clear();
+              return { data: true };
+            },
+          },
+        });
+        yield* harness.startTurn("first turn");
+        yield* Effect.promise(() =>
+          harness.nativeEvents.push({
+            type: "message.updated",
+            properties: {
+              sessionID: "root",
+              info: { id: promptId, sessionID: "root", role: "user", time: { created: 1 } },
+            },
+          }),
+        );
+        yield* Effect.promise(() =>
+          harness.nativeEvents.push({
+            type: "session.created",
+            properties: {
+              info: { id: "child", parentID: "root", time: { created: 2, updated: 2 } },
+            },
+          }),
+        );
+        yield* Effect.promise(() =>
+          harness.nativeEvents.push({
+            type: "session.status",
+            properties: { sessionID: "child", status: { type: "busy" } },
+          }),
+        );
+        yield* Effect.promise(() =>
+          harness.nativeEvents.push({
+            type: "session.status",
+            properties: { sessionID: "root", status: { type: "idle" } },
+          }),
+        );
+        const old = yield* harness.runtime.readThreadSnapshot({
+          providerThread: harness.providerThread,
+        });
+        assert.equal(old.providerTurns.at(-1)?.status, "completed");
+        assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+        yield* harness.ask("permission", "old-permission");
+        yield* TestClock.adjust("5 seconds");
+        yield* TestClock.adjust("0 millis");
+        assert.lengthOf(harness.errors(), 1);
+        assert.include(
+          harness.errors()[0]!.providerSession.lastError,
+          "Native permission remains pending",
+        );
+        assert.isEmpty(cancelled);
+        assert.deepEqual([...pending], ["old-permission", "sibling-permission"]);
+        yield* harness.startTurn("new turn", harness.providerThread, harness.policy, 2);
+        yield* harness.ask("permission", "old-permission");
+        yield* harness.ask("permission", "sibling-permission");
+        const current = yield* harness.runtime.readThreadSnapshot({
+          providerThread: harness.providerThread,
+        });
+        assert.notEqual(current.providerTurns.at(-1)?.id, old.providerTurns.at(-1)?.id);
+        assert.lengthOf(current.runtimeRequests, 2);
+        for (const request of current.runtimeRequests) {
+          assert.equal(request.status, "pending");
+          assert.equal(request.providerTurnId, current.providerTurns.at(-1)?.id);
+        }
+        assert.isEmpty(cancelled);
+      }).pipe(
+        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+        Effect.scoped,
+      ),
+    );
+
+    it.effect.each(["permission", "question"] as const)(
+      "preserves foreign evidence through failed lookups until a local root registers: %s",
+      (kind) =>
+        Effect.gen(function* () {
+          let available = true;
+          const harness = yield* makeHarness({
+            session: {
+              get: async ({ sessionID }: { sessionID: string }) => {
+                if (!available) throw new Error("Lookup unavailable");
+                return {
+                  data: {
+                    id: sessionID,
+                    ...(sessionID === "child" ? { parentID: "late-root" } : {}),
+                    time: { created: 1, updated: 1 },
+                  },
+                };
+              },
+            },
+          });
+          yield* harness.ask(kind);
+          available = false;
+          yield* TestClock.adjust("5 seconds");
+          yield* TestClock.adjust("0 millis");
+          assert.isEmpty(harness.errors());
+          assert.isEmpty(harness.warnings);
+          assert.isEmpty(harness.rejections);
+          available = true;
+          yield* harness.ask(kind);
+          const resumed = yield* harness.runtime.resumeThread({
+            providerThread: {
+              ...harness.providerThread,
+              nativeThreadRef: {
+                driver: OPENCODE_PROVIDER,
+                nativeId: "late-root",
+                strength: "weak",
+              },
+            },
+          });
+          yield* TestClock.adjust("5 seconds");
+          yield* TestClock.adjust("0 millis");
+          assert.lengthOf(harness.errors(), 1);
+          assert.include(harness.errors()[0]!.providerSession.lastError, `${kind} request request`);
+          assert.lengthOf(harness.warnings, 1);
+          assert.deepEqual(
+            harness.rejections,
+            kind === "question" ? [{ requestID: "request" }] : [],
+          );
+          const snapshot = yield* harness.runtime.readThreadSnapshot({ providerThread: resumed });
+          assert.isEmpty(snapshot.providerTurns);
+          assert.isEmpty(snapshot.runtimeRequests);
+        }).pipe(
+          Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+          Effect.scoped,
+        ),
+    );
+
+    it.effect("captures session state before the initial owner lookup yields", () =>
+      Effect.gen(function* () {
+        const lookupStarted = promiseGate<void>();
+        const releaseLookup = promiseGate<void>();
+        const harness = yield* makeHarness({
+          session: {
+            get: async ({ sessionID }: { sessionID: string }) => {
+              lookupStarted.resolve();
+              await releaseLookup.promise;
+              return { data: { id: sessionID, parentID: "root" } };
+            },
+          },
+        });
+        const asking = yield* harness.ask("question").pipe(Effect.forkScoped);
+        yield* Effect.promise(() => lookupStarted.promise);
+        yield* harness.startTurn("/compact");
+        releaseLookup.resolve();
+        yield* Fiber.join(asking);
+        yield* TestClock.adjust("5 seconds");
+        yield* TestClock.adjust("0 millis");
+        assert.deepEqual(harness.rejections, [{ requestID: "request" }]);
+        assert.isEmpty(harness.errors());
+        const session = harness.received.findLast(
+          (event) => event.type === "provider_session.updated",
+        )!;
+        assert.equal(session.providerSession.status, "ready");
+        assert.isNull(session.providerSession.lastError);
+        const snapshot = yield* harness.runtime.readThreadSnapshot({
+          providerThread: harness.providerThread,
+        });
+        assert.equal(snapshot.providerTurns.at(-1)?.status, "completed");
+      }).pipe(
+        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+        Effect.scoped,
+      ),
+    );
+
+    it.effect.each(["success", "failure"] as const)(
+      "compares session state after the timestamp yield on rejection %s",
+      (outcome) =>
+        Effect.gen(function* () {
+          const clockRead = yield* Deferred.make<void>();
+          const releaseClock = yield* Deferred.make<void>();
+          const baseClock = yield* Clock.Clock;
+          let blockClock = false;
+          const blockingClock: Clock.Clock = {
+            ...baseClock,
+            currentTimeMillis: Effect.suspend(() => {
+              if (!blockClock) return baseClock.currentTimeMillis;
+              blockClock = false;
+              return Deferred.succeed(clockRead, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseClock)),
+                Effect.andThen(baseClock.currentTimeMillis),
+              );
+            }),
+          };
+          const response = promiseGate<void>();
+          let rejectionStarted = false;
+          const harness = yield* makeHarness({
+            question: {
+              reject: async () => {
+                rejectionStarted = true;
+                await response.promise;
+                return outcome === "success"
+                  ? { data: true }
+                  : { error: { message: "Rejected delivery" } };
+              },
+            },
+          }).pipe(Effect.provideService(Clock.Clock, blockingClock));
+          yield* harness.ask("question");
+          yield* TestClock.adjust("5 seconds");
+          assert.isTrue(rejectionStarted);
+          blockClock = true;
+          response.resolve();
+          yield* TestClock.adjust("0 millis");
+          assert.isTrue(yield* Deferred.isDone(clockRead));
+          yield* harness.startTurn("new turn during the old error timestamp read");
+          yield* Deferred.succeed(releaseClock, undefined);
+          yield* TestClock.adjust("0 millis");
+          assert.isEmpty(harness.errors());
+          const session = harness.received.findLast(
+            (event) => event.type === "provider_session.updated",
+          )!;
+          assert.equal(session.providerSession.status, "running");
+          assert.isNull(session.providerSession.lastError);
+          const snapshot = yield* harness.runtime.readThreadSnapshot({
+            providerThread: harness.providerThread,
+          });
+          assert.equal(snapshot.providerTurns.at(-1)?.status, "running");
+        }).pipe(
+          Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+          Effect.scoped,
+        ),
+    );
+  });
 
   it.effect(
     "preserves tool lifecycle, approval kinds, and late assistant text without cached tool payloads",

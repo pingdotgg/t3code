@@ -1095,8 +1095,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           Effect.fnUntraced(function* (
             status: OrchestrationV2ProviderSession["status"],
             lastError: string | null = sessionEntity.lastError,
+            expectedSession?: OrchestrationV2ProviderSession,
           ) {
             const updatedAt = yield* DateTime.now;
+            // Check after the clock yield so late routing work cannot overwrite
+            // a newer session update, including a turn that already finished.
+            if (expectedSession !== undefined && sessionEntity !== expectedSession) return;
             sessionEntity = { ...sessionEntity, status, lastError, updatedAt };
             yield* emitProviderEvent({
               type: "provider_session.updated",
@@ -1974,8 +1978,10 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               client.session.get({ sessionID: cursor }),
             ).pipe(Effect.option);
             const info = Option.getOrUndefined(response)?.data;
-            const parentId = info?.parentID;
-            if (parentId === undefined) return undefined;
+            if (info === undefined) return undefined;
+            const parentId = info.parentID;
+            // A complete chain to an unregistered root may belong to another runtime.
+            if (parentId === undefined) return null;
             hops.push(cursor);
             const owner = threads.get(parentId) ?? relatedSessionOwners.get(parentId);
             if (owner !== undefined) {
@@ -1995,6 +2001,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             | { readonly type: "question"; readonly value: QuestionRequest },
         ) {
           if (pendingChildRequestRoutes.has(nativeRequestId)) return;
+          const routingSession = sessionEntity;
+          let lastResolvedOwner: OpenCodeThreadState | null | undefined;
           const attempt = Effect.gen(function* () {
             if (
               settledNativeRequestIds.has(nativeRequestId) ||
@@ -2003,7 +2011,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               return true;
             }
             const state = yield* resolveSessionOwner(sessionId);
-            const owner = state === undefined ? undefined : topLevelRequestOwner(state);
+            // Failed lookups cannot erase ownership evidence; later registration can replace it.
+            if (state !== undefined) lastResolvedOwner = state;
+            const owner = state == null ? undefined : topLevelRequestOwner(state);
             if (owner === undefined) return false;
             yield* emitRuntimeRequest(owner, nativeRequestId, request);
             return true;
@@ -2015,6 +2025,42 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               yield* Effect.sleep(Duration.millis(Math.min(200 * 2 ** retry, 2_000)));
               if (yield* attempt) return;
             }
+            if (lastResolvedOwner === null) return;
+            const detail =
+              `OpenCode ${request.type} request ${nativeRequestId} could not be routed to an active thread.` +
+              (request.type === "permission"
+                ? " Native permission remains pending because rejection can cancel other permissions in the same native session."
+                : "");
+            yield* Effect.logWarning(detail, {
+              nativeSessionId: sessionId,
+              providerSessionId: input.providerSessionId,
+            });
+            // Native permission rejection also cancels sibling requests in the same session.
+            if (lastResolvedOwner !== undefined && request.type === "question") {
+              const rejected = yield* sdkCall(
+                "question.reject",
+                { requestID: nativeRequestId },
+                (signal) => client.question.reject({ requestID: nativeRequestId }, { signal }),
+              ).pipe(
+                Effect.map((response) => unwrapData("question.reject", response)),
+                Effect.timeout("10 seconds"),
+                Effect.exit,
+              );
+              if (Exit.isFailure(rejected)) {
+                if (isOpenCodeNotFound(Cause.squash(rejected.cause))) {
+                  rememberSettledRequest(nativeRequestId);
+                  return;
+                }
+                yield* updateProviderSession(
+                  "error",
+                  `${detail} Native rejection failed.`,
+                  routingSession,
+                );
+                return;
+              }
+              rememberSettledRequest(nativeRequestId);
+            }
+            yield* updateProviderSession("error", detail, routingSession);
           }).pipe(
             Effect.ensuring(Effect.sync(() => pendingChildRequestRoutes.delete(nativeRequestId))),
             Effect.forkIn(scope),
