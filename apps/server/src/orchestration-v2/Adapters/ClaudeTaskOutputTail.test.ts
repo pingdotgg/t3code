@@ -48,6 +48,30 @@ describe("tailClaudeTaskOutput", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("drops a split character when the file is truncated and rewritten", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const { root, tasks, file } = yield* makeTaskFile;
+        yield* fileSystem.makeDirectory(tasks, { recursive: true });
+        // End the first read inside the two-byte é.
+        yield* fileSystem.writeFile(file, new TextEncoder().encode("café").subarray(0, 4));
+        const chunks = yield* Queue.unbounded<string>();
+        yield* tailClaudeTaskOutput({
+          root,
+          sessionId: SESSION_ID,
+          taskId: TASK_ID,
+          stop: yield* Deferred.make<void>(),
+          onChunk: (chunk) => Queue.offer(chunks, chunk),
+        }).pipe(Effect.forkScoped);
+        assert.equal(yield* Queue.take(chunks), "caf");
+
+        yield* fileSystem.writeFileString(file, "ok\n");
+        assert.equal(yield* Queue.take(chunks), "ok\n");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("skips ahead when the command writes faster than it is read", () =>
     Effect.scoped(
       Effect.gen(function* () {
