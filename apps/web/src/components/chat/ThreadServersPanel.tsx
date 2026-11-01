@@ -34,11 +34,17 @@ const SERVER_PAGE_COUNT = 4;
 
 const serverKey = (server: DiscoveredLocalServer) => `${server.pid}:${server.port}`;
 
-/** Local servers the thread's terminals and agent started. Hidden while none run. */
-export function ThreadServersPanel(props: {
+interface ThreadServersPanelProps {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
-}) {
+}
+
+/** Local servers the thread's terminals and agent started. Hidden while none run. */
+export function ThreadServersPanel(props: ThreadServersPanelProps) {
+  return <ThreadServersList key={`${props.environmentId}:${props.threadId}`} {...props} />;
+}
+
+function ThreadServersList(props: ThreadServersPanelProps) {
   const servers = useThreadDiscoveredPorts(props);
   const canOpen = useEnvironmentScope(props.environmentId, AuthPreviewOperateScope);
   const canStop = useAtomValue(
