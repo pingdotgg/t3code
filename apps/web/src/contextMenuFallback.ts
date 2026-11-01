@@ -611,7 +611,13 @@ export function showContextMenuFallback<T extends string>(
       submenuTriggerStack[level] = parentTrigger;
 
       requestAnimationFrame(() => {
-        clampMenuPosition(menu, preferredLeft, preferredTop, level === 0);
+        if (level === 0) {
+          clampMenuPosition(menu, preferredLeft, preferredTop, true);
+          return;
+        }
+        // openSubmenu may already have flipped this menu left of its parent; keep that side.
+        const current = menu.getBoundingClientRect();
+        clampMenuPosition(menu, current.left, current.top);
       });
     };
 

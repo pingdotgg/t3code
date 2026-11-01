@@ -245,6 +245,37 @@ describe("showContextMenuFallback", () => {
     await expect(selectionPromise).resolves.toBe("rename");
   });
 
+  it("keeps a submenu that overflows to the right beside its parent after the next frame", () => {
+    const frames: Array<(time: number) => void> = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: (time: number) => void) => {
+      frames.push(callback);
+      return 0;
+    });
+    vi.stubGlobal("window", {
+      innerWidth: 400,
+      innerHeight: 800,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    const runFrames = () => {
+      for (const frame of frames.splice(0)) frame(0);
+    };
+
+    void showContextMenuFallback(
+      [{ id: "group", label: "Group with", children: [{ id: "one", label: "Terminal 1" }] }],
+      { x: 200, y: 0 },
+    );
+    runFrames();
+    const trigger = findButton("Group with");
+    trigger!.style.left = "200px";
+    trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    runFrames();
+
+    const parent = trigger?.parent?.parent?.getBoundingClientRect();
+    const submenu = findButton("Terminal 1")?.parent?.parent?.getBoundingClientRect();
+    expect(submenu!.right).toBeLessThanOrEqual(parent!.left);
+  });
+
   it("opens no other menu on a right-click inside the open menu", () => {
     void showContextMenuFallback([{ id: "rename", label: "Rename" }]);
     const rightClick = new FakeDomEvent("contextmenu", { target: findButton("Rename") });
