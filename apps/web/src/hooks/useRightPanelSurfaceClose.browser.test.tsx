@@ -11,6 +11,11 @@ const fixture = vi.hoisted(() => ({
   allowed: new Set<string>(),
   sessions: new Map<string, string>(),
   failClose: false,
+  sideChatShell: null as { latestRun: { runId: string } | null } | null,
+  threadRemoved: false,
+  failDelete: false,
+  shellStatus: "live",
+  clearedDrafts: [] as ScopedThreadRef[],
 }));
 vi.mock("../lib/terminalCloseConfirm", () => ({
   confirmTerminalClose: (labels: readonly string[]) => fixture.confirm(labels),
@@ -31,13 +36,18 @@ vi.mock("../state/session", () => ({
 vi.mock("../state/entities", () => ({
   useQuietThreadShell: () => null,
   useProject: () => null,
-  readThreadShell: () => null,
+  readThreadShell: () => fixture.sideChatShell,
+  waitForThreadRemoval: async () => fixture.threadRemoved,
 }));
 vi.mock("../state/terminalSessions", () => ({ useKnownTerminalSessions: () => null }));
 vi.mock("../composerDraftStore", async () => {
   const Schema = await import("effect/Schema");
   return {
-    useComposerDraftStore: () => null,
+    useComposerDraftStore: Object.assign(() => null, {
+      getState: () => ({
+        clearDraftThread: (ref: ScopedThreadRef) => fixture.clearedDrafts.push(ref),
+      }),
+    }),
     DraftId: Schema.String.pipe(Schema.brand("DraftId")),
   };
 });
@@ -50,6 +60,7 @@ vi.mock("../state/use-atom-command", () => ({
     }) => {
       const key = `${request.environmentId}/${request.input.threadId}/${request.input.terminalId}`;
       if (label === "terminal close" && fixture.failClose) return { _tag: "Failure" };
+      if (label === "side chat delete" && fixture.failDelete) return { _tag: "Failure" };
       if (label === "terminal close" || label === "terminal write") fixture.sessions.delete(key);
       return { _tag: "Success" };
     },
@@ -59,6 +70,9 @@ vi.mock("../state/terminal", () => ({ terminalEnvironment: { open: {}, close: {}
 vi.mock("../state/preview", () => ({ previewEnvironment: { close: {} } }));
 vi.mock("../state/threads", () => ({ threadEnvironment: { delete: {} } }));
 vi.mock("../state/shell", () => ({ environmentShell: { stateValueAtom: () => null } }));
+vi.mock("../rpc/atomRegistry", () => ({
+  appAtomRegistry: { get: () => ({ status: fixture.shellStatus }) },
+}));
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: () => false,
 }));
@@ -67,6 +81,11 @@ function setup() {
   fixture.allowed = new Set(["environment-a", "environment-b"]);
   fixture.sessions = new Map();
   fixture.failClose = false;
+  fixture.sideChatShell = null;
+  fixture.threadRemoved = false;
+  fixture.failDelete = false;
+  fixture.shellStatus = "live";
+  fixture.clearedDrafts = [];
   useRightPanelStore.setState({ byThreadKey: {} });
   useTerminalUiStateStore.setState({ terminalUiStateByThreadKey: {} });
   const original: ScopedThreadRef = {
@@ -133,5 +152,41 @@ it.each(["cancel", "revoked"])(
     expect(
       useRightPanelStore.getState().byThreadKey[scopedThreadKey(other)]?.surfaces,
     ).toHaveLength(1);
+  },
+);
+
+// The local shell lags the server, so a run-less shell never proves the side chat was deleted.
+it.each([
+  { name: "the thread leaves the live shell", threadRemoved: true, cleared: true },
+  { name: "the server keeps the thread", threadRemoved: false, cleared: false },
+  { name: "the delete fails", threadRemoved: true, failDelete: true, cleared: false },
+  { name: "the shell is not live", threadRemoved: true, shellStatus: "loading", cleared: false },
+])(
+  "clears a closed side chat's draft only after deletion: $name",
+  async ({ threadRemoved, failDelete = false, shellStatus = "live", cleared }) => {
+    const { original } = setup();
+    fixture.sideChatShell = { latestRun: null };
+    fixture.threadRemoved = threadRemoved;
+    fixture.failDelete = failDelete;
+    fixture.shellStatus = shellStatus;
+    const sideChatId = ThreadId.make("side-chat-a");
+    useRightPanelStore.getState().openSideChat(original, sideChatId);
+    const surface = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      original,
+    ).surfaces.find((entry) => entry.kind === "side-chat")!;
+    function SideChatHarness() {
+      const { closeSurface } = useRightPanelSurfaceClose({
+        threadRef: original,
+        terminalLabelsById: new Map(),
+      });
+      return <button onClick={() => closeSurface(surface)}>Close side chat</button>;
+    }
+    await using screen = await render(<SideChatHarness />);
+    await screen.getByRole("button").click();
+    await act(async () => {});
+    expect(fixture.clearedDrafts).toEqual(
+      cleared ? [{ environmentId: original.environmentId, threadId: sideChatId }] : [],
+    );
   },
 );

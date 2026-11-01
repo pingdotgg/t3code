@@ -9,6 +9,7 @@ import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import { agentControlledBrowserCloseConfirmation } from "../components/ChatView.logic";
 import { closePreviewSession } from "../components/preview/closePreviewSession";
 import { useThreadTerminalActions } from "../components/terminal/useThreadTerminalActions";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { focusPanelTerminalAfterClose } from "../lib/terminalFocus";
 import { readLocalApi } from "../localApi";
@@ -20,7 +21,7 @@ import {
   type RightPanelSurface,
 } from "../rightPanelStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { readThreadShell } from "../state/entities";
+import { readThreadShell, waitForThreadRemoval } from "../state/entities";
 import { previewEnvironment } from "../state/preview";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { environmentShell } from "../state/shell";
@@ -70,19 +71,23 @@ export function useRightPanelSurfaceClose(input: {
         terminalActions.closeTerminalSession(terminalId, ref);
       }
     }
+    if (surface.kind !== "side-chat") return;
+    const sideChatRef = scopeThreadRef(ref.environmentId, surface.threadId);
+    const shellIsLive = () =>
+      appAtomRegistry.get(environmentShell.stateValueAtom(ref.environmentId)).status === "live";
     if (
-      surface.kind === "side-chat" &&
       readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope) &&
       // A live shell without the side chat means it is already deleted.
-      !(
-        appAtomRegistry.get(environmentShell.stateValueAtom(ref.environmentId)).status === "live" &&
-        readThreadShell(scopeThreadRef(ref.environmentId, surface.threadId)) === null
-      )
+      !(shellIsLive() && readThreadShell(sideChatRef) === null)
     ) {
       // The server keeps a side chat with a run or message. Reopen skips one it deleted.
       void deleteThread({
         environmentId: ref.environmentId,
         input: { threadId: surface.threadId, onlyIfUnused: true },
+      }).then(async (result) => {
+        // Success also covers a kept side chat, whose draft must survive.
+        if (result._tag !== "Success" || !(await waitForThreadRemoval(sideChatRef))) return;
+        if (shellIsLive()) useComposerDraftStore.getState().clearDraftThread(sideChatRef);
       });
     }
   };

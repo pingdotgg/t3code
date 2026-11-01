@@ -9,6 +9,8 @@ import {
 import { useRef } from "react";
 
 import { newMessageId, newThreadId } from "~/lib/utils";
+import { requestWorkspaceFocus } from "~/lib/workspaceFocus";
+import { useComposerDraftStore } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { waitForThreadShell } from "../../state/entities";
@@ -16,9 +18,15 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 
+/** `prompt` is sent as the first message; `draft` waits in the side chat's composer. */
+interface SideChatSeed {
+  readonly prompt?: string;
+  readonly draft?: string;
+}
+
 /**
  * Starts side chats from `threadRef`, or offers none when it is null. `open` forks the
- * thread's latest stable point, sends `prompt` there, and shows the side chat's tab. It
+ * thread's latest stable point, applies the seed there, and shows the side chat's tab. It
  * resolves false when the side chat did not start, or another one is still starting.
  */
 export function useSideChat(input: {
@@ -39,7 +47,7 @@ export function useSideChat(input: {
     const error = squashAtomCommandFailure(failure);
     input.onError(error instanceof Error ? error.message : fallback);
   };
-  const start = async (threadRef: ScopedThreadRef, prompt: string | undefined) => {
+  const start = async (threadRef: ScopedThreadRef, seed: SideChatSeed) => {
     const targetThreadId = newThreadId();
     const fork = await forkSideChat({
       environmentId: threadRef.environmentId,
@@ -60,7 +68,12 @@ export function useSideChat(input: {
       discard();
       return false;
     }
-    const text = prompt?.trim();
+    const text = seed.prompt?.trim();
+    if (seed.draft) {
+      useComposerDraftStore
+        .getState()
+        .setPrompt(scopeThreadRef(threadRef.environmentId, targetThreadId), seed.draft);
+    }
     // Send before showing the tab: closing a tab whose side chat has no run deletes it.
     if (text) {
       // The server asks before edits on a side chat's first turn whatever mode is sent.
@@ -82,13 +95,19 @@ export function useSideChat(input: {
       }
     }
     useRightPanelStore.getState().openSideChat(threadRef, targetThreadId);
+    if (seed.draft) {
+      requestWorkspaceFocus({
+        area: "panel",
+        selector: `[data-side-chat-pane="${targetThreadId}"] [data-testid="composer-editor"]`,
+      });
+    }
     return true;
   };
-  const open = async (prompt?: string) => {
+  const open = async (seed: SideChatSeed = {}) => {
     const { threadRef } = input;
     if (!threadRef || pendingRef.current) return false;
     pendingRef.current = true;
-    return start(threadRef, prompt).finally(() => {
+    return start(threadRef, seed).finally(() => {
       pendingRef.current = false;
     });
   };
