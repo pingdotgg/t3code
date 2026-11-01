@@ -221,10 +221,6 @@ export function useThreadLinkLabels(
   return { markdown: relabeled, unavailable };
 }
 
-export function useLiveThreadLinkLabels(markdown: string, environmentId: EnvironmentId): string {
-  return useThreadLinkLabels(markdown, environmentId).markdown;
-}
-
 /** Keyed reads; every thread is read only to place a v1 link its message's environment lacks. */
 export function resolveThreadLink(
   read: <A>(atom: Atom.Atom<A>) => A,

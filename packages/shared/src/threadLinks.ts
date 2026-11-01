@@ -121,7 +121,8 @@ export function unknownThreadLinkLabel(
 
 /**
  * Writes each link with its thread's current title. A link `title` cannot resolve keeps its written
- * label or a neutral one and goes to `onUnresolved`, except a labeled v1 link, which may open elsewhere.
+ * label or a neutral one and goes to `onUnresolved`. A v1 link may open elsewhere, so a labeled one
+ * stays as written and a bare one becomes plain text.
  */
 export function relabelThreadLinks(
   markdown: string,
@@ -147,11 +148,10 @@ export function relabelThreadLinks(
     const current = title({ environmentId, threadId });
     if (current === undefined) {
       if (groups.href !== undefined && written.environmentId === null) return source;
+      const label = groups.label?.trim() || unknownThreadLinkLabel(written, messageEnvironmentId);
+      if (written.environmentId === null) return label;
       onUnresolved?.(threadLinkHref(written));
-      return formatThreadLink(
-        written,
-        groups.label?.trim() || unknownThreadLinkLabel(written, messageEnvironmentId),
-      );
+      return formatThreadLink(written, label);
     }
     return formatThreadLink(
       { environmentId: written.environmentId, threadId },

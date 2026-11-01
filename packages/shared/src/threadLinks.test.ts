@@ -122,6 +122,15 @@ describe("thread links", () => {
     expect(relabelThreadLinks("[Old](t3-thread://v1/t1)", local, () => undefined)).toBe(
       "[Old](t3-thread://v1/t1)",
     );
+    expect(
+      relabelThreadLinks(
+        "<t3-thread://v1/t1>",
+        local,
+        () => undefined,
+        () => unresolved.push("v1"),
+      ),
+    ).toBe("Thread no longer available");
+    expect(unresolved).not.toContain("v1");
   });
 
   it("leaves links inside code spans and fences as written", () => {
