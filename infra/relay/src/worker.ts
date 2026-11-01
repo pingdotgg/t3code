@@ -57,6 +57,7 @@ import * as ApnsClient from "./agentActivity/ApnsClient.ts";
 import * as ApnsProviderTokens from "./agentActivity/ApnsProviderTokens.ts";
 import * as ApnsDeliveryQueue from "./agentActivity/ApnsDeliveryQueue.ts";
 import * as ApnsDeliveries from "./agentActivity/ApnsDeliveries.ts";
+import * as ApnsDeliveryQueueConsumer from "./agentActivity/ApnsDeliveryQueueConsumer.ts";
 import * as CloudflareApiPause from "./environments/CloudflareApiPause.ts";
 import * as EnvironmentConnector from "./environments/EnvironmentConnector.ts";
 import * as EnvironmentLinker from "./environments/EnvironmentLinker.ts";
@@ -453,12 +454,7 @@ export const layer = Api.make(
       (stream) =>
         stream.pipe(
           Stream.withSpan("relay.apn_delivery_queue.process_batch"),
-          Stream.runForEach((message) =>
-            ApnsDeliveries.ApnsDeliveries.pipe(
-              Effect.flatMap((deliveries) => deliveries.processSignedJob(message.body)),
-              Effect.withSpan("relay.apn_delivery_queue.process_message"),
-            ),
-          ),
+          Stream.runForEach(ApnsDeliveryQueueConsumer.processMessage),
           Effect.provide(layerRuntime),
         ),
     );
