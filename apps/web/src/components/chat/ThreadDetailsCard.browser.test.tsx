@@ -43,12 +43,15 @@ function Card({
   inline,
   fixture,
   rows = 1,
+  list,
 }: {
   threadRef: ScopedThreadRef;
   inline: boolean;
   fixture: ReturnType<typeof setup>;
   /** Rows of 100px shown at full density. Compact always takes 50px. */
   rows?: number;
+  /** A 600px section at full density carrying this data attribute. */
+  list?: string;
 }) {
   return (
     // The web root renders in StrictMode, which re-runs ref callbacks on every mount.
@@ -73,9 +76,14 @@ function Card({
           contentKey={String(rows)}
         >
           {(density) => (
-            <p style={{ height: density === "full" ? rows * 100 : 50 }}>
-              Details for {threadRef.threadId}
-            </p>
+            <>
+              <p style={{ height: density === "full" ? rows * 100 : 50 }}>
+                Details for {threadRef.threadId}
+              </p>
+              {density === "full" && list && (
+                <section {...{ [list]: "" }} style={{ height: 600 }} />
+              )}
+            </>
           )}
         </ThreadDetailsCard>
       </ChatCanvasContext>
@@ -156,5 +164,15 @@ it("returns to full density when hidden items make the content fit", async () =>
   await expect.element(card).toHaveAttribute("data-density", "compact");
 
   await screen.rerender(<Card threadRef={threadB} inline fixture={fixture} rows={2} />);
+  await expect.element(card).toHaveAttribute("data-density", "full");
+});
+
+it("stays at full density when a long automations list overflows the card", async () => {
+  using fixture = setup();
+  await using _screen = await render(
+    <Card threadRef={threadB} inline fixture={fixture} list="data-thread-automations-panel" />,
+  );
+  const card = page.getByRole("region", { name: "Thread details" });
+  await expect.element(page.getByText("Details for thread-b")).toBeVisible();
   await expect.element(card).toHaveAttribute("data-density", "full");
 });
