@@ -132,15 +132,17 @@ describe("CDP relay", () => {
 });
 
 describe("CDP relay extra sessions", () => {
-  it.each([
-    { committed: true, newerSucceeds: false, olderSucceeds: false },
-    { committed: true, newerSucceeds: true, olderSucceeds: false },
-    { committed: false, newerSucceeds: true, olderSucceeds: false },
-    { committed: false, newerSucceeds: false, olderSucceeds: true },
-    { committed: false, newerSucceeds: false, olderSucceeds: false },
-  ])(
+  it.each(
+    [
+      { committed: true, newerSucceeds: false, olderSucceeds: false },
+      { committed: true, newerSucceeds: true, olderSucceeds: false },
+      { committed: false, newerSucceeds: true, olderSucceeds: false },
+      { committed: false, newerSucceeds: false, olderSucceeds: true },
+      { committed: false, newerSucceeds: false, olderSucceeds: false },
+    ].flatMap((scenario) => [true, false].map((olderFirst) => ({ ...scenario, olderFirst }))),
+  )(
     "preserves only committed streams across overlapping starts (%j)",
-    async ({ committed, newerSucceeds, olderSucceeds }) => {
+    async ({ committed, newerSucceeds, olderSucceeds, olderFirst }) => {
       const send = vi.fn<CdpRelayTarget["send"]>(async () => ({}));
       const written: Array<Record<string, unknown>> = [];
       const relay = makeRelay(makeTarget(send), (raw) => written.push(JSON.parse(raw)));
@@ -166,12 +168,19 @@ describe("CDP relay extra sessions", () => {
       command(4, "Page.startScreencast");
       frame(8);
       expect(frames()).toEqual([]);
-      if (newerSucceeds) newer.resolve({});
-      else newer.reject(new Error("Refused"));
-      await settle();
-      if (olderSucceeds) older.resolve({});
-      else older.reject(new Error("Refused"));
-      await settle();
+      for (const [pending, succeeds] of olderFirst
+        ? ([
+            [older, olderSucceeds],
+            [newer, newerSucceeds],
+          ] as const)
+        : ([
+            [newer, newerSucceeds],
+            [older, olderSucceeds],
+          ] as const)) {
+        if (succeeds) pending.resolve({});
+        else pending.reject(new Error("Refused"));
+        await settle();
+      }
       if (committed) {
         frame(9);
         expect(frames()).toEqual([]);
@@ -179,7 +188,7 @@ describe("CDP relay extra sessions", () => {
       }
       frame(9);
       frame(9);
-      expect(frames()).toHaveLength(committed || newerSucceeds ? 1 : 0);
+      expect(frames()).toHaveLength(committed || newerSucceeds || olderSucceeds ? 1 : 0);
       expect(written.filter((message) => message["error"])).toHaveLength(
         Number(!olderSucceeds) + Number(!newerSucceeds),
       );
@@ -255,6 +264,11 @@ describe("CDP relay extra sessions", () => {
 
     relay.receive(JSON.stringify({ id: 8, method: "Page.stopScreencast", sessionId: extra }));
     relay.receive(JSON.stringify({ id: 9, method: "Page.startScreencast", sessionId: extra }));
+    await settle();
+    written.length = 0;
+    frame(8);
+    expect(written).toEqual([]);
+    acknowledge(extra);
     await settle();
     written.length = 0;
     frame(8);

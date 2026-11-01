@@ -70,7 +70,7 @@ interface AttachedTab {
   agentUsed: boolean;
   focusReleasing: boolean;
   /** The sessions streaming the guest; one stopping leaves the others' screencasts running. */
-  readonly screencasts: Map<string | undefined, { committed: boolean; generation: object }>;
+  readonly screencasts: Map<string | undefined, { committed: boolean; pending: number }>;
   readonly onMessage: (
     event: Electron.Event,
     method: string,
@@ -309,14 +309,11 @@ export const make = Effect.gen(function* () {
     const relay: CdpRelayConnection = createCdpRelayConnection(
       {
         send: (method, params, sessionId, owner) => {
-          let start: { committed: boolean; generation: object } | undefined;
+          let start: { committed: boolean; pending: number } | undefined;
           // A child session's screencast is not the page's, such as a late one on a detached session.
           if (sessionId === undefined && method === "Page.startScreencast") {
-            const previous = tab.screencasts.get(owner);
-            start = {
-              committed: previous?.committed ?? false,
-              generation: previous?.generation ?? {},
-            };
+            start = tab.screencasts.get(owner) ?? { committed: false, pending: 0 };
+            start.pending++;
             tab.screencasts.set(owner, start);
             if (owner !== undefined) streamingOwners.add(owner);
           } else if (sessionId === undefined && method === "Page.stopScreencast") {
@@ -349,15 +346,17 @@ export const make = Effect.gen(function* () {
             : method === "Page.startScreencast"
               ? holdFocus(tab, method, owner, forward).then(
                   (result) => {
-                    const current = tab.screencasts.get(owner);
-                    if (start && tab.relay === relay && current?.generation === start.generation) {
-                      current.committed = true;
+                    if (start && tab.relay === relay && tab.screencasts.get(owner) === start) {
+                      start.pending--;
+                      start.committed = true;
                     }
                     return result;
                   },
                   (cause: unknown) => {
+                    if (start) start.pending--;
                     if (
                       start &&
+                      start.pending === 0 &&
                       !start.committed &&
                       tab.relay === relay &&
                       tab.screencasts.get(owner) === start
