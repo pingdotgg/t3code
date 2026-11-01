@@ -116,27 +116,6 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
     );
   };
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the externally highlighted row into the virtualized list's window
-  useLayoutEffect(() => {
-    const list = listRef.current;
-    // Until a row is measured the list cannot place one; it mounts at the top.
-    if (!props.activeItemId || !list?.getState?.().sizes.size) return;
-    const index = props.items.findIndex((item) => item.id === props.activeItemId);
-    if (index < 0) return;
-    let current = true;
-    // Native scrolling honours the list's scroll padding, which scrollIndexIntoView ignores.
-    const reveal = () => {
-      const element = list.getState?.().elementAtIndex(index);
-      if (current && element instanceof HTMLElement) element.scrollIntoView({ block: "nearest" });
-    };
-    if (list.getState?.().elementAtIndex(index)) reveal();
-    else void list.scrollIndexIntoView?.({ index, animated: false }).then(reveal);
-    return () => {
-      current = false;
-    };
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Only a highlight change scrolls; a new item list keeps its scroll position.
-  }, [props.activeItemId]);
-
   return (
     <Command
       autoHighlight={false}
@@ -161,6 +140,10 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
               ref={listRef}
               data={props.items}
               keyExtractor={(item) => item.id}
+              // The highlighted row stays mounted, for aria-activedescendant and so it can scroll itself into view.
+              alwaysRender={{ keys: props.activeItemId ? [props.activeItemId] : [] }}
+              // Legend needs a data refresh to mount a new pin without a scroll event.
+              dataVersion={props.activeItemId ?? ""}
               // Rows also render from the highlight, theme, trigger and callbacks.
               extraData={props}
               renderItem={({ item, index }) => (
@@ -227,10 +210,17 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
     props.triggerKind === "slash-command" && props.item.type === "skill" ? props.item.skill : null;
   const pullRequestPresentation =
     props.item.type === "pull-request" ? resolvePullRequestState(props.item.pullRequest) : null;
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the externally highlighted row into the list's view
+  useLayoutEffect(() => {
+    if (props.isActive) rowRef.current?.scrollIntoView({ block: "nearest" });
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A recycled row can become the active one while it stays active.
+  }, [props.isActive, props.item.id]);
 
   return (
     <CommandItem
-      render={<div id={props.optionId} />}
+      render={<div id={props.optionId} ref={rowRef} />}
       index={props.index}
       aria-selected={props.isActive}
       value={props.item.id}

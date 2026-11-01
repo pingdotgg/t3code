@@ -4,7 +4,11 @@ import { page } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import "~/index.css";
-import { ComposerCommandMenu, type ComposerCommandItem } from "./ComposerCommandMenu";
+import {
+  ComposerCommandMenu,
+  composerSuggestionOptionId,
+  type ComposerCommandItem,
+} from "./ComposerCommandMenu";
 
 const skillItems: ComposerCommandItem[] = Array.from({ length: 300 }, (_, index) => {
   const name = `demo-skill-${String(index).padStart(3, "0")}`;
@@ -24,11 +28,17 @@ const skillItems: ComposerCommandItem[] = Array.from({ length: 300 }, (_, index)
   };
 });
 
-function Menu({ activeItemId }: { activeItemId: string | null }) {
+function Menu({
+  activeItemId,
+  items = skillItems,
+}: {
+  activeItemId: string | null;
+  items?: ComposerCommandItem[];
+}) {
   return (
     <ComposerCommandMenu
       listId="composer-suggestions"
-      items={skillItems}
+      items={items}
       resolvedTheme="light"
       isLoading={false}
       triggerKind="slash-command"
@@ -75,4 +85,35 @@ it("brings a highlighted row far down a long list into the visible window", asyn
   await screen.rerender(<Menu activeItemId={skillItems[250]!.id} />);
 
   await expect.element(page.getByRole("option", { name: /Demo Skill 250/ })).toBeInViewport();
+});
+
+async function scrollListToEnd() {
+  const firstRow = page.getByRole("option", { name: /Demo Skill 000/ });
+  await expect.element(firstRow).toBeVisible();
+  let scroller = firstRow.element().parentElement;
+  while (scroller && scroller.scrollHeight <= scroller.clientHeight) {
+    scroller = scroller.parentElement;
+  }
+  if (!scroller) throw new Error("list scroller not found");
+  scroller.scrollTop = scroller.scrollHeight;
+  await expect.element(page.getByRole("option", { name: /Demo Skill 299/ })).toBeInViewport();
+}
+
+it("shows the first row when filtering a scrolled list highlights it", async () => {
+  await using screen = await render(<Menu activeItemId={skillItems[0]!.id} />);
+  await scrollListToEnd();
+  const filtered = skillItems.filter((item) => item.label.endsWith("3"));
+  await screen.rerender(<Menu activeItemId={filtered[0]!.id} items={filtered} />);
+
+  await expect.element(page.getByRole("option", { name: /Demo Skill 003/ })).toBeInViewport();
+});
+
+it("keeps the highlighted option mounted while the list scrolls away from it", async () => {
+  await using _screen = await render(<Menu activeItemId={skillItems[0]!.id} />);
+  await scrollListToEnd();
+
+  expect(
+    document.getElementById(composerSuggestionOptionId("composer-suggestions", skillItems[0]!.id)),
+    "aria-activedescendant target",
+  ).not.toBeNull();
 });
