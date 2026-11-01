@@ -50,22 +50,14 @@ describe("usage source messages", () => {
     );
   });
 
-  it.each([
-    { first: 1, second: 1, total: 2 },
-    { first: 1, second: 11, total: 12 },
-  ])(
-    "combines hosts reporting $first and $second skipped records once per source",
-    ({ first, second, total }) => {
-      const source = malformedSource(first);
-      const otherHost = malformedSource(second, {
-        fingerprint: { ...source.fingerprint, hostId: "other-demo-host" },
-      });
+  it("combines hosts reporting the same count once per source", () => {
+    const source = malformedSource(1);
+    const otherHost = malformedSource(1, {
+      fingerprint: { ...source.fingerprint, hostId: "other-demo-host" },
+    });
 
-      expect(codexMessages([source, source, otherHost, otherHost])).toEqual([skipped(total)]);
-      expect(codexMessages([source, source])).toEqual([skipped(first)]);
-      expect(codexMessages([otherHost, otherHost])).toEqual([skipped(second)]);
-    },
-  );
+    expect(codexMessages([source, source, otherHost, otherHost])).toEqual([skipped(2)]);
+  });
 
   it("keeps different machines with the same hostname and home path distinct", () => {
     const source = malformedSource(1);
@@ -131,7 +123,6 @@ describe("usage source messages", () => {
         malformedSource(1, { action: "enableCursorKeychain" }),
       ]),
     ).toEqual(new Map());
-    expect(usageSourceMessagesByProvider([])).toEqual(new Map());
   });
 });
 

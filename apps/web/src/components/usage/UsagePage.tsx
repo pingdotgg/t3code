@@ -659,8 +659,11 @@ function UsageOverview({
       loading.providers.has(provider) ||
       sourceMessages.has(provider),
   );
+  const chartProviders = activeProviders.filter(
+    (provider) => providersWithData.has(provider) || loading.providers.has(provider),
+  );
   const chartLoadingProviders = new Set(
-    activeProviders.filter((provider) => loadingProviders.has(provider)),
+    chartProviders.filter((provider) => loadingProviders.has(provider)),
   );
   const breakdownPeriods: readonly (DailyTotals | HourlyTotals)[] = (
     shownHourly ? merged.hourly : merged.daily
@@ -832,7 +835,7 @@ function UsageOverview({
             {shownHourly ? "Hourly" : "Daily"} {metric === "tokens" ? "processed tokens" : "cost"}
           </h2>
           <UsageProviderChart
-            providers={activeProviders}
+            providers={chartProviders}
             loadingProviders={chartLoadingProviders}
             days={days}
             daily={merged.daily}
