@@ -41,7 +41,11 @@ import type { ProviderMaintenanceCapabilities } from "@t3tools/provider-core/ser
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
-const UPDATE_TIMEOUT_MS = 5 * 60_000;
+// Native updaters (`claude update`) download a ~300 MB binary without printing
+// progress, and killing one mid-download leaves a truncated binary that the
+// next run treats as installed. Allow a slow connection to finish.
+const UPDATE_TIMEOUT_MINUTES = 30;
+const UPDATE_TIMEOUT_MS = UPDATE_TIMEOUT_MINUTES * 60_000;
 const UPDATE_OUTPUT_MAX_BYTES = 10_000;
 // Sample installer output because every progress update resends the provider list to all clients.
 const UPDATE_PROGRESS_INTERVAL = Duration.seconds(1);
@@ -98,13 +102,14 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
   }) {
     const collectCommandResult = Effect.fn("ProviderMaintenanceRunner.collectCommandResult")(
       function* () {
+        const env = input.env ? { env: input.env, extendEnv: true } : {};
         // Windows batch shims require shell dispatch through resolveSpawnCommand.
-        const resolved = yield* resolveSpawnCommand(input.command, input.args);
+        const resolved = yield* resolveSpawnCommand(input.command, input.args, env);
         const child = yield* input.spawner
           .spawn(
             ChildProcess.make(resolved.command, resolved.args, {
               shell: resolved.shell,
-              ...(input.env ? { env: input.env, extendEnv: true } : {}),
+              ...env,
             }),
           )
           .pipe(
@@ -259,7 +264,7 @@ function lastOutputLine(result: ProviderMaintenanceCommandResult): string | null
 
 function failureMessage(result: ProviderMaintenanceCommandResult): string {
   if (result.timedOut) {
-    return "Update timed out.";
+    return `Update timed out after ${UPDATE_TIMEOUT_MINUTES} minutes.`;
   }
   const summary =
     result.exitCode !== null && result.exitCode !== 0
