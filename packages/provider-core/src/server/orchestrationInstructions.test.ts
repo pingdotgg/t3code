@@ -9,6 +9,28 @@ import {
   t3OrchestrationSystemPrompt,
 } from "./orchestrationInstructions.ts";
 
+describe("T3 review delegation instructions", () => {
+  it("keep every independent review round on a new delegate_task", () => {
+    assert.include(
+      T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "Every new delegate review or re-check is a new `delegate_task`",
+    );
+    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "never a `t3_thread_send`");
+  });
+
+  it("resume an interrupted unfinished delegated task in its own child thread", () => {
+    assert.include(
+      T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "Told to continue an interrupted unfinished delegated task that has no pending question or approval: resume that same child with `t3_thread_send` on its `childThreadId`",
+    );
+    assert.include(
+      T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "A waiting task with `hasPendingQuestion` or `pendingApproval`: answer via `t3_pending_request`",
+    );
+    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "a `delegate_task` starts that work over");
+  });
+});
+
 describe("T3 device instructions", () => {
   it("route device work through device_open and give Claude the line that loads the tools", () => {
     for (const intent of ["`device_list`", "`device_open`", "`agent-device`", "ssh", "`hostId`"]) {
