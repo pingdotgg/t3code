@@ -1,3 +1,5 @@
+import { typedThreadNamesByThreadKey } from "./chatViewSend";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   type EnvironmentId,
   type ModelSelection,
@@ -42,6 +44,11 @@ import {
 import type { useLocalDispatchState } from "./useLocalDispatchState";
 
 interface MultipleModelSendInput {
+  readonly draftThreadNameInput: string;
+  readonly setThreadNamesByDraftId: import("react").Dispatch<
+    import("react").SetStateAction<Record<string, string>>
+  >;
+
   readonly environmentId: EnvironmentId;
   readonly routeThreadKey: string;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
@@ -62,6 +69,8 @@ interface MultipleModelSendInput {
  */
 export function useMultipleModelSend(input: MultipleModelSendInput) {
   const {
+    draftThreadNameInput,
+    setThreadNamesByDraftId,
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
@@ -135,6 +144,12 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
+      if (draftId)
+        setThreadNamesByDraftId((names) => {
+          const next = { ...names };
+          delete next[draftId];
+          return next;
+        });
       clearedDraft = true;
       const clearedDraftSnapshot = useComposerDraftStore
         .getState()
@@ -157,8 +172,13 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
             ]),
             model: target.selection.model,
             uncertainSubmissions: uncertainSubmissionsRef.current,
-            start: (targetThreadId) => {
-              return startThreadTurn({
+            start: async (targetThreadId) => {
+              const targetThreadKey = scopedThreadKey(
+                scopeThreadRef(environmentId, targetThreadId),
+              );
+              const threadName = draftThreadNameInput.trim();
+              if (threadName) typedThreadNamesByThreadKey.set(targetThreadKey, threadName);
+              const result = await startThreadTurn({
                 environmentId,
                 input: {
                   threadId: targetThreadId,
@@ -173,12 +193,13 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                   },
                   modelSelection: target.selection,
                   titleSeed: title,
+                  ...(threadName ? { title: threadName } : {}),
                   runtimeMode,
                   interactionMode: target.interactionMode,
                   bootstrap: {
                     createThread: {
                       projectId: project.id,
-                      title,
+                      title: threadName || title,
                       modelSelection: target.selection,
                       runtimeMode,
                       interactionMode: target.interactionMode,
@@ -197,6 +218,8 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                   createdAt: createdAt,
                 },
               });
+              if (result._tag === "Success") typedThreadNamesByThreadKey.delete(targetThreadKey);
+              return result;
             },
             openThread: (threadId) =>
               void navigate({
@@ -232,6 +255,10 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     const restoreFailedDraft = () => {
       appAtomRegistry.set(fanoutSelectionsAtom, failedSelections);
       if (clearedDraft) {
+        if (draftId && draftThreadNameInput)
+          setThreadNamesByDraftId((names) =>
+            names[draftId] !== undefined ? names : { ...names, [draftId]: draftThreadNameInput },
+          );
         restoreComposerDraft(composerDraftTarget, sendSnapshot);
         if (composerRef.current && currentRouteThreadKeyRef.current === routeThreadKey) {
           promptRef.current = messageText;

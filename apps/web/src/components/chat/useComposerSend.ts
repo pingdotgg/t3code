@@ -1,3 +1,4 @@
+import { typedThreadNamesByThreadKey } from "./chatViewSend";
 import {
   mergeDirectPreviewAnnotation,
   resolveBackgroundDraftWorkspaceOptions,
@@ -165,6 +166,11 @@ type UsageLimitsPanel = ReturnType<typeof useUsageLimitsPanel>;
 type TimelineFollow = ReturnType<typeof useTimelineFollow>;
 
 interface ComposerSendInput {
+  readonly draftThreadNameInput: string;
+  readonly setThreadNamesByDraftId: import("react").Dispatch<
+    import("react").SetStateAction<Record<string, string>>
+  >;
+
   readonly environmentId: EnvironmentId;
   readonly routeThreadKey: string;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
@@ -263,6 +269,8 @@ interface ComposerSendInput {
  */
 export function useComposerSend(input: ComposerSendInput) {
   const {
+    draftThreadNameInput,
+    setThreadNamesByDraftId,
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
@@ -371,6 +379,8 @@ export function useComposerSend(input: ComposerSendInput) {
     startFromOrigin,
     resetLocalDispatch,
     setThreadError,
+    draftThreadNameInput,
+    setThreadNamesByDraftId,
   });
   const submitPlanFollowUp = usePlanFollowUpSend({
     environmentId,
@@ -1304,6 +1314,13 @@ export function useComposerSend(input: ComposerSendInput) {
     let backgroundDraftOpened = false;
     let turnStartSucceeded = false;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
+      const threadNameKey = scopedThreadKey(scopeThreadRef(environmentId, threadIdForSend));
+      const draftThreadName = draftThreadNameInput.trim();
+      if (draftId) {
+        if (draftThreadName) typedThreadNamesByThreadKey.set(threadNameKey, draftThreadName);
+        else typedThreadNamesByThreadKey.delete(threadNameKey);
+      }
+      const threadName = typedThreadNamesByThreadKey.get(threadNameKey);
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
           ? {
@@ -1311,7 +1328,7 @@ export function useComposerSend(input: ComposerSendInput) {
                 ? {
                     createThread: {
                       projectId: activeProject.id,
-                      title,
+                      title: threadName || title,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
                       interactionMode: sendInteractionMode,
@@ -1355,6 +1372,7 @@ export function useComposerSend(input: ComposerSendInput) {
           },
           modelSelection: ctxSelectedModelSelection,
           titleSeed: title,
+          ...(threadName ? { title: threadName } : {}),
           runtimeMode,
           interactionMode: sendInteractionMode,
           dispatchMode: turnDispatchMode,
@@ -1390,6 +1408,7 @@ export function useComposerSend(input: ComposerSendInput) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        typedThreadNamesByThreadKey.delete(threadNameKey);
         setKeepFullHistory(routeThreadKey, false);
         clearUsageLimitsFor(routeThreadKey);
         if (turnUsesAttachmentUploads) {

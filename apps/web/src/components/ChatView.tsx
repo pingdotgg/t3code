@@ -44,6 +44,7 @@ import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
+import { ComposerThreadNameField } from "./chat/ComposerThreadNameField";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { useUsageLimitsPanel } from "./chat/useUsageLimitsPanel";
 import { useWorktreeSetup } from "./chat/useWorktreeSetup";
@@ -940,6 +941,11 @@ export default function ChatView(props: ChatViewProps) {
     (isServerThread ? activeThread?.runtimeMode : undefined) ??
     defaultRuntimeMode;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
+  const [threadNamesByDraftId, setThreadNamesByDraftId] = useState<Record<string, string>>({});
+  const draftThreadNameInput = draftId ? (threadNamesByDraftId[draftId] ?? "") : "";
+  const setDraftThreadName = (id: string, name: string) => {
+    setThreadNamesByDraftId((names) => ({ ...names, [id]: name }));
+  };
   const canCheckoutPullRequestIntoThread = canWriteSourceControl && isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
   // Turn items can lag projection hydration; keep the environment locked through that gap.
@@ -2885,6 +2891,8 @@ export default function ChatView(props: ChatViewProps) {
     defaultRuntimeMode,
   });
   const { onSend } = useComposerSend({
+    draftThreadNameInput,
+    setThreadNamesByDraftId,
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
@@ -3621,6 +3629,15 @@ export default function ChatView(props: ChatViewProps) {
                                             : projectCloneSendBlockReason
                               }
                               isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
+                              threadNameField={
+                                isLocalDraftThread && draftId ? (
+                                  <ComposerThreadNameField
+                                    name={draftThreadNameInput}
+                                    onNameChange={(name) => setDraftThreadName(draftId, name)}
+                                    onSubmit={scheduleComposerFocus}
+                                  />
+                                ) : undefined
+                              }
                               bannerItems={isDraftHeroState ? [] : composerBannerItems}
                               resumeCompactionTokens={resumeCompactionTokens}
                               keepFullHistory={keepFullHistory}

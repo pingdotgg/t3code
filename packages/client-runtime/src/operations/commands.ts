@@ -178,6 +178,8 @@ export interface StartThreadTurnInput extends ThreadCommandInput {
   };
   readonly modelSelection?: ModelSelection;
   readonly titleSeed?: string;
+  /** A name the user typed for the thread. It wins over `titleSeed` and skips title generation. */
+  readonly title?: string;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly bootstrap?: StartThreadBootstrap;
@@ -715,8 +717,8 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       threadId: input.threadId,
       ...(bootstrap === undefined ? { reuseExistingThread: true } : {}),
       projectId: thread.projectId,
-      title: input.titleSeed ?? thread.title,
-      generateTitle: input.titleSeed !== undefined,
+      title: input.title ?? input.titleSeed ?? thread.title,
+      generateTitle: input.title === undefined && input.titleSeed !== undefined,
       modelSelection: input.modelSelection ?? thread.modelSelection,
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
@@ -773,7 +775,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       ? {}
       : { idleCompaction: input.message.idleCompaction }),
     attachments,
-    ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
+    ...(input.titleSeed === undefined || input.title !== undefined
+      ? {}
+      : { titleSeed: input.titleSeed }),
     ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
     ...(input.sourceProposedPlan === undefined ? {} : { sourcePlanRef: input.sourceProposedPlan }),
     ...(requestedMode !== "queue" ? { deliveryIntent: requestedMode } : {}),
