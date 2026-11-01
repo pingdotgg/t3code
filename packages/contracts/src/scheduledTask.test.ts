@@ -31,6 +31,7 @@ describe("ScheduledTaskSchedule", () => {
       "2026-11-03T09:00",
       "2026-13-03T09:00Z",
       "2026-02-30T09:00Z",
+      "9999-12-31T23:30-01:00",
       "tomorrow",
     ]) {
       expect(() => decodeUpsertSchedule({ type: "once", runAt })).toThrow();

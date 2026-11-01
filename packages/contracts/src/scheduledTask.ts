@@ -51,7 +51,8 @@ const ISO_WITH_OFFSET =
 /** Date.parse rolls impossible days like Feb 30 into the next month, so check the day too. */
 function isIsoWithOffset(value: string): boolean {
   const match = ISO_WITH_OFFSET.exec(value);
-  if (!match || !Number.isFinite(Date.parse(value))) return false;
+  // The server stores UTC, which must stay a four-digit year to decode again.
+  if (!match || !(Date.parse(value) < Date.parse("+010000-01-01T00:00:00Z"))) return false;
   const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
   const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
   const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
