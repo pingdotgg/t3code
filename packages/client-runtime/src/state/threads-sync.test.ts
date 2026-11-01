@@ -673,6 +673,17 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("asks the server again when the session changes after a 404", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ httpSnapshot: { _tag: "missing" } });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+      yield* harness.replaceSession;
+      yield* awaitThreadState(harness.observed, (value) => value.status === "synchronizing");
+      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(2);
+    }),
+  );
+
   it.effect("asks the server again after an HTTP miss, since the thread may not exist yet", () =>
     Effect.gen(function* () {
       const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
