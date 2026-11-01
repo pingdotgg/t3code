@@ -2396,6 +2396,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     filePaths?: readonly string[],
     env?: NodeJS.ProcessEnv,
   ) {
+    if (filePaths?.some((file) => file.includes("\0"))) {
+      return yield* new GitCommandError({
+        operation: "GitVcsDriver.commit",
+        command: "git add",
+        cwd,
+        detail: "Selected file paths must not contain NUL bytes.",
+      });
+    }
     const config = env
       ? ["-c", "core.splitIndex=false", "-c", "splitIndex.sharedIndexExpire=never"]
       : [];

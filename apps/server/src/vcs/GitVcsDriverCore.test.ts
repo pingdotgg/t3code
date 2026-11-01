@@ -5073,6 +5073,22 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         for (const file of selected) yield* writeTextFile(cwd, file, "literal\n");
         yield* writeTextFile(cwd, "selected1.txt", "pattern match\n");
 
+        yield* git(cwd, ["add", "selected1.txt"]);
+        const stagedBefore = yield* git(cwd, ["diff", "--cached"]);
+        const headBefore = yield* git(cwd, ["rev-parse", "HEAD"]);
+        const invalidSelection = ["selected[1].txt\0:(top,glob)**"];
+        const prepared = yield* driver
+          .prepareCommitContext(cwd, invalidSelection)
+          .pipe(Effect.result);
+        const committed = yield* driver
+          .commit(cwd, "Invalid selection", "", { stage: { filePaths: invalidSelection } })
+          .pipe(Effect.result);
+        assert.isTrue(Result.isFailure(prepared));
+        assert.isTrue(Result.isFailure(committed));
+        assert.equal(yield* git(cwd, ["diff", "--cached"]), stagedBefore);
+        assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), headBefore);
+        yield* git(cwd, ["reset"]);
+
         const context = yield* driver.prepareCommitContext(cwd, selected);
 
         assert.include(context?.stagedSummary ?? "", "selected[1].txt");
