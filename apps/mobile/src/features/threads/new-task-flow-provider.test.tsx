@@ -139,7 +139,7 @@ function setup() {
   const projects = [
     project("one", "a"),
     { ...project("one", "b"), groupingIdentity },
-    { ...project("two", "b"), groupingIdentity },
+    { ...project("two", "copy"), groupingIdentity },
   ];
   mocks.projects.mockReturnValue(projects);
   mocks.presentation.mockReturnValue({
@@ -296,9 +296,9 @@ it("owns a status stream only while the draft is active, retaining draft choices
   expect(screen.current.selectedProject).toEqual(screen.projects[2]);
   expect(screen.snapshot(draftKey).project).toEqual({
     environmentId: "two",
-    projectId: "b",
+    projectId: "copy",
   });
-  expect(screen.events).toEqual(["start:/a", "start:/b", "start:/b"]);
+  expect(screen.events).toEqual(["start:/a", "start:/b", "start:/copy"]);
   // A late old-project result cannot replace the current environment's checkout.
   await screen.emit("/a", "stale-branch");
   expect(screen.current.currentCheckoutBranchName).toBe("main");
