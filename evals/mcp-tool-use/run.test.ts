@@ -2,9 +2,15 @@
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { assert, expect, it } from "@effect/vitest";
-import { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  ComposerContextId,
+  EnvironmentId,
+  OrchestratorMcpDelegateTaskResult,
+  ThreadId,
+} from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 
 import {
@@ -24,6 +30,7 @@ import {
   shellRequest,
   summarize,
   t3SystemAppend,
+  t3Result,
   t3SubagentContext,
   withDevices,
 } from "./run.ts";
@@ -344,6 +351,80 @@ it("replays earlier capability results with the model under test as the caller",
     .find((block) => block.type === "tool_result" && String(block.content).includes("inherited"));
   assert.include(String(replayed?.content), '"inheritedModel":"claude-opus-5-5"');
 });
+
+const decodeCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
+const decodeTaskResult = Schema.decodeUnknownResult(OrchestratorMcpDelegateTaskResult);
+const taskIdOf = (value: unknown) =>
+  typeof value === "object" && value !== null && "taskId" in value ? value.taskId : undefined;
+
+it.effect("gives the model every delegated-task result in T3's contract shape", () =>
+  Effect.gen(function* () {
+    // A Codex base answers any prior tool, so every case's prior turns replay.
+    const base = {
+      ...buildBase(template, { model: "gpt-6.1-sol", keepUserInstructions: false }),
+      codex: { input: [], reasoning: { effort: "high" } },
+    };
+    const invalid: Array<string> = [];
+    for (const file of NodeFS.readdirSync(new URL("./cases/", import.meta.url))) {
+      const lines = NodeFS.readFileSync(new URL(`./cases/${file}`, import.meta.url), "utf8");
+      for (const [index, line] of lines.trim().split("\n").entries()) {
+        const testCase = decodeCase(line);
+        const sample = makeSample(testCase, base);
+        yield* withDevices(sample);
+        const blocks = buildMessages(sample).flatMap((message) => message.content);
+        const seen = blocks.flatMap((use) => {
+          const tool = normalizeToolName(String(use.name));
+          if (use.type !== "tool_use" || !["delegate_task", "task_status"].includes(tool))
+            return [];
+          const result = blocks.find((block) => block.tool_use_id === use.id);
+          return [{ source: "prior", tool, value: JSON.parse(String(result?.content)) }];
+        });
+        const delegated = t3Result(sample, "delegate_task", { task: "Review the diff." });
+        seen.push({ source: "live", tool: "delegate_task", value: delegated });
+        const taskIds = new Set(seen.map(({ value }) => taskIdOf(value)).filter(Boolean));
+        for (const taskId of taskIds.size > 0 ? taskIds : ["task-1"]) {
+          seen.push({
+            source: "live",
+            tool: "task_status",
+            value: t3Result(sample, "task_status", { taskId }),
+          });
+        }
+        for (const { source, tool, value } of seen) {
+          const mock = testCase.setup.mocks?.[tool];
+          const decoded = decodeTaskResult(value);
+          if (source === "live" && typeof mock === "object" && mock !== null && "_tag" in mock) {
+            assert.deepEqual(value, mock);
+            assert.isTrue(Result.isFailure(decoded));
+          } else if (Result.isFailure(decoded)) {
+            invalid.push(`${file}:${index + 1} ${source} ${tool}: ${decoded.failure.message}`);
+          }
+        }
+      }
+    }
+    assert.deepEqual(invalid, []);
+
+    // A later status names the child and model the task's earlier results gave it.
+    const lines = NodeFS.readFileSync(
+      new URL("./cases/orchestration.ndjson", import.meta.url),
+      "utf8",
+    );
+    const stale = lines
+      .trim()
+      .split("\n")
+      .map((line) => decodeCase(line))
+      .find(({ id }) => id === "stale-review-not-cancelled-on-ship")!;
+    const sample = makeSample(stale, base);
+    buildMessages(sample);
+    assert.deepInclude(t3Result(sample, "task_status", { taskId: "task-1" }), {
+      childRunId: "run-child-1",
+      providerInstanceId: "codex",
+      model: "gpt-6.1-sol",
+      status: "completed",
+      hasPendingChildRuns: true,
+      latestTerminalRunId: "run-child-1",
+    });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it("does not record a deferred tool called before it was loaded", () => {
   const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
