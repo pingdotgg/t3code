@@ -116,15 +116,19 @@ export function buildTraitsTriggerDisplay(input: {
       descriptor.type === "boolean" &&
       descriptor.currentValue === false,
   );
+  const hasReasoningSelect = input.descriptors.some(
+    (descriptor) =>
+      descriptor.type === "select" && REASONING_SELECT_DESCRIPTOR_IDS.has(descriptor.id),
+  );
   let fastModeFallbackLabel: string | null = null;
   let speedLabel: string | null = null;
   let reasoningLabelIndex = -1;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
     if (descriptor.id === "thinking" && descriptor.type === "boolean") {
-      if (thinkingOff) {
+      if (thinkingOff || (!hasReasoningSelect && descriptor.currentValue === true)) {
         reasoningLabelIndex = labels.length;
-        labels.push("Off");
+        labels.push(thinkingOff ? "Off" : "Thinking");
       }
       continue;
     }

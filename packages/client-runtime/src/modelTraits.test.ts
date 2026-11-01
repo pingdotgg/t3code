@@ -5,10 +5,12 @@ import { buildTraitsTriggerDisplay } from "./modelTraits.ts";
 
 describe("composer thinking summary", () => {
   it.each([
-    { thinking: true, toggleFirst: false, label: "Extra High · 1M" },
-    { thinking: true, toggleFirst: true, label: "Extra High · 1M" },
-    { thinking: false, toggleFirst: false, label: "Off · 1M" },
-    { thinking: false, toggleFirst: true, label: "Off · 1M" },
+    { thinking: true, toggleFirst: false, effort: true, label: "Extra High · 1M" },
+    { thinking: true, toggleFirst: true, effort: true, label: "Extra High · 1M" },
+    { thinking: false, toggleFirst: false, effort: true, label: "Off · 1M" },
+    { thinking: false, toggleFirst: true, effort: true, label: "Off · 1M" },
+    { thinking: true, toggleFirst: true, effort: false, label: "Thinking · 1M" },
+    { thinking: false, toggleFirst: true, effort: false, label: "Off · 1M" },
   ])("shows $label with thinking=$thinking and toggleFirst=$toggleFirst", (testCase) => {
     const thinking: ProviderOptionDescriptor = {
       id: "thinking",
@@ -24,7 +26,11 @@ describe("composer thinking summary", () => {
       options: [{ id: "xhigh", label: "Extra High" }],
     };
     const descriptors: Array<ProviderOptionDescriptor> = [
-      ...(testCase.toggleFirst ? [thinking, effort] : [effort, thinking]),
+      ...(testCase.effort
+        ? testCase.toggleFirst
+          ? [thinking, effort]
+          : [effort, thinking]
+        : [thinking]),
       {
         id: "contextWindow",
         label: "Context Window",
@@ -37,7 +43,7 @@ describe("composer thinking summary", () => {
       buildTraitsTriggerDisplay({
         provider: ProviderDriverKind.make("claudeAgent"),
         descriptors,
-        primarySelectDescriptorId: "effort",
+        primarySelectDescriptorId: testCase.effort ? "effort" : "contextWindow",
         ultrathinkPromptControlled: false,
       }),
     ).toMatchObject({
