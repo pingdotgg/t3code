@@ -5,11 +5,16 @@ import {
   type UsageLimitSourceAccount,
   type UsageLimitSourceConfig,
 } from "@t3tools/contracts";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Hex from "effect/encoding/Hex";
+import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
@@ -17,6 +22,27 @@ import { codexPlanLabel } from "../provider/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
+
+class HubProviderRateLimitedError extends Schema.TaggedError<HubProviderRateLimitedError>()(
+  "HubProviderRateLimitedError",
+  {},
+) {
+  override get message(): string {
+    return "The provider is rate limiting requests from the hub. Try again in a few minutes.";
+  }
+}
+const isHubProviderRateLimitedError = Schema.is(HubProviderRateLimitedError);
+
+const USAGE_READ_INTERVAL_MS = 60_000;
+const USAGE_READ_MAX_BACKOFF_MS = 8 * 60_000;
+const USAGE_READ_RETENTION_MS = 15 * 60_000;
+
+interface UsageReadState {
+  readonly nextReadAt: number;
+  readonly intervalMs: number;
+  readonly last: { readonly value: UsageLimitSourceAccount; readonly at: number } | undefined;
+  readonly message: string;
+}
 
 const AuthFile = Schema.Struct({
   id: Schema.String,
@@ -237,6 +263,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ...(data === undefined ? {} : { data: yield* encodeJson(data) }),
     });
     const response = yield* decodeApiResponse(raw);
+    if (response.status_code === 429) return yield* new HubProviderRateLimitedError();
     if (response.status_code < 200 || response.status_code >= 300) {
       return yield* new UsageLimitSourceError({
         detail: `The provider refused the hub request (HTTP ${response.status_code}).`,
@@ -261,6 +288,17 @@ export const makeCliproxyApi = Effect.gen(function* () {
       )
       .toSorted((a, b) => Date.parse(a.expires_at) - Date.parse(b.expires_at));
   });
+
+  const usageReads = yield* Ref.make<ReadonlyMap<string, UsageReadState>>(new Map());
+  const usageReadLock = yield* KeyedLock.make<string>();
+  const usageReadKey = (config: UsageLimitSourceConfig, account: typeof AuthFile.Type) =>
+    JSON.stringify([
+      config.url,
+      account.id,
+      account.provider,
+      account.email ?? "",
+      account.id_token?.chatgpt_account_id ?? "",
+    ]);
 
   const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
     config: UsageLimitSourceConfig,
@@ -353,15 +391,50 @@ export const makeCliproxyApi = Effect.gen(function* () {
         },
       };
     });
-    return yield* read.pipe(
-      Effect.orElseSucceed(() => ({
-        ...base,
-        usageLimits: makeUnavailableUsageLimits({
-          checkedAt,
-          reason: "probeFailed",
-          message: "The hub could not read this account's usage.",
-        }),
-      })),
+    const key = usageReadKey(config, account);
+    return yield* usageReadLock.withLock(
+      key,
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        const previous = (yield* Ref.get(usageReads)).get(key);
+        let entry = previous;
+        if (!entry || now >= entry.nextReadAt) {
+          const result = yield* Effect.result(read);
+          const intervalMs = Result.isSuccess(result)
+            ? USAGE_READ_INTERVAL_MS
+            : Math.min(
+                (entry?.intervalMs ?? USAGE_READ_INTERVAL_MS) * 2,
+                USAGE_READ_MAX_BACKOFF_MS,
+              );
+          entry = {
+            nextReadAt: now + intervalMs,
+            intervalMs,
+            last: Result.isSuccess(result) ? { value: result.success, at: now } : entry?.last,
+            message:
+              Result.isFailure(result) && isHubProviderRateLimitedError(result.failure)
+                ? result.failure.message
+                : "The hub could not read this account's usage.",
+          };
+        }
+        // A slow failed probe can cross the retention boundary.
+        const finishedAt = yield* Clock.currentTimeMillis;
+        if (entry.last && finishedAt - entry.last.at >= USAGE_READ_RETENTION_MS) {
+          entry = { ...entry, last: undefined };
+        }
+        if (entry !== previous) {
+          const next = entry;
+          yield* Ref.update(usageReads, (current) => new Map(current).set(key, next));
+        }
+        if (entry.last) return entry.last.value;
+        return {
+          ...base,
+          usageLimits: makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "probeFailed",
+            message: entry.message,
+          }),
+        };
+      }),
     );
   });
 
@@ -390,13 +463,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     accountId: string,
     creditId: string,
   ): Effect.fn.Return<ProviderConsumeResetCreditResult, UsageLimitSourceError> {
-    const operation = Effect.gen(function* () {
-      const account = (yield* authFiles(config)).find((account) => account.id === accountId);
-      if (!account || account.disabled || account.provider !== "codex") {
-        return yield* new UsageLimitSourceError({
-          detail: "The Codex hub account is missing or disabled.",
-        });
-      }
+    const redeem = Effect.fnUntraced(function* (account: typeof AuthFile.Type) {
       const body = yield* apiCall(config, account, `${CREDIT_URL}/consume`, {
         redeem_request_id: yield* creditRedeemRequestId(
           account.id_token?.chatgpt_account_id ?? account.id,
@@ -427,12 +494,41 @@ export const makeCliproxyApi = Effect.gen(function* () {
           : {}),
       } as const;
     });
+    const operation = Effect.gen(function* () {
+      const account = (yield* authFiles(config)).find((account) => account.id === accountId);
+      if (!account || account.disabled || account.provider !== "codex") {
+        return yield* new UsageLimitSourceError({
+          detail: "The Codex hub account is missing or disabled.",
+        });
+      }
+      const key = usageReadKey(config, account);
+      return yield* redeem(account).pipe(
+        // Only an explicit provider 429 guarantees that no credit was spent.
+        Effect.onExit((exit) => {
+          const failure = Exit.findError(exit);
+          if (Result.isSuccess(failure) && isHubProviderRateLimitedError(failure.success)) {
+            return Effect.void;
+          }
+          // Wait for older probes before dropping their result.
+          return usageReadLock.withLock(
+            key,
+            Ref.update(usageReads, (current) => {
+              const next = new Map(current);
+              next.delete(key);
+              return next;
+            }),
+          );
+        }),
+      );
+    });
     return yield* operation.pipe(
       Effect.mapError((error) =>
         isUsageLimitSourceError(error)
           ? error
           : new UsageLimitSourceError({
-              detail: "The hub returned an unexpected reset-credit response.",
+              detail: isHubProviderRateLimitedError(error)
+                ? error.message
+                : "The hub returned an unexpected reset-credit response.",
             }),
       ),
     );
