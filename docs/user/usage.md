@@ -87,6 +87,11 @@ the dialog.
 
 ## Track subscription limits
 
+On web and desktop, drag the grip beside a provider heading to put your preferred providers
+first. You can also focus the grip, press Space, use the arrow keys, and press Space again to
+drop it. Escape cancels. The order is remembered on this device, including providers you
+temporarily hide or disconnect.
+
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
 or Claude accounts across your enabled environments and hubs you read one number per window rather than a
 list. Each window card shows how much of the pool is left and a bar with one segment per account,

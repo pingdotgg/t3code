@@ -524,6 +524,10 @@ export function UsagePage() {
               <UsageLimitsSection
                 selectedEnvironmentIds={selectedEnvironmentIds}
                 hiddenProviders={hiddenProviders}
+                providerOrder={preferences.limitProviderOrder ?? []}
+                onProviderOrderChange={(limitProviderOrder) =>
+                  updatePreferences({ limitProviderOrder })
+                }
                 now={limitsNow}
                 cursorPrompt={
                   cursorAccessEnvironments.length > 0 ? (

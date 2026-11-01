@@ -1,3 +1,4 @@
+import { ProviderDriverKind } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { readUsagePagePreferences, saveUsagePagePreferences } from "./usagePagePreferences";
@@ -24,6 +25,19 @@ afterEach(() => {
 });
 
 describe("Usage page preferences", () => {
+  it("remembers provider order without losing filters or the selected metric", () => {
+    const preferences = {
+      metric: "limits" as const,
+      windowDays: 7 as const,
+      hiddenProviders: ["cursor" as const],
+      limitProviderOrder: ["claudeAgent", "codex", "cursor"].map((driver) =>
+        ProviderDriverKind.make(driver),
+      ),
+    };
+    saveUsagePagePreferences(preferences);
+    expect(readUsagePagePreferences()).toEqual(preferences);
+  });
+
   it("round-trips hidden providers and reads older saves without them", () => {
     saveUsagePagePreferences({ metric: "cost", windowDays: 7, hiddenProviders: ["codex"] });
     expect(readUsagePagePreferences().hiddenProviders).toEqual(["codex"]);
