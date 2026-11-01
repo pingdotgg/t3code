@@ -178,6 +178,7 @@ function WorkspaceColumns(
   const windowDimensions = useWindowDimensions();
   const nativeMetrics = useNativeLayoutMetrics();
   const viewportWidth = nativeMetrics?.width ?? windowDimensions.width;
+  const primaryColumnWidth = layout.listPaneWidth ?? 320;
   const [inspectorWidthFraction, setInspectorWidthFraction] = useState(0.4);
   const inspectorWidth = Math.max(
     260,
@@ -354,9 +355,11 @@ function WorkspaceColumns(
         if (inspector.visible) toggleAuxiliaryPane();
       }}
       columnMetrics={{
-        minimumPrimaryColumnWidth: 280,
-        maximumPrimaryColumnWidth: Math.max(380, layout.listPaneWidth ?? 0),
-        preferredPrimaryColumnWidthOrFraction: layout.listPaneWidth ?? 320,
+        minimumPrimaryColumnWidth: layout.primarySidebarOverlaysContent ? primaryColumnWidth : 280,
+        maximumPrimaryColumnWidth: layout.primarySidebarOverlaysContent
+          ? primaryColumnWidth
+          : Math.max(380, primaryColumnWidth),
+        preferredPrimaryColumnWidthOrFraction: primaryColumnWidth,
         minimumSecondaryColumnWidth: 320,
         // UIKit can retain its automatic width despite a new preference; constrain both edges.
         minimumInspectorColumnWidth: inspectorWidth,

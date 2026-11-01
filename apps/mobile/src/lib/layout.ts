@@ -142,14 +142,21 @@ export function deriveLayout(input: {
       region.x - metrics.safeArea.left >= SPLIT_SIDEBAR_MIN_WIDTH &&
       width - region.x - region.width - metrics.safeArea.right >= 320,
   );
+  const primarySidebarOverlaysContent =
+    input.nativeWorkspace === true && metrics?.hasHinge === true && width < height;
   return {
     variant: "split",
     usesSplitView: true,
-    primarySidebarOverlaysContent:
-      input.nativeWorkspace === true && metrics?.hasHinge === true && width < height,
+    primarySidebarOverlaysContent,
     listPaneWidth:
       division?.x ??
-      clamp(Math.round(width * 0.32), SPLIT_SIDEBAR_MIN_WIDTH, SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH),
+      (primarySidebarOverlaysContent
+        ? 350
+        : clamp(
+            Math.round(width * 0.32),
+            SPLIT_SIDEBAR_MIN_WIDTH,
+            SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH,
+          )),
     ...(division ? { listPaneGap: division.width } : {}),
     shellPadding: 0,
   };
