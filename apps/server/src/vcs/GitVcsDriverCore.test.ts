@@ -3695,6 +3695,47 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("flattens a generated name when a branch at its parent path blocks it", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        // A local `t3` branch is why launches start on the flat `t3-<hex>` temporary branch.
+        yield* git(cwd, ["branch", "t3"]);
+        yield* git(cwd, ["checkout", "-b", "t3-abcd1234"]);
+        yield* git(cwd, ["branch", "t3-fix-login"]);
+
+        const renamed = yield* driver.renameBranch({
+          cwd,
+          oldBranch: "t3-abcd1234",
+          newBranch: "t3/fix-login",
+        });
+
+        assert.equal(renamed.branch, "t3-fix-login-1");
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "t3-fix-login-1");
+      }),
+    );
+
+    it.effect("skips a flattened name that a nested branch blocks", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["branch", "t3"]);
+        yield* git(cwd, ["checkout", "-b", "t3-abcd1234"]);
+        yield* git(cwd, ["branch", "t3-fix-login/child"]);
+
+        const renamed = yield* driver.renameBranch({
+          cwd,
+          oldBranch: "t3-abcd1234",
+          newBranch: "t3/fix-login",
+        });
+
+        assert.equal(renamed.branch, "t3-fix-login-1");
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "t3-fix-login-1");
+      }),
+    );
+
     it.effect("rejects a missing branch without restoring a matching dirty file", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
