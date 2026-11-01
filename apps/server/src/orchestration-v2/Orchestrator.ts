@@ -1542,6 +1542,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       options?: {
         readonly failedRunId?: RunId;
         readonly endedRunId?: RunId;
+        readonly preserveFailureHold?: boolean;
         readonly queuedRunId?: RunId;
       },
     ) {
@@ -1580,13 +1581,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // Failed worktree creation would run queued work in the project checkout; wait for the user.
       const failedRun = latestExecutedRun(projection.runs);
       const failureClass =
-        failedRun?.id === options?.failedRunId
+        failedRun?.id === options?.failedRunId ||
+        (options?.preserveFailureHold === true && failedRun?.status === "failed")
           ? latestRootProviderFailure(failedRun, projection.turnItems)?.class
           : undefined;
       const worktreeMissing =
-        failedRun?.id === options?.endedRunId &&
-        failedRun?.workspacePreparation?.type === "worktree" &&
-        projection.thread.worktreePath === null;
+        (options?.preserveFailureHold === true && worktreeSetupPending(projection)) ||
+        (failedRun?.id === options?.endedRunId &&
+          failedRun?.workspacePreparation?.type === "worktree" &&
+          projection.thread.worktreePath === null);
       const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
       const projectOverride =
         settings.projectSettingsOverrides[projection.thread.projectId]?.providerInstances?.[
@@ -13368,7 +13371,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* mapDispatchError(command)(
           startNextQueuedRun(
             command.threadId,
-            command.type === "queued-run.start" ? { queuedRunId: command.runId } : undefined,
+            command.type === "queued-run.start"
+              ? { queuedRunId: command.runId }
+              : command.type === "queued-run.editing"
+                ? { preserveFailureHold: true }
+                : undefined,
           ),
         );
       }
@@ -13519,7 +13526,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* mapDispatchError(command)(
         startNextQueuedRun(
           command.threadId,
-          command.type === "queued-run.start" ? { queuedRunId: command.runId } : undefined,
+          command.type === "queued-run.start"
+            ? { queuedRunId: command.runId }
+            : command.type === "queued-run.editing"
+              ? { preserveFailureHold: true }
+              : undefined,
         ),
       );
     }

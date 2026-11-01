@@ -5976,6 +5976,66 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* orchestrator.resumeQueuedRuns;
       const after = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(after.runs.find((run) => run.id === edited!.id)?.status, "starting");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:after-preparation`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:after-preparation`),
+        text: "Wait for the worktree",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+      });
+      const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+      const release = {
+        type: "queued-run.editing" as const,
+        commandId: CommandId.make(`${threadId}:release-after-failure`),
+        threadId,
+        runId: queued.id,
+        editing: false,
+      };
+      yield* orchestrator.dispatch({
+        ...release,
+        commandId: CommandId.make(`${threadId}:hold-after-preparation`),
+        editing: true,
+      });
+      const preparing = after.runs.find((run) => run.id === edited!.id)!;
+      // Keep the persisted failure ahead of the terminal reactor deterministically.
+      yield* eventSink.write({
+        commandId: CommandId.make(`command:runtime-reconcile:${threadId}:preparation-failed`),
+        events: [
+          {
+            id: EventId.make(`${threadId}:missing-worktree`),
+            type: "thread.metadata-updated",
+            threadId,
+            occurredAt: now,
+            payload: { ...after.thread, worktreePath: null },
+          },
+          {
+            id: EventId.make(`${threadId}:preparation-failed`),
+            type: "run.updated",
+            threadId,
+            runId: preparing.id,
+            occurredAt: now,
+            payload: {
+              ...preparing,
+              status: "failed",
+              completedAt: now,
+              workspacePreparation: { type: "worktree", baseRef: "main" },
+            },
+          },
+        ],
+      });
+      for (const command of [release, release]) {
+        yield* orchestrator.dispatch(command);
+        const held = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.id === queued.id,
+        )!;
+        assert.equal(held.status, "queued");
+        assert.isTrue(held.queueHeld);
+      }
     }),
   );
 
