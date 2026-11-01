@@ -183,13 +183,14 @@ function BackgroundActivityAdvancedDialog({
                   value={automaticGitFetchIntervalSeconds}
                   min={0}
                   step={5}
-                  onCommit={(seconds) =>
+                  onCommit={(seconds, options) =>
                     updateSettings(
                       backgroundActivityOverrideSettings(
                         settings.backgroundActivity,
                         resolvedBackgroundActivity,
                         { automaticGitFetchInterval: Duration.seconds(seconds) },
                       ),
+                      options,
                     )
                   }
                 />
@@ -211,13 +212,14 @@ function BackgroundActivityAdvancedDialog({
                   value={providerHealthRefreshIntervalSeconds}
                   min={0}
                   step={PROVIDER_HEALTH_INTERVAL_STEP_SECONDS}
-                  onCommit={(seconds) =>
+                  onCommit={(seconds, options) =>
                     updateSettings(
                       backgroundActivityOverrideSettings(
                         settings.backgroundActivity,
                         resolvedBackgroundActivity,
                         { providerHealthRefreshInterval: Duration.seconds(seconds) },
                       ),
+                      options,
                     )
                   }
                 />
@@ -238,13 +240,14 @@ function BackgroundActivityAdvancedDialog({
                   value={hostPowerMonitorActiveIntervalSeconds}
                   min={5}
                   step={5}
-                  onCommit={(seconds) =>
+                  onCommit={(seconds, options) =>
                     updateSettings(
                       backgroundActivityOverrideSettings(
                         settings.backgroundActivity,
                         resolvedBackgroundActivity,
                         { hostPowerMonitorActiveInterval: Duration.seconds(seconds) },
                       ),
+                      options,
                     )
                   }
                 />
@@ -265,13 +268,14 @@ function BackgroundActivityAdvancedDialog({
                   value={hostPowerMonitorIdleIntervalSeconds}
                   min={5}
                   step={30}
-                  onCommit={(seconds) =>
+                  onCommit={(seconds, options) =>
                     updateSettings(
                       backgroundActivityOverrideSettings(
                         settings.backgroundActivity,
                         resolvedBackgroundActivity,
                         { hostPowerMonitorIdleInterval: Duration.seconds(seconds) },
                       ),
+                      options,
                     )
                   }
                 />

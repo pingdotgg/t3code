@@ -360,7 +360,7 @@ describe("EnvironmentProviderSettings routing", () => {
 });
 
 describe("EnvironmentProviderSettings health check interval", () => {
-  it("saves a typed interval once, when editing ends", async () => {
+  it("commits interval drafts and allows retrying rejected edits", async () => {
     await setup();
     await using _screen = await render(panel());
     const input = page.getByRole("textbox", { name: "Provider health check interval in seconds" });
@@ -384,6 +384,21 @@ describe("EnvironmentProviderSettings health check interval", () => {
         Duration.toSeconds(patch.backgroundActivity.overrides.providerHealthRefreshInterval),
       ),
     ).toEqual([120]);
+
+    await act(() => state.updateSettings.mock.calls.at(-1)?.[1]?.onFailed?.());
+    await expect.element(input).toHaveValue("300");
+    await userEvent.type(input, "{Backspace}{Backspace}{Backspace}120");
+    await userEvent.tab();
+    expect(
+      state.updateSettings.mock.calls.map(([patch]) =>
+        Duration.toSeconds(patch.backgroundActivity.overrides.providerHealthRefreshInterval),
+      ),
+    ).toEqual([120, 120]);
+
+    const rejectPrevious = state.updateSettings.mock.calls.at(-1)?.[1]?.onFailed;
+    await userEvent.type(input, "{ArrowUp}");
+    await act(() => rejectPrevious?.());
+    await expect.element(input).toHaveValue("150");
   });
 
   it("restores the saved interval when a cleared field loses focus", async () => {

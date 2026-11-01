@@ -19,36 +19,50 @@ export function IntervalSecondsField({
   value: number;
   min: number;
   step: number;
-  onCommit: (seconds: number) => void;
+  onCommit: (seconds: number, options: { onFailed: () => void }) => void;
 }) {
-  const [draft, setDraft] = useState<number | null>(value);
-  const [savedValue, setSavedValue] = useState(value);
-  const [committedValue, setCommittedValue] = useState(value);
-  if (savedValue !== value) {
-    setSavedValue(value);
-    setCommittedValue(value);
-    setDraft(value);
+  const [field, setField] = useState({
+    saved: value,
+    draft: value as number | null,
+    committed: value,
+    revision: 0,
+  });
+  if (field.saved !== value) {
+    setField({ ...field, saved: value, draft: value, committed: value });
   }
 
   return (
     <NumberField
-      value={draft}
+      value={field.draft}
       min={min}
       step={step}
       size="sm"
       className="w-32"
-      onValueChange={setDraft}
+      onValueChange={(draft) => setField((current) => ({ ...current, draft }))}
       onValueCommitted={(next) => {
         if (next === null) {
-          setDraft(committedValue);
+          setField((current) => ({ ...current, draft: current.saved }));
           return;
         }
         const seconds = normalizeIntervalSeconds(next, min);
-        setDraft(seconds);
-        if (seconds !== committedValue) {
-          setCommittedValue(seconds);
-          onCommit(seconds);
+        if (seconds === field.committed) {
+          setField((current) => ({ ...current, draft: seconds }));
+          return;
         }
+        const revision = field.revision + 1;
+        setField((current) => ({ ...current, draft: seconds, committed: seconds, revision }));
+        onCommit(seconds, {
+          onFailed: () =>
+            setField((current) =>
+              current.revision !== revision
+                ? current
+                : {
+                    ...current,
+                    committed: current.saved,
+                    draft: current.draft === seconds ? current.saved : current.draft,
+                  },
+            ),
+        });
       }}
     >
       <NumberFieldGroup>
