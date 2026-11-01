@@ -174,6 +174,15 @@ export const comparisonBase = Effect.fn("checkChanged.comparisonBase")(function*
 
 const CODE = /\.[cm]?[jt]sx?$/;
 const TEST = /\.test\.[cm]?[jt]sx?$/;
+// CI runs the .github/scripts tests with `node --test`; vitest passes a failing node:test file.
+const NODE_TEST = /^\.github[/\\]scripts[/\\]/;
+export const splitTests = (tests: Iterable<string>) => {
+  const all = [...tests];
+  return {
+    vitestTests: all.filter((file) => !NODE_TEST.test(file)),
+    nodeTests: all.filter((file) => NODE_TEST.test(file)),
+  };
+};
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // A flag wins over its environment variable; either must be a positive integer.
@@ -319,6 +328,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   for (const test of docReaderTests(files)) tests.add(test);
   // It reads files other than the ones beside it, so no changed file selects it.
   if (affected.includes("t3")) tests.add("apps/server/src/provider/AgentContextBudget.test.ts");
+  const { vitestTests, nodeTests } = splitTests(tests);
 
   // React Compiler coverage compiles every client source file, so run only the
   // changed files' cases, in one extra step: a -t filter in the main test step
@@ -485,17 +495,27 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
         ]
       : []),
     // From the repo root, the root vite.config.ts hands each file to its package's config.
-    ...(tests.size > 0
+    ...(vitestTests.length > 0
       ? [
           {
-            ...command(`test (${tests.size} files)`, [
+            ...command(`test (${vitestTests.length} files)`, [
               "test",
               "run",
               "--passWithNoTests",
-              ...tests,
+              ...vitestTests,
             ]),
             serial: true,
           },
+        ]
+      : []),
+    ...(nodeTests.length > 0
+      ? [
+          command(`node --test (${nodeTests.length} files)`, [
+            "exec",
+            "node",
+            "--test",
+            ...nodeTests,
+          ]),
         ]
       : []),
     ...(compilerApps.length > 0

@@ -5089,6 +5089,31 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("stops a selected-file commit when another process holds the index lock", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const head = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* writeTextFile(cwd, "a.txt", "a\n");
+        yield* writeTextFile(cwd, "staged.txt", "staged\n");
+        yield* git(cwd, ["add", "staged.txt"]);
+        const lockPath = (yield* Path.Path).join(cwd, ".git", "index.lock");
+        yield* (yield* FileSystem.FileSystem).writeFileString(lockPath, "");
+        const { driver } = yield* makeDriverReleasingLock(
+          (args) => args.includes("reset"),
+          lockPath,
+        );
+
+        const error = yield* driver
+          .commit(cwd, "Add a", "", { stage: { filePaths: ["a.txt"] } })
+          .pipe(Effect.flip);
+
+        assert.equal(error.operation, "GitVcsDriver.commit.reset");
+        assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), head);
+        assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "staged.txt");
+      }),
+    );
+
     it.effect.each([
       { location: "root", ref: "refs/heads/MERGE_HEAD" },
       { location: "nested", ref: "refs/heads/MERGE_HEAD" },

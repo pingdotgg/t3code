@@ -2450,9 +2450,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               "Cannot commit selected files during a merge. Commit all files to finish the merge.",
           });
         }
-        yield* runGit("GitVcsDriver.commit.reset", cwd, ["reset"]).pipe(
-          Effect.catchTags({ GitCommandError: () => Effect.void }),
-        );
+        yield* runGit("GitVcsDriver.commit.reset", cwd, ["reset", "--quiet"]);
       }
       yield* runGit(
         "GitVcsDriver.commit.addSelected",
