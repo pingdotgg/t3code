@@ -75,6 +75,7 @@ export class PeerLinks extends Context.Service<
     ) => Effect.Effect<
       Option.Option<{ readonly environmentId: EnvironmentId; readonly label: string }>
     >;
+    /** Stored outcomes and current expiry; does not probe peers. */
     readonly list: Effect.Effect<ReadonlyArray<PeerLinkSummary>, PeerLinkError>;
     /** The stored link, without asking the peer whether it answers. */
     readonly get: (
@@ -486,29 +487,17 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => Option.none()),
     );
 
-  const statusOf = (link: PeerLink, now: DateTime.Utc) =>
+  const statusOf = (link: PeerLink, now: DateTime.Utc): PeerLinkStatus =>
     DateTime.isLessThanOrEqualTo(link.expiresAt, now)
-      ? Effect.succeed<PeerLinkStatus>("expired")
-      : Effect.findFirst(link.urls, (url) =>
-          describe(url).pipe(
-            Effect.map(
-              (found) => Option.isSome(found) && found.value.environmentId === link.environmentId,
-            ),
-          ),
-        ).pipe(
-          Effect.map((answered): PeerLinkStatus =>
-            Option.isSome(answered) ? "reachable" : "unreachable",
-          ),
-        );
+      ? "expired"
+      : link.lastReachedAt !== null && link.lastError === null
+        ? "reachable"
+        : "unreachable";
 
   const list: PeerLinks["Service"]["list"] = Effect.gen(function* () {
     const links = yield* Effect.forEach(yield* readRows, toLink);
     const now = yield* DateTime.now;
-    return yield* Effect.forEach(
-      links,
-      (link) => statusOf(link, now).pipe(Effect.map((status) => ({ ...link, status }))),
-      { concurrency: "unbounded" },
-    );
+    return links.map((link) => ({ ...link, status: statusOf(link, now) }));
   });
 
   const get: PeerLinks["Service"]["get"] = (environmentId) =>

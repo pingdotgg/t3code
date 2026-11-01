@@ -13,7 +13,6 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
   const list = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:peer-links:list",
     tag: WS_METHODS.peerLinksList,
-    // Listing probes every linked environment, so a list stays fresh briefly.
     staleTimeMs: 10_000,
   });
   return {
@@ -53,11 +52,7 @@ export type PeerLinkHealth =
   | { readonly kind: "failing"; readonly detail: string }
   | { readonly kind: "expired" };
 
-/**
- * Listing only checks that the peer answers, so a link whose last call failed
- * (the peer revoked it, say) is `failing` with the recorded reason; the next
- * successful call clears it.
- */
+/** Stored outcomes describe the last call; expiry is checked against the client's clock too. */
 export function peerLinkHealth(link: PeerLinkSummary, now: DateTime.Utc): PeerLinkHealth {
   if (link.status === "expired" || DateTime.isLessThanOrEqualTo(link.expiresAt, now)) {
     return { kind: "expired" };

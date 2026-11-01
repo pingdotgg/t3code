@@ -2,6 +2,7 @@ import { NodeHttpServer } from "@effect/platform-node";
 import { type ExecutionEnvironmentDescriptor, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -279,6 +280,53 @@ const serveRaw = <E, R>(
     ),
   );
 
+it.effect("lists stored outcomes without waiting for an unreachable peer", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      const linked = yield* a.links.link({
+        url: b.url,
+        pairingCode: pairing.credential,
+        access: "auto",
+      });
+      const probed = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const asleep = yield* serveRaw(() =>
+        Deferred.succeed(probed, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as(HttpServerResponse.empty({ status: 503 })),
+        ),
+      );
+      yield* a.sql`UPDATE peer_environment_links SET urls_json = ${JSON.stringify([asleep])}`;
+
+      const listed = yield* Effect.raceFirst(
+        a.links.list,
+        Deferred.await(probed).pipe(Effect.as("blocked on peer")),
+      );
+      yield* Deferred.succeed(release, undefined);
+      expect(listed).toEqual([{ ...linked, urls: [asleep], status: "reachable" }]);
+
+      yield* a.links.recordOutcome(box.environmentId, { error: "Peer did not answer" });
+      expect(yield* a.links.list).toMatchObject([
+        {
+          status: "unreachable",
+          lastError: "Peer did not answer",
+          lastReachedAt: linked.lastReachedAt,
+        },
+      ]);
+      yield* a.links.recordOutcome(box.environmentId, { error: null });
+      expect(yield* a.links.list).toMatchObject([{ status: "reachable", lastError: null }]);
+      yield* a.sql`UPDATE peer_environment_links SET last_reached_at = NULL`;
+      expect(yield* a.links.list).toMatchObject([{ status: "unreachable" }]);
+      yield* TestClock.adjust(Duration.days(31));
+      expect(yield* a.links.list).toMatchObject([{ status: "expired" }]);
+      expect(yield* Deferred.isDone(probed)).toBe(false);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("never follows a peer's redirect with the pairing code", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -335,6 +383,10 @@ it.effect("never sends a link's token to an address that stops answering as that
       expect(failed.message).toContain("Box did not answer");
       expect(yield* Ref.get(b.bearers)).toEqual([]);
       expect((yield* a.links.list).map((link) => link.status)).toEqual(["unreachable"]);
+
+      yield* Ref.set(b.descriptor, box);
+      yield* probe(a);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
