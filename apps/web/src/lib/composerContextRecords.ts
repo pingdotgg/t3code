@@ -70,7 +70,9 @@ export function reviewCommentContextLabel(comment: ReviewCommentPresentation): s
   const rangeLabel = diffRange
     ? `L${diffRange[2]}${diffRange[3] ? ` to L${diffRange[3]}` : ""}${diffRange[1] === "-" ? " (before)" : ""}`
     : comment.rangeLabel;
-  return `${basename(comment.filePath)} ${rangeLabel}`;
+  const sectionPullRequest = /^pull-request:(\d+)$/u.exec(comment.sectionId)?.[1];
+  const prefix = sectionPullRequest === undefined ? "" : `#${sectionPullRequest} `;
+  return `${prefix}${basename(comment.filePath)} ${rangeLabel}`;
 }
 
 export function isPullRequestSummaryContext(comment: ReviewCommentPresentation): boolean {
