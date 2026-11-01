@@ -1251,6 +1251,7 @@ export const make = Effect.gen(function* () {
   const getPrLookup = (key: string) => detachStackFrame(Cache.get(prLookupCache, key));
   interface LastKnownPr {
     readonly pr: ReturnType<typeof toStatusPr> | null;
+    readonly headSha: string | null;
     readonly upstreamRef: string | null;
     readonly headBranch: string;
     readonly remoteName: string | null;
@@ -1272,7 +1273,7 @@ export const make = Effect.gen(function* () {
   const resolveLastKnownPr = (
     branchKey: string,
     current: Pick<LastKnownPr, "upstreamRef" | "headBranch" | "remoteName" | "headRemoteUrlKey">,
-  ): ReturnType<typeof toStatusPr> | null => {
+  ): LastKnownPr | null => {
     const lastKnown = lastKnownPrByBranchKey.get(branchKey);
     if (!lastKnown) return null;
     if (lastKnown.headBranch !== current.headBranch) {
@@ -1281,7 +1282,7 @@ export const make = Effect.gen(function* () {
 
     // Config read failures become null; require both remote URLs before treating a mismatch as real.
     if (lastKnown.headRemoteUrlKey !== null && current.headRemoteUrlKey !== null) {
-      return lastKnown.headRemoteUrlKey === current.headRemoteUrlKey ? lastKnown.pr : null;
+      return lastKnown.headRemoteUrlKey === current.headRemoteUrlKey ? lastKnown : null;
     }
 
     if (
@@ -1290,9 +1291,9 @@ export const make = Effect.gen(function* () {
       lastKnown.remoteName !== null &&
       current.remoteName !== null
     ) {
-      return lastKnown.remoteName === current.remoteName ? lastKnown.pr : null;
+      return lastKnown.remoteName === current.remoteName ? lastKnown : null;
     }
-    return lastKnown.pr;
+    return lastKnown;
   };
   const lookupStatusPr = Effect.fn("lookupStatusPr")(function* (
     cwd: string,
@@ -1324,10 +1325,11 @@ export const make = Effect.gen(function* () {
         }
         return { pr: toStatusPr(latest), headSha: latest.headSha ?? null, headContext };
       }),
-      Effect.tap(({ pr, headContext }) =>
+      Effect.tap(({ pr, headSha, headContext }) =>
         Effect.sync(() =>
           rememberLastKnownPr(branchKey, {
             pr,
+            headSha,
             upstreamRef: details.upstreamRef,
             headBranch: headContext.headBranch,
             remoteName: headContext.remoteName,
@@ -1367,7 +1369,10 @@ export const make = Effect.gen(function* () {
               : {}),
           }),
           Effect.andThen(fallback),
-          Effect.map((pr) => ({ pr, headSha: null })),
+          Effect.map((lastKnown) => ({
+            pr: lastKnown?.pr ?? null,
+            headSha: lastKnown?.headSha ?? null,
+          })),
         );
       }),
     );
@@ -1399,6 +1404,9 @@ export const make = Effect.gen(function* () {
     // Squash and rebase merges land new commits, so HEAD never becomes reachable from the base.
     const shippedByMergedPr =
       pr?.state === "merged" &&
+      (details.defaultBranch === null
+        ? pr.baseRef === "main" || pr.baseRef === "master"
+        : pr.baseRef === details.defaultBranch) &&
       headSha !== null &&
       (yield* gitCore.resolveCommit({ cwd, revision: "HEAD" }).pipe(
         Effect.map(({ commitSha }) => commitSha === headSha),

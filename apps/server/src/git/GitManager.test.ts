@@ -1879,6 +1879,66 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("status still reports work against main after a merge into another base", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const initialSha = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const branch = "feature/release-only";
+      const headSha = yield* squashMergeIntoRemoteMain(repoDir, branch);
+      // Move the merge to release and leave main without it.
+      const squashSha = (yield* runGit(repoDir, ["rev-parse", "origin/main"])).stdout.trim();
+      yield* runGit(repoDir, ["push", "origin", `${squashSha}:refs/heads/release`]);
+      yield* runGit(repoDir, ["push", "--force", "origin", `${initialSha}:refs/heads/main`]);
+      yield* runGit(repoDir, ["fetch", "origin"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          prListSequence: [[{ ...squashMergedPr(branch, headSha), baseRefName: "release" }]],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr?.state).toBe("merged");
+      expect(status.aheadOfDefaultCount).toBe(1);
+    }),
+  );
+
+  it.effect("status keeps a squash-merged branch shipped when a later PR lookup fails", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const branch = "feature/squash-lookup-fails";
+      const headSha = yield* squashMergeIntoRemoteMain(repoDir, branch);
+      yield* runGit(repoDir, ["push", "origin", "--delete", branch]);
+      yield* runGit(repoDir, ["fetch", "--prune", "origin"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          prListSequence: [[squashMergedPr(branch, headSha)]],
+          failWith: "Rate limited",
+          failAfterCalls: 1,
+        },
+      });
+
+      const first = yield* manager.status({ cwd: repoDir });
+      yield* manager.invalidateStatus(repoDir);
+      const second = yield* manager.status({ cwd: repoDir });
+
+      expect(first.aheadOfDefaultCount).toBe(0);
+      expect(second.pr?.state).toBe("merged");
+      expect({
+        aheadCount: second.aheadCount,
+        aheadOfDefaultCount: second.aheadOfDefaultCount,
+      }).toEqual({ aheadCount: 0, aheadOfDefaultCount: 0 });
+    }),
+  );
+
   it.each([
     [
       "https://github.example.com/team/repository/pull/42?tab=files",
