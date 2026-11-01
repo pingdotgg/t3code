@@ -60,6 +60,20 @@ export function shouldNavigateAfterThreadPark(input: {
   );
 }
 
+export function resolveThreadAfterPark(
+  orderedKeys: readonly string[],
+  threadKey: string,
+  canOpen: (key: string) => boolean,
+): string | null {
+  const index = orderedKeys.indexOf(threadKey);
+  if (index === -1) return null;
+  return (
+    orderedKeys.slice(index + 1).find(canOpen) ??
+    orderedKeys.slice(0, index).findLast(canOpen) ??
+    null
+  );
+}
+
 const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 
 export function resolveSidebarRowAccessibility(input: {

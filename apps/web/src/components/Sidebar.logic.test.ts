@@ -32,6 +32,7 @@ import {
   sortScopedProjectsForSidebar,
   sortSidebarV2ProjectGroups,
   shouldNavigateAfterThreadPark,
+  resolveThreadAfterPark,
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
@@ -985,6 +986,18 @@ describe("navigation after parking a thread", () => {
       ).toBe(expected);
     },
   );
+
+  it.each([
+    { threadKey: "b", expected: "d" },
+    { threadKey: "e", expected: "d" },
+    { threadKey: "a", expected: "b" },
+    { threadKey: "missing", expected: null },
+  ])("parking $threadKey opens $expected", ({ threadKey, expected }) => {
+    const parked = new Set(["c"]);
+    expect(
+      resolveThreadAfterPark(["a", "b", "c", "d", "e"], threadKey, (key) => !parked.has(key)),
+    ).toBe(expected);
+  });
 });
 
 describe("unseen completion with background work", () => {
