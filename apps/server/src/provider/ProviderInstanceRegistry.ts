@@ -51,6 +51,7 @@ interface InstanceSecrets {
 }
 
 interface LiveEntry {
+  readonly sourceInstance: ProviderInstance;
   readonly instance: ProviderInstance;
   readonly scope: Scope.Closeable;
   readonly entry: ProviderInstanceConfig;
@@ -66,8 +67,33 @@ interface RegistryState {
   readonly changes: PubSub.PubSub<void>;
 }
 
-const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
-  Equal.equals(a, b);
+const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean => {
+  const { iconUrl: _a, ...aRuntime } = a;
+  const { iconUrl: _b, ...bRuntime } = b;
+  return Equal.equals(aRuntime, bRuntime);
+};
+
+function withInstanceIcon(
+  instance: ProviderInstance,
+  iconUrl: string | undefined,
+): ProviderInstance {
+  if (!iconUrl) return instance;
+  const withIcon = <S extends ServerProvider>(snapshot: S): S => ({ ...snapshot, iconUrl });
+  return {
+    ...instance,
+    snapshot: {
+      ...instance.snapshot,
+      getSnapshot: instance.snapshot.getSnapshot.pipe(Effect.map(withIcon)),
+      refresh: instance.snapshot.refresh.pipe(Effect.map(withIcon)),
+      streamChanges: instance.snapshot.streamChanges.pipe(Stream.map(withIcon)),
+    },
+    ...(instance.snapshotForCwd
+      ? {
+          snapshotForCwd: (cwd: string) => instance.snapshotForCwd!(cwd).pipe(Effect.map(withIcon)),
+        }
+      : {}),
+  };
+}
 
 const secretReferencesIn = (environment: ProviderInstanceEnvironment): Array<SecretReference> =>
   environment.flatMap((variable) => (typeof variable.value === "string" ? [] : [variable.value]));
@@ -297,30 +323,11 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   }
 
   const instance = createResult.success;
-  // Branding belongs to the instance, including local ACP commands whose driver has no icon.
-  const withIcon = <S extends ServerProvider>(snapshot: S): S =>
-    entry.iconUrl ? { ...snapshot, iconUrl: entry.iconUrl } : snapshot;
-
   return {
     kind: "live" as const,
     live: {
-      instance: entry.iconUrl
-        ? {
-            ...instance,
-            snapshot: {
-              ...instance.snapshot,
-              getSnapshot: instance.snapshot.getSnapshot.pipe(Effect.map(withIcon)),
-              refresh: instance.snapshot.refresh.pipe(Effect.map(withIcon)),
-              streamChanges: instance.snapshot.streamChanges.pipe(Stream.map(withIcon)),
-            },
-            ...(instance.snapshotForCwd
-              ? {
-                  snapshotForCwd: (cwd: string) =>
-                    instance.snapshotForCwd!(cwd).pipe(Effect.map(withIcon)),
-                }
-              : {}),
-          }
-        : instance,
+      sourceInstance: instance,
+      instance: withInstanceIcon(instance, entry.iconUrl),
       scope: childScope,
       entry,
       secrets,
@@ -405,6 +412,7 @@ const makeReconcile = <R>(input: {
       const builtUnavailable = new Map<ProviderInstanceId, ServerProvider>();
       const builtSecretsUnreadable = new Map<ProviderInstanceId, ProviderInstanceConfig>();
       let orderChanged = false;
+      let iconsChanged = false;
       const previousOrder = [...previousEntries.keys()];
       const nextOrder: Array<ProviderInstanceId> = [];
 
@@ -414,7 +422,16 @@ const makeReconcile = <R>(input: {
 
         const existing = previousEntries.get(instanceId);
         if (existing !== undefined && !replacedIds.has(instanceId)) {
-          builtEntries.set(instanceId, existing);
+          if (existing.entry.iconUrl !== entry.iconUrl) {
+            iconsChanged = true;
+            builtEntries.set(instanceId, {
+              ...existing,
+              entry,
+              instance: withInstanceIcon(existing.sourceInstance, entry.iconUrl),
+            });
+          } else {
+            builtEntries.set(instanceId, existing);
+          }
           continue;
         }
         const parked = parkedSnapshot(instanceId, entry);
@@ -453,6 +470,7 @@ const makeReconcile = <R>(input: {
       }
 
       const entriesChanged =
+        iconsChanged ||
         orderChanged ||
         removedIds.length > 0 ||
         replacedIds.size > 0 ||
