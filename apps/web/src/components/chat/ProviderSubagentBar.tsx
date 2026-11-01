@@ -4,8 +4,8 @@ import {
 } from "@t3tools/client-runtime/state/thread-execution";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 import { ArrowUpLeftIcon } from "lucide-react";
-import { useLayoutEffect, useRef } from "react";
 
+import { tickTextContent } from "~/lib/tickTextContent";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { Button } from "../ui/button";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
@@ -18,7 +18,6 @@ export function ProviderSubagentBar(props: {
   readonly status: ProviderSubagentStatus | null;
   readonly onOpenParent: (() => void) | null;
 }) {
-  const statusRef = useRef<HTMLSpanElement>(null);
   const { status } = props;
   const live = status !== null && isOrchestrationV2WorkActive(status.status);
   const modelDescription =
@@ -28,24 +27,11 @@ export function ProviderSubagentBar(props: {
     0,
   );
 
-  // Write timer labels to the DOM to avoid chat renders on each tick.
-  useLayoutEffect(() => {
-    const update = () => {
-      if (statusRef.current) {
-        statusRef.current.textContent = formatProviderSubagentStatus(status, Date.now());
-      }
-    };
-    update();
-    if (!live) return;
-    const id = setInterval(update, 1_000);
-    return () => clearInterval(id);
-  }, [live, status]);
-
   // Sized by the composer, not the viewport: a docked side panel narrows the
   // chat column on a wide window, and one row there squeezes out the model
   // and status, so the status drops to its own line instead.
   return (
-    <div className="flex min-h-12 items-center gap-3 rounded-3xl py-2 ps-5 pe-2 text-sm">
+    <div className="flex min-h-12 items-center gap-3 rounded-2xl py-2 ps-5 pe-2 text-sm">
       <div className="flex min-w-0 flex-1 items-center gap-3 @max-[560px]/composer-surface:flex-col @max-[560px]/composer-surface:items-start @max-[560px]/composer-surface:gap-0.5">
         <span className="flex min-w-0 max-w-full items-center gap-2">
           {props.provider ? (
@@ -67,7 +53,7 @@ export function ProviderSubagentBar(props: {
           )}
         </span>
         <span
-          ref={statusRef}
+          ref={tickTextContent((nowMs) => formatProviderSubagentStatus(status, nowMs), live)}
           aria-hidden
           className="min-w-0 max-w-full truncate text-muted-foreground tabular-nums @max-[560px]/composer-surface:text-xs"
         />

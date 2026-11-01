@@ -1,7 +1,7 @@
 import { Spinner } from "~/components/ui/spinner";
 import { AuthFilesystemReadScope, type ProjectContentMatch } from "@t3tools/contracts";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { useActiveProjectTarget, type ActiveProjectTarget } from "~/hooks/useActiveProjectTarget";
 import { useRenderedAppearance, useTheme } from "~/hooks/useTheme";
@@ -97,6 +97,10 @@ function EmptyContentSearchDialog() {
   );
 }
 
+const scrollSelectedRowIntoView = (row: HTMLElement | null) => {
+  row?.scrollIntoView({ block: "nearest" });
+};
+
 function OpenContentSearchDialog(props: {
   readonly onOpenChange: (open: boolean) => void;
   readonly target: ActiveProjectTarget;
@@ -133,12 +137,6 @@ function OpenContentSearchDialog(props: {
   }
   const visibleMatches = matches.slice(0, visibleCount);
   const groups = groupMatches(visibleMatches);
-
-  useEffect(() => {
-    document
-      .querySelector<HTMLElement>(`[data-content-search-result="${selectedIndex}"]`)
-      ?.scrollIntoView({ block: "nearest" });
-  }, [selectedIndex]);
 
   const observeLoadMoreSentinel = (sentinel: HTMLElement | null) => {
     if (!sentinel) return;
@@ -280,7 +278,9 @@ function OpenContentSearchDialog(props: {
                     <button
                       type="button"
                       key={`${match.path}:${match.lineNumber}:${match.resultIndex}`}
-                      data-content-search-result={match.resultIndex}
+                      ref={
+                        match.resultIndex === selectedIndex ? scrollSelectedRowIntoView : undefined
+                      }
                       className={cn(
                         "flex h-7 w-full min-w-0 items-center gap-3 px-3 text-left font-mono text-xs hover:bg-accent/60 disabled:pointer-events-none",
                         match.resultIndex === selectedIndex && "bg-accent text-accent-foreground",

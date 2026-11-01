@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vite-plus/test";
 
 import { createNativeReviewDiffSourceLoader } from "./nativeReviewDiffSource";
+import * as DiffHighlightTrace from "./nativeReviewDiffTrace";
 import type { NativeReviewDiffSource } from "./nativeReviewDiffTypes";
 
 const SOURCE = { oldContents: "const before = true;", newContents: "const after = false;" };
@@ -57,17 +58,24 @@ const failureKeys = [
   ["function", () => () => SOURCE],
 ] as const;
 
-it.each(failureKeys)("bounds transient retries for a %s key", async (_name, createKey) => {
-  const key = createKey();
-  const fetch = vi.fn(async () => {
-    throw new Error("Offline");
-  });
-  const load = createNativeReviewDiffSourceLoader(fetch);
-  await expect(load(key)).rejects.toThrow("Offline");
-  expect(await load(key)).toBeNull();
-  expect(await load(key)).toBeNull();
-  expect(fetch).toHaveBeenCalledTimes(2);
-});
+it.each(failureKeys)(
+  "recovers after two transient failures on a later load for a %s key",
+  async (_name, createKey) => {
+    const key = createKey();
+    const fetch = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Offline"))
+      .mockRejectedValueOnce(new Error("Still offline"))
+      .mockResolvedValue(SOURCE);
+    const load = createNativeReviewDiffSourceLoader(fetch);
+    await expect(load(key)).rejects.toThrow("Offline");
+    await expect(load(key)).rejects.toThrow("Still offline");
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(await load(key)).toBe(SOURCE);
+    expect(await load(key)).toBe(SOURCE);
+    expect(fetch).toHaveBeenCalledTimes(3);
+  },
+);
 
 it.each(failureKeys)(
   "remembers permanent unavailability for a %s key",
@@ -148,4 +156,41 @@ it("serializes RPCs and drops cancelled queued files", async () => {
   await active;
   await load("next.ts");
   expect(fetch.mock.calls).toEqual([["active.ts"], ["next.ts"]]);
+});
+
+it("starts a shared fresh request for a file whose cancelled request was dropped", async () => {
+  const started = Promise.withResolvers<void>();
+  const response = Promise.withResolvers<NativeReviewDiffSource>();
+  const dropped = Promise.withResolvers<void>();
+  const replacementStarted = Promise.withResolvers<void>();
+  const replacementResponse = Promise.withResolvers<NativeReviewDiffSource>();
+  using _trace = vi.spyOn(DiffHighlightTrace, "traceDiffHighlight").mockImplementation((event) => {
+    if (event === "source-dropped") dropped.resolve();
+  });
+  const fetch = vi.fn((file: string) => {
+    if (file === "active.ts") {
+      started.resolve();
+      return response.promise;
+    }
+    replacementStarted.resolve();
+    return replacementResponse.promise;
+  });
+  const load = createNativeReviewDiffSourceLoader(fetch);
+  const active = load("active.ts");
+  await started.promise;
+  const controller = new AbortController();
+  const queued = load("cancelled.ts", controller.signal);
+  controller.abort();
+  expect(await queued).toBeNull();
+  response.resolve(SOURCE);
+  await dropped.promise;
+  const fresh = load("cancelled.ts");
+  // Settling first means the fresh caller joined the dropped request instead of fetching.
+  await Promise.race([replacementStarted.promise, fresh]);
+  const shared = load("cancelled.ts");
+  replacementResponse.resolve(SOURCE);
+  expect(await fresh).toBe(SOURCE);
+  expect(await shared).toBe(SOURCE);
+  expect(await active).toBe(SOURCE);
+  expect(fetch.mock.calls).toEqual([["active.ts"], ["cancelled.ts"]]);
 });

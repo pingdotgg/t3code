@@ -1,10 +1,6 @@
 import type { NavigationState } from "@react-navigation/native";
 import { resetRootStack, type RootStackNavigation } from "./root-stack-reset";
 
-export type AndroidWorkspaceDestination =
-  | { readonly name: "Thread"; readonly params: ReactNavigation.RootParamList["Thread"] }
-  | { readonly name: "PullRequest"; readonly params: ReactNavigation.RootParamList["PullRequest"] };
-
 function androidWorkspaceBackReturnsToThread(state: NavigationState) {
   const current = state.routes[state.index];
   const params = current?.params as ReactNavigation.RootParamList["Thread"] | undefined;
@@ -16,43 +12,14 @@ function androidWorkspaceBackReturnsToThread(state: NavigationState) {
   );
 }
 
-export function androidWorkspaceNavigationState(
-  state: NavigationState,
-  destination?: AndroidWorkspaceDestination,
-  reviewers?: ReactNavigation.RootParamList["PullRequestReviewers"],
-) {
+/** The root stack with only the workspace list. */
+export function androidWorkspaceNavigationState(state: NavigationState) {
   const home = state.routes.find((route) => route.name === "Home") ?? { name: "Home" };
-  if (!destination) return { ...state, index: 0, routes: [home] };
-  const identity =
-    destination.name === "Thread"
-      ? ["environmentId", "threadId"]
-      : ["environmentId", "projectId", "repository", "number", "host"];
-  const params = destination.params as Readonly<Record<string, unknown>>;
-  const existing = state.routes.findLast((route) => {
-    if (route.name !== destination.name) return false;
-    const current = route.params as Readonly<Record<string, unknown>> | undefined;
-    return identity.every((key) => current?.[key] === params[key]);
-  });
-  return {
-    ...state,
-    index: reviewers ? 2 : 1,
-    routes: [
-      home,
-      { ...existing, ...destination },
-      ...(reviewers ? [{ name: "PullRequestReviewers", params: reviewers }] : []),
-    ],
-  };
+  return { ...state, index: 0, routes: [home] };
 }
 
-/** Resets the root stack to a workspace list or detail. */
-export function resetAndroidWorkspace(
-  navigation: RootStackNavigation,
-  destination?: AndroidWorkspaceDestination,
-  reviewers?: ReactNavigation.RootParamList["PullRequestReviewers"],
-) {
-  resetRootStack(navigation, (state) =>
-    androidWorkspaceNavigationState(state, destination, reviewers),
-  );
+export function resetAndroidWorkspace(navigation: RootStackNavigation) {
+  resetRootStack(navigation, androidWorkspaceNavigationState);
 }
 
 export function parentThreadIsBelow(

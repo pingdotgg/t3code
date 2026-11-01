@@ -361,13 +361,14 @@ describe("AcpClientTerminals", () => {
           sessionId: "foreign-session",
           terminalId: created.terminalId,
         };
-        const results = yield* Effect.all(
+        const results = yield* Effect.forEach(
           [
             terminals.output(foreignRequest),
             terminals.waitForExit(foreignRequest),
             terminals.kill(foreignRequest),
             terminals.release(foreignRequest),
-          ].map((effect) => effect.pipe(Effect.result)),
+          ],
+          (effect) => effect.pipe(Effect.result),
           { concurrency: "unbounded" },
         );
 

@@ -87,7 +87,8 @@ export const makeClaudeCodeModelRoutes = Effect.fn("makeClaudeCodeModelRoutes")(
     }),
     settle: Deferred.succeed(firstProbeSettled, undefined).pipe(Effect.asVoid),
     catalogFor: Effect.fn("ClaudeCodeModelRoutes.catalogFor")(function* (cwd: string | null) {
-      yield* Deferred.await(firstProbeSettled);
+      // Leave room for the sequential version and capability probes before falling back.
+      yield* Deferred.await(firstProbeSettled).pipe(Effect.timeoutOption("2 minutes"));
       const base = yield* catalog;
       const { models, settingsKey: probeKey } = yield* Ref.get(reported);
       const routed = withClaudeCodeModelRoutes(base, models);
