@@ -174,7 +174,6 @@ const AssetClaimsSchema = Schema.Union([
     kind: Schema.Literal(SOURCE_CONTROL_MEDIA_ASSET),
     /** A host's `fetchUrl`, narrowed at mint time; the signature is what keeps it there. */
     url: Schema.String,
-    cwd: Schema.String,
     expiresAt: Schema.Number,
   }),
 ]);
@@ -202,7 +201,6 @@ export type ResolvedAsset =
   | {
       readonly kind: "source-control-media";
       readonly url: string;
-      readonly cwd: string;
       readonly expiresAt: number;
     };
 
@@ -840,7 +838,6 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         version: 1,
         kind: SOURCE_CONTROL_MEDIA_ASSET,
         url: media.fetchUrl,
-        cwd: input.resource.cwd,
         expiresAt,
       };
       fileName = media.fileName;
@@ -958,7 +955,6 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     return {
       kind: "source-control-media",
       url: claims.url,
-      cwd: claims.cwd,
       expiresAt: claims.expiresAt,
     } satisfies ResolvedAsset;
   }

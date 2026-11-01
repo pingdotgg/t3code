@@ -107,7 +107,11 @@ export function PullRequestReviewerPicker({
     >
       {(candidate) => (
         <>
-          <PullRequestActorLabel actor={candidate} className="flex-1" />
+          <PullRequestActorLabel
+            actor={candidate}
+            environmentId={environmentId}
+            className="flex-1"
+          />
           {candidate.kind === "team" ? (
             <span className="shrink-0 text-muted-foreground">team</span>
           ) : null}

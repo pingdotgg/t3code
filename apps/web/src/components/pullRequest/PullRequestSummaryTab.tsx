@@ -89,9 +89,11 @@ function reviewerKey(login: string): string {
 function CommentIdentity({
   comment,
   detail,
+  environmentId,
 }: {
   comment: PullRequestComment;
   detail: PullRequestDetailView;
+  environmentId: EnvironmentId;
 }) {
   const actor = comment.author;
   const profileUrl = actor
@@ -99,7 +101,12 @@ function CommentIdentity({
     : null;
   return (
     <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
-      <PullRequestActorLabel actor={actor} profileUrl={profileUrl} className="max-w-full" />
+      <PullRequestActorLabel
+        actor={actor}
+        environmentId={environmentId}
+        profileUrl={profileUrl}
+        className="max-w-full"
+      />
       <Tooltip>
         <TooltipTrigger
           render={
@@ -236,7 +243,11 @@ function CollapsedComment({
       <article className="group rounded-lg border border-border/60 [contain-intrinsic-block-size:44px] [content-visibility:auto]">
         <div className="p-3">
           <div className="flex flex-wrap items-baseline gap-2">
-            <CommentIdentity comment={comment} detail={detail} />
+            <CommentIdentity
+              comment={comment}
+              detail={detail}
+              environmentId={editing.environmentId}
+            />
             {replyCount > 0 ? (
               <span className="shrink-0 py-1 text-xs text-muted-foreground">
                 {replyCount} {replyCount === 1 ? "reply" : "replies"}
@@ -574,7 +585,7 @@ export function PullRequestSummaryTab({
       >
         <div className="flex flex-wrap items-baseline gap-2 rounded-t-lg bg-muted/25 px-3 py-2.5">
           <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 text-xs text-muted-foreground">
-            <CommentIdentity comment={comment} detail={detail} />
+            <CommentIdentity comment={comment} detail={detail} environmentId={environmentId} />
             {outcome ? (
               <PullRequestReviewOutcomeBadge outcome={outcome} />
             ) : comment.reviewState ? (
@@ -686,6 +697,7 @@ export function PullRequestSummaryTab({
                         >
                           <PullRequestActorLabel
                             actor={entry.actor}
+                            environmentId={environmentId}
                             tooltip={false}
                             variant="avatar"
                           />

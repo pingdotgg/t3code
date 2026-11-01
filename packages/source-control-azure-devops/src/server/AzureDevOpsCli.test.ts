@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
@@ -306,4 +307,113 @@ describe("AzureDevOpsCli.layer", () => {
       assert.strictEqual(error.cause, cause);
     }).pipe(Effect.provide(layer)),
   );
+
+  describe("getIdentityAvatar", () => {
+    const identity = {
+      organizationUrl: "https://dev.azure.com/acme",
+      identityId: "15f0488e-b980-68ca-9d71-8a387c166d09",
+    };
+    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const graphValue = (value: string) => Effect.succeed(processOutput(JSON.stringify({ value })));
+    const answerAvatarLookup = () => {
+      mockRun
+        .mockReturnValueOnce(graphValue("aad.descriptor"))
+        .mockReturnValueOnce(graphValue(Buffer.from(png).toString("base64")));
+    };
+
+    it.effect("resolves the descriptor, decodes the image, and caches it", () =>
+      Effect.gen(function* () {
+        answerAvatarLookup();
+        const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+
+        const first = yield* az.getIdentityAvatar({ cwd: "/home", identity });
+        const second = yield* az.getIdentityAvatar({ cwd: "/home", identity: { ...identity } });
+
+        assert.deepStrictEqual(first, { bytes: png, mimeType: "image/png" });
+        assert.strictEqual(second, first);
+        assert.strictEqual(mockRun.mock.calls.length, 2);
+        assert.deepStrictEqual(
+          mockRun.mock.calls.map(([input]) => input.args),
+          [
+            [
+              "devops",
+              "invoke",
+              "--org",
+              "https://dev.azure.com/acme",
+              "--area",
+              "graph",
+              "--resource",
+              "descriptors",
+              "--route-parameters",
+              "storageKey=15f0488e-b980-68ca-9d71-8a387c166d09",
+              "--api-version",
+              "7.1",
+              "--only-show-errors",
+              "--output",
+              "json",
+            ],
+            [
+              "devops",
+              "invoke",
+              "--org",
+              "https://dev.azure.com/acme",
+              "--area",
+              "graph",
+              "--resource",
+              "avatars",
+              "--route-parameters",
+              "subjectDescriptor=aad.descriptor",
+              "--query-parameters",
+              "size=medium",
+              "--api-version",
+              "7.1",
+              "--only-show-errors",
+              "--output",
+              "json",
+            ],
+          ],
+        );
+      }).pipe(Effect.provide(layer)),
+    );
+
+    it.effect("returns null for bytes that are not an image", () =>
+      Effect.gen(function* () {
+        mockRun
+          .mockReturnValueOnce(graphValue("aad.descriptor"))
+          .mockReturnValueOnce(graphValue(Buffer.from("<html>").toString("base64")));
+        const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+
+        assert.isNull(yield* az.getIdentityAvatar({ cwd: "/home", identity }));
+      }).pipe(Effect.provide(layer)),
+    );
+
+    it.effect("asks again soon after an authentication failure", () =>
+      Effect.gen(function* () {
+        mockRun.mockReturnValueOnce(
+          Effect.fail(
+            new VcsProcessExitError({
+              operation: "AzureDevOpsCli.execute",
+              command: "az",
+              cwd: "/home",
+              argumentCount: 15,
+              exitCode: 1,
+              detail: "Please run 'az login' to setup account.",
+              failureKind: "authentication",
+            }),
+          ),
+        );
+        const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+
+        const error = yield* az.getIdentityAvatar({ cwd: "/home", identity }).pipe(Effect.flip);
+        assert.instanceOf(error, AzureDevOpsCli.AzureDevOpsCliAuthenticationError);
+        yield* az.getIdentityAvatar({ cwd: "/home", identity }).pipe(Effect.flip);
+        assert.strictEqual(mockRun.mock.calls.length, 1);
+
+        yield* TestClock.adjust("1 minute");
+        answerAvatarLookup();
+        const avatar = yield* az.getIdentityAvatar({ cwd: "/home", identity });
+        assert.strictEqual(avatar?.mimeType, "image/png");
+      }).pipe(Effect.provide(layer)),
+    );
+  });
 });

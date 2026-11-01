@@ -109,7 +109,11 @@ export const PullRequestListRow = memo(
               )}
             >
               <View className="flex-row items-center gap-1.5">
-                <PullRequestAvatar actor={item.author} size={16} />
+                <PullRequestAvatar
+                  actor={item.author}
+                  environmentId={item.environmentId}
+                  size={16}
+                />
                 <Text className={cn("min-w-0 flex-1 text-xs", mutedForeground)} numberOfLines={1}>
                   {item.repository} <Text className={tertiaryForeground}>#{item.number}</Text>
                 </Text>

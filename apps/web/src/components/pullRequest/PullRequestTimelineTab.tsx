@@ -131,11 +131,13 @@ function IconMarker({ icon, className }: { icon: ReactNode; className?: string |
 
 function ActorTimelineMarker({
   actors,
+  environmentId,
   className,
   fallback,
   muted = false,
 }: {
   actors: ReadonlyArray<PullRequestActor>;
+  environmentId: EnvironmentId;
   className?: string | undefined;
   fallback: ReactNode;
   muted?: boolean;
@@ -147,6 +149,7 @@ function ActorTimelineMarker({
     <TimelineMarker className={className}>
       <PullRequestActorAvatar
         actor={actor}
+        environmentId={environmentId}
         className={cn(
           "size-7 bg-muted text-3xs transition-opacity",
           muted && "opacity-45 grayscale",
@@ -316,6 +319,7 @@ function ConversationGroup({
     <div className="relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
       <ActorTimelineMarker
         actors={actors}
+        environmentId={reactions.environmentId}
         className="top-6"
         fallback={<MessageSquareIcon className="size-3.5" />}
         muted={!open}
@@ -391,6 +395,7 @@ function ReviewThreadEvent({
     <div className="group relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
       <ActorTimelineMarker
         actors={event.actor ? [event.actor] : []}
+        environmentId={reactions.environmentId}
         className="top-4"
         fallback={<MessageSquareIcon className="size-3.5" />}
         muted={!expanded}
@@ -467,9 +472,11 @@ function ReviewThreadEvent({
 
 function CommitEvent({
   event,
+  environmentId,
   onOpen,
 }: {
   event: PullRequestTimelineEvent;
+  environmentId: EnvironmentId;
   onOpen: (oid: string) => void;
 }) {
   return (
@@ -481,6 +488,7 @@ function CommitEvent({
     >
       <ActorTimelineMarker
         actors={event.commitAuthors}
+        environmentId={environmentId}
         fallback={<GitCommitHorizontalIcon className="size-3.5" />}
       />
       <div className="flex min-w-0 items-center gap-2.5 py-1.5">
@@ -560,6 +568,7 @@ function ReviewVerdictEvent({
     <div className="group relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
       <ActorTimelineMarker
         actors={event.actor ? [event.actor] : []}
+        environmentId={reactions.environmentId}
         className="top-6"
         fallback={<PullRequestReviewOutcomeIcon outcome={outcome} />}
       />
@@ -701,7 +710,9 @@ export function PullRequestTimelineTab({
         />
       );
     }
-    if (event.kind === "commit") return <CommitEvent event={event} onOpen={onOpenCommit} />;
+    if (event.kind === "commit") {
+      return <CommitEvent event={event} environmentId={environmentId} onOpen={onOpenCommit} />;
+    }
     const outcome = pullRequestReviewOutcome(event.reviewState);
     if (outcome !== null) {
       return (

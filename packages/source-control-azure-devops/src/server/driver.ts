@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 
 import { definition } from "../shared/definition.ts";
 
+import * as AzureDevOpsAvatarFetch from "./azureDevOpsAvatarFetch.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import * as AzureDevOpsPullRequestProvider from "./AzureDevOpsPullRequestProvider.ts";
@@ -18,6 +19,7 @@ const makeInstance = Effect.all({
   sourceControl: AzureDevOpsSourceControlProvider.make,
   discovery: Effect.succeed(AzureDevOpsSourceControlProvider.discovery),
   pullRequests: AzureDevOpsPullRequestProvider.make,
+  fetchMedia: AzureDevOpsAvatarFetch.make,
 });
 
 export const driver = defineSourceControlDriver({

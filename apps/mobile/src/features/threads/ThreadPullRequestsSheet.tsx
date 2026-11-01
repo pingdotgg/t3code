@@ -58,6 +58,7 @@ export function ThreadPullRequestsSheet(
         renderItem={({ item, index }) => (
           <LinkedPullRequestRow
             line={item}
+            environmentId={selectedThread?.environmentId ?? null}
             separator={index < lines.length - 1}
             surfaceClassName={Platform.OS === "ios" ? "text-screen" : "text-sheet-solid"}
             openPullRequest={openPullRequest}

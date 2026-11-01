@@ -211,7 +211,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                 onPress={() => void update(item)}
                 className="min-h-16 flex-row items-center gap-3 border-b border-border-subtle px-4 py-3 active:opacity-70"
               >
-                <PullRequestAvatar actor={item} size={32} />
+                <PullRequestAvatar actor={item} environmentId={target.environmentId} size={32} />
                 <View className="min-w-0 flex-1 gap-0.5">
                   <Text className="text-sm font-t3-medium" numberOfLines={1}>
                     {item.name || item.login}
