@@ -272,6 +272,9 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     if (
       next.limits.resetCredits &&
       (!previousCredit ||
+        (next.limits.atLimitReset &&
+          !previousCredit.limits.atLimitReset &&
+          previousCredit.limits.resetCredits?.availableCount === 0) ||
         Date.parse(next.limits.checkedAt) > Date.parse(previousCredit.limits.checkedAt))
     ) {
       creditSources.set(key, next);
@@ -822,6 +825,8 @@ export function collectProviderUsageLimits(
     const showHubCredits =
       hubCredits &&
       (!credits ||
+        (hubCredits.account.usageLimits.atLimitReset &&
+          credits.limits.resetCredits?.availableCount === 0) ||
         Date.parse(hubCredits.account.usageLimits.checkedAt) >
           Date.parse(credits.limits.checkedAt));
     const shownCredits = showHubCredits

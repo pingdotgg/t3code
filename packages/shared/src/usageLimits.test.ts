@@ -242,7 +242,11 @@ describe("pools", () => {
     const native = provider({
       driver: claude,
       auth: { status: "authenticated", email: "same@example.com" },
-      usageLimits: { checkedAt: "2026-09-03T11:30:00.000Z", windows: [window] },
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [window],
+        resetCredits: { availableCount: 0 },
+      },
     });
     const input = new Map([
       [
@@ -273,7 +277,7 @@ describe("pools", () => {
                     usageLimits: {
                       checkedAt: "2026-09-03T11:15:00.000Z",
                       windows: [window],
-                      resetCredits: { availableCount: 0 },
+                      resetCredits: { availableCount: 2 },
                       atLimitReset: { available: false },
                     },
                   },
@@ -287,7 +291,7 @@ describe("pools", () => {
     const [account] = collectLimitAccounts(input);
     expect(account?.limits).toMatchObject({
       checkedAt: native.usageLimits?.checkedAt,
-      resetCredits: { availableCount: 0 },
+      resetCredits: { availableCount: 2 },
       atLimitReset: { available: false },
     });
     expect(account?.redeem).toBeNull();
@@ -1158,8 +1162,8 @@ describe("/usage-limits", () => {
     ]);
   });
 
-  it.each([false, true])(
-    "keeps merged Claude hub status read-only unless native credits were reported (%s)",
+  it.each([undefined, 0, 3])(
+    "keeps merged Claude hub status read-only unless native credits are usable (%s)",
     (nativeCredits) => {
       const claude = ProviderDriverKind.make("claudeAgent");
       const local = provider({
@@ -1168,7 +1172,9 @@ describe("/usage-limits", () => {
         usageLimits: {
           ...limits,
           checkedAt: "2026-09-03T11:30:00.000Z",
-          ...(nativeCredits ? { resetCredits: { availableCount: 3 } } : {}),
+          ...(nativeCredits !== undefined
+            ? { resetCredits: { availableCount: nativeCredits } }
+            : {}),
         },
       });
       const hubs = [
