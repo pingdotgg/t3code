@@ -1333,6 +1333,91 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("does not complete a new v2 prompt with the cancelled prompt's late idle", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const acp = yield* AcpClient.make(stdio);
+      const seen: Array<string> = [];
+      yield* acp.handleSessionUpdate((n) => Effect.sync(() => seen.push(n.update.sessionUpdate)));
+      const sessionId = "devin-session";
+      // Turn 1: T3's Stop interrupts the prompt fiber locally, then notifies session/cancel.
+      const first = yield* acp.agent
+        .prompt({ sessionId, prompt: [{ type: "text", text: "long task" }] })
+        .pipe(Effect.forkScoped);
+      const firstRequest = yield* decodePromptRequestLine(yield* Queue.take(output));
+      yield* Fiber.interrupt(first);
+      yield* acp.agent.cancel({ sessionId });
+      yield* Queue.take(output);
+      // Turn 2 ("continue") is sent before the agent has finished winding turn 1 down.
+      const second = yield* acp.agent
+        .prompt({ sessionId, prompt: [{ type: "text", text: "continue" }] })
+        .pipe(Effect.forkScoped);
+      const secondRequest = yield* decodePromptRequestLine(yield* Queue.take(output));
+      const update = (u: unknown) =>
+        encodeJsonl(SessionUpdateNotification, {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: { sessionId, update: u },
+        });
+      // Agent: turn 1 goes idle(cancelled), then accepts turn 2 and streams its answer.
+      yield* Queue.offer(
+        input,
+        concatBytes([
+          yield* update({ sessionUpdate: "state_update", state: "idle", stopReason: "cancelled" }),
+          yield* encodeJsonl(PromptResponse, { jsonrpc: "2.0", id: firstRequest.id, result: {} }),
+          yield* encodeJsonl(PromptResponse, { jsonrpc: "2.0", id: secondRequest.id, result: {} }),
+          yield* update({ sessionUpdate: "state_update", state: "running" }),
+          yield* update({
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "continuing" },
+          }),
+          yield* update({ sessionUpdate: "state_update", state: "idle", stopReason: "end_turn" }),
+        ]),
+      );
+      const result = yield* Fiber.join(second);
+      const seenAtCompletion = [...seen];
+      assert.deepEqual(
+        { stopReason: result.stopReason, seenAtCompletion },
+        {
+          stopReason: "end_turn",
+          seenAtCompletion: ["state_update", "state_update", "agent_message_chunk", "state_update"],
+        },
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not complete the root v2 prompt with a Devin subagent's idle", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const acp = yield* AcpClient.make(stdio);
+      const sessionId = "devin-session";
+      const prompt = yield* acp.agent
+        .prompt({ sessionId, prompt: [{ type: "text", text: "continue" }] })
+        .pipe(Effect.forkScoped);
+      const request = yield* decodePromptRequestLine(yield* Queue.take(output));
+      const update = (u: unknown) =>
+        encodeJsonl(SessionUpdateNotification, {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: { sessionId, update: u },
+        });
+      yield* Queue.offer(
+        input,
+        concatBytes([
+          yield* encodeJsonl(PromptResponse, { jsonrpc: "2.0", id: request.id, result: {} }),
+          yield* update({
+            sessionUpdate: "state_update",
+            state: "idle",
+            stopReason: "cancelled",
+            _meta: { "cognition.ai/subagent_context": { parentAgentId: "child-a" } },
+          }),
+          yield* update({ sessionUpdate: "state_update", state: "idle", stopReason: "end_turn" }),
+        ]),
+      );
+      assert.strictEqual((yield* Fiber.join(prompt)).stopReason, "end_turn");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("routes MCP-over-ACP connect, message, notification, and disconnect callbacks", () =>
     Effect.gen(function* () {
       const handle = yield* makeHandle({ ACP_MOCK_MCP_OVER_ACP: "1" });
