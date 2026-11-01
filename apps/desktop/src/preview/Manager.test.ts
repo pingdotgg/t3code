@@ -654,7 +654,11 @@ describe("PreviewManager", () => {
         ]);
         beforeInput({ preventDefault } as never, { ...key, key: "l", shift: false } as never);
         expect(focus).toHaveBeenCalledOnce();
-        expect(send).toHaveBeenLastCalledWith("desktop:menu-action", "preview.focusUrl");
+        expect(send).toHaveBeenLastCalledWith(
+          "desktop:menu-action",
+          "preview.focusUrl",
+          "tab_older",
+        );
         expect(focus.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[1]!);
         beforeInput(
           { preventDefault } as never,

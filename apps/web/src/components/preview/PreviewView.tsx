@@ -100,6 +100,8 @@ interface Props {
   tabId?: string | null;
   configuredUrls?: ReadonlyArray<string> | undefined;
   visible: boolean;
+  /** Whether toolbar shortcuts reach this view. Defaults to `visible`. */
+  shortcutsEnabled?: boolean;
   onSendAnnotation?: (
     annotation: PreviewAnnotationPayload,
     image: ComposerImageAttachment | null,
@@ -144,6 +146,7 @@ export function PreviewView({
   tabId: requestedTabId,
   configuredUrls,
   visible,
+  shortcutsEnabled = visible,
   onSendAnnotation,
 }: Props) {
   const urlInputRef = useRef<HTMLInputElement | null>(null);
@@ -833,7 +836,8 @@ export function PreviewView({
     };
   }, [runtimeTabId]);
 
-  // Subscribe only while visible; ChatView always owns URL-aware toggle-panel handling.
+  // Subscribe only while enabled; `toggle-panel` is owned by ChatView's
+  // URL-aware handler regardless of whether the panel is currently mounted.
   const onPreviewAction = useEffectEvent(
     (action: Parameters<Parameters<typeof subscribePreviewAction>[0]>[0]) => {
       switch (action) {
@@ -859,15 +863,24 @@ export function PreviewView({
   );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to preview actions while the view is visible
   useEffect(() => {
+    if (!shortcutsEnabled) return;
+    return subscribePreviewAction((action) => onPreviewAction(action));
+  }, [shortcutsEnabled]);
+
+  const onDesktopMenuAction = useEffectEvent((action: string, sourceTabId?: string) => {
+    if (
+      action === "preview.focusUrl" &&
+      (sourceTabId ? sourceTabId === runtimeTabId : shortcutsEnabled)
+    ) {
+      onPreviewAction("focus-url");
+    }
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- routes native guest menu actions to their visible browser column
+  useEffect(() => {
     if (!visible) return;
-    const unsubscribeAction = subscribePreviewAction((action) => onPreviewAction(action));
-    const unsubscribeMenu = window.desktopBridge?.onMenuAction((action) => {
-      if (action === "preview.focusUrl") onPreviewAction("focus-url");
-    });
-    return () => {
-      unsubscribeAction();
-      unsubscribeMenu?.();
-    };
+    return window.desktopBridge?.onMenuAction((action, sourceTabId) =>
+      onDesktopMenuAction(action, sourceTabId),
+    );
   }, [visible]);
 
   return (

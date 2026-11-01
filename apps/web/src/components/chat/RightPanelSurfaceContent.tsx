@@ -19,6 +19,7 @@ import {
   PersistentThreadTerminalPanel,
   type PersistentThreadTerminalPanelProps,
 } from "../PersistentThreadTerminals";
+import type { RightPanelColumnView } from "../RightPanelColumns";
 import { pullRequestPanelContext } from "../pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
@@ -64,6 +65,7 @@ export function RightPanelSurfaceContent(props: {
   readonly threadRef: ScopedThreadRef;
   readonly environmentId: EnvironmentId;
   readonly visible: boolean;
+  readonly columnView?: RightPanelColumnView;
   readonly composerDraftTarget: ScopedThreadRef | DraftId;
   readonly keybindings: ResolvedKeybindingsConfig;
   readonly configuredPreviewUrls: ReadonlyArray<string>;
@@ -81,6 +83,9 @@ export function RightPanelSurfaceContent(props: {
 }) {
   const { surface, threadRef, visible, onCloseSurface } = props;
   if (surface === null) return null;
+  const active = props.columnView?.active ?? props.activeSurfaceId === surface.id;
+  const onScreen = props.columnView?.visible ?? true;
+  const unclipped = props.columnView?.unclipped ?? true;
   switch (surface.kind) {
     case "preview":
       return (
@@ -90,7 +95,8 @@ export function RightPanelSurfaceContent(props: {
             threadRef={threadRef}
             tabId={surface.resourceId}
             configuredUrls={props.configuredPreviewUrls}
-            visible={visible}
+            visible={visible && unclipped}
+            shortcutsEnabled={visible && unclipped && active}
             onSendAnnotation={props.onSendAnnotation}
           />
         </Suspense>
@@ -100,6 +106,7 @@ export function RightPanelSurfaceContent(props: {
         <PersistentThreadTerminalPanel
           {...props.terminal}
           visible={visible}
+          offscreen={!onScreen}
           threadRef={threadRef}
           surface={surface}
         />
@@ -130,7 +137,7 @@ export function RightPanelSurfaceContent(props: {
       return (
         <PullRequestDetailPanel
           getShortcutContext={props.getShortcutContext}
-          shortcutsEnabled={visible && props.activeSurfaceId === surface.id}
+          shortcutsEnabled={visible && onScreen && active}
           key={`${scopedThreadKey(threadRef)}:${surface.id}`}
           environmentId={props.environmentId}
           onSelectPullRequest={(reference) => {
@@ -187,7 +194,8 @@ export function RightPanelSurfaceContent(props: {
             threadRef={threadRef}
             key={surface.id}
             surface={surface}
-            visible={visible}
+            visible={visible && onScreen}
+            selected={active}
             onDismissSetup={() => {
               props.onCloseSurface(surface);
               useRightPanelStore.getState().show(threadRef);
@@ -213,7 +221,7 @@ export function RightPanelSurfaceContent(props: {
             composerDraftTarget={props.composerDraftTarget}
             keybindings={props.keybindings}
             availableEditors={files.availableEditors}
-            openInShortcutEnabled={visible}
+            openInShortcutEnabled={visible && onScreen && active}
             relativePath={surface.kind === "file" ? surface.relativePath : null}
             {...(attachment ? { attachment } : {})}
             revealLine={surface.kind === "file" ? (surface.revealLine ?? null) : null}

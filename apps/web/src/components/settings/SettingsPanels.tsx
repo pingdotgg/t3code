@@ -432,6 +432,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.mathRenderingEnabled !== DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled
       ? ["Render math"]
       : []),
+    ...(settings.rightPanelLayout !== DEFAULT_UNIFIED_SETTINGS.rightPanelLayout
+      ? ["Right panel layout"]
+      : []),
     ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
       ? ["Panel animations"]
       : []),
@@ -601,6 +604,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
+      rightPanelLayout: DEFAULT_UNIFIED_SETTINGS.rightPanelLayout,
       effortDisplay: DEFAULT_UNIFIED_SETTINGS.effortDisplay,
       mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,

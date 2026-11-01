@@ -1484,7 +1484,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             // DOM focus in the renderer cannot by itself release the guest's native keyboard focus.
             host.focus();
           }
-          host.send(MENU_ACTION_CHANNEL, forwarded.command);
+          if (forwarded.command === "preview.focusUrl") {
+            host.send(MENU_ACTION_CHANNEL, forwarded.command, tabId);
+          } else {
+            host.send(MENU_ACTION_CHANNEL, forwarded.command);
+          }
         }
         return;
       }
