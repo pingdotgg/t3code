@@ -1,5 +1,5 @@
 // 1.4.2 through 1.4.4 write skills/system/run-workflow/SKILL.md into every session workspace.
-const ANTIGRAVITY_RELEASE_VERSION = "1.4.1";
+export const ANTIGRAVITY_RELEASE_VERSION = "1.4.1";
 
 export interface AntigravityReleaseAsset {
   readonly version: string;
