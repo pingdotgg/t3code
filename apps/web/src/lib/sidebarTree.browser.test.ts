@@ -172,6 +172,25 @@ describe("sidebar keyboard navigation", () => {
     expect([firstAction.tabIndex, secondAction.tabIndex]).toEqual([-1, 0]);
   });
 
+  it("keeps the scroll position when focus follows a row that moved away", async () => {
+    using tree = setup();
+    Object.assign(tree.root.style, { height: "100px", overflow: "auto" });
+    const settled = tree.row("settled");
+    const settle = document.createElement("button");
+    settle.textContent = "Settle";
+    settled.after(settle);
+    settle.dataset.sidebarActionFor = "settled";
+    for (let index = 0; index < 20; index++) tree.row(`row-${index}`).style.display = "block";
+    tree.install();
+    settle.focus();
+    // Settling moves the row to the shelf at the bottom and removes the focused button.
+    settle.remove();
+    settled.remove();
+    const moved = tree.row("settled");
+    await vi.waitFor(() => expect(document.activeElement).toBe(moved));
+    expect(tree.root.scrollTop).toBe(0);
+  });
+
   it("does not pull focus back after a click outside the tree", async () => {
     using tree = setup();
     const first = tree.row("first");

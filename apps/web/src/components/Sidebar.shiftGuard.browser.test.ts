@@ -126,6 +126,22 @@ describe("sidebar shift guard", () => {
     expect(list.pressed).toEqual([]);
   });
 
+  it("lets another pointer click an unmoved row while a dropped press is held", async () => {
+    await using screen = await render(null);
+    using list = mountList(screen.container, ["A", "B", "C"]);
+    using _clock = fakeTimers();
+
+    list.remove("B");
+    list.guard.update();
+    const dropped = { bubbles: true, pointerId: 9, pointerType: "touch" };
+    list.button("C").dispatchEvent(new PointerEvent("pointerdown", dropped));
+    await userEvent.click(list.button("A"));
+    expect(list.pressed).toEqual(["A"]);
+    list.button("C").dispatchEvent(new PointerEvent("pointerup", dropped));
+    list.button("C").dispatchEvent(new PointerEvent("click", { ...dropped, detail: 1 }));
+    expect(list.pressed).toEqual(["A"]);
+  });
+
   it("lets keyboard activation through while a dropped press is held", async () => {
     await using screen = await render(null);
     using list = mountList(screen.container, ["A", "B", "C"]);

@@ -5,9 +5,7 @@ import {
   PreviewInvalidUrlError,
   type PreviewListInput,
   type PreviewListResult,
-  type PreviewNavigateInput,
   type PreviewOpenInput,
-  type PreviewRefreshInput,
   type PreviewReportStatusInput,
   type PreviewResizeInput,
   type PreviewAdjustInput,
@@ -41,9 +39,6 @@ export class PreviewManager extends Context.Service<
         readonly beforePublish?: (snapshot: PreviewSessionSnapshot) => void;
       },
     ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
-    readonly navigate: (
-      input: PreviewNavigateInput,
-    ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
     readonly reportStatus: (
       input: PreviewReportStatusInput & { readonly serverControlled?: boolean },
     ) => Effect.Effect<void, PreviewError>;
@@ -60,7 +55,6 @@ export class PreviewManager extends Context.Service<
     readonly adjust: (
       input: PreviewAdjustInput,
     ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
-    readonly refresh: (input: PreviewRefreshInput) => Effect.Effect<void, PreviewError>;
     readonly close: (input: PreviewCloseInput) => Effect.Effect<void, PreviewError>;
     readonly list: (input: PreviewListInput) => Effect.Effect<PreviewListResult>;
     readonly events: Stream.Stream<PreviewEvent>;
@@ -227,41 +221,6 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     },
   );
 
-  const navigate: PreviewManager["Service"]["navigate"] = Effect.fn("PreviewManager.navigate")(
-    function* (input) {
-      const url = yield* normalizeUrl(input.url);
-      return yield* mutateExistingSession(
-        input.threadId,
-        input.tabId,
-        Effect.fn("PreviewManager.navigateSession")(function* (session) {
-          if (session.snapshot.runtime === "server")
-            return yield* new PreviewControlRequiredError({ tabId: input.tabId });
-          const updatedAt = yield* currentIsoTimestamp;
-          const previousTitle =
-            session.snapshot.navStatus._tag === "Idle" ? "" : session.snapshot.navStatus.title;
-          const resolvedTitle = input.resolvedTitle ?? previousTitle;
-          const snapshot: PreviewSessionSnapshot = {
-            ...session.snapshot,
-            navStatus: { _tag: "Success", url, title: resolvedTitle },
-            viewport: session.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
-            updatedAt,
-          };
-          return {
-            next: { ...session, snapshot },
-            emit: {
-              type: "navigated",
-              threadId: session.threadId,
-              tabId: session.tabId,
-              createdAt: snapshot.updatedAt,
-              snapshot,
-            },
-            result: snapshot,
-          };
-        }),
-      );
-    },
-  );
-
   const reportStatus: PreviewManager["Service"]["reportStatus"] = Effect.fn(
     "PreviewManager.reportStatus",
   )(function* (input) {
@@ -406,14 +365,6 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     },
   );
 
-  const refresh: PreviewManager["Service"]["refresh"] = Effect.fn("PreviewManager.refresh")(
-    function* (input) {
-      yield* mutateExistingSession(input.threadId, input.tabId, (session) =>
-        Effect.succeed({ next: session, emit: null, result: undefined as void }),
-      );
-    },
-  );
-
   const close: PreviewManager["Service"]["close"] = Effect.fn("PreviewManager.close")(
     function* (input) {
       const createdAt = yield* currentIsoTimestamp;
@@ -499,12 +450,10 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   return PreviewManager.of({
     open,
     requestReveal,
-    navigate,
     reportStatus,
     markHeadless,
     resize,
     adjust,
-    refresh,
     close,
     list,
     events,

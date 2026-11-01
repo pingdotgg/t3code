@@ -61,7 +61,7 @@ export interface Pool {
   readonly env: NodeJS.ProcessEnv;
 }
 
-export class AgentDeviceError extends Error {}
+class AgentDeviceError extends Error {}
 
 // A shared pool's workers drop off the gateway and stall under load for seconds at a time.
 const TRANSIENT =

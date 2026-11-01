@@ -62,14 +62,10 @@ export function useLinkableMachines(environmentId: EnvironmentId, enabled: boole
   const links = useEnvironmentQuery(
     enabled ? peerLinkEnvironment.list({ environmentId, input: {} }) : null,
   );
-  return useMemo(
-    () =>
-      linkableMachines({
-        environments,
-        threadEnvironmentId: environmentId,
-        links: links.data?.links ?? [],
-        connect: discovery.environments,
-      }),
-    [discovery.environments, environmentId, environments, links.data],
-  );
+  return linkableMachines({
+    environments,
+    threadEnvironmentId: environmentId,
+    links: links.data?.links ?? [],
+    connect: discovery.environments,
+  });
 }

@@ -3,7 +3,6 @@ import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { useEnabledNavigationTabs } from "./navigation-tabs";
 import { NAVIGATION_TAB_ORDER } from "./navigation-tab-order";
 import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
-import { useMemo } from "react";
 import { useWindowDimensions, View } from "react-native";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -32,10 +31,11 @@ export function WorkspaceRootScreen() {
   const { fabClearance, scale, fabSize } = useAndroidControlSizing();
   const window = useWindowDimensions();
   const floating = floatingTabsMetrics(enabled.length + 1, scale, fabSize, window.width);
-  const context = useMemo(
-    () => ({
-      ...workspace,
-      bottomClearance: floatingTabsEnabled
+  const context = {
+    ...workspace,
+    bottomClearance: layout.usesSplitView
+      ? workspace.bottomClearance
+      : floatingTabsEnabled
         ? insets.bottom +
           FLOATING_TABS.bottom +
           FLOATING_TABS.edge +
@@ -46,63 +46,32 @@ export function WorkspaceRootScreen() {
         : workspace.state.selectedTab === "threads"
           ? fabClearance + 16
           : 16,
-    }),
-    [
-      floatingTabsEnabled,
-      workspace,
-      fabClearance,
-      insets.bottom,
-      floating.height,
-      floating.fabOffset,
-      fabSize,
-    ],
-  );
+  };
   const tab = workspace.state.selectedTab;
-
-  if (layout.usesSplitView) {
-    if (enabled.length === 0) return <View className="flex-1 bg-screen" />;
-    return (
-      <WorkspaceTabPanes
-        tabs={TABS}
-        selected={tab}
-        renderTab={(tab) =>
-          tab === "threads" ? (
-            <HomeRouteScreen />
-          ) : tab !== "pullRequests" ? (
-            <WorkspaceExtraTab tab={tab} />
-          ) : (
-            <>
-              <NativeStackScreenOptions options={{ headerShown: false }} />
-              <AndroidScreenHeader title="Pull requests" />
-              <View className="flex-1 items-center justify-center px-10">
-                <EmptyState
-                  title="Select a pull request"
-                  detail="Choose a pull request from the sidebar to review it."
-                  variant="plain"
-                />
-              </View>
-            </>
-          )
-        }
-      />
-    );
-  }
 
   return (
     <WorkspaceTabsContext value={context}>
-      <View className="flex-1 bg-header">
-        <NativeStackScreenOptions options={{ headerShown: false }} />
+      <View className={layout.usesSplitView ? "flex-1 bg-screen" : "flex-1 bg-header"}>
+        {!layout.usesSplitView ? (
+          <NativeStackScreenOptions options={{ headerShown: false }} />
+        ) : null}
         <SafeAreaInsetsContext
           value={
-            floatingTabsEnabled
-              ? tab === "usage"
-                ? { ...insets, bottom: context.bottomClearance }
-                : insets
-              : { ...insets, bottom: 0 }
+            layout.usesSplitView
+              ? insets
+              : floatingTabsEnabled
+                ? tab === "usage"
+                  ? { ...insets, bottom: context.bottomClearance }
+                  : insets
+                : { ...insets, bottom: 0 }
           }
         >
           {enabled.length === 0 ? (
-            <WorkspaceNoTabs />
+            layout.usesSplitView ? (
+              <View className="flex-1 bg-screen" />
+            ) : (
+              <WorkspaceNoTabs />
+            )
           ) : (
             <WorkspaceTabPanes
               tabs={TABS}
@@ -112,6 +81,18 @@ export function WorkspaceRootScreen() {
                   <HomeRouteScreen />
                 ) : tab !== "pullRequests" ? (
                   <WorkspaceExtraTab tab={tab} />
+                ) : layout.usesSplitView ? (
+                  <>
+                    <NativeStackScreenOptions options={{ headerShown: false }} />
+                    <AndroidScreenHeader title="Pull requests" />
+                    <View className="flex-1 items-center justify-center px-10">
+                      <EmptyState
+                        title="Select a pull request"
+                        detail="Choose a pull request from the sidebar to review it."
+                        variant="plain"
+                      />
+                    </View>
+                  </>
                 ) : (
                   <PullRequestsScreen
                     renderFrame={(filters, list) => (
@@ -126,7 +107,7 @@ export function WorkspaceRootScreen() {
             />
           )}
         </SafeAreaInsetsContext>
-        {floatingTabsEnabled ? (
+        {layout.usesSplitView ? null : floatingTabsEnabled ? (
           <FloatingWorkspaceTabs fillWidth onNewThread={startNewTask} />
         ) : (
           <AndroidWorkspaceNavigation onNewThread={startNewTask} />
