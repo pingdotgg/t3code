@@ -9,8 +9,8 @@ export const ASSISTANT_CITATION_CONTEXT_LENGTH = 32;
 export const AssistantCitation = Schema.Struct({
   version: Schema.Literal(1),
   environmentId: EnvironmentId.check(Schema.isMaxLength(512)),
-  threadId: ThreadId.check(Schema.isMaxLength(512)),
-  messageId: MessageId.check(Schema.isMaxLength(512)),
+  threadId: ThreadId,
+  messageId: MessageId,
   text: Schema.String.check(
     Schema.isNonEmpty(),
     Schema.isMaxLength(ASSISTANT_CITATION_MAX_TEXT_LENGTH),
