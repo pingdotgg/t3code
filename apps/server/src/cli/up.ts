@@ -488,8 +488,8 @@ const formatTailscale = (
       ? [
           // Discovery shows a tagged host to everyone, an untagged one only to its user.
           tagged
-            ? "Tailnet devices find this machine automatically."
-            : "Your own tailnet devices find this machine automatically; others add it by the address above.",
+            ? "Desktops on this tailnet find this machine automatically; a phone adds it by the address above."
+            : "Your own desktops on this tailnet find this machine automatically; a phone or another user's device adds it by the address above.",
         ]
       : []),
     "",

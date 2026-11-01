@@ -37,6 +37,11 @@ describe("parsePairingUrl", () => {
     const pairingUrl = extractPairingUrlFromQrPayload("http://100.88.1.2:3773");
     expect(parsePairingUrl(pairingUrl)).toEqual({ host: "http://100.88.1.2:3773", code: "" });
     expect(buildPairingUrl("http://100.88.1.2:3773", "")).toBe("http://100.88.1.2:3773");
+    // `t3 up` on port 80 prints `:80`, which URL would drop.
+    expect(parsePairingUrl("http://100.88.1.2:80")).toEqual({
+      host: "http://100.88.1.2:80",
+      code: "",
+    });
   });
 
   it("reads hosted pairing links into backend host fields", () => {

@@ -323,6 +323,12 @@ describe("connection onboarding", () => {
         pairingCode: "pairing-token",
       }).pipe(Effect.provide(layerPairingOnboarding()));
       expect(tailnet.profile.httpBaseUrl).toBe("http://100.88.1.2:3773/");
+      // A one-word name could be a LAN host, so the code goes over HTTPS.
+      const shortName = yield* preparePairingRegistration({
+        host: "studio",
+        pairingCode: "pairing-token",
+      }).pipe(Effect.provide(layerPairingOnboarding()));
+      expect(shortName.profile.httpBaseUrl).toBe("https://studio/");
       expect(tokenParams.has("scope")).toBe(false);
       expect(tokenParams.get("client_label")).toBe("T3 Code Test");
       expect(tokenParams.get("client_device_type")).toBe("desktop");
