@@ -41,6 +41,7 @@ import { formatShortcutLabel } from "../../keybindings";
 import { cn } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { useClientSettings } from "../../hooks/useSettings";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -48,7 +49,23 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group"
 import { Kbd, KbdGroup } from "../ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import {
+  Combobox,
+  ComboboxTrigger,
+  ComboboxPopup,
+  ComboboxSearchInput,
+  ComboboxEmpty,
+  ComboboxList,
+  ComboboxItem,
+} from "../ui/combobox";
+import {
+  SelectButton,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { Toggle } from "../ui/toggle";
 import { toastManager } from "../ui/toast";
 import {
@@ -1117,28 +1134,59 @@ interface NewKeybindingProps {
 function NewKeybindingCommandSelect({
   draft,
   commandOptions,
+  allRows,
   className,
 }: {
   draft: NewKeybindingDraft;
   commandOptions: ReadonlyArray<KeybindingCommandOption>;
+  allRows: ReadonlyArray<KeybindingRow>;
   className?: string | undefined;
 }) {
   return (
-    <Select
-      value={draft.commandDraft}
-      onValueChange={(value) => draft.setCommandDraft(value as KeybindingCommand)}
+    <Combobox
+      items={commandOptions}
+      defaultOpen
+      itemToStringLabel={commandLabel}
+      filter={(command, query) =>
+        `${command} ${commandLabel(command)}`.toLowerCase().includes(query.trim().toLowerCase())
+      }
+      autoHighlight
+      value={draft.commandDraft || null}
+      onValueChange={(value) => value && draft.setCommandDraft(value)}
     >
-      <SelectTrigger size="sm" className={className}>
-        <SelectValue placeholder="Command" />
-      </SelectTrigger>
-      <SelectContent alignItemWithTrigger={false} matchTriggerWidth={false} className="max-h-72">
-        {commandOptions.map((command) => (
-          <SelectItem key={command} value={command} className="w-full">
-            <span className="truncate">{commandLabel(command)}</span>
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+      <ComboboxTrigger
+        aria-label="Command"
+        render={<SelectButton size="sm" />}
+        className={className}
+      >
+        {draft.commandDraft ? commandLabel(draft.commandDraft) : "Command"}
+      </ComboboxTrigger>
+      <ComboboxPopup className="w-96">
+        <ComboboxSearchInput autoFocus placeholder="Search actions…" aria-label="Search actions" />
+        <ComboboxEmpty>No actions found.</ComboboxEmpty>
+        <ComboboxList>
+          {(command: KeybindingCommandOption) => {
+            const bindings = allRows.filter((row) => row.command === command && !row.isShadowed);
+            return (
+              <ComboboxItem key={command} value={command}>
+                <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                  <span>{commandLabel(command)}</span>
+                  {bindings.length > 0 && (
+                    <span className="flex shrink-0 flex-col items-end gap-1">
+                      {bindings.map((row) => (
+                        <Kbd key={row.id} title={row.when || undefined}>
+                          {formatShortcutLabel(row.binding.shortcut)}
+                        </Kbd>
+                      ))}
+                    </span>
+                  )}
+                </div>
+              </ComboboxItem>
+            );
+          }}
+        </ComboboxList>
+      </ComboboxPopup>
+    </Combobox>
   );
 }
 
@@ -1235,6 +1283,7 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
           <NewKeybindingCommandSelect
             draft={draft}
             commandOptions={commandOptions}
+            allRows={allRows}
             className="w-56"
           />
           <KeybindingConflictWarning labels={draft.conflictLabels} />
@@ -1304,11 +1353,12 @@ function keybindingAnchorIds(rows: ReturnType<typeof buildKeybindingRows>) {
 
 // Cache rows in a separate hook so the compiler does not rebuild them per search keystroke.
 function useKeybindingCatalog() {
+  const sendShortcut = useClientSettings((settings) => settings.sendShortcut);
   const serverKeybindings = useSettingsScope().environment?.serverConfig?.keybindings;
   const merged = mergeWithDefaultKeybindings(serverKeybindings ?? []);
   return {
     commandOptions: buildKeybindingCommandOptions(merged),
-    allRows: buildKeybindingRows(merged),
+    allRows: buildKeybindingRows(merged, navigator.platform, sendShortcut),
   };
 }
 

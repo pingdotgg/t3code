@@ -1,5 +1,6 @@
 import {
   STATIC_KEYBINDING_COMMANDS,
+  type ClientSettings,
   type KeybindingCommand,
   type KeybindingShortcut,
   type KeybindingWhenNode,
@@ -13,7 +14,7 @@ import {
   US_SHIFTED_TO_UNSHIFTED_KEYS,
 } from "@t3tools/shared/keybindings";
 
-import { shortcutConflictKey, shortcutKeyFromEvent } from "../../keybindings";
+import { shortcutConflictKey, shortcutForContext, shortcutKeyFromEvent } from "../../keybindings";
 import { isMacPlatform } from "../../lib/utils";
 import { METRIC_OPTIONS, WINDOW_OPTIONS } from "../usage/usageShortcuts";
 
@@ -52,6 +53,7 @@ export interface KeybindingRow {
   readonly defaultWhen: string;
   readonly binding: ResolvedKeybindingRule;
   readonly conflicts: ReadonlyArray<string>;
+  readonly isShadowed: boolean;
 }
 
 export type WhenVariableOption = string;
@@ -249,13 +251,37 @@ export function groupKeybindingRows(
 export function buildKeybindingRows(
   keybindings: ResolvedKeybindingsConfig,
   platform = navigator.platform,
+  sendShortcut: ClientSettings["sendShortcut"] = "enter",
 ): ReadonlyArray<KeybindingRow> {
+  // Multiline sending can use either shortcut; settings have no active composer prompt.
+  const modifierModes =
+    sendShortcut === "mod-enter-multiline" ? [false, true] : [sendShortcut === "mod-enter"];
+  const conflictKeys = modifierModes.map((composerRequiresModifier) =>
+    keybindings.map((binding) =>
+      shortcutConflictKey(shortcutForContext(binding, { composerRequiresModifier }), platform),
+    ),
+  );
+  const lastBindingIndices = conflictKeys.map((keys) => {
+    const indices = new Map<string, number>();
+    for (const [index, binding] of keybindings.entries()) {
+      indices.set(`${keys[index]}:${whenAstToExpression(binding.whenAst)}`, index);
+    }
+    return indices;
+  });
   const rowsById = new Map<string, KeybindingRow>();
-  for (const binding of keybindings) {
+  for (const [index, binding] of keybindings.entries()) {
     const defaultBinding = defaultBindingForBinding(binding);
     const key = shortcutToKeybindingInput(binding.shortcut);
     const when = whenAstToExpression(binding.whenAst);
     const id = keybindingRowId(binding.command, key, when);
+    // Only discard proven shadows; distinct conditions may apply in other focus contexts.
+    const isShadowed = lastBindingIndices.every((indices, mode) => {
+      const conflictKey = conflictKeys[mode]?.[index];
+      return (
+        (indices.get(`${conflictKey}:`) ?? -1) > index ||
+        (indices.get(`${conflictKey}:${when}`) ?? -1) > index
+      );
+    });
     rowsById.set(id, {
       id,
       command: binding.command,
@@ -266,6 +292,7 @@ export function buildKeybindingRows(
       defaultWhen: whenAstToExpression(defaultBinding?.whenAst),
       binding,
       conflicts: [],
+      isShadowed,
     });
   }
   const rows = [...rowsById.values()];
