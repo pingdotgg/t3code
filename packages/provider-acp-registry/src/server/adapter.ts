@@ -219,6 +219,9 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
         }
       : AcpProviderCapabilitiesV2,
     customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
+    // Agents that implement `/compact` as a prompt command (omp, Claude, Codex) compact natively;
+    // agents that do not advertise it are rejected instead of receiving `/compact` as chat.
+    compactCommand: "compact",
     promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
     ...(registryAgentId === "factory-droid"
       ? { extractElicitationForm: extractDroidElicitationForm }

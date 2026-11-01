@@ -538,6 +538,85 @@ function assertReinjectedInstructions(
   assert.include(text, `<user_request>\n${request}\n</user_request>`);
 }
 
+const makeAdvertisedCompactionHarness = Effect.fnUntraced(function* (
+  environment: Readonly<Record<string, string>>,
+) {
+  const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const path = yield* Path.Path;
+  const selfInvocation = yield* resolveSelfInvocation();
+  const mockAgentPath = yield* path.fromFileUrl(
+    new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+  );
+  const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+  // Resolves after the adapter records what the agent advertised, so the refusal is deterministic.
+  const commandsPublished = yield* Deferred.make<void>();
+  const instanceId = ProviderInstanceId.make("acp-test-advertised-compaction");
+  const threadId = ThreadId.make("thread-acp-advertised-compaction");
+  const adapter = yield* makeAcpAdapterV2({
+    instanceId,
+    flavor: {
+      driver: ACP_TEST_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      compactCommand: "compact",
+      onAvailableCommandsUpdate: () => Deferred.succeed(commandsPublished, undefined),
+      makeRuntime: makeMockRuntime({
+        childProcessSpawner,
+        mockAgentPath,
+        protocolEvents,
+        environment,
+      }),
+    },
+    selfInvocation,
+  });
+  const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    cwd: process.cwd(),
+  });
+  const modelSelection = { instanceId, model: "default" } as const;
+  const runtime = yield* adapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make("provider-session-acp-advertised-compaction"),
+    modelSelection,
+    runtimePolicy,
+  });
+  const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+  yield* Deferred.await(commandsPublished);
+  const now = yield* DateTime.now;
+  let ordinal = 0;
+  const nextPromptTexts = () =>
+    Effect.gen(function* () {
+      while (true) {
+        const event = yield* Queue.take(protocolEvents);
+        if (event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt") {
+          return rawProtocolPromptTextBlocks(event);
+        }
+      }
+    });
+  return {
+    runtime,
+    compact: () =>
+      Effect.gen(function* () {
+        const compactThread = runtime.compactThread;
+        assert.isDefined(compactThread, "compactThread must be wired for compactCommand");
+        return yield* Effect.exit(
+          compactThread!(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now,
+              ordinal: ++ordinal,
+              messageText: "Compact the conversation.",
+            }),
+          ),
+        );
+      }),
+    nextPromptTexts,
+  };
+});
+
 describe("AcpAdapterV2", () => {
   it.live("reports per-turn usage unavailable on a continuation turn that never prompts", () =>
     Effect.gen(function* () {
@@ -1914,6 +1993,32 @@ describe("AcpAdapterV2", () => {
         assertReinjectedInstructions(yield* runTurn("Continue work."), "Continue work.");
         assert.equal((yield* runTurn("Finish work."))[0]?.text, "Finish work.");
       }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("sends a bare /compact prompt to an agent that advertises the compact command", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeAdvertisedCompactionHarness({
+        T3_ACP_AVAILABLE_COMMANDS: "compact,plan",
+      });
+      const compacted = yield* harness.compact();
+      assert.isTrue(Exit.isSuccess(compacted));
+      assert.deepEqual(yield* harness.nextPromptTexts(), [{ type: "text", text: "/compact" }]);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("refuses compaction when the agent does not advertise the compact command", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeAdvertisedCompactionHarness({
+        T3_ACP_AVAILABLE_COMMANDS: "plan",
+      });
+      const compacted = yield* harness.compact();
+      const error = Exit.isFailure(compacted) ? Cause.squash(compacted.cause) : undefined;
+      assert.instanceOf(error, ProviderAdapter.ProviderAdapterTurnStartError);
+      assert.include(
+        (error as ProviderAdapter.ProviderAdapterTurnStartError).cause,
+        "does not advertise a /compact command",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live("reapplies a selection after a switch away from it failed partway", () =>
