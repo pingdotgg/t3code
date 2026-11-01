@@ -140,6 +140,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
+  const platform = yield* HostProcess.Platform;
 
   const fingerprintOf = (host: string, token: string) =>
     crypto.digest("SHA-256", new TextEncoder().encode(token)).pipe(
@@ -288,7 +289,8 @@ export const make = Effect.gen(function* () {
       );
     }),
     unixSocket: Effect.fn("GitHubCredentials.unixSocket")((host: string) =>
-      Cache.get(unixSockets, normalizeHost(host)),
+      // Node opens only named pipes on Windows, not the socket files gh uses there.
+      platform === "win32" ? Effect.succeedNone : Cache.get(unixSockets, normalizeHost(host)),
     ),
   });
 });

@@ -10,6 +10,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 
@@ -193,5 +194,14 @@ describe("GitHubCredentials", () => {
         ["config", "get", "http_unix_socket", "--host", "ghe.example.com"],
       ]);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("sends straight to the host on Windows, which cannot open gh's socket files", () => {
+    const { layer, calls } = harness({}, [], {}, { "github.com": "C:\\gh\\gh.sock" });
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      expect(yield* credentials.unixSocket("github.com")).toEqual(Option.none());
+      expect(calls).toEqual([]);
+    }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Platform, "win32"));
   });
 });
