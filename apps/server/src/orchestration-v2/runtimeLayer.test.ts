@@ -3294,12 +3294,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("finishes owed checks once after pending sweeps, a restart, and a re-watch", () =>
+  it.effect.each(["pending", "action-required"] as const)("recovers %s watches", (initialStatus) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      const threadId = ThreadId.make("runtime-pull-request-watch-owed");
-      const projectId = ProjectId.make("pr-watch-owed-project");
+      const threadId = ThreadId.make(`runtime-pull-request-watch-owed-${initialStatus}`);
+      const projectId = ProjectId.make(`pr-watch-owed-project-${initialStatus}`);
       yield* seedProject({
         projectId,
         title: "Watch owed",
@@ -3311,7 +3311,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         type: "thread.create",
         createdBy: "user",
         creationSource: "web",
-        commandId: CommandId.make("pr-watch-owed-create"),
+        commandId: CommandId.make(`pr-watch-owed-create-${initialStatus}`),
         threadId,
         projectId,
         title: "Watch owed",
@@ -3324,7 +3324,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const watch = (on: boolean, id: string) =>
         orchestrator.dispatch({
           type: "thread.pull-request.watch",
-          commandId: CommandId.make(`pr-watch-owed-${id}`),
+          commandId: CommandId.make(`pr-watch-owed-${initialStatus}-${id}`),
           threadId,
           host: "github.com",
           repository: "pingdotgg/t3code",
@@ -3334,7 +3334,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
       yield* watch(true, "start");
 
-      let remainingStatus: "pending" | "success" = "pending";
+      let remainingStatus: "pending" | "action-required" | "success" = initialStatus;
+      const approval = initialStatus === "action-required";
+      const firstSummary = approval ? "#12: checks await approval" : "#12: checks passed";
+      const runUrl = "https://github.com/pingdotgg/t3code/actions/runs/123";
       const host = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(PullRequestService.PullRequestService)({
@@ -3350,7 +3353,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 name,
                 status: name === "test" ? remainingStatus : ("success" as const),
                 description: null,
-                url: null,
+                url: name === "test" ? `${runUrl}/job/7` : null,
                 required: name === "lint",
               })),
             })),
@@ -3375,38 +3378,42 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* TestClock.adjust("10 minutes");
       yield* reactor.sweep;
       yield* worker.drain();
-      assert.deepEqual(yield* summaries, ["#12: checks passed"]);
+      assert.deepEqual(yield* summaries, [firstSummary]);
 
       assert.deepEqual(
-        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.owedChecks,
-        ["test"],
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.[
+          approval ? "awaitingApproval" : "owedChecks"
+        ],
+        approval ? [runUrl] : ["test"],
       );
       // The fresh reactor reloads the nonempty obligation from the persisted watch.
       const restarted = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
       yield* restarted.sweep;
       yield* worker.drain();
-      assert.deepEqual(yield* summaries, ["#12: checks passed"]);
+      assert.deepEqual(yield* summaries, [firstSummary]);
 
       // A new watch on the same pull request knows what the last one told.
       yield* watch(false, "stop");
       yield* watch(true, "again");
       yield* restarted.sweep;
       yield* worker.drain();
-      assert.deepEqual(yield* summaries, ["#12: checks passed"]);
+      assert.deepEqual(yield* summaries, [firstSummary]);
 
       assert.deepEqual(
-        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.owedChecks,
-        ["test"],
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.[
+          approval ? "awaitingApproval" : "owedChecks"
+        ],
+        approval ? [runUrl] : ["test"],
       );
       remainingStatus = "success";
       yield* TestClock.adjust("10 minutes");
       yield* restarted.sweep;
       yield* worker.drain();
-      assert.deepEqual(yield* summaries, ["#12: checks passed", "#12: checks passed"]);
+      assert.deepEqual(yield* summaries, [firstSummary, "#12: checks passed"]);
       yield* TestClock.adjust("10 minutes");
       yield* restarted.sweep;
       yield* worker.drain();
-      assert.deepEqual(yield* summaries, ["#12: checks passed", "#12: checks passed"]);
+      assert.deepEqual(yield* summaries, [firstSummary, "#12: checks passed"]);
       assert.deepEqual(
         (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.owedChecks,
         [],
