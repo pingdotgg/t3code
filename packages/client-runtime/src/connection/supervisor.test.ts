@@ -1806,22 +1806,30 @@ describe("EnvironmentSupervisor routes", () => {
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
         initialConfig: () =>
           Ref.get(lanAddress).pipe(
-            Effect.map((httpBaseUrl): Pick<ServerConfig, "directEndpoints"> => ({
-              directEndpoints: [{ kind: "lan", httpBaseUrl }],
-            })),
+            Effect.map(
+              (
+                httpBaseUrl,
+              ): Pick<ServerConfig, "directEndpoints"> & {
+                readonly environment: Pick<ServerConfig["environment"], "label">;
+              } => ({
+                environment: { label: RELAY_TARGET.label },
+                directEndpoints: [{ kind: "lan", httpBaseUrl }],
+              }),
+            ),
             Effect.map((config) => config as ServerConfig),
           ),
       });
       const current = yield* Ref.make(relayEntry);
       const supervisor = yield* EnvironmentSupervisor.make(relayEntry, {
         initiallyDesired: true,
-        learnRoutes: ({ activeRoute, reported }) =>
+        learnRoutes: ({ activeRoute, reported, label }) =>
           Effect.gen(function* () {
             const entry = yield* Ref.get(current);
             const routes = mergeLearnedRoutes({
               entry,
               activeRoute,
               reported,
+              label,
               allowInsecure: true,
             });
             if (routes === null) return Option.none();

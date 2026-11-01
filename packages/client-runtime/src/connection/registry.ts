@@ -922,7 +922,8 @@ export const make = Effect.gen(function* () {
   const learnRoutes = Effect.fn("EnvironmentRegistry.learnRoutes")(function* (input: {
     readonly environmentId: EnvironmentId;
     readonly activeRoute: ConnectionRoute;
-    readonly reported: ReadonlyArray<ReportedEndpoint>;
+    readonly reported: ReadonlyArray<ReportedEndpoint> | undefined;
+    readonly label: string;
   }) {
     return yield* withLeaseLock(
       input.environmentId,
@@ -936,6 +937,7 @@ export const make = Effect.gen(function* () {
           entry,
           activeRoute: input.activeRoute,
           reported: input.reported,
+          label: input.label,
           allowInsecure: allowInsecureRoutes,
         });
         if (routes === null) return Option.none<ConnectionCatalogEntry>();
