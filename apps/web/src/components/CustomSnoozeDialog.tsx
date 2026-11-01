@@ -11,6 +11,7 @@ import { Button } from "./ui/button";
 import { CalendarIcon, Settings2Icon } from "lucide-react";
 import { Calendar } from "./ui/calendar";
 import { weekStartsOn } from "../timestampFormat";
+import { useClientSettings } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { Popover, PopoverTrigger, PopoverPopup } from "./ui/popover";
 import { Input } from "./ui/input";
@@ -64,6 +65,7 @@ export function CustomSnoozeDialogHost() {
 
 function CustomSnoozeDialog() {
   const id = useId();
+  const is24HourTime = useClientSettings((settings) => settings.timestampFormat === "24-hour");
   const navigate = useNavigate();
   const [initial] = useState(() => new Date(Date.now() + 3_600_000));
   const nowMinute = useNowMinute();
@@ -166,7 +168,11 @@ function CustomSnoozeDialog() {
                         nativeInput
                         id={`${id}-time`}
                         className="h-9 sm:h-8"
-                        type="time"
+                        // Native time inputs follow the browser/OS hour cycle, not our setting.
+                        type={is24HourTime ? "text" : "time"}
+                        placeholder={is24HourTime ? "HH:MM" : undefined}
+                        pattern={is24HourTime ? "([01][0-9]|2[0-3]):[0-5][0-9]" : undefined}
+                        title={is24HourTime ? "Enter a 24-hour time (HH:MM)." : undefined}
                         required
                         value={time}
                         onChange={(event) => {
