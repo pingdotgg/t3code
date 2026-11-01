@@ -125,7 +125,7 @@ export function canSnooze(
   options: { readonly now: string },
 ): boolean {
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return false;
-  // The server rejects snoozing even for nonblocking questions.
+  // The server rejects snoozing for any pending request.
   if (shell.source?.pendingRuntimeRequest != null) return false;
   if (shell.pendingSubagentRequest != null) return false;
   // A waiting guest message would wake it at once.

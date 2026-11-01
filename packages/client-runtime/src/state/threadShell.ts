@@ -15,7 +15,7 @@ import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
-import { presentThreadShell, shellHasPendingUserInput, threadRuntimeIsActive } from "./models.ts";
+import { presentThreadShell, threadRuntimeIsActive } from "./models.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
 import {
   arrayElementsEqual,
@@ -84,17 +84,13 @@ function subagentRequest(thread: OrchestrationV2ThreadShell): PendingSubagentReq
   return kind === "user_input" ? "user_input" : "approval";
 }
 
-/**
- * A side chat asks its user directly, so questions roll up to the parent as well as approvals,
- * when its own row would show them.
- */
+/** A side chat asks its user directly, so questions roll up to the parent as well as approvals. */
 function sideChatRequest(thread: OrchestrationV2ThreadShell): PendingSubagentRequest | null {
   const kind = thread.pendingRuntimeRequest?.kind;
   if (kind === undefined || kind === "auth_refresh" || thread.lineage.sideChat !== true) {
     return null;
   }
-  if (kind !== "user_input") return "approval";
-  return shellHasPendingUserInput(thread) ? "user_input" : null;
+  return kind === "user_input" ? "user_input" : "approval";
 }
 
 /**
