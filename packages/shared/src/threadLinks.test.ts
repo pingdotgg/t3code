@@ -149,10 +149,10 @@ describe("thread links", () => {
   it("lists the threads a message's links can name, outside code", () => {
     expect(
       threadLinkRefs(
-        "<t3-thread://v2/there/t1> [a](t3-thread://v1/t%3A2) `<t3-thread://v2/code/t3>`",
+        "<t3-thread://v2/there/t1> [a](t3-thread://v1/t%3A2) `<t3-thread://v2/code/t3>` [b](<t3-thread://v2/other/t4>)",
         local,
       ),
-    ).toEqual([ref("there", "t1"), ref("local", "t%3A2"), ref("local", "t:2")]);
+    ).toEqual([ref("there", "t1"), ref("local", "t%3A2"), ref("local", "t:2"), ref("other", "t4")]);
   });
 
   it("writes a titleless autolink that opens that exact thread", () => {
