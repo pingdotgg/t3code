@@ -26,8 +26,10 @@ bin_dir="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}"
 # Trailing slashes would put `//` in the paths the t3 command guard compares.
 while [ "${t3_home%/}" != "$t3_home" ] && [ "$t3_home" != / ]; do t3_home="${t3_home%/}"; done
 while [ "${bin_dir%/}" != "$bin_dir" ] && [ "$bin_dir" != / ]; do bin_dir="${bin_dir%/}"; done
-# Absolute, so the PATH hint never adds a folder that changes with the working directory.
+# Absolute, so the PATH hint never adds a folder that changes with the working directory, and
+# the links never resolve against the folder they sit in.
 case "$bin_dir" in /*) ;; *) bin_dir="$PWD/$bin_dir" ;; esac
+case "$t3_home" in /*) ;; *) t3_home="$PWD/$t3_home" ;; esac
 
 fail() {
   printf '\nt3 install: %s\n' "$1" >&2
@@ -269,7 +271,9 @@ link_kind() {
     fi
     return 0
   fi
-  # Only a gone folder (a pruned version) leaves the text, and only without . or .. segments.
+  # Only a missing folder (a pruned version) leaves the text, and only without . or .. segments.
+  # A folder that exists but cannot be resolved, or is a link, may be another program's.
+  if [ -e "$(dirname -- "$existing")" ] || [ -L "$(dirname -- "$existing")" ]; then return 0; fi
   case "$existing" in
     */./* | */../*) ;;
     "${t3_home}/bin/t3") echo older ;;
@@ -278,17 +282,18 @@ link_kind() {
 }
 kind=
 real_public="$(CDPATH='' cd -P -- "$bin_dir" && pwd)/t3"
-# A bin folder of runtime itself would make the command link point at itself.
+# The command link is replaced in place, which is safe only away from the public name.
 if [ "$real_public" = "$real_command_link" ]; then
-  kind=current
-elif [ -e "$public" ] || [ -L "$public" ]; then
+  fail "T3CODE_INSTALL_BIN_DIR cannot be ${t3_home}/runtime. Choose another folder."
+fi
+if [ -e "$public" ] || [ -L "$public" ]; then
   kind="$(link_kind "$public")"
   [ -n "$kind" ] || fail "another t3 is already at ${public}. Remove it and run this again, or run ${target_dir}/t3 directly."
 fi
 # Inside the T3 home, so swapping it in place cannot replace another program's file. Still,
-# only a link is ever replaced there.
-if [ -e "$command_link" ] && [ ! -L "$command_link" ]; then
-  fail "${command_link} is not a link. Remove it and run this again."
+# only a link to a file is ever replaced there; mv would move into a folder.
+if [ -d "$command_link" ] || { [ -e "$command_link" ] && [ ! -L "$command_link" ]; }; then
+  fail "${command_link} is not a link to a file. Remove it and run this again."
 fi
 rm -f "${command_link}.$$.tmp"
 if ! { ln -s "${target_dir}/t3" "${command_link}.$$.tmp" && mv -f "${command_link}.$$.tmp" "$command_link"; }; then
@@ -300,25 +305,25 @@ case "$kind" in
   # Into the folder, so an entry of any kind already named t3 makes ln fail instead of filling it.
   "") ln -s "$command_link" "${bin_dir}/" || fail "could not link ${public}; something else was created there." ;;
   older)
-    # Moved aside before it is checked again, so the check sees exactly what gets replaced.
-    # Reserved first, so an entry left by an earlier install is never replaced.
-    aside="$(mktemp "${bin_dir}/.t3.XXXXXX")" || fail "could not replace ${public}"
-    mv -f "$public" "$aside" || { rm -f "$aside"; fail "could not replace ${public}"; }
+    # Moved aside before it is checked again, so the check sees exactly what gets replaced. A new
+    # folder of its own, so nothing left by an earlier install is replaced; the entry keeps its
+    # name t3, so it goes back with `ln -P ... "${bin_dir}/"`, which never overwrites anything.
+    aside_dir="$(mktemp -d "${bin_dir}/.t3.XXXXXX")" || fail "could not replace ${public}"
+    aside="${aside_dir}/t3"
+    mv "$public" "$aside" || { rmdir "$aside_dir"; fail "could not replace ${public}"; }
     if [ -n "$(link_kind "$aside")" ]; then
-      linked=true
-      ln -s "$command_link" "${bin_dir}/" || linked=false
-      rm -f "$aside"
-      "$linked" || fail "could not link ${public}; something else was created there."
+      if ! ln -s "$command_link" "${bin_dir}/"; then
+        # Keep the working old command when the name is still free.
+        ln -P "$aside" "${bin_dir}/" 2>/dev/null || true
+        rm -f "$aside" && rmdir "$aside_dir"
+        fail "could not link ${public}"
+      fi
+      rm -f "$aside" && rmdir "$aside_dir"
     else
       # Another program wrote it after the check: put it back without overwriting anything newer.
-      restored=false
-      if [ -L "$aside" ]; then
-        ln -s "$(readlink "$aside")" "$public" 2>/dev/null && restored=true
-      else
-        ln "$aside" "$public" 2>/dev/null && restored=true
-      fi
-      "$restored" || fail "another program wrote ${public} during the install; its file is now at ${aside}."
-      rm -f "$aside"
+      ln -P "$aside" "${bin_dir}/" 2>/dev/null ||
+        fail "another program wrote ${public} during the install; its file is now at ${aside}."
+      rm -f "$aside" && rmdir "$aside_dir"
       fail "another t3 was just written at ${public}. Remove it and run this again, or run ${target_dir}/t3 directly."
     fi
     ;;

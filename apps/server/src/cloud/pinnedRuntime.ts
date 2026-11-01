@@ -419,6 +419,14 @@ export const directLinkTargets = Effect.fn("cloud.pinned_runtime.direct_link_tar
     Effect.orElseSucceed(() => []),
   );
   if (physical.length > 0) return physical;
+  // A folder that exists but cannot be resolved, or is a link, may be another program's.
+  const folder = path.dirname(raw);
+  if (
+    Option.isSome(yield* fs.readLink(folder).pipe(Effect.option)) ||
+    (yield* fs.exists(folder).pipe(Effect.orElseSucceed(() => true)))
+  ) {
+    return [];
+  }
   const plain = !text.value.split(/[\\/]/).some((part) => part === "." || part === "..");
   return plain ? [path.resolve(raw)] : [];
 });

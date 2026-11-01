@@ -99,10 +99,34 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       yield* fs.symlink(older, link);
       yield* fs.remove(commandLink);
       yield* fs.writeFileString(commandLink, "mine\n");
-      assert.include((yield* provide(installCli()).pipe(Effect.flip)).message, "Could not link");
+      assert.include((yield* provide(installCli()).pipe(Effect.flip)).message, "is not a link");
       assert.equal(yield* fs.readFileString(commandLink), "mine\n");
       assert.equal(yield* fs.readLink(link), older);
       yield* fs.remove(commandLink);
+
+      // The command link is replaced in place, so it can never be the public name.
+      const inRuntime = yield* provide(installCli(), { T3CODE_INSTALL_BIN_DIR: runtimeDir }).pipe(
+        Effect.flip,
+      );
+      assert.include(inRuntime.message, "T3CODE_INSTALL_BIN_DIR cannot be");
+
+      // When the new link cannot be made, the old command keeps working.
+      const failing = installCli().pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          symlink: (target, to) =>
+            to === link && target === commandLink
+              ? // Fails like a full disk: the folder name is taken, so symlink() errors.
+                fs.symlink(target, path.dirname(to))
+              : fs.symlink(target, to),
+        }),
+      );
+      yield* provide(failing).pipe(Effect.flip);
+      assert.equal(yield* fs.readLink(link), older);
+      assert.deepStrictEqual(
+        (yield* fs.readDirectory(path.dirname(link))).filter((name) => name.startsWith(".t3.")),
+        [],
+      );
 
       // A relative older link still resolves the same once moved aside.
       const rootLink = path.join(root, "t3");

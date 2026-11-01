@@ -204,8 +204,19 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
     yield* fs
       .makeDirectory(binDir, { recursive: true })
       .pipe(Effect.mapError(failed(`Could not create ${binDir}.`)));
+    // The command link is replaced in place, which is safe only away from the public name.
+    const real = (directory: string) =>
+      fs.realPath(directory).pipe(Effect.orElseSucceed(() => directory));
+    if ((yield* real(binDir)) === (yield* real(runtimeDir))) {
+      return yield* new CliInstallError({
+        reason: `T3CODE_INSTALL_BIN_DIR cannot be ${runtimeDir}. Choose another folder.`,
+      });
+    }
     const linked = yield* linkCommand({ link, baseDir: path.dirname(runtimeDir), executable }).pipe(
-      Effect.mapError(failed(`Could not link ${link}.`)),
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          Effect.fail(new CliInstallError({ reason: `Could not link ${link}.`, cause })),
+      }),
     );
     if (!linked) {
       return yield* new CliInstallError({

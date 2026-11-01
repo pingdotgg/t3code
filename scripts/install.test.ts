@@ -88,7 +88,7 @@ async function installOver(input: {
   readonly env?: NodeJS.ProcessEnv;
   readonly cwd?: string;
 }) {
-  const target = NodePath.join(input.home, "runtime", "versions", "1.2.3");
+  const target = NodePath.resolve(input.cwd ?? ".", input.home, "runtime", "versions", "1.2.3");
   await NodeFSP.mkdir(target, { recursive: true });
   await NodeFSP.writeFile(NodePath.join(target, ".install-complete"), "1.2.3\n");
   const installer = NodePath.resolve(import.meta.dirname, input.script);
@@ -186,16 +186,31 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
       expect(borrowed.code).not.toBe(0);
       expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/versions/0.9.0/t3"));
 
-      // Only a link is ever replaced at the command link, even inside the T3 home.
-      const commandLink = NodePath.join(home, "runtime/t3");
-      await NodeFSP.rm(commandLink, { force: true });
-      await NodeFSP.writeFile(commandLink, "mine\n");
-      const notLink = await installOver({ script: "install.sh", home, binDir });
-      expect(notLink.code).not.toBe(0);
-      expect(await NodeFSP.readFile(commandLink, "utf8")).toBe("mine\n");
-      await NodeFSP.rm(commandLink);
+      // Only a link to a file is ever replaced at the command link, even inside the T3 home.
       await NodeFSP.rm(link);
       await NodeFSP.symlink(NodePath.join(home, "runtime/versions/1.0.0/t3"), link);
+      const commandLink = NodePath.join(home, "runtime/t3");
+      await NodeFSP.mkdir(NodePath.join(root, "folder"));
+      for (const make of [
+        () => NodeFSP.writeFile(commandLink, "mine\n"),
+        () => NodeFSP.symlink(NodePath.join(root, "folder"), commandLink),
+      ]) {
+        await NodeFSP.rm(commandLink, { force: true });
+        await make();
+        const notLink = await installOver({ script: "install.sh", home, binDir });
+        expect(notLink.code).not.toBe(0);
+        expect(notLink.output).toContain("is not a link to a file");
+        expect(await NodeFSP.readdir(NodePath.join(root, "folder"))).toEqual([]);
+      }
+      await NodeFSP.rm(commandLink);
+      // The command link is replaced in place, so it can never be the public name.
+      const inRuntime = await installOver({
+        script: "install.sh",
+        home,
+        binDir: NodePath.join(home, "runtime"),
+      });
+      expect(inRuntime.code).not.toBe(0);
+      expect(inRuntime.output).toContain("T3CODE_INSTALL_BIN_DIR cannot be");
 
       // Containers and CI often have no SHELL; `set -u` must not stop the installer there.
       const noShell = await installOver({
@@ -217,6 +232,16 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
       });
       expect(relative.code, relative.output).toBe(0);
       expect(relative.output).toContain(`'export PATH="$PATH:$HOME/bin"'`);
+      // So is a relative T3 home, or both links would resolve against the folder they sit in.
+      await NodeFSP.rm(link);
+      const relativeHome = await installOver({
+        script: "install.sh",
+        home: NodePath.relative(root, home),
+        binDir,
+        cwd: root,
+      });
+      expect(relativeHome.code, relativeHome.output).toBe(0);
+      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/t3"));
 
       await NodeFSP.rm(link);
       await NodeFSP.symlink(NodePath.join(home, "bin/t3"), link);
@@ -253,6 +278,8 @@ if [ -n "$RACE" ] && [ ! -e "$RACE.fired" ]; then
   : > "$RACE.fired"
   printf 'theirs\\n' > "$RACE.new" && mv -f "$RACE.new" "$RACE"
 fi
+# Fails only creating the new public link, never putting one back.
+if [ -n "$FAIL" ] && [ "$1" = -s ]; then for last; do :; done; [ "$last" != "$FAIL" ] || exit 1; fi
 exec ${realLn} "$@"
 `,
         { mode: 0o755 },
@@ -283,6 +310,15 @@ exec ${realLn} "$@"
       const current = await racing();
       expect(current.code, current.output).toBe(0);
       expect(await NodeFSP.readFile(link, "utf8")).toBe("theirs\n");
+
+      // When the new link cannot be made, the old command keeps working.
+      const oldLink = NodePath.join(home, "runtime/versions/1.0.0/t3");
+      await NodeFSP.rm(link);
+      await NodeFSP.symlink(oldLink, link);
+      const failing = await racing({ RACE: "", FAIL: `${binDir}/` });
+      expect(failing.code).not.toBe(0);
+      expect(await NodeFSP.readlink(link)).toBe(oldLink);
+      expect((await NodeFSP.readdir(binDir)).filter((name) => name.startsWith(".t3."))).toEqual([]);
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }

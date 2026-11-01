@@ -82,10 +82,12 @@ const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
           ),
         ]
       : yield* directLinkTargets(launcher);
-  // The command link sits beside versions; a link to it may dangle after a prune.
-  const commandLinks = [versionsDir, realVersionsDir].map((dir) =>
-    path.join(path.dirname(dir), "t3"),
-  );
+  // The command link sits beside versions, in the runtime folder itself; versions may be a link.
+  const runtimeDir = path.dirname(versionsDir);
+  const commandLinks = [
+    runtimeDir,
+    yield* fs.realPath(runtimeDir).pipe(Effect.orElseSucceed(() => runtimeDir)),
+  ].map((dir) => path.join(dir, "t3"));
   return targets.some(
     (target) =>
       target !== undefined &&

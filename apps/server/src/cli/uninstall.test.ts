@@ -64,6 +64,26 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       const borrowed = path.join(root, "bin/t3-borrowed");
       yield* fs.symlink(path.join(versionsDir, "2.0.0/t3"), borrowed);
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: borrowed, versionsDir }));
+      // A version folder link that leads nowhere is not missing; it may be another tool's.
+      yield* fs.symlink(path.join(root, "unmounted"), path.join(versionsDir, "2.1.0"));
+      const unmounted = path.join(root, "bin/t3-unmounted");
+      yield* fs.symlink(path.join(versionsDir, "2.1.0/t3"), unmounted);
+      assert.isUndefined(yield* findOwnedLauncher({ launchedAs: unmounted, versionsDir }));
+      // With versions itself a link, the command link is still the one in the runtime folder.
+      const store = path.join(root, "store");
+      yield* fs.makeDirectory(path.join(store, "versions/1.0.0"), { recursive: true });
+      yield* fs.writeFileString(path.join(store, "t3"), "");
+      const linkedHome = path.join(root, "linked-home");
+      yield* fs.makeDirectory(path.join(linkedHome, "runtime"), { recursive: true });
+      yield* fs.symlink(path.join(store, "versions"), path.join(linkedHome, "runtime/versions"));
+      const storeLauncher = path.join(root, "bin/t3-store");
+      yield* fs.symlink(path.join(store, "t3"), storeLauncher);
+      assert.isUndefined(
+        yield* findOwnedLauncher({
+          launchedAs: storeLauncher,
+          versionsDir: path.join(linkedHome, "runtime/versions"),
+        }),
+      );
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: theirs, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: copy, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: undefined, versionsDir }));

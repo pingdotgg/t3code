@@ -26,16 +26,27 @@ export const replaceOwnedLink = Effect.fn("ownedLink.replace")(function* <E, R>(
   yield* fs.writeFileString(aside, "", { flag: "wx" });
   const discard = fs.remove(aside);
   yield* fs.rename(input.link, aside).pipe(Effect.tapError(() => discard.pipe(Effect.ignore)));
+  // Exclusive, so it never overwrites anything written at `link` meanwhile.
+  const putBack = fs.readLink(aside).pipe(
+    Effect.option,
+    Effect.flatMap((text) =>
+      Option.isSome(text) ? fs.symlink(text.value, input.link) : fs.link(aside, input.link),
+    ),
+  );
   if (!(yield* input.owns(aside))) {
-    const text = yield* fs.readLink(aside).pipe(Effect.option);
-    yield* (
-      Option.isSome(text) ? fs.symlink(text.value, input.link) : fs.link(aside, input.link)
-    ).pipe(Effect.andThen(discard));
+    yield* putBack.pipe(Effect.andThen(discard));
     return false;
   }
-  // Something written after the move keeps the name; this home's old link goes either way.
-  yield* (input.target === undefined ? Effect.void : fs.symlink(input.target, input.link)).pipe(
-    Effect.ensuring(discard.pipe(Effect.ignore)),
-  );
+  if (input.target !== undefined) {
+    // On failure the old link goes back while the name is free, so the command keeps working.
+    yield* fs
+      .symlink(input.target, input.link)
+      .pipe(
+        Effect.tapError(() =>
+          putBack.pipe(Effect.ignore, Effect.andThen(discard.pipe(Effect.ignore))),
+        ),
+      );
+  }
+  yield* discard.pipe(Effect.ignore);
   return true;
 });
