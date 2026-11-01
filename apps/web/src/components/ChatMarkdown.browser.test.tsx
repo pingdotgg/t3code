@@ -385,6 +385,31 @@ describe("ChatMarkdown inline code selection", () => {
   });
 });
 
+describe("ChatMarkdown editor deep links", () => {
+  const hrefs = (container: HTMLElement) =>
+    [...container.querySelectorAll("a")].map((link) => link.getAttribute("href"));
+
+  it("keeps local editor file links", async () => {
+    setup();
+    await using screen = await renderText(
+      "[file.md line 3](cursor://file/Users/me/repo/file.md:3) and [same](vscode://file/Users/me/repo/file.md:3:7)",
+    );
+    expect(hrefs(screen.container)).toEqual([
+      "cursor://file/Users/me/repo/file.md:3",
+      "vscode://file/Users/me/repo/file.md:3:7",
+    ]);
+  });
+
+  it("still drops other editor links and unknown schemes", async () => {
+    setup();
+    await using screen = await renderText(
+      "[prompt](cursor://anysphere.cursor-deeplink/prompt?text=hi) [user](cursor://me@file/Users/me/file.md) [unknown](foo://file/Users/me/file.md)",
+    );
+    expect(screen.container.innerHTML).not.toContain("://");
+    expect(hrefs(screen.container).filter(Boolean)).toEqual([]);
+  });
+});
+
 describe("ChatMarkdown Windows file links", () => {
   const environmentId = EnvironmentId.make("env-windows");
   const renderWindows = (text: string, parseRawHtml: boolean) =>
