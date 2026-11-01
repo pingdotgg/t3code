@@ -993,6 +993,12 @@ it.effect.each([
     status: "succeeded",
   },
   {
+    mode: "default-unknown",
+    version: "1.14.19",
+    installation: { installedVersion: null },
+    status: "unchanged",
+  },
+  {
     mode: "unknown",
     version: "1.14.19",
     installation: { installedVersion: null },
@@ -1055,24 +1061,30 @@ it.effect.each([
 
       const result = yield* updater.updateProvider({
         provider: OPENCODE_DRIVER,
-        ...(mode === "default" ? {} : { targetVersion: "1.14.20" }),
+        ...(mode.startsWith("default") ? {} : { targetVersion: "1.14.20" }),
       });
 
       assert.deepStrictEqual(calls, [
-        `npm install -g opencode-ai@${mode === "default" ? "latest" : "1.14.20"}`,
+        `npm install -g opencode-ai@${mode.startsWith("default") ? "latest" : "1.14.20"}`,
       ]);
       const provider = result.providers[0];
       assert.ok(provider);
       assert.strictEqual(provider.updateState?.status, status);
+      if (mode === "default" || mode === "targeted") {
+        assert.strictEqual(
+          provider.updateState?.message,
+          "OpenCode CLI updated. Restart the configured local OpenCode server to use the new version.",
+        );
+      }
       assert.strictEqual(provider.version, version);
       assert.strictEqual("installedVersion" in provider, mode !== "legacy");
       assert.strictEqual(
         provider.versionAdvisory?.status,
-        mode === "unknown" ? "unknown" : "current",
+        mode.endsWith("unknown") ? "unknown" : "current",
       );
       assert.strictEqual(
         provider.versionAdvisory?.currentVersion,
-        mode === "unknown" ? null : "1.14.20",
+        mode.endsWith("unknown") ? null : "1.14.20",
       );
     }).pipe(
       Effect.provide(

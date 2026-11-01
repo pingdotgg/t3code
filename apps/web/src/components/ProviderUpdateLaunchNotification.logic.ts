@@ -78,11 +78,12 @@ function dedupeProvidersByDriver<T extends ServerProvider>(providers: ReadonlyAr
   return [...latestProviderByDriver.values()];
 }
 
-function getProviderUpdatedTitle(provider: Pick<ServerProvider, "driver" | "version">): string {
+function getProviderUpdatedTitle(
+  provider: Pick<ServerProvider, "driver" | "version" | "installedVersion">,
+): string {
   const providerName = PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver;
-  return provider.version
-    ? `${providerName} updated: ${formatVersion(provider.version)}`
-    : `${providerName} updated`;
+  const version = provider.installedVersion ?? provider.version;
+  return version ? `${providerName} updated: ${formatVersion(version)}` : `${providerName} updated`;
 }
 
 function getProviderUpdatedDescription(providerCount: number): string {
@@ -200,7 +201,8 @@ export interface ProviderUpdateRun {
 export function getProviderUpdateRunOutcome(
   run: ProviderUpdateRun,
 ):
-  | { readonly status: "interrupted" | "updated" }
+  | { readonly status: "interrupted" }
+  | { readonly status: "updated"; readonly message: string | null }
   | { readonly status: "failed"; readonly line: string } {
   if (isAtomCommandInterrupted(run.result)) return { status: "interrupted" };
   const label = `${run.machineLabel} · ${PROVIDER_DISPLAY_NAMES[run.driver] ?? run.driver}`;
@@ -215,7 +217,7 @@ export function getProviderUpdateRunOutcome(
     (provider) => provider.instanceId === run.instanceId,
   )?.updateState;
   return updateState?.status === "succeeded"
-    ? { status: "updated" }
+    ? { status: "updated", message: updateState.message }
     : {
         status: "failed",
         line: `${label}: ${updateState?.message ?? "Provider update did not finish."}`,
@@ -236,11 +238,18 @@ export function getProviderUpdateRunToastView(runs: ReadonlyArray<ProviderUpdate
   const failureLines = settled.flatMap((outcome) =>
     outcome.status === "failed" ? [outcome.line] : [],
   );
+  const successMessages = [
+    ...new Set(
+      settled.flatMap((outcome) =>
+        outcome.status === "updated" && outcome.message ? [outcome.message] : [],
+      ),
+    ),
+  ];
   if (failureLines.length === 0) {
     return {
       type: "success",
       title: settled.length === 1 ? "Provider updated" : `${settled.length} providers updated`,
-      description: getProviderUpdatedDescription(settled.length),
+      description: successMessages.join("\n") || getProviderUpdatedDescription(settled.length),
     };
   }
   return {
@@ -251,7 +260,7 @@ export function getProviderUpdateRunToastView(runs: ReadonlyArray<ProviderUpdate
         : settled.length === 1
           ? "Provider update failed"
           : "Provider updates failed",
-    description: failureLines.join("\n"),
+    description: [...failureLines, ...successMessages].join("\n"),
   };
 }
 
@@ -398,7 +407,14 @@ export function getProviderUpdateSidebarPillView(
         succeededProviders.length === 1
           ? getProviderUpdatedTitle(succeededProvider)
           : `${succeededProviders.length} providers updated`,
-      description: getProviderUpdatedDescription(succeededProviders.length),
+      description:
+        [
+          ...new Set(
+            succeededProviders.flatMap((provider) =>
+              provider.updateState?.message ? [provider.updateState.message] : [],
+            ),
+          ),
+        ].join("\n") || getProviderUpdatedDescription(succeededProviders.length),
       dismissAfterVisibleMs: PROVIDER_UPDATE_SUCCESS_VISIBLE_MS,
     });
   }

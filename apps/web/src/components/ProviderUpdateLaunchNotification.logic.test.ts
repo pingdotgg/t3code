@@ -318,6 +318,30 @@ describe("getProviderUpdateRunToastView", () => {
     result,
   });
 
+  it("preserves the local server restart instruction after a successful update", () => {
+    const message =
+      "OpenCode CLI updated. Restart the configured local OpenCode server to use the new version.";
+    const updated = {
+      ...provider({
+        driver: driver("opencode"),
+        version: "2.1.2",
+        advisoryStatus: "current",
+        updateState: updateState("succeeded", message),
+      }),
+      installedVersion: "2.2.5",
+    };
+    expect(
+      getProviderUpdateRunToastView([
+        run("Linux", "opencode", AsyncResult.success({ providers: [updated] })),
+      ]),
+    ).toMatchObject({ type: "success", description: message });
+    expect(
+      getProviderUpdateSidebarPillView([updated], {
+        visibleAfterIso: sessionStartedAt,
+      }),
+    ).toMatchObject({ title: "OpenCode updated: v2.2.5", description: message });
+  });
+
   it("lists every failed update and ignores interrupted ones", () => {
     const view = getProviderUpdateRunToastView([
       run(
@@ -351,7 +375,8 @@ describe("getProviderUpdateRunToastView", () => {
     expect(view).toEqual({
       type: "error",
       title: "2 of 3 provider updates failed",
-      description: "Mac Studio · Claude: npm exited with code 1.\nLaptop · Codex: WebSocket closed",
+      description:
+        "Mac Studio · Claude: npm exited with code 1.\nLaptop · Codex: WebSocket closed\nProvider updated.",
     });
   });
 });

@@ -27,9 +27,22 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderMaintenance from "@t3tools/provider-core/server/maintenanceResolver";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
+import { OpenCodeDriver, isLocalOpenCodeServerUrl, openCodeUpdateFor } from "./driver.ts";
 import { OPENCODE_2_RESPONSES, replayOpenCodeServer } from "./probeResponses.fixture.ts";
-import { OpenCodeDriver, openCodeUpdateFor } from "./driver.ts";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+
+it("only probes a locally configured OpenCode server's installed CLI", () => {
+  assert.isTrue(isLocalOpenCodeServerUrl("http://127.0.0.1:35768"));
+  assert.isTrue(isLocalOpenCodeServerUrl("http://127.0.0.2:4096"));
+  assert.isTrue(isLocalOpenCodeServerUrl("http://127.255.255.254:4096"));
+  assert.isFalse(isLocalOpenCodeServerUrl("http://127.example.com:4096"));
+  assert.isFalse(isLocalOpenCodeServerUrl("http://128.0.0.1:4096"));
+  assert.isTrue(isLocalOpenCodeServerUrl("http://localhost:4096"));
+  assert.isTrue(isLocalOpenCodeServerUrl("http://[::1]:4096"));
+  assert.isFalse(isLocalOpenCodeServerUrl("https://remote.example.com:4096"));
+  assert.isFalse(isLocalOpenCodeServerUrl(""));
+  assert.isFalse(isLocalOpenCodeServerUrl("file:///tmp/opencode"));
+});
 
 const serverStarts: Array<string> = [];
 const reachedServer = (operation: string) =>
@@ -61,12 +74,12 @@ const layer = Layer.mergeAll(
   Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, openCode2Runtime),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
-const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient) =>
+const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient, enabled = true) =>
   OpenCodeDriver.create({
     instanceId: ProviderInstanceId.make("opencode-test"),
     displayName: undefined,
     environment: [],
-    enabled: true,
+    enabled,
     config: { ...OpenCodeDriver.defaultConfig(), ...config },
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
 
@@ -85,6 +98,52 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         }),
       );
       assert.deepStrictEqual(serverStarts, ["start"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["2.1.2", null])(
+    "reports the installed CLI version independently of the loopback server (%s)",
+    (installedVersion) =>
+      Effect.gen(function* () {
+        const runtime = {
+          ...openCode2Runtime,
+          runOpenCodeCommand: () =>
+            Effect.succeed({
+              stdout:
+                installedVersion === null ? "unrecognized" : `opencode v${installedVersion}\n`,
+              stderr: "",
+              code: 0,
+            }),
+        } as OpenCodeRuntime.OpenCodeRuntime["Service"];
+        const instance = yield* create(
+          { serverUrl: "http://127.0.0.1:4096" },
+          replayOpenCodeServer(OPENCODE_2_RESPONSES, ""),
+        ).pipe(Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime));
+
+        const snapshot = yield* instance.snapshot.refresh;
+        assert.strictEqual(snapshot.version, "2.0.18");
+        assert.strictEqual(snapshot.installedVersion, installedVersion);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("skips the installed CLI probe when a localhost provider is disabled", () =>
+    Effect.gen(function* () {
+      const probed: string[] = [];
+      const runtime = {
+        ...openCode2Runtime,
+        runOpenCodeCommand: () =>
+          Effect.sync(() => {
+            probed.push("--version");
+            return { stdout: "opencode v2.1.2\n", stderr: "", code: 0 };
+          }),
+      } as OpenCodeRuntime.OpenCodeRuntime["Service"];
+      const instance = yield* create({ serverUrl: "http://127.0.0.1:4096" }, noHttp, false).pipe(
+        Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime),
+      );
+
+      const snapshot = yield* instance.snapshot.refresh;
+      assert.isFalse(snapshot.enabled);
+      assert.deepStrictEqual(probed, []);
     }).pipe(Effect.scoped),
   );
 

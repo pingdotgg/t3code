@@ -34,6 +34,12 @@ settings. T3 Code uses only that configured password for an external server; it
 does not forward a local `OPENCODE_SERVER_PASSWORD`. If connection or version checks
 fail, check the URL, credentials, and OpenCode version, then refresh provider status.
 
+When **Server URL** points to a locally running server (such as `127.0.0.1`),
+the update button upgrades its installed CLI without terminating the running server.
+The server can still report the previous version until you restart it. T3 Code
+shows that restart requirement instead of treating the CLI update as a failure.
+Restart the server when active sessions can safely be interrupted.
+
 After a lost connection, send another prompt to reconnect to the same OpenCode
 session.
 
