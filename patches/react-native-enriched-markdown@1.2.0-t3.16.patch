@@ -1,0 +1,1764 @@
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt
+index 3a2c517..b7a6347 100644
+--- a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt
+@@ -49,6 +49,7 @@ import com.swmansion.enriched.markdown.utils.text.view.ImagePressHost
+ import com.swmansion.enriched.markdown.utils.text.view.SelectionMenuConfig
+ import com.swmansion.enriched.markdown.utils.text.view.applySelectionColors
+ import com.swmansion.enriched.markdown.utils.text.view.emitImagePressEvent
++import com.swmansion.enriched.markdown.utils.text.wordMajorityAST
+ import java.util.EnumSet
+ import java.util.concurrent.ExecutorService
+ import java.util.concurrent.Executors
+@@ -72,6 +73,17 @@ class EnrichedMarkdown(
+   private val mathContainerClass: Class<*>? by lazy { SegmentViewCreators.mathContainerClass() }
+   private val videoContainerClass: Class<*>? by lazy { SegmentViewCreators.videoContainerClass() }
+ 
++  private var writingDirectionMode = "first-strong"
++
++  fun setWritingDirection(value: String?) {
++    val next = value ?: "first-strong"
++    if (writingDirectionMode == next) return
++    writingDirectionMode = next
++    dirtyFlags += DirtyFlag.RECREATE_SEGMENTS
++    dirtyFlags += DirtyFlag.FORCE_HEIGHT
++    renderPending = true
++  }
++
+   private var currentRenderId = 0L
+   private val dirtyFlags = EnumSet.noneOf(DirtyFlag::class.java)
+   var streamingAnimation: Boolean = false
+@@ -531,6 +543,7 @@ class EnrichedMarkdown(
+     val codeLinkRegex: LinkRegexConfig?,
+     val slotIds: Set<String>,
+     val annotateImages: Boolean,
++    val directionMode: String,
+   )
+ 
+   private fun renderJob(): RenderJob? {
+@@ -547,6 +560,7 @@ class EnrichedMarkdown(
+       inlineCodeLinkRegex,
+       activeBlockSlotIds,
+       imageSourceOverrides.isNotEmpty(),
++      writingDirectionMode,
+     )
+   }
+ 
+@@ -573,7 +587,7 @@ class EnrichedMarkdown(
+         job.annotateImages,
+       ) ?: return emptyList<RenderedSegment>() to false
+ 
+-    val segments = splitASTIntoSegments(ast)
++    val segments = splitASTIntoSegments(wordMajorityAST(ast, job.style, job.directionMode))
+     val renderedSegments =
+       MarkdownSegmentRenderer.render(
+         segments,
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownManager.kt b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownManager.kt
+index c95c971..6a17441 100644
+--- a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownManager.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownManager.kt
+@@ -304,7 +304,7 @@ class EnrichedMarkdownManager :
+     view: EnrichedMarkdown?,
+     value: String?,
+   ) {
+-    // No-op on Android — first-strong per-paragraph resolution is the platform default
++    view?.setWritingDirection(value)
+   }
+ 
+   @ReactProp(name = "streamingAnimation", defaultBoolean = false)
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownText.kt b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownText.kt
+index 3e00d90..9469e7b 100644
+--- a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownText.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownText.kt
+@@ -48,6 +48,7 @@ import com.swmansion.enriched.markdown.utils.text.view.emitImagePressEvent
+ import com.swmansion.enriched.markdown.utils.text.view.emitLinkLongPressEvent
+ import com.swmansion.enriched.markdown.utils.text.view.emitLinkPressEvent
+ import com.swmansion.enriched.markdown.utils.text.view.setupAsMarkdownTextView
++import com.swmansion.enriched.markdown.utils.text.wordMajorityAST
+ import java.util.concurrent.Executors
+ import kotlin.math.ceil
+ import kotlin.math.roundToInt
+@@ -85,6 +86,15 @@ class EnrichedMarkdownText
+ 
+     private val mainHandler = Handler(Looper.getMainLooper())
+     private val executor = Executors.newSingleThreadExecutor()
++    private var writingDirectionMode = "first-strong"
++
++    fun setWritingDirection(value: String?) {
++      val next = value ?: "first-strong"
++      if (writingDirectionMode == next) return
++      writingDirectionMode = next
++      scheduleRenderIfNeeded()
++    }
++
+     private var currentRenderId = 0L
+ 
+     val layoutManager = EnrichedMarkdownTextLayoutManager(this)
+@@ -312,6 +322,7 @@ class EnrichedMarkdownText
+ 
+       val textLinkRegex = linkRegex
+       val codeLinkRegex = inlineCodeLinkRegex
++      val directionMode = writingDirectionMode
+       val renderId = ++currentRenderId
+ 
+       executor.execute {
+@@ -323,7 +334,7 @@ class EnrichedMarkdownText
+             }
+ 
+           renderer.configure(style, context, latexErrorReporter)
+-          val styledText = renderer.renderDocument(ast, onLinkPressCallback, onLinkLongPressCallback)
++          val styledText = renderer.renderDocument(wordMajorityAST(ast, style, directionMode), onLinkPressCallback, onLinkLongPressCallback)
+ 
+           mainHandler.post {
+             if (renderId == currentRenderId) {
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownTextManager.kt b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownTextManager.kt
+index 56e721e..aebc2bc 100644
+--- a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownTextManager.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownTextManager.kt
+@@ -262,7 +262,7 @@ class EnrichedMarkdownTextManager :
+     view: EnrichedMarkdownText?,
+     value: String?,
+   ) {
+-    // No-op on Android — first-strong per-paragraph resolution is the platform default
++    view?.setWritingDirection(value)
+   }
+ 
+   @ReactProp(name = "streamingAnimation", defaultBoolean = false)
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt b/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
+index 31ef1eb..d07bceb 100644
+--- a/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
+@@ -50,6 +50,7 @@ import com.swmansion.enriched.markdown.utils.common.parseLinkPillContent
+ import com.swmansion.enriched.markdown.utils.common.parseLinkRecognition
+ import com.swmansion.enriched.markdown.utils.text.extensions.replaceMathSpansWithPlaceholders
+ import com.swmansion.enriched.markdown.utils.text.span.prepareWidthAwareSpans
++import com.swmansion.enriched.markdown.utils.text.wordMajorityAST
+ import java.util.concurrent.ConcurrentHashMap
+ import kotlin.math.ceil
+ 
+@@ -363,6 +364,7 @@ object MeasurementStore {
+     result = 31 * result + imageRequestHeaders.hashCode()
+     result = 31 * result + imageSources.hashCode()
+     result = 31 * result + linkPillContent.hashCode()
++    result = 31 * result + props.getStringOrDefault("writingDirection", "first-strong").hashCode()
+     result = 31 * result + props.getIntOrDefault("numberOfLines", 0)
+     result = 31 * result + props.getStringOrDefault("ellipsizeMode", EllipsizeUtils.DEFAULT_MODE).hashCode()
+     return result
+@@ -439,6 +441,7 @@ object MeasurementStore {
+         parseLinkPillContent(props.getArrayOrNull("linkPillContent")),
+         linkRecognition.text,
+         linkRecognition.inlineCode,
++        props.getStringOrDefault("writingDirection", "first-strong"),
+       )
+     spannable?.replaceMathSpansWithPlaceholders(context)
+     val textToMeasure = spannable ?: markdown
+@@ -576,7 +579,7 @@ object MeasurementStore {
+       style.imageRequestHeaders = parseImageRequestHeaders(props.getArrayOrNull("imageRequestHeaders"))
+       style.imageSourceOverrides = imageSources
+       style.linkPillContent = parseLinkPillContent(props.getArrayOrNull("linkPillContent"))
+-      val segments = splitASTIntoSegments(ast)
++      val segments = splitASTIntoSegments(wordMajorityAST(ast, style, props.getStringOrDefault("writingDirection", "first-strong")))
+       val renderedSegments = MarkdownSegmentRenderer.render(segments, style, context, null, null)
+ 
+       val mathHeightByIndex = HashMap<Int, Float>()
+@@ -672,6 +675,7 @@ object MeasurementStore {
+     linkPillContent: Map<String, LinkPillContent> = emptyMap(),
+     linkRegex: LinkRegexConfig? = null,
+     inlineCodeLinkRegex: LinkRegexConfig? = null,
++    writingDirection: String = "first-strong",
+   ): Spannable? {
+     if (styleMap == null) return null
+ 
+@@ -681,7 +685,7 @@ object MeasurementStore {
+       style.imageRequestHeaders = imageRequestHeaders
+       style.linkPillContent = linkPillContent
+       measureRenderer.configure(style, context)
+-      measureRenderer.renderDocument(ast, null)
++      measureRenderer.renderDocument(wordMajorityAST(ast, style, writingDirection), null)
+     } catch (e: Exception) {
+       Log.w(TAG, "Failed to render markdown for measurement, falling back to raw text", e)
+       null
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/renderer/CodeRenderer.kt b/android/src/main/java/com/swmansion/enriched/markdown/renderer/CodeRenderer.kt
+index 0008d9b..dce90da 100644
+--- a/android/src/main/java/com/swmansion/enriched/markdown/renderer/CodeRenderer.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/renderer/CodeRenderer.kt
+@@ -4,6 +4,8 @@ import android.text.SpannableStringBuilder
+ import com.swmansion.enriched.markdown.parser.MarkdownASTNode
+ import com.swmansion.enriched.markdown.spans.CodeBackgroundSpan
+ import com.swmansion.enriched.markdown.spans.CodeSpan
++import com.swmansion.enriched.markdown.spans.DirectionControlSpan
++import com.swmansion.enriched.markdown.utils.text.PROSE_DIRECTION
+ import com.swmansion.enriched.markdown.utils.text.span.SPAN_FLAGS_EXCLUSIVE_EXCLUSIVE
+ 
+ class CodeRenderer(
+@@ -18,6 +20,12 @@ class CodeRenderer(
+   ) {
+     if (node.children.isEmpty() || node.children.all { it.content.isEmpty() }) return
+ 
++    val isolate = node.attributes[PROSE_DIRECTION] != null
++    if (isolate) {
++      val index = builder.length
++      builder.append('\u2066')
++      builder.setSpan(DirectionControlSpan(), index, index + 1, SPAN_FLAGS_EXCLUSIVE_EXCLUSIVE)
++    }
+     factory.renderWithSpan(builder, { node.children.forEach { builder.append(it.content) } }) { start, end, blockStyle ->
+       builder.setSpan(
+         CodeSpan(factory.styleCache, blockStyle),
+@@ -32,5 +40,10 @@ class CodeRenderer(
+         SPAN_FLAGS_EXCLUSIVE_EXCLUSIVE,
+       )
+     }
++    if (isolate) {
++      val index = builder.length
++      builder.append('\u2069')
++      builder.setSpan(DirectionControlSpan(), index, index + 1, SPAN_FLAGS_EXCLUSIVE_EXCLUSIVE)
++    }
+   }
+ }
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/renderer/NodeRenderer.kt b/android/src/main/java/com/swmansion/enriched/markdown/renderer/NodeRenderer.kt
+index 7381fa2..cf03921 100644
+--- a/android/src/main/java/com/swmansion/enriched/markdown/renderer/NodeRenderer.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/renderer/NodeRenderer.kt
+@@ -4,11 +4,14 @@ import android.content.Context
+ import android.text.SpannableStringBuilder
+ import android.text.Spanned
+ import android.text.style.MetricAffectingSpan
++import android.text.style.ParagraphStyle
+ import com.swmansion.enriched.markdown.math.LatexErrorReporter
+ import com.swmansion.enriched.markdown.parser.MarkdownASTNode
++import com.swmansion.enriched.markdown.spans.DirectionControlSpan
+ import com.swmansion.enriched.markdown.spans.ImageSpan
+ import com.swmansion.enriched.markdown.styles.StyleConfig
+ import com.swmansion.enriched.markdown.utils.common.FeatureFlags
++import com.swmansion.enriched.markdown.utils.text.PROSE_DIRECTION
+ import com.swmansion.enriched.markdown.utils.text.span.SPAN_FLAGS_EXCLUSIVE_EXCLUSIVE
+ 
+ interface NodeRenderer {
+@@ -196,7 +199,27 @@ class RendererFactory(
+     onLinkLongPress: ((String) -> Unit)?,
+   ) {
+     nodes.forEach { node ->
++      val start = builder.length
+       getRenderer(node).render(node, builder, onLinkPress, onLinkLongPress, this)
++      val direction = node.attributes[PROSE_DIRECTION]
++      if (direction != null && node.type in listOf(MarkdownASTNode.NodeType.Paragraph, MarkdownASTNode.NodeType.Heading, MarkdownASTNode.NodeType.CodeBlock)) {
++        val marker = if (node.type != MarkdownASTNode.NodeType.CodeBlock && direction == "rtl") '\u200F' else '\u200E'
++        // Android's first-strong bidi pass consumes chars, not paragraph spans.
++        for (index in (builder.length - 1) downTo start) {
++          if (index == start || builder[index - 1] == '\n') {
++            val lineEnd = builder.indexOf('\n', index).let { if (it < 0) builder.length else it }
++            if (builder.subSequence(index, lineEnd).isBlank()) continue
++            // Keep paragraph spans on the first character, including code padding and list indent.
++            val startingSpans =
++              builder.getSpans(index, index, ParagraphStyle::class.java)
++                .filter { builder.getSpanStart(it) == index }
++            builder.insert(index, marker.toString())
++            startingSpans.forEach { builder.setSpan(it, index, builder.getSpanEnd(it), builder.getSpanFlags(it)) }
++            shiftDeferredSpans(index, 1)
++            builder.setSpan(DirectionControlSpan(), index, index + 1, SPAN_FLAGS_EXCLUSIVE_EXCLUSIVE)
++          }
++        }
++      }
+     }
+   }
+ 
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/segments/BlockquoteContainerView.kt b/android/src/main/java/com/swmansion/enriched/markdown/segments/BlockquoteContainerView.kt
+index 4b0e852..ccd300f 100644
+--- a/android/src/main/java/com/swmansion/enriched/markdown/segments/BlockquoteContainerView.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/segments/BlockquoteContainerView.kt
+@@ -58,6 +58,7 @@ class BlockquoteContainerView(
+ 
+   // Set from the applied node: null for a plain quote, the admonition type
+   // ("note"/"tip"/…) otherwise. Drives the header + per-type theming.
++  private var proseRTL: Boolean = false
+   private var admonitionType: String? = null
+ 
+   // Cached markdown source for the "Copy as Markdown" action.
+@@ -117,6 +118,7 @@ class BlockquoteContainerView(
+   }
+ 
+   fun applyBlockquoteNode(node: MarkdownASTNode) {
++    proseRTL = node.attributes["_enrmProseDirection"] == "rtl"
+     admonitionType =
+       if (node.type == MarkdownASTNode.NodeType.Admonition) {
+         node.getAttribute("admonitionType")?.takeIf { it.isNotEmpty() } ?: "note"
+@@ -124,7 +126,7 @@ class BlockquoteContainerView(
+         null
+       }
+     // Reserve the header band above the body by enlarging the top padding.
+-    setPadding(leftInset, verticalInset + reservedHeaderHeight(), rightInset, verticalInset)
++    setPadding(if (proseRTL) rightInset else leftInset, verticalInset + reservedHeaderHeight(), if (proseRTL) leftInset else rightInset, verticalInset)
+ 
+     cachedMarkdown = MarkdownASTSerializer.serializeBlockquote(node)
+     cachedPlainText = MarkdownASTSerializer.plainText(node)
+@@ -224,10 +226,10 @@ class BlockquoteContainerView(
+     if (hasRadius) {
+       canvas.withSave {
+         clipPath(path)
+-        drawRect(0f, 0f, borderWidthPx, height.toFloat(), borderPaint)
++        drawRect(if (proseRTL) width - borderWidthPx else 0f, 0f, if (proseRTL) width.toFloat() else borderWidthPx, height.toFloat(), borderPaint)
+       }
+     } else {
+-      canvas.drawRect(0f, 0f, borderWidthPx, height.toFloat(), borderPaint)
++      canvas.drawRect(if (proseRTL) width - borderWidthPx else 0f, 0f, if (proseRTL) width.toFloat() else borderWidthPx, height.toFloat(), borderPaint)
+     }
+ 
+     if (type != null) {
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt b/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt
+index 9a98add..20c31ac 100644
+--- a/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt
+@@ -53,6 +53,7 @@ class TableContainerView(
+   override val segmentMarginBottom: Int get() = tableStyle.marginBottom.toInt()
+   private val density = resources.displayMetrics.density
+   private val isRtl = resources.isLayoutRTL()
++  private var wordMajority = false
+ 
+   var allowFontScaling = true
+   var maxFontSizeMultiplier = 0f
+@@ -121,6 +122,7 @@ class TableContainerView(
+   }
+ 
+   fun applyTableNode(tableNode: MarkdownASTNode) {
++    wordMajority = tableNode.attributes["_enrmProseDirection"] != null
+     rows =
+       tableNode.children.flatMap { section ->
+         val isSectionHead = section.type == NodeType.TableHead
+@@ -156,7 +158,10 @@ class TableContainerView(
+     isHeader: Boolean,
+     alignment: Layout.Alignment,
+   ): Spannable {
+-    val paragraph = MarkdownASTNode(NodeType.Paragraph, children = node.children)
++    val cellAlignment =
++      if (wordMajority) textAlignmentFromString(node.getAttribute("align"), node.attributes["_enrmProseDirection"] == "rtl")
++      else alignment
++    val paragraph = MarkdownASTNode(NodeType.Paragraph, attributes = node.attributes, children = node.children)
+     val cellParagraphStyle = styleConfig.tableCellParagraphStyle(tableStyle, isHeader)
+     return styleConfig
+       .withParagraphOverride(cellParagraphStyle) {
+@@ -164,18 +169,18 @@ class TableContainerView(
+       }.apply {
+         if (isNotEmpty()) {
+           if (isHeader) setSpan(HeaderTypefaceSpan(styleConfig.tableHeaderTypeface ?: Typeface.DEFAULT_BOLD), 0, length, 33)
+-          if (alignment != Layout.Alignment.ALIGN_NORMAL) setSpan(AlignmentSpan.Standard(alignment), 0, length, 33)
++          if (wordMajority || cellAlignment != Layout.Alignment.ALIGN_NORMAL) setSpan(AlignmentSpan.Standard(cellAlignment), 0, length, 33)
+         }
+       }
+   }
+ 
+   private fun extractPlainText(node: MarkdownASTNode): String = node.content + node.children.joinToString("") { extractPlainText(it) }
+ 
+-  private fun textAlignmentFromString(align: String?): Layout.Alignment =
++  private fun textAlignmentFromString(align: String?, rtl: Boolean = isRtl): Layout.Alignment =
+     when (align) {
+       "center" -> Layout.Alignment.ALIGN_CENTER
+-      "right" -> if (isRtl) Layout.Alignment.ALIGN_NORMAL else Layout.Alignment.ALIGN_OPPOSITE
+-      "left" -> if (isRtl) Layout.Alignment.ALIGN_OPPOSITE else Layout.Alignment.ALIGN_NORMAL
++      "right" -> if (rtl) Layout.Alignment.ALIGN_NORMAL else Layout.Alignment.ALIGN_OPPOSITE
++      "left" -> if (rtl) Layout.Alignment.ALIGN_OPPOSITE else Layout.Alignment.ALIGN_NORMAL
+       else -> Layout.Alignment.ALIGN_NORMAL
+     }
+ 
+@@ -279,6 +284,7 @@ class TableContainerView(
+   ) {
+     val cellTextView =
+       CellTextView(context).apply {
++        if (wordMajority) textDirection = View.TEXT_DIRECTION_FIRST_STRONG_LTR
+         text = data.attributedText
+         textSize = tableStyle.fontSize / resources.displayMetrics.scaledDensity
+         typeface = if (data.isHeader) styleConfig.tableHeaderTypeface else styleConfig.tableTypeface
+@@ -515,7 +521,7 @@ class TableContainerView(
+           section.children.filter { it.type == NodeType.TableRow }.map { row ->
+             row.children.map { cell ->
+               val isHeader = section.type == NodeType.TableHead || cell.type == NodeType.TableHeaderCell
+-              val paragraph = MarkdownASTNode(NodeType.Paragraph, children = cell.children)
++              val paragraph = MarkdownASTNode(NodeType.Paragraph, attributes = cell.attributes, children = cell.children)
+               val cellParagraphStyle = config.tableCellParagraphStyle(tableStyle, isHeader)
+               val styledText =
+                 config.withParagraphOverride(cellParagraphStyle) {
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/spans/DirectionControlSpan.kt b/android/src/main/java/com/swmansion/enriched/markdown/spans/DirectionControlSpan.kt
+new file mode 100644
+index 0000000..f29bab9
+--- /dev/null
++++ b/android/src/main/java/com/swmansion/enriched/markdown/spans/DirectionControlSpan.kt
+@@ -0,0 +1,4 @@
++package com.swmansion.enriched.markdown.spans
++
++/** Invisible layout controls omitted when copying the rendered selection. */
++class DirectionControlSpan
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/WordMajority.kt b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/WordMajority.kt
+new file mode 100644
+index 0000000..ec192ce
+--- /dev/null
++++ b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/WordMajority.kt
+@@ -0,0 +1,81 @@
++package com.swmansion.enriched.markdown.utils.text
++
++import com.swmansion.enriched.markdown.parser.MarkdownASTNode
++import com.swmansion.enriched.markdown.parser.MarkdownASTNode.NodeType
++import com.swmansion.enriched.markdown.parser.isTopLevelBlock
++
++internal const val PROSE_DIRECTION = "_enrmProseDirection"
++
++private fun wordSpace(c: Int): Boolean =
++  c in 9..13 || c == 32 || c == 0xA0 || c == 0x1680 || c in 0x2000..0x200A ||
++    c == 0x2028 || c == 0x2029 || c == 0x202F || c == 0x205F || c == 0x3000 || c == 0xFEFF
++
++internal fun wordMajorityDirection(text: String): String? {
++  var rtl = 0
++  var ltr = 0
++  var first: String? = null
++  var counted = false
++  var offset = 0
++  while (offset < text.length) {
++    val c = text.codePointAt(offset)
++    offset += Character.charCount(c)
++    if (wordSpace(c)) {
++      counted = false
++    } else if (!counted && Character.isLetter(c)) {
++      val isRtl = c in 0x0590..0x08FF || c in 0xFB1D..0xFDFF || c in 0xFE70..0xFEFF ||
++        c in 0x10800..0x10FFF || c in 0x1E800..0x1EFFF
++      val direction = if (isRtl) "rtl" else "ltr"
++      if (first == null) first = direction
++      if (isRtl) rtl++ else ltr++
++      counted = true
++    }
++  }
++  return if (rtl == ltr) first else if (rtl > ltr) "rtl" else "ltr"
++}
++
++private fun chipHasBlocker(node: MarkdownASTNode): Boolean =
++  node.type in listOf(NodeType.Image, NodeType.LatexMathInline, NodeType.Spoiler, NodeType.LineBreak) ||
++    node.content.any { it == '\n' || it == '\r' || it == '\u2028' || it == '\u2029' } ||
++    node.children.any(::chipHasBlocker)
++
++private fun collectProse(node: MarkdownASTNode, text: StringBuilder, isChip: (String) -> Boolean) {
++  when (node.type) {
++    NodeType.Code, NodeType.CodeBlock, NodeType.Table, NodeType.Image, NodeType.Video,
++    NodeType.LatexMathInline, NodeType.LatexMathDisplay -> {
++      text.append(' ')
++      return
++    }
++    NodeType.Link -> if (isChip(node.attributes["url"] ?: "") && !chipHasBlocker(node)) {
++      text.append(' ')
++      return
++    }
++    else -> Unit
++  }
++  val block = node.type.isTopLevelBlock() || node.type == NodeType.ListItem ||
++    node.type == NodeType.LineBreak || node.type == NodeType.SoftBreak
++  if (block) text.append(' ')
++  if (node.type == NodeType.Text) text.append(node.content)
++  node.children.forEach { collectProse(it, text, isChip) }
++  if (block) text.append(' ')
++}
++
++internal fun withWordMajority(
++  node: MarkdownASTNode,
++  isChip: (String) -> Boolean,
++  inherited: String? = null,
++): MarkdownASTNode {
++  if (node.type in listOf(NodeType.Document, NodeType.Table, NodeType.TableHead, NodeType.TableBody, NodeType.TableRow)) {
++    return node.copy(
++      attributes = if (node.type == NodeType.Table) node.attributes + (PROSE_DIRECTION to "ltr") else node.attributes,
++      children = node.children.map { withWordMajority(it, isChip) },
++    )
++  }
++  val direction = inherited ?: wordMajorityDirection(buildString { collectProse(node, this, isChip) }) ?: "ltr"
++  val needsDirection = node.type.isTopLevelBlock() || node.type == NodeType.ListItem ||
++    node.type == NodeType.Code || node.type == NodeType.TableCell || node.type == NodeType.TableHeaderCell
++  if (!needsDirection && node.children.isEmpty()) return node
++  return node.copy(
++    attributes = if (needsDirection) node.attributes + (PROSE_DIRECTION to direction) else node.attributes,
++    children = node.children.map { withWordMajority(it, isChip, direction) },
++  )
++}
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/WordMajorityStyle.kt b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/WordMajorityStyle.kt
+new file mode 100644
+index 0000000..51b0563
+--- /dev/null
++++ b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/WordMajorityStyle.kt
+@@ -0,0 +1,12 @@
++package com.swmansion.enriched.markdown.utils.text
++
++import com.swmansion.enriched.markdown.parser.MarkdownASTNode
++import com.swmansion.enriched.markdown.styles.StyleConfig
++
++internal fun wordMajorityAST(node: MarkdownASTNode, style: StyleConfig, mode: String): MarkdownASTNode {
++  if (mode != "word-majority") return node
++  val variants = style.linkVariants.mapNotNull { entry ->
++    runCatching { Regex(entry.pattern) to entry }.getOrNull()
++  }
++  return withWordMajority(node, { url -> variants.firstOrNull { it.first.containsMatchIn(url) }?.second?.pill != null })
++}
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/conversion/HTMLGenerator.kt b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/conversion/HTMLGenerator.kt
+index b55937f..157f048 100644
+--- a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/conversion/HTMLGenerator.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/conversion/HTMLGenerator.kt
+@@ -9,6 +9,7 @@ import com.swmansion.enriched.markdown.spans.BaseListSpan
+ import com.swmansion.enriched.markdown.spans.BlockquoteSpan
+ import com.swmansion.enriched.markdown.spans.CodeBlockSpan
+ import com.swmansion.enriched.markdown.spans.CodeSpan
++import com.swmansion.enriched.markdown.spans.DirectionControlSpan
+ import com.swmansion.enriched.markdown.spans.EmphasisSpan
+ import com.swmansion.enriched.markdown.spans.HeadingSpan
+ import com.swmansion.enriched.markdown.spans.HighlightSpan
+@@ -753,6 +754,11 @@ object HTMLGenerator {
+     styles: CachedStyles,
+     isCodeBlock: Boolean,
+   ) {
++    if (text.getSpans(start, end, DirectionControlSpan::class.java).any {
++        text.getSpanStart(it) <= start && text.getSpanEnd(it) >= end
++      }
++    ) return
++
+     val strongSpans = text.getSpans(start, end, StrongSpan::class.java)
+     val styleSpans = text.getSpans(start, end, StyleSpan::class.java)
+     val emphasisSpans = text.getSpans(start, end, EmphasisSpan::class.java)
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/conversion/MarkdownExtractor.kt b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/conversion/MarkdownExtractor.kt
+index ec5a034..3cee0bf 100644
+--- a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/conversion/MarkdownExtractor.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/conversion/MarkdownExtractor.kt
+@@ -1,6 +1,7 @@
+ package com.swmansion.enriched.markdown.utils.text.conversion
+ 
+ import android.text.Spannable
++import android.text.SpannableStringBuilder
+ import android.text.style.UnderlineSpan
+ import android.widget.TextView
+ import com.swmansion.enriched.markdown.EnrichedMarkdownText
+@@ -9,6 +10,7 @@ import com.swmansion.enriched.markdown.spans.BaselineShiftSpan
+ import com.swmansion.enriched.markdown.spans.BlockquoteSpan
+ import com.swmansion.enriched.markdown.spans.CodeBlockSpan
+ import com.swmansion.enriched.markdown.spans.CodeSpan
++import com.swmansion.enriched.markdown.spans.DirectionControlSpan
+ import com.swmansion.enriched.markdown.spans.EmphasisSpan
+ import com.swmansion.enriched.markdown.spans.HeadingSpan
+ import com.swmansion.enriched.markdown.spans.HighlightSpan
+@@ -49,6 +51,23 @@ object MarkdownExtractor {
+     start: Int,
+     end: Int,
+   ): String {
++    // Remove layout controls before their span boundaries can split a code fence.
++    if (spannable.getSpans(start, end, DirectionControlSpan::class.java).any {
++        spannable.getSpanStart(it) < end && spannable.getSpanEnd(it) > start
++      }
++    ) {
++      val clean = SpannableStringBuilder(spannable, start, end)
++      clean.getSpans(0, clean.length, DirectionControlSpan::class.java)
++        .sortedByDescending { clean.getSpanStart(it) }
++        .forEach { control ->
++          val controlStart = clean.getSpanStart(control)
++          val controlEnd = clean.getSpanEnd(control)
++          clean.removeSpan(control)
++          clean.delete(controlStart, controlEnd)
++        }
++      return extractFromSpannable(clean, 0, clean.length)
++    }
++
+     val result = StringBuilder()
+     val state = ExtractionState()
+     val headingAccumulator = HeadingAccumulator()
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/DirectionControlText.kt b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/DirectionControlText.kt
+new file mode 100644
+index 0000000..4c76f23
+--- /dev/null
++++ b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/DirectionControlText.kt
+@@ -0,0 +1,15 @@
++package com.swmansion.enriched.markdown.utils.text.view
++
++import android.text.Spanned
++import com.swmansion.enriched.markdown.spans.DirectionControlSpan
++
++internal fun textWithoutDirectionControls(text: CharSequence): String {
++  if (text !is Spanned) return text.toString()
++  val ranges = text.getSpans(0, text.length, DirectionControlSpan::class.java)
++    .map { text.getSpanStart(it).coerceAtLeast(0) to text.getSpanEnd(it).coerceAtMost(text.length) }
++    .filter { it.second > it.first }
++    .sortedByDescending { it.first }
++  return StringBuilder(text.toString()).apply {
++    ranges.forEach { (start, end) -> delete(start, end) }
++  }.toString()
++}
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionActionMode.kt b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionActionMode.kt
+index 746bd66..6f75a8a 100644
+--- a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionActionMode.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionActionMode.kt
+@@ -152,7 +152,7 @@ fun createSelectionActionModeCallback(
+       if (customIndex in customItems.indices) {
+         val start = textView.selectionStart
+         val end = textView.selectionEnd
+-        val selectedText = if (start >= 0 && end > start) textView.text.substring(start, end) else ""
++        val selectedText = if (start >= 0 && end > start) textWithoutDirectionControls(textView.text.subSequence(start, end)) else ""
+         onCustomItemPress(customItems[customIndex], selectedText, start, end)
+         mode?.finish()
+         return true
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionClipboard.kt b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionClipboard.kt
+index 386aeea..908eb1e 100644
+--- a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionClipboard.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionClipboard.kt
+@@ -1,6 +1,7 @@
+ package com.swmansion.enriched.markdown.utils.text.view
+ 
+ import android.text.Spanned
++import com.swmansion.enriched.markdown.spans.DirectionControlSpan
+ import com.swmansion.enriched.markdown.spans.LinkSpan
+ import org.json.JSONObject
+ 
+@@ -32,7 +33,7 @@ internal fun canonicalClipboardText(
+   text: Spanned,
+   config: SelectionClipboardConfig,
+ ): String? {
+-  val replacements =
++  val links =
+     text
+       .getSpans(0, text.length, LinkSpan::class.java)
+       .mapNotNull { link ->
+@@ -40,7 +41,12 @@ internal fun canonicalClipboardText(
+           Triple(text.getSpanStart(link).coerceAtLeast(0), text.getSpanEnd(link).coerceAtMost(text.length), replacement)
+         }
+       }.filter { it.second > it.first }
+-      .sortedByDescending { it.first }
++
++  val controls = text.getSpans(0, text.length, DirectionControlSpan::class.java)
++    .map { Triple(text.getSpanStart(it), text.getSpanEnd(it), "") }
++    .filter { it.second > it.first }
++    .filter { control -> links.none { control.first < it.second && it.first < control.second } }
++  val replacements = (links + controls).sortedByDescending { it.first }
+   if (replacements.isEmpty()) return null
+   return StringBuilder(text.toString())
+     .apply {
+diff --git a/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/conversions.h b/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/conversions.h
+index 7b8ac88..158e319 100644
+--- a/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/conversions.h
++++ b/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/conversions.h
+@@ -10,6 +10,7 @@ namespace facebook::react {
+ inline folly::dynamic toDynamic(const EnrichedMarkdownTextProps &props) {
+   folly::dynamic serializedProps = folly::dynamic::object();
+   serializedProps["markdown"] = props.markdown;
++  serializedProps["writingDirection"] = props.writingDirection;
+   serializedProps["markdownStyle"] = toDynamic(props.markdownStyle);
+   serializedProps["md4cFlags"] = toDynamic(props.md4cFlags);
+   serializedProps["allowFontScaling"] = props.allowFontScaling;
+@@ -43,6 +44,7 @@ inline folly::dynamic toDynamic(const EnrichedMarkdownTextProps &props) {
+ inline folly::dynamic toDynamic(const EnrichedMarkdownProps &props) {
+   folly::dynamic serializedProps = folly::dynamic::object();
+   serializedProps["markdown"] = props.markdown;
++  serializedProps["writingDirection"] = props.writingDirection;
+   serializedProps["markdownStyle"] = toDynamic(props.markdownStyle);
+   serializedProps["md4cFlags"] = toDynamic(props.md4cFlags);
+   serializedProps["allowFontScaling"] = props.allowFontScaling;
+diff --git a/android/src/test/java/com/swmansion/enriched/markdown/utils/text/view/DirectionClipboardTest.kt b/android/src/test/java/com/swmansion/enriched/markdown/utils/text/view/DirectionClipboardTest.kt
+new file mode 100644
+index 0000000..8293b7d
+--- /dev/null
++++ b/android/src/test/java/com/swmansion/enriched/markdown/utils/text/view/DirectionClipboardTest.kt
+@@ -0,0 +1,219 @@
++package com.swmansion.enriched.markdown.utils.text.view
++
++import android.content.res.Configuration
++import android.text.Html
++import android.text.Layout
++import android.text.Selection
++import android.text.Spannable
++import android.text.SpannableStringBuilder
++import android.text.style.AlignmentSpan
++import android.text.style.LeadingMarginSpan
++import android.view.View
++import android.view.ViewGroup
++import android.widget.PopupMenu
++import android.widget.TextView
++import com.facebook.react.bridge.JavaOnlyMap
++import com.facebook.react.uimanager.DisplayMetricsHolder
++import com.swmansion.enriched.markdown.parser.MarkdownASTNode
++import com.swmansion.enriched.markdown.parser.MarkdownASTNode.NodeType
++import com.swmansion.enriched.markdown.renderer.Renderer
++import com.swmansion.enriched.markdown.renderer.RendererConfig
++import com.swmansion.enriched.markdown.renderer.RendererFactory
++import com.swmansion.enriched.markdown.segments.TableContainerView
++import com.swmansion.enriched.markdown.spans.CodeBlockSpan
++import com.swmansion.enriched.markdown.spans.DirectionControlSpan
++import com.swmansion.enriched.markdown.styles.StyleConfig
++import com.swmansion.enriched.markdown.utils.text.PROSE_DIRECTION
++import com.swmansion.enriched.markdown.utils.text.conversion.HTMLGenerator
++import com.swmansion.enriched.markdown.utils.text.conversion.MarkdownExtractor
++import com.swmansion.enriched.markdown.utils.text.withWordMajority
++import java.util.Locale
++import org.junit.Assert.assertEquals
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.RuntimeEnvironment
++import org.robolectric.annotation.Config
++
++@RunWith(RobolectricTestRunner::class)
++@Config(manifest = Config.NONE, sdk = [28])
++class DirectionClipboardTest {
++  private fun selection(): SpannableStringBuilder = SpannableStringBuilder("\u200Freal \u2066code()\u2069 \u200F").apply {
++    setSpan(DirectionControlSpan(), 6, 7, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
++    setSpan(DirectionControlSpan(), 13, 14, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
++  }
++
++  @Test fun plainAndMarkdownPreserveAuthoredMarks() {
++    val text = selection()
++    val expected = "\u200Freal code() \u200F"
++    assertEquals(expected, canonicalClipboardText(text, SelectionClipboardConfig()))
++    assertEquals(expected, MarkdownExtractor.extractFromSpannable(text, 0, text.length))
++    assertEquals("code()", MarkdownExtractor.extractFromSpannable(text, 6, 14))
++    assertEquals("code()", canonicalClipboardText(text.subSequence(6, 14) as android.text.Spanned, SelectionClipboardConfig()))
++    assertEquals("\u200Freal \u2066code()\u2069 \u200F", text.toString())
++  }
++
++  @Test fun htmlRoundTripPreservesOnlyAuthoredMarks() {
++    val text = selection()
++    val expected = SpannableStringBuilder("\u200Freal code() \u200F")
++    val style = style()
++    val html = HTMLGenerator.generateHTML(text, style)
++    assertEquals(HTMLGenerator.generateHTML(expected, style), html)
++    assertEquals(expected.toString(), Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY).toString().trimEnd('\n'))
++    fun tableHTML(cell: CharSequence) = HTMLGenerator.generateTableHTML(
++      listOf(listOf(Triple(cell, false, Layout.Alignment.ALIGN_NORMAL))), style,
++    )
++    assertEquals(tableHTML(expected), tableHTML(text))
++    assertEquals(tableHTML("code()"), tableHTML(text.subSequence(6, 14)))
++    assertEquals(
++      HTMLGenerator.generateHTML(SpannableStringBuilder("code()"), style),
++      HTMLGenerator.generateHTML(SpannableStringBuilder(text.subSequence(6, 14)), style),
++    )
++  }
++
++  @Test fun customActionReceivesCleanTextWithViewSelectionOffsets() {
++    val context = RuntimeEnvironment.getApplication()
++    val view = TextView(context)
++    view.setText(selection(), TextView.BufferType.SPANNABLE)
++    Selection.setSelection(view.text as Spannable, 6, 14)
++    var received: Triple<String, Int, Int>? = null
++    val callback = createSelectionActionModeCallback(view, getCustomItemTexts = { listOf("Use text") },
++      onCustomItemPress = { _, text, start, end -> received = Triple(text, start, end) })
++    val item = PopupMenu(context, view).menu.add(0, 2000, 0, "Use text")
++    callback.onActionItemClicked(null, item)
++    assertEquals(Triple("code()", 6, 14), received)
++    assertEquals("\u200Freal code() \u200F", textWithoutDirectionControls(view.text))
++  }
++
++  @Test fun directionControlsKeepCodeBlockAndListIndentRanges() {
++    val context = RuntimeEnvironment.getApplication()
++    val style = style()
++    val code = MarkdownASTNode(NodeType.CodeBlock, children = listOf(MarkdownASTNode(NodeType.Text, content = "שלום\ncode()")))
++    for (listed in listOf(false, true)) {
++      val node = if (listed) MarkdownASTNode(NodeType.UnorderedList, children = listOf(
++        MarkdownASTNode(NodeType.ListItem, children = listOf(code)),
++      )) else code
++      val text = Renderer().apply { configure(style, context) }.renderContent(listOf(withWordMajority(node, { false })))
++      val span = text.getSpans(0, text.length, CodeBlockSpan::class.java).single()
++      val start = text.getSpanStart(span)
++      assertEquals('\u200E', text[start])
++      assertEquals(0, start)
++      assertEquals(span.getLeadingMargin(true), text.getSpans(start, start + 1, LeadingMarginSpan::class.java).sumOf { it.getLeadingMargin(true) })
++      assertEquals("שלום\ncode()", textWithoutDirectionControls(text).trimEnd('\n'))
++    }
++  }
++
++  @Test fun multilineCodeMarkdownCleansControlsBeforeWalkingSpanTransitions() {
++    val context = RuntimeEnvironment.getApplication()
++    val style = style()
++    val code = MarkdownASTNode(NodeType.CodeBlock, children = listOf(
++      MarkdownASTNode(NodeType.Text, content = "\u200Ffoo\nbar\u2066\n"),
++    ))
++    var node = code
++    for (depth in 0..2) {
++      val text = SpannableStringBuilder()
++      val factory = RendererFactory(RendererConfig(style), context) { }
++      factory.renderNodes(listOf(withWordMajority(node, { false })), text, null, null)
++      factory.flushDeferredSpans(text)
++      val span = text.getSpans(0, text.length, CodeBlockSpan::class.java).single()
++      val start = text.getSpanStart(span)
++      val end = text.getSpanEnd(span)
++      val source = text.toString()
++      assertEquals("```\n\u200Ffoo\nbar\u2066\n```\n", MarkdownExtractor.extractFromSpannable(text, start, end))
++      assertEquals("```\noo\nbar\u2066\n```\n", MarkdownExtractor.extractFromSpannable(text, text.indexOf("foo") + 1, end))
++      assertEquals(source, text.toString())
++      assertEquals(start, text.getSpanStart(span))
++      assertEquals(end, text.getSpanEnd(span))
++      node = MarkdownASTNode(NodeType.UnorderedList, children = listOf(
++        MarkdownASTNode(NodeType.ListItem, children = listOf(node)),
++      ))
++    }
++  }
++
++  @Test fun tableAlignmentUsesEachCellDirectionWithoutReorderingColumns() {
++    assertTableAlignment(false)
++  }
++
++  @Test
++  fun rtlLocaleKeepsColumnOrderWhileCellsResolveTheirOwnDirection() {
++    assertTableAlignment(true)
++  }
++
++  private fun assertTableAlignment(rtlColumns: Boolean) {
++    val application = RuntimeEnvironment.getApplication()
++    val locale = if (rtlColumns) Locale.forLanguageTag("ar") else Locale.ENGLISH
++    val configuration = Configuration(application.resources.configuration).apply {
++      setLocale(locale)
++      setLayoutDirection(locale)
++    }
++    val context = application.createConfigurationContext(configuration)
++    assertEquals(rtlColumns, context.resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL)
++    val style = style()
++    val alignments = listOf("left", "right", "center", "")
++    val cells = listOf("ltr", "rtl").flatMap { direction ->
++      alignments.map { alignment ->
++        MarkdownASTNode(NodeType.TableCell, attributes = mapOf(PROSE_DIRECTION to direction, "align" to alignment),
++          children = listOf(MarkdownASTNode(NodeType.Text, content = if (direction == "rtl") "שלום" else "Hello")))
++      }
++    }
++    val table = MarkdownASTNode(NodeType.Table, attributes = mapOf(PROSE_DIRECTION to "ltr"), children = listOf(
++      MarkdownASTNode(NodeType.TableBody, children = listOf(MarkdownASTNode(NodeType.TableRow, children = cells))),
++    ))
++    val view = TableContainerView(context, style)
++    view.applyTableNode(table)
++    fun textViews(view: View): List<TextView> = when (view) {
++      is TextView -> listOf(view)
++      is ViewGroup -> (0 until view.childCount).flatMap { textViews(view.getChildAt(it)) }
++      else -> emptyList()
++    }
++    val views = textViews(view)
++    assertEquals(8, views.size)
++    views.forEachIndexed { index, cell ->
++      val rtl = index >= 4
++      val expected = when (index % 4) {
++        0 -> if (rtl) Layout.Alignment.ALIGN_OPPOSITE else Layout.Alignment.ALIGN_NORMAL
++        1 -> if (rtl) Layout.Alignment.ALIGN_NORMAL else Layout.Alignment.ALIGN_OPPOSITE
++        2 -> Layout.Alignment.ALIGN_CENTER
++        else -> Layout.Alignment.ALIGN_NORMAL
++      }
++      val text = cell.text as android.text.Spanned
++      assertEquals(expected, text.getSpans(0, text.length, AlignmentSpan::class.java).lastOrNull()?.alignment
++        ?: Layout.Alignment.ALIGN_NORMAL)
++      assertEquals(if (rtl) "שלום" else "Hello", textWithoutDirectionControls(text))
++      if (index > 0) {
++        val previous = (views[index - 1].parent as View).layoutParams as android.widget.FrameLayout.LayoutParams
++        val current = (cell.parent as View).layoutParams as android.widget.FrameLayout.LayoutParams
++        org.junit.Assert.assertTrue(
++          if (rtlColumns) current.leftMargin < previous.leftMargin else current.leftMargin > previous.leftMargin,
++        )
++      }
++    }
++  }
++
++  private fun style(): StyleConfig {
++    val context = RuntimeEnvironment.getApplication()
++    DisplayMetricsHolder.initDisplayMetricsIfNotInitialized(context)
++    val block = JavaOnlyMap()
++    for (name in listOf("fontSize", "marginTop", "marginBottom", "lineHeight", "borderWidth", "borderRadius", "padding",
++      "gapWidth", "bulletSize", "markerMinWidth", "marginLeft", "itemSpacing", "checkboxSize", "checkboxBorderRadius",
++      "height", "maxHeight", "aspectRatio", "cellPaddingHorizontal", "cellPaddingVertical", "horizontalOverflow",
++      "fontScale", "baselineOffsetScale", "size")) block.putDouble(name, 0.0)
++    block.putDouble("fontSize", 16.0)
++    block.putDouble("padding", 4.0)
++    for (name in listOf("color", "backgroundColor", "borderColor", "bulletColor", "markerColor", "checkedColor",
++      "checkmarkColor", "checkedTextColor", "headerBackgroundColor", "headerTextColor", "rowEvenBackgroundColor", "rowOddBackgroundColor")) block.putDouble(name, 0.0)
++    block.putBoolean("checkedStrikethrough", false)
++    block.putBoolean("underline", false)
++    val map = JavaOnlyMap()
++    for (name in listOf("paragraph", "codeBlock", "code", "blockquote", "list", "taskList", "link", "strong", "em",
++      "strikethrough", "underline", "highlight", "image", "video", "inlineImage", "thematicBreak", "table",
++      "math", "inlineMath", "superscript", "subscript", "h1", "h2", "h3", "h4", "h5", "h6")) map.putMap(name, block)
++    val spoiler = JavaOnlyMap().apply {
++      putDouble("color", 0.0)
++      putMap("particles", JavaOnlyMap.of("density", 0.0, "speed", 0.0))
++      putMap("solid", JavaOnlyMap.of("borderRadius", 0.0))
++    }
++    map.putMap("spoiler", spoiler)
++    return StyleConfig(map, context, false, 0f)
++  }
++}
+diff --git a/ios/EnrichedMarkdown.mm b/ios/EnrichedMarkdown.mm
+index 3f35e62..6b9f1d0 100644
+--- a/ios/EnrichedMarkdown.mm
++++ b/ios/EnrichedMarkdown.mm
+@@ -49,6 +49,7 @@
+ #import "MarkdownExtractor.h"
+ #import "MeasurementCache.h"
+ #import "ParagraphStyleUtils.h"
++#import "ENRMWordMajority.h"
+ #import "RenderContext.h"
+ #import "RenderedMarkdownSegment.h"
+ #import "RuntimeKeys.h"
+@@ -900,7 +901,6 @@ static char kENRMSegmentFadeAnimatorKey;
+   } else if (layoutMetrics.layoutDirection == LayoutDirection::LeftToRight) {
+     resolved = NSWritingDirectionLeftToRight;
+   }
+-
+   if (resolved != _resolvedLayoutDirection) {
+     _resolvedLayoutDirection = resolved;
+     [self pushWritingDirectionToTableSegments];
+@@ -1029,6 +1029,9 @@ static char kENRMSegmentFadeAnimatorKey;
+     if (!ast)
+       return NO;
+ 
++    if (writingDirectionMode == ENRMWritingDirectionModeWordMajority)
++      ENRMAnnotateWordMajority(ast, ^BOOL(NSString *url) { return [config effectiveLinkVariantForURL:url].pill != nil; });
++
+     renderedSegments = ENRMRenderSegmentsFromAST(ast, config, allowTrailingMargin, allowFontScaling,
+                                                  maxFontSizeMultiplier, lineBreakStrategy,
+                                                  /*blockquoteContent*/ NO);
+@@ -1069,6 +1072,9 @@ static char kENRMSegmentFadeAnimatorKey;
+     return nil;
+   }
+ 
++  if (_writingDirectionMode == ENRMWritingDirectionModeWordMajority)
++    ENRMAnnotateWordMajority(ast, ^BOOL(NSString *url) { return [_config effectiveLinkVariantForURL:url].pill != nil; });
++
+   NSArray<ENRMRenderedSegment *> *segments =
+       ENRMRenderSegmentsFromAST(ast, _config, _allowTrailingMargin, _fontScaleObserver.allowFontScaling,
+                                 _maxFontSizeMultiplier, _lineBreakStrategy, /*blockquoteContent*/ NO);
+diff --git a/ios/EnrichedMarkdownText.mm b/ios/EnrichedMarkdownText.mm
+index f41930f..4455621 100644
+--- a/ios/EnrichedMarkdownText.mm
++++ b/ios/EnrichedMarkdownText.mm
+@@ -31,6 +31,7 @@
+ #import "MarkdownExtractor.h"
+ #import "MeasurementCache.h"
+ #import "ParagraphStyleUtils.h"
++#import "ENRMWordMajority.h"
+ #import "PasteboardUtils.h"
+ #import "RenderContext.h"
+ #import "RuntimeKeys.h"
+@@ -467,6 +468,8 @@ typedef NS_OPTIONS(NSUInteger, ENRMDirtyFlags) {
+                                  inlineCodeLinkRegex:inlineCodeLinkRegex];
+         if (!ast)
+           return NO;
++        if (writingDirectionMode == ENRMWritingDirectionModeWordMajority)
++          ENRMAnnotateWordMajority(ast, ^BOOL(NSString *url) { return [config effectiveLinkVariantForURL:url].pill != nil; });
+ 
+         result = ENRMRenderASTNodes(ast.children, config, allowTrailingMargin, allowFontScaling, maxFontSizeMultiplier,
+                                     lineBreakStrategy);
+@@ -492,6 +495,8 @@ typedef NS_OPTIONS(NSUInteger, ENRMDirtyFlags) {
+   if (!ast) {
+     return nil;
+   }
++  if (_writingDirectionMode == ENRMWritingDirectionModeWordMajority)
++    ENRMAnnotateWordMajority(ast, ^BOOL(NSString *url) { return [_config effectiveLinkVariantForURL:url].pill != nil; });
+ 
+   ENRMRenderResult *result =
+       ENRMRenderASTNodes(ast.children, _config, _allowTrailingMargin, _fontScaleObserver.allowFontScaling,
+diff --git a/ios/attachments/ENRMLinkPillText.m b/ios/attachments/ENRMLinkPillText.m
+index 172cba2..7ab43d9 100644
+--- a/ios/attachments/ENRMLinkPillText.m
++++ b/ios/attachments/ENRMLinkPillText.m
+@@ -1,4 +1,5 @@
+ #import "ENRMLinkPillText.h"
++#import "ENRMWordMajority.h"
+ #import "ENRMLinkPillAttachment.h"
+ 
+ #if !TARGET_OS_OSX
+@@ -114,5 +115,5 @@ NSAttributedString *ENRMAttributedStringByExpandingLinkPills(NSAttributedString
+ 
+ NSString *ENRMStringByExpandingLinkPills(NSAttributedString *text)
+ {
+-  return ENRMAttributedStringByExpandingLinkPills(text, NULL).string;
++  return ENRMWithoutDirectionControls(ENRMAttributedStringByExpandingLinkPills(text, NULL)).string;
+ }
+diff --git a/ios/input/EnrichedMarkdownTextInput.mm b/ios/input/EnrichedMarkdownTextInput.mm
+index 57100a2..ab8ddf8 100644
+--- a/ios/input/EnrichedMarkdownTextInput.mm
++++ b/ios/input/EnrichedMarkdownTextInput.mm
+@@ -1341,6 +1341,7 @@ static const NSTimeInterval kENRMAtomicSnapPollInterval = 0.1;
+       return NO;
+     case ENRMWritingDirectionModeRTL:
+       return YES;
++    case ENRMWritingDirectionModeWordMajority:
+     case ENRMWritingDirectionModeFirstStrong:
+       return _resolvedLayoutDirection == NSWritingDirectionRightToLeft;
+     case ENRMWritingDirectionModeAuto:
+diff --git a/ios/internals/ENRMViewFreeMeasurement.h b/ios/internals/ENRMViewFreeMeasurement.h
+index 65281b1..69f0c1f 100644
+--- a/ios/internals/ENRMViewFreeMeasurement.h
++++ b/ios/internals/ENRMViewFreeMeasurement.h
+@@ -16,6 +16,7 @@
+ #import "MarkdownASTNode.h"
+ #import "MeasurementCache.h"
+ #import "ParagraphStyleUtils.h"
++#import "ENRMWordMajority.h"
+ #import "RenderedMarkdownSegment.h"
+ #import "SegmentRenderer.h"
+ #import "StreamingMarkdownFilter.h"
+@@ -198,6 +199,8 @@ static inline CGSize ENRMMeasureMarkdownViewFree(const PropsT &typedProps, CGFlo
+     if (!ast) {
+       return fallback;
+     }
++    if (typedProps.writingDirection == "word-majority")
++      ENRMAnnotateWordMajority(ast, ^BOOL(NSString *url) { return [config effectiveLinkVariantForURL:url].pill != nil; });
+ 
+     NSLineBreakStrategy lineBreakStrategy =
+         ENRMResolveLineBreakStrategy([[NSString alloc] initWithUTF8String:typedProps.lineBreakStrategyIOS.c_str()]);
+@@ -294,6 +297,8 @@ static inline CGSize ENRMMeasureSegmentedMarkdownViewFree(const PropsT &typedPro
+     if (!ast) {
+       return fallback;
+     }
++    if (typedProps.writingDirection == "word-majority")
++      ENRMAnnotateWordMajority(ast, ^BOOL(NSString *url) { return [config effectiveLinkVariantForURL:url].pill != nil; });
+ 
+     NSLineBreakStrategy lineBreakStrategy =
+         ENRMResolveLineBreakStrategy([[NSString alloc] initWithUTF8String:typedProps.lineBreakStrategyIOS.c_str()]);
+diff --git a/ios/renderer/BaseRenderer.m b/ios/renderer/BaseRenderer.m
+index ab2531b..82f9a68 100644
+--- a/ios/renderer/BaseRenderer.m
++++ b/ios/renderer/BaseRenderer.m
+@@ -1,5 +1,9 @@
+ #import "BaseRenderer.h"
+ #import "RenderContext.h"
++#import "MarkdownASTNode.h"
++#import "ENRMWordMajority.h"
++#import "ParagraphStyleUtils.h"
++#import "LastElementUtils.h"
+ #import "RendererFactory.h"
+ #import "StyleConfig.h"
+ 
+@@ -16,12 +20,26 @@
+ 
+ - (void)renderNode:(MarkdownASTNode *)node into:(NSMutableAttributedString *)output context:(RenderContext *)context
+ {
++  NSUInteger start = output.length;
+   id snapshot = [self takeContextSnapshot:context];
+   @try {
+     [self renderNodeContent:node into:output context:context];
+   } @finally {
+     [self restoreContextSnapshot:snapshot context:context];
+   }
++  NSString *direction = node.attributes[ENRMProseDirectionKey];
++  if (direction && output.length > start &&
++      (ENRMIsTopLevelBlockType(node.type) || node.type == MarkdownNodeTypeListItem)) {
++    NSRange range = NSMakeRange(start, output.length - start);
++    [output enumerateAttribute:NSParagraphStyleAttributeName inRange:range options:0
++                    usingBlock:^(NSParagraphStyle *style, NSRange run, BOOL *stop) {
++      BOOL code = [[output attribute:CodeBlockAttributeName atIndex:run.location effectiveRange:nil] boolValue];
++      NSMutableParagraphStyle *updated = style ? [style mutableCopy] : [NSMutableParagraphStyle new];
++      updated.baseWritingDirection = code || [direction isEqualToString:@"ltr"]
++          ? NSWritingDirectionLeftToRight : NSWritingDirectionRightToLeft;
++      [output addAttribute:NSParagraphStyleAttributeName value:updated range:run];
++    }];
++  }
+ }
+ 
+ - (void)renderNodeContent:(MarkdownASTNode *)node
+diff --git a/ios/renderer/CodeRenderer.m b/ios/renderer/CodeRenderer.m
+index d0a9b3a..88230d7 100644
+--- a/ios/renderer/CodeRenderer.m
++++ b/ios/renderer/CodeRenderer.m
+@@ -1,5 +1,6 @@
+ #import "CodeRenderer.h"
+ #import "CodeBackground.h"
++#import "ENRMWordMajority.h"
+ #import "ENRMUIKit.h"
+ #import "FontUtils.h"
+ #import "MarkdownASTNode.h"
+@@ -63,6 +64,14 @@
+     codeAttributes[@"BlockLineHeight"] = @(UIFontLineHeight(blockFont));
+ 
+     [output setAttributes:codeAttributes range:range];
++    if (node.attributes[ENRMProseDirectionKey]) {
++      NSMutableDictionary *controls = [codeAttributes mutableCopy];
++      controls[ENRMDirectionControlKey] = @YES;
++      [output insertAttributedString:[[NSAttributedString alloc] initWithString:@"\u2069" attributes:controls]
++                             atIndex:NSMaxRange(range)];
++      [output insertAttributedString:[[NSAttributedString alloc] initWithString:@"\u2066" attributes:controls]
++                             atIndex:range.location];
++    }
+   }
+ }
+ 
+diff --git a/ios/renderer/LinkRenderer.m b/ios/renderer/LinkRenderer.m
+index c9fd57d..706bd88 100644
+--- a/ios/renderer/LinkRenderer.m
++++ b/ios/renderer/LinkRenderer.m
+@@ -1,5 +1,6 @@
+ #import "LinkRenderer.h"
+ #import "CodeBackground.h"
++#import "ENRMWordMajority.h"
+ #import "ENRMLinkPillAttachment.h"
+ #import "ENRMSpoilerTapUtils.h"
+ #import "ENRMTextLinkAttributes.h"
+@@ -50,7 +51,7 @@ static NSRange ENRMCollapseLinkIntoPill(NSMutableAttributedString *output, NSRan
+   NSMutableDictionary<NSAttributedStringKey, id> *placeholder = [attributes mutableCopy];
+   [placeholder removeObjectsForKeys:@[
+     NSBackgroundColorAttributeName, NSUnderlineStyleAttributeName, NSUnderlineColorAttributeName,
+-    NSStrikethroughStyleAttributeName, CodeAttributeName
++    NSStrikethroughStyleAttributeName, CodeAttributeName, ENRMDirectionControlKey
+   ]];
+   placeholder[NSAttachmentAttributeName] = pill;
+   [output replaceCharactersInRange:range
+diff --git a/ios/segments/ENRMBlockquoteContainerView.mm b/ios/segments/ENRMBlockquoteContainerView.mm
+index 3296ff9..5d1354b 100644
+--- a/ios/segments/ENRMBlockquoteContainerView.mm
++++ b/ios/segments/ENRMBlockquoteContainerView.mm
+@@ -111,6 +111,7 @@ static UIEdgeInsets ENRMBlockquoteContentInsets(StyleConfig *config)
+ #endif
+ // nil for a plain blockquote; the admonition type string otherwise.
+ @property (nonatomic, copy, nullable) NSString *admonitionType;
++@property (nonatomic, assign) BOOL proseRTL;
+ @property (nonatomic, copy) NSString *cachedMarkdown;
+ @property (nonatomic, copy) NSString *cachedPlainText;
+ @end
+@@ -147,8 +148,13 @@ static UIEdgeInsets ENRMBlockquoteContentInsets(StyleConfig *config)
+ 
+ - (void)applyBlockquoteNode:(MarkdownASTNode *)node
+ {
++  self.proseRTL = [node.attributes[@"_enrmProseDirection"] isEqualToString:@"rtl"];
+   self.admonitionType = ENRMAdmonitionTypeForNode(node);
+   self.contentInsets = ENRMBlockquoteContentInsetsForNode(self.config, self.admonitionType != nil);
++  if (self.proseRTL) {
++    UIEdgeInsets insets = self.contentInsets;
++    self.contentInsets = UIEdgeInsetsMake(insets.top, insets.right, insets.bottom, insets.left);
++  }
+   self.cachedMarkdown = markdownFromBlockquoteNode(node);
+   self.cachedPlainText = plainTextFromASTNode(node);
+   NSArray<ENRMRenderedSegment *> *rendered =
+@@ -468,7 +474,7 @@ static UIEdgeInsets ENRMBlockquoteContentInsets(StyleConfig *config)
+     RCTUIColor *borderColor =
+         admonitionType ? [config admonitionColorForType:admonitionType] : config.blockquoteBorderColor;
+     if (borderColor) {
+-      CGRect barRect = CGRectMake(0, 0, borderWidth, bounds.size.height);
++      CGRect barRect = CGRectMake(self.proseRTL ? bounds.size.width - borderWidth : 0, 0, borderWidth, bounds.size.height);
+       [borderColor setFill];
+ #if !TARGET_OS_OSX
+       CGContextRef ctx = UIGraphicsGetCurrentContext();
+diff --git a/ios/segments/TableContainerView.m b/ios/segments/TableContainerView.m
+index 987eb21..0073f71 100644
+--- a/ios/segments/TableContainerView.m
++++ b/ios/segments/TableContainerView.m
+@@ -85,15 +85,26 @@ static NSMutableAttributedString *ENRMTableRenderCellNode(MarkdownASTNode *cellN
+   context.allowFontScaling = allowFontScaling;
+   context.maxFontSizeMultiplier = maxFontSizeMultiplier;
+ 
+-  NSMutableAttributedString *attributedText = [renderer renderNodes:cellNode.children context:context block:nil];
++  NSMutableAttributedString *attributedText;
++  if (cellNode.attributes[@"_enrmProseDirection"]) {
++    MarkdownASTNode *paragraph = [[MarkdownASTNode alloc] initWithType:MarkdownNodeTypeParagraph];
++    paragraph.attributes = [cellNode.attributes mutableCopy];
++    for (MarkdownASTNode *child in cellNode.children)
++      [paragraph addChild:child];
++    attributedText = [renderer renderNodes:@[ paragraph ] context:context block:nil];
++  } else {
++    attributedText = [renderer renderNodes:cellNode.children context:context block:nil];
++  }
+ 
+   [context applyLinkAttributesToString:attributedText];
+   [context applyImageAttributesToString:attributedText];
+ 
+   ENRMPinLineMetricsToStyledFonts(attributedText, NSMakeRange(0, attributedText.length));
+-  ENRMApplyWritingDirectionMode(attributedText, writingDirectionMode, resolvedLayoutDirection);
++  if (!cellNode.attributes[@"_enrmProseDirection"])
++    ENRMApplyWritingDirectionMode(attributedText, writingDirectionMode, resolvedLayoutDirection);
+ 
+-  if (alignment != NSTextAlignmentLeft && attributedText.length > 0) {
++  if ((alignment != NSTextAlignmentLeft || [cellNode.attributes[@"align"] isEqualToString:@"left"]) &&
++      attributedText.length > 0) {
+     NSRange fullRange = NSMakeRange(0, attributedText.length);
+     [attributedText
+         enumerateAttribute:NSParagraphStyleAttributeName
+diff --git a/ios/utils/ENRMWordMajority.h b/ios/utils/ENRMWordMajority.h
+new file mode 100644
+index 0000000..b8f9c00
+--- /dev/null
++++ b/ios/utils/ENRMWordMajority.h
+@@ -0,0 +1,13 @@
++#import <Foundation/Foundation.h>
++@class MarkdownASTNode;
++
++__BEGIN_DECLS
++
++// Internal AST metadata; never inserted into markdown or copied text.
++extern NSString *const ENRMProseDirectionKey;
++extern NSString *const ENRMDirectionControlKey;
++NSAttributedString *ENRMWithoutDirectionControls(NSAttributedString *text);
++NSString *ENRMWordMajorityDirection(NSString *text);
++void ENRMAnnotateWordMajority(MarkdownASTNode *root, BOOL (^isChip)(NSString *url));
++
++__END_DECLS
+diff --git a/ios/utils/ENRMWordMajority.m b/ios/utils/ENRMWordMajority.m
+new file mode 100644
+index 0000000..3c40447
+--- /dev/null
++++ b/ios/utils/ENRMWordMajority.m
+@@ -0,0 +1,118 @@
++#import "ENRMWordMajority.h"
++#import "MarkdownASTNode.h"
++
++NSString *const ENRMProseDirectionKey = @"_enrmProseDirection";
++NSString *const ENRMDirectionControlKey = @"ENRMDirectionControl";
++
++NSAttributedString *ENRMWithoutDirectionControls(NSAttributedString *text)
++{
++  NSMutableAttributedString *result = [text mutableCopy];
++  [text enumerateAttribute:ENRMDirectionControlKey inRange:NSMakeRange(0, text.length)
++                  options:NSAttributedStringEnumerationReverse
++               usingBlock:^(id value, NSRange range, BOOL *stop) {
++    if ([value boolValue]) [result deleteCharactersInRange:range];
++  }];
++  return result;
++}
++
++static BOOL ENRMWordSpace(UTF32Char c)
++{
++  // Match JavaScript's /\s/ rather than locale-specific word segmentation.
++  return (c >= 9 && c <= 13) || c == 32 || c == 0xA0 || c == 0x1680 ||
++         (c >= 0x2000 && c <= 0x200A) || c == 0x2028 || c == 0x2029 ||
++         c == 0x202F || c == 0x205F || c == 0x3000 || c == 0xFEFF;
++}
++
++NSString *ENRMWordMajorityDirection(NSString *text)
++{
++  NSInteger rtl = 0, ltr = 0;
++  NSString *first = nil;
++  BOOL counted = NO;
++  static NSRegularExpression *letters;
++  static dispatch_once_t once;
++  dispatch_once(&once, ^{ letters = [NSRegularExpression regularExpressionWithPattern:@"\\p{L}" options:0 error:nil]; });
++  for (NSUInteger i = 0; i < text.length; i++) {
++    UTF32Char c = [text characterAtIndex:i];
++    if (CFStringIsSurrogateHighCharacter(c) && i + 1 < text.length &&
++        CFStringIsSurrogateLowCharacter([text characterAtIndex:i + 1])) {
++      c = CFStringGetLongCharacterForSurrogatePair(c, [text characterAtIndex:++i]);
++    }
++    if (ENRMWordSpace(c)) {
++      counted = NO;
++    } else if (!counted && [letters firstMatchInString:text options:NSMatchingAnchored
++        range:NSMakeRange(i - (c > 0xFFFF ? 1 : 0), c > 0xFFFF ? 2 : 1)]) {
++      BOOL isRTL = (c >= 0x0590 && c <= 0x08FF) || (c >= 0xFB1D && c <= 0xFDFF) ||
++                   (c >= 0xFE70 && c <= 0xFEFF) || (c >= 0x10800 && c <= 0x10FFF) ||
++                   (c >= 0x1E800 && c <= 0x1EFFF);
++      if (!first) first = isRTL ? @"rtl" : @"ltr";
++      if (isRTL) rtl++; else ltr++;
++      counted = YES;
++    }
++  }
++  return rtl == ltr ? first : (rtl > ltr ? @"rtl" : @"ltr");
++}
++
++static BOOL ENRMChipHasBlocker(MarkdownASTNode *node)
++{
++  if (node.type == MarkdownNodeTypeImage || node.type == MarkdownNodeTypeLatexMathInline ||
++      node.type == MarkdownNodeTypeSpoiler || node.type == MarkdownNodeTypeLineBreak ||
++      (node.content && [node.content rangeOfCharacterFromSet:NSCharacterSet.newlineCharacterSet].location != NSNotFound))
++    return YES;
++  for (MarkdownASTNode *child in node.children) if (ENRMChipHasBlocker(child)) return YES;
++  return NO;
++}
++
++static void ENRMCollectProse(MarkdownASTNode *node, NSMutableString *text, BOOL (^isChip)(NSString *))
++{
++  switch (node.type) {
++    case MarkdownNodeTypeCode:
++    case MarkdownNodeTypeCodeBlock:
++    case MarkdownNodeTypeTable:
++    case MarkdownNodeTypeImage:
++    case MarkdownNodeTypeVideo:
++    case MarkdownNodeTypeLatexMathInline:
++    case MarkdownNodeTypeLatexMathDisplay:
++      [text appendString:@" "];
++      return;
++    case MarkdownNodeTypeLink:
++      if (isChip && isChip(node.attributes[@"url"] ?: @"") && !ENRMChipHasBlocker(node)) {
++        [text appendString:@" "];
++        return;
++      }
++      break;
++    default: break;
++  }
++  BOOL block = ENRMIsTopLevelBlockType(node.type) || node.type == MarkdownNodeTypeListItem ||
++               node.type == MarkdownNodeTypeLineBreak || node.type == MarkdownNodeTypeSoftBreak;
++  if (block) [text appendString:@" "];
++  if (node.type == MarkdownNodeTypeText) [text appendString:node.content ?: @""];
++  for (MarkdownASTNode *child in node.children) ENRMCollectProse(child, text, isChip);
++  if (block) [text appendString:@" "];
++}
++
++static void ENRMAnnotateNode(MarkdownASTNode *node, NSString *inherited, BOOL (^isChip)(NSString *))
++{
++  if (node.type == MarkdownNodeTypeDocument || node.type == MarkdownNodeTypeTable ||
++      node.type == MarkdownNodeTypeTableHead || node.type == MarkdownNodeTypeTableBody ||
++      node.type == MarkdownNodeTypeTableRow) {
++    if (node.type == MarkdownNodeTypeTable) node.attributes[ENRMProseDirectionKey] = @"ltr";
++    for (MarkdownASTNode *child in node.children) ENRMAnnotateNode(child, nil, isChip);
++    return;
++  }
++  NSString *direction = inherited;
++  if (!direction) {
++    NSMutableString *text = [NSMutableString new];
++    ENRMCollectProse(node, text, isChip);
++    direction = ENRMWordMajorityDirection(text) ?: @"ltr";
++  }
++  if (ENRMIsTopLevelBlockType(node.type) || node.type == MarkdownNodeTypeListItem ||
++      node.type == MarkdownNodeTypeCode || node.type == MarkdownNodeTypeTableCell ||
++      node.type == MarkdownNodeTypeTableHeaderCell)
++    node.attributes[ENRMProseDirectionKey] = direction;
++  for (MarkdownASTNode *child in node.children) ENRMAnnotateNode(child, direction, isChip);
++}
++
++void ENRMAnnotateWordMajority(MarkdownASTNode *root, BOOL (^isChip)(NSString *url))
++{
++  ENRMAnnotateNode(root, nil, isChip);
++}
+diff --git a/ios/utils/HTMLGenerator.m b/ios/utils/HTMLGenerator.m
+index f0018df..fe5ac4e 100644
+--- a/ios/utils/HTMLGenerator.m
++++ b/ios/utils/HTMLGenerator.m
+@@ -1,3 +1,4 @@
++#import "ENRMWordMajority.h"
+ #import "HTMLGenerator.h"
+ #import "BlockquoteBorder.h"
+ #import "CodeBackground.h"
+@@ -825,7 +826,8 @@ NSString *_Nullable generateHTML(NSAttributedString *attributedString, StyleConf
+   if (!attributedString || attributedString.length == 0)
+     return nil;
+ 
+-  attributedString = ENRMAttributedStringByExpandingLinkPills(attributedString, NULL);
++  attributedString = ENRMWithoutDirectionControls(ENRMAttributedStringByExpandingLinkPills(attributedString, NULL));
++  if (attributedString.length == 0) return nil;
+ 
+   CachedStyles *styles = cacheStyles(styleConfig);
+ 
+@@ -1009,7 +1011,7 @@ HTMLString _Nullable generateTableHTML(NSArray<NSArray<NSDictionary *> *> *rows,
+       NSTextAlignment alignment = (NSTextAlignment)[cellInfo[@"alignment"] integerValue];
+       NSAttributedString *attributedText = cellInfo[@"attributedText"];
+       if (attributedText)
+-        attributedText = ENRMAttributedStringByExpandingLinkPills(attributedText, NULL);
++        attributedText = ENRMWithoutDirectionControls(ENRMAttributedStringByExpandingLinkPills(attributedText, NULL));
+ 
+       NSString *htmlTag = isHeaderCell ? @"th" : @"td";
+       NSString *cellStyle = styleForCell(isHeaderCell, bodyRowIndex, styleConfig, alignment);
+diff --git a/ios/utils/MarkdownExtractor.m b/ios/utils/MarkdownExtractor.m
+index 90c8450..168a8c9 100644
+--- a/ios/utils/MarkdownExtractor.m
++++ b/ios/utils/MarkdownExtractor.m
+@@ -1,3 +1,4 @@
++#import "ENRMWordMajority.h"
+ #import "MarkdownExtractor.h"
+ #import "BaselineShiftTextAttributes.h"
+ #import "BlockquoteBorder.h"
+@@ -131,6 +132,8 @@ NSString *_Nullable extractMarkdownFromAttributedString(NSAttributedString *attr
+ 
+   range.length = MIN(range.length, attributedText.length - range.location);
+   attributedText = ENRMAttributedStringByExpandingLinkPills(attributedText, &range);
++  attributedText = ENRMWithoutDirectionControls([attributedText attributedSubstringFromRange:range]);
++  range = NSMakeRange(0, attributedText.length);
+ 
+   NSMutableString *result = [NSMutableString string];
+ 
+diff --git a/ios/utils/ParagraphStyleUtils.h b/ios/utils/ParagraphStyleUtils.h
+index 7d0f17e..2f4b54b 100644
+--- a/ios/utils/ParagraphStyleUtils.h
++++ b/ios/utils/ParagraphStyleUtils.h
+@@ -25,6 +25,7 @@ typedef NS_ENUM(NSInteger, ENRMWritingDirectionMode) {
+   ENRMWritingDirectionModeLTR,
+   ENRMWritingDirectionModeRTL,
+   ENRMWritingDirectionModeFirstStrong,
++  ENRMWritingDirectionModeWordMajority,
+ };
+ 
+ ENRMWritingDirectionMode ENRMResolveWritingDirectionMode(NSString *_Nullable value);
+diff --git a/ios/utils/ParagraphStyleUtils.m b/ios/utils/ParagraphStyleUtils.m
+index 11320dd..c3572cd 100644
+--- a/ios/utils/ParagraphStyleUtils.m
++++ b/ios/utils/ParagraphStyleUtils.m
+@@ -57,6 +57,7 @@ ENRMWritingDirectionMode ENRMResolveWritingDirectionMode(NSString *value)
+   if ([value isEqualToString:@"auto"]) {
+     return ENRMWritingDirectionModeAuto;
+   }
++  if ([value isEqualToString:@"word-majority"]) return ENRMWritingDirectionModeWordMajority;
+   return ENRMWritingDirectionModeFirstStrong;
+ }
+ 
+@@ -100,6 +101,9 @@ void ENRMApplyWritingDirectionMode(NSMutableAttributedString *output, ENRMWritin
+     case ENRMWritingDirectionModeRTL:
+       ENRMApplyWritingDirectionToParagraphStyles(output, NSWritingDirectionRightToLeft);
+       break;
++    case ENRMWritingDirectionModeWordMajority:
++      // Direction was resolved on the AST before segmentation and block styling.
++      break;
+     case ENRMWritingDirectionModeFirstStrong:
+       ENRMApplyFirstStrongParagraphDirections(output, layoutDirection);
+       break;
+diff --git a/ios/utils/PasteboardUtils.m b/ios/utils/PasteboardUtils.m
+index 3e8c15d..76202e2 100644
+--- a/ios/utils/PasteboardUtils.m
++++ b/ios/utils/PasteboardUtils.m
+@@ -1,3 +1,4 @@
++#import "ENRMWordMajority.h"
+ #import "PasteboardUtils.h"
+ #import "ENRMImageAttachment.h"
+ #import "ENRMLinkPillText.h"
+@@ -167,7 +168,7 @@ void copyAttributedStringToPasteboard(NSAttributedString *attributedString, NSSt
+     return;
+ 
+   // Expanded once here for the plain-text flavor; the exporters below then have nothing left to expand.
+-  attributedString = ENRMAttributedStringByExpandingLinkPills(attributedString, NULL);
++  attributedString = ENRMWithoutDirectionControls(ENRMAttributedStringByExpandingLinkPills(attributedString, NULL));
+ 
+   NSMutableDictionary *items = [NSMutableDictionary dictionary];
+ 
+diff --git a/ios/utils/RTFExportUtils.m b/ios/utils/RTFExportUtils.m
+index c5f8b77..7618685 100644
+--- a/ios/utils/RTFExportUtils.m
++++ b/ios/utils/RTFExportUtils.m
+@@ -5,6 +5,7 @@
+ #import "LastElementUtils.h"
+ #import "ListItemRenderer.h"
+ #import "RenderContext.h"
++#import "ENRMWordMajority.h"
+ #import "StyleConfig.h"
+ #import "ThematicBreakAttachment.h"
+ 
+@@ -279,7 +280,7 @@ static void processThematicBreaks(NSMutableAttributedString *text)
+ NSAttributedString *prepareAttributedStringForRTFExport(NSAttributedString *attributedString,
+                                                         StyleConfig *_Nullable styleConfig)
+ {
+-  attributedString = ENRMAttributedStringByExpandingLinkPills(attributedString, NULL);
++  attributedString = ENRMWithoutDirectionControls(ENRMAttributedStringByExpandingLinkPills(attributedString, NULL));
+   if (!styleConfig)
+     return attributedString;
+ 
+diff --git a/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts b/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts
+index 360ae49..d8dcac9 100644
+--- a/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts
++++ b/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts
+@@ -628,8 +628,8 @@ export interface NativeProps extends ViewProps {
+      * - 'auto': React Native parity; iOS TextKit follows the app's userInterfaceLayoutDirection.
+      * - 'ltr' / 'rtl': force base direction on every paragraph. Code blocks always stay LTR.
+      * @default 'first-strong'
+-     * @platform ios
+      */
++    // Also accepts word-majority; kept as a string for native codegen.
+     writingDirection?: CodegenTypes.WithDefault<string, 'first-strong'>;
+     /**
+      * No-op for the GFM backend. Declared for parity with the CommonMark
+diff --git a/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts b/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts
+index d79d050..398f187 100644
+--- a/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts
++++ b/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts
+@@ -611,8 +611,8 @@ export interface NativeProps extends ViewProps {
+      * - 'auto': React Native parity; iOS TextKit follows the app's userInterfaceLayoutDirection.
+      * - 'ltr' / 'rtl': force base direction on every paragraph. Code blocks always stay LTR.
+      * @default 'first-strong'
+-     * @platform ios
+      */
++    // Also accepts word-majority; kept as a string for native codegen.
+     writingDirection?: CodegenTypes.WithDefault<string, 'first-strong'>;
+     /**
+      * Maximum number of lines to display before the text is truncated. 0 (the
+diff --git a/lib/typescript/src/types/MarkdownTextProps.d.ts b/lib/typescript/src/types/MarkdownTextProps.d.ts
+index b44bedb..0338b3d 100644
+--- a/lib/typescript/src/types/MarkdownTextProps.d.ts
++++ b/lib/typescript/src/types/MarkdownTextProps.d.ts
+@@ -497,15 +497,17 @@ export interface EnrichedMarkdownTextProps extends Omit<ViewProps, 'style'> {
+      *   directional character. Neutral-only paragraphs fall back to the view's
+      *   resolved layout direction (inherits ancestor `direction` style). Library
+      *   extension beyond React Native — matches Android's `TEXT_DIRECTION_FIRST_STRONG`.
+-     * - `'auto'`: React Native parity. iOS TextKit follows the app's
++     * - `'word-majority'`: iOS/Android prose blocks follow the majority of their
++   *   words (ties use the first word), excluding code and link pills. Lists and
++   *   quotes share a direction; table cells resolve independently; code stays LTR.
++   * - `'auto'`: React Native parity. iOS TextKit follows the app's
+      *   `userInterfaceLayoutDirection`; mixed-direction paragraphs do not
+      *   auto-resolve.
+      * - `'ltr'` / `'rtl'`: force base direction on every paragraph. Code blocks
+      *   always stay LTR.
+      * @default 'first-strong'
+-     * @platform ios
+-     */
+-    writingDirection?: 'auto' | 'ltr' | 'rtl' | 'first-strong';
++       */
++    writingDirection?: 'auto' | 'ltr' | 'rtl' | 'first-strong' | 'word-majority';
+     /**
+      * Maximum number of lines to display before the text is truncated. `0` (the
+      * default) means unlimited. Matches React Native `Text`'s `numberOfLines`.
+diff --git a/src/EnrichedMarkdownNativeComponent.ts b/src/EnrichedMarkdownNativeComponent.ts
+index af6574c..c5b22dd 100644
+--- a/src/EnrichedMarkdownNativeComponent.ts
++++ b/src/EnrichedMarkdownNativeComponent.ts
+@@ -692,8 +692,8 @@ export interface NativeProps extends ViewProps {
+    * - 'auto': React Native parity; iOS TextKit follows the app's userInterfaceLayoutDirection.
+    * - 'ltr' / 'rtl': force base direction on every paragraph. Code blocks always stay LTR.
+    * @default 'first-strong'
+-   * @platform ios
+    */
++  // Also accepts word-majority; kept as a string for native codegen.
+   writingDirection?: CodegenTypes.WithDefault<string, 'first-strong'>;
+   /**
+    * No-op for the GFM backend. Declared for parity with the CommonMark
+diff --git a/src/EnrichedMarkdownTextNativeComponent.ts b/src/EnrichedMarkdownTextNativeComponent.ts
+index ba0dc96..1a4ed66 100644
+--- a/src/EnrichedMarkdownTextNativeComponent.ts
++++ b/src/EnrichedMarkdownTextNativeComponent.ts
+@@ -673,8 +673,8 @@ export interface NativeProps extends ViewProps {
+    * - 'auto': React Native parity; iOS TextKit follows the app's userInterfaceLayoutDirection.
+    * - 'ltr' / 'rtl': force base direction on every paragraph. Code blocks always stay LTR.
+    * @default 'first-strong'
+-   * @platform ios
+    */
++  // Also accepts word-majority; kept as a string for native codegen.
+   writingDirection?: CodegenTypes.WithDefault<string, 'first-strong'>;
+   /**
+    * Maximum number of lines to display before the text is truncated. 0 (the
+diff --git a/src/types/MarkdownTextProps.ts b/src/types/MarkdownTextProps.ts
+index b6b179b..40583d7 100644
+--- a/src/types/MarkdownTextProps.ts
++++ b/src/types/MarkdownTextProps.ts
+@@ -524,15 +524,17 @@ export interface EnrichedMarkdownTextProps extends Omit<ViewProps, 'style'> {
+    *   directional character. Neutral-only paragraphs fall back to the view's
+    *   resolved layout direction (inherits ancestor `direction` style). Library
+    *   extension beyond React Native — matches Android's `TEXT_DIRECTION_FIRST_STRONG`.
++   * - `'word-majority'`: iOS/Android prose blocks follow the majority of their
++   *   words (ties use the first word), excluding code and link pills. Lists and
++   *   quotes share a direction; table cells resolve independently; code stays LTR.
+    * - `'auto'`: React Native parity. iOS TextKit follows the app's
+    *   `userInterfaceLayoutDirection`; mixed-direction paragraphs do not
+    *   auto-resolve.
+    * - `'ltr'` / `'rtl'`: force base direction on every paragraph. Code blocks
+    *   always stay LTR.
+    * @default 'first-strong'
+-   * @platform ios
+    */
+-  writingDirection?: 'auto' | 'ltr' | 'rtl' | 'first-strong';
++  writingDirection?: 'auto' | 'ltr' | 'rtl' | 'first-strong' | 'word-majority';
+   /**
+    * Maximum number of lines to display before the text is truncated. `0` (the
+    * default) means unlimited. Matches React Native `Text`'s `numberOfLines`.
+diff --git a/tests/word-majority/Android.kt b/tests/word-majority/Android.kt
+new file mode 100644
+index 0000000..8c86c5d
+--- /dev/null
++++ b/tests/word-majority/Android.kt
+@@ -0,0 +1,44 @@
++package com.swmansion.enriched.markdown.utils.text
++
++import com.swmansion.enriched.markdown.parser.MarkdownASTNode
++import com.swmansion.enriched.markdown.parser.MarkdownASTNode.NodeType
++
++private fun node(type: NodeType, text: String = "", vararg children: MarkdownASTNode) =
++  MarkdownASTNode(type, content = text, children = children.toList())
++
++fun main() {
++  val cases = listOf(
++    "StrictMode: يعيد الـ render مرتين" to "rtl",
++    "Supercalifragilisticexpialidocious مرحبا بكم" to "rtl",
++    "שלום documentation is available" to "ltr",
++    "hello שלום" to "ltr", "שלום hello" to "rtl", "123 !!!" to null,
++    "\uFEFFhello\u00A0שלום\u3000עולם" to "rtl", "𐤀 hello שלום" to "rtl",
++    "َhello שלום" to "ltr", "APIשלום مرحبا" to "ltr", "مرحباAPI hello" to "rtl",
++  )
++  cases.forEach { (text, expected) -> check(wordMajorityDirection(text) == expected) { text } }
++  val english = node(NodeType.Paragraph, "", node(NodeType.Text, "English"))
++  val arabic = node(NodeType.Paragraph, "", node(NodeType.Text, "مرحبا بكم"), node(NodeType.SoftBreak),
++    node(NodeType.Code, "", node(NodeType.Text, "many english code words")),
++    MarkdownASTNode(NodeType.Link, attributes = mapOf("url" to "chip"), children = listOf(node(NodeType.Text, "more english words here"))))
++  val table = node(NodeType.Table, "", node(NodeType.TableRow, "",
++    node(NodeType.TableCell, "", node(NodeType.Text, "Hello world")),
++    node(NodeType.TableCell, "", node(NodeType.Text, "مرحبا بكم"))))
++  val quote = node(NodeType.Blockquote, "", english, arabic, table)
++  val list = node(NodeType.UnorderedList, "", node(NodeType.ListItem, "", node(NodeType.Text, "English")),
++    node(NodeType.ListItem, "", node(NodeType.Text, "مرحبا بكم")))
++  val root = withWordMajority(node(NodeType.Document, "", quote, list), { it == "chip" })
++  val result = root.children[0]
++  check(result.attributes[PROSE_DIRECTION] == "rtl")
++  check(result.children.take(2).all { it.attributes[PROSE_DIRECTION] == "rtl" })
++  check(root.children[1].children.all { it.attributes[PROSE_DIRECTION] == "rtl" })
++  val cells = result.children[2].children[0].children
++  check(cells[0].attributes[PROSE_DIRECTION] == "ltr")
++  check(cells[1].attributes[PROSE_DIRECTION] == "rtl")
++  check(result.children[2].attributes[PROSE_DIRECTION] == "ltr")
++  check(english.children[0].content == "English" && english.attributes.isEmpty())
++  val fallback = arabic.copy(children = arabic.children.map { child ->
++    if (child.type == NodeType.Link) child.copy(children = child.children + node(NodeType.LineBreak)) else child
++  })
++  check(withWordMajority(fallback, { it == "chip" }).attributes[PROSE_DIRECTION] == "ltr")
++  println("Android JVM: 11 word-direction cases and AST inheritance/code/chip/table checks passed")
++}
+diff --git a/tests/word-majority/ClipboardTests.m b/tests/word-majority/ClipboardTests.m
+new file mode 100644
+index 0000000..8cf6e8b
+--- /dev/null
++++ b/tests/word-majority/ClipboardTests.m
+@@ -0,0 +1,115 @@
++#import <XCTest/XCTest.h>
++#import "CodeBackground.h"
++#import "ENRMWordMajority.h"
++#import "ENRMLinkPillText.h"
++#import "HTMLGenerator.h"
++#import "MarkdownExtractor.h"
++#import "StyleConfig.h"
++#import "AttributedRenderer.h"
++#import "ENRMLinkPillAttachment.h"
++#import "MarkdownASTNode.h"
++#import "RenderContext.h"
++#import "TableContainerView.h"
++
++@interface ENRMDirectionClipboardTests : XCTestCase
++@end
++@implementation ENRMDirectionClipboardTests
++- (void)testPlainHTMLMarkdownAndCustomSelectionPreserveAuthoredMarks
++{
++  NSMutableAttributedString *text = [[NSMutableAttributedString alloc] initWithString:@"\u200Freal \u2066code()\u2069 \u200F"];
++  for (NSNumber *index in @[ @6, @13 ]) {
++    [text addAttributes:@{ ENRMDirectionControlKey: @YES }
++                  range:NSMakeRange(index.unsignedIntegerValue, 1)];
++  }
++  NSAttributedString *expected = [[NSAttributedString alloc] initWithString:@"\u200Freal code() \u200F"];
++  XCTAssertEqualObjects(ENRMWithoutDirectionControls(text).string, expected.string);
++  XCTAssertEqualObjects(ENRMStringByExpandingLinkPills(text), expected.string);
++  XCTAssertEqualObjects(extractMarkdownFromAttributedString(text, NSMakeRange(0, text.length)), expected.string);
++  XCTAssertEqualObjects(extractMarkdownFromAttributedString(text, NSMakeRange(6, 8)), @"code()");
++  StyleConfig *style = [StyleConfig new];
++  XCTAssertEqualObjects(generateHTML(text, style), generateHTML(expected, style));
++  XCTAssertEqualObjects(generateHTML([text attributedSubstringFromRange:NSMakeRange(6, 8)], style),
++                        generateHTML([[NSAttributedString alloc] initWithString:@"code()"], style));
++  XCTAssertEqualObjects(text.string, @"\u200Freal \u2066code()\u2069 \u200F");
++  NSAttributedString *control = [[NSAttributedString alloc] initWithString:@"\u200E"
++      attributes:@{ ENRMDirectionControlKey: @YES }];
++  XCTAssertNil(generateHTML(control, style));
++}
++- (void)testCodeLedPillsPreserveSourceAndAuthoredDirectionMarks
++{
++  for (NSString *suffix in @[ @"", @" more \u200Ftext" ]) {
++    NSString *source = @"\u200Ffile.ts\u2066";
++    MarkdownASTNode *text = [[MarkdownASTNode alloc] initWithType:MarkdownNodeTypeText];
++    text.content = source;
++    MarkdownASTNode *code = [[MarkdownASTNode alloc] initWithType:MarkdownNodeTypeCode];
++    [code addChild:text];
++    MarkdownASTNode *link = [[MarkdownASTNode alloc] initWithType:MarkdownNodeTypeLink];
++    link.attributes[@"url"] = @"file:///file.ts";
++    [link addChild:code];
++    MarkdownASTNode *tail = [[MarkdownASTNode alloc] initWithType:MarkdownNodeTypeText];
++    tail.content = suffix;
++    [link addChild:tail];
++    MarkdownASTNode *paragraph = [[MarkdownASTNode alloc] initWithType:MarkdownNodeTypeParagraph];
++    [paragraph addChild:link];
++    ENRMAnnotateWordMajority(paragraph, ^BOOL(NSString *url) { return YES; });
++    StyleConfig *style = [StyleConfig new];
++    LinkVariantConfig *variant = [LinkVariantConfig new];
++    variant.pattern = @"^file:";
++    variant.pill = [LinkPillConfig new];
++    [style setLinkVariants:@[ variant ]];
++    NSAttributedString *rendered = [[[AttributedRenderer alloc] initWithConfig:style]
++        renderNodes:@[ paragraph ] context:[RenderContext new] block:nil];
++    __block ENRMLinkPillAttachment *pill = nil;
++    [rendered enumerateAttribute:NSAttachmentAttributeName inRange:NSMakeRange(0, rendered.length) options:0
++                     usingBlock:^(id value, NSRange range, BOOL *stop) {
++      if (![value isKindOfClass:ENRMLinkPillAttachment.class]) return;
++      pill = value;
++      XCTAssertNil([rendered attribute:ENRMDirectionControlKey atIndex:range.location effectiveRange:NULL]);
++    }];
++    XCTAssertNotNil(pill);
++    NSString *expanded = ENRMStringByExpandingLinkPills(rendered);
++    XCTAssertTrue([expanded containsString:source]);
++    XCTAssertTrue([expanded hasSuffix:suffix]);
++    XCTAssertEqualObjects(expanded, ENRMWithoutDirectionControls(pill.originalText).string);
++    NSAttributedString *attributed = ENRMAttributedStringByExpandingLinkPills(rendered, NULL);
++    NSRange sourceRange = [attributed.string rangeOfString:source];
++    XCTAssertNotEqual(sourceRange.location, NSNotFound);
++    XCTAssertNotNil([attributed attribute:CodeAttributeName atIndex:sourceRange.location effectiveRange:NULL]);
++  }
++}
++
++- (void)testRTLTableCellsDistinguishExplicitLeftFromNaturalAlignment
++{
++  NSMutableArray<MarkdownASTNode *> *cells = [NSMutableArray new];
++  for (NSString *align in @[ @"left", @"right", @"center", @"" ]) {
++    MarkdownASTNode *cell = [[MarkdownASTNode alloc] initWithType:MarkdownNodeTypeTableCell];
++    if (align.length > 0) cell.attributes[@"align"] = align;
++    MarkdownASTNode *text = [[MarkdownASTNode alloc] initWithType:MarkdownNodeTypeText];
++    text.content = @"שלום";
++    [cell addChild:text];
++    [cells addObject:cell];
++  }
++  MarkdownASTNode *row = [[MarkdownASTNode alloc] initWithType:MarkdownNodeTypeTableRow];
++  for (MarkdownASTNode *cell in cells) [row addChild:cell];
++  MarkdownASTNode *body = [[MarkdownASTNode alloc] initWithType:MarkdownNodeTypeTableBody];
++  [body addChild:row];
++  MarkdownASTNode *table = [[MarkdownASTNode alloc] initWithType:MarkdownNodeTypeTable];
++  [table addChild:body];
++  ENRMAnnotateWordMajority(table, nil);
++  TableContainerView *view = [[TableContainerView alloc] initWithConfig:[StyleConfig new]];
++  [view applyTableNode:table];
++  NSArray *rendered = [view valueForKey:@"rows"];
++  NSArray<NSNumber *> *expected = @[ @(NSTextAlignmentLeft), @(NSTextAlignmentRight),
++                                    @(NSTextAlignmentCenter), @(NSTextAlignmentNatural) ];
++  XCTAssertEqual(rendered.count, 1);
++  NSArray *renderedCells = rendered.firstObject;
++  XCTAssertEqual(renderedCells.count, expected.count);
++  for (NSUInteger i = 0; i < renderedCells.count; i++) {
++    NSAttributedString *text = [renderedCells[i] valueForKey:@"attributedText"];
++    NSParagraphStyle *paragraph = [text attribute:NSParagraphStyleAttributeName atIndex:0 effectiveRange:NULL];
++    XCTAssertEqual(paragraph.baseWritingDirection, NSWritingDirectionRightToLeft);
++    XCTAssertEqual(paragraph.alignment, expected[i].integerValue);
++  }
++}
++
++@end
+diff --git a/tests/word-majority/ios.m b/tests/word-majority/ios.m
+new file mode 100644
+index 0000000..0a63d90
+--- /dev/null
++++ b/tests/word-majority/ios.m
+@@ -0,0 +1,59 @@
++#import <Foundation/Foundation.h>
++#import "ENRMWordMajority.h"
++#import "MarkdownASTNode.h"
++
++static MarkdownASTNode *node(MarkdownNodeType type, NSString *text, NSArray *children) {
++  MarkdownASTNode *result = [[MarkdownASTNode alloc] initWithType:type];
++  result.content = text;
++  [result.children addObjectsFromArray:children ?: @[]];
++  return result;
++}
++static void check(BOOL value) { if (!value) abort(); }
++int main(void) {
++  @autoreleasepool {
++    NSArray *cases = @[
++      @[@"StrictMode: يعيد الـ render مرتين", @"rtl"],
++      @[@"Supercalifragilisticexpialidocious مرحبا بكم", @"rtl"],
++      @[@"שלום documentation is available", @"ltr"],
++      @[@"hello שלום", @"ltr"], @[@"שלום hello", @"rtl"],
++      @[@"123 !!!", @""], @[@"\uFEFFhello\u00A0שלום\u3000עולם", @"rtl"],
++      @[@"𐤀 hello שלום", @"rtl"], @[@"َhello שלום", @"ltr"],
++      @[@"APIשלום مرحبا", @"ltr"], @[@"مرحباAPI hello", @"rtl"]
++    ];
++    for (NSArray *test in cases) check([(ENRMWordMajorityDirection(test[0]) ?: @"") isEqual:test[1]]);
++    MarkdownASTNode *english = node(MarkdownNodeTypeParagraph, nil, @[node(MarkdownNodeTypeText, @"English", nil)]);
++    MarkdownASTNode *arabic = node(MarkdownNodeTypeParagraph, nil, @[
++      node(MarkdownNodeTypeText, @"مرحبا بكم", nil), node(MarkdownNodeTypeSoftBreak, nil, nil),
++      node(MarkdownNodeTypeCode, nil, @[node(MarkdownNodeTypeText, @"many english code words", nil)])]);
++    MarkdownASTNode *chip = node(MarkdownNodeTypeLink, nil, @[node(MarkdownNodeTypeText, @"more english words here", nil)]);
++    chip.attributes[@"url"] = @"chip";
++    [arabic addChild:chip];
++    MarkdownASTNode *quote = node(MarkdownNodeTypeBlockquote, nil, @[english, arabic]);
++    MarkdownASTNode *left = node(MarkdownNodeTypeTableCell, nil, @[node(MarkdownNodeTypeText, @"Hello world", nil)]);
++    MarkdownASTNode *right = node(MarkdownNodeTypeTableCell, nil, @[node(MarkdownNodeTypeText, @"مرحبا بكم", nil)]);
++    MarkdownASTNode *table = node(MarkdownNodeTypeTable, nil, @[node(MarkdownNodeTypeTableRow, nil, @[left, right])]);
++    [quote addChild:table];
++    MarkdownASTNode *list = node(MarkdownNodeTypeUnorderedList, nil, @[
++      node(MarkdownNodeTypeListItem, nil, @[node(MarkdownNodeTypeText, @"English", nil)]),
++      node(MarkdownNodeTypeListItem, nil, @[node(MarkdownNodeTypeText, @"مرحبا بكم", nil)])]);
++    MarkdownASTNode *root = node(MarkdownNodeTypeDocument, nil, @[quote, list]);
++    ENRMAnnotateWordMajority(root, ^BOOL(NSString *url) { return [url isEqual:@"chip"]; });
++    for (MarkdownASTNode *item in @[quote, english, arabic, list, list.children[0], list.children[1]])
++      check([item.attributes[ENRMProseDirectionKey] isEqual:@"rtl"]);
++    check([left.attributes[ENRMProseDirectionKey] isEqual:@"ltr"]);
++    check([right.attributes[ENRMProseDirectionKey] isEqual:@"rtl"]);
++    check([table.attributes[ENRMProseDirectionKey] isEqual:@"ltr"]);
++    check([english.children[0].content isEqual:@"English"]);
++    [chip addChild:node(MarkdownNodeTypeLineBreak, nil, nil)];
++    ENRMAnnotateWordMajority(root, ^BOOL(NSString *url) { return [url isEqual:@"chip"]; });
++    check([quote.attributes[ENRMProseDirectionKey] isEqual:@"ltr"]);
++    NSString *source = @"\u200Freal \u2066code()\u2069 \u200F";
++    NSMutableAttributedString *selection = [[NSMutableAttributedString alloc] initWithString:source];
++    [selection addAttribute:ENRMDirectionControlKey value:@YES range:NSMakeRange(6, 1)];
++    [selection addAttribute:ENRMDirectionControlKey value:@YES range:NSMakeRange(13, 1)];
++    check([ENRMWithoutDirectionControls(selection).string isEqual:@"\u200Freal code() \u200F"]);
++    check([ENRMWithoutDirectionControls([selection attributedSubstringFromRange:NSMakeRange(6, 8)]).string isEqual:@"code()"]);
++    check([selection.string isEqual:source]);
++    puts("iOS: 11 word-direction cases and AST inheritance/code/chip/table/clipboard checks passed");
++  }
++}

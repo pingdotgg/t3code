@@ -14,6 +14,7 @@ import android.text.InputType
 import android.text.InputFilter
 import android.text.Spanned
 import android.text.TextUtils
+import android.text.TextDirectionHeuristic
 import android.text.TextWatcher
 import android.text.style.ReplacementSpan
 import android.util.TypedValue
@@ -580,6 +581,8 @@ internal class SelectionAwareEditText(
   context: Context,
   private val currentActivity: () -> Activity? = { context as? Activity }
 ) : EditText(context) {
+  override fun getTextDirectionHeuristic(): TextDirectionHeuristic = ComposerTextDirection
+
   var readOnly = false
   var selectionListener: ((Int, Int) -> Unit)? = null
   var pasteImagesListener: ((List<String>) -> Unit)? = null
