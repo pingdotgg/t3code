@@ -310,6 +310,8 @@ export class GitVcsDriver extends Context.Service<
       cwd: string,
       options?: GitRemoteStatusOptions,
     ) => Effect.Effect<GitRemoteStatusDetails, GitCommandError>;
+    /** Changes whenever a status read fetches this repository, so callers can tell if refs may have moved. */
+    readonly statusUpstreamFetchCount: (cwd: string) => Effect.Effect<number>;
     readonly prepareCommitContext: (
       cwd: string,
       filePaths?: readonly string[],

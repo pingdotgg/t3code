@@ -1621,10 +1621,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
     }
   });
+  const statusUpstreamFetches = new Map<string, number>();
   const refreshStatusRemoteCacheEntry = Effect.fn("refreshStatusRemoteCacheEntry")(function* (
     cacheKey: StatusRemoteRefreshCacheKey,
   ) {
     return yield* fetchRemoteForStatus(cacheKey.gitCommonDir, cacheKey.remoteName).pipe(
+      // Counted on failure too: a fetch can move some refs before it fails.
+      Effect.ensuring(
+        Effect.sync(() => {
+          statusUpstreamFetches.set(
+            cacheKey.gitCommonDir,
+            (statusUpstreamFetches.get(cacheKey.gitCommonDir) ?? 0) + 1,
+          );
+        }),
+      ),
       Effect.as(true as const),
     );
   });
@@ -1639,6 +1649,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             statusRemoteRefreshFailures.get(statusRemoteRefreshFailureKey(cacheKey))?.count ?? 1,
           ),
   });
+
+  const statusUpstreamFetchCount: GitVcsDriver.GitVcsDriver["Service"]["statusUpstreamFetchCount"] =
+    (cwd) =>
+      resolveGitCommonDir(cwd).pipe(
+        Effect.map((gitCommonDir) => statusUpstreamFetches.get(gitCommonDir) ?? 0),
+        Effect.orElseSucceed(() => 0),
+      );
 
   const refreshStatusUpstreamIfStale = Effect.fn("refreshStatusUpstreamIfStale")(function* (
     cwd: string,
@@ -4936,6 +4953,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     statusDetails,
     statusDetailsLocal,
     statusDetailsRemote,
+    statusUpstreamFetchCount,
     prepareCommitContext,
     commit: Effect.fnUntraced(function* (cwd, subject, body, options) {
       return yield* withListRefsInvalidation(cwd, commit(cwd, subject, body, options));

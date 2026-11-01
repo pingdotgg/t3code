@@ -2433,6 +2433,42 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("a checkout's invalidation keeps the branch's cached PR lookup", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-cached"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-cached"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          prListSequence: [
+            [
+              {
+                number: 215,
+                title: "Cached PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/215",
+                baseRefName: "main",
+                headRefName: "feature/pr-cached",
+              },
+            ],
+            [],
+          ],
+        },
+      });
+
+      expect((yield* manager.status({ cwd: repoDir })).pr?.number).toBe(215);
+
+      yield* manager.invalidateStatus(repoDir, { keepPullRequestLookups: true });
+      expect((yield* manager.status({ cwd: repoDir })).pr?.number).toBe(215);
+
+      yield* manager.invalidateStatus(repoDir);
+      expect((yield* manager.status({ cwd: repoDir })).pr).toBeNull();
+    }),
+  );
+
   it.effect(
     "status does not reuse a stale PR after the branch is retargeted to a different upstream",
     () =>

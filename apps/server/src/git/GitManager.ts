@@ -140,7 +140,11 @@ export class GitManager extends Context.Service<
     ) => Effect.Effect<GitBranchPullRequest | null, GitManagerServiceError>;
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
-    readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
+    /** keepPullRequestLookups is for changes that cannot affect a PR, such as a checkout. */
+    readonly invalidateStatus: (
+      cwd: string,
+      options?: { readonly keepPullRequestLookups?: boolean },
+    ) => Effect.Effect<void, never>;
     readonly resolvePullRequest: (
       input: GitPullRequestRefInput,
     ) => Effect.Effect<GitResolvePullRequestResult, GitManagerServiceError>;
@@ -2665,10 +2669,10 @@ export const make = Effect.gen(function* () {
     yield* invalidateRemoteStatusResultCache(cwd);
   });
   const invalidateStatus: GitManager["Service"]["invalidateStatus"] = Effect.fn("invalidateStatus")(
-    function* (cwd) {
+    function* (cwd, options) {
       yield* invalidateLocalStatusResultCache(cwd);
       yield* invalidateRemoteStatusResultCache(cwd);
-      yield* bumpPrLookupEpoch(cwd);
+      if (!options?.keepPullRequestLookups) yield* bumpPrLookupEpoch(cwd);
       yield* forgetPrLookupGitState(cwd);
     },
   );

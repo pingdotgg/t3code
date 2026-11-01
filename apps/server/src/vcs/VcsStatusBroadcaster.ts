@@ -24,6 +24,7 @@ import type {
 } from "@t3tools/contracts";
 import { DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import { mergeGitStatusParts } from "@t3tools/shared/git";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -556,6 +557,33 @@ export const make = Effect.gen(function* () {
     return yield* refreshRemoteAndLocalTotals(cwd, rawCwd);
   });
 
+  const refreshRemoteAfterCheckout = Effect.fn("VcsStatusBroadcaster.refreshRemoteAfterCheckout")(
+    function* (cwd: string, policyCwd: string) {
+      yield* withRemoteWriteLock(
+        cwd,
+        Effect.gen(function* () {
+          const refreshUpstream = !Duration.isZero(yield* automaticFetchInterval);
+          yield* workflow.invalidateStatus(cwd, { keepPullRequestLookups: true });
+          const fetchesBefore = yield* workflow.statusUpstreamFetchCount(cwd);
+          const remoteRead = yield* readRemoteStatus(cwd, { refreshUpstream });
+          // Only a fetch can move the base used for local Changes totals.
+          if ((yield* workflow.statusUpstreamFetchCount(cwd)) !== fetchesBefore) {
+            yield* refreshLocalStatusCore(cwd);
+          }
+          // Without a fetch, the cached behind count cannot justify an automatic pull.
+          const pulled = refreshUpstream
+            ? yield* maybeAutoPull(cwd, remoteRead, [policyCwd])
+            : null;
+          if (pulled === null) {
+            yield* updateCachedRemoteStatus(cwd, remoteRead, { publish: true });
+          }
+        }),
+      );
+    },
+    // Someone just picked this branch, so its PR lookup skips the background batching delay.
+    Effect.provideService(SourceControlRateLimit.Interactive, true),
+  );
+
   const refreshAfterCheckout: VcsStatusBroadcaster["Service"]["refreshAfterCheckout"] = Effect.fn(
     "VcsStatusBroadcaster.refreshAfterCheckout",
   )(function* (rawCwd) {
@@ -564,7 +592,7 @@ export const make = Effect.gen(function* () {
     // Owned by the broadcaster so a client disconnecting mid-switch still leaves status correct.
     yield* refreshLocalStatusCore(cwd).pipe(
       Effect.ensuring(Deferred.succeed(localDone, undefined)),
-      Effect.andThen(refreshRemoteAndLocalTotals(cwd, rawCwd)),
+      Effect.andThen(refreshRemoteAfterCheckout(cwd, rawCwd)),
       Effect.ignoreCause({ log: true }),
       Effect.forkIn(broadcasterScope),
     );

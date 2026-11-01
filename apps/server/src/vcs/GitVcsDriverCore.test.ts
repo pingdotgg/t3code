@@ -3386,6 +3386,31 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("counts a status read's upstream fetch only when one actually ran", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const initial = yield* driver.statusUpstreamFetchCount(cwd);
+
+        yield* driver.statusDetailsRemote(cwd, { refreshUpstream: false });
+        assert.equal(yield* driver.statusUpstreamFetchCount(cwd), initial);
+
+        yield* driver.statusDetailsRemote(cwd);
+        const afterFetch = yield* driver.statusUpstreamFetchCount(cwd);
+        assert.equal(afterFetch, initial + 1);
+
+        // Still inside the refresh interval, so this read reuses the last fetch.
+        yield* driver.statusDetailsRemote(cwd);
+        assert.equal(yield* driver.statusUpstreamFetchCount(cwd), afterFetch);
+      }),
+    );
+
     it.effect("does not start Git auto-maintenance from background upstream fetches", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
