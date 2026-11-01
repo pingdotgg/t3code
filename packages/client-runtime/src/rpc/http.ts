@@ -158,6 +158,18 @@ const failRemoteRequest = (
   );
 };
 
+const REMOTE_REQUEST_HEDGE_DELAY = Duration.seconds(2);
+
+/**
+ * Starts one identical attempt if an idempotent request has not settled after
+ * `REMOTE_REQUEST_HEDGE_DELAY`: Tailscale can black-hole the first connection after a wake.
+ */
+export const hedgeIdempotentRequest = <A, E, R>(
+  request: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off -- A hedge, not a timeout: the first attempt keeps running.
+  Effect.raceFirst(request, Effect.sleep(REMOTE_REQUEST_HEDGE_DELAY).pipe(Effect.andThen(request)));
+
 export const executeEnvironmentHttpRequest = <A, E, R>(
   requestUrl: string,
   timeoutMs: number,
