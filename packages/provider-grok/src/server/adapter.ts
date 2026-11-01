@@ -87,6 +87,11 @@ const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 
 const GrokProviderCapabilitiesV2 = {
   ...AcpProviderCapabilitiesV2,
+  turns: {
+    ...AcpProviderCapabilitiesV2.turns,
+    // Cancelling a Grok prompt interrupts its running tools; queue follow-ups instead.
+    supportsSteeringByInterruptRestart: false,
+  },
   sessions: {
     ...AcpProviderCapabilitiesV2.sessions,
     supportsModelSwitchInSession: true,
@@ -228,7 +233,7 @@ export function makeGrokAcpAdapterFlavor(
     runtimeHarness: "Grok",
     capabilities: GrokProviderCapabilitiesV2,
     interruptPromptOnCancel: false,
-    // User Stop restarts the process group; steering cancels softly to preserve background work.
+    // User Stop restarts the process group; follow-ups wait in the app-owned queue.
     restartRuntimeAfterInterrupt: true,
     terminateRuntimeProcessGroupOnInterrupt: true,
     // Settled Grok sessions accept concurrent prompts; skip cancel to preserve background subagents.

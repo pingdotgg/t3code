@@ -12,6 +12,8 @@ import {
   ThreadId,
   TurnItemId,
   type ModelSelection,
+  type ChatAttachment,
+  type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -28,6 +30,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { makeGrokAcpAdapterFlavor } from "@t3tools/provider-grok/testing";
 
 const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
@@ -448,13 +451,14 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   name: string,
   canRestart = false,
   canSteer = true,
+  providerCapabilities?: OrchestrationV2ProviderCapabilities,
 ) {
   const cwd = yield* checkpointWorkspace(name);
   const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
   const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
   const steered: string[] = [];
   const interrupted: ProviderTurnId[] = [];
-  const capabilities = {
+  const capabilities = providerCapabilities ?? {
     ...CodexProviderCapabilitiesV2,
     turns: {
       ...CodexProviderCapabilitiesV2.turns,
@@ -943,25 +947,52 @@ it.effect("starts a steer that missed the turn on the saved next-turn selection"
   ),
 );
 
-// regression: #26695 cancelling a Copilot prompt to steer it kills its background agents
-it.effect("queues a steer until the turn ends when the provider cannot steer it", () =>
+// Interrupt-and-restart cancels running tools and native background agents.
+it.effect("queues a Grok steer with attachments until the turn ends without cancellation", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { events, started, steered, interrupted, layer, startFirstTurn } =
-        yield* nextTurnSelectionHarness("steering-unsupported", false, false);
+        yield* nextTurnSelectionHarness(
+          "steering-unsupported",
+          false,
+          false,
+          makeGrokAcpAdapterFlavor(
+            { makeRuntime: () => Effect.never } as unknown as Parameters<
+              typeof makeGrokAcpAdapterFlavor
+            >[0],
+            "/home/ada",
+          ).capabilities,
+        );
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const threadId = yield* startFirstTurn;
         const first = started[0]!;
         const messageId = MessageId.make("message:steer");
+        const attachments: ChatAttachment[] = [
+          {
+            type: "image",
+            id: "queued-image",
+            name: "image.png",
+            mimeType: "image/png",
+            sizeBytes: 10,
+          },
+          {
+            type: "file",
+            id: "queued-file",
+            name: "notes.txt",
+            mimeType: "text/plain",
+            sizeBytes: 20,
+            source: { _tag: "pasted-text" },
+          },
+        ];
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make("steer"),
           threadId,
           messageId,
           text: "follow up",
-          attachments: [],
+          attachments,
           modelSelection: runSelection,
           dispatchMode: { type: "start_immediately" },
           deliveryIntent: "steer",
@@ -977,6 +1008,10 @@ it.effect("queues a steer until the turn ends when the provider cannot steer it"
         assert.equal(held.runs.find((run) => run.id === first.runId)?.status, "running");
         const queued = held.runs.find((run) => run.userMessageId === messageId);
         assert.equal(queued?.status, "queued");
+        assert.deepEqual(
+          held.messages.find((message) => message.id === messageId)?.attachments,
+          attachments,
+        );
 
         const settled = yield* orchestrator.streamDomainEvents.pipe(
           Stream.filter(
@@ -1014,6 +1049,9 @@ it.effect("queues a steer until the turn ends when the provider cannot steer it"
         assert.equal(started.length, 2);
         assert.equal(started[1]?.runId, queued?.id);
         assert.equal(started[1]?.message.text, "follow up");
+        assert.equal(started[1]?.message.messageId, messageId);
+        assert.deepEqual(started[1]?.message.attachments, attachments);
+        assert.deepEqual(steered, []);
       }).pipe(Effect.provide(layer));
     }),
   ),
