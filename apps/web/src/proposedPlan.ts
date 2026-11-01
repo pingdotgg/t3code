@@ -1,11 +1,11 @@
 import { stripDisplayedPlanMarkdown, proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
 
-export function buildCollapsedProposedPlanPreviewMarkdown(
+export function buildCollapsedProposedPlanPreview(
   planMarkdown: string,
   options?: {
     maxLines?: number;
   },
-): string {
+) {
   const maxLines = options?.maxLines ?? 8;
   const lines = stripDisplayedPlanMarkdown(planMarkdown)
     .trimEnd()
@@ -32,14 +32,13 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
   }
 
   if (previewLines.length === 0) {
-    return proposedPlanTitle(planMarkdown) ?? "Plan preview unavailable.";
+    return {
+      markdown: proposedPlanTitle(planMarkdown) ?? "Plan preview unavailable.",
+      truncated: false,
+    };
   }
 
-  if (hasMoreContent) {
-    previewLines.push("", "...");
-  }
-
-  return previewLines.join("\n");
+  return { markdown: previewLines.join("\n"), truncated: hasMoreContent };
 }
 
 function sanitizePlanFileSegment(input: string): string {

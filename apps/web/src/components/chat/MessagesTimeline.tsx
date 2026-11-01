@@ -83,6 +83,7 @@ import {
   isTimelineMinimapRowVisible,
   resolveTimelineMinimapVisibleRange,
   resolveTimelineMinimapHitStripWidth,
+  citationSourceId,
   timelineTurnFoldRunIdsByEntryId,
   type MessagesTimelineRow,
   type TimelineLatestRun,
@@ -619,9 +620,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     citationHistory._tag !== "failed"
       ? timelineEntries.find(
           (entry) =>
-            entry.kind === "message" &&
-            entry.message.role === "assistant" &&
-            entry.message.id === citationRequest.citation.messageId,
+            (entry.kind === "proposed-plan" ||
+              (entry.kind === "message" && entry.message.role === "assistant")) &&
+            citationSourceId(entry) === citationRequest.citation.messageId,
         )
       : undefined;
   if (citationRequest && citedEntry) {
