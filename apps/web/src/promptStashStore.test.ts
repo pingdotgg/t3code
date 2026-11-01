@@ -369,7 +369,7 @@ describe("promptStashStore", () => {
       expect(JSON.parse(shared.stored.get(PROMPT_STASH_STORAGE_KEY) ?? "null")).toMatchObject({
         state: {
           entries: [
-            { id: "orphan", pendingImageCount: 0, unreadableImageNames: [expect.any(String)] },
+            { id: "orphan", pendingImageCount: 1 },
             { id: "encoding", attachments: [encodedImage], pendingImageCount: 0 },
           ],
         },
@@ -377,6 +377,17 @@ describe("promptStashStore", () => {
       expect(tab.usePromptStashStore.getState().takeEntry("encoding").entry?.attachments).toEqual([
         encodedImage,
       ]);
+
+      const settling = tab.writePromptStashStorageForTest(
+        JSON.stringify({ version: 2, state: { entries: [orphan] } }),
+      );
+      shared.afterNextRead = () => {
+        tab.usePromptStashStore.getState().stashEntry(makeEntry({ id: "new-text" }));
+      };
+      await settling;
+      expect(tab.usePromptStashStore.getState().takeEntry("new-text").entry?.prompt).toBe(
+        "prompt new-text",
+      );
     } finally {
       vi.unstubAllGlobals();
     }

@@ -93,11 +93,12 @@ const pendingEntryIds = (entries: ReadonlyArray<PromptStashEntry>) =>
   new Set(entries.filter((entry) => entry.pendingImageCount).map((entry) => entry.id));
 
 const SETTLE_LOCK_ATTEMPTS = 3;
+const settledPendingEntryIds = new Set<string>();
 
 /**
  * Only the stashing tab's encode clears `pendingImageCount`, so an entry nobody encodes would
- * show "saving…" forever. Settling writes only while holding the encode lock of every entry
- * pending in its final read, and an encoder frees its lock only after finalizing.
+ * show "saving…" forever. Check ownership under encode locks, then settle locally;
+ * writing a startup snapshot could overwrite a prompt another tab just stashed.
  */
 async function settleOrphanedPendingImages(loaded: ReadonlyArray<PromptStashEntry>) {
   let pendingIds = pendingEntryIds(loaded);
@@ -135,26 +136,25 @@ function settlePendingImages(
   latest: ReadonlyArray<PromptStashEntry>,
   orphanIds: ReadonlySet<string>,
 ): void {
-  let settledAny = false;
-  const settled = latest.map((entry) => {
-    if (!entry.pendingImageCount || !orphanIds.has(entry.id)) return entry;
-    settledAny = true;
-    const lostCount = entry.pendingImageCount;
-    return {
-      ...entry,
-      pendingImageCount: 0,
-      unreadableImageNames: [
-        ...(entry.unreadableImageNames ?? []),
-        ...Array.from(
-          { length: lostCount },
-          (_, index) => `image ${index + 1} (not saved before reload)`,
-        ),
-      ],
-    };
-  });
-  if (!settledAny) return;
-  persistEntries(settled);
-  usePromptStashStore.setState({ entries: visibleEntries(settled) });
+  for (const entry of latest) {
+    if (entry.pendingImageCount && orphanIds.has(entry.id)) settledPendingEntryIds.add(entry.id);
+  }
+  usePromptStashStore.setState({ entries: visibleEntries(readPersistedEntries() ?? latest) });
+}
+
+function withSettledPendingImages(entry: PromptStashEntry): PromptStashEntry {
+  if (!entry.pendingImageCount || !settledPendingEntryIds.has(entry.id)) return entry;
+  return {
+    ...entry,
+    pendingImageCount: 0,
+    unreadableImageNames: [
+      ...(entry.unreadableImageNames ?? []),
+      ...Array.from(
+        { length: entry.pendingImageCount },
+        (_, index) => `image ${index + 1} (not saved before reload)`,
+      ),
+    ],
+  };
 }
 
 export function partitionStashAttachments(
@@ -228,7 +228,10 @@ function visibleEntries(entries: ReadonlyArray<PromptStashEntry>): ReadonlyArray
   for (const entryId of unsavedImagesByEntryId.keys()) {
     if (!entries.some((entry) => entry.id === entryId)) unsavedImagesByEntryId.delete(entryId);
   }
-  return unsavedImagesByEntryId.size === 0 ? entries : entries.map(withUnsavedImages);
+  for (const entryId of settledPendingEntryIds) {
+    if (!entries.some((entry) => entry.id === entryId)) settledPendingEntryIds.delete(entryId);
+  }
+  return entries.map((entry) => withUnsavedImages(withSettledPendingImages(entry)));
 }
 
 // Clear the composer only after a durable write; debounce cannot confirm durability.
@@ -272,7 +275,7 @@ function readPersistedEntries(): ReadonlyArray<PromptStashEntry> | null {
  * entry another tab stashed since this tab last read.
  */
 function latestEntries(current: ReadonlyArray<PromptStashEntry>): ReadonlyArray<PromptStashEntry> {
-  return readPersistedEntries() ?? current;
+  return visibleEntries(readPersistedEntries() ?? current);
 }
 
 interface PromptStashStoreState {
