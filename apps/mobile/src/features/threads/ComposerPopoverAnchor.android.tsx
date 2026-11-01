@@ -8,14 +8,12 @@ const COMPOSER_GAP = 8;
 
 type Frame = { readonly x: number; readonly y: number; readonly width: number };
 
-/**
- * Android only delivers drags to views inside their parent's bounds, so a popover hung above the
- * composer with `bottom-full` takes taps but its list never scrolls.
- */
+/** Android only delivers drags inside parent bounds; bottom-full popover lists cannot scroll. */
 export function ComposerPopoverAnchor(props: { readonly children: ReactNode }) {
   const host = useComposerPopoverHost();
   const anchorRef = useRef<ViewInstance>(null);
   const [frame, setFrame] = useState<Frame | null>(null);
+  const popoverHeight = host?.popoverHeight;
 
   const measure = () => {
     const hostView = host?.hostRef.current;
@@ -29,9 +27,8 @@ export function ComposerPopoverAnchor(props: { readonly children: ReactNode }) {
     });
   };
 
-  // No dependency array: the composer re-renders when its padding or expanded
-  // state changes, which moves it without resizing the anchor, so measure and
-  // re-project after every render.
+  // Measure every render: composer padding or expansion can move the anchor without resizing it.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the anchor view after every commit and hands its popover content to the composer popover host
   useEffect(() => {
     measure();
     host?.setContent(
@@ -41,14 +38,27 @@ export function ComposerPopoverAnchor(props: { readonly children: ReactNode }) {
           className="absolute top-0 justify-end"
           style={{ left: frame.x, width: frame.width, height: frame.y - COMPOSER_GAP }}
         >
-          {props.children}
+          <View
+            onLayout={(event) => {
+              popoverHeight?.set(event.nativeEvent.layout.height);
+            }}
+          >
+            {props.children}
+          </View>
         </View>
       ),
     );
   });
 
   const setHostContent = host?.setContent;
-  useEffect(() => () => setHostContent?.(null), [setHostContent]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the popover host's content and shared height value when the anchor unmounts
+  useEffect(
+    () => () => {
+      setHostContent?.(null);
+      popoverHeight?.set(0);
+    },
+    [setHostContent, popoverHeight],
+  );
 
   if (host === null) {
     return <View className="absolute inset-x-0 bottom-full z-10 mb-2">{props.children}</View>;

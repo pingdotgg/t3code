@@ -1,20 +1,22 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
-  type ProviderInstanceId,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 
-import { mergeEnvironmentSettings } from "../../hooks/useSettings";
-import { getCustomModelOptionsByInstance } from "../../modelSelection";
+import { useClientSettings } from "../../hooks/useSettings";
 import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
+  defaultModelSelectionsAreMixed,
+  getCustomModelOptionsByInstance,
+  resolveEffectiveDefaultModelSelection,
+} from "../../modelSelection";
+import {
+  providerInstanceEntriesFor,
   resolveDefaultProviderModelSelection,
-  sortProviderInstanceEntries,
+  resolveProjectDefaultProviderModelSelection,
 } from "../../providerInstances";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
@@ -35,6 +37,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
+import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -50,6 +53,7 @@ function isWorktreeSubmodules(value: string | null): value is WorktreeSubmodules
 export function ProjectDefaultsSettings({ category }: { category: ProjectSettingsCategory }) {
   const { scope, target, targets, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
+  const clientSettings = useClientSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
   const { environments } = useEnvironments();
@@ -61,14 +65,14 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     (representative?.serverConfig
       ? providersByEnvironment.get(representative.environmentId)
       : undefined) ?? EMPTY_SERVER_PROVIDERS;
-  const selection = resolveDefaultProviderModelSelection(providers, settings.defaultModelSelection);
-  const entries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(
-      deriveProviderInstanceEntries(providers),
-      settings,
-      target?.projectId ?? null,
-    ),
-  );
+  const storedSelection =
+    settings.defaultModelSelection === null
+      ? resolveProjectDefaultProviderModelSelection(providers, settings, target?.projectId ?? null)
+      : resolveDefaultProviderModelSelection(providers, settings.defaultModelSelection);
+  const selection = storedSelection
+    ? resolveEffectiveDefaultModelSelection(settings, providers, storedSelection)
+    : null;
+  const entries = providerInstanceEntriesFor(providers, settings, target?.projectId ?? null);
   const modelOptions = getCustomModelOptionsByInstance(
     settings,
     providers,
@@ -76,11 +80,29 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     selection?.model,
   );
   const activeEntry = entries.find((entry) => entry.instanceId === selection?.instanceId);
-  const mixedModel = useScopedSettingsMixed(["defaultModelSelection"]);
+  const mixedModel = defaultModelSelectionsAreMixed(
+    clientSettings,
+    targets.map((candidate) => ({
+      projectId: candidate.projectId,
+      settings: candidate.settings,
+      providers: providersByEnvironment.get(candidate.environmentId) ?? EMPTY_SERVER_PROVIDERS,
+    })),
+  );
+  const automaticModel =
+    targets.length > 0 &&
+    targets.every((candidate) => candidate.settings.defaultModelSelection === null);
+  const mixedFallback = useScopedSettingsMixed(["fallbackModelSelection"]);
+  const fallbackSelection = settings.fallbackModelSelection ?? selection;
+  const fallbackEntry = entries.find((entry) => entry.instanceId === fallbackSelection?.instanceId);
+  const fallbackModelOptions = getCustomModelOptionsByInstance(
+    settings,
+    providers,
+    fallbackSelection?.instanceId,
+    fallbackSelection?.model,
+  );
   const mixedPermissions = useScopedSettingsMixed(["defaultRuntimeMode"]);
   const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
   const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
-  const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
   const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
@@ -91,34 +113,10 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     ? resolveProjectSettings(target.settings, null, null, null).settings
     : null;
 
-  function modelDisabledReason(instanceId: ProviderInstanceId, model: string): string | null {
-    const sourceEntry = entries.find((entry) => entry.instanceId === instanceId);
-    for (const candidate of targets) {
-      const environment = environments.find(
-        (entry) => entry.environmentId === candidate.environmentId,
-      );
-      const providers = providersByEnvironment.get(candidate.environmentId);
-      if (!environment?.serverConfig || !providers) continue;
-      const entry = applyProviderInstanceSettings(
-        deriveProviderInstanceEntries(providers),
-        candidate.settings,
-        candidate.projectId,
-      ).find((option) => option.instanceId === instanceId);
-      const options = getCustomModelOptionsByInstance(
-        mergeEnvironmentSettings(candidate.settings, settings),
-        providers,
-      ).get(instanceId);
-      if (
-        !entry?.enabled ||
-        !entry.isAvailable ||
-        entry.driverKind !== sourceEntry?.driverKind ||
-        !options?.some((option) => option.slug === model && !option.isUnavailable)
-      ) {
-        return `This model is unavailable on ${environment?.label ?? "a selected environment"}. Select that environment to choose its model separately.`;
-      }
-    }
-    return null;
-  }
+  const modelDisabledReason = useScopedModelDisabledReason(settings, entries);
+  const effortDisabledReason = selection
+    ? modelDisabledReason(selection.instanceId, selection.model)
+    : null;
 
   const setModel = (value: ModelSelection | null) => {
     const reason = value ? modelDisabledReason(value.instanceId, value.model) : null;
@@ -139,14 +137,14 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       description={
         isProjectScope
           ? "Model for new threads in this project."
-          : "Default model for new threads. Projects can override it."
+          : !unavailable && modelSource !== "project" && automaticModel
+            ? "Default model for new threads, selected automatically. Projects can override it."
+            : "Default model for new threads. Projects can override it."
       }
       status={
-        unavailable || mixedModel || modelSource === "project"
-          ? undefined
-          : settings.defaultModelSelection === null
-            ? "Automatic"
-            : undefined
+        mixedModel
+          ? `${automaticModel ? "Automatic defaults differ." : "Defaults differ."} Select one environment or choose a shared model to edit effort.`
+          : effortDisabledReason
       }
       resetAction={
         settings.defaultModelSelection !== null ? (
@@ -164,7 +162,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               instanceEntries={entries}
               modelOptionsByInstance={modelOptions}
               triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-              {...(mixedModel ? { triggerLabel: "Mixed" } : {})}
+              {...(mixedModel
+                ? { triggerLabel: automaticModel ? "Automatic (mixed)" : "Mixed" }
+                : {})}
               getModelDisabledReason={modelDisabledReason}
               onOpenProviderSetup={(instanceId) => {
                 if (representative)
@@ -177,13 +177,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 setModel(createModelSelection(instanceId, model))
               }
             />
-            {!mixedModel ? (
+            {!mixedModel && !effortDisabledReason ? (
               <TraitsPicker
                 provider={activeEntry.driverKind}
                 models={activeEntry.models}
                 model={selection.model}
-                prompt=""
-                onPromptChange={() => {}}
                 modelOptions={selection.options ?? []}
                 allowPromptInjectedEffort={false}
                 planModeEnabled={settings.planModeEnabled}
@@ -195,7 +193,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             ) : null}
           </div>
         ) : (
-          <span className="text-sm text-muted-foreground">No providers available</span>
+          <span className="text-sm text-muted-foreground">
+            {mixedModel ? "Mixed" : "No providers available"}
+          </span>
         )
       }
     />
@@ -248,6 +248,80 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     />
   );
 
+  const fallbackRow = !isProjectScope ? (
+    <SettingsRow
+      serverScoped
+      settingKeys={["fallbackModelSelection"]}
+      mixed={mixedFallback}
+      {...searchableSetting("fallback-model")}
+      description="Used for new threads when the default model's provider is out of usage."
+      resetAction={
+        mixedFallback || settings.fallbackModelSelection !== null ? (
+          <SettingResetButton
+            label="fallback model"
+            onClick={() => updateSettings({ fallbackModelSelection: null })}
+          />
+        ) : null
+      }
+      control={
+        fallbackSelection ? (
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+            <ProviderModelPicker
+              environmentId={representative?.environmentId ?? null}
+              activeInstanceId={fallbackSelection.instanceId}
+              model={fallbackSelection.model}
+              lockedProvider={null}
+              instanceEntries={entries}
+              modelOptionsByInstance={fallbackModelOptions}
+              triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+              triggerAriaLabel="Fallback model"
+              {...(mixedFallback
+                ? { triggerLabel: "Mixed" }
+                : settings.fallbackModelSelection === null
+                  ? { triggerLabel: "None" }
+                  : {})}
+              getModelDisabledReason={modelDisabledReason}
+              onInstanceModelChange={(instanceId, model) => {
+                const reason = modelDisabledReason(instanceId, model);
+                if (reason) {
+                  toastManager.add({
+                    type: "error",
+                    title: "Fallback model not saved",
+                    description: reason,
+                  });
+                  return;
+                }
+                updateSettings({ fallbackModelSelection: createModelSelection(instanceId, model) });
+              }}
+            />
+            {settings.fallbackModelSelection !== null && fallbackEntry && !mixedFallback ? (
+              <TraitsPicker
+                provider={fallbackEntry.driverKind}
+                models={fallbackEntry.models}
+                model={fallbackSelection.model}
+                modelOptions={fallbackSelection.options ?? []}
+                allowPromptInjectedEffort={false}
+                planModeEnabled={settings.planModeEnabled}
+                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                onModelOptionsChange={(options) =>
+                  updateSettings({
+                    fallbackModelSelection: createModelSelection(
+                      fallbackSelection.instanceId,
+                      fallbackSelection.model,
+                      options,
+                    ),
+                  })
+                }
+              />
+            ) : null}
+          </div>
+        ) : (
+          <span className="text-sm text-muted-foreground">No providers available</span>
+        )
+      }
+    />
+  ) : null;
+
   return (
     <SettingsSection
       id={category === "source-control" ? "source-control-defaults" : "project-defaults"}
@@ -256,11 +330,13 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       {category === "project" ? (
         <>
           {modelRow}
+          {fallbackRow}
           {workspaceRow}
         </>
       ) : category === "general" ? (
         <>
           {modelRow}
+          {fallbackRow}
           <SettingsRow
             serverScoped
             settingKeys={["defaultRuntimeMode"]}
@@ -323,52 +399,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             }
           />
           {workspaceRow}
-          <SettingsRow
-            serverScoped
-            settingKeys={["worktreeSubmodules"]}
-            mixed={mixedSubmodules}
-            {...searchableSetting("worktree-submodules")}
-            description={
-              isProjectScope
-                ? "How new worktrees in this project populate git submodules."
-                : "How new worktrees populate git submodules. Projects and their t3.json can override it."
-            }
-            resetAction={
-              !isProjectScope && settings.worktreeSubmodules !== null ? (
-                <SettingResetButton
-                  label="worktree submodules"
-                  onClick={() => updateSettings({ worktreeSubmodules: null })}
-                />
-              ) : null
-            }
-            control={
-              <Select
-                value={mixedSubmodules ? null : (effective?.worktreeSubmodules ?? null)}
-                onValueChange={(value) => {
-                  if (isWorktreeSubmodules(value)) updateSettings({ worktreeSubmodules: value });
-                }}
-              >
-                <SelectTrigger size="sm" aria-label="Worktree submodules">
-                  <SelectValue>
-                    {(value: string | null) =>
-                      isWorktreeSubmodules(value)
-                        ? WORKTREE_SUBMODULES_LABELS[value]
-                        : unavailable
-                          ? "Unavailable"
-                          : "Mixed"
-                    }
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {WORKTREE_SUBMODULES_OPTIONS.map((option) => (
-                    <SelectItem key={option} value={option}>
-                      {WORKTREE_SUBMODULES_LABELS[option]}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            }
-          />
         </>
       ) : (
         <>
@@ -406,7 +436,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             settingKeys={["removeAgentCreditsOnMerge"]}
             mixed={mixedAgentCredits}
             {...searchableSetting("remove-agent-credits-on-merge")}
-            description="Remove recognized agent credit lines from GitHub merge and squash messages, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits."
+            description="Remove recognized agent credit lines from merge and squash messages on hosts that support it, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits."
             resetAction={
               settings.removeAgentCreditsOnMerge ? (
                 <SettingResetButton
@@ -478,5 +508,66 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         </>
       )}
     </SettingsSection>
+  );
+}
+
+export function WorktreeSubmodulesRow() {
+  const { scope, target, connectedEnvironments } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);
+  const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
+  const unavailable = connectedEnvironments.length === 0;
+  const effective = target
+    ? resolveProjectSettings(target.settings, null, null, null).settings
+    : null;
+
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["worktreeSubmodules"]}
+      mixed={mixedSubmodules}
+      {...searchableSetting("worktree-submodules")}
+      description={
+        isProjectScope
+          ? "How new worktrees in this project populate git submodules."
+          : "How new worktrees populate git submodules. Projects and their t3.json can override it."
+      }
+      resetAction={
+        !isProjectScope && settings.worktreeSubmodules !== null ? (
+          <SettingResetButton
+            label="worktree submodules"
+            onClick={() => updateSettings({ worktreeSubmodules: null })}
+          />
+        ) : null
+      }
+      control={
+        <Select
+          value={mixedSubmodules ? null : (effective?.worktreeSubmodules ?? null)}
+          onValueChange={(value) => {
+            if (isWorktreeSubmodules(value)) updateSettings({ worktreeSubmodules: value });
+          }}
+        >
+          <SelectTrigger size="sm" aria-label="Worktree submodules">
+            <SelectValue>
+              {(value: string | null) =>
+                isWorktreeSubmodules(value)
+                  ? WORKTREE_SUBMODULES_LABELS[value]
+                  : unavailable
+                    ? "Unavailable"
+                    : "Mixed"
+              }
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {WORKTREE_SUBMODULES_OPTIONS.map((option) => (
+              <SelectItem key={option} value={option}>
+                {WORKTREE_SUBMODULES_LABELS[option]}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      }
+    />
   );
 }

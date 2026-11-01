@@ -3,6 +3,7 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
+import { textDirection } from "~/textDirection";
 
 import { isCommentSubmitShortcut } from "./commentSubmitShortcut";
 
@@ -47,6 +48,7 @@ export function DiffCommentAnnotation({
   const trimmedText = displayedText.trim();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the draft textarea on the next animation frame after mount
   useLayoutEffect(() => {
     if (kind !== "draft" || !focusOnMount) return;
     const frame = window.requestAnimationFrame(() => {
@@ -63,8 +65,13 @@ export function DiffCommentAnnotation({
         contentEditable={false}
         onPointerDown={(event) => event.stopPropagation()}
       >
-        <MessageCircle className="mt-0.5 size-3.5 shrink-0 text-primary/70" aria-hidden="true" />
-        <p className="min-w-0 flex-1 whitespace-pre-wrap text-sm leading-5">{displayedText}</p>
+        <MessageCircle className="size-3.5 h-5 shrink-0 text-primary/70" aria-hidden="true" />
+        <p
+          className="min-w-0 flex-1 whitespace-pre-wrap text-sm leading-5"
+          dir={textDirection(displayedText)}
+        >
+          {displayedText}
+        </p>
         {onDelete ? (
           <span className="-my-1 -mr-1 flex shrink-0 opacity-0 transition-opacity group-hover/comment:opacity-100 focus-within:opacity-100 max-sm:opacity-100">
             <Button
@@ -81,8 +88,7 @@ export function DiffCommentAnnotation({
     );
   }
 
-  // Editable file annotations inherit Pierre's transparent native caret and selection.
-  // Comments use a native textarea, so they need their own visible text feedback.
+  // Pierre hides native carets and selection; textarea comments need their own visible feedback.
   return (
     <div
       data-diff-comment-annotation
@@ -95,6 +101,7 @@ export function DiffCommentAnnotation({
         autoFocus={focusOnMount}
         size="sm"
         value={displayedText}
+        dir={textDirection(displayedText)}
         placeholder={placeholder}
         aria-label={`Comment on lines ${rangeLabel}`}
         onChange={(event) => (onTextChange ?? setLocalDraftText)(event.target.value)}

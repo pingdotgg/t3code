@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ConnectionTraceId } from "./ConnectionTraceId";
 import {
@@ -5,7 +6,7 @@ import {
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { Pressable, View } from "react-native";
+import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 
@@ -87,13 +88,9 @@ export function EnvironmentConnectionNotice(props: {
         </Text>
 
         {props.connection.phase !== "offline" && props.connection.phase !== "unsupported" ? (
-          <Pressable
-            accessibilityRole="button"
-            className="mt-1 rounded-full bg-subtle px-4 py-2.5 active:opacity-70"
-            onPress={props.onRetry}
-          >
-            <Text className="text-sm font-t3-bold text-foreground">Retry now</Text>
-          </Pressable>
+          <View className="mt-1">
+            <Button label="Retry now" tone="secondary" onPress={props.onRetry} />
+          </View>
         ) : null}
       </View>
     </View>

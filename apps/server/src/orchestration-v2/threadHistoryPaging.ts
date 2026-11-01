@@ -7,14 +7,19 @@ import type {
 } from "@t3tools/contracts";
 
 /**
- * Item/byte budgets only apply to histories without turn starts; tool activity
- * must not split an ordinary conversation turn.
+ * Every window stops at the byte budget. A window that holds a user turn also
+ * stops at `maxUserTurns` or `maxTurnItems` rows, which keeps ordinary turns
+ * whole (V1 kept 500 activities). Any other window, such as an agent-driven
+ * thread or the inside of one very long turn, stops at `maxItems` rows.
  */
 export const THREAD_HISTORY_PAGE_POLICY = {
   maxUserTurns: 10,
   maxItems: 75,
+  maxTurnItems: 500,
   maxEncodedBytes: 1_048_576,
 } as const;
+
+export const THREAD_HISTORY_INLINE_WORK_ITEM_LIMIT = 150;
 
 export const OLDER_THREAD_USER_TURN_LIMIT = 20;
 
@@ -24,12 +29,16 @@ export function isConversationHistoryItem(item: Pick<OrchestrationV2TurnItem, "t
 export const THREAD_HISTORY_MAX_RAW_TURNS = 150;
 
 export const THREAD_HISTORY_SNAPSHOT_ROW_LIMIT = THREAD_HISTORY_PAGE_POLICY.maxItems + 2;
+/** The snapshot query's row limit once the history has a user turn. */
+export const THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT = THREAD_HISTORY_PAGE_POLICY.maxTurnItems + 2;
 
-export const THREAD_HISTORY_CURSOR_MAX_LENGTH = 4_096;
+const THREAD_HISTORY_CURSOR_MAX_LENGTH = 4_096;
 
 export type ThreadHistoryPagePolicy = {
   readonly maxUserTurns?: number | undefined;
   readonly maxItems: number;
+  /** Defaults to `maxItems`. */
+  readonly maxTurnItems?: number | undefined;
   readonly maxEncodedBytes: number;
 };
 
@@ -39,6 +48,7 @@ export type ThreadHistoryCursorPayload = {
   readonly st: string;
   readonly si: string;
   readonly p: number;
+  readonly inclusive?: boolean;
 };
 
 type HistoryRow = Pick<
@@ -51,6 +61,14 @@ type HistoryRow = Pick<
     readonly inputIntent?: string;
     readonly createdBy?: string;
     readonly runId?: string | null;
+    readonly status?: OrchestrationV2TurnItem["status"];
+    readonly parentItemId?: string | null;
+    readonly ordinal?: number;
+    readonly runStatus?: string | undefined;
+    readonly attemptId?: string | null | undefined;
+    readonly attemptStatus?: string | null | undefined;
+    readonly persistentOutput?: boolean;
+    readonly deferredWork?: OrchestrationV2TurnItem["deferredWork"];
   };
 };
 export type SelectTimelinePageResult<Row extends HistoryRow = OrchestrationV2ProjectedTurnItem> = {
@@ -64,7 +82,6 @@ export type BoundedProjectionResult = {
   readonly historyCursor: string | null;
   readonly hasMoreHistory: boolean;
   readonly latestLocalTurnOrdinal: number | null;
-  readonly payloadBudgetExceeded: boolean;
 };
 
 export class InvalidThreadHistoryCursorError extends Error {
@@ -83,11 +100,7 @@ export function projectedRowEncodedBytes(row: HistoryRow): number {
   return bytesOfJson(row);
 }
 
-/**
- * Bounded-snapshot cost: local rows also land in `projection.turnItems`, so
- * charge the nested item a second time. Inherited rows only appear in the
- * visible list.
- */
+/** Charge local items twice because bounded snapshots also include projection.turnItems; inherited rows appear only once. */
 export function projectedRowBoundedSnapshotEncodedBytes(
   row: OrchestrationV2ProjectedTurnItem,
   threadId: ThreadId | string,
@@ -112,6 +125,7 @@ export function encodeThreadHistoryCursor(input: {
   readonly sourceThreadId: ThreadId | string;
   readonly sourceItemId: TurnItemId | string;
   readonly position: number;
+  readonly inclusive?: boolean;
 }): string {
   return encodeCursorPayload({
     v: 1,
@@ -119,6 +133,7 @@ export function encodeThreadHistoryCursor(input: {
     st: String(input.sourceThreadId),
     si: String(input.sourceItemId),
     p: input.position,
+    ...(input.inclusive ? { inclusive: true } : {}),
   });
 }
 
@@ -137,21 +152,22 @@ export function decodeThreadHistoryCursor(cursor: string): ThreadHistoryCursorPa
     typeof parsed !== "object" ||
     parsed === null ||
     !("v" in parsed) ||
-    (parsed as { v: unknown }).v !== 1 ||
+    parsed.v !== 1 ||
     !("seq" in parsed) ||
-    typeof (parsed as { seq: unknown }).seq !== "number" ||
-    !Number.isInteger((parsed as { seq: number }).seq) ||
-    (parsed as { seq: number }).seq < 0 ||
+    typeof parsed.seq !== "number" ||
+    !Number.isInteger(parsed.seq) ||
+    parsed.seq < 0 ||
     !("st" in parsed) ||
-    typeof (parsed as { st: unknown }).st !== "string" ||
-    (parsed as { st: string }).st.length === 0 ||
+    typeof parsed.st !== "string" ||
+    parsed.st.length === 0 ||
     !("si" in parsed) ||
-    typeof (parsed as { si: unknown }).si !== "string" ||
-    (parsed as { si: string }).si.length === 0 ||
+    typeof parsed.si !== "string" ||
+    parsed.si.length === 0 ||
     !("p" in parsed) ||
-    typeof (parsed as { p: unknown }).p !== "number" ||
-    !Number.isInteger((parsed as { p: number }).p) ||
-    (parsed as { p: number }).p < 0
+    typeof parsed.p !== "number" ||
+    !Number.isInteger(parsed.p) ||
+    parsed.p < 0 ||
+    ("inclusive" in parsed && typeof parsed.inclusive !== "boolean")
   ) {
     throw new InvalidThreadHistoryCursorError();
   }
@@ -165,14 +181,111 @@ function isThreadHistoryTurnStart(item: HistoryRow["item"]): boolean {
   );
 }
 
-/**
- * A wake (PR watch, task completion) starts its run with a notification instead of a user message, so a
- * notification starts a turn when it is its run's first input. ProjectionStore's `run_starts` window query
- * applies the same rule.
- */
-export function threadHistoryTurnStarts(
-  items: ReadonlyArray<HistoryRow["item"]>,
-): ReadonlyArray<boolean> {
+const DEFERRED_WORK_ITEM_TYPES = [
+  "command_execution",
+  "reasoning",
+  "file_change",
+  "file_search",
+  "web_search",
+  "dynamic_tool",
+] as const;
+
+function isDeferrableWorkItem(item: HistoryRow["item"]): boolean {
+  return (
+    item.status === "completed" &&
+    item.persistentOutput !== true &&
+    DEFERRED_WORK_ITEM_TYPES.some((type) => type === item.type)
+  );
+}
+
+export function deferWorkHistoryRows<Row extends HistoryRow>(items: ReadonlyArray<Row>): Row[] {
+  const blocked = new Set(
+    items.flatMap(({ item }) =>
+      item.runId != null &&
+      (item.type === "run_interrupt_request" ||
+        item.type === "run_interrupt_result" ||
+        (item.type === "error" && item.status === "failed" && item.parentItemId == null))
+        ? [item.runId]
+        : [],
+    ),
+  );
+  const segments = new Map<string, number>();
+  const groups = new Map<string, Row[]>();
+  for (const row of items) {
+    const item = row.item;
+    if (item.runId == null) continue;
+    if (item.type === "user_message") segments.set(item.runId, (segments.get(item.runId) ?? 0) + 1);
+    if (
+      (item.runStatus !== "completed" && item.attemptStatus !== "superseded") ||
+      blocked.has(item.runId) ||
+      !isDeferrableWorkItem(item)
+    )
+      continue;
+    const key = `${row.sourceThreadId}:${item.runId}:${segments.get(item.runId) ?? 0}:${item.attemptId ?? ""}`;
+    const group = groups.get(key) ?? [];
+    group.push(row);
+    groups.set(key, group);
+  }
+  const omitted = new Set<Row>();
+  const anchors = new Map<Row, Row>();
+  for (const group of groups.values()) {
+    if (group.length <= THREAD_HISTORY_INLINE_WORK_ITEM_LIMIT) continue;
+    const first = group[0]!;
+    const last = group.at(-1)!;
+    for (const row of group.slice(1)) omitted.add(row);
+    anchors.set(first, {
+      ...first,
+      item: {
+        ...first.item,
+        deferredWork: {
+          cursor: encodeThreadHistoryCursor({
+            snapshotSequence: 0,
+            sourceThreadId: last.sourceThreadId,
+            sourceItemId: last.sourceItemId,
+            position: last.item.ordinal ?? last.position,
+            inclusive: true,
+          }),
+          itemCount: group.length,
+          lastOrdinal: last.item.ordinal ?? last.position,
+        },
+      },
+    });
+  }
+  return items.flatMap((row) => (omitted.has(row) ? [] : [anchors.get(row) ?? row]));
+}
+
+export function selectDeferredWorkPage<Row extends HistoryRow>(input: {
+  readonly items: ReadonlyArray<Row>;
+  readonly cursor: string;
+  readonly throughEntryId?: string | undefined;
+  readonly snapshotSequence: number;
+  readonly rowEncodedBytes?: ((row: Row) => number) | undefined;
+}): SelectTimelinePageResult<Row> {
+  const cursor = decodeThreadHistoryCursor(input.cursor);
+  const end = findCursorEndIndex(input.items, cursor);
+  const start = input.items.findIndex((row) => row.sourceItemId === input.throughEntryId);
+  if (start < 0 || start >= end) throw new InvalidThreadHistoryCursorError();
+  const anchor = input.items[start]!;
+  const items = input.items
+    .slice(start, end)
+    .filter(
+      (row) =>
+        row.sourceThreadId === anchor.sourceThreadId &&
+        row.item.runId === anchor.item.runId &&
+        row.item.attemptId === anchor.item.attemptId &&
+        isDeferrableWorkItem(row.item),
+    );
+  return selectOlderTimelinePage({
+    items,
+    exclusiveEndIndex: items.length,
+    snapshotSequence: input.snapshotSequence,
+    rowEncodedBytes: input.rowEncodedBytes,
+    policy: THREAD_HISTORY_PAGE_POLICY,
+  });
+}
+
+/** Notifications can start wake turns when they are the run's first input; match ProjectionStore run_starts. */
+function threadHistoryTurnStarts(items: ReadonlyArray<HistoryRow["item"]>): ReadonlyArray<boolean> {
   const startedRuns = new Set<string>();
   return items.map((item) => {
     if (item.type !== "user_message" && item.type !== "notification") return false;
@@ -189,8 +302,7 @@ export function isThreadHistoryUserTurn(item: HistoryRow["item"]): boolean {
 }
 
 /**
- * Histories without turn starts use row budgets and always admit at least one
- * row so oversized items cannot deadlock paging.
+ * Always admit at least one row so oversized items cannot deadlock paging.
  */
 function selectOlderTimelinePage<Row extends HistoryRow>(input: {
   readonly items: ReadonlyArray<Row>;
@@ -215,14 +327,17 @@ function selectOlderTimelinePage<Row extends HistoryRow>(input: {
   const turnLimit = candidates.some((row) => isThreadHistoryUserTurn(row.item))
     ? policy.maxUserTurns
     : undefined;
+  const maxItems =
+    turnLimit === undefined ? policy.maxItems : (policy.maxTurnItems ?? policy.maxItems);
   for (let index = end - 1; index >= 0; index -= 1) {
     const row = input.items[index]!;
-    const rowBytes = turnLimit === undefined ? rowCost(row) : 0;
+    const rowBytes = rowCost(row);
     if (
       selected.length > 0 &&
-      (turnLimit === undefined
-        ? selected.length >= policy.maxItems || encodedBytes + rowBytes > policy.maxEncodedBytes
-        : userTurns >= turnLimit || rawTurns >= THREAD_HISTORY_MAX_RAW_TURNS)
+      (selected.length >= maxItems ||
+        encodedBytes + rowBytes > policy.maxEncodedBytes ||
+        (turnLimit !== undefined &&
+          (userTurns >= turnLimit || rawTurns >= THREAD_HISTORY_MAX_RAW_TURNS)))
     ) {
       break;
     }
@@ -231,6 +346,10 @@ function selectOlderTimelinePage<Row extends HistoryRow>(input: {
     if (isThreadHistoryUserTurn(row.item)) userTurns += 1;
     if (turnStarts[index]) rawTurns += 1;
   }
+  // Inside a turn longer than the window, no selected row starts a user turn.
+  // Later pages and the snapshot query see only such rows and use `maxItems`,
+  // so this page uses it too.
+  if (userTurns === 0) selected.splice(policy.maxItems);
   selected.reverse();
 
   const oldest = selected[0];
@@ -273,17 +392,61 @@ export function selectRecentTimelineWindow(input: {
   });
 }
 
-function findCursorIndex(
-  items: ReadonlyArray<Pick<HistoryRow, "sourceThreadId" | "sourceItemId">>,
+function findCursorEndIndex(
+  items: ReadonlyArray<HistoryRow>,
   cursor: ThreadHistoryCursorPayload,
 ): number {
   const byIdentity = items.findIndex(
     (row) => String(row.sourceThreadId) === cursor.st && String(row.sourceItemId) === cursor.si,
   );
   if (byIdentity !== -1) {
-    return byIdentity;
+    return byIdentity + (cursor.inclusive ? 1 : 0);
   }
-  return Math.min(cursor.p, items.length);
+  // Inclusive deferred cursors carry source ordinals; ordinary cursors carry visible positions.
+  const byPosition = items.findIndex((row) =>
+    cursor.inclusive
+      ? String(row.sourceThreadId) === cursor.st && (row.item.ordinal ?? row.position) > cursor.p
+      : row.position >= cursor.p,
+  );
+  return byPosition === -1 ? items.length : byPosition;
+}
+
+/**
+ * Older pages allow twice the turns, and a targeted page widens further so it
+ * reaches `throughEntryId`. Callers that re-bound a page must reuse this policy
+ * or they drop the target again.
+ */
+export function olderHistoryPagePolicy<Row extends HistoryRow>(input: {
+  readonly items: ReadonlyArray<Row>;
+  readonly cursor: string;
+  readonly policy?: ThreadHistoryPagePolicy | undefined;
+  readonly throughEntryId?: string | undefined;
+}): ThreadHistoryPagePolicy {
+  const policy = input.policy ?? {
+    ...THREAD_HISTORY_PAGE_POLICY,
+    maxUserTurns: OLDER_THREAD_USER_TURN_LIMIT,
+  };
+  if (input.throughEntryId === undefined) return policy;
+  const anchorIndex = findCursorEndIndex(input.items, decodeThreadHistoryCursor(input.cursor));
+  const targetIndex = input.items.findIndex(
+    (row) => (row.item.messageId ?? row.item.id) === input.throughEntryId,
+  );
+  if (targetIndex < 0 || targetIndex >= anchorIndex) return policy;
+  const turns = input.items
+    .slice(targetIndex, anchorIndex)
+    .filter((row) => isThreadHistoryUserTurn(row.item)).length;
+  return {
+    ...policy,
+    maxUserTurns: Math.min(
+      OLDER_THREAD_USER_TURN_LIMIT * 2,
+      Math.max(
+        OLDER_THREAD_USER_TURN_LIMIT,
+        turns + (isThreadHistoryUserTurn(input.items[targetIndex]!.item) ? 0 : 1),
+      ),
+    ),
+    maxItems: policy.maxItems * 2,
+    maxTurnItems: (policy.maxTurnItems ?? policy.maxItems) * 2,
+  };
 }
 
 export function selectHistoryPageFromCursor<Row extends HistoryRow>(input: {
@@ -295,39 +458,40 @@ export function selectHistoryPageFromCursor<Row extends HistoryRow>(input: {
   readonly throughEntryId?: string | undefined;
 }): SelectTimelinePageResult<Row> {
   const decoded = decodeThreadHistoryCursor(input.cursor);
-  const anchorIndex = findCursorIndex(input.items, decoded);
-  let policy = input.policy ?? {
-    ...THREAD_HISTORY_PAGE_POLICY,
-    maxUserTurns: OLDER_THREAD_USER_TURN_LIMIT,
-  };
-  if (input.throughEntryId !== undefined) {
-    const targetIndex = input.items.findIndex(
-      (row) => (row.item.messageId ?? row.item.id) === input.throughEntryId,
-    );
-    if (targetIndex >= 0 && targetIndex < anchorIndex) {
-      const turns = input.items
-        .slice(targetIndex, anchorIndex)
-        .filter((row) => isThreadHistoryUserTurn(row.item)).length;
-      policy = {
-        ...policy,
-        maxUserTurns: Math.min(
-          OLDER_THREAD_USER_TURN_LIMIT * 2,
-          Math.max(
-            OLDER_THREAD_USER_TURN_LIMIT,
-            turns + (isThreadHistoryUserTurn(input.items[targetIndex]!.item) ? 0 : 1),
-          ),
-        ),
-        maxItems: policy.maxItems * 2,
-      };
-    }
-  }
   return selectOlderTimelinePage({
     items: input.items,
-    exclusiveEndIndex: anchorIndex,
+    exclusiveEndIndex: findCursorEndIndex(input.items, decoded),
     snapshotSequence: input.snapshotSequence,
     ...(input.rowEncodedBytes === undefined ? {} : { rowEncodedBytes: input.rowEncodedBytes }),
-    policy,
+    policy: olderHistoryPagePolicy(input),
   });
+}
+
+/**
+ * Row and byte budgets can split a turn between an interrupt result and its
+ * older request. Clients read a superseded result without a request as a
+ * legacy steer and hide it, so a page carries the requests its results need.
+ */
+export function missingInterruptRequests<Row extends HistoryRow>(
+  items: ReadonlyArray<Row>,
+  page: ReadonlyArray<Pick<HistoryRow, "item" | "sourceThreadId" | "sourceItemId" | "position">>,
+): Row[] {
+  const runs = new Set<string>();
+  for (const row of page) {
+    if (row.item.type === "run_interrupt_result" && row.item.runId != null)
+      runs.add(row.item.runId);
+  }
+  for (const row of page) {
+    if (row.item.type === "run_interrupt_request" && row.item.runId != null)
+      runs.delete(row.item.runId);
+  }
+  if (runs.size === 0) return [];
+  return items.filter(
+    (row) =>
+      row.item.type === "run_interrupt_request" &&
+      row.item.runId != null &&
+      runs.has(row.item.runId),
+  );
 }
 
 function isLocalProjectedRow(
@@ -337,12 +501,30 @@ function isLocalProjectedRow(
   return row.visibility === "local" || String(row.sourceThreadId) === String(projection.thread.id);
 }
 
-/**
- * Keep every small request item from the full projection even when it sits
- * outside the recent visible window, so a later history page that introduces
- * the matching result still has the request available for live attempt/run
- * reducers.
- */
+function pendingRequestIdsOf(
+  projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests">,
+): ReadonlySet<string> {
+  return new Set(
+    projection.runtimeRequests
+      .filter((request) => request.status === "pending")
+      .map((request) => String(request.id)),
+  );
+}
+
+// Clients build the answer panel of an open question or approval from its row,
+// and a run that kept working pushes that row out of the newest turns.
+function isRetainedDependency(
+  item: OrchestrationV2TurnItem,
+  pendingRequestIds: ReadonlySet<string>,
+): boolean {
+  return (
+    item.type === "run_interrupt_request" ||
+    ((item.type === "user_input_request" || item.type === "approval_request") &&
+      pendingRequestIds.has(String(item.requestId)))
+  );
+}
+
+/** Retain small requests outside the visible window; later result pages still need them for attempt/run reducers. */
 function retainedInterruptRequestTurnItems(
   projection: OrchestrationV2ThreadProjection,
   visible: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
@@ -354,9 +536,10 @@ function retainedInterruptRequestTurnItems(
     }
   }
 
+  const pendingRequestIds = pendingRequestIdsOf(projection);
   const retained: OrchestrationV2TurnItem[] = [];
   for (const item of projection.turnItems) {
-    if (item.type !== "run_interrupt_request") {
+    if (!isRetainedDependency(item, pendingRequestIds)) {
       continue;
     }
     if (visibleLocalIds.has(String(item.id))) {
@@ -371,16 +554,7 @@ function localTurnItemsForVisibleWindow(
   projection: OrchestrationV2ThreadProjection,
   visible: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
 ): OrchestrationV2TurnItem[] {
-  const localIds = new Set<string>();
-  for (const row of visible) {
-    if (isLocalProjectedRow(projection, row)) {
-      localIds.add(String(row.sourceItemId));
-    }
-  }
-  if (localIds.size === 0) {
-    return [];
-  }
-  return projection.turnItems.filter((item) => localIds.has(String(item.id)));
+  return visible.filter((row) => isLocalProjectedRow(projection, row)).map((row) => row.item);
 }
 
 function messagesForBoundedProjection(
@@ -418,16 +592,12 @@ function messagesForBoundedProjection(
       retainedMessageIds.has(String(message.id)) ||
       (message.runId !== null && retainedRunIds.has(String(message.runId))) ||
       message.delegatedCompletion !== undefined ||
-      // Clients open a workflow coordinator's thread from its script, however
-      // far back the history window starts. A thread has at most one.
+      // Keep the workflow script outside the history window; clients use it to open the coordinator thread.
       message.workflowScript === true,
   );
 }
 
-/**
- * Used as a cheap partial-timeline watermark so old missing turn-item updates
- * cannot append newest when the bounded window has no local rows.
- */
+/** Watermark prevents old missing updates from appending newest when bounded windows lack local rows. */
 export function computeLatestLocalTurnOrdinal(
   turnItems: ReadonlyArray<{ readonly ordinal: number }>,
 ): number | null {
@@ -461,9 +631,26 @@ export function buildBoundedThreadProjection(input: {
 }): BoundedProjectionResult {
   const policy = input.policy ?? THREAD_HISTORY_PAGE_POLICY;
   const threadId = input.projection.thread.id;
+  const runOrdinals = new Map(input.projection.runs.map((run) => [run.id, run.ordinal]));
+  let latestTodoList: (typeof input.projection.plans)[number] | undefined;
+  let latestTodoListOrdinal = -1;
+  for (const plan of input.projection.plans) {
+    const ordinal = plan.runId === null ? undefined : runOrdinals.get(plan.runId);
+    if (
+      plan.kind === "todo_list" &&
+      plan.status !== "superseded" &&
+      ordinal !== undefined &&
+      ordinal >= latestTodoListOrdinal
+    ) {
+      latestTodoList = plan;
+      latestTodoListOrdinal = ordinal;
+    }
+  }
   const controlProjection = {
     ...input.projection,
-    plans: input.projection.plans.filter((plan) => plan.status === "active"),
+    plans: input.projection.plans.filter(
+      (plan) => plan.status === "active" || plan.id === latestTodoList?.id,
+    ),
     contextHandoffs: input.projection.contextHandoffs.filter(
       (handoff) => handoff.status === "pending" || handoff.status === "ready",
     ),
@@ -472,8 +659,9 @@ export function buildBoundedThreadProjection(input: {
 
   const dependencyReserve = (() => {
     let reserve = 0;
+    const pendingRequestIds = pendingRequestIdsOf(controlProjection);
     for (const item of controlProjection.turnItems) {
-      if (item.type === "run_interrupt_request") {
+      if (isRetainedDependency(item, pendingRequestIds)) {
         reserve += bytesOfJson(item);
       }
     }
@@ -485,17 +673,13 @@ export function buildBoundedThreadProjection(input: {
     turnItems: [],
     visibleTurnItems: [],
   });
-  // Control state (checkpoint file lists, an active plan) cannot be paged, so it may claim at most
+  // Control state (checkpoint file lists, the latest task list) cannot be paged, so it may claim at most
   // half the budget; past that the window would shrink to the one row every page admits.
   const windowBudget = Math.max(
     policy.maxEncodedBytes / 2,
     policy.maxEncodedBytes - dependencyReserve - controlBytes - 1_024,
   );
-  const windowPolicy: ThreadHistoryPagePolicy = {
-    maxUserTurns: policy.maxUserTurns,
-    maxItems: policy.maxItems,
-    maxEncodedBytes: windowBudget,
-  };
+  const windowPolicy: ThreadHistoryPagePolicy = { ...policy, maxEncodedBytes: windowBudget };
 
   const window = selectRecentTimelineWindow({
     items: controlProjection.visibleTurnItems,
@@ -527,9 +711,14 @@ export function buildBoundedThreadProjection(input: {
     turnItems.flatMap((item) => (item.type === "handoff" ? [String(item.contextHandoffId)] : [])),
   );
   const plans = input.projection.plans
-    .filter((plan) => plan.status === "active" || visiblePlanIds.has(String(plan.id)))
+    .filter(
+      (plan) =>
+        plan.status === "active" ||
+        plan.id === latestTodoList?.id ||
+        visiblePlanIds.has(String(plan.id)),
+    )
     .map((plan) =>
-      plan.status === "active"
+      plan.status === "active" || plan.id === latestTodoList?.id
         ? plan
         : plan.kind === "proposed_plan"
           ? { ...plan, markdown: "", detailInTurnItem: true as const }
@@ -561,7 +750,5 @@ export function buildBoundedThreadProjection(input: {
     historyCursor: window.nextCursor,
     hasMoreHistory: window.hasMoreHistory,
     latestLocalTurnOrdinal,
-    payloadBudgetExceeded:
-      controlBytes > policy.maxEncodedBytes || bytesOfJson(projection) > policy.maxEncodedBytes,
   };
 }

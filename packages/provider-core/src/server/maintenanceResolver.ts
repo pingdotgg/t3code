@@ -27,6 +27,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -85,7 +86,11 @@ export interface PackageManagedProviderMaintenanceDefinition {
   readonly nativeUpdate: {
     readonly args: ReadonlyArray<string>;
     readonly isCommandPath?: (commandPath: string) => boolean;
-    readonly env?: NodeJS.ProcessEnv;
+    /** The updater cannot detect installs outside `isCommandPath`, so leave those manual-only. */
+    readonly requiresCommandPath?: boolean;
+    readonly env?:
+      | NodeJS.ProcessEnv
+      | ((context: ProviderMaintenanceResolutionContext) => NodeJS.ProcessEnv);
   } | null;
 }
 
@@ -121,6 +126,7 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
   readonly latestVersion?: string | null;
+  readonly lookupLatestVersion?: Effect.Effect<string | null>;
 }): ProviderMaintenanceCapabilities {
   const platform = input.platform ?? HostProcess.Platform.defaultValue();
   const update =
@@ -143,6 +149,7 @@ export function makeProviderMaintenanceCapabilities(input: {
     packageName: input.packageName,
     update,
     ...("latestVersion" in input ? { latestVersion: input.latestVersion } : {}),
+    ...(input.lookupLatestVersion ? { lookupLatestVersion: input.lookupLatestVersion } : {}),
   };
 }
 
@@ -192,6 +199,8 @@ export function makeManualOnlyProviderMaintenanceCapabilities(input: {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
   readonly installPath?: string;
+  readonly lookupLatestVersion?: Effect.Effect<string | null>;
+  readonly manualCommand?: string;
 }): ProviderMaintenanceCapabilities {
   return {
     ...makeProviderMaintenanceCapabilities({
@@ -200,8 +209,12 @@ export function makeManualOnlyProviderMaintenanceCapabilities(input: {
       updateExecutable: null,
       updateArgs: [],
       updateLockKey: null,
+      ...(input.lookupLatestVersion
+        ? { latestVersion: null, lookupLatestVersion: input.lookupLatestVersion }
+        : {}),
     }),
     ...(input.installPath ? { installPath: input.installPath } : {}),
+    ...(input.manualCommand ? { manualCommand: input.manualCommand } : {}),
   };
 }
 
@@ -209,8 +222,15 @@ export function normalizeCommandPath(commandPath: string): string {
   return commandPath.replaceAll("\\", "/").toLowerCase();
 }
 
+/**
+ * Vite+ shims live in `<VP_HOME>/bin`: `~/.vite-plus` by default,
+ * `~/.local/share/vite-plus` with the XDG layout, and `%LOCALAPPDATA%\vite-plus`
+ * on Windows.
+ */
 function isVitePlusGlobalCommandPath(commandPath: string): boolean {
-  return normalizeCommandPath(commandPath).includes("/.vite-plus/bin/");
+  return /\/(?:\.vite-plus|\.local\/share\/vite-plus|appdata\/local\/vite-plus)\/bin\//.test(
+    normalizeCommandPath(commandPath),
+  );
 }
 
 function isBunGlobalCommandPath(commandPath: string): boolean {
@@ -227,16 +247,37 @@ function isMiseCommandPath(commandPath: string): boolean {
   return normalized.includes("/mise/installs/") || normalized.includes("/mise/shims/");
 }
 
-/**
- * WinGet's Claude Code install under its user root (`<drive>:\Users\<name>\AppData\Local\Microsoft\WinGet`)
- * or machine root (`<drive>:\Program Files\WinGet`): the `Links\claude.exe` link or the binary in the
- * `Packages\Anthropic.ClaudeCode_…` directory.
- */
 const winGetClaudeCommandPath =
   /^[a-z]:\/(?:users\/[^/]+\/appdata\/local\/microsoft|program files(?: \(x86\))?)\/winget\/(?:links|packages\/anthropic\.claudecode_[^/]+)\/claude\.exe$/;
 
 function isWinGetClaudeCommandPath(commandPath: string): boolean {
   return winGetClaudeCommandPath.test(normalizeCommandPath(commandPath));
+}
+
+const CHOCOLATEY_CLAUDE_PACKAGE_ID = "claude-code";
+
+// Chocolatey's executable shim is not a symlink, so realpath cannot prove its owner.
+const chocolateyClaudeCommandPath = /\/chocolatey\/(?:bin|lib\/claude-code\/tools)\/claude\.exe$/;
+
+function isChocolateyClaudeCommandPath(commandPath: string, env: NodeJS.ProcessEnv): boolean {
+  const normalized = normalizeCommandPath(commandPath);
+  if (chocolateyClaudeCommandPath.test(normalized)) return true;
+  const root = nonEmptyString(env.ChocolateyInstall);
+  if (!root) return false;
+  const prefix = normalizeCommandPath(root.replace(/[\\/]+$/, ""));
+  return (
+    normalized === `${prefix}/bin/claude.exe` ||
+    normalized === `${prefix}/lib/claude-code/tools/claude.exe`
+  );
+}
+
+/** `choco search --exact --limit-output` prints `<id>|<version>` for a match and nothing otherwise. */
+export function parseChocolateyLatestVersion(output: string, packageId: string): string | null {
+  for (const line of output.split(/\r?\n/)) {
+    const [id, version] = line.trim().split("|", 2);
+    if (id?.toLowerCase() === packageId.toLowerCase()) return nonEmptyString(version);
+  }
+  return null;
 }
 
 function isPnpmGlobalCommandPath(commandPath: string): boolean {
@@ -261,8 +302,7 @@ export function npmGlobalPrefixFromCommandPath(
   if (packageIndex < 0 || normalized.slice(0, packageIndex).includes("/node_modules/")) {
     return null;
   }
-  // Mise's npm backend uses a global-looking layout inside a tool version.
-  // Globals under its Node installation still belong to npm.
+  // Mise tool layouts resemble npm globals; only globals under its Node install belong to npm.
   const miseTool = /\/mise\/installs\/([^/]+)\/[^/]+$/.exec(normalized.slice(0, packageIndex))?.[1];
   if (miseTool && miseTool !== "node") {
     return null;
@@ -305,7 +345,6 @@ const HomebrewInfoResponse = Schema.Struct({
 
 const decodeHomebrewInfo = Schema.decodeUnknownOption(Schema.fromJsonString(HomebrewInfoResponse));
 
-/** Cask versions may carry a build suffix after a comma (`1.2.3,456`). */
 export function parseHomebrewLatestVersion(
   infoJson: string,
   ownership: HomebrewOwnership,
@@ -326,6 +365,7 @@ const runProbe = Effect.fn("runProbe")(function* (
   command: string,
   args: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv,
+  okExitCodes: ReadonlyArray<number> = [0],
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const collect = Effect.gen(function* () {
@@ -348,7 +388,7 @@ const runProbe = Effect.fn("runProbe")(function* (
       ],
       { concurrency: "unbounded" },
     );
-    return Number(exitCode) !== 0 || stdout.truncated ? null : stdout.text;
+    return !okExitCodes.includes(Number(exitCode)) || stdout.truncated ? null : stdout.text;
   });
   return yield* collect.pipe(
     Effect.scoped,
@@ -362,6 +402,57 @@ const runProbe = Effect.fn("runProbe")(function* (
       }).pipe(Effect.as(null)),
     ),
   );
+});
+
+const decodePnpmOutdated = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Record(Schema.String, Schema.Struct({ latest: Schema.optional(Schema.String) })),
+  ),
+);
+const decodePnpmList = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({
+        dependencies: Schema.optional(
+          Schema.Record(Schema.String, Schema.Struct({ version: Schema.optional(Schema.String) })),
+        ),
+      }),
+    ),
+  ),
+);
+
+// Unlike npm's latest tag, pnpm outdated respects minimumReleaseAge and its excludes.
+const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion")(function* (
+  packageName: string,
+  env: NodeJS.ProcessEnv,
+) {
+  // Match the updater's pnpm and environment.
+  const pnpmPath = yield* resolveCommandPath("pnpm", {
+    env: { ...(yield* HostProcess.Environment), ...env },
+  });
+  if (!pnpmPath) return null;
+  // Silent reporting keeps project package-manager warnings out of the JSON.
+  const outdated = yield* runProbe(
+    pnpmPath,
+    ["outdated", "-g", "--reporter=silent", "--format", "json", packageName],
+    env,
+    // pnpm outdated exits 1 when updates are available.
+    [0, 1],
+  );
+  const outdatedEntries = outdated
+    ? Option.getOrUndefined(decodePnpmOutdated(outdated))
+    : undefined;
+  if (!outdatedEntries) return null;
+  const latest = nonEmptyString(outdatedEntries[packageName]?.latest);
+  if (latest) return latest;
+  // An empty result means the installed version is still the eligible release.
+  const listed = yield* runProbe(
+    pnpmPath,
+    ["ls", "-g", "--reporter=silent", "--depth", "0", "--json", packageName],
+    env,
+  );
+  const listedEntries = listed ? Option.getOrUndefined(decodePnpmList(listed)) : undefined;
+  return nonEmptyString(listedEntries?.[0]?.dependencies?.[packageName]?.version);
 });
 
 export const resolvePackageManagedProviderMaintenance = Effect.fn(
@@ -383,8 +474,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   });
   const commandPaths = [context.resolvedCommandPath, context.realCommandPath];
   const packageName = definition.npmPackageName;
-  // WinGet owns these files: `claude update` only reports "managed by winget"
-  // and exits 0, and T3 Code does not run `winget upgrade` itself.
+  // WinGet-managed claude update exits 0 without updating; T3 does not run winget upgrade.
   if (
     definition.provider === "claudeAgent" &&
     context.platform === "win32" &&
@@ -392,8 +482,35 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   ) {
     return manual;
   }
+  // Chocolatey's package directory is writable only by administrators, so an
+  // unelevated server cannot run `choco upgrade`; `claude update` through the
+  // shim installs a native copy elsewhere and leaves the shim's version alone.
+  if (
+    definition.provider === "claudeAgent" &&
+    context.platform === "win32" &&
+    commandPaths.some((commandPath) => isChocolateyClaudeCommandPath(commandPath, context.env))
+  ) {
+    const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
+    return makeManualOnlyProviderMaintenanceCapabilities({
+      provider: definition.provider,
+      packageName,
+      installPath: context.realCommandPath,
+      manualCommand: "choco upgrade claude-code",
+      lookupLatestVersion: runProbe(
+        "choco",
+        ["search", CHOCOLATEY_CLAUDE_PACKAGE_ID, "--exact", "--limit-output"],
+        context.env,
+      ).pipe(
+        Effect.map((output) =>
+          output ? parseChocolateyLatestVersion(output, CHOCOLATEY_CLAUDE_PACKAGE_ID) : null,
+        ),
+        Effect.provideContext(services),
+      ),
+    });
+  }
 
   const nativeUpdate = definition.nativeUpdate;
+  const nativeEnv = nativeUpdate?.env;
   const native = nativeUpdate
     ? makeProviderMaintenanceCapabilities({
         provider: definition.provider,
@@ -402,19 +519,27 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
         updateArgs: nativeUpdate.args,
         updateLockKey: `${definition.provider}-native`,
         platform: context.platform,
-        ...(nativeUpdate.env ? { env: nativeUpdate.env } : {}),
+        ...(nativeEnv
+          ? { env: typeof nativeEnv === "function" ? nativeEnv(context) : nativeEnv }
+          : {}),
       })
     : manual;
-  if (nativeUpdate?.isCommandPath && commandPaths.some(nativeUpdate.isCommandPath)) {
+  // A native-looking launcher can still delegate to a mise-owned install.
+  if (
+    nativeUpdate?.isCommandPath &&
+    commandPaths.some(nativeUpdate.isCommandPath) &&
+    !commandPaths.some(isMiseCommandPath) &&
+    !(yield* isMiseWrapperScript(context))
+  ) {
     return native;
   }
   // A `node_modules` path not proven below belongs to another package or a
   // project, so the provider's own updater could act on the wrong install.
-  const fallback = commandPaths.some((commandPath) =>
-    normalizeCommandPath(commandPath).includes("/node_modules/"),
-  )
-    ? manual
-    : native;
+  const fallback =
+    nativeUpdate?.requiresCommandPath ||
+    commandPaths.some((commandPath) => normalizeCommandPath(commandPath).includes("/node_modules/"))
+      ? manual
+      : native;
   if (commandPaths.some(isVitePlusGlobalCommandPath)) {
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
@@ -422,6 +547,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateExecutable: "vp",
       updateArgs: ["i", "-g", packageName],
       updateLockKey: "vite-plus-global",
+      env: context.env,
     });
   }
   if (commandPaths.some(isBunGlobalCommandPath)) {
@@ -431,24 +557,27 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateExecutable: "bun",
       updateArgs: ["i", "-g", `${packageName}@latest`],
       updateLockKey: "bun-global",
+      env: context.env,
     });
   }
   if (commandPaths.some(isPnpmGlobalCommandPath)) {
-    // pnpm 10 skips unapproved install scripts and still exits 0, leaving a
-    // package whose postinstall finishes the install broken. Global installs
-    // can only approve on the command line, and pnpm before 10.4 rejects the
-    // flag as an unknown option.
+    // pnpm 10 skips unapproved scripts; the approval flag requires 10.4+.
     const pnpmVersion = yield* runProbe("pnpm", ["--version"], context.env);
     const allowBuild =
       pnpmVersion !== null && satisfiesSemverRange(pnpmVersion, ">=10.4.0")
         ? [`--allow-build=${packageName}`]
         : [];
+    const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
       updateExecutable: "pnpm",
       updateArgs: ["add", "-g", ...allowBuild, `${packageName}@latest`],
       updateLockKey: "pnpm-global",
+      env: context.env,
+      lookupLatestVersion: resolvePnpmGlobalLatestVersion(packageName, context.env).pipe(
+        Effect.provideContext(services),
+      ),
     });
   }
 
@@ -459,6 +588,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateExecutable: "yarn",
       updateArgs: ["global", "add", `${packageName}@latest`],
       updateLockKey: "yarn-global",
+      env: context.env,
     });
   }
   if (yield* isVoltaPackageInstall(context, packageName)) {
@@ -468,19 +598,14 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateExecutable: "volta",
       updateArgs: ["install", `${packageName}@latest`],
       updateLockKey: "volta",
+      env: context.env,
     });
   }
 
-  // npm proof names the package, so it outranks a keg the path merely passes
-  // through: a Homebrew-installed Node keeps its globals under
-  // `Cellar/node/<ver>/lib/node_modules/`, and that is npm's install, not brew's.
+  // npm proof outranks a containing Homebrew keg; Homebrew Node globals still belong to npm.
   const npmPrefix = yield* resolveNpmGlobalPrefix(context, packageName);
   if (npmPrefix) {
-    // npm 12 blocks install scripts by default (empty allow-scripts allowlist)
-    // and still exits 0, so a package whose postinstall finishes the install
-    // (claude copies its native binary over a placeholder stub) is left broken
-    // while the update reports success. Older npm warns about the unknown
-    // config and continues.
+    // npm 12 requires script approval to install native binaries; older npm only warns about the flag.
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -494,6 +619,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
         `${packageName}@latest`,
       ],
       updateLockKey: `npm-global:${normalizeCommandPath(npmPrefix)}`,
+      env: context.env,
     });
   }
 
@@ -521,8 +647,8 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
 
 /**
  * `brew upgrade` capabilities once the keg's prefix is confirmed by a `brew`
- * that reports it as its own, with `latestVersion` from `brew info`. Null when
- * no `brew` is found or it owns another prefix.
+ * that reports it as its own. Version checks defer `brew info` until needed.
+ * Null when no `brew` is found or it owns another prefix.
  */
 export const resolveHomebrewProviderMaintenance = Effect.fn("resolveHomebrewProviderMaintenance")(
   function* (
@@ -532,8 +658,7 @@ export const resolveHomebrewProviderMaintenance = Effect.fn("resolveHomebrewProv
   ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    // The keg's own brew works even when a GUI-launched server has no
-    // Homebrew on PATH; the prefix check below still applies to it.
+    // GUI servers may lack Homebrew on PATH; use the keg brew with the same prefix check.
     const kegBrewPath = path.join(homebrew.prefix, "bin", "brew");
     const brewPath = (yield* fileSystem.exists(kegBrewPath).pipe(Effect.orElseSucceed(() => false)))
       ? kegBrewPath
@@ -553,9 +678,7 @@ export const resolveHomebrewProviderMaintenance = Effect.fn("resolveHomebrewProv
     }
     const args =
       homebrew.kind === "cask" ? ["upgrade", "--cask", homebrew.name] : ["upgrade", homebrew.name];
-    // Homebrew lags npm by hours on every release, so compare against what
-    // `brew upgrade` can actually deliver.
-    const info = yield* runProbe(brewPath, ["info", "--json=v2", homebrew.name], context.env);
+    const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
     return makeProviderMaintenanceCapabilities({
       provider: input.provider,
       packageName: input.packageName,
@@ -563,7 +686,16 @@ export const resolveHomebrewProviderMaintenance = Effect.fn("resolveHomebrewProv
       updateArgs: args,
       updateLockKey: "homebrew",
       updateCommand: ["brew", ...args].join(" "),
-      latestVersion: info ? parseHomebrewLatestVersion(info, homebrew) : null,
+      // Brew's release can lag npm; only its own channel can say what upgrade installs.
+      latestVersion: null,
+      lookupLatestVersion: runProbe(
+        brewPath,
+        ["info", "--json=v2", homebrew.name],
+        context.env,
+      ).pipe(
+        Effect.map((info) => (info ? parseHomebrewLatestVersion(info, homebrew) : null)),
+        Effect.provideContext(services),
+      ),
     });
   },
 );
@@ -585,10 +717,7 @@ const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
   return script.startsWith("#!") && /\bmise\s+(?:x|exec)\b/.test(script);
 });
 
-/**
- * Volta's `bin/<cmd>` is a link to its `volta-shim`, which picks the package
- * at run time; the package's own image directory proves Volta installed it.
- */
+// Volta bin links only identify its shim; the package image proves ownership.
 const isVoltaPackageInstall = Effect.fn("isVoltaPackageInstall")(function* (
   context: ProviderMaintenanceResolutionContext,
   packageName: string,
@@ -626,9 +755,7 @@ const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
     ...packageName.split("/"),
     "package.json",
   );
-  // npm writes both `<cmd>.cmd` and an extensionless sh script into the
-  // Windows prefix; either one sits directly beside `node_modules`. A POSIX
-  // project checkout has the same shape, which is why this is Windows-only.
+  // Windows npm shims sit beside node_modules; POSIX project checkouts can mimic this layout.
   const hasManifest = yield* fileSystem
     .exists(manifestPath)
     .pipe(Effect.orElseSucceed(() => false));
@@ -651,6 +778,64 @@ function makeManualProviderMaintenanceCapabilities(
     packageName: null,
   });
 }
+
+const decodeNpmViewVersion = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Union([Schema.String, Schema.Tuple([Schema.String])])),
+);
+
+const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup")(function* (
+  capabilities: ProviderMaintenanceCapabilities,
+) {
+  const packageName = capabilities.packageName;
+  if (!packageName || capabilities.latestVersion !== undefined) {
+    return capabilities;
+  }
+  const env = { ...(yield* HostProcess.Environment), ...capabilities.update?.env };
+  const npmPath = yield* resolveCommandPath("npm", { env });
+  if (!npmPath) return capabilities;
+  const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
+  const update = capabilities.update;
+  const prefixIndex = update?.lockKey.startsWith("npm-global:")
+    ? update.args.indexOf("--prefix")
+    : -1;
+  const prefix = prefixIndex >= 0 ? update?.args[prefixIndex + 1] : undefined;
+  const lookup = runProbe(
+    npmPath,
+    [
+      "view",
+      "--global",
+      ...(prefix ? ["--prefix", prefix] : []),
+      "--json",
+      `${packageName}@latest`,
+      "version",
+    ],
+    env,
+  ).pipe(
+    Effect.map((stdout) => {
+      const value = stdout ? Option.getOrNull(decodeNpmViewVersion(stdout.trim())) : null;
+      return nonEmptyString(typeof value === "string" ? value : value?.[0]);
+    }),
+    Effect.tap((version) =>
+      version === null
+        ? Effect.logWarning("Configured npm version lookup failed", { packageName })
+        : Effect.void,
+    ),
+    Effect.provideContext(services),
+  );
+  return {
+    ...capabilities,
+    // npm owns registry, scoped auth and proxy configuration; failure must not retry public npm.
+    latestVersion: null,
+    lookupLatestVersion: capabilities.lookupLatestVersion
+      ? capabilities.lookupLatestVersion.pipe(
+          Effect.filterOrElse(
+            (version) => version !== null,
+            () => lookup,
+          ),
+        )
+      : lookup,
+  };
+});
 
 export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   "resolveProviderMaintenanceCapabilitiesEffect",
@@ -686,13 +871,8 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
     env,
     platform: yield* HostProcess.Platform,
   });
-});
+}, Effect.flatMap(withConfiguredNpmVersionLookup));
 
-/**
- * Turn a one-shot resolution into the shape drivers expose: a cached read for
- * advisories and a `fresh` read that update execution uses so it never trusts
- * ownership derived before the user clicked.
- */
 export const makeCachedProviderMaintenanceResolution = Effect.fn(
   "makeCachedProviderMaintenanceResolution",
 )(function* (resolve: Effect.Effect<ProviderMaintenanceCapabilities>) {
@@ -706,10 +886,6 @@ export const makeCachedProviderMaintenanceResolution = Effect.fn(
     options?.fresh ? Cache.invalidate(cache, undefined).pipe(Effect.andThen(cached)) : cached;
 });
 
-/**
- * An install T3 Code cannot update gets no Update button or command, so its
- * message names the version and the executable instead.
- */
 function manualUpdateMessage(latestVersion: string, installPath: string | undefined): string {
   return installPath
     ? `Version ${latestVersion} is out. T3 Code runs ${installPath}; update it with the app or tool that installed it.`
@@ -764,7 +940,10 @@ export function createProviderVersionAdvisory(input: {
     status: advisory.status,
     currentVersion: input.currentVersion,
     latestVersion,
-    updateCommand: resolveLatestProviderUpdateAction(capabilities, latestVersion)?.command ?? null,
+    updateCommand:
+      resolveLatestProviderUpdateAction(capabilities, latestVersion)?.command ??
+      capabilities.manualCommand ??
+      null,
     canUpdate: capabilities.update !== null,
     canInstallVersion: makeTargetedProviderUpdateAction(capabilities, "0.0.0") !== null,
     checkedAt: input.checkedAt ?? null,
@@ -777,27 +956,49 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
   const request = HttpClientRequest.get(
     `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
   ).pipe(HttpClientRequest.setHeader("accept", "application/json"));
-  const response = yield* client.execute(request).pipe(
+  // The deadline covers the body too: headers can arrive before the JSON stalls.
+  const payload = yield* client.execute(request).pipe(
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap(HttpClientResponse.schemaBodyJson(NpmLatestVersionResponse)),
     Effect.timeoutOption(LATEST_VERSION_TIMEOUT_MS),
     Effect.orElseSucceed(() => Option.none()),
   );
-  if (Option.isNone(response)) {
-    return null;
-  }
-  const httpResponse = response.value;
-  if (httpResponse.status < 200 || httpResponse.status >= 300) {
-    return null;
-  }
-  const payload = yield* httpResponse.json.pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(NpmLatestVersionResponse)),
-    Effect.orElseSucceed(() => null),
-  );
-  return payload ? nonEmptyString(payload.version) : null;
+  return Option.isSome(payload) ? nonEmptyString(payload.value.version) : null;
 });
+
+/**
+ * The installer's own answer is cached apart from the npm registry entry. A
+ * manual-only install has no command to key on, so its executable stands in.
+ */
+function installerLatestVersionKey(capabilities: ProviderMaintenanceCapabilities) {
+  if (!capabilities.lookupLatestVersion) return null;
+  const update = capabilities.update;
+  if (update) return [update.lockKey, update.executable, ...update.args].join("\0");
+  return capabilities.installPath
+    ? ["manual", capabilities.installPath].join("\0")
+    : capabilities.packageName && `npm-registry\0${capabilities.packageName}`;
+}
+
+export function latestProviderVersionCacheKeys(
+  capabilities: ProviderMaintenanceCapabilities,
+): ReadonlyArray<string> {
+  return [capabilities.packageName, installerLatestVersionKey(capabilities)].filter(
+    (key) => key !== null,
+  );
+}
 
 export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVersion")(function* (
   maintenanceCapabilities: ProviderMaintenanceCapabilities,
 ) {
+  const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+  const installerKey = installerLatestVersionKey(maintenanceCapabilities);
+  if (installerKey && maintenanceCapabilities.lookupLatestVersion) {
+    const installable = yield* latestVersions.cached(
+      installerKey,
+      maintenanceCapabilities.lookupLatestVersion,
+    );
+    if (installable !== null) return installable;
+  }
   if (maintenanceCapabilities.latestVersion !== undefined) {
     return maintenanceCapabilities.latestVersion;
   }
@@ -806,9 +1007,19 @@ export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVers
     return null;
   }
 
-  const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
   return yield* latestVersions.cached(packageName, fetchNpmLatestVersion(packageName));
 });
+
+export const invalidateLatestProviderVersion = Effect.fn("invalidateLatestProviderVersion")(
+  function* (maintenanceCapabilities: ProviderMaintenanceCapabilities) {
+    const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+    yield* Effect.forEach(
+      latestProviderVersionCacheKeys(maintenanceCapabilities),
+      latestVersions.invalidate,
+      { discard: true },
+    );
+  },
+);
 
 export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
   "enrichProviderSnapshotWithVersionAdvisory",
@@ -821,17 +1032,19 @@ export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
 ) {
   const capabilities =
     maintenanceCapabilities ?? makeManualProviderMaintenanceCapabilities(snapshot.driver);
+  const currentVersion =
+    snapshot.installedVersion !== undefined ? snapshot.installedVersion : snapshot.version;
   const shouldResolveLatestVersion =
     options?.enableProviderUpdateChecks !== false &&
     snapshot.enabled &&
     snapshot.installed &&
-    Boolean(snapshot.version);
+    Boolean(currentVersion);
   if (!shouldResolveLatestVersion) {
     return {
       ...snapshot,
       versionAdvisory: createProviderVersionAdvisory({
         driver: snapshot.driver,
-        currentVersion: snapshot.version,
+        currentVersion,
         checkedAt: snapshot.checkedAt,
         maintenanceCapabilities: capabilities,
       }),
@@ -843,7 +1056,7 @@ export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
     ...snapshot,
     versionAdvisory: createProviderVersionAdvisory({
       driver: snapshot.driver,
-      currentVersion: snapshot.version,
+      currentVersion,
       latestVersion,
       checkedAt: DateTime.formatIso(yield* DateTime.now),
       maintenanceCapabilities: capabilities,
