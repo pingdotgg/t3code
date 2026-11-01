@@ -6,12 +6,18 @@ import St from "gi://St";
 import { Extension } from "resource:///org/gnome/shell/extensions/extension.js";
 import * as Main from "resource:///org/gnome/shell/ui/main.js";
 import { CaptureService, isWaylandSession } from "./captureService.js";
+import { ShortcutService } from "./shortcutService.js";
 import { CaptureFeedback } from "./captureFeedback.js";
 
 const NAME = "org.gnome.Shell.Extensions.T3SnapShot";
 const PATH = "/org/gnome/Shell/Extensions/T3SnapShot";
 const XML = `<node><interface name="${NAME}">
   <property name="Version" type="u" access="read"/>
+  <method name="BindShortcut">
+    <arg name="name" type="s" direction="in"/>
+    <arg name="accelerator" type="s" direction="in"/>
+  </method>
+  <signal name="ShortcutActivated"/>
   <method name="Capture">
     <arg name="png" type="ay" direction="out"/>
     <arg name="metadata" type="s" direction="out"/>
@@ -116,6 +122,45 @@ function takeSnapshot(animate) {
 
 export default class T3SnapShotExtension extends Extension {
   enable() {
+    this._shortcuts = new ShortcutService({
+      getNameOwner,
+      isAvailable: () =>
+        isWaylandSession(Meta) && !Main.sessionMode.isLocked && !Main.sessionMode.isGreeter,
+      grab: (accelerator) => {
+        const action = global.display.grab_accelerator(
+          accelerator,
+          Meta.KeyBindingFlags.IGNORE_AUTOREPEAT,
+        );
+        if (action !== Meta.KeyBindingAction.NONE)
+          Main.wm.allowKeybinding(
+            Meta.external_binding_name_for_action(action),
+            Shell.ActionMode.NORMAL,
+          );
+        return action;
+      },
+      ungrab: (action) => {
+        Main.wm.allowKeybinding(
+          Meta.external_binding_name_for_action(action),
+          Shell.ActionMode.NONE,
+        );
+        global.display.ungrab_accelerator(action);
+      },
+      watch: (sender, vanished) =>
+        Gio.bus_watch_name_on_connection(
+          Gio.DBus.session,
+          sender,
+          Gio.BusNameWatcherFlags.NONE,
+          null,
+          vanished,
+        ),
+      unwatch: (watch) => Gio.bus_unwatch_name(watch),
+      activate: (sender) =>
+        Gio.DBus.session.emit_signal(sender, PATH, NAME, "ShortcutActivated", null),
+    });
+    this._acceleratorActivated = global.display.connect(
+      "accelerator-activated",
+      (_display, action) => this._shortcuts.activated(action),
+    );
     this._feedback = new CaptureFeedback();
     this._sessionChanged = Main.sessionMode.connect("updated", () => this._feedback.dispose());
     this._monitorsChanged = Main.layoutManager.connect("monitors-changed", () =>
@@ -142,6 +187,13 @@ export default class T3SnapShotExtension extends Extension {
 
   get Version() {
     return 2;
+  }
+
+  BindShortcutAsync([name, accelerator], invocation) {
+    void this._shortcuts
+      .bind(invocation.get_sender(), name, accelerator)
+      .then(() => invocation.return_value(null))
+      .catch((error) => invocation.return_dbus_error(`${NAME}.Failed`, error.message));
   }
 
   CaptureAsync(_params, invocation) {
@@ -177,6 +229,10 @@ export default class T3SnapShotExtension extends Extension {
   }
 
   disable() {
+    this._shortcuts?.disable();
+    if (this._acceleratorActivated) global.display.disconnect(this._acceleratorActivated);
+    this._acceleratorActivated = 0;
+    this._shortcuts = null;
     this._service?.disable();
     this._feedback?.dispose();
     if (this._sessionChanged) Main.sessionMode.disconnect(this._sessionChanged);
