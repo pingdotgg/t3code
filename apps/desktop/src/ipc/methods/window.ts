@@ -1,5 +1,6 @@
 import {
   ContextMenuItemSchema,
+  ContextMenuSource,
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
   DesktopThemeSchema,
@@ -56,6 +57,7 @@ const ContextMenuPosition = Schema.Struct({
 const ContextMenuInput = Schema.Struct({
   items: Schema.Array(ContextMenuItemSchema),
   position: Schema.optionalKey(ContextMenuPosition),
+  source: Schema.optionalKey(ContextMenuSource),
 });
 
 function toWebSocketBaseUrl(httpBaseUrl: URL): string {
@@ -296,6 +298,7 @@ export const showContextMenu = DesktopIpc.makeIpcMethod({
       window: window.value,
       items: input.items,
       position: Option.fromNullishOr(input.position),
+      source: Option.fromNullishOr(input.source),
     });
     return Option.getOrNull(selectedItemId);
   }),
