@@ -356,4 +356,73 @@ describe("EnvironmentProviderSettings routing", () => {
       {},
     );
   });
+
+  it("resets an edited managed Codex instance to managed setup instead of removing it", async () => {
+    await setup();
+    const codex = ProviderDriverKind.make("codex");
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: {
+          driver: codex,
+          enabled: true,
+          displayName: "Personal",
+          config: { enabled: true, setupMode: "managed", launchArgs: "--verbose" },
+        },
+      },
+    };
+    await setProviders([provider()]);
+    await using _screen = await render(panel({ targetInstanceId: codexId }));
+    await userEvent.click(
+      page.getByRole("button", { name: "Reset Codex provider settings to default" }),
+    );
+
+    expect(state.mutateProviderInstance.mock.lastCall?.[0]).toEqual({
+      operation: "upsert",
+      instanceId: codexId,
+      instance: { driver: codex, config: { enabled: true, setupMode: "managed" } },
+    });
+  });
+
+  it("does not offer reset for a managed Codex instance still at its onboarding config", async () => {
+    await setup();
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: {
+          driver: ProviderDriverKind.make("codex"),
+          config: { enabled: true, setupMode: "managed" },
+        },
+      },
+    };
+    await setProviders([provider()]);
+    await using _screen = await render(panel({ targetInstanceId: codexId }));
+    await expect.element(page.getByRole("heading", { name: "ChatGPT account" })).toBeVisible();
+    expect(
+      page.getByRole("button", { name: "Reset Codex provider settings to default" }).query(),
+    ).toBeNull();
+  });
+
+  it("resets an existing-CLI Codex instance by removing it", async () => {
+    await setup();
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: {
+          driver: ProviderDriverKind.make("codex"),
+          config: { binaryPath: "/opt/codex/bin/codex" },
+        },
+      },
+    };
+    await setProviders([provider()]);
+    await using _screen = await render(panel({ targetInstanceId: codexId }));
+    await userEvent.click(
+      page.getByRole("button", { name: "Reset Codex provider settings to default" }),
+    );
+
+    expect(state.mutateProviderInstance.mock.lastCall?.[0]).toEqual({
+      operation: "remove",
+      instanceId: codexId,
+    });
+  });
 });
