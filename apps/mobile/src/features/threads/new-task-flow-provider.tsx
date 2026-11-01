@@ -746,7 +746,7 @@ export function NewTaskFlowProvider(
       threadId: ThreadId.make(metadata.threadId),
       messageId: MessageId.make(metadata.messageId),
       commandId: CommandId.make(metadata.commandId),
-      text,
+      text: draft.text,
       attachments: draft.attachments,
       context: draft.context,
       modelSelection: draftModelSelection,

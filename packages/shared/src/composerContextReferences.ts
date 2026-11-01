@@ -6,6 +6,7 @@ import {
   type ElementContextDetails,
   type EnvironmentId,
   type KnownComposerContextRecord,
+  type OrchestrationMessageContext,
   type ScopedThreadRef,
   type ThreadContextRecord,
 } from "@t3tools/contracts";
@@ -403,4 +404,55 @@ export function remapComposerContextAttachments(
         : record,
     ),
   };
+}
+/** Capture text-only recall while the composer still knows what it, rather than the app, supplied. */
+export function composerRecallContext(
+  sentText: string,
+  composerText: string,
+  context?: OrchestrationMessageContext,
+  previousText?: string,
+): OrchestrationMessageContext | undefined {
+  // A queued editor can reopen the already-trimmed wire text. A no-op save
+  // must not replace the captured original with that lossy representation.
+  if (
+    context?.composerRecall !== undefined &&
+    composerText === previousText &&
+    sentText === previousText
+  ) {
+    return context;
+  }
+  const ids = new Set(context?.records.map((record) => record.contextId));
+  let text = composerText;
+  const references = collectComposerContextReferences(text);
+  for (let index = references.length - 1; index >= 0; index--) {
+    const reference = references[index]!;
+    if (!ids.has(reference.contextId)) continue;
+    let { start, end } = reference;
+    if (text[end] === " ") end += 1;
+    else if (text[start - 1] === " ") start -= 1;
+    text = text.slice(0, start) + text.slice(end);
+  }
+  // Recompute rather than carrying provenance from a message being edited.
+  const { composerRecall: _previousRecall, ...base } = context ?? { version: 1, records: [] };
+  if (text === sentText) return base.records.length > 0 || base.guest ? base : undefined;
+  const start = text.length > 0 ? sentText.indexOf(text) : -1;
+  return {
+    ...base,
+    composerRecall: start < 0 ? text : [start, start + text.length],
+  };
+}
+
+/** Unknown historical origin is not evidence that matching text was app-generated. */
+export function recallComposerText(text: string, context?: OrchestrationMessageContext): string {
+  const recall = context?.composerRecall;
+  if (recall === undefined) return text;
+  if (typeof recall === "string") return recall;
+  const [start, end] = recall;
+  return Number.isSafeInteger(start) &&
+    Number.isSafeInteger(end) &&
+    start >= 0 &&
+    end >= start &&
+    end <= text.length
+    ? text.slice(start, end)
+    : text;
 }

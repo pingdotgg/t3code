@@ -420,6 +420,7 @@ const ComposerDraftProjectSchema = Schema.Struct({
 // Recovery can exceed send limits; keep payloads reloadable and let send guards request trimming.
 const PersistedComposerContextSchema = Schema.Struct({
   version: Schema.Literal(1),
+  composerRecall: OrchestrationMessageContext.fields.composerRecall,
   records: ForwardCompatibleArray(ComposerContextRecord),
 });
 
@@ -1285,7 +1286,11 @@ export function setComposerDraftText(draftKey: string, value: string): void {
   let removed: ReadonlyArray<DraftComposerAttachment> = [];
   updateComposerDrafts((current) => {
     const existing = normalizeDraft(current[draftKey]);
-    const context = referencedComposerContext(value, existing.context);
+    let context = referencedComposerContext(value, existing.context);
+    if (value !== existing.text && context?.composerRecall !== undefined) {
+      const { composerRecall: _previousRecall, ...editedContext } = context;
+      context = editedContext;
+    }
     const draft = withReferencedContextFiles(existing, value, context);
     removed = existing.attachments.filter((attachment) => !draft.attachments.includes(attachment));
     return withComposerDraft(current, draftKey, draft);

@@ -1,11 +1,13 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { describe, expect, it } from "vite-plus/test";
+import { composerRecallContext } from "@t3tools/shared/composerContextReferences";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
 import { threadContextReference } from "../../lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import {
   approvalRedirectNotice,
+  approvalFeedbackBlockReason,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
@@ -15,6 +17,16 @@ const local = EnvironmentId.make("local");
 const remote = EnvironmentId.make("remote");
 const localThread = threadContextRecord(scopeThreadRef(local, ThreadId.make("a")), "Local");
 const remoteThread = threadContextRecord(scopeThreadRef(remote, ThreadId.make("b")), "Remote");
+
+describe("approval feedback", () => {
+  it("accepts whitespace-preserving plain text but still rejects real added context", () => {
+    const prompt = "  Please use a read-only command instead.\n";
+    const context = composerRecallContext(prompt.trim(), prompt);
+    expect(approvalFeedbackBlockReason(0, context)).toBeNull();
+    expect(approvalFeedbackBlockReason(1, context)).not.toBeNull();
+    expect(approvalFeedbackBlockReason(0, { version: 1, records: [localThread] })).not.toBeNull();
+  });
+});
 
 describe("referencedThreadContexts", () => {
   it("keeps only the attached threads the prompt still links", () => {
