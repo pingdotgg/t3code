@@ -60,10 +60,22 @@ const hasOption = (node: unknown, names: ReadonlySet<string>) => {
   );
 };
 
-const isNumericLiteral = (node: unknown) =>
-  Option.exists(
-    unwrapExpression(node),
-    (expression) => expression.type === "Literal" && typeof expression.value === "number",
+const FUNCTION_TYPES = new Set(["ArrowFunctionExpression", "FunctionExpression"]);
+const CALLBACK_OR_OPTIONS_TYPES = new Set([
+  ...FUNCTION_TYPES,
+  "CallExpression",
+  "Identifier",
+  "MemberExpression",
+  "ObjectExpression",
+]);
+
+// After an inline body the third argument can only be a timeout or options. After options or a
+// reference it may be the body itself, so only a value that cannot be one counts as a timeout.
+const isPositionalTimeout = (second: unknown, third: unknown) =>
+  Option.exists(unwrapExpression(third), (expression) =>
+    Option.exists(unwrapExpression(second), (body) => FUNCTION_TYPES.has(body.type))
+      ? expression.type !== "ObjectExpression"
+      : !CALLBACK_OR_OPTIONS_TYPES.has(expression.type),
   );
 
 const isStringLiteral = (node: unknown) =>
@@ -115,7 +127,8 @@ export default defineRule({
         }
 
         if (callee.value.type === "Identifier" && HOOK_FUNCTIONS.has(callee.value.name)) {
-          if (checkTimeouts && isNumericLiteral(node.arguments[1])) {
+          // A hook's only parameter after its callback is the timeout.
+          if (checkTimeouts && node.arguments[1] !== undefined) {
             context.report({ node, message: TIMEOUT_MESSAGE });
           }
           return;
@@ -126,7 +139,7 @@ export default defineRule({
         // `test(name, { timeout }, fn)` is the options-first spelling of the same override.
         if (
           checkTimeouts &&
-          (isNumericLiteral(third) ||
+          (isPositionalTimeout(second, third) ||
             hasOption(third, TIMEOUT_OPTIONS) ||
             hasOption(second, TIMEOUT_OPTIONS))
         ) {

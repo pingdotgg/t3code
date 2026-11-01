@@ -15,11 +15,16 @@ describe(RULE, () => {
     `
       import { describe, it, vi } from "vitest";
 
+      const options = { concurrent: true };
+      const run = async () => {};
       describe.skipIf(process.env.CI)("suite", () => {
         it.runIf(true)("runs", async () => {
           await vi.waitFor(() => {}, { timeout: 10_000 });
         });
         it.each([1, 2])("handles %s", (value) => {});
+        it("by reference", run);
+        it("options first", options, run);
+        it("inline options", { tags: ["db"] }, run);
       });
       vi.setConfig({ restoreMocks: true });
     `,
@@ -65,19 +70,26 @@ describe(RULE, () => {
   );
 
   rule.invalid(
-    "reports retry options, options-first timeouts, and hook timeouts",
+    "reports retry options, options-first timeouts, and literal or computed positional timeouts",
     `
-      import { beforeAll, describe, it } from "vitest";
+      import { afterEach, beforeAll, beforeEach, describe, it } from "vitest";
 
+      const SECOND = 1_000;
+      const run = async () => {};
       describe("suite", () => {
         beforeAll(() => {}, 60_000);
+        beforeEach(() => {}, SECOND);
+        afterEach(() => {}, 10 * SECOND);
         it("flaky", () => {}, { retry: 3 });
         it("slow", { timeout: 30_000 }, () => {});
+        it("named", () => {}, SECOND);
+        it("function body", function () {}, 30 * SECOND);
+        it("by reference", run, SECOND * 2);
       });
     `,
     (output) => {
       assertTimeoutMessage(output);
-      assert.equal(output.match(/no-test-timeout-or-unreasoned-skip/g)?.length, 3);
+      assert.equal(output.match(/no-test-timeout-or-unreasoned-skip/g)?.length, 8);
     },
   );
 
@@ -180,7 +192,9 @@ createOxlintRuleHarness(RULE, { filename: "Provider.live.test.ts" }).valid(
     import { it } from "@effect/vitest";
     import * as Effect from "effect/Effect";
 
+    const TURN_TIMEOUT = 360_000;
     it.live("real turn", () => Effect.void, 360_000);
+    it.live("named turn", () => Effect.void, TURN_TIMEOUT);
   `,
 );
 
