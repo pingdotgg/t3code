@@ -17,6 +17,7 @@ import { getRouter, type AppRouter } from "~/router";
 import {
   ENVIRONMENT_ID,
   assistantItem,
+  emitTerminalMetadata,
   emitThreadEvent,
   installFakeEnvironment,
   isThreadSubscribed,
@@ -50,6 +51,7 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
 const HISTORY_TURNS = 20;
 const STREAM_DELTAS = 30;
 const TYPED_TEXT = "fix the flaky tests!";
+const TERMINAL_UPDATES = 20;
 // The stream scenario leaves a turn on its thread, so it streams into one no other scenario opens.
 const THREADS = ["thread-warm", "thread-a", "thread-b", "thread-live"].map((name) =>
   threadWithHistory(name, HISTORY_TURNS),
@@ -209,6 +211,37 @@ it("app-stream-assistant-turn", async () => {
   // Each delta adds a paragraph; finished blocks keep their render.
   expect(counted.components.MarkdownParagraph).toBe(STREAM_DELTAS);
   await report("app-stream-assistant-turn", [counted], { commits: false });
+});
+
+it("app-terminal-updates-in-other-thread", async () => {
+  using _clock = frozenClock();
+  await using _app = (await openThread(A)).screen;
+  const counted = await measure(async () => {
+    for (let update = 0; update < TERMINAL_UPDATES; update++) {
+      await act(() =>
+        emitTerminalMetadata({
+          type: "upsert",
+          terminal: {
+            threadId: B,
+            terminalId: "default",
+            cwd: "/repo",
+            worktreePath: null,
+            status: "running",
+            pid: 42,
+            exitCode: null,
+            exitSignal: null,
+            hasRunningSubprocess: true,
+            label: `command ${update}`,
+            updatedAt: `2026-03-18T09:01:${String(update).padStart(2, "0")}.000Z`,
+          },
+        }),
+      );
+    }
+  });
+  // Only thread B's sidebar row shows these updates.
+  expect(counted.components.ChatView).toBeUndefined();
+  expect(counted.components.SidebarThreadRow).toBe(TERMINAL_UPDATES);
+  await report("app-terminal-updates-in-other-thread", [counted]);
 });
 
 it("app-type-in-composer", async () => {
