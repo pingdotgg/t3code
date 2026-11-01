@@ -533,7 +533,7 @@ it.effect.each(["bare", "unborn"] as const)(
         assert.equal(Result.isSuccess(result), state === "bare");
         if (Result.isFailure(result)) {
           assert.equal(result.failure.operation, "GitVcsDriver.createWorktree.createBranch");
-          assert.equal(result.failure.detail, "git worktree add failed");
+          assert.equal(result.failure.detail, "Git could not find that branch or commit.");
         }
         assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 1);
         assert.isFalse(spawnedArgs.some((args) => args[0] === "symbolic-ref"));
@@ -1419,7 +1419,7 @@ describe("rejected git refs", () => {
     {
       label: "a ref the remote refused",
       stderr: [
-        "remote: Unable to determine if workflow can be created; workflow scope may be required.",
+        "remote: nothing to commit; workflow scope may be required.",
         `To ${remoteUrl}`,
         " ! [remote rejected] private-branch -> private-branch (workflow scope may be required.)",
         failedPush,
@@ -1506,38 +1506,40 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     }),
   );
   describe("structured errors", () => {
-    it.effect("does not retain git arguments or stderr in command failures", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* driver.initRepo({ cwd });
+    it.effect.each(["secret-token-value", "prefix123=private-secret", "tiny"])(
+      "does not retain git argument %s in command failures",
+      (secret) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* driver.initRepo({ cwd });
 
-        const secret = "secret-token-value";
-        const error = yield* driver
-          .execute({
+          const error = yield* driver
+            .execute({
+              operation: "GitVcsDriver.test.redactedFailure",
+              cwd,
+              args: ["status", `--unknown-option=${secret}`],
+            })
+            .pipe(Effect.flip);
+
+          assert.deepInclude(error, {
+            _tag: "GitCommandError",
             operation: "GitVcsDriver.test.redactedFailure",
+            command: "git",
+            argumentCount: 2,
             cwd,
-            args: ["status", `--unknown-option=${secret}`],
-          })
-          .pipe(Effect.flip);
-
-        assert.deepInclude(error, {
-          _tag: "GitCommandError",
-          operation: "GitVcsDriver.test.redactedFailure",
-          command: "git",
-          argumentCount: 2,
-          cwd,
-        });
-        assert.isNumber(error.exitCode);
-        assert.isAbove(error.stderrLength ?? 0, 0);
-        assert.include(error.detail, "unknown option");
-        assert.include(error.detail, "[redacted]");
-        assert.notInclude(error.detail, secret);
-        assert.notInclude(error.message, secret);
-        assert.notProperty(error, "args");
-        assert.notProperty(error, "stderr");
-        assert.notProperty(error, "reason");
-      }),
+          });
+          assert.isNumber(error.exitCode);
+          assert.isAbove(error.stderrLength ?? 0, 0);
+          assert.include(error.detail, "unknown option");
+          assert.include(error.detail, "[redacted]");
+          assert.notInclude(error.detail, secret);
+          assert.notInclude(error.message, secret.split("=").at(-1)!);
+          assert.notInclude(error.message, secret);
+          assert.notProperty(error, "args");
+          assert.notProperty(error, "stderr");
+          assert.notProperty(error, "reason");
+        }),
     );
 
     it.effect("names a missing author identity behind a failed commit", () =>
@@ -1575,20 +1577,23 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("names an empty working tree behind a failed commit", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* initRepoWithCommit(cwd);
+    it.effect.each([false, true])(
+      "names a commit without staged changes (unstaged: %s)",
+      (unstaged) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* initRepoWithCommit(cwd);
 
-        const error = yield* driver.commit(cwd, "empty", "").pipe(Effect.flip);
+          if (unstaged) yield* writeTextFile(cwd, "README.md", "unstaged changes\n");
+          const error = yield* driver.commit(cwd, "empty", "").pipe(Effect.flip);
 
-        assert.deepInclude(error, {
-          _tag: "GitCommandError",
-          reason: "nothing_to_commit",
-        });
-        assert.include(error.detail, "Nothing to commit");
-      }),
+          assert.deepInclude(error, {
+            _tag: "GitCommandError",
+            reason: "nothing_to_commit",
+          });
+          assert.include(error.detail, "Nothing to commit");
+        }),
     );
 
     it.effect("surfaces a rejected commit hook's output in the failure detail", () =>

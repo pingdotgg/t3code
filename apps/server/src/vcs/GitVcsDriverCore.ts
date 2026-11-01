@@ -470,7 +470,10 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
     "push_rejected_non_fast_forward",
   ],
   [/Author identity unknown|^fatal: empty ident name\b/im, "author_identity_unknown"],
-  [/^fatal: Unable to create ['"].+\.lock['"]: File exists/im, "index_locked"],
+  [
+    /^fatal: Unable to create ['"](?:index\.lock|[^'"\r\n]*[\\/]index\.lock)['"]: File exists/im,
+    "index_locked",
+  ],
   [
     /(?:^error: gpg failed to sign the data|gpg failed to sign|signing failed|no ssh public key)/im,
     "commit_signing_failed",
@@ -488,7 +491,7 @@ const GIT_DIAGNOSTIC_LINE_PATTERN = /^(?:fatal|error):|^!\s|^\s+!\s/;
 const SSH_TRANSPORT_REFUSAL_PATTERN =
   /Permission denied \((?:publickey|password|keyboard-interactive)|Permission denied, please try again|Host key verification failed/i;
 const NOTHING_TO_COMMIT_PATTERN =
-  /nothing to commit|nothing added to commit but untracked files present/i;
+  /^(?:nothing to commit|no changes added to commit|nothing added to commit but untracked files present)\b/im;
 
 // Reasons the user can act on get a sentence in place of the generic detail.
 const GIT_FAILURE_REASON_DETAILS: Partial<Record<GitCommandFailureReason, string>> = {
@@ -535,8 +538,12 @@ function redactGitFailureText(text: string, args: readonly string[]): string {
     .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/g, "[redacted]");
   // Argv can embed tokens that Git echoes back into diagnostics.
   for (const arg of args) {
-    const value = arg.startsWith("-") ? (arg.split("=", 2)[1] ?? "") : arg;
-    if (value.length < 8 || !redacted.includes(value)) continue;
+    const value = arg.startsWith("-")
+      ? arg.includes("=")
+        ? arg.slice(arg.indexOf("=") + 1)
+        : ""
+      : arg;
+    if (value.length === 0 || !redacted.includes(value)) continue;
     redacted = redacted.split(value).join("[redacted]");
   }
   return redacted;
@@ -576,8 +583,12 @@ function gitFailureDetail(
   );
 }
 
-function classifyGitFailure(stderr: string, stdout = ""): GitCommandFailureReason | null {
-  if (NOTHING_TO_COMMIT_PATTERN.test(stdout) || NOTHING_TO_COMMIT_PATTERN.test(stderr)) {
+function classifyGitFailure(
+  stderr: string,
+  stdout: string,
+  args: readonly string[],
+): GitCommandFailureReason | null {
+  if (args[0] === "commit" && NOTHING_TO_COMMIT_PATTERN.test(stdout)) {
     return "nothing_to_commit";
   }
   const diagnostics = stderr
@@ -1130,7 +1141,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* trace2Monitor.flush;
 
         if (!input.allowNonZeroExit && exitCode !== 0) {
-          const reason = classifyGitFailure(stderr.text, stdout.text);
+          const reason = classifyGitFailure(stderr.text, stdout.text, commandInput.args);
           return yield* new GitCommandError({
             ...gitCommandContext(commandInput),
             ...(reason === null ? {} : { reason }),
@@ -1244,7 +1255,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         if (options.allowNonZeroExit || result.exitCode === 0) {
           return Effect.succeed(result);
         }
-        const reason = classifyGitFailure(result.stderr, result.stdout);
+        const reason = classifyGitFailure(result.stderr, result.stdout, args);
         const classifiedDetail = reason === null ? undefined : GIT_FAILURE_REASON_DETAILS[reason];
         return Effect.fail(
           new GitCommandError({
@@ -2974,7 +2985,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
     }
     if (result.exitCode !== 0) {
-      const reason = classifyGitFailure(result.stderr, result.stdout);
+      const reason = classifyGitFailure(result.stderr, result.stdout, args);
       return yield* new GitCommandError({
         ...gitCommandContext({ operation: "GitVcsDriver.pullCurrentBranch.pull", cwd, args }),
         ...(reason === null ? {} : { reason }),
