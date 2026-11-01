@@ -20,6 +20,7 @@ import { initializeV2Database } from "./initializeV2Database.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
+import * as TurnItemContentStoreTestkit from "../orchestration-v2/TurnItemContentStore.testkit.ts";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 
 it.effect(
@@ -52,7 +53,9 @@ it.effect(
       const layerStores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
         Layer.provideMerge(layerDatabase),
       );
-      const layerSink = EventSink.layer.pipe(Layer.provide(layerStores));
+      const layerSink = EventSink.layer.pipe(
+        Layer.provide(Layer.merge(layerStores, TurnItemContentStoreTestkit.layerPassthrough)),
+      );
       const layerImporter = LegacyV1ThreadImporter.layer.pipe(
         Layer.provideMerge(Layer.mergeAll(layerStores, layerSink)),
       );

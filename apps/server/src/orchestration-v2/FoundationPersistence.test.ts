@@ -64,6 +64,7 @@ import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
+import * as TurnItemContentStoreTestkit from "./TurnItemContentStore.testkit.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
 const isLiveStreamBufferError = Schema.is(LiveStreamBufferError);
@@ -76,6 +77,7 @@ const layerStoresProvided = Layer.mergeAll(
   layerDatabase,
   layerEventStoreProvided,
   layerProjectionStoreProvided,
+  TurnItemContentStoreTestkit.layerPassthrough,
 );
 const layerEventSinkProvided = EventSink.layer.pipe(Layer.provide(layerStoresProvided));
 const layerEffectOutboxProvided = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));

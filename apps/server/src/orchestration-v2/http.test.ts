@@ -207,6 +207,13 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
         0,
       );
     const boundaryOutput = "界" + "x".repeat(PROVIDER_SEND_TURN_MAX_FILE_BYTES - baseSize - 3);
+    const commandItem = items.find(
+      (item): item is Extract<(typeof items)[number], { type: "command_execution" }> =>
+        item.type === "command_execution",
+    );
+    expect(commandItem).toBeDefined();
+    if (commandItem === undefined) throw new Error("Expected a command item");
+    expect(commandItem.contentRef).toBeUndefined();
     for (const [suffix, expectedStatus] of [
       ["", 200],
       ["x", 400],
@@ -219,7 +226,7 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
             threadId: thread.id,
             occurredAt: now,
             payload: {
-              ...items.find((item) => item.type === "command_execution")!,
+              ...commandItem,
               output: boundaryOutput + suffix,
             },
           },
@@ -243,6 +250,39 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
         });
       }
     }
+
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("oversized-stored-transcript-item"),
+          type: "turn-item.updated",
+          threadId: thread.id,
+          occurredAt: now,
+          payload: {
+            ...commandItem,
+            output: "Stored output preview",
+            contentRef: {
+              attachmentId: "missing-transcript-content",
+              sizeBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1,
+            },
+          },
+        },
+      ],
+    });
+    const oversizedStoredItemError = yield* Context.get(
+      services,
+      ThreadManagementService.ThreadManagementService,
+    )
+      .getThreadTranscript(thread.id)
+      .pipe(
+        Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
+          getEnvironmentId: Effect.succeed(environmentId),
+        }),
+        Effect.flip,
+      );
+    expect(oversizedStoredItemError).toBeInstanceOf(
+      ThreadManagementService.ThreadTranscriptTooLargeError,
+    );
 
     expect((yield* read(ThreadId.make("missing"))).status).toBe(404);
     allowed = false;

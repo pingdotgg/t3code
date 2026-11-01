@@ -55,7 +55,12 @@ import {
 } from "../auth/utils.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
-import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
+import {
+  parseAttachmentFileExtension,
+  parseThreadSegmentFromAttachmentId,
+  resolveAttachmentPathById,
+  toSafeThreadAttachmentSegment,
+} from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -246,8 +251,36 @@ const readToolOutputImage = Effect.fn("AssetAccess.readToolOutputImage")(functio
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const item = yield* orchestrator.getTurnItem(input);
   const image =
-    item?.type === "dynamic_tool" ? toolOutputImages(item.output)[input.index] : undefined;
-  return image?.data === undefined || image.data.length > MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH
+    item?.type === "dynamic_tool" && item.threadId === input.threadId
+      ? toolOutputImages(item.output)[input.index]
+      : undefined;
+  if (image === undefined) return null;
+  if (image.attachmentId !== undefined) {
+    const ownerSegment = toSafeThreadAttachmentSegment(input.threadId);
+    if (
+      ownerSegment === null ||
+      parseThreadSegmentFromAttachmentId(image.attachmentId) !== ownerSegment
+    ) {
+      return null;
+    }
+    const config = yield* ServerConfig.ServerConfig;
+    const attachmentPath = resolveAttachmentPathById({
+      attachmentsDir: config.attachmentsDir,
+      attachmentId: image.attachmentId,
+    });
+    if (attachmentPath === null) return null;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const bytes = yield* fileSystem.readFile(attachmentPath).pipe(Effect.orElseSucceed(() => null));
+    if (
+      bytes === null ||
+      bytes.byteLength > MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH ||
+      (image.sizeBytes !== undefined && image.sizeBytes !== bytes.byteLength)
+    ) {
+      return null;
+    }
+    return { mimeType: image.mimeType, bytes };
+  }
+  return image.data === undefined || image.data.length > MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH
     ? null
     : { mimeType: image.mimeType, bytes: Buffer.from(image.data, "base64") };
 });

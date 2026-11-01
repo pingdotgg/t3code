@@ -237,7 +237,12 @@ export function resolveWorkEntryToolPresentation(
   const status = entry.toolLifecycleStatus ?? fallbackStatus;
   return resolveT3McpToolPresentation(
     definition,
-    definition && t3ToolResultIndicatesFailure(workEntryToolOutput(entry)) ? "failed" : status,
+    definition &&
+      ((entry.structuredPayload?.type === "dynamic_tool" &&
+        entry.structuredPayload.outputIndicatesFailure === true) ||
+        t3ToolResultIndicatesFailure(workEntryToolOutput(entry)))
+      ? "failed"
+      : status,
     entry.toolData,
   );
 }
@@ -277,6 +282,7 @@ function workEntryIndicatesToolFailureFromOutput(
     return true;
   }
   const item = entry.structuredPayload;
+  if (item?.type === "dynamic_tool" && item.outputIndicatesFailure) return true;
   if (item?.type === "command_execution") {
     // The exit code outranks text in the output or the command itself.
     if (item.exitCode !== undefined) return item.exitCode !== 0;

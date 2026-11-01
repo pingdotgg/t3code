@@ -4,6 +4,7 @@ import {
   type OrchestrationV2CommandOutputFrame,
   type OrchestrationV2SubscribeCommandOutputInput,
   type OrchestrationV2TurnItem,
+  type ThreadId,
 } from "@t3tools/contracts";
 import {
   appendTerminalOutput,
@@ -25,6 +26,7 @@ import * as Stream from "effect/Stream";
 
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as TurnItemContentStore from "./TurnItemContentStore.ts";
 
 /** Output bypasses orchestration events; expanded rows receive tails, coalesced appends, then persisted output. */
 
@@ -67,6 +69,23 @@ const isCommandOutputError = Schema.is(OrchestrationV2CommandOutputError);
 
 function commandKey(target: CommandOutputTarget): string {
   return `${target.threadId}\u0000${target.itemId}`;
+}
+
+export function wakeAfterReadFailure(input: {
+  readonly threadId: ThreadId;
+  readonly cause: TurnItemContentStore.TurnItemContentStoreError;
+  readonly wake: Queue.Queue<void>;
+  readonly setFailure: (error: OrchestrationV2CommandOutputError) => void;
+}): Effect.Effect<boolean> {
+  return Effect.sync(() =>
+    input.setFailure(
+      new OrchestrationV2CommandOutputError({
+        threadId: input.threadId,
+        message: "Failed to read command output.",
+        cause: input.cause,
+      }),
+    ),
+  ).pipe(Effect.andThen(Queue.offer(input.wake, undefined)));
 }
 
 const decodeLegacyClaudeBashResult = Schema.decodeUnknownOption(
@@ -121,6 +140,7 @@ function setBounded<V>(
 export const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const turnItemContentStore = yield* TurnItemContentStore.TurnItemContentStore;
   const tails = new Map<string, TerminalOutputState>();
   const finished = new Map<string, TerminalOutputState>();
   const subscribers = new Map<string, Set<Subscriber>>();
@@ -193,6 +213,7 @@ export const make = Effect.gen(function* () {
         // Persisted items provide settlement and final output; snapshot-only providers (ACP, Pi) also stream here.
         let snapshotOutput: string | undefined;
         let lost: Cause.Cause<unknown> | undefined;
+        let readFailure: OrchestrationV2CommandOutputError | undefined;
         let settled: Extract<OrchestrationV2TurnItem, { type: "command_execution" }> | undefined;
         const observe = (item: OrchestrationV2TurnItem | undefined) =>
           Effect.suspend(() => {
@@ -207,6 +228,23 @@ export const make = Effect.gen(function* () {
             subscriber.needsReplace = true;
             return Queue.offer(wake, undefined);
           });
+        const observeStored = (item: OrchestrationV2TurnItem | undefined) => {
+          if (item?.type !== "command_execution") return observe(item);
+          return turnItemContentStore.read(item).pipe(
+            Effect.catchTags({
+              TurnItemContentStoreError: (cause) =>
+                wakeAfterReadFailure({
+                  threadId: target.threadId,
+                  cause,
+                  wake,
+                  setFailure: (error) => {
+                    readFailure = error;
+                  },
+                }).pipe(Effect.as(item)),
+            }),
+            Effect.flatMap(observe),
+          );
+        };
         const fromSequence = yield* eventSink.latestSequence({ threadId: target.threadId });
         yield* eventSink
           .stream({
@@ -217,7 +255,7 @@ export const make = Effect.gen(function* () {
           .pipe(
             Stream.runForEach((stored) =>
               stored.event.type === "turn-item.updated" && stored.event.payload.id === target.itemId
-                ? observe(stored.event.payload)
+                ? observeStored(stored.event.payload)
                 : Effect.void,
             ),
             // A lost event stream cannot settle the row; end with an error.
@@ -236,7 +274,7 @@ export const make = Effect.gen(function* () {
             message: "No such command.",
           });
         }
-        yield* observe(item);
+        yield* observeStored(item);
         yield* Queue.offer(wake, undefined);
 
         let lastFrameAt: number | undefined;
@@ -246,6 +284,7 @@ export const make = Effect.gen(function* () {
           OrchestrationV2CommandOutputError
         > {
           yield* Queue.take(wake);
+          if (readFailure !== undefined) return yield* readFailure;
           if (lost !== undefined) {
             return yield* new OrchestrationV2CommandOutputError({
               threadId: target.threadId,
@@ -315,5 +354,7 @@ export const make = Effect.gen(function* () {
 export const layer: Layer.Layer<
   CommandOutputHub,
   never,
-  EventSink.EventSinkV2 | ProjectionStore.ProjectionStoreV2
+  | EventSink.EventSinkV2
+  | ProjectionStore.ProjectionStoreV2
+  | TurnItemContentStore.TurnItemContentStore
 > = Layer.effect(CommandOutputHub, make);

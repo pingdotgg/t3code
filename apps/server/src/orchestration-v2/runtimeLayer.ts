@@ -53,6 +53,7 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
+import * as TurnItemContentStore from "./TurnItemContentStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -80,6 +81,7 @@ const layerStores = Layer.mergeAll(
   ProjectStore.layer,
   layerCommandReceiptStoreProvided,
   EffectOutbox.layer,
+  TurnItemContentStore.layer,
   TurnItemPositionStore.layer,
 );
 
@@ -127,7 +129,7 @@ const layerProviderSwitchServiceProvided = ProviderSwitchService.layer.pipe(
 );
 
 const layerCommandOutputHubProvided = CommandOutputHub.layer.pipe(
-  Layer.provide(Layer.merge(layerEventSink, ProjectionStore.layer)),
+  Layer.provide(Layer.mergeAll(layerEventSink, ProjectionStore.layer, TurnItemContentStore.layer)),
 );
 
 const layerProviderSessionManagerProvided = ProviderSessionManager.layer.pipe(

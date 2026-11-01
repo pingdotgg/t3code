@@ -63,6 +63,7 @@ import * as TurnItemPositionStore from "../TurnItemPositionStore.ts";
 import * as RuntimeRequestService from "../RuntimeRequestService.ts";
 import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
 import * as ThreadForkService from "../ThreadForkService.ts";
+import * as TurnItemContentStore from "../TurnItemContentStore.ts";
 import {
   runOrchestratorV2Scenario,
   type OrchestratorV2ScenarioStepError,
@@ -319,12 +320,16 @@ export function layerWithRegistry<Error>(
       ),
     ),
   ).pipe(Layer.orDie);
+  const layerTurnItemContentStore = TurnItemContentStore.layer.pipe(
+    Layer.provide(Layer.merge(layerServerConfig, NodeServices.layer)),
+  );
   const layerStores = Layer.mergeAll(
     EventStore.layer,
     ProjectionStore.layer,
     ProjectStore.layer,
     CommandReceiptStore.layer,
     EffectOutbox.layer,
+    layerTurnItemContentStore,
     TurnItemPositionStore.layer,
   ).pipe(Layer.provide(layerDatabase));
   const layerEventSinkProvided = EventSink.layerFromStores.pipe(
