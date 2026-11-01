@@ -281,7 +281,13 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     (key: VersionProbeKey) =>
       spawner
         .string(
-          ChildProcess.make(key.executablePath, ["version"], { stdin: "ignore", stderr: "ignore" }),
+          ChildProcess.make(key.executablePath, ["version"], {
+            stdin: "ignore",
+            stderr: "ignore",
+            // Go >= 1.24 aborts at startup when a removed GODEBUG setting (e.g. tlskyber=0) is inherited.
+            env: { GODEBUG: undefined },
+            extendEnv: true,
+          }),
         )
         .pipe(
           Effect.map(parseCloudflaredVersionOutput),

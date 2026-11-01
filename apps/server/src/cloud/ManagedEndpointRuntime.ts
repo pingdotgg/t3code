@@ -629,6 +629,8 @@ export const make = Effect.gen(function* () {
             detached: false,
             env: {
               ...process.env,
+              // Go >= 1.24 aborts at startup when a removed GODEBUG setting (e.g. tlskyber=0) is inherited.
+              GODEBUG: undefined,
               TUNNEL_TOKEN: config.connectorToken,
             },
             shell: false,
