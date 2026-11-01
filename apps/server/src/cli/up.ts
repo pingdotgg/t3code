@@ -626,7 +626,9 @@ const setUp = Effect.fn("cli.up")(function* (
     return yield* upError(`${tailscale.reason} Then run t3 up again.`);
   }
   if (tailscaleKept && !tailscale.ok && !(plan.ask.length > 0 && interactive)) {
-    yield* Console.log(`${tailscale.reason} Tailscale settings stay as they are.`);
+    yield* Console.log(
+      `${tailscale.reason} ${serveOffChosen ? "Serve turns off. Other Tailscale settings" : "Tailscale settings"} stay as they are.`,
+    );
   }
 
   const requireGrant = flags.requireGrant || before.requireGrant;
@@ -870,7 +872,7 @@ export const upCommand = Command.make("up", {
   ),
   tailscaleServe: Flag.Boolean("tailscale-serve").pipe(
     Flag.withDescription(
-      "Serve HTTPS through Tailscale Serve. Turn off with --no-tailscale-serve. Implies --tailscale.",
+      "Serve HTTPS through Tailscale Serve. Implies --tailscale. --no-tailscale-serve turns it off and leaves sign-in as it is.",
     ),
     Flag.optional,
   ),
