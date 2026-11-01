@@ -106,7 +106,7 @@ it("attributes ESM and CommonJS imports without changing module execution", () =
   }
 });
 
-it("captures the dev runner without profiling the launcher when an output directory is set", () => {
+it("captures only the dev runner and preserves its exit status", () => {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-startup-launcher-"));
   try {
     NodeFS.mkdirSync(NodePath.join(directory, "scripts"));
@@ -129,6 +129,20 @@ it("captures the dev runner without profiling the launcher when an output direct
     expect(NodeFS.readdirSync(output).sort()).toEqual(
       ["cpuprofile", "modules.json", "process.json"].map((suffix) => `${runner.pid}-0.${suffix}`),
     );
+    NodeFS.writeFileSync(
+      NodePath.join(directory, "scripts/dev-runner.ts"),
+      "process.kill(process.pid, 'SIGTERM');",
+    );
+    const interrupted = NodeChildProcess.spawnSync(
+      process.execPath,
+      [NodePath.join(import.meta.dirname, "profile-startup.mjs")],
+      {
+        cwd: directory,
+        env: { ...process.env, NODE_OPTIONS: "", T3CODE_STARTUP_PROFILE_DIR: output },
+      },
+    );
+    expect(interrupted.error).toBeUndefined();
+    expect(interrupted.status).toBe(1);
   } finally {
     NodeFS.rmSync(directory, { recursive: true, force: true });
   }
