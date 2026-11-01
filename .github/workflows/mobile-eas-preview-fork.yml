@@ -23,6 +23,7 @@ jobs:
       github.event.pull_request.head.repo.full_name != github.repository &&
       github.event.label.name == '🚀 Mobile Continuous Deployment'
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 20
     concurrency:
       group: mobile-eas-preview-fork-${{ github.event.pull_request.number }}
       cancel-in-progress: true
