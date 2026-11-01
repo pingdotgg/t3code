@@ -2961,7 +2961,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly freshQueueOnReopen?: boolean;
     readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
     readonly allocateSessionId?: Effect.Effect<string>;
-    readonly modelCatalog?: (cwd: string | null) => Effect.Effect<ClaudeModelCatalog>;
+    readonly modelCatalog?: (
+      cwd: string | null,
+      launchSettings?: ClaudeSdk.Settings,
+    ) => Effect.Effect<ClaudeModelCatalog>;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -4846,11 +4849,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           { value: "haiku", resolvedModel: "us.anthropic.claude-haiku-4-5-20251001-v1:0" },
         ]);
         yield* routes.settle;
-        const openedModel = (cwd: string) =>
+        const openedModel = (cwd: string, launchSettings?: Record<string, unknown>) =>
           Effect.scoped(
             Effect.gen(function* () {
               const harness = yield* makeWakeHarnessWithOptions({
                 modelCatalog: routes.catalogFor,
+                settings: {
+                  ...DEFAULT_CLAUDE_SETTINGS,
+                  launchArgs:
+                    launchSettings === undefined
+                      ? ""
+                      : `--settings '${JSON.stringify(launchSettings)}'`,
+                },
               });
               yield* harness.runtime.startTurn(
                 makeClaudeTestTurnInput({
@@ -4876,6 +4886,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
 
         assert.equal(yield* openedModel(project), "haiku");
+        assert.equal(
+          yield* openedModel(project, {
+            env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: "global.anthropic.claude-sonnet-4-6" },
+          }),
+          "claude-haiku-4-5",
+        );
+        assert.equal(yield* openedModel(project, { env: { FOO: "1" } }), "haiku");
         // Claude Code resolves `haiku` to Sonnet there, so the slug is the only safe id.
         assert.equal(yield* openedModel(overridden), "claude-haiku-4-5");
 

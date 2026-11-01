@@ -86,10 +86,14 @@ export const makeClaudeCodeModelRoutes = Effect.fn("makeClaudeCodeModelRoutes")(
       yield* Ref.set(reported, { models, settingsKey: yield* settingsKey(probeCwd) });
     }),
     settle: Deferred.succeed(firstProbeSettled, undefined).pipe(Effect.asVoid),
-    catalogFor: Effect.fn("ClaudeCodeModelRoutes.catalogFor")(function* (cwd: string | null) {
+    catalogFor: Effect.fn("ClaudeCodeModelRoutes.catalogFor")(function* (
+      cwd: string | null,
+      launchSettings?: ClaudeSdkSettings,
+    ) {
       // Leave room for the sequential version and capability probes before falling back.
       yield* Deferred.await(firstProbeSettled).pipe(Effect.timeoutOption("2 minutes"));
       const base = yield* catalog;
+      if (claudeModelSettingsKey(launchSettings ?? {}) !== NO_MODEL_SETTINGS_KEY) return base;
       const { models, settingsKey: probeKey } = yield* Ref.get(reported);
       const routed = withClaudeCodeModelRoutes(base, models);
       // Project settings can point an alias at another model, so routes hold only where the
