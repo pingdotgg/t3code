@@ -8,6 +8,8 @@ import {
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadWaitInput,
   OrchestratorMcpThreadWaitResult,
+  type PeerLinkError,
+  RuntimeMode,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -15,9 +17,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Tool from "effect/ai/Tool";
 
+import { runtimeModeRank } from "../mcp/delegatedTaskModes.ts";
 import { assertNotLinked } from "../mcp/linkOrigin.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { readCaller, unavailable } from "../mcp/threadAccess.ts";
@@ -87,6 +91,11 @@ export const linkedEnvironmentsOff = new OrchestratorMcpFailure({
     "Linked environments is off on this machine, so no tool can act on another machine. Leave out environmentId to work here; the user can turn it on in Settings → Labs.",
 });
 
+const isRuntimeMode = Schema.is(RuntimeMode);
+
+const linkStorageFailure = (error: PeerLinkError) =>
+  new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message });
+
 /** The linked environment a call names, or nothing when it names this one. */
 export const remoteTarget = (scope: Scope, environmentId: EnvironmentId | undefined) =>
   environmentId === scope.environmentId ? undefined : environmentId;
@@ -122,6 +131,28 @@ const make = Effect.gen(function* () {
       Effect.orDie,
     );
 
+  /**
+   * The linked environment refuses a mode above the link's access too, but as
+   * "broader than parent mode", which misleads when the parent here is broader.
+   * A read-only link refuses the launch there with its own capability error,
+   * and an expired one is left to say it expired.
+   */
+  const assertWithinLinkAccess = Effect.fn("PeerForwarding.assertWithinLinkAccess")(function* (
+    environmentId: EnvironmentId,
+    requested: unknown,
+  ) {
+    if (!isRuntimeMode(requested)) return;
+    const link = yield* links.get(environmentId).pipe(Effect.mapError(linkStorageFailure));
+    if (Option.isNone(link)) return;
+    if (DateTime.isLessThanOrEqualTo(link.value.expiresAt, yield* DateTime.now)) return;
+    const { label, access } = link.value;
+    if (access === "read-only" || runtimeModeRank(requested) <= runtimeModeRank(access)) return;
+    return yield* new OrchestratorMcpFailure({
+      code: "runtime_mode_escalation_denied",
+      message: `Linked environment "${label}" was linked with ${access} access, so work there cannot run in ${requested}. Omit runtimeMode to run it at a mode up to ${access}, or link it again with broader access.`,
+    });
+  });
+
   /** Tool and contract schemas are plain data: they encode and decode without services. */
   const forward = Effect.fn("PeerForwarding.forward")(function* <A>(
     scope: Scope,
@@ -136,6 +167,7 @@ const make = Effect.gen(function* () {
       params,
     ).pipe(Effect.mapError(unavailable))) as Record<string, unknown>;
     const { environmentId: _target, ...args } = encoded;
+    yield* assertWithinLinkAccess(environmentId, args.runtimeMode);
     // A pending upload lives here, so it cannot go with the call.
     if (Array.isArray(args.attachments) && args.attachments.length > 0) {
       return yield* new OrchestratorMcpFailure({
@@ -242,12 +274,7 @@ const make = Effect.gen(function* () {
     function* (scope) {
       yield* callerLimits(scope);
       yield* requireEnabled;
-      const listed = yield* links.list.pipe(
-        Effect.mapError(
-          (error) =>
-            new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
-        ),
-      );
+      const listed = yield* links.list.pipe(Effect.mapError(linkStorageFailure));
       return {
         environmentId: scope.environmentId,
         links: listed.map((link) => ({
