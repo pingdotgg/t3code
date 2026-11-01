@@ -191,9 +191,18 @@ case "$version" in
     ;;
 esac
 
-# Real and absolute, so the links never hold `.`, `..`, or a path relative to their own folder.
-mkdir -p "$t3_home"
-t3_home="$(CDPATH='' cd -P -- "$t3_home" && pwd)"
+# Spelled as Node's path.resolve gives it, which is the T3 home every t3 compares links against:
+# absolute, without `.`, `..`, or `//`, but keeping a symlinked home's own name.
+t3_home="$(
+  case "$t3_home" in /*) rest="$t3_home" ;; *) rest="$PWD/$t3_home" ;; esac
+  out=
+  IFS=/
+  set -f
+  for part in $rest; do
+    case "$part" in "" | .) ;; ..) out="${out%/*}" ;; *) out="$out/$part" ;; esac
+  done
+  printf '%s' "${out:-/}"
+)"
 stem="t3-${version}-${platform}-${arch}"
 archive="${stem}.tar.gz"
 versions_dir="${t3_home}/runtime/versions"
@@ -264,8 +273,8 @@ version_t3() {
 }
 newline="
 "
-# t3_home is already real; its bin folder may be a link, or missing until the app runs.
-real_desktop_launcher="${t3_home}/bin/t3"
+# Its bin folder may be a link, or missing until the app runs.
+real_desktop_launcher="$(CDPATH='' cd -P -- "$t3_home" && pwd)/bin/t3"
 if real_bin="$(CDPATH='' cd -P -- "${t3_home}/bin" 2>/dev/null && pwd)"; then
   real_desktop_launcher="${real_bin}/t3"
 fi
@@ -277,9 +286,10 @@ link_kind() {
   existing="$(readlink "$1" 2>/dev/null && echo x)" || return 0
   existing="${existing%x}"
   existing="${existing%"$newline"}"
-  # t3 writes plain targets; `.`, `..`, or an empty segment (`t3/`, `a//t3`) is someone else's.
-  case "$existing" in /*) segments="${existing}/" ;; *) segments="/${existing}/" ;; esac
-  case "$segments" in *//* | */./* | */../*) return 0 ;; esac
+  # `..` can mean another folder once a link is followed, and a target naming a folder (`t3/`,
+  # `t3/.`) never runs the file it would resolve to. Other spellings resolve on disk below.
+  case "/${existing}/" in */../*) return 0 ;; esac
+  case "$existing" in */ | */. | .) return 0 ;; esac
   case "$existing" in /*) ;; *) existing="${bin_dir}/${existing}" ;; esac
   # A folder that is itself a link (another versions/<name>) is not followed.
   folder="$(dirname -- "$existing")"
@@ -304,11 +314,12 @@ link_kind() {
 }
 kind=
 real_public="$(CDPATH='' cd -P -- "$bin_dir" && pwd)/t3"
-# The command link itself, by any name for its folder: -ef compares device and inode, so an alias
-# or a bind mount counts too.
+# The command link is replaced in place, which is safe only away from the public name. -ef
+# compares device and inode, so an alias or a bind mount of its folder counts too.
 if [ "$real_public" = "$real_command_link" ] || [ "$bin_dir" -ef "$current_dir" ]; then
-  kind=current
-elif [ -e "$public" ] || [ -L "$public" ]; then
+  fail "T3CODE_INSTALL_BIN_DIR cannot be ${current_dir}. Choose another folder."
+fi
+if [ -e "$public" ] || [ -L "$public" ]; then
   kind="$(link_kind "$public")"
   [ -n "$kind" ] || fail "another t3 is already at ${public}. Remove it and run this again, or run ${target_dir}/t3 directly."
 fi

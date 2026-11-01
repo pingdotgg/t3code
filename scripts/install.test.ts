@@ -165,10 +165,12 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         env: { HOME: root, SHELL: "/bin/zsh", PATH: "/usr/bin:/bin" },
       });
       expect(upgrade.code, upgrade.output).toBe(0);
-      // The links name the T3 home by its real path.
-      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/versions/current/t3"));
+      // The links keep the T3 home's own name, which released t3 compares them against.
+      expect(await NodeFSP.readlink(link)).toBe(
+        NodePath.join(root, "alias/runtime/versions/current/t3"),
+      );
       expect(await NodeFSP.readlink(NodePath.join(home, "runtime/versions/current/t3"))).toBe(
-        NodePath.join(home, "runtime/versions/1.2.3/t3"),
+        NodePath.join(root, "alias/runtime/versions/1.2.3/t3"),
       );
       expect(upgrade.output).toContain(
         `printf '\\n%s\\n' 'export PATH="$PATH:$HOME/bin"' >> ~/.zshrc`,
@@ -225,14 +227,21 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         expect(await NodeFSP.readdir(NodePath.join(root, "folder"))).toEqual([]);
       }
       await NodeFSP.rm(commandLink);
-      // A bin folder that is the command link's own folder only switches that link.
+      // The command link is replaced in place, so its folder can never be the bin folder.
       const inCurrent = await installOver({
         script: "install.sh",
         home,
         binDir: NodePath.join(home, "runtime/versions/current"),
       });
-      expect(inCurrent.code, inCurrent.output).toBe(0);
-      expect(await NodeFSP.readlink(commandLink)).toBe(NodePath.join(inCurrent.target, "t3"));
+      expect(inCurrent.code).not.toBe(0);
+      expect(inCurrent.output).toContain("T3CODE_INSTALL_BIN_DIR cannot be");
+
+      // Released installers wrote `//` for a T3 home set with a trailing slash; that is still ours.
+      await NodeFSP.rm(link);
+      await NodeFSP.symlink(`${home}//runtime/versions/1.0.0/t3`, link);
+      const doubled = await installOver({ script: "install.sh", home, binDir });
+      expect(doubled.code, doubled.output).toBe(0);
+      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/versions/current/t3"));
 
       // Containers and CI often have no SHELL; `set -u` must not stop the installer there.
       const noShell = await installOver({

@@ -368,7 +368,7 @@ export const make = Effect.gen(function* () {
       const link = path.join(directory, "t3");
       if (yield* isOurLink(link)) {
         yield* replaceOurLink({ link }).pipe(
-          Effect.mapError(() => fail(`Could not remove ${link}.`)),
+          Effect.mapError((error) => fail(`Could not remove ${link}: ${error.message}`)),
         );
       }
     }

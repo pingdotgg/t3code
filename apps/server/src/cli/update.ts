@@ -136,8 +136,10 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     executable: input.targetEntryPath,
   }).pipe(
     Effect.mapError(
-      () =>
-        new CliUpdateError({ reason: `Could not repoint the t3 launcher at ${input.launchedAs}.` }),
+      (error) =>
+        new CliUpdateError({
+          reason: `Could not repoint the t3 launcher at ${input.launchedAs}: ${error.message}`,
+        }),
     ),
   );
   return linked ? Option.some(input.launchedAs) : Option.none<string>();

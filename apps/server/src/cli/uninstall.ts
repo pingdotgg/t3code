@@ -248,7 +248,10 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
           : replaceOwnedLink({ link: launcher, owns })
       ).pipe(
         Effect.mapError(
-          () => new CliUninstallError({ reason: `Could not remove the launcher at ${launcher}.` }),
+          (error) =>
+            new CliUninstallError({
+              reason: `Could not remove the launcher at ${launcher}: ${error.message}`,
+            }),
         ),
       ));
     if (!removed) {

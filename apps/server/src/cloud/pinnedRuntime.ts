@@ -404,7 +404,7 @@ export function launcherOwnsVersionsDir(
  * Where the symlink at `link` points, not following that target any further: the target with its
  * folder resolved on disk, which sees through a symlinked T3 home. A folder that is itself a link
  * (another `versions/<name>`) is not followed. Only when the folder is missing (a pruned version)
- * does the text count. Empty for a non-link, or a target t3 never writes.
+ * does the text count. Empty for a non-link, or a target with `..` or naming a folder.
  */
 export const directLinkTargets = Effect.fn("cloud.pinned_runtime.direct_link_targets")(function* (
   link: string,
@@ -413,11 +413,10 @@ export const directLinkTargets = Effect.fn("cloud.pinned_runtime.direct_link_tar
   const path = yield* Path.Path;
   const text = yield* fs.readLink(link).pipe(Effect.option);
   if (Option.isNone(text)) return [];
-  // t3 writes plain targets; `.`, `..`, or an empty segment (`t3/`, `a//t3`) is someone else's.
+  // `..` can mean another folder once a link is followed, and a target naming a folder (`t3/`,
+  // `t3/.`) never runs the file it would resolve to. Other spellings resolve on disk below.
   const parts = text.value.split(/[\\/]/);
-  if (parts.some((part, index) => part === "." || part === ".." || (part === "" && index > 0))) {
-    return [];
-  }
+  if (parts.includes("..") || [".", ""].includes(parts.at(-1)!)) return [];
   const target = path.resolve(path.dirname(link), text.value);
   const folder = path.dirname(target);
   if (Option.isSome(yield* fs.readLink(folder).pipe(Effect.option))) return [];

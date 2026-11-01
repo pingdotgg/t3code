@@ -107,9 +107,11 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       assert.equal(yield* fs.readLink(link), older);
       yield* fs.remove(commandLink);
 
-      // A bin folder that is the command link's own folder only switches that link.
-      yield* provide(installCli(), { T3CODE_INSTALL_BIN_DIR: path.dirname(commandLink) });
-      assert.equal(yield* fs.readLink(commandLink), executable);
+      // The command link is replaced in place, so its folder can never be the bin folder.
+      const inCurrent = yield* provide(installCli(), {
+        T3CODE_INSTALL_BIN_DIR: path.dirname(commandLink),
+      }).pipe(Effect.flip);
+      assert.include(inCurrent.message, "T3CODE_INSTALL_BIN_DIR cannot be");
 
       // When the new link cannot be made, the old command keeps working.
       const failing = installCli().pipe(
@@ -157,16 +159,22 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       yield* provide(installCli(), { T3CODE_INSTALL_BIN_DIR: root });
       assert.equal(yield* fs.readLink(rootLink), commandLink);
       yield* fs.remove(rootLink);
-      // t3 writes plain targets, so one with `.` or `//` is left as it is.
+      // Released installers wrote `//` for a T3 home set with a trailing slash; that is still ours.
       for (const spelled of [
+        `${root}/.t3//runtime/versions/${VERSION}/t3`,
         `${root}/./.t3/runtime/versions/${VERSION}/t3`,
-        `${root}//.t3/runtime/versions/${VERSION}/t3`,
       ]) {
         yield* fs.remove(link);
         yield* fs.symlink(spelled, link);
-        assert.include((yield* provide(installCli()).pipe(Effect.flip)).message, "Another t3");
-        assert.equal(yield* fs.readLink(link), spelled);
+        yield* provide(installCli());
+        assert.equal(yield* fs.readLink(link), commandLink);
       }
+      // `..` can lead elsewhere once a link is followed, so it is left as it is.
+      const climbing = `${root}/.t3/runtime/versions/x/../${VERSION}/t3`;
+      yield* fs.remove(link);
+      yield* fs.symlink(climbing, link);
+      assert.include((yield* provide(installCli()).pipe(Effect.flip)).message, "Another t3");
+      assert.equal(yield* fs.readLink(link), climbing);
 
       // This home's desktop launcher is replaced, as install.sh does.
       yield* fs.remove(link);
