@@ -990,6 +990,31 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("reads provider history only when legacy provider settings need migrating", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`DROP TABLE provider_session_runtime`;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        JSON.stringify({ providers: { grok: { binaryPath: "/opt/grok" } } }),
+      );
+
+      const error = yield* Effect.flip(serverSettings.getSettings);
+      assert.equal(error.operation, "read-provider-history");
+
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        JSON.stringify({ addProjectBaseDirectory: "~/Development" }),
+      );
+
+      const settings = yield* serverSettings.getSettings;
+      assert.equal(settings.addProjectBaseDirectory, "~/Development");
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("migrates legacy providers from an invalid file without rewriting it", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
