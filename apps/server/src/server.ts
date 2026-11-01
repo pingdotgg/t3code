@@ -92,6 +92,7 @@ import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
+import * as AgentAlerts from "./notifications/AgentAlerts.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ManagedLimits from "./policy/managedLimits.ts";
@@ -619,8 +620,10 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
   }),
 );
 
+const layerAgentAlerts = AgentAlerts.layer;
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
-  AgentAwarenessRelay.layer,
+  AgentAwarenessRelay.layer.pipe(Layer.provide(layerAgentAlerts)),
+  layerAgentAlerts,
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,
@@ -678,7 +681,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
   ),
   Layer.provideMerge(ProviderRegistry.layer),
-  Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
+  // Hydration is built before this merge, so Claude's serviceOption(AgentAlerts)
+  // would otherwise stay empty. The same layer reference is memoized with the
+  // websocket and the phone publisher.
+  Layer.provideMerge(ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(layerAgentAlerts))),
   // Provider hydration builds the Claude runner, which reports agents to the same scanner the
   // terminal and preview layers share.
   Layer.provideMerge(layerPortScanner),
@@ -776,6 +782,8 @@ const layerMakeRoutes = Layer.mergeAll(
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
+    // serve forks its memo map. Building AgentAlerts inside the route would be a
+    // second instance, and Claude would publish to a pubsub no client reads.
     Ws.layer,
   ),
   McpHttpServer.layer.pipe(

@@ -103,6 +103,25 @@ class AgentNotificationsTest {
   }
 
   @Test
+  fun alertOnlyLeavesTheActivityCardInPlace() {
+    AgentNotifications.receive(context, update("activity", true))
+    val card = manager.activeNotifications.single { it.tag == "t3-agent-activity" }
+
+    val alert = update("ping", true).toMutableMap()
+    alert["alert_only"] = "true"
+    alert.remove("active")
+    alert.remove("activity_expires_at")
+    AgentNotifications.receive(context, alert)
+
+    val activity = manager.activeNotifications.single { it.tag == "t3-agent-activity" }
+    assertEquals(card.id, activity.id)
+    assertEquals(
+      "t3-agent-alert",
+      manager.activeNotifications.single { it.tag == "t3-agent-alert" }.tag
+    )
+  }
+
+  @Test
   fun foregroundSuppressesAlertsWhileOngoingActivityStillUpdatesAndClears() {
     lifecycle.currentState = Lifecycle.State.RESUMED
 

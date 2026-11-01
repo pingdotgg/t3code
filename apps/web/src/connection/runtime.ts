@@ -12,6 +12,7 @@ import { Atom } from "effect/reactivity";
 import { isGuestPage } from "../guestPage";
 
 import * as Runtime from "../lib/runtime";
+import * as AgentAlertNotifications from "../lib/agentAlertNotifications";
 import * as BackgroundActivityReporter from "../lib/backgroundActivityReporter";
 import * as ConnectionPlatform from "./platform";
 
@@ -30,7 +31,8 @@ type ConnectionLayerSource =
   | typeof Runtime.layer
   | typeof ConnectionPlatform.layer
   | typeof BackgroundActivityReporter.layerObserver
-  | typeof BackgroundActivityReporter.layer;
+  | typeof BackgroundActivityReporter.layer
+  | typeof AgentAlertNotifications.layer;
 
 const layerProvidedClientConnection = layerSnapshotLoader.pipe(
   Layer.provideMerge(
@@ -49,9 +51,10 @@ const layerProvidedClientConnection = layerSnapshotLoader.pipe(
   ),
 );
 
-const layerConnection = BackgroundActivityReporter.layer.pipe(
-  Layer.provideMerge(layerProvidedClientConnection),
-);
+const layerConnection = Layer.mergeAll(
+  BackgroundActivityReporter.layer,
+  AgentAlertNotifications.layer,
+).pipe(Layer.provideMerge(layerProvidedClientConnection));
 
 /**
  * A guest has no session here. Building the connection would open the page origin's environment

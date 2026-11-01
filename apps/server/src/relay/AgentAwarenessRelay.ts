@@ -7,10 +7,13 @@ import {
   type Project,
   type ThreadId,
 } from "@t3tools/contracts";
+import type { AgentAlert } from "@t3tools/contracts";
 import {
   RelayApi,
   type RelayAgentActivityPublishProofPayload,
   type RelayAgentActivityState,
+  type RelayAgentAlert,
+  type RelayAgentAlertPublishProofPayload,
 } from "@t3tools/contracts/relay";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -19,6 +22,7 @@ import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
   normalizeRelayIssuer,
   RELAY_ACTIVITY_PUBLISH_TYP,
+  RELAY_AGENT_ALERT_TYP,
   signRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import * as Cause from "effect/Cause";
@@ -48,6 +52,7 @@ import {
 } from "../cloud/config.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "../cloud/environmentKeys.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as AgentAlerts from "../notifications/AgentAlerts.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -270,6 +275,34 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
   return yield* signRelayAgentActivityPublishProof({ privateKey: input.privateKey, payload });
 });
 
+const makeAlertProof = Effect.fn("makeAlertProof")(function* (input: {
+  readonly privateKey: string;
+  readonly relayIssuer: string;
+  readonly environmentId: string;
+  readonly threadId: ThreadId;
+  readonly alert: RelayAgentAlert;
+  readonly jti: string;
+}) {
+  const now = yield* DateTime.now;
+  const expiresAt = DateTime.add(now, { minutes: 5 });
+  const payload = {
+    iss: `t3-env:${input.environmentId}`,
+    aud: normalizeRelayIssuer(input.relayIssuer),
+    sub: input.environmentId,
+    jti: input.jti,
+    iat: Math.floor(now.epochMilliseconds / 1_000),
+    exp: Math.floor(expiresAt.epochMilliseconds / 1_000),
+    environmentId: input.environmentId as RelayAgentAlertPublishProofPayload["environmentId"],
+    threadId: input.threadId,
+    alert: input.alert,
+  } satisfies RelayAgentAlertPublishProofPayload;
+  return yield* signRelayJwt({
+    privateKey: input.privateKey,
+    typ: RELAY_AGENT_ALERT_TYP,
+    payload,
+  });
+});
+
 function describeThreadShellForAwareness(
   thread: Option.Option<OrchestrationV2ThreadShell>,
 ): Record<string, unknown> {
@@ -361,6 +394,7 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
 
 /** @public */
 export const make = Effect.gen(function* () {
+  const agentAlerts = yield* Effect.serviceOption(AgentAlerts.AgentAlerts);
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -407,6 +441,10 @@ export const make = Effect.gen(function* () {
 
   let cachedRelayClient: Effect.Success<ReturnType<typeof makeRelayClient>> | undefined;
   let publishedRelayConfig: NonNullable<Effect.Success<typeof readRelayConfig>> | undefined;
+  // Phone alerts must not share this cache. Updating it without clearing
+  // publishedStateByThreadRef makes the next relay look already published.
+  let phoneRelayClient: Effect.Success<ReturnType<typeof makeRelayClient>> | undefined;
+  let phoneRelayConfig: NonNullable<Effect.Success<typeof readRelayConfig>> | undefined;
 
   // Confirm through the same worker so tombstones cannot race live updates; recovery clears the deadline.
   const publishConfirmDeadlines = new Map<ThreadId, number>();
@@ -844,6 +882,57 @@ export const make = Effect.gen(function* () {
       );
     },
   );
+
+  const publishPhone = Effect.fn("AgentAwarenessRelay.publishAgentAlert")(function* (
+    alert: AgentAlert,
+  ) {
+    const relayConfig = yield* readRelayConfig;
+    const publishEnabled = yield* readPublishAgentActivityEnabled;
+    if (!relayConfig || !publishEnabled) return false;
+    if (
+      phoneRelayConfig?.url !== relayConfig.url ||
+      phoneRelayConfig.issuer !== relayConfig.issuer ||
+      phoneRelayConfig.environmentCredential !== relayConfig.environmentCredential
+    ) {
+      phoneRelayClient = undefined;
+      phoneRelayConfig = relayConfig;
+    }
+    if (phoneRelayClient === undefined) {
+      phoneRelayClient = yield* makeRelayClient(relayConfig);
+    }
+    // Hold the client locally. A later config change can clear the cache while
+    // the shell lookup or the proof is still in flight.
+    const relayClient = phoneRelayClient;
+    const environmentId = yield* serverEnvironment.getEnvironmentId;
+    const shell = yield* threads.getThreadShell(alert.threadId);
+    const title = shell?.title.trim() || "T3";
+    const deepLink = `/threads/${encodeURIComponent(environmentId)}/${encodeURIComponent(alert.threadId)}`;
+    const phoneAlert = {
+      title,
+      body: alert.body,
+      deepLink,
+    } as RelayAgentAlert;
+    const proof = yield* makeAlertProof({
+      privateKey: cloudLinkKeyPair.privateKey,
+      relayIssuer: relayConfig.issuer,
+      environmentId,
+      threadId: alert.threadId,
+      alert: phoneAlert,
+      jti: yield* crypto.randomUUIDv4(),
+    });
+    const response = yield* relayClient.server
+      .publishAgentAlert({
+        params: { environmentId, threadId: alert.threadId },
+        payload: { alert: phoneAlert, proof },
+      })
+      .pipe(Effect.timeout("10 seconds"));
+    return response.ok && response.deliveries.some((delivery) => delivery.ok);
+  });
+  if (Option.isSome(agentAlerts)) {
+    yield* agentAlerts.value.registerPhone({
+      publish: (alert) => publishPhone(alert).pipe(Effect.orElseSucceed(() => false)),
+    });
+  }
 
   return AgentAwarenessRelay.of({
     publishThread,

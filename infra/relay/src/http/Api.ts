@@ -1355,6 +1355,52 @@ export const layerServerApi = HttpApiBuilder.group(
 
     return activityHandlers
       .handle(
+        "publishAgentAlert",
+        Effect.fn("relay.api.server.publishAgentAlert")(
+          function* (args) {
+            const { params, payload } = args;
+            const principal = yield* RelayEnvironmentPrincipal;
+            if (principal.environmentId !== params.environmentId) {
+              return yield* new HttpApiError.Unauthorized({});
+            }
+            yield* publishSignatures.verifyAlert({
+              environmentId: params.environmentId,
+              environmentPublicKey: principal.environmentPublicKey,
+              threadId: params.threadId,
+              request: payload,
+            });
+            return yield* publisher.publishAlert({
+              environmentId: params.environmentId,
+              environmentPublicKey: principal.environmentPublicKey,
+              threadId: params.threadId,
+              title: payload.alert.title,
+              body: payload.alert.body,
+              deepLink: payload.alert.deepLink,
+            });
+          },
+          mapErrorTags({
+            EnvironmentPublishSignatureExpired: (_error, traceId) =>
+              new RelayAgentActivityPublishProofExpiredError({
+                code: "agent_activity_publish_proof_expired",
+                traceId,
+              }),
+            EnvironmentPublishSignatureInvalid: (_error, traceId) =>
+              new RelayAgentActivityPublishProofInvalidError({
+                code: "agent_activity_publish_proof_invalid",
+                reason: "invalid_signature_or_payload",
+                traceId,
+              }),
+            DpopProofReplayPersistenceError: (_error, traceId) =>
+              new RelayInternalError({
+                code: "internal_error",
+                reason: "persistence_failed",
+                traceId,
+              }),
+          }),
+          mapRelayCommonApiErrors("not_authorized"),
+        ),
+      )
+      .handle(
         "registerManagedEndpointRecovery",
         Effect.fn("relay.api.server.registerManagedEndpointRecovery")(
           function* ({ params, payload }) {

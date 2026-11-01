@@ -41,6 +41,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as AgentAwarenessRelay from "./AgentAwarenessRelay.ts";
+import * as AgentAlerts from "../notifications/AgentAlerts.ts";
 
 const THREAD_ID = ThreadId.make("relay-thread");
 const SECOND_THREAD_ID = ThreadId.make("relay-thread-2");
@@ -142,6 +143,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly respond?: (attempt: number) => Response;
     readonly failSecretRead?: (name: string) => boolean;
     readonly linked?: boolean;
+    readonly alerts?: AgentAlerts.AgentAlerts["Service"];
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
   } = {},
@@ -243,9 +245,9 @@ const makeTestRelay = Effect.fnUntraced(function* (
       if (typeof body !== "string" && !(body instanceof Uint8Array)) {
         return Promise.reject(new Error("Expected a serialized activity publish payload"));
       }
-      const payload = decodePublishPayload(
-        typeof body === "string" ? body : new TextDecoder().decode(body),
-      );
+      const payload = String(input).endsWith("/agent-alert")
+        ? { state: null }
+        : decodePublishPayload(typeof body === "string" ? body : new TextDecoder().decode(body));
       publications.push({
         url: String(input),
         authorization: new Headers(init?.headers).get("authorization"),
@@ -258,6 +260,10 @@ const makeTestRelay = Effect.fnUntraced(function* (
     { preconnect: () => {} },
   );
   const relay = yield* AgentAwarenessRelay.make.pipe(
+    (program) =>
+      options.alerts
+        ? Effect.provideService(program, AgentAlerts.AgentAlerts, options.alerts)
+        : program,
     Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
     Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
     Effect.provideService(ServerEnvironment.ServerEnvironment, {
@@ -289,10 +295,60 @@ const makeTestRelay = Effect.fnUntraced(function* (
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provide(NodeCrypto.layer),
   );
-  return { relay, secrets, secretReads, currentShell, shellReads, publications, catchUp };
+  return { relay, secrets, secretReads, currentShell, shellReads, publications, catchUp, fetch };
 });
 
 describe("AgentAwarenessRelay", () => {
+  it.effect("reports phone acceptance only for a successful eligible delivery", () =>
+    Effect.gen(function* () {
+      const alerts = yield* AgentAlerts.AgentAlerts;
+      const responses = [
+        { ok: true, deliveries: [] },
+        { ok: false, deliveries: [] },
+        {
+          ok: true,
+          deliveries: [
+            {
+              deviceId: "phone",
+              kind: "push_notification",
+              ok: false,
+              apnsStatus: 400,
+              apnsReason: "BadDeviceToken",
+              apnsId: null,
+            },
+          ],
+        },
+        {
+          ok: true,
+          deliveries: [
+            {
+              deviceId: "phone",
+              kind: "push_notification",
+              ok: true,
+              queued: true,
+              apnsStatus: null,
+              apnsReason: null,
+              apnsId: null,
+            },
+          ],
+        },
+      ];
+      const { fetch } = yield* makeTestRelay({
+        alerts,
+        respond: (count) => Response.json(responses[count - 1]),
+      });
+      for (const expected of [false, false, false, true]) {
+        const result = yield* alerts
+          .offer({ threadId: THREAD_ID, body: "Build finished" })
+          .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
+        assert.deepEqual(result, {
+          local: false,
+          phone: expected,
+        });
+      }
+    }).pipe(Effect.provide(AgentAlerts.layer)),
+  );
+
   it.effect("coalesces queued updates and reruns a thread dirtied during publishing", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
