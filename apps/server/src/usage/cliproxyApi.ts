@@ -28,6 +28,10 @@ const AuthFile = Schema.Struct({
   provider: Schema.String,
   email: Schema.optional(Schema.String),
   disabled: Schema.optional(Schema.Boolean),
+  sub: Schema.optional(Schema.String),
+  subject: Schema.optional(Schema.String),
+  user_id: Schema.optional(Schema.String),
+  userId: Schema.optional(Schema.String),
   id_token: Schema.optional(
     Schema.Struct({
       chatgpt_account_id: Schema.optional(Schema.String),
@@ -206,6 +210,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
     url: string,
     data?: unknown,
   ) {
+    const userId = [account.sub, account.subject, account.user_id, account.userId]
+      .map((value) => value?.trim())
+      .find((value) => value);
     const header =
       account.provider === "codex"
         ? {
@@ -221,6 +228,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
           ? {
               Authorization: "Bearer $TOKEN$",
               "x-xai-token-auth": "xai-grok-cli",
+              ...(userId ? { "x-userid": userId } : {}),
               "x-grok-client-version": "1.0.46",
             }
           : {
@@ -283,14 +291,38 @@ export const makeCliproxyApi = Effect.gen(function* () {
     };
     const read = Effect.gen(function* () {
       if (account.provider === "xai") {
-        const body = yield* apiCall(
-          config,
-          account,
-          "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+        const results = yield* Effect.forEach(
+          [
+            "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+            "https://cli-chat-proxy.grok.com/v1/billing",
+          ],
+          (url) =>
+            apiCall(config, account, url).pipe(Effect.flatMap(decodeGrokUsage), Effect.result),
+          { concurrency: 2 },
+        );
+        const responses = results.flatMap((result) =>
+          result._tag === "Success" ? [result.success] : [],
+        );
+        if (responses.length === 0) {
+          return yield* new UsageLimitSourceError({
+            detail: "The hub could not read Grok billing.",
+          });
+        }
+        const windows = responses.flatMap(
+          (response) => grokUsageResponseToLimits(response, checkedAt).windows,
+        );
+        const uniqueWindows = windows.filter(
+          (window, index) => windows.findIndex((other) => other.kind === window.kind) === index,
         );
         return {
           ...base,
-          usageLimits: grokUsageResponseToLimits(yield* decodeGrokUsage(body), checkedAt),
+          usageLimits: {
+            checkedAt,
+            windows: uniqueWindows.map((window) => ({
+              ...window,
+              id: window.kind,
+            })),
+          },
         };
       }
       if (account.provider === "claude") {

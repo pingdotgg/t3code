@@ -51,6 +51,7 @@ function fixture(
     accounts?: Array<
       (typeof accounts)[number] & {
         disabled?: boolean;
+        sub?: string;
         id_token: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
       }
     >;
@@ -351,15 +352,18 @@ describe("CLIProxyAPI built-in management API", () => {
   ] as const)("reads xAI %s billing as Grok limits through the hub", ([period, kind, label]) =>
     Effect.gen(function* () {
       const test = fixture({
-        accounts: [{ ...accounts[0]!, provider: "xai" }],
+        accounts: [{ ...accounts[0]!, provider: "xai", sub: "oauth-subject" }],
         upstream: (request) => {
+          const url = `https://cli-chat-proxy.grok.com/v1/billing${period === "WEEKLY" ? "?format=credits" : ""}`;
+          if (request.url !== url) return { status: 403, body: {} };
           expect(request).toMatchObject({
             auth_index: "a",
             method: "GET",
-            url: "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+            url,
             header: {
               Authorization: "Bearer $TOKEN$",
               "x-xai-token-auth": "xai-grok-cli",
+              "x-userid": "oauth-subject",
               "x-grok-client-version": "1.0.46",
             },
           });
@@ -386,7 +390,7 @@ describe("CLIProxyAPI built-in management API", () => {
         usageLimits: {
           windows: [
             {
-              id: "subscription",
+              id: kind,
               kind,
               label,
               usedPercent: 37,
@@ -396,7 +400,47 @@ describe("CLIProxyAPI built-in management API", () => {
         },
       });
       expect(result[0]?.usageLimits.resetCredits).toBeUndefined();
-      expect(test.requests).toHaveLength(2);
+      expect(test.requests).toHaveLength(3);
+    }),
+  );
+
+  it.effect("merges distinct Grok billing periods without duplicate windows", () =>
+    Effect.gen(function* () {
+      for (const samePeriod of [false, true]) {
+        const test = fixture({
+          accounts: [{ ...accounts[0]!, provider: "xai" }],
+          upstream: (request) => ({
+            status: 200,
+            body: {
+              config: {
+                creditUsagePercent: request.url?.includes("format=credits") ? 25 : 60,
+                currentPeriod: {
+                  type:
+                    samePeriod || request.url?.includes("format=credits")
+                      ? "USAGE_PERIOD_TYPE_WEEKLY"
+                      : "USAGE_PERIOD_TYPE_MONTHLY",
+                },
+              },
+            },
+          }),
+        });
+        const api = yield* test.api;
+        const [account] = yield* api.readAccounts(config);
+        expect(
+          account?.usageLimits.windows.map((window) => [
+            window.id,
+            window.kind,
+            window.usedPercent,
+          ]),
+        ).toEqual(
+          samePeriod
+            ? [["weekly", "weekly", 25]]
+            : [
+                ["weekly", "weekly", 25],
+                ["monthly", "monthly", 60],
+              ],
+        );
+      }
     }),
   );
 
@@ -404,7 +448,10 @@ describe("CLIProxyAPI built-in management API", () => {
     Effect.gen(function* () {
       const api = yield* fixture({
         accounts: [{ ...accounts[0]!, provider: "xai" }],
-        upstream: () => ({ status: 200, body: { config: {} } }),
+        upstream: (request) => {
+          expect(request.header?.["x-userid"]).toBeUndefined();
+          return { status: 200, body: { config: {} } };
+        },
       }).api;
       const [account] = yield* api.readAccounts(config);
       expect(account?.driver).toBe("grok");
