@@ -121,6 +121,7 @@ export const make = Effect.gen(function* () {
       } catch {}
       // Chromium caches portal identity; set it before any asynchronous initialization.
       Electron.app.setDesktopName(linux.linuxDesktopEntryName);
+      // The T3 Agents launcher's StartupWMClass names this class, so its windows group under it.
       Electron.app.commandLine.appendSwitch("class", linux.linuxWmClass);
       if (linux.passwordStore !== null && linuxPasswordStoreCommandLine === null) {
         Electron.app.commandLine.appendSwitch("password-store", linux.passwordStore);

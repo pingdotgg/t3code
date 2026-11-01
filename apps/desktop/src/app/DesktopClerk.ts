@@ -26,6 +26,7 @@ import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { openClerkTokenStorage } from "./ClerkTokenStore.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
@@ -89,15 +90,22 @@ export const desktopClerkFrontendApiHostname = resolveDesktopClerkFrontendApiHos
     : __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__,
 );
 
-function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean) {
-  const tokenStorage = storage({ path: stateDir });
+function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean, userDataPath: string) {
+  const tokenStorage = openClerkTokenStorage(
+    stateDir,
+    (directory) => storage({ path: directory }),
+    userDataPath,
+  );
   return createClerkBridge({
     storage: usesAgentsStorageCompatibility()
       ? withLegacyTokenStorage({
           storage: tokenStorage,
           readEncrypted: async (key) => {
             const document: unknown = JSON.parse(
-              await NodeFSP.readFile(NodePath.join(stateDir, "clerk-tokens.json"), "utf8"),
+              await NodeFSP.readFile(
+                NodePath.join(NodePath.resolve(stateDir), "clerk", "clerk-tokens.json"),
+                "utf8",
+              ),
             );
             if (typeof document !== "object" || document === null) return undefined;
             // electron-store treats dots in keys as nested paths.
@@ -156,7 +164,8 @@ export const make = Effect.gen(function* () {
 
   yield* Effect.acquireRelease(
     Effect.try({
-      try: () => createDesktopClerkBridge(environment.stateDir, environment.isDevelopment),
+      try: () =>
+        createDesktopClerkBridge(environment.stateDir, environment.isDevelopment, userDataPath),
       catch: (cause) =>
         new DesktopClerkBridgeInitializationError({
           stateDir: environment.stateDir,

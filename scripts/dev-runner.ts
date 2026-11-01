@@ -273,6 +273,12 @@ const resolveBaseDir = Effect.fn("dev-runner.resolveBaseDir")(function* (
   const path = yield* Path.Path;
   const configured = baseDir?.trim();
 
+  if (configured === "~") {
+    return yield* HostProcess.HomeDirectory;
+  }
+  if (configured?.startsWith("~/") || configured?.startsWith("~\\")) {
+    return path.join(yield* HostProcess.HomeDirectory, configured.slice(2));
+  }
   if (configured) {
     return path.resolve(configured);
   }

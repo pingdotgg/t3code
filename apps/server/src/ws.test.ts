@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -50,6 +51,7 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
+import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -85,6 +87,7 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
+import * as NpmRelease from "./cloud/npmRelease.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
@@ -128,6 +131,7 @@ import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import {
   layerWsRpc,
+  resolveOpenDiscoveryForConfig,
   subscribeOrchestrationV2Shell,
   subscribeOrchestrationV2Thread,
   WS_RPC_SERVER_OPTIONS,
@@ -190,6 +194,38 @@ it.effect("resends a file manager reveal kind that missed the snapshot", () =>
     if (late?.type === "snapshot") {
       assert.equal(late.config.shellRevealInFileManagerKind, "file-explorer");
     }
+  }),
+);
+
+it.effect("runs editor, remote open target and direct endpoint discovery side by side", () =>
+  Effect.gen(function* () {
+    // Each discovery finishes only once the other two have started, so a
+    // config that ran them one after another would never resolve.
+    const editorsStarted = yield* Deferred.make<void>();
+    const targetsStarted = yield* Deferred.make<void>();
+    const endpointsStarted = yield* Deferred.make<void>();
+    const startThenAwait = <A>(started: Deferred.Deferred<void>, value: A) =>
+      Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(
+          Effect.forEach([editorsStarted, targetsStarted, endpointsStarted], Deferred.await),
+        ),
+        Effect.as(value),
+      );
+
+    const discovery = yield* resolveOpenDiscoveryForConfig({
+      editors: startThenAwait(editorsStarted, ["file-manager" as const]),
+      fileManagerRevealKind: Effect.succeed("finder" as const),
+      remoteOpenTargets: startThenAwait(targetsStarted, []),
+      directEndpoints: startThenAwait(endpointsStarted, []),
+    });
+
+    assert.deepEqual(discovery, {
+      availableEditors: ["file-manager"],
+      shellRevealInFileManager: true,
+      shellRevealInFileManagerKind: "finder",
+      remoteOpenTargets: [],
+      directEndpoints: [],
+    });
   }),
 );
 
@@ -419,12 +455,23 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
         Effect.flatMap((stream) => stream.pipe(Stream.take(1), Stream.runCollect)),
         Effect.map(([item]) => (item?.kind === "snapshot" ? item.snapshot : null)),
         Effect.provideService(ThreadManagement.ThreadManagementService, {
-          readShellSnapshot: () =>
+          listActiveShellIndex: () =>
+            Effect.succeed(
+              threads.map((thread) => ({
+                ...thread,
+                pinnedAt: null,
+                snoozedUntil: null,
+                mayBeLive: thread.activityRunStatus !== null,
+              })),
+            ),
+          readShellSnapshot: (options?: { readonly threadIds?: ReadonlyArray<string> }) =>
             Effect.succeed(
               Effect.succeed({
                 schemaVersion: 1,
                 snapshotSequence: 0,
-                threads,
+                threads: threads.filter(
+                  (thread) => options?.threadIds?.includes(thread.id) ?? true,
+                ),
                 archivedThreads: [],
               }),
             ),
@@ -525,10 +572,12 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ReviewService.ReviewService)({}),
   Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
+  Layer.mock(SecretResolver.SecretResolver)({}),
   Layer.mock(GuestShareService.GuestShareService)({}),
   Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({}),
   Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({}),
   Layer.mock(ServerSelfUpdate.ServerSelfUpdate)({}),
+  Layer.mock(NpmRelease.NpmRelease)({}),
   Layer.mock(SessionStore.SessionStore)({ cookieName: "config-test", legacyCookieName: undefined }),
   Layer.mock(SourceControlDiscovery.SourceControlDiscovery)({}),
   Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
@@ -606,6 +655,7 @@ it.effect(
           scratchRoot: Effect.succeedNone,
           namedProjectsRoot: process.cwd(),
         }),
+        Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
         Layer.mock(ServerEnvironment.ServerEnvironment)({
           getDescriptor: Effect.succeed({
             environmentId: EnvironmentId.make("config-test"),
@@ -661,6 +711,7 @@ it.effect(
             yield* ServerBrowser.ServerBrowser,
             yield* McpGatewayBroker.McpGatewayBroker,
             yield* ClientFocusBroker.ClientFocusBroker,
+            () => Effect.void,
           ).pipe(Layer.provide(configRpcServices)),
         ),
       );
@@ -791,6 +842,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         scratchRoot: Effect.succeedNone,
         namedProjectsRoot: process.cwd(),
       }),
+      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
       Layer.mock(ServerEnvironment.ServerEnvironment)({
         getDescriptor: Effect.succeed({
           environmentId: EnvironmentId.make("config-test"),
@@ -836,6 +888,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
           yield* ServerBrowser.ServerBrowser,
           yield* McpGatewayBroker.McpGatewayBroker,
           yield* ClientFocusBroker.ClientFocusBroker,
+          () => Effect.void,
         ).pipe(Layer.provide(configRpcServices)),
       ),
     );

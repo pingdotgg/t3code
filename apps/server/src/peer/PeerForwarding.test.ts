@@ -29,6 +29,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -212,34 +213,40 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
       McpHttpServer.layerOrchestratorToolkit,
       McpHttpServer.layerProjectRegistration,
       McpHttpServer.layerThreadToolkit,
-    ).pipe(
-      Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
-      Layer.provide(NodeCrypto.layer),
-      Layer.provide(boxThreads(seen, linkSession)),
-      Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
-      Layer.provide(boxLaunches(seen)),
-      Layer.provide(
-        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
-      ),
-      Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
-      Layer.provide(boxProjects(seen)),
-      Layer.provide(
-        ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-forwarding-box-" }).pipe(
-          Layer.provide(NodeServices.layer),
+    )
+      .pipe(
+        Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(boxThreads(seen, linkSession)),
+        Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+        Layer.provide(boxLaunches(seen)),
+        Layer.provide(
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+          }),
         ),
-      ),
-      Layer.provide(NodeServices.layer),
-      Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
-      Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
-      Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-      Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
-      Layer.provide(ServerSettings.layerTest()),
-      Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
-      Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
-      Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
-      Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
-      Layer.provide(Layer.mock(TailnetDevices.TailnetDevices)({})),
-    ),
+        Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+        Layer.provide(boxProjects(seen)),
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-forwarding-box-" }).pipe(
+            Layer.provide(NodeServices.layer),
+          ),
+        ),
+        Layer.provide(NodeServices.layer),
+        Layer.provide(
+          Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        ),
+        Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+        Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
+        Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+      )
+      .pipe(Layer.provide(Layer.mock(TailnetDevices.TailnetDevices)({}))),
   );
 
 const mcpClient = McpSchema.McpServerClient.of({
@@ -346,6 +353,7 @@ const makeLaptop = Effect.gen(function* () {
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         ServerSettings.layerTest(),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),

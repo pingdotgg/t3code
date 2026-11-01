@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CommandId,
   ContextTransferId,
+  EnvironmentId,
   MessageId,
   type ModelSelection,
   type OrchestrationV2AppThread,
@@ -110,6 +112,7 @@ function makeSourceProjection(sourceRun: OrchestrationV2Run): OrchestrationV2Thr
 const planFork = (
   sourceRun: OrchestrationV2Run,
   sourceProjection = makeSourceProjection(sourceRun),
+  options: { readonly sideChat?: boolean } = {},
 ) =>
   Effect.gen(function* () {
     const service = yield* ThreadForkService.ThreadForkServiceV2;
@@ -124,6 +127,7 @@ const planFork = (
       transferId: ContextTransferId.make("context-transfer:fork-snoozed-source"),
       targetThreadId,
       title: "Awake fork",
+      ...options,
       createdBy: "user",
       creationSource: "mobile",
       createdAt: forkCreatedAt,
@@ -156,6 +160,24 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
       threadId: sourceThreadId,
       runId: sourceRunId,
     });
+  }),
+);
+
+it.effect("starts a fork without the source thread's pending title regeneration", () =>
+  Effect.gen(function* () {
+    const sourceRun = makeSourceRun("completed");
+    const titleRegeneration = {
+      requestId: CommandId.make("command:fork-source-title"),
+      startedAt: snoozedAt,
+    };
+    const sourceProjection = {
+      ...makeSourceProjection(sourceRun),
+      thread: { ...makeSourceThread(), titleRegeneration },
+    };
+    const result = yield* planFork(sourceRun, sourceProjection);
+
+    assert.isNull(result.targetThread.titleRegeneration);
+    assert.deepEqual(sourceProjection.thread.titleRegeneration, titleRegeneration);
   }),
 );
 
@@ -240,5 +262,65 @@ it.effect("rejects in-progress and rolled-back fork sources", () =>
       assert.equal(error.targetThreadId, targetThreadId);
       assert.equal(error.cause, ThreadForkService.forkableSourceRunStatusError(sourceRun));
     }
+  }),
+);
+
+it.effect("marks only requested forks as supervised side chats", () =>
+  Effect.gen(function* () {
+    const sourceRun = makeSourceRun("completed");
+    const sideChat = yield* planFork(sourceRun, makeSourceProjection(sourceRun), {
+      sideChat: true,
+    });
+    assert.isTrue(sideChat.targetThread.lineage.sideChat);
+    assert.equal(sideChat.targetThread.runtimeMode, "approval-required");
+
+    const sideChatSource = makeSourceProjection(sourceRun);
+    const sideChatProjection = {
+      ...sideChatSource,
+      thread: {
+        ...sideChatSource.thread,
+        lineage: { ...sideChatSource.thread.lineage, sideChat: true },
+      },
+    };
+    const forkOfSideChat = yield* planFork(sourceRun, sideChatProjection);
+    assert.isUndefined(forkOfSideChat.targetThread.lineage.sideChat);
+    assert.equal(forkOfSideChat.targetThread.runtimeMode, "full-access");
+
+    const nested = yield* planFork(sourceRun, sideChatProjection, { sideChat: true }).pipe(
+      Effect.flip,
+    );
+    assert.equal(nested.cause, "A side chat cannot start another side chat.");
+
+    const subagentSource = makeSourceProjection(sourceRun);
+    const fromSubagent = yield* planFork(
+      sourceRun,
+      {
+        ...subagentSource,
+        thread: {
+          ...subagentSource.thread,
+          lineage: { ...subagentSource.thread.lineage, relationshipToParent: "subagent" },
+        },
+      },
+      { sideChat: true },
+    ).pipe(Effect.flip);
+    assert.equal(fromSubagent.cause, "A subagent cannot start a side chat.");
+
+    const delegatedSource = makeSourceProjection(sourceRun);
+    const fromDelegated = yield* planFork(
+      sourceRun,
+      {
+        ...delegatedSource,
+        thread: {
+          ...delegatedSource.thread,
+          delegatedFrom: {
+            environmentId: EnvironmentId.make("linked-environment"),
+            threadId: ThreadId.make("linked-parent"),
+            title: "Linked parent",
+          },
+        },
+      },
+      { sideChat: true },
+    ).pipe(Effect.flip);
+    assert.equal(fromDelegated.cause, "A subagent cannot start a side chat.");
   }),
 );

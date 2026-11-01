@@ -10,10 +10,13 @@ import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 import * as ProviderLatestVersions from "./ProviderLatestVersions.ts";
 import {
   createProviderVersionAdvisory,
@@ -22,10 +25,12 @@ import {
   homebrewOwnershipFromCommandPath,
   invalidateLatestProviderVersion,
   makeCachedProviderMaintenanceResolution,
+  makeManualOnlyProviderMaintenanceCapabilities,
   makePackageManagedProviderMaintenanceResolver,
   makeProviderMaintenanceCapabilities,
   normalizeCommandPath,
   npmGlobalPrefixFromCommandPath,
+  parseChocolateyLatestVersion,
   parseHomebrewLatestVersion,
   resolveLatestProviderVersion,
   resolvePackageManagedProviderMaintenance,
@@ -125,7 +130,9 @@ function stdoutSpawner(
   });
 }
 
-it.layer(NodeServices.layer)("providerMaintenance", (it) => {
+it.layer(
+  NodeServices.layer.pipe(Layer.merge(Layer.succeed(HostProcess.Environment, { PATH: "" }))),
+)("providerMaintenance", (it) => {
   it.effect("prefers the installer's own latest version over the npm registry", () =>
     resolveLatestProviderVersion({ ...manualPackageTool, latestVersion: "1.2.0" }).pipe(
       Effect.provide(ProviderLatestVersions.layer),
@@ -139,6 +146,39 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         expect(version).toBe("1.2.0");
       }),
     ),
+  );
+
+  it.effect("reads the latest version from the npm registry", () =>
+    resolveLatestProviderVersion(manualPackageTool).pipe(
+      Effect.provide(ProviderLatestVersions.layer),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ version: "1.2.3" }))),
+        ),
+      ),
+      Effect.map((version) => {
+        expect(version).toBe("1.2.3");
+      }),
+    ),
+  );
+
+  it.effect("gives up on a registry body that stalls after the headers", () =>
+    Effect.gen(function* () {
+      const lookup = yield* resolveLatestProviderVersion(manualPackageTool).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, new Response(new ReadableStream()))),
+          ),
+        ),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("4 seconds");
+      expect(lookup.pollUnsafe()).toBeDefined();
+      expect(yield* Fiber.join(lookup)).toBeNull();
+    }),
   );
 
   it.effect("does not fetch latest provider versions when update checks are disabled", () =>
@@ -163,6 +203,96 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         });
       }),
     ),
+  );
+
+  it.effect.each([
+    { install: "native", stdout: '"1.2.0"', exitCode: 0, latest: "1.2.0" },
+    { install: "manual", stdout: '["1.2.0"]', exitCode: 0, latest: "1.2.0" },
+    { install: "npm", stdout: '"1.2.0"', exitCode: 0, latest: "1.2.0" },
+    { install: "native", stdout: "", exitCode: 1, latest: null },
+    { install: "npm", stdout: '"1.2.0"', exitCode: 1, latest: null },
+    { install: "native", stdout: "not json", exitCode: 0, latest: null },
+    { install: "manual", stdout: '["1.2.0", "1.3.0"]', exitCode: 0, latest: null },
+    { install: "manual", stdout: '""', exitCode: 0, latest: null },
+  ])(
+    "uses npm's registry for $install installs (exit $exitCode, output $stdout)",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-registry-version");
+        const npmBinDir = NodePath.join(tempDir, "npm-bin");
+        writeExecutable(NodePath.join(npmBinDir, "npm"));
+        const binaryPath =
+          fixture.install === "npm"
+            ? linkIntoPackage(tempDir, "package-tool", [
+                "lib",
+                "node_modules",
+                "@example",
+                "package-tool",
+              ])
+            : NodePath.join(tempDir, ".local/bin/native-package-tool");
+        if (fixture.install !== "npm") writeExecutable(binaryPath);
+        let probes = 0;
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          fixture.install === "native" ? nativePackageToolUpdate : packageToolUpdate,
+          { binaryPath, env: { PATH: fixture.install === "npm" ? npmBinDir : "" } },
+        ).pipe(
+          Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            stdoutSpawner(
+              (command, args) => {
+                probes++;
+                expect(command).toBe(NodePath.join(npmBinDir, "npm"));
+                expect(args).toEqual([
+                  "view",
+                  "--global",
+                  ...(fixture.install === "npm" ? ["--prefix", tempDir] : []),
+                  "--json",
+                  `${capabilities.packageName}@latest`,
+                  "version",
+                ]);
+                return fixture.stdout;
+              },
+              () => fixture.exitCode,
+            ),
+          ),
+        );
+        const program = Effect.gen(function* () {
+          yield* enrichProviderSnapshotWithVersionAdvisory(
+            installedPackageToolProvider,
+            capabilities,
+            { enableProviderUpdateChecks: false },
+          );
+          expect(probes).toBe(0);
+          const snapshot = yield* enrichProviderSnapshotWithVersionAdvisory(
+            installedPackageToolProvider,
+            capabilities,
+          );
+          expect(snapshot.versionAdvisory?.latestVersion).toBe(fixture.latest);
+          expect(probes).toBe(1);
+          expect(yield* resolveLatestProviderVersion(capabilities)).toBe(fixture.latest);
+          expect(probes).toBe(1);
+          yield* invalidateLatestProviderVersion(capabilities);
+          expect(yield* resolveLatestProviderVersion(capabilities)).toBe(fixture.latest);
+          expect(probes).toBe(2);
+        });
+        yield* program.pipe(
+          Effect.provideServiceEffect(
+            ProviderLatestVersions.ProviderLatestVersions,
+            ProviderLatestVersions.make([
+              ["@example/package-tool", "9.9.9"],
+              ["@example/native-package-tool", "9.9.9"],
+            ]),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() =>
+              Effect.die("a configured npm lookup must not fall back to public npm"),
+            ),
+          ),
+        );
+      }),
+    { skip: !symlinksSupported || windowsHost },
   );
 
   it("pins the advertised stable version in a pnpm-global update command", () => {
@@ -253,6 +383,26 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
+  it("shows the Chocolatey upgrade command without offering to run it", () => {
+    expect(
+      createProviderVersionAdvisory({
+        driver: driver("claudeAgent"),
+        currentVersion: "2.1.304",
+        latestVersion: "2.1.306",
+        maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+          provider: driver("claudeAgent"),
+          packageName: "@anthropic-ai/claude-code",
+          installPath: "C:\\ProgramData\\chocolatey\\bin\\claude.exe",
+          manualCommand: "choco upgrade claude-code",
+        }),
+      }),
+    ).toMatchObject({
+      canUpdate: false,
+      canInstallVersion: false,
+      updateCommand: "choco upgrade claude-code",
+    });
+  });
+
   it.effect("stays manual-only when the binary cannot be located", () =>
     resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
       binaryPath: "package-tool",
@@ -266,7 +416,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   );
 
   it.effect.skipIf(!symlinksSupported)(
-    "pins npm updates to the global prefix that owns the package",
+    "pins npm updates to the global prefix that owns the package and the provider's PATH",
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-npm-capabilities");
@@ -276,12 +426,14 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           "@example",
           "package-tool",
         ]);
+        // A version manager's Node, which only the provider's settings put on PATH.
+        const providerEnv = { PATH: NodePath.join(tempDir, "bin") };
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           packageToolUpdate,
           {
             binaryPath: link,
-            env: { PATH: "" },
+            env: providerEnv,
           },
         ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
 
@@ -300,6 +452,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
               "@example/package-tool@latest",
             ],
             lockKey: `npm-global:${normalizeCommandPath(tempDir)}`,
+            env: providerEnv,
           },
         });
       }),
@@ -419,12 +572,13 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     readonly resolved: string;
     readonly real: string;
     readonly platform?: NodeJS.Platform;
+    readonly env?: NodeJS.ProcessEnv;
   }) =>
     resolvePackageManagedProviderMaintenance(input.definition, {
       binaryPath: "claude",
       resolvedCommandPath: input.resolved,
       realCommandPath: input.real,
-      env: {},
+      env: input.env ?? {},
       platform: input.platform ?? "win32",
     }).pipe(
       Effect.provideService(HostProcess.Platform, input.platform ?? "win32"),
@@ -455,6 +609,135 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
 
       expect(capabilities.update).toBeNull();
     }),
+  );
+
+  const chocolateyShim = "C:\\ProgramData\\chocolatey\\bin\\claude.exe";
+  const chocolateyPackage = "C:\\ProgramData\\chocolatey\\lib\\claude-code\\tools\\claude.exe";
+
+  it.effect.each([
+    { name: "the shimgen shim", resolved: chocolateyShim, real: chocolateyShim },
+    { name: "the package binary", resolved: chocolateyPackage, real: chocolateyPackage },
+    {
+      name: "a custom root",
+      resolved: "D:\\Tools\\Choco\\bin\\claude.exe",
+      real: "D:\\Tools\\Choco\\bin\\claude.exe",
+      env: { ChocolateyInstall: "D:\\Tools\\Choco" },
+    },
+    {
+      name: "a custom root package",
+      resolved: "D:\\Tools\\Choco\\lib\\claude-code\\tools\\claude.exe",
+      real: "D:\\Tools\\Choco\\lib\\claude-code\\tools\\claude.exe",
+      env: { ChocolateyInstall: "D:\\Tools\\Choco" },
+    },
+    {
+      name: "a mixed-case custom root with a trailing separator",
+      resolved: "D:\\Tools\\Choco\\bin\\Claude.EXE",
+      real: "D:\\Tools\\Choco\\bin\\Claude.EXE",
+      env: { ChocolateyInstall: "d:/tools/choco/" },
+    },
+    { name: "a native-looking alias", resolved: nativeClaude, real: chocolateyPackage },
+  ] as const)("keeps a Chocolatey Claude install manual-only through $name", (fixture) =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall({ definition: claudeUpdate, ...fixture });
+
+      expect(capabilities.update).toBeNull();
+      expect(capabilities.installPath).toBe(fixture.real);
+      expect(capabilities.latestVersion).toBeNull();
+      expect(capabilities.lookupLatestVersion).toBeDefined();
+      expect(capabilities.manualCommand).toBe("choco upgrade claude-code");
+    }),
+  );
+
+  it.effect("keeps a Chocolatey-shaped path off Windows on the native updater", () =>
+    Effect.gen(function* () {
+      const commandPath = "/home/me/chocolatey/bin/claude.exe";
+      const capabilities = yield* resolveInstall({
+        definition: claudeUpdate,
+        resolved: commandPath,
+        real: commandPath,
+        platform: "linux",
+      });
+
+      expect(capabilities.update).toMatchObject({ lockKey: "claudeAgent-native" });
+    }),
+  );
+
+  // Chocolatey publishes behind npm, so comparing against the registry would
+  // report an update `choco upgrade` cannot install yet.
+  it.effect("compares a Chocolatey Claude install against choco search", () =>
+    Effect.gen(function* () {
+      const probes: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+      const capabilities = yield* resolvePackageManagedProviderMaintenance(claudeUpdate, {
+        binaryPath: "claude",
+        resolvedCommandPath: chocolateyShim,
+        realCommandPath: chocolateyShim,
+        env: {},
+        platform: "win32",
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          stdoutSpawner((command, args) => {
+            probes.push({ command, args });
+            return "claude-code|2.1.304\r\n";
+          }),
+        ),
+      );
+      expect(probes).toEqual([]);
+
+      const latest = yield* resolveLatestProviderVersion(capabilities).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("the installer's latest should not come from npm")),
+        ),
+      );
+
+      expect(latest).toBe("2.1.304");
+      expect(probes.map(({ command }) => NodePath.basename(command).replace(/\.\w+$/, ""))).toEqual(
+        ["choco"],
+      );
+      expect(probes[0]?.args).toEqual(["search", "claude-code", "--exact", "--limit-output"]);
+      expect(
+        createProviderVersionAdvisory({
+          driver: driver("claudeAgent"),
+          currentVersion: "2.1.304",
+          latestVersion: latest,
+          maintenanceCapabilities: capabilities,
+        }),
+      ).toMatchObject({ status: "current", canUpdate: false, canInstallVersion: false });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("stays unknown when choco search fails instead of asking npm", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolvePackageManagedProviderMaintenance(claudeUpdate, {
+        binaryPath: "claude",
+        resolvedCommandPath: chocolateyShim,
+        realCommandPath: chocolateyShim,
+        env: {},
+        platform: "win32",
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          stdoutSpawner(
+            () => "",
+            () => 1,
+          ),
+        ),
+      );
+
+      const latest = yield* resolveLatestProviderVersion(capabilities).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("a failed choco search should not fall back to npm")),
+        ),
+      );
+
+      expect(latest).toBeNull();
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect.each([
@@ -488,6 +771,12 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       definition: otherProviderUpdate,
       resolved: userWinGetLink,
       real: userWinGetPackage,
+    },
+    {
+      name: "a claude-code tools path outside Chocolatey",
+      definition: claudeUpdate,
+      resolved: "C:\\Work\\lib\\claude-code\\tools\\claude.exe",
+      real: "C:\\Work\\lib\\claude-code\\tools\\claude.exe",
     },
     {
       name: "another WinGet package",
@@ -636,17 +925,39 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
 
   it.effect.each([
     {
-      case: "the eligible release",
+      case: "the eligible release with an inherited PATH",
+      inheritPath: true,
       outdated: { "@example/package-tool": { current: "1.0.0", latest: "1.1.0" } },
       exitCode: 1,
+      npmOutput: '"1.2.0"',
       expected: "1.1.0",
     },
-    { case: "no update during cooldown", outdated: {}, exitCode: 0, expected: "1.0.0" },
     {
-      case: "the npm fallback when the pnpm probe fails",
+      case: "no update during cooldown",
+      outdated: {},
+      exitCode: 0,
+      npmOutput: '"1.2.0"',
+      expected: "1.0.0",
+    },
+    {
+      case: "the public registry fallback when pnpm fails and npm is unavailable",
       outdated: { "@example/package-tool": { current: "1.0.0", latest: "1.1.0" } },
       exitCode: 2,
       expected: "9.9.9",
+    },
+    {
+      case: "the configured npm registry when the pnpm probe fails",
+      outdated: {},
+      exitCode: 2,
+      npmOutput: '"1.2.0"',
+      expected: "1.2.0",
+    },
+    {
+      case: "an unknown version when both configured lookups fail",
+      outdated: {},
+      exitCode: 2,
+      npmOutput: "not json",
+      expected: null,
     },
   ])(
     "advertises $case for pnpm-global installs",
@@ -655,6 +966,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         const tempDir = yield* makeTempDir("t3-pnpm-latest");
         const pnpmBinDir = NodePath.join(tempDir, "pnpm-bin");
         writeExecutable(NodePath.join(pnpmBinDir, "pnpm"));
+        if (fixture.npmOutput !== undefined) writeExecutable(NodePath.join(pnpmBinDir, "npm"));
         const link = linkIntoPackage(tempDir, "package-tool", [
           ".local",
           "share",
@@ -666,20 +978,28 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           "package-tool",
         ]);
 
+        let npmProbes = 0;
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           packageToolUpdate,
-          { binaryPath: link, env: { PATH: "" } },
+          { binaryPath: link, env: fixture.inheritPath ? {} : { PATH: pnpmBinDir } },
         ).pipe(
-          Effect.provideService(HostProcess.Environment, { PATH: pnpmBinDir }),
+          Effect.provideService(HostProcess.Environment, {
+            PATH: fixture.inheritPath ? pnpmBinDir : "",
+          }),
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
             stdoutSpawner(
-              (_command, args) =>
-                args[0] === "outdated"
+              (_command, args) => {
+                if (args[0] === "view") {
+                  npmProbes++;
+                  return fixture.npmOutput ?? "";
+                }
+                return args[0] === "outdated"
                   ? JSON.stringify(fixture.outdated)
                   : JSON.stringify([
                       { dependencies: { "@example/package-tool": { version: "1.0.0" } } },
-                    ]),
+                    ]);
+              },
               (args) => (args[0] === "outdated" ? fixture.exitCode : 0),
             ),
           ),
@@ -699,10 +1019,16 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           ),
         );
         expect(provider.versionAdvisory).toMatchObject({
-          status: fixture.expected === "1.0.0" ? "current" : "behind_latest",
+          status:
+            fixture.expected === null
+              ? "unknown"
+              : fixture.expected === "1.0.0"
+                ? "current"
+                : "behind_latest",
           currentVersion: "1.0.0",
           latestVersion: fixture.expected,
         });
+        expect(npmProbes).toBe(fixture.exitCode === 2 && fixture.npmOutput !== undefined ? 1 : 0);
       }),
     { skip: !symlinksSupported || windowsHost },
   );
@@ -889,6 +1215,13 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       expect(capabilities.update?.env).toEqual({ TOOL_HOME: tempDir });
     }),
   );
+
+  it("reads the Chocolatey package version from choco search --limit-output", () => {
+    expect(parseChocolateyLatestVersion("claude-code|2.1.304\r\n", "claude-code")).toBe("2.1.304");
+    expect(parseChocolateyLatestVersion("Claude-Code|2.1.304\r\n", "claude-code")).toBe("2.1.304");
+    expect(parseChocolateyLatestVersion("claude-code-other|9.9.9\r\n", "claude-code")).toBeNull();
+    expect(parseChocolateyLatestVersion("", "claude-code")).toBeNull();
+  });
 
   it("recognizes Homebrew kegs and casks from the real executable path", () => {
     expect(

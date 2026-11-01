@@ -159,9 +159,10 @@ export const make = Effect.gen(function* () {
       readThreadSnapshot(request),
       projectStore.listShells(),
     ]);
+    const snapshotThreads = threadSnapshot.threads;
     const projects = new Map(projectShells.map((project) => [project.id, project]));
     if (request.backfill) {
-      for (const thread of threadSnapshot.threads) {
+      for (const thread of snapshotThreads) {
         if (
           (thread.settledOverride === "settled" || thread.settledAt !== null) &&
           thread.branchPullRequest == null
@@ -171,13 +172,13 @@ export const make = Effect.gen(function* () {
       }
     }
     const visibleThreadIds = new Set(
-      threadSnapshot.threads.filter((thread) => thread.branch !== null).map((thread) => thread.id),
+      snapshotThreads.filter((thread) => thread.branch !== null).map((thread) => thread.id),
     );
     const checkedIds = request.threadId === null ? [...pendingBackfill.keys()] : [request.threadId];
     for (const threadId of checkedIds) {
       if (!visibleThreadIds.has(threadId)) pendingBackfill.delete(threadId);
     }
-    const threads = threadSnapshot.threads.filter(
+    const threads = snapshotThreads.filter(
       (thread) =>
         thread.archivedAt === null &&
         ((thread.settledOverride !== "settled" && thread.settledAt === null) ||

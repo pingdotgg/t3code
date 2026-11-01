@@ -18,6 +18,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command, CliError } from "effect/cli";
 
@@ -485,6 +486,105 @@ describe("auth scope options", () => {
       }
       assert.equal(scopeError.option, "scope");
       assert.equal(scopeError.value, "admin");
+    }),
+  );
+});
+
+describe("auth pairing create --base-url", () => {
+  it.effect.each(["192.168.1.5:3773", "localhost:3773", "ftp://localhost:3773"])(
+    "rejects %s before issuing a token",
+    (baseUrl) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-base-url-test-"));
+        const error = yield* runCli([
+          "auth",
+          "pairing",
+          "create",
+          "--base-dir",
+          baseDir,
+          "--base-url",
+          baseUrl,
+        ]).pipe(Effect.provide(layerCliRuntime), Effect.flip);
+
+        if (!CliError.isCliError(error) || error._tag !== "ShowHelp") {
+          assert.fail(`Expected ShowHelp, got ${String(error)}`);
+        }
+        const flagError = error.errors[0];
+        if (flagError?._tag !== "InvalidValue") {
+          assert.fail(`Expected InvalidValue, got ${String(flagError?._tag)}`);
+        }
+        assert.equal(flagError.option, "base-url");
+        assert.equal(flagError.value, baseUrl);
+
+        const listOutput = yield* captureStdout(
+          runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
+        );
+        assert.deepEqual(JSON.parse(listOutput), []);
+      }),
+  );
+
+  it.effect.each(["http://192.168.1.5:3773", "https://example.com", "http:localhost:3773"])(
+    "prints a pair URL for %s",
+    (baseUrl) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-base-url-test-"));
+        const output = yield* captureStdout(
+          runCli([
+            "auth",
+            "pairing",
+            "create",
+            "--base-dir",
+            baseDir,
+            "--base-url",
+            baseUrl,
+            "--json",
+          ]),
+        );
+        const issued = JSON.parse(output) as {
+          readonly credential: string;
+          readonly pairUrl: string;
+        };
+
+        assert.equal(issued.pairUrl, `${new URL(baseUrl).origin}/pair#token=${issued.credential}`);
+      }),
+  );
+});
+
+describe("scripted auth output", () => {
+  it.effect.each(
+    [
+      ["auth", "session", "issue", "--token-only"],
+      ["auth", "session", "list", "--json"],
+      ["auth", "pairing", "list", "--json"],
+    ].map((command) => ({ command, label: command.join(" ") })),
+  )("prints only the result for $label after removing an abandoned upload", ({ command }) =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-quiet-test-"));
+      const attachmentsDir = NodePath.join(baseDir, "userdata", "attachments");
+      NodeFS.mkdirSync(attachmentsDir, { recursive: true });
+      // An abandoned upload makes config resolution log that it removed it.
+      const abandoned = NodePath.join(attachmentsDir, "abandoned.part");
+      NodeFS.writeFileSync(abandoned, "");
+      const jan2020Seconds = 1_577_836_800;
+      NodeFS.utimesSync(abandoned, jan2020Seconds, jan2020Seconds);
+      // The sweep reads Clock, so a week past the upload's mtime makes it expired.
+      yield* TestClock.setTime((jan2020Seconds + 7 * 24 * 60 * 60) * 1000);
+
+      const lines = yield* provideCliTestLayers(
+        Effect.gen(function* () {
+          yield* runCli([...command, "--base-dir", baseDir]);
+          return yield* TestConsole.logLines;
+        }),
+      );
+
+      assert.isFalse(NodeFS.existsSync(abandoned));
+      assert.lengthOf(lines, 1);
+      const output = String(lines[0]);
+      if (command.includes("--json")) {
+        assert.deepEqual(JSON.parse(output), []);
+      } else {
+        assert.match(output.trim(), /^[\w-]+\.[\w-]+/);
+      }
     }),
   );
 });

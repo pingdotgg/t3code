@@ -43,7 +43,7 @@ const settingsLayer = Layer.mock(ServerSettingsService)({
 const memoryDatabase = NodeSqliteClient.layer({ filename: ":memory:" });
 
 it.effect(
-  "profile tasks launch with the current revision once, then post into their thread; one-time tasks disable after a run",
+  "profile tasks launch with the current revision once, then post into their thread; an early manual run keeps a one-time slot",
   () =>
     Effect.gen(function* () {
       yield* runMigrations();
@@ -99,8 +99,8 @@ it.effect(
           overrideFields: [],
         });
         assert.equal(first.task.threadId, "thread-reviewer");
-        assert.isFalse(first.task.enabled);
-        assert.isNull(first.task.nextRunAt);
+        assert.isTrue(first.task.enabled);
+        assert.equal(first.task.nextRunAt, "2099-01-01T00:00:00.000Z");
 
         // A client that does not know about profiles re-arms the task without the field.
         const { profileId: _profileId, ...withoutProfile } = input;

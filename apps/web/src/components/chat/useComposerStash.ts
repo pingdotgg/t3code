@@ -62,6 +62,7 @@ import {
   useState,
 } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { isInSideChatPane } from "../../lib/sideChatPane";
 import { useStableCallback } from "../../hooks/useStableCallback";
 
 /**
@@ -705,7 +706,8 @@ export function useComposerStash(input: {
       {
         capture: true,
         context: readShortcutContext,
-        when: () =>
+        when: (event) =>
+          !isInSideChatPane(event.target) &&
           isComposerEventForSurface(
             document.activeElement,
             composerFormRef.current?.closest("[data-embedded-chat-composer]") ?? null,

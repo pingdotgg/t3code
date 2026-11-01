@@ -43,6 +43,21 @@ export function cursorSdkFailureMessage(error: CursorAgentSdkRunnerError): strin
     : `Cursor Agent SDK ${error.method} failed: ${reason}`;
 }
 
+// The SDK maps backend details to codes like PRO_USER_USAGE_LIMIT or RATE_LIMITED, without a status.
+const CURSOR_USAGE_LIMIT_CODE =
+  /^(?:resource_exhausted|rate_limited(?:_changeable)?|\w*_usage_limit|\w*_rate_limit(?:_exceeded)?)$/i;
+
+export function isCursorUsageLimitError(cause: unknown): boolean {
+  const error = isCursorAgentSdkRunnerError(cause) ? cause.cause : cause;
+  if (typeof error !== "object" || error === null) return false;
+  const code = Reflect.get(error, "code");
+  return (
+    Reflect.get(error, "name") === "RateLimitError" ||
+    Reflect.get(error, "status") === 429 ||
+    (typeof code === "string" && CURSOR_USAGE_LIMIT_CODE.test(code))
+  );
+}
+
 const GENERIC_SDK_ERROR_CODES = new Set(["", "error", "unknown"]);
 
 function sdkErrorReason(cause: unknown): string | undefined {

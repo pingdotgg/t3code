@@ -1532,12 +1532,15 @@ export const ClientRequest__InternalChatMessageMetadataPassthrough = Schema.Stru
   identifier: "ClientRequest__InternalChatMessageMetadataPassthrough",
 });
 
-export type ClientRequest__MessagePhase = "commentary" | "final_answer";
+export type ClientRequest__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const ClientRequest__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -2219,12 +2222,15 @@ export const ServerNotification__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "ServerNotification__MemoryCitationEntry" });
 
-export type ServerNotification__MessagePhase = "commentary" | "final_answer";
+export type ServerNotification__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const ServerNotification__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -5991,12 +5997,18 @@ export const V2ItemCompletedNotification__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ItemCompletedNotification__MemoryCitationEntry" });
 
-export type V2ItemCompletedNotification__MessagePhase = "commentary" | "final_answer";
+export type V2ItemCompletedNotification__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2ItemCompletedNotification__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -6538,12 +6550,18 @@ export const V2ItemStartedNotification__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ItemStartedNotification__MemoryCitationEntry" });
 
-export type V2ItemStartedNotification__MessagePhase = "commentary" | "final_answer";
+export type V2ItemStartedNotification__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2ItemStartedNotification__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -7915,12 +7933,18 @@ export const V2RawResponseItemCompletedNotification__InternalChatMessageMetadata
     identifier: "V2RawResponseItemCompletedNotification__InternalChatMessageMetadataPassthrough",
   });
 
-export type V2RawResponseItemCompletedNotification__MessagePhase = "commentary" | "final_answer";
+export type V2RawResponseItemCompletedNotification__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2RawResponseItemCompletedNotification__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -8215,12 +8239,15 @@ export const V2ReviewStartResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ReviewStartResponse__MemoryCitationEntry" });
 
-export type V2ReviewStartResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ReviewStartResponse__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const V2ReviewStartResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -8927,12 +8954,15 @@ export const V2ThreadForkResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadForkResponse__MemoryCitationEntry" });
 
-export type V2ThreadForkResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadForkResponse__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const V2ThreadForkResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -9382,12 +9412,18 @@ export const V2ThreadItemsListResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadItemsListResponse__MemoryCitationEntry" });
 
-export type V2ThreadItemsListResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadItemsListResponse__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2ThreadItemsListResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -9872,12 +9908,15 @@ export const V2ThreadListResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadListResponse__MemoryCitationEntry" });
 
-export type V2ThreadListResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadListResponse__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const V2ThreadListResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -10364,12 +10403,18 @@ export const V2ThreadMetadataUpdateResponse__MemoryCitationEntry = Schema.Struct
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadMetadataUpdateResponse__MemoryCitationEntry" });
 
-export type V2ThreadMetadataUpdateResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadMetadataUpdateResponse__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2ThreadMetadataUpdateResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -10822,12 +10867,15 @@ export const V2ThreadReadResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadReadResponse__MemoryCitationEntry" });
 
-export type V2ThreadReadResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadReadResponse__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const V2ThreadReadResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -11382,12 +11430,15 @@ export const V2ThreadResumeParams__InternalChatMessageMetadataPassthrough = Sche
   identifier: "V2ThreadResumeParams__InternalChatMessageMetadataPassthrough",
 });
 
-export type V2ThreadResumeParams__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadResumeParams__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const V2ThreadResumeParams__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -11755,12 +11806,15 @@ export const V2ThreadResumeResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadResumeResponse__MemoryCitationEntry" });
 
-export type V2ThreadResumeResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadResumeResponse__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const V2ThreadResumeResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -12202,12 +12256,15 @@ export const V2ThreadRevertResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadRevertResponse__MemoryCitationEntry" });
 
-export type V2ThreadRevertResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadRevertResponse__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const V2ThreadRevertResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -12841,12 +12898,18 @@ export const V2ThreadStartedNotification__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadStartedNotification__MemoryCitationEntry" });
 
-export type V2ThreadStartedNotification__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadStartedNotification__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2ThreadStartedNotification__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -13469,12 +13532,15 @@ export const V2ThreadStartResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadStartResponse__MemoryCitationEntry" });
 
-export type V2ThreadStartResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadStartResponse__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const V2ThreadStartResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -13910,12 +13976,18 @@ export const V2ThreadTurnsListResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadTurnsListResponse__MemoryCitationEntry" });
 
-export type V2ThreadTurnsListResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadTurnsListResponse__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2ThreadTurnsListResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -14384,12 +14456,18 @@ export const V2ThreadUnarchiveResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadUnarchiveResponse__MemoryCitationEntry" });
 
-export type V2ThreadUnarchiveResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadUnarchiveResponse__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2ThreadUnarchiveResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -14785,12 +14863,18 @@ export const V2TurnCompletedNotification__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2TurnCompletedNotification__MemoryCitationEntry" });
 
-export type V2TurnCompletedNotification__MessagePhase = "commentary" | "final_answer";
+export type V2TurnCompletedNotification__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2TurnCompletedNotification__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -15200,12 +15284,18 @@ export const V2TurnStartedNotification__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2TurnStartedNotification__MemoryCitationEntry" });
 
-export type V2TurnStartedNotification__MessagePhase = "commentary" | "final_answer";
+export type V2TurnStartedNotification__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2TurnStartedNotification__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -15729,12 +15819,15 @@ export const V2TurnStartResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2TurnStartResponse__MemoryCitationEntry" });
 
-export type V2TurnStartResponse__MessagePhase = "commentary" | "final_answer";
+export type V2TurnStartResponse__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const V2TurnStartResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",

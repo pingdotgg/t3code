@@ -103,7 +103,12 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         });
       const { task, threadId } = yield* scheduler
         .runNow({ id: input.taskId })
-        .pipe(Effect.mapError(unavailable));
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+          ),
+        );
       const scope = yield* McpInvocationContext.McpInvocationContext;
       return {
         taskId: task.id,

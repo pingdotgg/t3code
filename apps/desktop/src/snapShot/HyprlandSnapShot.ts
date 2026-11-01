@@ -7,7 +7,7 @@ import * as NodeURL from "node:url";
 import * as Schema from "effect/Schema";
 import type { DesktopCaptureHelperState } from "@t3tools/contracts";
 import type { LinuxWindowSnapshot } from "./LinuxSnapShot.ts";
-import { readPortalPng } from "./linuxCaptureSession.ts";
+import { CaptureSetupRequiredError, readPortalPng } from "./linuxCaptureSession.ts";
 import { startNativeCaptureFeedback } from "./NativeCaptureFeedback.ts";
 import { HYPRLAND_CAPTURE_ACTION } from "./linuxCaptureSession.ts";
 export { isHyprlandCaptureSession } from "./linuxCaptureSession.ts";
@@ -167,9 +167,15 @@ export async function captureHyprlandWindow(
   paths: HyprlandCapturePaths,
   options?: { readonly flash: boolean; readonly animate: boolean },
 ): Promise<LinuxWindowSnapshot> {
-  const state = await new HyprlandCaptureSetup(paths).state();
-  if (state.status !== "ready")
-    throw new Error(`${state.message} Open Settings → SnapShots to continue setup.`);
+  const setup = new HyprlandCaptureSetup(paths);
+  let state = await setup.state();
+  if (state.status === "update-required") {
+    await setup.perform("install-hyprland-helper").catch((cause: unknown) => {
+      throw new CaptureSetupRequiredError(state.message, { cause });
+    });
+    state = await setup.state();
+  }
+  if (state.status !== "ready") throw new CaptureSetupRequiredError(state.message);
   const executable = hyprlandCaptureExecutable(paths);
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-hyprland-capture-"));
   const cleanup = () => NodeFSP.rm(directory, { recursive: true, force: true });

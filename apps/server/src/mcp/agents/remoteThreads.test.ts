@@ -44,6 +44,8 @@ import * as ThreadMetadataMcpService from "../ThreadMetadataMcpService.ts";
 import * as OrchestratorHandlers from "../toolkits/orchestrator/handlers.ts";
 import { OrchestratorToolkit } from "../toolkits/orchestrator/tools.ts";
 import * as ProjectHandlers from "../toolkits/project/handlers.ts";
+import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
+import * as ProjectCloneTracker from "../../project/ProjectCloneTracker.ts";
 import { ProjectToolkit } from "../toolkits/project/tools.ts";
 import { LocalGatewayPort } from "./LocalGatewayPort.ts";
 
@@ -214,6 +216,8 @@ const makeLayer = (macbook: ReturnType<typeof makeMacBook>, record: TestRecord) 
   ).pipe(Layer.provide(NodeServices.layer));
   return Layer.mergeAll(
     broker,
+    Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+    Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ discard: () => Effect.void }),
     Layer.succeed(LocalGatewayPort, {
       environmentId: devBox,
       label: "dev-box",

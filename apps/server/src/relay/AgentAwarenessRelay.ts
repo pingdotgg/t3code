@@ -1,12 +1,12 @@
-import type {
-  EnvironmentId,
-  OrchestrationV2DomainEvent,
-  OrchestrationV2ThreadShell,
-  OrchestrationV2TurnItem,
-  Project,
-  ThreadId,
+import {
+  isListedThread,
+  type EnvironmentId,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2ThreadShell,
+  type OrchestrationV2TurnItem,
+  type Project,
+  type ThreadId,
 } from "@t3tools/contracts";
-import { isSubagentThread } from "@t3tools/contracts";
 import {
   RelayApi,
   type RelayAgentActivityPublishProofPayload,
@@ -369,7 +369,6 @@ export const make = Effect.gen(function* () {
   const scope = yield* Effect.scope;
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
   const startedAt = (yield* DateTime.now).epochMilliseconds;
-  const activeSnapshotPublishedRef = yield* Ref.make(false);
   const catchUpRequests = yield* Queue.dropping<void>(1);
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
 
@@ -515,11 +514,11 @@ export const make = Effect.gen(function* () {
     // Read only this thread; full shell reads would make each activity event scale with all threads.
     const threadShell = yield* threads.getThreadShell(threadId);
     if (
-      threadShell != null &&
-      isSubagentThread(threadShell) &&
+      threadShell !== null &&
+      !isListedThread(threadShell) &&
       !(yield* Ref.get(publishedStateByThreadRef)).has(threadId)
     ) {
-      // Subagents have no relay rows to clear; per-event tombstones would needlessly redeliver user aggregates.
+      // Subagents and side chats have no relay rows to clear; per-event tombstones would needlessly redeliver user aggregates.
       return;
     }
     const thread =
@@ -728,10 +727,15 @@ export const make = Effect.gen(function* () {
       return "unlinked" as const;
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
-    const [projectSnapshot, shellSnapshot] = yield* Effect.all([
-      projects.snapshot,
-      threads.getShellSnapshot(),
-    ]);
+    const projectSnapshot = yield* projects.snapshot;
+    // Subagents and side chats never publish awareness, and subagents are most threads.
+    const topLevelThreadIds = (yield* threads.listActiveShellIndex()).flatMap((thread) =>
+      isListedThread(thread) ? [thread.id] : [],
+    );
+    const shellSnapshot = yield* threads.getShellSnapshot({
+      location: "active",
+      threadIds: topLevelThreadIds,
+    });
     const activeThreadIds = resolveAgentAwarenessRelayActiveThreadIds({
       environmentId,
       startedAt,
@@ -754,23 +758,25 @@ export const make = Effect.gen(function* () {
   // s to 60 s. A linked environment keeps the 5 s retry, because `t3 connect
   // publish` can turn publishing on from another process. Keep this untraced:
   // an unlinked environment can retry for the lifetime of the process.
-  const publishActiveThreadsOnceWhenConfigured = Effect.fnUntraced(function* (
+  const publishActiveThreadsWhenConfigured = Effect.fnUntraced(function* (
     logEnabledWhenReady: boolean,
   ) {
     let unlinkedRetryDelayMs = 5_000;
-    while (!(yield* Ref.get(activeSnapshotPublishedRef))) {
+    while (true) {
       const result = yield* publishActiveThreadsUnsafe.pipe(
         Effect.orElseSucceed(() => "failed" as const),
       );
       if (result === "published") {
-        yield* Ref.set(activeSnapshotPublishedRef, true);
         if (logEnabledWhenReady) {
           const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
           yield* Effect.logInfo("agent activity publishing enabled after link reconciliation", {
             relayUrl: relayConfig?.url,
           });
         }
-        return;
+        logEnabledWhenReady = false;
+        unlinkedRetryDelayMs = 5_000;
+        yield* Queue.take(catchUpRequests);
+        continue;
       }
       const retryDelayMs = result === "unlinked" ? unlinkedRetryDelayMs : 5_000;
       yield* Effect.race(Effect.sleep(retryDelayMs), Queue.take(catchUpRequests));
@@ -821,7 +827,7 @@ export const make = Effect.gen(function* () {
       }
       yield* forkParked(
         Effect.sleep("1 second").pipe(
-          Effect.andThen(publishActiveThreadsOnceWhenConfigured(startupState !== "enabled")),
+          Effect.andThen(publishActiveThreadsWhenConfigured(startupState !== "enabled")),
         ),
       );
       yield* forkParked(

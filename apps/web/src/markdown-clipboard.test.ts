@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { serializeRenderedMarkdownFragment } from "./markdown-clipboard";
+import {
+  serializeRenderedMarkdownFragment,
+  serializeTableElementToMarkdown,
+} from "./markdown-clipboard";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import {
   collectAssistantCitations,
   serializeAssistantCitation,
 } from "@t3tools/shared/assistantCitations";
+import { markdownMathRanges, parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 
 const TEXT_NODE = 3;
 const ELEMENT_NODE = 1;
@@ -94,6 +98,22 @@ class FakeElement {
       return null;
     };
     return search(this);
+  }
+
+  /** Supports the `:scope > a > b` child paths the table serializer queries. */
+  querySelectorAll(selector: string): FakeElement[] {
+    return selector.split(", ").flatMap((part) =>
+      part
+        .replace(/^:scope > /, "")
+        .split(" > ")
+        .reduce<FakeElement[]>(
+          (level, tag) =>
+            level.flatMap((element) =>
+              element.children.filter((child) => child.tagName === tag.toUpperCase()),
+            ),
+          [this],
+        ),
+    );
   }
 }
 
@@ -196,5 +216,81 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
       "printf '%s' 'TOKEN' | gh secret set CLOUDFLARE_API_TOKEN",
     );
+  });
+});
+
+function renderedFormula(tex: string): FakeElement {
+  // MarkdownMath's wrapper; its children stand in for KaTeX's glyphs.
+  return new FakeElement("SPAN", [], {
+    "data-markdown-math": "inline",
+    "data-markdown-copy": `\\(${tex}\\)`,
+  }).append(new FakeText(tex));
+}
+
+function renderedTable(...rows: Array<Array<FakeElement | FakeText>>): FakeElement {
+  const row = (tag: string, cells: Array<FakeElement | FakeText>) =>
+    new FakeElement("TR").append(...cells.map((cell) => new FakeElement(tag).append(cell)));
+  const [head = [], ...body] = rows;
+  return new FakeElement("TABLE").append(
+    new FakeElement("THEAD").append(row("TH", head)),
+    new FakeElement("TBODY").append(...body.map((cells) => row("TD", cells))),
+  );
+}
+
+describe("copying rendered Markdown tables", () => {
+  beforeEach(() => {
+    vi.stubGlobal("Node", { TEXT_NODE, ELEMENT_NODE });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps formula pipes as authored while escaping prose pipes", () => {
+    const table = renderedTable(
+      [new FakeText("Formula"), new FakeText("Note")],
+      [renderedFormula("|x|"), new FakeText("a | b")],
+      [renderedFormula("\\|x\\|"), new FakeElement("CODE").append(new FakeText("\\(c|d\\)"))],
+      [
+        new FakeElement("A", [], { href: "https://example.com/?q=a|b" }).append(
+          new FakeText("norm "),
+          renderedFormula("|y|"),
+        ),
+        new FakeText("e"),
+      ],
+      [
+        new FakeElement("UL").append(
+          new FakeElement("LI").append(renderedFormula("|z|"), new FakeText(" a | b")),
+        ),
+        new FakeElement("BLOCKQUOTE").append(new FakeElement("P").append(new FakeText("c | d"))),
+      ],
+    );
+    const markdown = serializeTableElementToMarkdown(table as unknown as Element);
+
+    const tree = parseMarkdownWithMath(markdown);
+    const parsed = tree.children[0];
+    if (parsed?.type !== "table") throw new Error("Expected a table");
+    expect(parsed.children.map((row) => row.children.length)).toEqual([2, 2, 2, 2, 2]);
+    expect(markdownMathRanges(markdown, tree).map((formula) => formula.tex)).toEqual([
+      "|x|",
+      "\\|x\\|",
+      "|y|",
+      "|z|",
+    ]);
+    expect(parsed.children[1]?.children[1]?.children).toMatchObject([
+      { type: "text", value: "a | b" },
+    ]);
+    expect(parsed.children[4]?.children[1]?.children).toMatchObject([
+      { type: "text", value: "> c | d" },
+    ]);
+    const [, , codeRow, linkRow] = parsed.children;
+    expect(codeRow?.children[1]?.children[0]).toMatchObject({
+      type: "inlineCode",
+      value: "\\(c|d\\)",
+    });
+    expect(linkRow?.children[0]?.children[0]).toMatchObject({
+      type: "link",
+      url: "https://example.com/?q=a|b",
+    });
   });
 });

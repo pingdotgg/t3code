@@ -52,10 +52,12 @@ export function scheduledTaskDefaultModel(
 }
 
 export type ScheduleDraft = {
-  /** "kept" leaves a cron or one-time schedule (set from the Agents board or MCP) unchanged. */
-  readonly mode: "fixed_time" | "interval" | "webhook" | "kept";
-  readonly kept: Extract<ScheduledTaskSchedule, { type: "cron" | "once" }> | null;
+  /** "kept" leaves a cron schedule (set from the Agents board or MCP) unchanged. */
+  readonly mode: "fixed_time" | "once" | "interval" | "webhook" | "kept";
+  readonly kept: Extract<ScheduledTaskSchedule, { type: "cron" }> | null;
   readonly timeOfDay: string;
+  /** ISO time for a one-time run. Empty until the user picks the "Once" mode. */
+  readonly runAt: string;
   readonly weekdays: ReadonlyArray<number>;
   readonly intervalMinutes: string;
   readonly signature: ScheduledTaskWebhookSignature | null;
@@ -71,6 +73,7 @@ export type ScheduleDraft = {
 export const DEFAULT_SCHEDULE: ScheduleDraft = {
   mode: "fixed_time",
   timeOfDay: "09:00",
+  runAt: "",
   weekdays: [1, 2, 3, 4, 5],
   intervalMinutes: "15",
   kept: null,
@@ -86,7 +89,6 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
 export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
   switch (task.schedule.type) {
     case "cron":
-    case "once":
       return { ...DEFAULT_SCHEDULE, mode: "kept", kept: task.schedule };
     case "fixed_time":
       return {
@@ -96,6 +98,8 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
           ? [...new Set(task.schedule.weekdays)].sort((a, b) => a - b)
           : [0, 1, 2, 3, 4, 5, 6],
       };
+    case "once":
+      return { ...DEFAULT_SCHEDULE, mode: "once", runAt: task.schedule.runAt };
     case "interval":
       return {
         ...DEFAULT_SCHEDULE,
@@ -121,6 +125,10 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
         savedFilters: webhookFilterDrafts(task.schedule.filters),
       };
   }
+}
+
+export function parseIntervalMinutes(value: string): number {
+  return Number(value.trim().replace(",", "."));
 }
 
 export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSchedule | null {
@@ -170,8 +178,12 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
         : {}),
     };
   }
+  if (draft.mode === "once") {
+    const runAt = new Date(draft.runAt);
+    return Number.isNaN(runAt.getTime()) ? null : { type: "once", runAt: runAt.toISOString() };
+  }
   if (draft.mode === "interval") {
-    const minutes = Number(draft.intervalMinutes);
+    const minutes = parseIntervalMinutes(draft.intervalMinutes);
     const everyMs = Math.round(minutes * 60_000);
     return minutes >= 1 && Number.isSafeInteger(everyMs) ? { type: "interval", everyMs } : null;
   }
@@ -219,6 +231,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
       .map((option) => [option.id, option.value]),
     draft.schedule.mode,
     draft.schedule.timeOfDay,
+    draft.schedule.runAt,
     [...draft.schedule.weekdays].sort((a, b) => a - b),
     draft.schedule.intervalMinutes,
     draft.schedule.maxDeliveryAgeMinutes,

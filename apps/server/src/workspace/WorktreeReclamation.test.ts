@@ -347,6 +347,8 @@ describe("WorktreeReclamation", () => {
           close: () => Effect.void,
           closeInstance: () => Effect.void,
           release: () => Effect.void,
+          releaseUnlessBusy: () => Effect.succeed(true),
+          otherWorkingThreads: () => Effect.succeed([]),
           detach: () => Effect.void,
         });
         const { fixture, service, updateThread } = yield* setup({
