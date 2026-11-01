@@ -12,6 +12,7 @@ import {
   needsCursorKeychainAccess,
   refreshUsage,
   usageFallbackWindow,
+  dailyUsageWindow,
 } from "@t3tools/client-runtime/state/usage";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import * as Cause from "effect/Cause";
@@ -43,7 +44,9 @@ interface UsageWindowResult {
 const usageByWindowAtom: (key: string) => Atom.Atom<UsageWindowResult> = Atom.family(
   (windowKey: string) =>
     Atom.make((get): UsageWindowResult => {
-      const input = JSON.parse(windowKey) as UsageSummaryInput;
+      const { selectedIds, ...input } = JSON.parse(windowKey) as UsageSummaryInput & {
+        selectedIds: readonly EnvironmentId[] | null;
+      };
       const presentations = get(environmentPresentations.presentationsAtom);
 
       const statuses: EnvironmentUsageStatus[] = [];
@@ -67,9 +70,13 @@ const usageByWindowAtom: (key: string) => Atom.Atom<UsageWindowResult> = Atom.fa
           continue;
         }
         const result = get(serverEnvironment.usageSummary({ environmentId, input }));
-        if (result._tag === "Failure") {
+        if (
+          result._tag === "Failure" &&
+          (selectedIds === null || selectedIds.includes(environmentId))
+        ) {
           const fallback = usageFallbackWindow(input, Cause.squash(result.cause));
-          if (fallback !== null) return get(usageByWindowAtom(JSON.stringify(fallback)));
+          if (fallback !== null)
+            return get(usageByWindowAtom(JSON.stringify({ ...fallback, selectedIds })));
         }
         const summary = AsyncResult.getOrElse(result, () => null);
         statuses.push({
@@ -170,6 +177,7 @@ export function useUsage(
   hiddenProviders: ReadonlySet<UsageProviderKind> = NO_HIDDEN_PROVIDERS,
 ): UsageView {
   const windowKey = JSON.stringify({
+    selectedIds: selectedEnvironmentIds === null ? null : [...selectedEnvironmentIds].sort(),
     sinceDay: input.sinceDay,
     untilDay: input.untilDay,
     timeZone: input.timeZone,
@@ -206,7 +214,14 @@ export function useUsage(
             readEnvironmentScope(environment.environmentId, AuthDiagnosticsReadScope),
         )
         .map(({ environmentId }) => environmentId),
-      input: nextInput ?? effectiveWindow,
+      input:
+        nextInput === undefined
+          ? effectiveWindow
+          : input.resolution === "hour" &&
+              effectiveWindow.resolution === "day" &&
+              nextInput.resolution === "hour"
+            ? dailyUsageWindow(nextInput)
+            : nextInput,
     });
 
   const answeredCount = selectedEnvironments.filter(

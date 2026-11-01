@@ -28,6 +28,10 @@ export function usageFallbackWindow(
     Date.parse(input.untilTime) - Date.parse(input.sinceTime) !== 7 * 24 * 60 * 60_000
   )
     return null;
+  return dailyUsageWindow(input);
+}
+
+export function dailyUsageWindow(input: UsageSummaryInput): UsageSummaryInput {
   // @effect-diagnostics-next-line globalDate:off -- Calendar-only UTC bounds preserve seven dates across DST.
   const start = new Date(input.untilDay + "T00:00:00Z");
   start.setUTCDate(start.getUTCDate() - 6);

@@ -1105,18 +1105,21 @@ describe("UsageService", () => {
             1,
           );
           assert.strictEqual(local[0]?.day, "2026-08-01");
-          const hourly = muse(
-            yield* service.readSummary({
-              ...window,
-              resolution: "hour",
-              sinceTime: "2026-08-01T00:00:00.000Z",
-              untilTime: "2026-08-08T00:00:00.000Z",
-            }),
-          );
-          assert.strictEqual(
-            hourly.reduce((sum, b) => sum + b.records, 0),
-            3,
-          );
+          for (const days of [1, 7]) {
+            const hourly = muse(
+              yield* service.readSummary({
+                ...window,
+                untilDay: UsageDay.make(days === 1 ? "2026-08-01" : "2026-08-07"),
+                resolution: "hour",
+                sinceTime: "2026-08-01T00:00:00.000Z",
+                untilTime: days === 1 ? "2026-08-02T00:00:00.000Z" : "2026-08-08T00:00:00.000Z",
+              }),
+            );
+            assert.strictEqual(
+              hourly.reduce((sum, b) => sum + b.records, 0),
+              days === 1 ? 3 : 4,
+            );
+          }
           const appended = encodeUnknownJsonString(entry("appended", "child"));
           const file = NodePath.join(child, "session.jsonl");
           yield* Effect.promise(() => NodeFSP.appendFile(file, appended.slice(0, -10)));
