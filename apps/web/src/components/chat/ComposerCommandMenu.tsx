@@ -179,6 +179,9 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
               recycleItems
               onLayout={updateScrollFade}
               onScroll={updateScrollFade}
+              // LegendList sizes its first window from this element before its rows give it height;
+              // reserving the rows' minimum height (1.75rem each, plus p-2) fills the first frame.
+              style={{ minHeight: `min(${props.items.length * 1.75 + 1}rem, 18rem)` }}
               className={cn(
                 "max-h-72 min-h-0 scroll-py-6 overflow-x-hidden overscroll-y-contain p-2 [&::-webkit-scrollbar-track]:my-4",
                 getVirtualizedScrollFadeClassName(scrollFade),
