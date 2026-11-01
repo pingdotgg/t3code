@@ -1,20 +1,32 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NetService from "@t3tools/shared/Net";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as TestConsole from "effect/testing/TestConsole";
+import { Command } from "effect/cli";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { afterEach, vi } from "vite-plus/test";
 
+import packageJson from "../../package.json" with { type: "json" };
+import * as BootService from "../cloud/bootService.ts";
+import {
+  repointLauncher,
+  resolveLauncherPath,
+  resolveNewestVersion,
+  updateCommand,
+} from "./update.ts";
 import { prunePinnedRuntimes } from "../cloud/pinnedRuntime.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { repointLauncher, resolveLauncherPath, resolveNewestVersion } from "./update.ts";
 
 // lsof listing one process, so prune sees a process list in which no runtime is running.
 const unrelatedLsof = ProcessRunner.ProcessRunner.of({
@@ -298,5 +310,144 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       assert.equal(relative, launcher);
       assert.equal(absent, undefined);
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+  );
+});
+
+it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update closing hint", (it) => {
+  it.effect("tells npm users how to move the t3 their package still pins", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      const baseDir = path.join(root, "home");
+      const prefix = path.join(root, "node");
+      const npmGlobal = path.join(prefix, "lib/node_modules/t3/bin/t3.mjs");
+      const npx = path.join(root, ".npm/_npx/abc/node_modules/t3/bin/t3.mjs");
+      const projectLocal = path.join(root, "project/node_modules/t3/bin/t3.mjs");
+      for (const launcher of [npmGlobal, npx, projectLocal]) {
+        yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
+        yield* fs.writeFileString(launcher, "");
+        yield* fs.writeFileString(
+          path.join(path.dirname(launcher), "../package.json"),
+          `{"name":"t3","version":"${packageJson.version}","bin":{"t3":"./bin/t3.mjs"}}`,
+        );
+      }
+      yield* fs.makeDirectory(path.join(prefix, "bin"));
+      const platform = yield* HostProcess.Platform;
+      if (platform !== "win32") yield* fs.symlink(npmGlobal, path.join(prefix, "bin/t3"));
+      const realPrefix = yield* fs.realPath(prefix);
+      // Cached runtimes avoid network downloads; the runner below validates their version.
+      const entryFor = (version: string) =>
+        path.join(baseDir, "runtime/versions", version, platform === "win32" ? "t3.exe" : "t3");
+      for (const version of ["9.9.9", packageJson.version]) {
+        yield* fs.makeDirectory(path.dirname(entryFor(version)), { recursive: true });
+        yield* fs.writeFileString(entryFor(version), "");
+        yield* fs.writeFileString(
+          path.join(path.dirname(entryFor(version)), ".install-complete"),
+          version,
+        );
+      }
+
+      const update = (
+        version: string,
+        launcher: string | undefined,
+        status: BootService.BootServiceStatus,
+      ) => {
+        vi.spyOn(ProcessRunner, "layer", "get").mockReturnValue(
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: (input) => {
+              assert.equal(input.command, entryFor(version));
+              assert.deepStrictEqual(input.args, ["--version"]);
+              return Effect.succeed({
+                stdout: `t3 v${version}\n`,
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              });
+            },
+          }),
+        );
+        vi.spyOn(BootService, "layer").mockReturnValue(
+          Layer.succeed(
+            BootService.BootService,
+            BootService.BootService.of({
+              status: Effect.succeed(status),
+              withStopped: (operation) => operation,
+              restart: Effect.succeed("restarted"),
+              install: () =>
+                Effect.succeed({
+                  program: [entryFor(version), "__service-launcher"],
+                  baseDir,
+                  unitPath: status.unitPath,
+                  logPath: status.logPath,
+                }),
+              uninstall: Effect.succeed(false),
+            }),
+          ),
+        );
+        return Command.runWith(updateCommand, { version: packageJson.version })([
+          version,
+          "--base-dir",
+          baseDir,
+          "--yes",
+        ]).pipe(
+          Effect.andThen(TestConsole.logLines),
+          Effect.map((lines) => lines.join("\n")),
+          Effect.provideService(
+            HostProcess.Environment,
+            launcher === undefined ? {} : { T3CODE_NPM_LAUNCHER_PATH: launcher },
+          ),
+          Effect.provideService(HostProcess.IsExecutable, false),
+          Effect.provideService(HostProcess.Arguments, ["node", path.join(root, "missing.mjs")]),
+          Effect.provideService(HostProcess.HomeDirectory, root),
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+              Layer.fresh(TestConsole.layer),
+            ),
+          ),
+        );
+      };
+      const noService = {
+        supported: true,
+        installed: false,
+        current: false,
+        unitPath: path.join(root, "t3code.service"),
+        logPath: path.join(root, "boot-service.log"),
+      } as const;
+      const stillRuns = `The t3 npm package still runs ${packageJson.version}.`;
+
+      for (const [launcher, expected] of [
+        [
+          npmGlobal,
+          platform === "win32"
+            ? `${stillRuns} Update it to t3@9.9.9 with the package manager that installed it.`
+            : `${stillRuns} Run \`npm install --global --prefix ${realPrefix} t3@9.9.9\` to move to 9.9.9.`,
+        ],
+        [npx, `${stillRuns} Run \`npx t3@9.9.9\` to move to 9.9.9.`],
+        [
+          projectLocal,
+          `${stillRuns} Update it to t3@9.9.9 with the package manager that installed it.`,
+        ],
+        [undefined, `Run ${entryFor("9.9.9")}\n`],
+      ] as const) {
+        const output = yield* update("9.9.9", launcher, noService);
+        assert.include(output, `  ${expected}`, launcher ?? "standalone");
+      }
+
+      // Updating only the service to the package's own version needs no package update.
+      const output = yield* update(packageJson.version, npmGlobal, {
+        ...noService,
+        installed: true,
+        installedVersion: "0.0.1",
+        installedBaseDir: baseDir,
+      });
+      assert.include(output, `  Run ${entryFor(packageJson.version)}\n`);
+      assert.notInclude(output, stillRuns);
+    }).pipe(Effect.scoped),
   );
 });

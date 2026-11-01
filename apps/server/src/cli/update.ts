@@ -35,6 +35,11 @@ import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/ser
 import * as ProcessRunner from "../processRunner.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import {
+  packageUpdateCommand,
+  resolveNpmLauncherPath,
+  resolveServerInstallation,
+} from "./invocation.ts";
 import { createUpdateProgress } from "./updateProgress.ts";
 import * as CliService from "./service.ts";
 
@@ -194,6 +199,26 @@ export const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(functio
     }
   }
   return undefined;
+});
+
+/** npm's `t3` keeps starting the runtime its package version names, not the one just downloaded. */
+const resolveNextStep = Effect.fn("cli.update.resolve_next_step")(function* (input: {
+  readonly repointed: boolean;
+  readonly entryPath: string;
+  readonly targetVersion: string;
+}) {
+  if (input.repointed) return "Run t3 to get started.";
+  if (input.targetVersion === packageJson.version) return `Run ${input.entryPath}`;
+  const stillRuns = `The t3 npm package still runs ${packageJson.version}.`;
+  const installation = yield* resolveServerInstallation;
+  if (installation !== null) {
+    const command = packageUpdateCommand(installation, input.targetVersion);
+    return `${stillRuns} Run \`${command}\` to move to ${input.targetVersion}.`;
+  }
+  if (Option.isSome(yield* resolveNpmLauncherPath)) {
+    return `${stillRuns} Update it to t3@${input.targetVersion} with the package manager that installed it.`;
+  }
+  return `Run ${input.entryPath}`;
 });
 
 const updateFlags = {
@@ -528,11 +553,12 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   }
 
   progress.success(`Installed T3 Code ${targetVersion}`);
-  if (Option.isSome(repointed)) {
-    yield* Console.log("  Run t3 to get started.\n");
-  } else {
-    yield* Console.log(`  Run ${runtime.entryPath}\n`);
-  }
+  const nextStep = yield* resolveNextStep({
+    repointed: Option.isSome(repointed),
+    entryPath: runtime.entryPath,
+    targetVersion,
+  });
+  yield* Console.log(`  ${nextStep}\n`);
   if (servicePlan?.handedOff === true) {
     yield* Console.log(
       `  Background service switching to ${targetVersion} from a separate systemd unit, since this session runs inside it and disconnects when it restarts. Result: ${servicePlan.logPath}`,
