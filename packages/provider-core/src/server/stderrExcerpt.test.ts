@@ -17,7 +17,7 @@ describe("stderrExcerpt", () => {
     );
 
     expect(excerpt).toContain("Invalid project config at ~/.cursor/cli.json");
-    expect(excerpt).toContain("Bearer [redacted]");
+    expect(excerpt).toContain("Authorization: [REDACTED]");
     expect(excerpt).toContain("[pairing-url]");
     expect(excerpt).toContain("[redacted]");
     expect(excerpt).not.toContain("secret-token-value");
@@ -41,8 +41,8 @@ describe("stderrExcerpt", () => {
     );
 
     expect(excerpt).toContain("[redacted]");
-    expect(excerpt).toContain("Authorization: Basic [redacted]");
-    expect(excerpt).toContain("x-api-key: [redacted]");
+    expect(excerpt).toContain("Authorization: [REDACTED]");
+    expect(excerpt).toContain("x-api-key: [REDACTED]");
     expect(excerpt).not.toContain("sk-proj-");
     expect(excerpt).not.toContain("sk-svcacct-");
     expect(excerpt).not.toContain("sk-ant-api03-");
@@ -69,8 +69,10 @@ describe("stderrExcerpt", () => {
       [
         "API_KEY=super-secret",
         "github_token: gh-value",
-        '{"dbPassword": "hunter2"}',
-        "Error: config missing at line 3",
+        'PASSWORD="first second third"',
+        '{"message":"failed","apiKey":"custom-credential-value"}',
+        "env:API_KEY=abc123",
+        "Unknown key: model-x",
       ].join("\n"),
       "/Users/ada",
       {},
@@ -78,10 +80,12 @@ describe("stderrExcerpt", () => {
 
     expect(excerpt).toBe(
       [
-        "API_KEY=[redacted]",
-        "github_token: [redacted]",
-        '{"dbPassword": [redacted]',
-        "Error: config missing at line 3",
+        "API_KEY=[REDACTED]",
+        "github_token: [REDACTED]",
+        "PASSWORD=[REDACTED]",
+        '{"message":"failed","apiKey":"[REDACTED]"}',
+        "env:API_KEY=[REDACTED]",
+        "Unknown key: model-x",
       ].join("\n"),
     );
   });

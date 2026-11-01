@@ -190,10 +190,8 @@ function replaceUnsafeControlCharacters(value: string): string {
   return sanitized.join("");
 }
 
-function redactProviderFailureText(value: string): string {
-  return replaceUnsafeControlCharacters(value)
-    .replace(/\bhttps?:\/\/[^\s<>"']+/giu, redactUrl)
-    .replace(/\b(Bearer|Basic)\s+[^\s,;]+/giu, "$1 [REDACTED]")
+export function redactSecretAssignments(value: string): string {
+  return value
     .replace(
       /(["'][\w-]*(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)["']\s*:\s*["'])[^"']*(["'])/giu,
       "$1[REDACTED]$2",
@@ -201,7 +199,15 @@ function redactProviderFailureText(value: string): string {
     .replace(
       /((?<![\w-])[\w-]*(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu,
       "$1[REDACTED]",
-    )
+    );
+}
+
+function redactProviderFailureText(value: string): string {
+  return redactSecretAssignments(
+    replaceUnsafeControlCharacters(value)
+      .replace(/\bhttps?:\/\/[^\s<>"']+/giu, redactUrl)
+      .replace(/\b(Bearer|Basic)\s+[^\s,;]+/giu, "$1 [REDACTED]"),
+  )
     .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/gu, "[REDACTED]")
     .trim();
 }
