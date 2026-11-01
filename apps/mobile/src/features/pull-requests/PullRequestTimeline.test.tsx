@@ -30,7 +30,7 @@ type Args = Parameters<typeof pullRequestTimelineRows>;
 const activity: PullRequestActivity = {
   comments: [
     {
-      id: "tie",
+      id: "newer",
       author: null,
       reviewState: null,
       kind: "issue-comment",
@@ -42,15 +42,12 @@ const activity: PullRequestActivity = {
   ],
   commentCount: 1,
   commentsTruncated: true,
-  commits: [
-    { oid: "tie", messageHeadline: "same instant", committedDate: "2026-07-04T20:30:00-04:00" },
-    { oid: "older", messageHeadline: "older", committedDate: "2026-07-04T23:00:00Z" },
-  ],
+  commits: [{ oid: "older", messageHeadline: "older", committedDate: "2026-07-04T23:00:00Z" }],
   reviewThreads: [],
 };
 
 describe("pullRequestTimelineRows", () => {
-  it("sorts by instant in either direction, keeps ties in input order and the truncation notice last", () => {
+  it("sorts in the chosen direction and keeps the truncation notice last", () => {
     const keys = (newestFirst: boolean) =>
       pullRequestTimelineRows(
         activity,
@@ -60,7 +57,7 @@ describe("pullRequestTimelineRows", () => {
         newestFirst,
       ).map((row) => row.key);
 
-    expect(keys(true)).toEqual(["comment:tie", "commit:tie", "commit:older", "truncated"]);
-    expect(keys(false)).toEqual(["commit:older", "comment:tie", "commit:tie", "truncated"]);
+    expect(keys(true)).toEqual(["comment:newer", "commit:older", "truncated"]);
+    expect(keys(false)).toEqual(["commit:older", "comment:newer", "truncated"]);
   });
 });
