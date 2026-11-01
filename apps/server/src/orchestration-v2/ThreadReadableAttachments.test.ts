@@ -111,7 +111,12 @@ it.effect("reads uploads from the history the thread's agent was given", () =>
       fork: {
         forkedFrom: fork("source", "run-3"),
         runs: runs("completed", "completed"),
-        items: [message("run-1", "fork-own"), message("run-2", "fork-after-nested-fork")],
+        // The fork names a source upload from after its fork run.
+        items: [
+          message("run-1", "fork-own"),
+          message("run-2", "fork-after-nested-fork"),
+          message("run-2", "source-after-fork"),
+        ],
       },
       nested: {
         forkedFrom: fork("fork", "run-1"),

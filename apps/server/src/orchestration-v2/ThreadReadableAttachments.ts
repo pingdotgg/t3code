@@ -35,7 +35,13 @@ export const readThreadReadableAttachmentIds = Effect.fn(
   const own = yield* projectionStore.getThreadRecords(threadId, ["runs", "attempts", "turnItems"], {
     turnItemTypes: ATTACHMENT_ITEM_TYPES,
   });
-  const ids = new Set(attachmentIds(visibleConversationItems(own, own.turnItems)));
+  // Each thread contributes only uploads it owns: a message may name another thread's stored
+  // upload, including an ancestor's upload from after the fork.
+  const owned = (ownerId: ThreadId, items: ReadonlyArray<OrchestrationV2TurnItem>) => {
+    const owner = toSafeThreadAttachmentSegment(ownerId);
+    return attachmentIds(items).filter((id) => parseThreadSegmentFromAttachmentId(id) === owner);
+  };
+  const ids = new Set(owned(threadId, visibleConversationItems(own, own.turnItems)));
   const seen = new Set([threadId]);
   let current = own.thread;
   while (
@@ -57,10 +63,8 @@ export const readThreadReadableAttachmentIds = Effect.fn(
         ...(source.thread.historyOrigin === "v1_import" ? [null] : []),
       ],
     });
-    for (const id of attachmentIds(visibleConversationItems(source, turnItems))) ids.add(id);
+    for (const id of owned(sourceId, visibleConversationItems(source, turnItems))) ids.add(id);
     current = source.thread;
   }
-  // A client can name another thread's stored upload; only uploads owned by this lineage count.
-  const owners = new Set([...seen].map(toSafeThreadAttachmentSegment));
-  return [...ids].filter((id) => owners.has(parseThreadSegmentFromAttachmentId(id)));
+  return [...ids];
 });

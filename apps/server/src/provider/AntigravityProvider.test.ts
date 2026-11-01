@@ -815,16 +815,20 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         yield* harness.provider.onSignedIn;
         yield* harness.provider.onSessionStarted(started);
         expect((yield* published)?.usageLimits).toEqual(newLimits);
-        // Switching again replaces limits the previous account already published.
-        const nextLimits = { ...newLimits, checkedAt: "2026-10-09T12:02:00.000Z" };
-        yield* Ref.set(usage, Effect.succeed(nextLimits));
+        // Switching again must not republish the previous account's limits, even if the read fails.
+        const failed = {
+          checkedAt: "2026-10-09T12:02:00.000Z",
+          windows: [],
+          unavailable: { reason: "probeFailed" },
+        } satisfies ServerProviderUsageLimits;
+        yield* Ref.set(usage, Effect.succeed(failed));
         const republished = yield* harness.nextPublish(
-          (snapshot) => snapshot.usageLimits?.checkedAt === nextLimits.checkedAt,
+          (snapshot) => snapshot.usageLimits?.unavailable?.reason === "probeFailed",
         );
         yield* harness.provider.onSignedIn;
         expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
         yield* harness.provider.onSessionStarted(started);
-        expect((yield* republished)?.usageLimits).toEqual(nextLimits);
+        expect((yield* republished)?.usageLimits).toEqual(failed);
       }),
     ),
   );

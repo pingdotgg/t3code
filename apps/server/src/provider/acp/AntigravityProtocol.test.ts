@@ -376,6 +376,16 @@ describe("Antigravity tool results", () => {
     pathOnly = normalizeAntigravityToolCall(mergeToolCallState(pathOnly, completed));
     expect(pathOnly.data.content).toEqual([{ type: "diff", patch: { format: "omitted" } }]);
     expect(acpToolCallDiffPatch(pathOnly.data.content)).toBeUndefined();
+    // A captured patch that a later update's shared text budget cut or dropped is omitted.
+    for (const patch of [{ text: "[Earlier output truncated]\n\n@@ -80,1 +80,1 @@" }, {}]) {
+      const kept = normalizeAntigravityToolCall({
+        toolCallId: "edit-cut",
+        kind: "edit",
+        status: "completed",
+        data: { content: [{ type: "diff", path, patch }] },
+      });
+      expect(kept.data.content).toEqual([{ type: "diff", path, patch: { format: "omitted" } }]);
+    }
     // A patch too long to keep, or input cut to its tail, must not fall back to line-1 snippets.
     for (const width of [60, 120]) {
       const block = (value: string) =>

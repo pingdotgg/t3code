@@ -248,10 +248,14 @@ export function makeAntigravityAcpAdapterFlavor(
       threadId,
       attachments,
     }) {
+      if (attachments.length === 0) return () => null;
       // A message may name another thread's stored upload; copy only this lineage's uploads.
       const owner = toSafeThreadAttachmentSegment(threadId);
+      const ownsAll = attachments.every(
+        (attachment) => parseThreadSegmentFromAttachmentId(attachment.id) === owner,
+      );
       const inherited = new Set(
-        options.host.readableAttachmentPaths === undefined
+        ownsAll || options.host.readableAttachmentPaths === undefined
           ? []
           : yield* options.host.readableAttachmentPaths(threadId),
       );

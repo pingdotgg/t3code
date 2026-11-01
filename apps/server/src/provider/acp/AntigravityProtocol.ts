@@ -371,8 +371,16 @@ function withAntigravityEditPatches(
   return content.map((entry) => {
     if (!Predicate.isObject(entry) || entry.type !== "diff" || typeof entry.path !== "string")
       return entry;
-    // Keep the first patch: once the edit runs, the file no longer holds the old text.
-    if (entry.patch !== undefined) return entry;
+    // Keep the first patch: once the edit runs, the file no longer holds the old text. A later
+    // update's shared text budget can cut or drop it, and a cut patch would misplace the hunk.
+    if (entry.patch !== undefined) {
+      const patch: unknown = entry.patch;
+      const cut =
+        Predicate.isObject(patch) &&
+        patch.format !== "omitted" &&
+        (typeof patch.text !== "string" || patch.text.startsWith(TOOL_TEXT_TRUNCATED));
+      return cut ? { ...entry, patch: { format: "omitted" } } : entry;
+    }
     // Bounding keeps only the tail of long input, so a cut snippet cannot be located.
     if (hasTruncatedText(data.rawInput)) return { ...entry, patch: { format: "omitted" } };
     const text = antigravityEditPatch({
