@@ -44,6 +44,7 @@ import * as FileSystem from "effect/FileSystem";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import { resolveAttachmentPathById } from "../../attachmentStore.ts";
+import * as PortScanner from "../../preview/PortScanner.ts";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -1521,6 +1522,57 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           },
         },
       ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  // regression: #28542 Codex shells inherited the server's thread id or none at all
+  it.effect("gives each thread on a shared session its own thread id in shell commands", () =>
+    Effect.gen(function* () {
+      const threadStarts: Array<unknown> = [];
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "shell-thread-env",
+          entries: [
+            ...codexReplayPreamble({
+              nativeThreadId: "shell-env-first",
+              nativeTurnId: "unused",
+              prompt: "unused",
+            }).slice(0, 5),
+            ...codexReplayPreamble({
+              nativeThreadId: "shell-env-second",
+              nativeTurnId: "unused",
+              prompt: "unused",
+            })
+              .slice(3, 5)
+              .map((entry) => withReplayRequestId(entry, 3)),
+          ],
+        }),
+        () => Effect.void,
+        (method, params) =>
+          Effect.sync(() => {
+            if (method === "thread/start") threadStarts.push(params);
+          }),
+      );
+      const secondThreadId = ThreadId.make("thread-shell-env-second");
+      yield* harness.runtime.ensureThread({
+        threadId: secondThreadId,
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      const shellThreadIdKey = `shell_environment_policy.set.${PortScanner.AGENT_THREAD_ENV}`;
+      assert.deepEqual(
+        threadStarts.map((params) =>
+          Predicate.isObject(params) && Predicate.isObject(params.config)
+            ? params.config[shellThreadIdKey]
+            : undefined,
+        ),
+        [harness.threadId, secondThreadId],
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
