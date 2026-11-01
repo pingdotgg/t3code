@@ -628,7 +628,9 @@ export default function DiffPanel({
   );
   const updateDiffFoldState = (update: (current: typeof foldState) => typeof foldState) => {
     if (!collapseScopeKey) return;
-    useDiffPanelSessionStore.getState().updateFoldState(collapseScopeKey, update);
+    useDiffPanelSessionStore
+      .getState()
+      .updateFoldState(collapseScopeKey, update, settings.diffFilesCollapsed);
   };
   const isDiffFileCollapsed = (fileKey: string) =>
     isDiffFileFoldCollapsed(fileKey, effectiveFoldOverride, foldState.toggledFileKeys);

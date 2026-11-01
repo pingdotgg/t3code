@@ -224,16 +224,24 @@ interface DiffPanelSessionStoreState {
   updateFoldState: (
     scopeKey: string,
     update: (current: DiffFileFoldState) => DiffFileFoldState,
+    diffFilesCollapsed: boolean,
   ) => void;
 }
 
 // Session-only so folds survive right-panel switches without changing reload defaults.
 export const useDiffPanelSessionStore = create<DiffPanelSessionStoreState>()((set) => ({
   foldStateByScopeKey: {},
-  updateFoldState: (scopeKey, update) =>
+  updateFoldState: (scopeKey, update, diffFilesCollapsed) =>
     set((state) => {
       const current = state.foldStateByScopeKey[scopeKey] ?? EMPTY_DIFF_FILE_FOLD_STATE;
-      const next = update(current);
+      const updated = update(current);
+      const next =
+        updated === current
+          ? current
+          : {
+              ...updated,
+              foldOverride: resolveDiffFileFoldOverride(updated.foldOverride, diffFilesCollapsed),
+            };
       if (
         next === current ||
         (next.foldOverride === current.foldOverride &&

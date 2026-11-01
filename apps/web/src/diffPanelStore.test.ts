@@ -87,20 +87,31 @@ describe("diffPanelStore", () => {
     expect(resolveToolCallDiffTarget(target, [])).toBe(target);
   });
 
-  it("retains fold choices when a panel consumer returns", () => {
+  it("retains individual fold choices when the default setting changes", () => {
     const scopeKey = "environment-1:thread-1:branch";
-    useDiffPanelSessionStore.getState().updateFoldState(scopeKey, (current) => ({
-      ...current,
-      foldOverride: "folded",
-      toggledFileKeys: new Set(["src/app.ts"]),
-    }));
+    useDiffPanelSessionStore.getState().updateFoldState(
+      scopeKey,
+      (current) => ({
+        ...current,
+        toggledFileKeys: new Set(["src/app.ts"]),
+      }),
+      true,
+    );
 
     expect(useDiffPanelSessionStore.getState().foldStateByScopeKey[scopeKey]).toEqual({
       foldOverride: "folded",
       toggledFileKeys: new Set(["src/app.ts"]),
     });
 
-    useDiffPanelSessionStore.getState().updateFoldState(scopeKey, (current) => current);
+    useDiffPanelSessionStore.getState().updateFoldState(scopeKey, (current) => current, false);
+    const stored = useDiffPanelSessionStore.getState().foldStateByScopeKey[scopeKey]!;
+    expect(
+      isDiffFileFoldCollapsed(
+        "src/app.ts",
+        resolveDiffFileFoldOverride(stored.foldOverride, false),
+        stored.toggledFileKeys,
+      ),
+    ).toBe(false);
     expect(useDiffPanelSessionStore.getState().foldStateByScopeKey[scopeKey]).toEqual({
       foldOverride: "folded",
       toggledFileKeys: new Set(["src/app.ts"]),
