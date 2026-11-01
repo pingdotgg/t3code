@@ -7,6 +7,7 @@ import {
   RunId,
   ThreadId,
   type OrchestrationV2CheckpointScope,
+  VcsProcessExitError,
   VcsProcessTimeoutError,
   VcsUnsupportedOperationError,
 } from "@t3tools/contracts";
@@ -93,4 +94,61 @@ it.effect(
         }).pipe(Effect.provide(layerTest));
       }
     }),
+);
+
+it.effect("records a repository probe failure as an error checkpoint, not a missing one", () =>
+  Effect.gen(function* () {
+    const scope: OrchestrationV2CheckpointScope = {
+      id: CheckpointScopeId.make("checkpoint-scope:probe-failure"),
+      threadId: ThreadId.make("thread:probe-failure"),
+      runId: RunId.make("run:probe-failure:1"),
+      nodeId: NodeId.make("node:probe-failure:1"),
+      parentScopeId: null,
+      providerThreadId: ProviderThreadId.make("provider-thread:probe-failure"),
+      kind: "root_run",
+      ordinalWithinParent: 0,
+      advancesAppRunCount: true,
+      cwd: "/repo/bad-config",
+      createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
+    };
+    const layerTest = CheckpointService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          Layer.mock(CheckpointStore.CheckpointStore)({
+            isGitRepository: () =>
+              Effect.fail(
+                new VcsProcessExitError({
+                  operation: "GitVcsDriver.detectRepository",
+                  command: "git",
+                  cwd: scope.cwd,
+                  exitCode: 128,
+                  detail: "fatal: bad config line 1 in file .git/config",
+                }),
+              ),
+          }),
+        ),
+      ),
+      Layer.provideMerge(NodeCrypto.layer),
+    );
+
+    const statuses = yield* Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+      const baseline = yield* checkpoints.materializeBaselineCheckpoint({
+        scope,
+        ordinalWithinScope: 0,
+      });
+      const turn = yield* checkpoints.capture({
+        scope,
+        ordinalWithinScope: 1,
+        runId: scope.runId!,
+        nodeId: scope.nodeId!,
+        appRunOrdinal: 1,
+        capturedAt: scope.createdAt,
+      });
+      return { baseline: baseline.status, turn: turn.status };
+    }).pipe(Effect.provide(layerTest));
+
+    assert.deepEqual(statuses, { baseline: "error", turn: "error" });
+  }),
 );

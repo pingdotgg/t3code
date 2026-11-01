@@ -117,6 +117,19 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       expect(yield* checkpointStore.isGitRepository(nested)).toBe(true);
     }),
   );
+  it.effect("fails the repository probe that other callers read as no repository", () =>
+    Effect.gen(function* () {
+      const tmp = yield* makeTmpDir();
+      yield* git(tmp, ["init"]);
+      yield* writeTextFile(NodePath.join(tmp, ".git", "config"), "invalid config\n");
+      const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+      const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+      expect(yield* registry.detect({ cwd: tmp })).toBeNull();
+      const probe = yield* Effect.flip(checkpointStore.isGitRepository(tmp));
+      expect(probe._tag).toBe("VcsProcessExitError");
+    }),
+  );
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {
