@@ -18,6 +18,7 @@ vi.mock(import("../../state/entities"), () => ({
   useThreadRelationshipShells: (() =>
     state.projection === null ? [] : [(state.projection as { thread: unknown }).thread]) as never,
   useProjects: (() => []) as never,
+  useThreadShells: (() => []) as never,
 }));
 vi.mock(import("../../state/environments"), () => ({
   useEnvironment: (() => null) as never,
@@ -175,7 +176,7 @@ it("opens an idle child from Lineage when its shell has not been loaded", async 
       showSideChats
     />,
   );
-  await screen.getByRole("button", { name: /Previous agents/ }).click();
+  await screen.getByRole("button", { name: /Previous subagents/ }).click();
   const child = screen.getByRole("button", { name: /Idle child/ });
   await expect.element(child).toBeEnabled();
   await child.click();

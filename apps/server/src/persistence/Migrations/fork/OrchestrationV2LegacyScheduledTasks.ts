@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import OrchestrationV2 from "./055_OrchestrationV2.ts";
+import OrchestrationV2 from "../055_OrchestrationV2.ts";
 
 // Fork migration 56 already created a differently shaped `scheduled_tasks`, which upstream's
 // `CREATE TABLE IF NOT EXISTS` would silently keep. Move it aside first; ScheduledTaskService

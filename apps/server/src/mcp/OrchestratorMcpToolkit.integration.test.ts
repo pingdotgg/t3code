@@ -631,6 +631,7 @@ describe("orchestrator MCP toolkit", () => {
           ).pipe(Effect.withTracer(tracer));
           expect(wait.isError).not.toBe(true);
           const expectedWait = {
+            environmentId: "environment:mcp-replay",
             threadId: delegated.childThreadId,
             runId: queuedFollowup.runId,
             status: "completed",

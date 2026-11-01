@@ -601,7 +601,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       ["rev-parse", "--is-inside-work-tree", "--show-toplevel", "--git-common-dir"],
       {
         allowNonZeroExit: true,
-        timeoutMs: 5_000,
         maxOutputBytes: 16_384,
       },
     ).pipe(Effect.catchIf(isMissingExecutable, () => Effect.succeed(null)));
