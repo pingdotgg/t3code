@@ -482,6 +482,31 @@ it.live("the agent asks without waiting, and the user links the box after its tu
         { kind: "user_input" },
       );
 
+      for (const secretStatus of ["pending", "saved"] as const) {
+        yield* a.orchestrator.dispatch({
+          type: "secret_request.record",
+          commandId: CommandId.make("command:secret-" + secretStatus),
+          threadId,
+          runId,
+          nodeId: rootNode,
+          turnItemId: TurnItemId.make("turn-item:snoozed-secret"),
+          label: "Credential",
+          reason: "Connect",
+          secretStatus,
+        });
+        if (secretStatus === "pending") {
+          yield* a.orchestrator.dispatch({
+            type: "thread.snooze",
+            commandId: CommandId.make("command:snooze-secret"),
+            threadId,
+            snoozedUntil: "2099-01-01T00:00:00.000Z",
+          });
+          expect((yield* a.projections.getThread(threadId)).snoozedUntil).not.toBeNull();
+        } else {
+          expect((yield* a.projections.getThread(threadId)).snoozedUntil).toBeNull();
+        }
+      }
+
       // The agent ends its turn; the card stays answerable, and the thread still asks.
       yield* endRun(a);
       expect(yield* cardOf(a)).toMatchObject({ status: "waiting", linkStatus: "pending" });
@@ -495,6 +520,14 @@ it.live("the agent asks without waiting, and the user links the box after its tu
       ).toMatchObject({ kind: "user_input" });
       expect(yield* a.projections.getSettlementCandidates(threadId)).toEqual([]);
 
+      yield* a.orchestrator.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make("command:snooze-link"),
+        threadId,
+        snoozedUntil: "2099-01-01T00:00:00.000Z",
+      });
+      expect((yield* a.projections.getThread(threadId)).snoozedUntil).not.toBeNull();
+
       // The user's client mints a code on the box and picks more than the agent suggested.
       const pairing = yield* b.auth.issuePairingCredential();
       yield* a.requests.answer({
@@ -502,6 +535,8 @@ it.live("the agent asks without waiting, and the user links the box after its tu
         turnItemId: card.id,
         answer: { type: "link", urls: [b.url], access: "auto", pairingCode: pairing.credential },
       });
+
+      expect((yield* a.projections.getThread(threadId)).snoozedUntil).toBeNull();
 
       const link = yield* a.links.get(box.environmentId);
       expect(Option.getOrUndefined(link)?.access).toBe("auto");

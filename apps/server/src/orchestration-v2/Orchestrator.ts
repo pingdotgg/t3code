@@ -3348,11 +3348,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} snooze wake time ${command.snoozedUntil} is not in the future.`,
         });
       }
-      if (projection.runtimeRequests.some((request) => request.status === "pending")) {
+      if (
+        projection.runtimeRequests.some(
+          (request) => request.status === "pending" && request.kind !== "user_input",
+        )
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Thread ${command.threadId} has a pending approval or user-input request and cannot be snoozed.`,
+          cause: `Thread ${command.threadId} has a pending approval and cannot be snoozed.`,
         });
       }
       const queuedRuns = projection.runs.filter((run) => run.status === "queued");
@@ -8584,6 +8588,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(command.delivery === undefined ? {} : { delivery: command.delivery }),
             secretStatus: command.secretStatus,
           };
+      if (
+        !unchanged &&
+        command.secretStatus === "saved" &&
+        projection.thread.snoozedUntil != null
+      ) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.unsnoozed",
+          threadId: command.threadId,
+          providerInstanceId: projection.thread.providerInstanceId,
+          occurredAt: now,
+          payload: { ...projection.thread, snoozedUntil: null, snoozedAt: null, updatedAt: now },
+        });
+      }
       yield* emit(
         events,
         command,
@@ -8710,6 +8730,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: now,
             type: "link_request",
           };
+      if (!unchanged && command.linkStatus === "linked" && projection.thread.snoozedUntil != null) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.unsnoozed",
+          threadId: command.threadId,
+          providerInstanceId: projection.thread.providerInstanceId,
+          occurredAt: now,
+          payload: { ...projection.thread, snoozedUntil: null, snoozedAt: null, updatedAt: now },
+        });
+      }
       yield* emit(
         events,
         command,
@@ -9129,6 +9161,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return yield* recordSubagentFollowup(answer, events).pipe(mapDispatchError(answer));
       }
       if (providerSessionId === null) return;
+      if (runtimeRequest.kind === "user_input" && resolvedNodeStatus === "completed") {
+        const thread = yield* projectionStore
+          .getThread(command.threadId)
+          .pipe(mapDispatchError(command));
+        if (thread.snoozedUntil != null) {
+          yield* emitEvent({
+            type: "thread.unsnoozed",
+            threadId: command.threadId,
+            providerInstanceId: thread.providerInstanceId,
+            occurredAt: now,
+            payload: { ...thread, snoozedUntil: null, snoozedAt: null, updatedAt: now },
+          });
+        }
+      }
       yield* Ref.update(effects, (existing) => [
         ...existing,
         {
