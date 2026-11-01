@@ -15,6 +15,7 @@ describe("deriveTimelineMinimapItems", () => {
           id: "image-only",
           createdAt: at,
           showAssistantMeta: false,
+          showAssistantTimestamp: false,
           showAssistantCopyButton: false,
           assistantCopyStreaming: false,
           message: {
