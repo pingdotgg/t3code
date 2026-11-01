@@ -118,6 +118,7 @@ const make = Effect.gen(function* () {
     outcome: LinkRequestOutcome,
     commandId: CommandId,
     wake?: LinkRequestWake,
+    answeringTurnItemIds?: ReadonlyArray<TurnItemId>,
   ) =>
     threadManagement.dispatch({
       type: "link_request.record",
@@ -134,6 +135,7 @@ const make = Effect.gen(function* () {
       ...(card.requestedAccess === undefined ? {} : { requestedAccess: card.requestedAccess }),
       ...outcome,
       ...(wake === undefined ? {} : { wake }),
+      ...(answeringTurnItemIds === undefined ? {} : { answeringTurnItemIds }),
     });
 
   const request: PeerLinkRequests["Service"]["request"] = Effect.fn("PeerLinkRequests.request")(
@@ -303,36 +305,53 @@ const make = Effect.gen(function* () {
   // One answer per card at a time: two answers racing on one card must not
   // both link. Other cards go on while a slow peer holds one.
   const answerLocks = yield* KeyedLock.make<TurnItemId>();
+  // Per thread, held only to read a card before answering and to record the
+  // answer, never while linking. A link ends older cards for the same
+  // machine, but not one already being answered (its key is in answerLocks);
+  // an answer that starts after that reads the ended card and links nothing.
+  const lifecycleLocks = yield* KeyedLock.make<ThreadId>();
   const answer: PeerLinkRequests["Service"]["answer"] = Effect.fn("PeerLinkRequests.answer")(
     function* (input) {
       yield* Effect.annotateCurrentSpan({
         "orchestration_v2.thread_id": input.threadId,
         "link_request.answer": input.answer.type,
       });
-      const card = yield* readCard(input.threadId, input.turnItemId).pipe(
-        Effect.mapError((cause) => new PeerLinkRequestError({ reason: "load_failed", cause })),
+      const card = yield* lifecycleLocks.withLock(
+        input.threadId,
+        Effect.gen(function* () {
+          const card = yield* readCard(input.threadId, input.turnItemId).pipe(
+            Effect.mapError((cause) => new PeerLinkRequestError({ reason: "load_failed", cause })),
+          );
+          if (card === undefined || card.runId === null || card.nodeId === null) {
+            return yield* new PeerLinkRequestError({ reason: "not_found" });
+          }
+          // Any time while the card is open: the agent hears the answer as a
+          // notification, whether or not its run is still going.
+          if (card.linkStatus !== "pending") {
+            return yield* new PeerLinkRequestError({ reason: "already_answered" });
+          }
+          return { ...card, runId: card.runId, nodeId: card.nodeId };
+        }),
       );
-      if (card === undefined || card.runId === null || card.nodeId === null) {
-        return yield* new PeerLinkRequestError({ reason: "not_found" });
-      }
-      // Any time while the card is open: the agent hears the answer as a
-      // notification, whether or not its run is still going.
-      if (card.linkStatus !== "pending") {
-        return yield* new PeerLinkRequestError({ reason: "already_answered" });
-      }
       const outcome = yield* answerOutcome(input.answer);
       // If Stop closed the card while linking, the card keeps that; the link
       // itself stands and Settings lists it.
-      yield* record(
-        { ...card, runId: card.runId, nodeId: card.nodeId },
-        outcome,
-        CommandId.make(`link-request:${card.id}:${outcome.linkStatus}`),
-        {
-          messageId: MessageId.make(`message:link-request:${card.id}`),
-          ...outcomeNotice(card, outcome),
-        },
-      ).pipe(
-        Effect.mapError((cause) => new PeerLinkRequestError({ reason: "record_failed", cause })),
+      yield* lifecycleLocks.withLock(
+        input.threadId,
+        Effect.flatMap(answerLocks.activeKeys, (answering) =>
+          record(
+            card,
+            outcome,
+            CommandId.make(`link-request:${card.id}:${outcome.linkStatus}`),
+            {
+              messageId: MessageId.make(`message:link-request:${card.id}`),
+              ...outcomeNotice(card, outcome),
+            },
+            answering,
+          ),
+        ).pipe(
+          Effect.mapError((cause) => new PeerLinkRequestError({ reason: "record_failed", cause })),
+        ),
       );
     },
     (effect, input) =>
