@@ -329,11 +329,14 @@ const loadExcludedPaths = Effect.fn("WorkspaceSearchIndex.loadExcludedPaths")(
       `${paths.join("\0")}\0`,
     );
     if (classified.exitCode !== 0) return [];
+    const globalExcludes = yield* runGit(["config", "--path", "--get", "core.excludesFile"]);
+    const globalExcludeSource = toPosixPath(globalExcludes.stdout.trim());
     // Records are `source NUL line NUL pattern NUL path NUL`.
     const fields = classified.stdout.split("\0");
     const excluded: string[] = [];
     for (let index = 0; index + 3 < fields.length; index += 4) {
-      if (!GITIGNORE_SOURCE.test(fields[index]!)) {
+      const source = toPosixPath(fields[index]!);
+      if (source === globalExcludeSource || !GITIGNORE_SOURCE.test(source)) {
         excluded.push(fields[index + 3]!);
       }
     }
@@ -547,7 +550,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
     }
     const result = yield* runSearch(query, pageSize, "mixedSearch", () =>
-      finder.mixedSearch(constrainedQuery, { pageSize }),
+      finder.mixedSearch([exclusionConstraints(), query].filter(Boolean).join(" "), { pageSize }),
     );
     const mapped = mapMixedSearchResult(result, limit);
     return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
@@ -579,10 +582,9 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         cursor: nextCursor,
         timeBudgetMs: remainingTimeBudgetMs,
       };
-      // Plain tokens keep exclusions native via multiGrep's separate constraints; regex has no such
-      // API, so a lone regex token runs unconstrained and excluded paths are dropped below.
+      // multiGrep has no overlapping ranges; grep preserves whole-word matches and literal fallback.
       const result: GrepResult =
-        singleToken && !regexMode
+        singleToken && !regexMode && !input.wholeWord
           ? yield* runSearch(input.query, input.limit, "multiGrep", () =>
               finder.multiGrep({
                 ...options,
@@ -591,7 +593,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
               }),
             )
           : yield* runSearch(input.query, input.limit, "grep", () =>
-              finder.grep(singleToken ? searchQuery : withExclusions(searchQuery), {
+              finder.grep(searchQuery, {
                 ...options,
                 mode: regexMode ? "regex" : "plain",
               }),

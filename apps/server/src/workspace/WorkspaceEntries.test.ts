@@ -516,9 +516,16 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* writeTextFile(cwd, "build/needle.js", "export const needle = 2;");
         yield* writeTextFile(cwd, "src/build/needle.ts", "export const needle = 3;");
         yield* writeTextFile(cwd, "src/needle.ts", "export const needle = 4;");
+        const globalExcludes = yield* makeTempDir();
+        yield* writeTextFile(globalExcludes, ".gitignore", "global-hidden.ts\n");
+        yield* git(cwd, ["config", "core.excludesFile", `${globalExcludes}/.gitignore`]);
+        yield* writeTextFile(cwd, "global-hidden.ts", "export const needle = 5;");
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         const searched = yield* searchWorkspaceEntries({ cwd, query: "needle", limit: 100 });
+        const directories = yield* searchWorkspaceEntries({ cwd, query: "src/", limit: 100 });
+        expect(directories.entries.length).toBeGreaterThan(0);
+        expect(directories.entries.every((entry) => entry.kind === "directory")).toBe(true);
         const listed = yield* workspaceEntries.list({ cwd });
         const contents = yield* workspaceEntries.searchContents({
           cwd,
@@ -542,6 +549,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         )) {
           expect(paths.some((path) => path.startsWith(".worktrees"))).toBe(false);
           expect(paths.some((path) => path.startsWith("build"))).toBe(false);
+          expect(paths).not.toContain("global-hidden.ts");
         }
       }),
     );
@@ -683,13 +691,15 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-token-", git: true });
         yield* writeTextFile(cwd, ".git/info/exclude", ".worktrees/\n");
-        const line = "see src/ and *.ts and !important\n";
+        const line = "see src/ and *.ts and !important\nxfoo-foo-foo\n";
         yield* writeTextFile(cwd, "lib/notes.txt", line);
         yield* writeTextFile(cwd, ".worktrees/copy/lib/notes.txt", line);
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        for (const { query, useRegex } of [
+        for (const { query, useRegex, wholeWord = false } of [
           { query: "src/", useRegex: false },
+          { query: "see src/ and", useRegex: false },
+          { query: "foo-foo", useRegex: false, wholeWord: true },
           { query: "*.ts", useRegex: false },
           { query: "!important", useRegex: false },
           { query: "src/", useRegex: true },
@@ -700,7 +710,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
             query,
             limit: 10,
             caseSensitive: true,
-            wholeWord: false,
+            wholeWord,
             useRegex,
           });
           expect(
