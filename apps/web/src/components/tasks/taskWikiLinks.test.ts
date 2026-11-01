@@ -1,8 +1,9 @@
 import { EnvironmentId, TaskDocumentId } from "@t3tools/contracts";
 import { remarkNormalizeListItemIndentation } from "@t3tools/shared/markdownListIndentation";
 import { expect, it } from "vite-plus/test";
+import type { Root } from "mdast";
 import remarkParse from "remark-parse";
-import { unified } from "unified";
+import { type Plugin, unified } from "unified";
 
 import { taskWikiLinkIdFromNode, remarkTaskWikiLinks } from "./taskWikiLinks";
 
@@ -46,7 +47,9 @@ function renderTree(
   normalizeLists = false,
 ) {
   const processor = unified().use(remarkParse);
-  if (normalizeLists) processor.use(remarkNormalizeListItemIndentation);
+  if (normalizeLists) {
+    processor.use(remarkNormalizeListItemIndentation as unknown as Plugin<[], Root>);
+  }
   processor.use(remarkTaskWikiLinks(taskTargets, environmentId, markdown));
   return processor.runSync(processor.parse(markdown), { value: markdown }) as Node;
 }
@@ -95,9 +98,7 @@ it("handles only links marked at a wikilink source position", () => {
       authoredAnchor,
     ),
   ).toBeNull();
-  expect(
-    taskWikiLinkIdFromNode({ properties: {}, position: markedLink.position }, markdown),
-  ).toBeNull();
+  expect(taskWikiLinkIdFromNode({ ...markedLink, properties: {} }, markdown)).toBeNull();
 });
 
 it("leaves unknown, ambiguous, code, nested, embed, raw HTML, and escaped syntax untouched", () => {

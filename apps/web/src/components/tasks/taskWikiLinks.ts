@@ -7,8 +7,16 @@ type MarkdownNode = {
   value?: string;
   url?: string;
   position?: {
-    start?: { line?: number; column?: number; offset?: number };
-    end?: { line?: number; column?: number; offset?: number };
+    start?: {
+      line?: number | undefined;
+      column?: number | undefined;
+      offset?: number | undefined;
+    };
+    end?: {
+      line?: number | undefined;
+      column?: number | undefined;
+      offset?: number | undefined;
+    };
   };
   data?: { hProperties?: Record<string, string> };
   children?: MarkdownNode[];
@@ -97,7 +105,12 @@ function pointAt(markdown: string, lineStarts: ReadonlyArray<number>, offset: nu
 }
 
 export function taskWikiLinkIdFromNode(
-  node: { properties?: Record<string, unknown>; position?: MarkdownNode["position"] } | undefined,
+  node:
+    | {
+        properties?: Record<string, unknown> | undefined;
+        position?: MarkdownNode["position"] | undefined;
+      }
+    | undefined,
   markdown: string,
 ) {
   const taskDocumentId = node?.properties?.dataTaskDocumentId;
