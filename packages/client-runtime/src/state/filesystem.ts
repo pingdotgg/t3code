@@ -22,6 +22,8 @@ import {
 } from "./projects.ts";
 import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
+const BROWSE_IDLE_TTL_MS = 5_000;
+
 export function resolveFilesystemReadAccess(input: {
   readonly isCatalogReady: boolean;
   readonly connection: Pick<EnvironmentConnectionPresentation, "phase" | "error"> | null;
@@ -121,6 +123,9 @@ export function createFilesystemEnvironmentAtoms<R, E>(
     browse: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:filesystem:browse",
       tag: WS_METHODS.filesystemBrowse,
+      // A listing kept alive while unread is never revalidated, so reopening the browser
+      // would show folders as they were. Keep it only long enough for a prefetch to land.
+      idleTtlMs: BROWSE_IDLE_TTL_MS,
     }),
   };
 }
