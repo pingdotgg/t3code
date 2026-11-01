@@ -110,6 +110,7 @@ import {
   toMcpElicitationResponse,
 } from "../../provider/CodexMcpElicitation.ts";
 import {
+  codexHomeLaunchArgs,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "../../provider/Drivers/CodexHomeLayout.ts";
@@ -1592,6 +1593,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
     enabled,
     binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
     homePath: homeLayout.effectiveHomePath ?? "",
+    launchArgs: codexHomeLaunchArgs(yield* Path.Path, homeLayout, config.launchArgs),
   } satisfies CodexSettings;
 
   return yield* makeCodexAdapterV2({
