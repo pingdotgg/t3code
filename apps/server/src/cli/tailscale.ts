@@ -25,15 +25,11 @@ import { SERVICE_ENV_FILE } from "../cloud/serviceProtocol.ts";
 import { peersJoined, policyGrantedPeers } from "../auth/tailnetGrants.ts";
 import {
   formatTailscaleHealth,
-  NO_IPV4_FIX,
   readErrorFacts,
   readTailscaleHealth,
+  signInIssues,
   stateFix,
 } from "../environment/TailscaleHealth.ts";
-import {
-  isSupportedTailscaleVersion,
-  MINIMUM_TAILSCALE_VERSION,
-} from "../tailscale/TailscaleHost.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 const encodeStatusJson = Schema.encodeEffect(fromJsonStringPretty(ServerTailscaleStatus));
@@ -86,18 +82,13 @@ export const signInBlocker = (
 ): string | null => {
   const state = tailscaleStateFromBackend(status.backendState);
   if (state !== "running") return issueLine({ cause: state, fix: stateFix(state, platform) });
-  return status.userspaceNetworking === true
-    ? "Tailscale sign-in needs device addresses, and userspace networking hides them. Give the container /dev/net/tun and run tailscaled without --tun=userspace-networking."
-    : !isSupportedTailscaleVersion(status.version)
-      ? `Tailscale ${status.version ?? "(unknown version)"} is too old for Tailscale sign-in. Update to ${MINIMUM_TAILSCALE_VERSION} or newer.`
-      : status.tailnetIpv4Addresses.length === 0
-        ? issueLine({ cause: "no_ipv4", fix: NO_IPV4_FIX })
-        : null;
+  const [first] = signInIssues(status);
+  return first === undefined ? null : issueLine(first);
 };
 
 /**
- * Peers the tailnet policy grants T3 Code here, and whether this host is tagged. Null when
- * Tailscale cannot say, and "changed" when the account or its devices changed during the
+ * Peers the tailnet policy grants T3 Code here, whether this host is tagged, and what stops
+ * sign-in here, if anything. "changed" when the account or its devices changed during the
  * check: lookups after a switch read another tailnet, and a device that joined was not read.
  */
 const readPolicyGrantedPeers = Effect.gen(function* () {
@@ -129,7 +120,7 @@ const readPolicyGrantedPeers = Effect.gen(function* () {
   return scan.granted.length === 0 && peersJoined(status, after)
     ? ("changed" as const)
     : { ...scan, ...facts };
-}).pipe(Effect.option, Effect.map(Option.getOrNull));
+});
 
 /** Whether this tagged host has an owner, from `t3 up --owner` or this shell's environment. */
 const hasOwner = Effect.fn("cli.tailscale.hasOwner")(function* (
@@ -196,34 +187,28 @@ const requireGrantCommand = Command.make("require-grant", {
                     "changed during the check.",
                     "Run this again.",
                   ]
-                : scan === null
+                : read.noNode
                   ? [
-                      "No device signs in here while Tailscale does not answer.",
-                      "Grant required: not turned on.",
+                      "Grant required: yes, because Tailscale names no node for this host.",
+                      "Run `tailscale up` to sign in.",
                     ]
-                  : scan.noNode
+                  : read.unreadable.length > 0
                     ? [
-                        "Grant required: yes, because Tailscale names no node for this host.",
-                        "Run `tailscale up` to sign in.",
+                        `Grant required: probably. Tailscale could not read ${read.unreadable.join(", ")},`,
+                        "so T3 Code cannot tell whether your policy grants it here. It keeps the answer",
+                        "from its last full check for up to five minutes, then requires a grant.",
                       ]
-                    : scan.unreadable.length > 0
+                    : read.tagged && !(yield* hasOwner(config.baseDir, config.tailscaleOwnerUserId))
                       ? [
-                          `Grant required: probably. Tailscale could not read ${scan.unreadable.join(", ")},`,
-                          "so T3 Code cannot tell whether your policy grants it here. It keeps the answer",
-                          "from its last full check for up to five minutes, then requires a grant.",
+                          "Grant required: no, but this tagged host has no owner, so only granted",
+                          "devices get in. Name its owner with: t3 up --owner <login>",
                         ]
-                      : scan.tagged &&
-                          !(yield* hasOwner(config.baseDir, config.tailscaleOwnerUserId))
-                        ? [
-                            "Grant required: no, but this tagged host has no owner, so only granted",
-                            "devices get in. Name its owner with: t3 up --owner <login>",
-                          ]
-                        : [
-                            "Grant required: no. Your tailnet policy grants T3 Code here to no device,",
-                            "so, with Tailscale sign-in on, your own untagged devices sign in without one.",
-                            `Once the policy grants ${TAILNET_APP_CAPABILITY} here, only granted devices get in.`,
-                            "Require a grant now with: t3 tailscale require-grant on",
-                          ];
+                      : [
+                          "Grant required: no. Your tailnet policy grants T3 Code here to no device,",
+                          "If Tailscale sign-in is on, your own untagged devices sign in without one.",
+                          `Once the policy grants ${TAILNET_APP_CAPABILITY} here, only granted devices get in.`,
+                          "Require a grant now with: t3 tailscale require-grant on",
+                        ];
       yield* Console.log(
         [
           ...lines,

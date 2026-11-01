@@ -33,8 +33,29 @@ export type TailscaleStatusRead = Result.Result<
   TailscaleCommandError | TailscaleStatusParseError
 >;
 
-export const NO_IPV4_FIX =
-  "Allow IPv4 for this machine in your tailnet policy. Tailscale sign-in needs it.";
+/** What stops Tailscale sign-in on a running Tailscale, most urgent first. */
+export function signInIssues(status: TailscaleStatus): Array<ServerTailscaleIssue> {
+  const issues: Array<ServerTailscaleIssue> = [];
+  if (!TailscaleHost.isSupportedTailscaleVersion(status.version)) {
+    issues.push({
+      cause: "outdated",
+      fix: `Update Tailscale to ${TailscaleHost.MINIMUM_TAILSCALE_VERSION} or newer.`,
+    });
+  }
+  if (status.tailnetIpv4Addresses.length === 0) {
+    issues.push({
+      cause: "no_ipv4",
+      fix: "Allow IPv4 for this machine in your tailnet policy. Tailscale sign-in needs it.",
+    });
+  }
+  if (status.userspaceNetworking === true) {
+    issues.push({
+      cause: "userspace_networking",
+      fix: "Run tailscaled with a TUN device (in a container, give it /dev/net/tun), so T3 Code can see which device connects.",
+    });
+  }
+  return issues;
+}
 
 /** Linux and other headless hosts use the CLI; macOS and Windows users usually have the app. */
 const usesApp = (platform: NodeJS.Platform) => platform === "darwin" || platform === "win32";
@@ -94,21 +115,7 @@ export function classifyTailscaleHealth(
   const issues: Array<ServerTailscaleIssue> = [];
   if (state !== "running") issues.push({ cause: state, fix: stateFix(state, platform) });
   // Each stops Tailscale sign-in, so they come before the warnings below.
-  if (state === "running" && !TailscaleHost.isSupportedTailscaleVersion(status.version)) {
-    issues.push({
-      cause: "outdated",
-      fix: `Update Tailscale to ${TailscaleHost.MINIMUM_TAILSCALE_VERSION} or newer.`,
-    });
-  }
-  if (state === "running" && status.tailnetIpv4Addresses.length === 0) {
-    issues.push({ cause: "no_ipv4", fix: NO_IPV4_FIX });
-  }
-  if (state === "running" && status.userspaceNetworking === true) {
-    issues.push({
-      cause: "userspace_networking",
-      fix: "Run tailscaled with a TUN device, so T3 Code can see which device connects.",
-    });
-  }
+  if (state === "running") issues.push(...signInIssues(status));
 
   // NaN when the key never expires, which fails both comparisons.
   const expiresAt = status.keyExpiry === null ? Number.NaN : Date.parse(status.keyExpiry);

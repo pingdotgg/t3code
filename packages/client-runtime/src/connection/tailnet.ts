@@ -183,7 +183,7 @@ export function tailnetRefusalVerdict(
       return {
         headline: `${host} did not see this device on its Tailscale address`,
         steps: [
-          "Turn on Tailscale on this device, and log in to it again if it asks. Saved machines reconnect on their own.",
+          "Turn on Tailscale on this device, and log in to it again if it asks. Saved machines retry on their own.",
           `Add ${host} by its Tailscale name or 100.x address, not a LAN or HTTPS address.`,
         ],
       };
