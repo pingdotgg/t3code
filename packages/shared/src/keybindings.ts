@@ -177,7 +177,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "k", command: "diff.previousLine", when: "diffFocus && diffLineMode" },
   { key: "shift+j", command: "diff.expandBelow", when: "diffFocus && diffLineMode" },
   { key: "shift+k", command: "diff.expandAbove", when: "diffFocus && diffLineMode" },
-  { key: "space", command: "diff.comment", when: "diffFocus && diffLineMode" },
+  { key: "c", command: "diff.comment", when: "diffFocus && diffLineMode" },
   { key: "shift+v", command: "diff.startSelection", when: "diffFocus && diffLineMode" },
   { key: "escape", command: "diff.back", when: "diffFocus && diffLineMode" },
   { key: "mod+shift+j", command: "preview.toggle" },

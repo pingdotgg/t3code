@@ -57,17 +57,11 @@ const REPEATABLE_COMMANDS: ReadonlySet<DiffReviewCommand> = new Set([
 
 const NO_EXPANSIONS: ReadonlyMap<number, HunkExpansionRegion> = new Map();
 
-// A control reached with Tab keeps Enter and Space; one focused by a click hands them to the cursor.
-function activatesFocusedControl(event: KeyboardEvent, root: HTMLElement | null): boolean {
-  return (
-    (event.key === "Enter" || event.key === " ") &&
-    event.target instanceof Element &&
-    event.target !== root &&
-    event.target.matches(":focus-visible") &&
-    event.target.closest(
-      'button, a[href], input, select, [role="button"], [role="checkbox"], [role="switch"]',
-    ) !== null
-  );
+const CONTROL_SELECTOR =
+  'button, a[href], input, select, [role="button"], [role="checkbox"], [role="switch"]';
+
+function isControlFocused(): boolean {
+  return (document.activeElement?.closest(CONTROL_SELECTOR) ?? null) !== null;
 }
 
 export interface DiffReviewFile {
@@ -111,6 +105,8 @@ export function useDiffReviewKeyboard(input: DiffReviewKeyboardInput) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const reviewRef = useRef<AnnotatableCodeViewReview | null>(null);
   const pendingScrollRef = useRef<CodeViewLineScrollTarget | null>(null);
+  // Chrome marks a clicked control :focus-visible on the next key press, so record how focus came.
+  const tabbedToRef = useRef<EventTarget | null>(null);
 
   const storedCursor = cursorState.scopeKey === scopeKey ? cursorState.cursor : null;
   const cursorFile = storedCursor
@@ -308,6 +304,10 @@ export function useDiffReviewKeyboard(input: DiffReviewKeyboardInput) {
       event.preventDefault();
       // The viewer drops a scroll requested during a key press that reaches it.
       event.stopPropagation();
+      // Otherwise a clicked header control shows a focus ring while the cursor moves.
+      if (isControlFocused() && document.activeElement !== tabbedToRef.current) {
+        rootRef.current?.focus({ preventScroll: true });
+      }
     }
     return handled;
   });
@@ -319,14 +319,39 @@ export function useDiffReviewKeyboard(input: DiffReviewKeyboardInput) {
     for (const command of DIFF_REVIEW_COMMANDS) {
       handlers[command] = (event) => handleCommand(command, event);
     }
+    let lastInputWasKeyboard = false;
+    const onPointerDown = () => {
+      lastInputWasKeyboard = false;
+    };
+    const onKeyDown = () => {
+      lastInputWasKeyboard = true;
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      tabbedToRef.current = lastInputWasKeyboard ? event.target : null;
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("focusin", onFocusIn, true);
     // Capture phase, so the keys reach the panel before type-to-focus sends them to the composer.
-    return registerCommands(handlers, {
+    const unregister = registerCommands(handlers, {
       capture: true,
-      when: (event) =>
-        rootRef.current?.contains(document.activeElement) === true &&
-        !activatesFocusedControl(event, rootRef.current),
+      when: (event) => {
+        if (rootRef.current?.contains(document.activeElement) !== true) return false;
+        // A control reached from the keyboard keeps Enter and Space; a clicked one hands them over.
+        return !(
+          (event.key === "Enter" || event.key === " ") &&
+          isControlFocused() &&
+          document.activeElement === tabbedToRef.current
+        );
+      },
       context: () => ({ diffLineMode: isLineMode() }),
     });
+    return () => {
+      unregister();
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("focusin", onFocusIn, true);
+    };
   }, [handleCommand, isLineMode]);
 
   return {

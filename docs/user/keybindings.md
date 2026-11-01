@@ -81,9 +81,9 @@ On lines:
 
 - `j` and `k` move one line.
 - `Shift+j` and `Shift+k` show more of the unchanged lines below or above.
-- `Space` comments on the line. After you send or cancel the comment, you are
+- `c` comments on the line. After you send or cancel the comment, you are
   back on the line.
-- `Shift+v` starts a selection. `j` and `k` extend it, and `Space` comments on
+- `Shift+v` starts a selection. `j` and `k` extend it, and `c` comments on
   the selected lines.
 - `v` marks the file viewed and returns to files.
 
