@@ -10,7 +10,6 @@ import {
   type TailscaleWhois,
   type TailscaleWhoisParseError,
 } from "@t3tools/tailscale";
-import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -23,10 +22,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ServerConfig from "../config.ts";
 
 const STATUS_TTL = Duration.seconds(5);
-// Short, so a renewal reads a node that was tagged or removed seconds ago.
-const WHOIS_TTL = Duration.seconds(3);
-const WHOIS_CACHE_CAPACITY = 256;
-// Lookups that miss the cache, per address. Each one spawns the CLI.
+// Lookups per address from sign-in requests. Each one spawns the CLI.
 const WHOIS_LOOKUPS_PER_WINDOW = 10;
 const WHOIS_WINDOW_MS = 60_000;
 
@@ -132,31 +128,18 @@ const make = Effect.gen(function* () {
     });
   });
 
-  // Keyed by this machine's node and the address, since a switch to another Tailscale
-  // account switches tailnets, and an address there names another device.
-  const whoisCache = yield* Cache.makeWith(
-    Effect.fn("TailscaleHost.whoisLookup")(function* (key: string) {
-      const address = key.slice(key.indexOf(" ") + 1);
-      if (!(yield* takeLookup(address))) {
+  // Not cached: after a switch to another Tailscale account, the same address names a
+  // device on another tailnet, and a cached answer would carry the old one's grant.
+  const whois: TailscaleHost["Service"]["whois"] = Effect.fn("TailscaleHost.whois")(
+    function* (address, options) {
+      if (options?.fromServer !== true && !(yield* takeLookup(address))) {
         return yield* new TailscaleWhoisRateLimitedError({});
       }
       return yield* readTailscaleWhois(address).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
-    }),
-    { capacity: WHOIS_CACHE_CAPACITY, timeToLive: () => WHOIS_TTL },
+    },
   );
-
-  const whois: TailscaleHost["Service"]["whois"] = (address, options) =>
-    options?.fromServer === true
-      ? readTailscaleWhois(address).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        )
-      : status.pipe(
-          Effect.map(({ selfNodeId }) => selfNodeId ?? ""),
-          Effect.orElseSucceed(() => ""),
-          Effect.flatMap((account) => Cache.get(whoisCache, `${account} ${address}`)),
-        );
 
   return TailscaleHost.of({ inUse, status, whois });
 });

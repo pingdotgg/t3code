@@ -119,36 +119,61 @@ const writeRecords = Effect.fn("TailscaleServe.writeRecords")(function* (
 });
 
 /**
- * The Tailscale account whose Serve config is live now. Tailscale keeps Serve config per
- * login profile, one user on one tailnet, which outlives a node ID when a device is re-added.
+ * The Tailscale account whose Serve config is live now. Its `key` is the login profile ID,
+ * the key Tailscale stores Serve config under, which tagging a host does not change. `keys`
+ * also holds the keys earlier runs may have used for it: tailnet and user from a CLI too old
+ * to list profiles, which outlives a node ID when a device is re-added, and the node ID.
  */
 const currentAccount = Effect.fn("TailscaleServe.currentAccount")(function* () {
-  // The profile ID is the key Tailscale stores Serve config under. Tagging a host changes
-  // its user, not its profile.
   const profile = yield* readTailscaleProfile().pipe(
     Effect.map(Option.getOrNull),
     Effect.orElseSucceed(() => null),
   );
-  if (profile !== null) {
-    const label = [profile.account, profile.tailnet].filter((part) => part !== null).join(" on ");
-    return { key: profile.id, label: label || profile.id };
-  }
-  // Older Tailscale lists no profiles, so the profile's tailnet and user stand in.
   const status = yield* readTailscaleStatus("active");
-  const login = status.users.find((user) => user.userId === status.selfUserId)?.loginName;
-  const key =
+  const legacyKey =
     status.tailnetName !== null && status.selfUserId !== null
       ? `${status.tailnetName}/${status.selfUserId}`
-      : status.selfNodeId;
-  if (key === null) {
+      : null;
+  const keys = [profile?.id ?? null, legacyKey, status.selfNodeId].filter((key) => key !== null);
+  const key = keys[0];
+  if (key === undefined) {
     return yield* new ServeRecordError({
       reason: "no_account",
       message: "Tailscale is not signed in here. Run `tailscale up` to sign in.",
     });
   }
-  const label = [login, status.tailnetName].filter((part) => part != null).join(" on ") || key;
-  return { key, label };
+  const login =
+    profile?.account ??
+    status.users.find((user) => user.userId === status.selfUserId)?.loginName ??
+    null;
+  const tailnet = profile?.tailnet ?? status.tailnetName;
+  const label = [login, tailnet].filter((part) => part !== null).join(" on ") || key;
+  return { key, keys, label };
 });
+
+/** The records that belong to `account`, and the rest. */
+const splitRecords = (records: ServeRecords, account: { readonly keys: ReadonlyArray<string> }) => {
+  const entries = Object.entries(records);
+  return {
+    ours: entries.filter(([key]) => account.keys.includes(key)).map(([, record]) => record),
+    rest: Object.fromEntries(entries.filter(([key]) => !account.keys.includes(key))),
+  };
+};
+
+// A switch while removing a mapping means the removal may have run on the other account.
+const switchedDuring = (account: { readonly key: string }) =>
+  currentAccount().pipe(
+    Effect.flatMap((now) =>
+      now.keys.includes(account.key)
+        ? Effect.void
+        : Effect.fail(
+            new ServeRecordError({
+              reason: "switched",
+              message: "Tailscale switched accounts during cleanup. Run this again.",
+            }),
+          ),
+    ),
+  );
 
 const failureKey = (cause: ClaimError) =>
   cause._tag === "TailscaleCommandExitError" ? `exit:${cause.stderrDiagnostic}` : cause._tag;
@@ -193,15 +218,14 @@ export const layer = (options: {
           const recordedUnder = yield* Ref.get(account);
           if (recordedUnder === null) return;
           // After a switch to another account, the mapping is not visible, so its record stays.
-          if ((yield* currentAccount()).key !== recordedUnder) return;
+          if (!(yield* currentAccount()).keys.includes(recordedUnder)) return;
           const released = yield* releaseTailscaleServe(target).pipe(
             Effect.tapError((cause) =>
               Effect.logWarning("Failed to disable Tailscale Serve", { cause, ...logContext }),
             ),
           );
           if (released) yield* Effect.logInfo("Tailscale Serve disabled", logContext);
-          // A switch while removing it means the removal may have run on the other account.
-          if ((yield* currentAccount()).key !== recordedUnder) return;
+          yield* switchedDuring({ key: recordedUnder });
           const { [recordedUnder]: _ours, ...rest } = yield* readRecords(options.stateDir);
           yield* writeRecords(options.stateDir, rest);
         }).pipe(
@@ -221,17 +245,19 @@ export const layer = (options: {
         // Checked on every try, since Tailscale may have switched accounts since the last.
         yield* Ref.set(releasing, null);
         const now = yield* currentAccount();
-        if ((yield* Ref.get(account)) !== now.key) {
+        const recordedUnder = yield* Ref.get(account);
+        if (recordedUnder === null || !now.keys.includes(recordedUnder)) {
           // An unreadable record may name a mapping to remove, so Serve waits for it.
-          const records = yield* readRecords(options.stateDir);
-          const earlier = records[now.key];
-          if (earlier !== undefined && !sameTarget(earlier, target)) {
+          const { ours, rest } = splitRecords(yield* readRecords(options.stateDir), now);
+          for (const earlier of ours.filter((record) => !sameTarget(record, target))) {
             yield* Ref.set(releasing, earlier);
             yield* releaseTailscaleServe(earlier);
             yield* Ref.set(releasing, null);
           }
+          // Its record is replaced only once its mapping is gone from this account.
+          if (ours.length > 0) yield* switchedDuring(now);
           yield* writeRecords(options.stateDir, {
-            ...records,
+            ...rest,
             [now.key]: { ...target, label: now.label },
           });
           yield* Ref.set(account, now.key);
@@ -278,15 +304,12 @@ export const releaseRecorded = Effect.fn("TailscaleServe.releaseRecorded")(funct
   const records = yield* readRecords(stateDir);
   if (Object.keys(records).length === 0) return { released: false, otherAccounts: [] };
   const now = yield* currentAccount();
-  const { [now.key]: ours, ...rest } = records;
-  const released = ours === undefined ? false : yield* releaseTailscaleServe(ours);
-  // A switch while removing it means the removal may have run on the other account.
-  if ((yield* currentAccount()).key !== now.key) {
-    return yield* new ServeRecordError({
-      reason: "switched",
-      message: "Tailscale switched accounts during cleanup. Run this again.",
-    });
+  const { ours, rest } = splitRecords(records, now);
+  let released = false;
+  for (const record of ours) {
+    if (yield* releaseTailscaleServe(record)) released = true;
   }
+  yield* switchedDuring(now);
   yield* writeRecords(stateDir, rest);
   return { released, otherAccounts: Object.values(rest).map((record) => record.label) };
 });

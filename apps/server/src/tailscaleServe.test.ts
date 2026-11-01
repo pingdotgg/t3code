@@ -459,6 +459,45 @@ describe("TailscaleServe", () => {
     }),
   );
 
+  it.effect("matches a record an older Tailscale CLI keyed by tailnet and user", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeTailscale({
+        heldBy: LOCAL_TARGET,
+        profileId: "prof1",
+        profile: { tailnet: "example.com", userId: "7" },
+      });
+      const files = new Map([[CLAIM_PATH, record(18638, SERVE_PORT, "example.com/7")]]);
+      const scope = yield* Scope.make();
+      yield* Layer.buildWithScope(
+        TailscaleServe.layerReleaseLeftover({ stateDir: STATE_DIR }).pipe(
+          Layer.provide(fakeLayers(fake, files)),
+        ),
+        scope,
+      );
+      yield* TestClock.adjust("1 second");
+
+      assert.equal(fake.state.releases, 1);
+      assert.isFalse(files.has(CLAIM_PATH));
+      yield* Scope.close(scope, Exit.void);
+    }),
+  );
+
+  it.effect(
+    "keeps an older port's record when Tailscale switches accounts during its removal",
+    () =>
+      Effect.gen(function* () {
+        const older = record(18638, OTHER_PORT);
+        const { settled, files } = yield* startTailscaleServe({
+          heldOnOtherPort: LOCAL_TARGET,
+          recorded: older,
+          switchOnServeRead: "work",
+        });
+        yield* Deferred.await(settled);
+
+        assert.equal(files.get(CLAIM_PATH), older);
+      }),
+  );
+
   it.effect("keeps the record when Tailscale switches accounts during its removal", () =>
     Effect.gen(function* () {
       const fake = makeFakeTailscale({ heldBy: LOCAL_TARGET, switchOnServeRead: "work" });
