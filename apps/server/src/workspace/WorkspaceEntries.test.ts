@@ -691,7 +691,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-token-", git: true });
         yield* writeTextFile(cwd, ".git/info/exclude", ".worktrees/\n");
-        const line = "see src/ and *.ts and !important\nxfoo-foo-foo\n";
+        const line = "see src/ and *.ts and !important\nxfoo-foo-foo\nfirst\nsecond\n";
         yield* writeTextFile(cwd, "lib/notes.txt", line);
         yield* writeTextFile(cwd, ".worktrees/copy/lib/notes.txt", line);
 
@@ -700,6 +700,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           { query: "src/", useRegex: false },
           { query: "see src/ and", useRegex: false },
           { query: "foo-foo", useRegex: false, wholeWord: true },
+          { query: "first\\nsecond", useRegex: false },
+          { query: "\\*.ts", useRegex: false },
           { query: "*.ts", useRegex: false },
           { query: "!important", useRegex: false },
           { query: "src/", useRegex: true },

@@ -582,9 +582,9 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         cursor: nextCursor,
         timeBudgetMs: remainingTimeBudgetMs,
       };
-      // multiGrep has no overlapping ranges; grep preserves whole-word matches and literal fallback.
+      // grep preserves escapes, overlapping whole-word candidates, and multi-token literal fallback.
       const result: GrepResult =
-        singleToken && !regexMode && !input.wholeWord
+        singleToken && !regexMode && !input.wholeWord && !pattern.includes("\\")
           ? yield* runSearch(input.query, input.limit, "multiGrep", () =>
               finder.multiGrep({
                 ...options,
