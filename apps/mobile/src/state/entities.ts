@@ -202,13 +202,23 @@ export function useSideChats(ref: ScopedThreadRef) {
   return useAtomValue(environmentThreadShells.sideChatsAtom(ref));
 }
 
-export function useLiveThreadLinkLabels(markdown: string, environmentId: EnvironmentId): string {
+export function useThreadLinkLabels(
+  markdown: string,
+  environmentId: EnvironmentId,
+): { readonly markdown: string; readonly unavailable: ReadonlySet<string> } {
   const titles = useAtomValue(
     hasThreadLinks(markdown)
       ? threadLinkTitlesAtom(JSON.stringify(threadLinkRefs(markdown, environmentId).map(threadKey)))
       : EMPTY_THREAD_LINK_TITLES_ATOM,
   );
-  return relabelThreadLinks(markdown, environmentId, (ref) => titles.get(threadKey(ref)));
+  const unavailable = new Set<string>();
+  const relabeled = relabelThreadLinks(
+    markdown,
+    environmentId,
+    (ref) => titles.get(threadKey(ref)),
+    (href) => unavailable.add(href),
+  );
+  return { markdown: relabeled, unavailable };
 }
 
 /** Keyed reads; every thread is read only to place a v1 link its message's environment lacks. */

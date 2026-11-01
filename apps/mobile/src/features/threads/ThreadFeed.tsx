@@ -248,7 +248,7 @@ import {
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 import {
   resolveThreadLink,
-  useLiveThreadLinkLabels,
+  useThreadLinkLabels,
   useQuietThreadShell,
   useThreadChipIcons,
 } from "../../state/entities";
@@ -1186,12 +1186,15 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
-  const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
+  const live = useThreadLinkLabels(props.markdown, props.environmentId);
+  const liveMarkdown = live.markdown;
   const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
   const linkHandlers: MarkdownLinkHandlers = {
     ...props.linkHandlers,
     linkCustomization: (href) =>
-      withChipIcon(props.linkHandlers.linkCustomization?.(href), threadIcons.get(href)),
+      live.unavailable.has(href)
+        ? enrichedThreadLinkCustomization(href, false)
+        : withChipIcon(props.linkHandlers.linkCustomization?.(href), threadIcons.get(href)),
   };
 
   return (
@@ -2369,7 +2372,8 @@ function UserMessageContent(props: UserMessageContentProps) {
   const navigation = useNavigation();
   const openLinkedThread = useOpenLinkedThread();
   const { selectedThread } = useThreadSelection();
-  const liveText = useLiveThreadLinkLabels(props.text, props.environmentId);
+  const live = useThreadLinkLabels(props.text, props.environmentId);
+  const liveText = live.markdown;
   const threadIcons = useThreadChipIcons(props.environmentId, liveText, props.context?.records);
   const text = replaceComposerContextReferences(liveText, (ref) => {
     const available = props.context?.records.some((record) => record.contextId === ref.contextId);
@@ -2454,11 +2458,13 @@ function UserMessageContent(props: UserMessageContentProps) {
             }
           },
           linkCustomization: (href) =>
-            withChipIcon(
-              enrichedContextLinkCustomization(href, props.context?.records ?? []) ??
-                props.linkHandlers.linkCustomization?.(href),
-              threadIcons.get(href),
-            ),
+            live.unavailable.has(href)
+              ? enrichedThreadLinkCustomization(href, false)
+              : withChipIcon(
+                  enrichedContextLinkCustomization(href, props.context?.records ?? []) ??
+                    props.linkHandlers.linkCustomization?.(href),
+                  threadIcons.get(href),
+                ),
         }}
       />
       {selected ? (

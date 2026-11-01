@@ -28,7 +28,8 @@ import { cn } from "../../lib/cn";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
-import { useLiveThreadLinkLabels } from "../../state/entities";
+import { enrichedThreadLinkCustomization } from "../../native/useEnrichedLinkVariants";
+import { useThreadLinkLabels } from "../../state/entities";
 import {
   isPendingUserInputOptionSelected,
   type PendingUserInputDraftAnswer,
@@ -80,18 +81,23 @@ function QuestionText(props: {
   readonly setDirection: TextDirection | undefined;
 }) {
   const styles = useMarkdownPreviewStyles();
-  const markdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
+  const live = useThreadLinkLabels(props.markdown, props.environmentId);
   const openLink = useOpenPullRequest();
   return (
     <SelectableMarkdownText
-      markdown={markdown}
+      markdown={live.markdown}
       textStyle={styles.nativeTextStyle}
-      writingDirection={markdownProseDirection(markdown)}
+      writingDirection={markdownProseDirection(live.markdown)}
       // Android's renderer aligns relative to each paragraph's direction.
       textAlign={
         Platform.OS === "android" ? undefined : props.setDirection === "rtl" ? "right" : "left"
       }
-      onLinkPress={(href) => void openLink(href)}
+      onLinkPress={(href) => {
+        if (!live.unavailable.has(href)) void openLink(href);
+      }}
+      linkCustomization={(href) =>
+        live.unavailable.has(href) ? enrichedThreadLinkCustomization(href, false) : undefined
+      }
     />
   );
 }
