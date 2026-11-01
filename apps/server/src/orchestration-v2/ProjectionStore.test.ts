@@ -6366,6 +6366,18 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       });
       assert.deepEqual(followingPage.items, targetAfterRollback.visibleTurnItems.slice(2));
       assert.isFalse(followingPage.hasMore);
+      const tracedTimelinePage = (limit: number) =>
+        Effect.gen(function* () {
+          const { statements, tracer } = traceSqlStatements();
+          const page = yield* projectionStore
+            .getTimelinePage(targetThreadId, { view: "activity", limit })
+            .pipe(Effect.withTracer(tracer));
+          return { page, statements };
+        });
+      const singleItemPage = yield* tracedTimelinePage(1);
+      const fullPage = yield* tracedTimelinePage(10);
+      assert.deepEqual(fullPage.page.items, targetAfterRollback.visibleTurnItems);
+      assert.lengthOf(fullPage.statements, singleItemPage.statements.length);
 
       assert.deepEqual(
         targetAfterRollback.visibleTurnItems.map((row) => [
