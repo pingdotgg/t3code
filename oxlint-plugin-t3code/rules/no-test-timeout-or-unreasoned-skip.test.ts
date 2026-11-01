@@ -15,7 +15,7 @@ describe(RULE, () => {
     `
       import { describe, it } from "@effect/vitest";
       import * as Effect from "effect/Effect";
-      import { vi } from "vitest";
+      import { afterAll, vi } from "vitest";
 
       const options = { concurrent: true };
       const run = async () => {};
@@ -29,8 +29,11 @@ describe(RULE, () => {
         it("inline options", { tags: ["db"] }, run);
         it("conditional body", {}, process.platform === "win32" ? run : async () => {});
         it.effect("options last", () => Effect.void, options);
+        it.effect("no options", () => Effect.void, void 0);
+        it.effect("flag options", () => Effect.void, process.env.CI !== undefined);
       });
       vi.setConfig({ restoreMocks: true });
+      afterAll(() => {}, undefined);
     `,
   );
 

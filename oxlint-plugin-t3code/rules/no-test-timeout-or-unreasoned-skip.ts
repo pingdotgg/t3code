@@ -13,6 +13,8 @@ const FOCUS_OR_SKIP_MODIFIERS = new Set(["only", "skip", "todo"]);
 const FOCUS_OR_SKIP_FUNCTIONS = new Set(["fdescribe", "fit", "xdescribe", "xit", "xtest"]);
 const TIMEOUT_OPTIONS = new Set(["retry", "timeout"]);
 const SET_CONFIG_OPTIONS = new Set(["hookTimeout", "retry", "testTimeout"]);
+const NUMERIC_BINARY_OPERATORS = new Set(["+", "-", "*", "/", "%", "**"]);
+const NUMERIC_UNARY_OPERATORS = new Set(["+", "-"]);
 const QUARANTINE_PATTERN =
   /quarantine:\s*#\d+|https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/issues\/\d+/u;
 
@@ -86,7 +88,7 @@ export default defineRule({
     if (!TEST_FILE_PATTERN.test(context.filename)) return {};
     const checkTimeouts = !LIVE_TEST_FILE_PATTERN.test(context.filename);
 
-    const initializerOf = (identifier: Extract<ESTree.Node, { type: "Identifier" }>): unknown => {
+    const initializerOf = (identifier: Extract<ESTree.Node, { type: "Identifier" }>) => {
       let scope = context.sourceCode.getScope(identifier);
       while (true) {
         const variable = scope.set.get(identifier.name);
@@ -107,8 +109,9 @@ export default defineRule({
           case "Literal":
             return typeof expression.value === "number";
           case "BinaryExpression":
+            return NUMERIC_BINARY_OPERATORS.has(expression.operator);
           case "UnaryExpression":
-            return true;
+            return NUMERIC_UNARY_OPERATORS.has(expression.operator);
           case "ConditionalExpression":
             return (
               isNumberValued(expression.consequent, followBinding) ||
@@ -144,8 +147,7 @@ export default defineRule({
         }
 
         if (callee.value.type === "Identifier" && HOOK_FUNCTIONS.has(callee.value.name)) {
-          // A hook's only parameter after its callback is the timeout.
-          if (checkTimeouts && node.arguments[1] !== undefined) {
+          if (checkTimeouts && isNumberValued(node.arguments[1])) {
             context.report({ node, message: TIMEOUT_MESSAGE });
           }
           return;
