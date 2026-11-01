@@ -61,11 +61,18 @@ export interface Pool {
   readonly env: NodeJS.ProcessEnv;
 }
 
-export class AgentDeviceError extends Error {}
+class AgentDeviceError extends Error {}
 
 // A shared pool's workers drop off the gateway and stall under load for seconds at a time.
 const TRANSIENT =
-  /Remote daemon is unavailable|not connected to the gateway|still finishing a previous command|Invalid daemon response|Daemon request timed out/i;
+  /Remote daemon is unavailable|not connected to the gateway|still finishing a previous command|Invalid daemon response|Daemon request timed out|no worker connected/i;
+
+/** Failures that say the pool could not serve the pose, not that the app misbehaved. */
+export const poolError = (message: string) =>
+  TRANSIENT.test(message) ||
+  /Daemon connection closed|Failed to read daemon response|WORKER_UNREACHABLE|xcrun timed out|refused by simlock|is not available on this simlock/i.test(
+    message,
+  );
 
 export class Device {
   readonly pose: Pose;
@@ -105,9 +112,9 @@ export class Device {
       try {
         return await this.agentOnce(args, options);
       } catch (error) {
-        if (attempt >= 3 || !(error instanceof AgentDeviceError) || !TRANSIENT.test(error.message))
+        if (attempt >= 5 || !(error instanceof AgentDeviceError) || !TRANSIENT.test(error.message))
           throw error;
-        await delay(3_000 * attempt);
+        await delay(5_000 * attempt);
       }
     }
   }
@@ -172,7 +179,22 @@ export class Device {
       { timeoutMs: 180_000 },
     );
     await this.acceptOpenPrompt();
-    if (this.pose.landscape) await this.agent(["orientation", "landscape-left"]);
+  }
+
+  /**
+   * agent-device names rotations relative to the device's natural orientation, which is
+   * landscape on tablets and unfolded folds, so try each name until the screen has the shape.
+   */
+  async orient(shape: "landscape" | "portrait"): Promise<Snapshot> {
+    let snapshot = await this.snapshot();
+    for (const name of ["landscape-left", "portrait", "landscape-right"]) {
+      const { width, height } = snapshot.viewport;
+      if (width > height === (shape === "landscape")) return snapshot;
+      await this.agent(["orientation", name]);
+      await delay(2_000);
+      snapshot = await this.snapshot();
+    }
+    return snapshot;
   }
 
   async openUrl(url: string) {

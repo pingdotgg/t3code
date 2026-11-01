@@ -1,8 +1,8 @@
 import { Button } from "../../components/ui/Button";
 import { QuestionAttachments } from "./QuestionAttachments";
-import type { RuntimeRequestId } from "@t3tools/contracts";
+import type { EnvironmentId, RuntimeRequestId } from "@t3tools/contracts";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
-import { useCallback, useRef } from "react";
+import { useRef } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
   Easing,
@@ -23,13 +23,15 @@ import { cn } from "../../lib/cn";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
+import { useLiveThreadLinkLabels } from "../../state/entities";
 import {
   isPendingUserInputOptionSelected,
-  type PendingUserInput,
   type PendingUserInputDraftAnswer,
-} from "../../lib/threadActivity";
+} from "@t3tools/client-runtime/state/pending-user-input";
+import type { PendingUserInput } from "../../lib/threadActivity";
 
 export interface PendingUserInputCardProps {
+  readonly environmentId: EnvironmentId;
   readonly canOperateThread: boolean;
   readonly pendingUserInput: PendingUserInput;
   readonly maxHeight: DerivedValue<number>;
@@ -59,12 +61,13 @@ export interface PendingUserInputCardProps {
 /** Android cannot hit-test overlays beyond their parent's bounds; render its expanded card in-flow. */
 const EXPANDED_CARD_IS_OVERLAY = Platform.OS === "ios";
 
-function QuestionText(props: { readonly markdown: string }) {
+function QuestionText(props: { readonly markdown: string; readonly environmentId: EnvironmentId }) {
   const styles = useMarkdownPreviewStyles();
+  const markdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   const openLink = useOpenPullRequest();
   return (
     <SelectableMarkdownText
-      markdown={props.markdown}
+      markdown={markdown}
       textStyle={styles.nativeTextStyle}
       onLinkPress={(href) => void openLink(href)}
     />
@@ -81,29 +84,23 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const barHeightRef = useRef(0);
   const cardHeightRef = useRef(0);
   const cardHeight = useSharedValue(0);
-  const notifyCoverage = useCallback(() => {
+  const notifyCoverage = () => {
     if (!cardCoverage) {
       return;
     }
     // The card resizes with the keyboard every frame, so easing each sample would leave the
     // feed inset and floating controls trailing it.
     cardCoverage.set(Math.max(0, cardHeightRef.current - barHeightRef.current));
-  }, [cardCoverage]);
-  const handleBarLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      barHeightRef.current = event.nativeEvent.layout.height;
-      notifyCoverage();
-    },
-    [notifyCoverage],
-  );
-  const handleCardLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      cardHeightRef.current = event.nativeEvent.layout.height;
-      cardHeight.set(event.nativeEvent.layout.height);
-      notifyCoverage();
-    },
-    [cardHeight, notifyCoverage],
-  );
+  };
+  const handleBarLayout = (event: LayoutChangeEvent) => {
+    barHeightRef.current = event.nativeEvent.layout.height;
+    notifyCoverage();
+  };
+  const handleCardLayout = (event: LayoutChangeEvent) => {
+    cardHeightRef.current = event.nativeEvent.layout.height;
+    cardHeight.set(event.nativeEvent.layout.height);
+    notifyCoverage();
+  };
   const cardProgress = props.cardProgress;
   const maxHeight = props.maxHeight;
   const cardAnimatedStyle = useAnimatedStyle(() => {
@@ -223,7 +220,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
               <Text className="font-t3-bold text-xs uppercase tracking-[1px] text-foreground-muted">
                 {question.header}
               </Text>
-              <QuestionText markdown={question.question} />
+              <QuestionText markdown={question.question} environmentId={props.environmentId} />
               <View className="gap-2">
                 {question.options.map((option) => {
                   const optionValue = option.value ?? option.label.trim();
@@ -269,6 +266,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
               </View>
               {question.allowCustomAnswer !== false ? (
                 <QuestionAttachments
+                  key={`${props.pendingUserInput.requestId}:${question.id}`}
                   requestId={props.pendingUserInput.requestId}
                   question={question}
                   questions={props.pendingUserInput.questions}

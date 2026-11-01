@@ -1,6 +1,7 @@
 import { isDuoDevice } from "../../lib/device-type";
 import { Platform } from "react-native";
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
+import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
 import { useDeviceType, useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { workspaceUsesColumns } from "./workspace-tabs-state";
@@ -34,6 +35,18 @@ export function useCompactWorkspaceTabs() {
     deviceType !== "pad" &&
     !layout.usesSplitView &&
     !isDuoDevice(deviceType)
+  );
+}
+
+/** The workspace tab bar floats with compose beside it. Before iOS 26 UITabBar is opaque and
+ * full width, so it sits flush and compose stays in the header. */
+export function useFloatingWorkspaceTabs() {
+  const { layout } = useAdaptiveWorkspaceLayout();
+  const deviceType = useDeviceType();
+  const compactTabs = useCompactWorkspaceTabs();
+  return (
+    NATIVE_LIQUID_GLASS_SUPPORTED &&
+    (compactTabs || (deviceType === "pad" && !layout.usesSplitView))
   );
 }
 
