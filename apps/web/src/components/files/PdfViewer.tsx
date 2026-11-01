@@ -233,7 +233,7 @@ export default function PdfViewer(props: {
   const jumpToPage = useEffectEvent((index: number) => {
     scroll.current?.scrollTo({ top: pdfPageScrollTop(offsets, index) });
   });
-  const saveView = (node: HTMLDivElement) => {
+  const saveView = (node: HTMLDivElement, notify = true) => {
     const page = currentPdfPage(offsets, ratios.length, node.scrollTop);
     if (!pdf) return;
     const view = {
@@ -242,7 +242,7 @@ export default function PdfViewer(props: {
       zoom,
       left: node.scrollLeft,
     };
-    props.onViewChange?.(view);
+    if (notify) props.onViewChange?.(view);
     if (props.positionKey !== undefined) {
       positions.delete(props.positionKey);
       positions.set(props.positionKey, { ...view, width, ratios });
@@ -293,7 +293,7 @@ export default function PdfViewer(props: {
         top: offsets[anchor.page]! - 16 + (anchor.offset * width) / anchor.width,
       });
     }
-    saveView(node);
+    saveView(node, anchor !== null);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Scroll to the first asynchronous search result after its measured page offsets have committed.
   useLayoutEffect(() => {
