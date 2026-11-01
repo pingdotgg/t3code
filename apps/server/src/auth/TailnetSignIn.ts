@@ -233,7 +233,8 @@ export const make = Effect.gen(function* () {
   const [scanPolicy, rescanPolicy] = yield* Effect.cachedInvalidateWithTTL(
     Effect.gen(function* () {
       const signInsBefore = yield* Ref.get(grantSignIns);
-      const status = yield* host.freshStatus;
+      // The status a sign-in just read, or a recheck's; a switch after it is caught below.
+      const status = yield* host.status;
       const account = status.selfNodeId;
       const { granted, unreadable } = yield* policyGrantedPeers(status, (address) =>
         host.whois(address, { fromServer: true }),
@@ -349,7 +350,8 @@ export const make = Effect.gen(function* () {
       if (
         remoteAddress === undefined ||
         localAddress === undefined ||
-        !isTailscaleIpv4Address(remoteAddress)
+        !isTailscaleIpv4Address(remoteAddress) ||
+        !isTailscaleIpv4Address(localAddress)
       ) {
         return yield* refuse("not_direct_tailnet");
       }
@@ -363,19 +365,8 @@ export const make = Effect.gen(function* () {
               : !status.tailnetIpv4Addresses.includes(localAddress)
                 ? "not_direct_tailnet"
                 : null;
-      // The kept status gates the request, so only one with a valid proof that passes the
-      // per-address whois limit makes T3 Code read `tailscale status` again.
-      const kept = yield* host.status.pipe(
-        Effect.catch((cause) => refuse("tailscale_unavailable", cause)),
-      );
-      const keptRefusal = hostRefusal(kept);
-      if (keptRefusal !== null) return yield* refuse(keptRefusal);
-
-      const proofKeyThumbprint = yield* verifyRequestDpopProof({ request }).pipe(
-        Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
-        Effect.provideService(Crypto.Crypto, crypto),
-      );
-
+      // The per-address whois limit comes first, so a request over it costs no proof check,
+      // and only one under it with a valid proof reads `tailscale status`.
       // A missing required field fails the parse, so it refuses like an unreachable daemon.
       const node = yield* host
         .whois(remoteAddress)
@@ -389,8 +380,13 @@ export const make = Effect.gen(function* () {
             ),
           ),
         );
+      const proofKeyThumbprint = yield* verifyRequestDpopProof({ request }).pipe(
+        Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
+        Effect.provideService(Crypto.Crypto, crypto),
+      );
       // Decided on a status read now, as one kept from before an account switch names the
-      // old tailnet's policy and owner.
+      // old tailnet's policy and owner. A switch also moves this host's tailnet address, so a
+      // request that arrived on the old one fails the address check below.
       const status = yield* host.freshStatus.pipe(
         Effect.catch((cause) => refuse("tailscale_unavailable", cause)),
       );

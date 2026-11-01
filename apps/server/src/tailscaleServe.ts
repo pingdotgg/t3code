@@ -85,6 +85,7 @@ const ServeRecord = Schema.Struct({
   profileId: Schema.optionalKey(Schema.String),
   // Every key the account had when it was written, so a later read missing one still matches.
   keys: Schema.optionalKey(Schema.Array(Schema.String)),
+  nodeId: Schema.optionalKey(Schema.String),
 });
 type ServeRecord = typeof ServeRecord.Type;
 const ServeRecords = Schema.fromJsonString(Schema.Record(Schema.String, ServeRecord));
@@ -161,23 +162,35 @@ const currentAccount = Effect.fn("TailscaleServe.currentAccount")(function* (lis
     null;
   const tailnet = profile?.tailnet ?? status.tailnetName;
   const label = [login, tailnet].filter((part) => part !== null).join(" on ") || key;
-  return { key, keys, label, profileId: profile?.id ?? null, profiles: profiles?.ids ?? null };
+  return {
+    key,
+    keys,
+    label,
+    profileId: profile?.id ?? null,
+    nodeId: status.selfNodeId,
+    profiles: profiles?.ids ?? null,
+  };
 });
 
 /** An account as a record or a read names it: every key it had, and its profile if listed. */
 interface AccountKeys {
   readonly keys: ReadonlyArray<string>;
   readonly profileId: string | null;
+  readonly nodeId: string | null;
 }
-// Two profiles can share a tailnet and user, as two Windows users signed in to one account,
-// so known profile IDs decide alone; other keys match only when one side has no profile.
+// Two profiles can share a tailnet and user, as two Windows users signed in to one account.
+// So known profile IDs decide alone, and with one side's profile unknown, node IDs do; other
+// keys match only when neither side has a profile, as from a CLI too old to list them.
 const sameAccount = (a: AccountKeys, b: AccountKeys) =>
   a.profileId !== null && b.profileId !== null
     ? a.profileId === b.profileId
-    : a.keys.some((key) => b.keys.includes(key));
+    : (a.profileId !== null || b.profileId !== null) && a.nodeId !== null && b.nodeId !== null
+      ? a.nodeId === b.nodeId
+      : a.keys.some((key) => b.keys.includes(key));
 const recordAccount = (key: string, record: ServeRecord): AccountKeys => ({
   keys: [key, ...(record.keys ?? [])],
   profileId: record.profileId ?? null,
+  nodeId: record.nodeId ?? null,
 });
 
 /**
@@ -320,10 +333,15 @@ export const layer = (options: {
               ...target,
               label: now.label,
               keys: now.keys,
+              ...(now.nodeId === null ? {} : { nodeId: now.nodeId }),
               ...(now.profileId === null ? {} : { profileId: now.profileId }),
             },
           });
-          yield* Ref.set(account, { keys: now.keys, profileId: now.profileId });
+          yield* Ref.set(account, {
+            keys: now.keys,
+            profileId: now.profileId,
+            nodeId: now.nodeId,
+          });
         }
         yield* claimTailscaleServe(target);
       }).pipe(

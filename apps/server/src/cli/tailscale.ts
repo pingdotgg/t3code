@@ -55,6 +55,12 @@ export const turnOnRequireGrant = Effect.fn("cli.tailscale.turnOnRequireGrant")(
 const readPolicyGrantedPeers = readTailscaleStatus("active").pipe(
   Effect.flatMap((status) =>
     policyGrantedPeers(status, readTailscaleWhois).pipe(
+      // Lookups that ran after an account switch read another tailnet, so they say nothing.
+      Effect.tap(() =>
+        readTailscaleStatus("active").pipe(
+          Effect.filterOrFail((after) => after.selfNodeId === status.selfNodeId),
+        ),
+      ),
       Effect.map((scan) => ({
         ...scan,
         tagged: status.selfTags.length > 0,

@@ -65,6 +65,8 @@ interface Tailnet {
   staleStatus?: JsonObject;
   /** How many times sign-in read `tailscale status` now rather than the kept read. */
   freshReads?: number;
+  /** The caller's address is over its whois limit. */
+  rateLimited?: boolean;
   node: JsonObject | null;
   /** The whois `CapMap`: the app capabilities grants give the device. */
   capMap?: JsonObject;
@@ -93,12 +95,17 @@ const layerTailscaleHost = (tailnet: Tailnet) =>
       status: Effect.suspend(() =>
         parseTailscaleStatus(tailscaleJson(tailnet.staleStatus ?? tailnet.status)),
       ),
+      // As on the host, a read now also replaces the kept one.
       freshStatus: Effect.suspend(() => {
         tailnet.freshReads = (tailnet.freshReads ?? 0) + 1;
+        delete tailnet.staleStatus;
         return parseTailscaleStatus(tailscaleJson(tailnet.status));
       }),
-      whois: (address) =>
+      whois: (address, options) =>
         Effect.gen(function* () {
+          if (tailnet.rateLimited === true && options?.fromServer !== true) {
+            return yield* new TailscaleHost.TailscaleWhoisRateLimitedError({});
+          }
           const device = tailnet.devices?.[address] ?? {
             node: tailnet.node,
             capMap: tailnet.capMap,
@@ -473,6 +480,9 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
         "ServerAuthInvalidCredentialError",
       );
       expect(tailnet.freshReads ?? 0).toBe(0);
+      // Over its lookup limit, it is refused before its proof costs a replay-marker write.
+      tailnet.rateLimited = true;
+      expect(yield* refusalOf(signIn(makeDpopKey(), { dpop: false }))).toBe("rate_limited");
     }).pipe(Effect.provide(layerTest(tailnet)));
   });
 

@@ -47,6 +47,18 @@ const layerTest = (whoisSpawns: { count: number }) =>
   );
 
 it.layer(NodeServices.layer)("TailscaleHost", (it) => {
+  it.effect("keeps a fresh status read, so the next kept read shares it", () => {
+    const spawns = { count: 0 };
+    return Effect.gen(function* () {
+      const host = yield* TailscaleHost.TailscaleHost;
+      yield* host.freshStatus;
+      yield* host.status;
+      expect(spawns.count).toBe(1);
+      yield* host.freshStatus;
+      expect(spawns.count).toBe(2);
+    }).pipe(Effect.provide(layerTest(spawns)));
+  });
+
   it.effect("asks Tailscale on every whois and allows 10 lookups per address a minute", () => {
     const whoisSpawns = { count: 0 };
     return Effect.gen(function* () {

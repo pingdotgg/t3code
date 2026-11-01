@@ -199,6 +199,7 @@ const record = (
   servePort: number,
   account = "n1",
   keys?: ReadonlyArray<string>,
+  nodeId?: string,
 ) =>
   JSON.stringify({
     [account]: {
@@ -207,6 +208,7 @@ const record = (
       servePort,
       label: account,
       ...(keys === undefined ? {} : { keys }),
+      ...(nodeId === undefined ? {} : { nodeId }),
     },
   });
 
@@ -428,7 +430,7 @@ describe("TailscaleServe", () => {
 
       assert.equal(state.releases, 1);
       // The refused try on the first account may have left nothing; its record waits there.
-      assert.equal(files.get(CLAIM_PATH), record(18638, SERVE_PORT, "n1", ["n1"]));
+      assert.equal(files.get(CLAIM_PATH), record(18638, SERVE_PORT, "n1", ["n1"], "n1"));
     }),
   );
 
@@ -549,6 +551,7 @@ describe("TailscaleServe", () => {
               label: "me@example.com on example.com",
               profileId: "prof1",
               keys: ["prof1", "example.com/7", "n1"],
+              nodeId: "n1",
             },
           }),
         ],
@@ -564,6 +567,41 @@ describe("TailscaleServe", () => {
 
       assert.equal(fake.state.releases, 1);
       assert.isFalse(files.has(CLAIM_PATH));
+      yield* Scope.close(scope, Exit.void);
+    }),
+  );
+
+  it.effect("with profiles unlisted, keeps a record from another node on the same user", () =>
+    Effect.gen(function* () {
+      // Another profile on the same tailnet and user shares every key but the profile and node.
+      const fake = makeFakeTailscale({
+        heldBy: LOCAL_TARGET,
+        account: "nB",
+        profile: { tailnet: "example.com", userId: "7" },
+      });
+      const recorded = JSON.stringify({
+        profA: {
+          localPort: 18638,
+          localHost: "127.0.0.1",
+          servePort: SERVE_PORT,
+          label: "me@example.com on example.com",
+          profileId: "profA",
+          keys: ["profA", "example.com/7", "nA"],
+          nodeId: "nA",
+        },
+      });
+      const files = new Map([[CLAIM_PATH, recorded]]);
+      const scope = yield* Scope.make();
+      yield* Layer.buildWithScope(
+        TailscaleServe.layerReleaseLeftover({ stateDir: STATE_DIR }).pipe(
+          Layer.provide(fakeLayers(fake, files)),
+        ),
+        scope,
+      );
+      yield* TestClock.adjust("1 second");
+
+      assert.equal(fake.state.releases, 0);
+      assert.equal(files.get(CLAIM_PATH), recorded);
       yield* Scope.close(scope, Exit.void);
     }),
   );
@@ -684,7 +722,7 @@ describe("TailscaleServe", () => {
       yield* Scope.close(scope, Exit.void);
 
       assert.equal(state.releases, 0);
-      assert.equal(files.get(CLAIM_PATH), record(18638, SERVE_PORT, "n1", ["n1"]));
+      assert.equal(files.get(CLAIM_PATH), record(18638, SERVE_PORT, "n1", ["n1"], "n1"));
     }),
   );
 
