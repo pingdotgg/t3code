@@ -31,6 +31,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 
@@ -568,8 +569,11 @@ type BootstrapExchangeResult = {
 
 const AUTHORIZATION_PREFIX = "Bearer ";
 const DPOP_AUTHORIZATION_PREFIX = "DPoP ";
-const WEBSOCKET_TICKET_QUERY_PARAM = "wsTicket";
-const WEBSOCKET_PROOF_QUERY_PARAM = "dpop";
+const WebSocketUpgradeQuery = Schema.Struct({
+  wsTicket: Schema.optionalKey(Schema.RedactedFromValue(Schema.String)),
+  dpop: Schema.optionalKey(Schema.RedactedFromValue(Schema.String)),
+});
+const decodeWebSocketUpgradeQuery = Schema.decodeEffect(WebSocketUpgradeQuery);
 
 const bySessionPriority = (left: AuthClientSession, right: AuthClientSession) => {
   const leftCanManage = left.scopes.includes(AuthAccessWriteScope);
@@ -1215,7 +1219,7 @@ export const make = Effect.gen(function* () {
         Effect.map(
           (issued) =>
             ({
-              ticket: issued.token,
+              ticket: Redacted.make(issued.token),
               expiresAt: DateTime.toUtc(issued.expiresAt),
             }) satisfies AuthWebSocketTicketResult,
         ),
@@ -1231,7 +1235,10 @@ export const make = Effect.gen(function* () {
     Effect.fn("EnvironmentAuth.authenticateWebSocketUpgrade")(function* (request, use) {
       const requestUrl = HttpServerRequest.toURL(request);
       if (Option.isSome(requestUrl)) {
-        const websocketTicket = requestUrl.value.searchParams.get(WEBSOCKET_TICKET_QUERY_PARAM);
+        const query = yield* decodeWebSocketUpgradeQuery(
+          Object.fromEntries(requestUrl.value.searchParams),
+        ).pipe(Effect.orDie);
+        const websocketTicket = query.wsTicket && Redacted.value(query.wsTicket);
         if (websocketTicket && websocketTicket.trim().length > 0) {
           const session = yield* sessions
             .verifyWebSocketToken(websocketTicket)
@@ -1245,10 +1252,7 @@ export const make = Effect.gen(function* () {
             // WebSocket clients cannot set headers, so the proof travels in the query.
             // The proof hashes the ticket; consuming its jti prevents replay after first use.
             // Only encrypted transport prevents an active interceptor from racing that use.
-            const proof =
-              request.headers.dpop ??
-              requestUrl.value.searchParams.get(WEBSOCKET_PROOF_QUERY_PARAM) ??
-              undefined;
+            const proof = request.headers.dpop ?? (query.dpop && Redacted.value(query.dpop));
             if (!proof) {
               return yield* new ServerAuthInvalidCredentialError({
                 diagnostic: "DPoP-bound WebSocket ticket requires a DPoP proof.",
