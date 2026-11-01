@@ -53,7 +53,6 @@ const PROVIDER_STATE_PRIORITY = {
   ready: 5,
 } as const;
 
-/** Select the most usable configured instance for each provider driver. */
 export function selectOnboardingProvidersByDriver(
   providers: ReadonlyArray<ServerProvider> | null | undefined,
 ) {
@@ -73,11 +72,7 @@ export function selectOnboardingProvidersByDriver(
   return providersByDriver;
 }
 
-/**
- * Official standalone installers. Neither needs Node or npm, and both land in
- * the paths the server's provider maintenance recognizes as native, so the
- * one-click updater in Settings keeps working after install.
- */
+// These need no Node/npm and install where provider maintenance recognizes native binaries.
 const NATIVE_INSTALL_COMMANDS = {
   claudeAgent: {
     windows: "irm https://claude.ai/install.ps1 | iex",
@@ -89,12 +84,6 @@ const NATIVE_INSTALL_COMMANDS = {
   },
 } as const;
 
-/**
- * Install command for the setup terminal, keyed on the environment's platform
- * (not the client's): a Windows desktop driving a WSL server gets the shell
- * script. Unknown platforms get the shell script too, since the terminal there
- * is a POSIX shell in practice.
- */
 export function resolveOnboardingProviderInstallCommand(
   driver: keyof typeof NATIVE_INSTALL_COMMANDS,
   platform: ExecutionEnvironmentPlatformOs,
@@ -103,7 +92,6 @@ export function resolveOnboardingProviderInstallCommand(
   return platform === "windows" ? commands.windows : commands.posix;
 }
 
-/** Use the selected provider instance's binary when the setup terminal opens its login flow. */
 export function resolveOnboardingProviderLoginCommand(
   provider: ServerProvider,
   settings: ServerSettings,
@@ -112,17 +100,13 @@ export function resolveOnboardingProviderLoginCommand(
   const instance = settings.providerInstances[provider.instanceId];
 
   if (provider.driver === "claudeAgent") {
-    const config = decodeClaudeSettings(
-      instance ? (instance.config ?? {}) : settings.providers.claudeAgent,
-    );
+    const config = decodeClaudeSettings(instance?.config ?? {});
     const binaryPath = Option.isSome(config) ? config.value.binaryPath : "claude";
     return `${quoteProviderBinary(binaryPath, "claude", platform)} auth login`;
   }
 
   if (provider.driver === "codex") {
-    const config = decodeCodexSettings(
-      instance ? (instance.config ?? {}) : settings.providers.codex,
-    );
+    const config = decodeCodexSettings(instance?.config ?? {});
     const binaryPath = Option.isSome(config) ? config.value.binaryPath : "codex";
     return `${quoteProviderBinary(binaryPath, "codex", platform)} login`;
   }

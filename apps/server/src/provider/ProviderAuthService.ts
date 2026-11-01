@@ -10,61 +10,17 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
-import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import type { ProviderAuthController } from "@t3tools/provider-core/server/auth";
 
-export interface ProviderAuthController {
-  /** Equal keys mean these instances share credentials on this environment. */
-  readonly credentialBinding?: { readonly owner: "provider" | "t3"; readonly key: string };
-  readonly reconnectProfile?: (
-    methodId: string,
-  ) => Effect.Effect<ChatGptReconnectProfile | null, ProviderSetupError>;
-  readonly importProfile?: (
-    profile: ChatGptTransferredProfile,
-    stopSessions: Effect.Effect<void, ProviderSetupError>,
-  ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
-  readonly adoptCredentials?: (
-    update: Effect.Effect<void, ProviderSetupError>,
-    stopSessions: Effect.Effect<void, ProviderSetupError>,
-  ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
-  readonly isChangingCredentials?: Effect.Effect<boolean>;
-  readonly invalidate?: Effect.Effect<void>;
-  readonly refreshMethods?: Effect.Effect<void>;
-  readonly withAccess?: <A, E, R>(
-    task: Effect.Effect<A, E, R>,
-  ) => Effect.Effect<A, E | ProviderSetupError, R | Scope.Scope>;
-  readonly start: (
-    ownerSessionId: string,
-    stopSessions?: Effect.Effect<void, ProviderSetupError>,
-    methodId?: string,
-    returnUrl?: string,
-    callbackMode?: "server" | "client",
-  ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
-  readonly complete: (
-    ownerSessionId: string,
-    input: { readonly flowId: string; readonly callbackUrl: string },
-  ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
-  readonly cancel: (
-    ownerSessionId: string,
-    flowId: string,
-  ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
-  readonly respond?: (
-    ownerSessionId: string,
-    input: ProviderAuthRespondInput,
-  ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
-  /** The controller closes process admission before it stops routed sessions. */
-  readonly logout: (
-    stopSessions: Effect.Effect<void, ProviderSetupError>,
-  ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
-  readonly subscribe: (ownerSessionId: string) => Stream.Stream<ProviderAuthState>;
-  readonly isLogoutPrompt?: (text: string, hasAttachments: boolean) => boolean;
-}
+export type { ProviderAuthController } from "@t3tools/provider-core/server/auth";
 
 interface ProviderAuthTarget {
   readonly instanceId: ProviderInstanceId;
@@ -131,9 +87,7 @@ export const makeProviderAuthService = Effect.gen(function* () {
     return instance.auth;
   });
 
-  // Native sessions may still belong to the previous provider after the
-  // selected model changes. Read session bindings, not the selected model,
-  // when invalidating credentials for sign-in or sign-out.
+  // Invalidate credentials using session bindings; model selection may already point to another provider.
   const stopSessions = Effect.fn("ProviderAuthService.stopSessions")(function* (
     instanceId: ProviderInstanceId,
     binding: ProviderAuthController["credentialBinding"],
@@ -251,8 +205,8 @@ export const makeProviderAuthService = Effect.gen(function* () {
         });
       return yield* auth.reconnectProfile(input.methodId);
     }),
-    importProfile: (input) =>
-      credentialChanges.withPermit(
+    importProfile: Effect.fn("ProviderAuthService.importProfile")(function (input) {
+      return credentialChanges.withPermit(
         Effect.gen(function* () {
           const auth = yield* getController(input.instanceId, "import");
           yield* checkSharedBinding(input.instanceId, "start", auth);
@@ -267,7 +221,8 @@ export const makeProviderAuthService = Effect.gen(function* () {
             stopSessions(input.instanceId, auth.credentialBinding),
           );
         }),
-      ),
+      );
+    }),
     start: Effect.fn("ProviderAuthService.start")(function* (input, ownerSessionId) {
       return yield* credentialChanges.withPermit(
         Effect.gen(function* () {
@@ -311,8 +266,8 @@ export const makeProviderAuthService = Effect.gen(function* () {
         }),
       );
     }),
-    subscribe: (input, ownerSessionId) =>
-      Effect.gen(function* () {
+    subscribe: Function.flow(
+      Effect.fn("ProviderAuthService.subscribe")(function* (input, ownerSessionId) {
         const changes = yield* registry.subscribeChanges;
         const initial = yield* getController(input.instanceId, "subscribe");
         return Stream.concat(
@@ -324,7 +279,9 @@ export const makeProviderAuthService = Effect.gen(function* () {
           Stream.changesWith((previous, next) => previous === next),
           Stream.switchMap((auth) => auth.subscribe(ownerSessionId)),
         );
-      }).pipe(Stream.unwrap),
+      }),
+      Stream.unwrap,
+    ),
     tryHandlePromptCommand: Effect.fn("ProviderAuthService.tryHandlePromptCommand")(
       function* (input) {
         const instance = yield* registry.getInstance(input.instanceId);

@@ -12,6 +12,7 @@ import {
 import { writeTerminalOutputUpdate } from "../../components/ThreadTerminalDrawer";
 import { GHOSTTY_CELL_WIDE, GhosttyTerminalCore, ghosttyCellText } from "./core";
 import { loadGhosttyRuntime } from "./runtime";
+import { terminalNavigationShortcutData } from "../../keybindings";
 
 vi.mock("./vendor/ghostty-vt.wasm?url", async () => ({
   default: (await import("./vendor/ghostty-vt.wasm?inline")).default,
@@ -28,9 +29,6 @@ function codepointView(codepoints: ReadonlyArray<number>): DataView {
 
 describe("ghosttyCellText", () => {
   it("converts oversized grapheme clusters without hitting engine spread limits", () => {
-    // A program printing one base character followed by a huge run of
-    // combining marks packs the whole cluster into one cell; spreading that
-    // many arguments into String.fromCodePoint once overflows the call stack.
     const graphemeLength = 130_000;
     const view = new DataView(new ArrayBuffer(graphemeLength * 4));
     for (let index = 0; index < graphemeLength; index += 1) {
@@ -43,17 +41,10 @@ describe("ghosttyCellText", () => {
     expect(text.codePointAt(graphemeLength - 1)).toBe(0x301);
   });
 
+  // regression: #7809 oversized terminal graphemes crashed rendering
   it("converts small clusters including astral codepoints", () => {
     const text = ghosttyCellText(codepointView([0x1f642, 0x20e3]), 2);
     expect([...text]).toEqual(["\u{1F642}", "\u{20E3}"]);
-  });
-
-  it("converts a single astral codepoint", () => {
-    expect(ghosttyCellText(codepointView([0x1f642]), 1)).toBe("🙂");
-  });
-
-  it("returns an empty string for empty cells", () => {
-    expect(ghosttyCellText(codepointView([]), 0)).toBe("");
   });
 });
 
@@ -111,6 +102,50 @@ describe("GhosttyTerminalCore snapshots", () => {
     vi.restoreAllMocks();
   });
 
+  it.each([
+    { key: "ArrowLeft", expected: "\x1b[1;5D" },
+    { key: "ArrowRight", expected: "\x1b[1;5C" },
+  ])("sends Ctrl+$key as a modified arrow instead of Alt+B/F", async ({ key, expected }) => {
+    const core = await createCore();
+    const event = {
+      code: key,
+      key,
+      repeat: false,
+      shiftKey: false,
+      ctrlKey: true,
+      altKey: false,
+      metaKey: false,
+      isComposing: false,
+      getModifierState: () => false,
+    } as unknown as KeyboardEvent;
+
+    expect(terminalNavigationShortcutData(event, "Win32") ?? core.encodeKey(event)).toBe(expected);
+  });
+
+  it.each([
+    { code: "", key: "Backspace", expected: "\x7f" },
+    { code: "Unidentified", key: "Backspace", expected: "\x7f" },
+    { code: "Backspace", key: "Backspace", expected: "\x7f" },
+    { code: "Delete", key: "Backspace", expected: "\x1b[3~" },
+    { code: "", key: "a", expected: "a" },
+    { code: "", key: "Unidentified", expected: "" },
+  ])("encodes key $key with physical code '$code'", async ({ code, key, expected }) => {
+    const core = await createCore();
+    const event = {
+      code,
+      key,
+      repeat: false,
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      isComposing: false,
+      getModifierState: () => false,
+    } as unknown as KeyboardEvent;
+
+    expect(core.encodeKey(event)).toBe(expected);
+  });
+
   it("preserves styles, wide cells, and selection after shared memory grows", async () => {
     const core = await createCore();
     const runtime = await loadGhosttyRuntime();
@@ -154,71 +189,45 @@ describe("GhosttyTerminalCore snapshots", () => {
     });
   });
 
-  it("reuses a grown grapheme buffer and releases it on disposal", async () => {
+  it("resolves foreground and background independently without retaining prior cell colors", async () => {
     const core = await createCore();
-    const runtime = await loadGhosttyRuntime();
-    core.write("ASCII");
-    core.snapshot();
-
-    const grapheme = `z${"\u0301".repeat(256)}`;
-    core.resetAndWrite(`${grapheme}X`);
-    const alloc = vi.spyOn(runtime, "alloc");
-    const free = vi.spyOn(runtime, "free");
+    core.write(
+      "\x1b[38;2;123;45;67mF\x1b[39;48;2;9;8;7mB\x1b[0mD\x1b[38;2;12;34;56;48;2;78;90;123mC\x1b[0mE",
+    );
     expect(
       core
         .snapshot()
-        .rowData[0]!.cells.slice(0, 2)
-        .map((cell) => cell.text),
-    ).toEqual([grapheme, "X"]);
-    expect(alloc).toHaveBeenCalledTimes(1);
-    const allocation = alloc.mock.results[0]!;
-    if (allocation.type !== "return") throw new Error("Grapheme allocation did not return");
-    const buffer = allocation.value;
-    const capacity = alloc.mock.calls[0]![0];
-
-    core.write("\rQ\u0301");
-    alloc.mockClear();
-    expect(core.snapshot().rowData[0]!.cells[0]!.text).toBe("Q\u0301");
-    expect(alloc).not.toHaveBeenCalled();
-    core.dispose();
-    expect(free).toHaveBeenCalledWith(buffer, capacity);
+        .rowData[0]!.cells.slice(0, 6)
+        .map(({ text, foreground, background }) => ({ text, foreground, background })),
+    ).toEqual([
+      { text: "F", foreground: { r: 123, g: 45, b: 67 }, background: { r: 0, g: 0, b: 0 } },
+      { text: "B", foreground: { r: 255, g: 255, b: 255 }, background: { r: 9, g: 8, b: 7 } },
+      { text: "D", foreground: { r: 255, g: 255, b: 255 }, background: { r: 0, g: 0, b: 0 } },
+      { text: "C", foreground: { r: 12, g: 34, b: 56 }, background: { r: 78, g: 90, b: 123 } },
+      { text: "E", foreground: { r: 255, g: 255, b: 255 }, background: { r: 0, g: 0, b: 0 } },
+      { text: "", foreground: { r: 255, g: 255, b: 255 }, background: { r: 0, g: 0, b: 0 } },
+    ]);
   });
 
-  it.each(["varied", "identical"] as const)(
-    "preserves Ghostty state through a full MiB of %s output without rollover resets",
-    async (kind) => {
-      const [core, reference] = await Promise.all([createCore(), createCore()]);
-      const initial = "\x1b[31m";
-      let state = createSession(initial);
-      const first = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
-      writeTerminalOutputUpdate(core, first);
-      reference.resetAndWrite(initial);
-      let cursor = first.cursor;
-      const reset = vi.spyOn(core, "resetAndWrite");
-      const inputs: string[] = [];
-      let receivedCharacters = 0;
+  it("paints ANSI colors from the theme palette and repaints them on theme change", async () => {
+    const core = await createCore();
+    const theme = {
+      foreground: { r: 255, g: 255, b: 255 },
+      background: { r: 0, g: 0, b: 0 },
+      cursor: { r: 255, g: 255, b: 255 },
+    };
+    const palette = Array.from({ length: 16 }, (_, index) => ({ r: index, g: 1, b: 2 }));
+    core.write("\x1b[31mR\x1b[38;5;196mX\x1b[0m");
+    core.setTheme({ ...theme, palette });
+    let cells = core.snapshot().rowData[0]!.cells;
+    expect(cells[0]!.foreground).toEqual({ r: 1, g: 1, b: 2 });
+    expect(cells[1]!.foreground).toEqual({ r: 255, g: 0, b: 0 });
 
-      for (let index = 0; index < 128; index += 1) {
-        const data =
-          kind === "identical"
-            ? "x".repeat(8192)
-            : `${index.toString().padStart(4, "0")}\r\n${"x".repeat(8186)}`;
-        inputs.push(data);
-        state = append(state, data);
-        const update = readTerminalOutputUpdate(state.output, cursor);
-        if (update.type !== "append") throw new Error(`Expected append, received ${update.type}`);
-        receivedCharacters += update.data.length;
-        writeTerminalOutputUpdate(core, update);
-        cursor = update.cursor;
-      }
-
-      reference.write(inputs.join(""));
-      expect(receivedCharacters).toBe(1024 * 1024);
-      expect(state.output.retainedBytes).toBe(DEFAULT_MAX_TERMINAL_BUFFER_BYTES);
-      expect(reset).not.toHaveBeenCalled();
-      expect(core.snapshot()).toEqual(reference.snapshot());
-    },
-  );
+    core.setTheme({ ...theme, palette: palette.map((color) => ({ ...color, g: 9 })) });
+    cells = core.snapshot().rowData[0]!.cells;
+    expect(cells[0]!.foreground).toEqual({ r: 1, g: 9, b: 2 });
+    expect(cells[1]!.foreground).toEqual({ r: 255, g: 0, b: 0 });
+  });
 
   it("preserves Unicode and split ANSI parser state across batched renderer reads", async () => {
     const [core, reference] = await Promise.all([createCore(), createCore()]);

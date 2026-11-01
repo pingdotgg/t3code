@@ -1,18 +1,17 @@
-/**
- * The comment half of the floating composer: a remark on the pull request itself, optionally
- * the one that closes or reopens it. The popover around it belongs to PullRequestComposer.
- */
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { useAtomCommand } from "~/state/use-atom-command";
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
 import { SendIcon } from "lucide-react";
 import { useState, type RefObject } from "react";
 
-import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { PullRequestGlyph } from "./pullRequestIcons";
+import { pullRequestReviewKey } from "./pullRequestReviewStore";
+import { useInlineActionConfirm } from "./useInlineActionConfirm";
 
 export function PullRequestCommentForm({
   environmentId,
@@ -38,7 +37,10 @@ export function PullRequestCommentForm({
 }) {
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
-  const postComment = useAtomCommand(pullRequestEnvironment.comment, { reportFailure: false });
+  const postComment = useAtomCommand(pullRequestEnvironment.comment, {
+    reportFailure: false,
+  });
+  const inlineConfirm = useInlineActionConfirm(pullRequestReviewKey(reference));
   const followUpAction =
     detail.state === "open" &&
     detail.capabilities.actions.includes("close") &&
@@ -85,13 +87,12 @@ export function PullRequestCommentForm({
     <div className="space-y-2">
       <Textarea
         ref={textareaRef}
-        // Locked while posting: the body is cleared on success, which would otherwise throw
-        // away a new draft typed while the request was still in flight.
+        // Lock while posting because success clears the draft.
         disabled={submitting !== null || actionPending}
         value={body}
         rows={3}
         placeholder="Leave a comment"
-        aria-label="Comment on this pull request"
+        aria-label={`Comment on this ${sourceControlClients.get(detail.provider).changeRequest.singular}`}
         onChange={(event) => setBody(event.target.value)}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -113,20 +114,34 @@ export function PullRequestCommentForm({
             size="xs"
             variant={followUpAction === "close" ? "destructive-outline" : "outline"}
             disabled={body.trim().length === 0 || submitting !== null || actionPending}
-            onClick={() => void submit(followUpAction)}
+            {...(followUpAction === "close"
+              ? inlineConfirm.props("close", () => void submit("close"))
+              : { onClick: () => void submit("reopen") })}
           >
             {followUpAction === "close" ? (
               <PullRequestGlyph.closed className="size-3.5" />
             ) : (
               <PullRequestGlyph.reopen className="size-3.5" />
             )}
-            {submitting === followUpAction
-              ? followUpAction === "close"
-                ? "Closing..."
-                : "Reopening..."
-              : followUpAction === "close"
-                ? "Close with comment"
-                : "Reopen with comment"}
+            {followUpAction === "close" ? (
+              // The longest label holds the width, so the confirming click lands on the button.
+              <span className="inline-grid">
+                <span aria-hidden className="invisible col-start-1 row-start-1">
+                  Close with comment
+                </span>
+                <span className="col-start-1 row-start-1">
+                  {submitting === "close"
+                    ? "Closing..."
+                    : inlineConfirm.isArmed("close")
+                      ? "Confirm close?"
+                      : "Close with comment"}
+                </span>
+              </span>
+            ) : submitting === "reopen" ? (
+              "Reopening..."
+            ) : (
+              "Reopen with comment"
+            )}
           </Button>
         )}
         <Button

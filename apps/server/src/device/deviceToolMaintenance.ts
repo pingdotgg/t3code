@@ -5,7 +5,6 @@ import * as Path from "effect/Path";
 import * as ProcessRunner from "../processRunner.ts";
 import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
-/** Shared with the SSH bootstrap. Cleanup runs only after successful startup. */
 export const deviceToolMaintenanceScript = String.raw`
 const maintenanceFs = require('node:fs');
 const maintenancePath = require('node:path');

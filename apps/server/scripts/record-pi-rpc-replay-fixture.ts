@@ -1,14 +1,4 @@
-/**
- * Records a Pi RPC replay transcript by running a registered fixture's input
- * through the real orchestrator and the real PiAdapterV2 against a live
- * `pi --mode rpc`. The adapter's spawner tees every stdin/stdout record.
- *
- *   node scripts/record-pi-rpc-replay-fixture.ts --scenario simple
- *
- * The model is pinned to the fixture's Pi model selection through launch
- * arguments and `set_model`. Sessions go to a temporary directory, never the
- * user's Pi session store.
- */
+import { pipe } from "effect/Function";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ProviderReplayEntry, ProviderReplayTranscript } from "@t3tools/contracts";
 import * as Console from "effect/Console";
@@ -29,8 +19,8 @@ import {
   PiOrchestratorReplayHarness,
 } from "../src/orchestration-v2/Adapters/PiAdapterV2.testkit.ts";
 import * as PiAdapterV2Testkit from "../src/orchestration-v2/Adapters/PiAdapterV2.testkit.ts";
-import { PI_PROVIDER } from "../src/orchestration-v2/Adapters/PiAdapterV2.ts";
-import * as IdAllocator from "../src/orchestration-v2/IdAllocator.ts";
+import { PI_PROVIDER } from "@t3tools/provider-pi/server";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { provideDeterministicTestRuntime } from "../src/orchestration-v2/testkit/DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "../src/orchestration-v2/testkit/fixtures/index.ts";
 import { materializeFixtureInput } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
@@ -38,18 +28,12 @@ import { runOrchestratorV2ProviderReplayScenario } from "../src/orchestration-v2
 import {
   checkpointWorkspace,
   makeCheckpointWorkspace,
-} from "../src/orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
+} from "@t3tools/provider-testing/replayWorkspace";
 
-/**
- * Keeps the user's skills, templates and context files out of the recording.
- * `--approve` trusts the throwaway workspace so its `.pi/settings.json` loads.
- */
+// Exclude user context; --approve lets the throwaway workspace's `.pi/settings.json` load.
 const HERMETIC_LAUNCH_ARGS =
   "--no-extensions --no-skills --no-prompt-templates --no-context-files --approve";
-/**
- * Pi keeps the last ~20k tokens out of a compaction, so a short fixture
- * conversation has nothing to compact. A tiny budget makes `/compact` real.
- */
+// Pi excludes ~20k recent tokens from compaction; lower the budget for this short fixture.
 const WORKSPACE_PI_SETTINGS = { compaction: { keepRecentTokens: 50 } };
 const CLOCK_TICK = Duration.millis(20);
 
@@ -73,11 +57,8 @@ const [modelProvider, ...modelId] = variant.modelSelection.model.split("/");
 const launchArgs = `--provider ${modelProvider} --model ${modelId.join("/")} ${HERMETIC_LAUNCH_ARGS}`;
 const home = process.env.HOME ?? "";
 
-// ── normalization ─────────────────────────────────────────────
-
 const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/giu;
 const ISO_TIMESTAMP_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/gu;
-/** Recorded wall-clock times are shifted to start here, keeping their spacing. */
 const NORMALIZED_EPOCH_MS = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"));
 
 function escapeRegExp(value: string): string {
@@ -88,14 +69,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * Makes a live recording portable and reviewable. Session files, the
- * workspace, the home directory, UUIDs and wall-clock times become stable
- * placeholders applied consistently to both directions, so values the adapter
- * echoes back (a session path in `switch_session`, `--fork <file>`) still line
- * up on replay. Opaque reasoning signatures are dropped, and the model catalog
- * is trimmed to the pinned model: the adapter only reads context windows there.
- */
+// Normalize both directions consistently so echoed paths, UUIDs and times still match on replay.
 function normalizeEntries(input: {
   readonly entries: ReadonlyArray<ProviderReplayEntry>;
   readonly workspace: string;
@@ -126,8 +100,12 @@ function normalizeEntries(input: {
       .replaceAll(input.workspace, "<workspace>")
       .replaceAll(home.length > 1 ? home : "\0", "~")
       .replace(ISO_TIMESTAMP_PATTERN, (iso) =>
-        DateTime.formatIso(
-          DateTime.makeUnsafe(shiftTime(DateTime.toEpochMillis(DateTime.makeUnsafe(iso)))),
+        pipe(
+          DateTime.makeUnsafe(iso),
+          DateTime.toEpochMillis,
+          shiftTime,
+          DateTime.makeUnsafe,
+          DateTime.formatIso,
         ),
       )
       .replace(UUID_PATTERN, (uuid) => {
@@ -141,8 +119,7 @@ function normalizeEntries(input: {
     if (typeof value === "string") return normalizeString(value);
     if (Array.isArray(value)) return value.map(normalizeValue);
     if (!isRecord(value)) return value;
-    // Pi's system prompt lists the machine's skills, docs and cwd, and the
-    // adapter never reads system messages. Keep the shape, drop the text.
+    // Pi's unread system messages contain machine-specific context; retain only their shape.
     if (value.role === "system" && isRecord(value.sections)) {
       return {
         ...value,
@@ -166,7 +143,6 @@ function normalizeEntries(input: {
     if (!isRecord(frame)) return normalizeValue(frame);
     const args = frame.args;
     if (frame.type === "process_start" && Array.isArray(args)) {
-      // The injected extension lives in the server's per-run cache directory.
       return normalizeValue({
         ...frame,
         args: args.map((arg, index) => (args[index - 1] === "--extension" ? PI_REPLAY_ANY : arg)),
@@ -202,13 +178,7 @@ function encodeTranscriptNdjson(transcript: ProviderReplayTranscript): string {
   ].join("\n");
 }
 
-// ── recording run ─────────────────────────────────────────────
-
-/**
- * Replay runs on a frozen TestClock; recording shares that runtime so fixture
- * `advance_clock` steps behave identically, but lets it follow wall time so a
- * live Pi's timeouts and termination grace periods still elapse.
- */
+// Follow wall time for live Pi timers while retaining replay's TestClock steps.
 const followWallClock = Effect.gen(function* () {
   while (true) {
     yield* TestClock.withLive(Effect.sleep(CLOCK_TICK));
@@ -244,13 +214,13 @@ const record = Effect.gen(function* () {
   );
 
   const entries: Array<ProviderReplayEntry> = [];
-  const placeholder = {
+  const placeholder: ProviderReplayTranscript = {
     provider: PI_PROVIDER,
     protocol: PI_RPC_REPLAY_PROTOCOL,
     version: piVersion,
     scenario: fixture.name,
     entries: [],
-  } satisfies ProviderReplayTranscript;
+  };
   const layerRecordingSpawner = Layer.effect(
     ChildProcessSpawner.ChildProcessSpawner,
     Effect.map(Effect.service(ChildProcessSpawner.ChildProcessSpawner), (live) =>
@@ -314,9 +284,7 @@ const record = Effect.gen(function* () {
     }),
   } satisfies ProviderReplayTranscript;
 
-  // The live projection still holds raw session paths, so the fixture's
-  // assertions run on a replay of the normalized transcript. A recording that
-  // fails them never replaces the existing fixture.
+  // Assert on normalized replay; the live projection has raw paths. Failed assertions preserve the fixture.
   yield* Effect.gen(function* () {
     const replayWorkspace = yield* checkpointWorkspace(fixture.name, fixtureInput.workspaceFiles);
     const materialized = yield* materializeInput;

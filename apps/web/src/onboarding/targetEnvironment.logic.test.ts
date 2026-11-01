@@ -8,7 +8,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  isOnboardingRelayEnvironment,
+  resolveOnboardingSetup,
   resolveOnboardingTargetEnvironment,
 } from "./targetEnvironment.logic";
 
@@ -114,28 +114,6 @@ describe("resolveOnboardingTargetEnvironment", () => {
     ).toBe(pairedRemote);
   });
 
-  it("waits for a newly paired machine that has not appeared in the catalog", () => {
-    expect(
-      resolveOnboardingTargetEnvironment({
-        mode: "direct",
-        environments: [primaryEnvironment, olderRelay],
-        primaryEnvironment,
-        pairedEnvironmentId: pairedRemote.environmentId,
-      }),
-    ).toBeNull();
-  });
-
-  it("uses the primary machine for local onboarding", () => {
-    expect(
-      resolveOnboardingTargetEnvironment({
-        mode: "local",
-        environments: [primaryEnvironment, olderRelay],
-        primaryEnvironment,
-        pairedEnvironmentId: null,
-      }),
-    ).toBe(primaryEnvironment);
-  });
-
   it("does not substitute a remote machine when the local primary is offline", () => {
     const offlinePrimary = { ...primaryEnvironment, connection: { phase: "disconnected" } };
 
@@ -187,25 +165,51 @@ describe("resolveOnboardingTargetEnvironment", () => {
       }),
     ).toBe(primaryEnvironment);
   });
-
-  it("falls back to the connected primary when no remote is available", () => {
-    expect(
-      resolveOnboardingTargetEnvironment({
-        mode: "connect",
-        environments: [primaryEnvironment],
-        primaryEnvironment,
-        pairedEnvironmentId: null,
-      }),
-    ).toBe(primaryEnvironment);
-  });
 });
 
-describe("isOnboardingRelayEnvironment", () => {
-  it("includes only T3 Connect relay targets", () => {
+describe("resolveOnboardingSetup", () => {
+  const computer = (id: string, phase: string) => ({
+    environmentId: EnvironmentId.make(id),
+    connection: { phase },
+  });
+  const local = computer("local", "connected");
+
+  it("skips selected computers that will not connect on their own", () => {
+    const environments = [
+      local,
+      computer("switched-off", "available"),
+      computer("offline", "offline"),
+      computer("failing", "reconnecting"),
+      computer("old-client", "unsupported"),
+    ];
     expect(
-      [olderRelay, pairedRemote, sshEnvironment, desktopLocalEnvironment].filter(
-        isOnboardingRelayEnvironment,
+      resolveOnboardingSetup(
+        environments,
+        new Set(environments.map((environment) => environment.environmentId)),
       ),
-    ).toEqual([olderRelay]);
+    ).toEqual({
+      ready: true,
+      environmentIds: [local.environmentId],
+      skippedIds: environments.slice(1).map((environment) => environment.environmentId),
+    });
+  });
+
+  it("waits for a first connection attempt to settle", () => {
+    const connecting = computer("new", "connecting");
+    expect(
+      resolveOnboardingSetup(
+        [local, connecting],
+        new Set([local.environmentId, connecting.environmentId]),
+      ).ready,
+    ).toBe(false);
+  });
+
+  // regression: #16887 onboarding Continue locked up on computers that won't connect
+  it("is not ready without a connected selection", () => {
+    expect(resolveOnboardingSetup([local], new Set()).ready).toBe(false);
+    expect(
+      resolveOnboardingSetup([computer("off", "available")], new Set([EnvironmentId.make("off")]))
+        .ready,
+    ).toBe(false);
   });
 });

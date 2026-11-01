@@ -95,8 +95,7 @@ export class GhosttyRuntime {
   allocOpaque(): number {
     const pointer = this.call("ghostty_wasm_alloc_opaque");
     if (pointer === 0) throw new Error("libghostty-vt failed to allocate an opaque pointer");
-    // The slot is uninitialized until a *_new call writes it; zero it so dispose
-    // paths that run after a partial initialization never free a garbage pointer.
+    // Zero before *_new so partial-initialization cleanup cannot free a garbage pointer.
     new DataView(this.memory.buffer).setUint32(pointer, 0, true);
     return pointer;
   }
@@ -106,7 +105,7 @@ export class GhosttyRuntime {
   }
 
   readPointer(slot: number): number {
-    return this.currentMemoryView().getUint32(slot, true);
+    return this.memoryDataView().getUint32(slot, true);
   }
 
   attachPtyWriter(terminal: number, writer: (data: string) => void): number {
@@ -134,8 +133,7 @@ export class GhosttyRuntime {
     return new Uint8Array(this.memory.buffer, pointer, size);
   }
 
-  /** Reuse scalar reads across cells, refreshing after any terminal grows shared WASM memory. */
-  private currentMemoryView(): DataView {
+  memoryDataView(): DataView {
     if (this.memoryView.buffer !== this.memory.buffer) {
       this.memoryView = new DataView(this.memory.buffer);
     }
@@ -145,7 +143,7 @@ export class GhosttyRuntime {
   setField(pointer: number, structName: string, fieldName: string, value: number): void {
     const field = this.layout(structName).fields[fieldName];
     if (!field) throw new Error(`libghostty-vt field is unavailable: ${structName}.${fieldName}`);
-    const view = this.currentMemoryView();
+    const view = this.memoryDataView();
     const offset = pointer + field.offset;
     switch (field.type) {
       case "bool":
@@ -173,7 +171,7 @@ export class GhosttyRuntime {
   readField(pointer: number, structName: string, fieldName: string): number {
     const field = this.layout(structName).fields[fieldName];
     if (!field) throw new Error(`libghostty-vt field is unavailable: ${structName}.${fieldName}`);
-    const view = this.currentMemoryView();
+    const view = this.memoryDataView();
     const offset = pointer + field.offset;
     switch (field.type) {
       case "bool":
@@ -213,9 +211,7 @@ export class GhosttyRuntime {
       throw new Error("libghostty-vt did not expose its callback table");
     }
     const index = table.length;
-    // grow-then-set instead of grow(1, fn): WebKit stores a grow init value
-    // with broken type information and every later call_indirect through the
-    // entry traps with a signature mismatch. table.set canonicalizes correctly.
+    // WebKit grow(1, fn) stores broken type info and traps on call_indirect; table.set canonicalizes it.
     table.grow(1);
     table.set(index, trampoline);
     this.writePtyFunctionIndex = index;

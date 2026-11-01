@@ -1,0 +1,503 @@
+import { ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
+import { OpenCodeSettings } from "../settings.ts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
+import * as NetService from "@t3tools/shared/Net";
+import { beforeEach, expect } from "vite-plus/test";
+
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
+import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
+import * as OpenCodeTextGeneration from "./textGeneration.ts";
+import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
+
+const runtimeMock = {
+  state: {
+    startCalls: [] as string[],
+    promptUrls: [] as string[],
+    promptParts: [] as ReadonlyArray<unknown>[],
+    authHeaders: [] as Array<string | null>,
+    closeCalls: [] as string[],
+    sessionCreateCalls: 0,
+    abortCalls: [] as string[],
+    onSessionCreate: undefined as ((signal?: AbortSignal) => Promise<never>) | undefined,
+    onPrompt: undefined as
+      | ((signal?: AbortSignal) => Promise<{ data: { parts: ReadonlyArray<unknown> } }>)
+      | undefined,
+    onAbort: undefined as ((signal?: AbortSignal) => Promise<never>) | undefined,
+    connectionError: undefined as Error | undefined,
+    sessionCreateError: undefined as unknown,
+    sessionResult: undefined as { data?: { id: string } } | undefined,
+    promptRequestError: undefined as unknown,
+    promptResult: undefined as
+      | { data?: { info?: { error?: unknown }; parts?: Array<unknown> } }
+      | undefined,
+  },
+  reset() {
+    this.state.startCalls.length = 0;
+    this.state.promptUrls.length = 0;
+    this.state.promptParts.length = 0;
+    this.state.authHeaders.length = 0;
+    this.state.closeCalls.length = 0;
+    this.state.sessionCreateCalls = 0;
+    this.state.abortCalls.length = 0;
+    this.state.onSessionCreate = undefined;
+    this.state.onPrompt = undefined;
+    this.state.onAbort = undefined;
+    this.state.connectionError = undefined;
+    this.state.sessionCreateError = undefined;
+    this.state.sessionResult = undefined;
+    this.state.promptRequestError = undefined;
+    this.state.promptResult = undefined;
+  },
+};
+
+const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
+  startOpenCodeServerProcess: ({ binaryPath, serverPassword, environment }) =>
+    Effect.gen(function* () {
+      const index = runtimeMock.state.startCalls.length + 1;
+      const url = `http://127.0.0.1:${4_300 + index}`;
+      runtimeMock.state.startCalls.push(binaryPath);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          runtimeMock.state.closeCalls.push(url);
+        }),
+      );
+      const effectiveServerPassword = OpenCodeRuntime.resolveOpenCodeServerPassword({
+        external: false,
+        ...(serverPassword !== undefined ? { serverPassword } : {}),
+        ...(environment !== undefined ? { environment } : {}),
+      });
+      return {
+        url,
+        ...(effectiveServerPassword !== undefined
+          ? { serverPassword: effectiveServerPassword }
+          : {}),
+        version: "1.14.19",
+        isRunning: Effect.succeed(true),
+        exitCode: Effect.never,
+      };
+    }),
+  connectToOpenCodeServer: ({ serverUrl, serverPassword }) =>
+    runtimeMock.state.connectionError
+      ? Effect.fail(
+          new OpenCodeRuntime.OpenCodeRuntimeError({
+            operation: "global.health",
+            detail: runtimeMock.state.connectionError.message,
+            cause: runtimeMock.state.connectionError,
+          }),
+        )
+      : Effect.succeed({
+          url: serverUrl ?? "http://127.0.0.1:4301",
+          ...(serverPassword ? { serverPassword } : {}),
+          version: "1.14.19",
+          exitCode: null,
+          external: Boolean(serverUrl),
+        }),
+  runOpenCodeCommand: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
+  createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>
+    ({
+      session: {
+        create: async (_input: unknown, options?: { readonly signal?: AbortSignal }) => {
+          runtimeMock.state.sessionCreateCalls += 1;
+          if (runtimeMock.state.onSessionCreate) {
+            return runtimeMock.state.onSessionCreate(options?.signal);
+          }
+          if (runtimeMock.state.sessionCreateError !== undefined) {
+            throw runtimeMock.state.sessionCreateError;
+          }
+          return runtimeMock.state.sessionResult ?? { data: { id: `${baseUrl}/session` } };
+        },
+        abort: async (
+          input: { readonly sessionID: string },
+          options?: { readonly signal?: AbortSignal },
+        ) => {
+          runtimeMock.state.abortCalls.push(input.sessionID);
+          if (runtimeMock.state.onAbort) return runtimeMock.state.onAbort(options?.signal);
+          return { data: true };
+        },
+        prompt: async (
+          input: { readonly parts: ReadonlyArray<unknown> },
+          options?: { readonly signal?: AbortSignal },
+        ) => {
+          runtimeMock.state.promptUrls.push(baseUrl);
+          runtimeMock.state.promptParts.push(input.parts);
+          runtimeMock.state.authHeaders.push(
+            serverPassword ? `Basic ${btoa(`opencode:${serverPassword}`)}` : null,
+          );
+          if (runtimeMock.state.onPrompt) return runtimeMock.state.onPrompt(options?.signal);
+          if (runtimeMock.state.promptRequestError !== undefined) {
+            throw runtimeMock.state.promptRequestError;
+          }
+          return (
+            runtimeMock.state.promptResult ?? {
+              data: {
+                parts: [
+                  {
+                    type: "text",
+                    text: JSON.stringify({
+                      subject: "Improve OpenCode reuse",
+                      body: "Reuse one server for the full action.",
+                    }),
+                  },
+                ],
+              },
+            }
+          );
+        },
+      },
+    }) as unknown as ReturnType<
+      OpenCodeRuntime.OpenCodeRuntime["Service"]["createOpenCodeSdkClient"]
+    >,
+  loadOpenCodeInventory: () =>
+    Effect.fail(
+      new OpenCodeRuntime.OpenCodeRuntimeError({
+        operation: "loadOpenCodeInventory",
+        detail: "OpenCodeRuntimeTestDouble.loadOpenCodeInventory not used in this test",
+        cause: null,
+      }),
+    ),
+  loadOpenCodeSkills: () => Effect.succeed([]),
+};
+
+const DEFAULT_TEST_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("opencode"),
+  model: "openai/gpt-5",
+};
+const DEFAULT_COMMIT_MESSAGE_INPUT = {
+  cwd: process.cwd(),
+  branch: "feature/opencode-reuse",
+  stagedSummary: "M README.md",
+  stagedPatch: "diff --git a/README.md b/README.md",
+  modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+};
+
+const OPENCODE_TEXT_GENERATION_IDLE_TTL_MS = 30_000;
+
+const layerOpenCodeTextGenerationTest = Layer.succeed(
+  OpenCodeRuntime.OpenCodeRuntime,
+  OpenCodeRuntimeTestDouble,
+).pipe(
+  Layer.provideMerge(TestProviderHost.layer()),
+  Layer.provideMerge(NetService.layer),
+  Layer.provideMerge(NodeServices.layer),
+);
+
+const layerOpenCodeTextGenerationExistingServerTest = Layer.succeed(
+  OpenCodeRuntime.OpenCodeRuntime,
+  OpenCodeRuntimeTestDouble,
+).pipe(
+  Layer.provideMerge(TestProviderHost.layer()),
+  Layer.provideMerge(NetService.layer),
+  Layer.provideMerge(NodeServices.layer),
+);
+
+const DEFAULT_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
+  binaryPath: "fake-opencode",
+});
+const EXISTING_SERVER_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
+  binaryPath: "fake-opencode",
+  serverUrl: "http://127.0.0.1:9999",
+  serverPassword: "secret-password",
+});
+const EXTERNAL_SERVER_WITHOUT_AUTH_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
+  binaryPath: "fake-opencode",
+  serverUrl: "http://127.0.0.1:9999",
+});
+
+function withOpenCodeTextGeneration<A, E, R>(
+  settings: OpenCodeSettings,
+  effectFn: (textGeneration: ProviderTextGeneration) => Effect.Effect<A, E, R>,
+  environment?: NodeJS.ProcessEnv,
+) {
+  return Effect.gen(function* () {
+    const serverOwner = yield* OpenCodeServerOwner.make({
+      binaryPath: settings.binaryPath,
+      directory: process.cwd(),
+      ...(settings.serverPassword ? { serverPassword: settings.serverPassword } : {}),
+      ...(environment ? { environment } : {}),
+    });
+    const textGeneration = yield* OpenCodeTextGeneration.makeOpenCodeTextGeneration(settings).pipe(
+      Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
+    );
+    return yield* effectFn(textGeneration);
+  }).pipe(Effect.scoped);
+}
+
+beforeEach(() => {
+  runtimeMock.reset();
+});
+
+const advanceIdleClock = Effect.gen(function* () {
+  yield* Effect.yieldNow;
+  yield* TestClock.adjust(Duration.millis(OPENCODE_TEXT_GENERATION_IDLE_TTL_MS + 1));
+  yield* Effect.yieldNow;
+});
+
+it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
+  it.effect("cancels an in-flight session creation before prompting", () =>
+    withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<AbortSignal | undefined>();
+        runtimeMock.state.onSessionCreate = (signal) => {
+          Deferred.doneUnsafe(started, Effect.succeed(signal));
+          return new Promise<never>(() => {});
+        };
+        const fiber = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+          .pipe(Effect.forkChild);
+        const signal = yield* Deferred.await(started);
+        yield* Fiber.interrupt(fiber);
+
+        const exit = yield* Fiber.await(fiber);
+        expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+        expect(signal?.aborted).toBe(true);
+        expect(runtimeMock.state.promptUrls).toEqual([]);
+        expect(runtimeMock.state.abortCalls).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("cancels only its prompt session while another generation uses the shared server", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<AbortSignal | undefined>();
+        runtimeMock.state.sessionResult = { data: { id: "cancelled-session" } };
+        runtimeMock.state.onPrompt = (signal) => {
+          Deferred.doneUnsafe(started, Effect.succeed(signal));
+          return new Promise<never>(() => {});
+        };
+        const fiber = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+          .pipe(Effect.forkChild);
+        const signal = yield* Deferred.await(started);
+
+        const otherStarted = yield* Deferred.make<AbortSignal | undefined>();
+        const otherReply = Promise.withResolvers<{ data: { parts: ReadonlyArray<unknown> } }>();
+        runtimeMock.state.sessionResult = { data: { id: "other-session" } };
+        runtimeMock.state.onPrompt = (otherSignal) => {
+          Deferred.doneUnsafe(otherStarted, Effect.succeed(otherSignal));
+          return otherReply.promise;
+        };
+        const otherFiber = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+          .pipe(Effect.forkChild);
+        const otherSignal = yield* Deferred.await(otherStarted);
+        yield* Fiber.interrupt(fiber);
+
+        const exit = yield* Fiber.await(fiber);
+        expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+        expect(signal?.aborted).toBe(true);
+        expect(otherSignal?.aborted).toBe(false);
+        expect(runtimeMock.state.abortCalls).toEqual(["cancelled-session"]);
+        expect(runtimeMock.state.closeCalls).toEqual([]);
+
+        otherReply.resolve({
+          data: {
+            parts: [{ type: "text", text: '{"subject":"Other generation completed","body":""}' }],
+          },
+        });
+        expect((yield* Fiber.join(otherFiber)).subject).toBe("Other generation completed");
+        expect(runtimeMock.state.startCalls).toEqual(["fake-opencode"]);
+        expect(runtimeMock.state.promptUrls).toEqual([
+          "http://127.0.0.1:4301",
+          "http://127.0.0.1:4301",
+        ]);
+        expect(runtimeMock.state.abortCalls).toEqual(["cancelled-session"]);
+        expect(runtimeMock.state.closeCalls).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("excludes generic files from thread title generation", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.promptResult = {
+          data: {
+            parts: [{ type: "text", text: '{"title":"Review uploaded report"}' }],
+          },
+        };
+
+        yield* textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Review these attachments.",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          attachments: [
+            {
+              type: "image",
+              id: "thread-image-attachment",
+              name: "screenshot.png",
+              mimeType: "image/png",
+              sizeBytes: 3,
+            },
+            {
+              type: "file",
+              id: "thread-report-attachment-pdf",
+              name: "report.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 42,
+            },
+          ],
+        });
+
+        expect(runtimeMock.state.promptParts[0]).toEqual([
+          expect.objectContaining({ type: "text" }),
+          expect.objectContaining({ type: "file", filename: "screenshot.png" }),
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("uses an environment-only password for a locally spawned server", () =>
+    withOpenCodeTextGeneration(
+      DEFAULT_OPENCODE_SETTINGS,
+      (textGeneration) =>
+        Effect.gen(function* () {
+          yield* textGeneration.generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT);
+
+          expect(runtimeMock.state.authHeaders).toEqual([
+            `Basic ${btoa("opencode:environment-password")}`,
+          ]);
+        }),
+      { OPENCODE_SERVER_PASSWORD: "environment-password" },
+    ),
+  );
+
+  it.effect("returns a typed empty-output error for malformed and blank response parts", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.promptResult = {
+          data: {
+            parts: [null, { type: "tool" }, { type: "text", text: "   " }],
+          },
+        };
+
+        const error = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+          .pipe(Effect.flip);
+
+        expect(error.message).toContain("OpenCode returned empty output.");
+        expect(error.cause).toMatchObject({
+          _tag: "OpenCodeTextGenerationEmptyOutputError",
+          operation: "generateCommitMessage",
+          cwd: process.cwd(),
+          sessionId: "http://127.0.0.1:4301/session",
+          providerId: "openai",
+          modelId: "gpt-5",
+          responsePartCount: 3,
+          textPartCount: 1,
+        });
+        expect(error.cause).not.toHaveProperty("cause");
+      }),
+    ),
+  );
+
+  it.effect("parses JSON returned as plain text output", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.promptResult = {
+          data: {
+            parts: [
+              {
+                type: "text",
+                text: 'Here is the result:\n{"subject":"Tighten OpenCode parsing","body":"Handle JSON text output locally."}',
+              },
+            ],
+          },
+        };
+
+        const result = yield* textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/opencode-reuse",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+
+        expect(result).toEqual({
+          subject: "Tighten OpenCode parsing",
+          body: "Handle JSON text output locally.",
+        });
+      }),
+    ),
+  );
+});
+
+it.layer(layerOpenCodeTextGenerationExistingServerTest)(
+  "OpenCodeTextGeneration with configured server URL",
+  (it) => {
+    it.effect("does not send a local environment password to a configured server", () =>
+      withOpenCodeTextGeneration(
+        EXTERNAL_SERVER_WITHOUT_AUTH_OPENCODE_SETTINGS,
+        (textGeneration) =>
+          Effect.gen(function* () {
+            yield* textGeneration.generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT);
+            expect(runtimeMock.state.authHeaders).toEqual([null]);
+          }),
+        { OPENCODE_SERVER_PASSWORD: "local-secret" },
+      ),
+    );
+
+    it.effect("does not create a session when the server version is unsupported", () =>
+      withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
+        Effect.gen(function* () {
+          runtimeMock.state.connectionError = new Error(
+            "OpenCode v1.14.18 is too old. Upgrade to v1.14.19 or newer.",
+          );
+
+          const error = yield* textGeneration
+            .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+            .pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(TextGenerationError);
+          expect(error.message).toContain("v1.14.18 is too old");
+          expect(runtimeMock.state.sessionCreateCalls).toBe(0);
+        }),
+      ),
+    );
+
+    it.effect("reuses a configured OpenCode server URL without spawning or applying idle TTL", () =>
+      withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
+        Effect.gen(function* () {
+          yield* textGeneration.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/opencode-reuse",
+            stagedSummary: "M README.md",
+            stagedPatch: "diff --git a/README.md b/README.md",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          yield* textGeneration.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/opencode-reuse",
+            stagedSummary: "M README.md",
+            stagedPatch: "diff --git a/README.md b/README.md",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+
+          expect(runtimeMock.state.startCalls).toEqual([]);
+          expect(runtimeMock.state.promptUrls).toEqual([
+            "http://127.0.0.1:9999",
+            "http://127.0.0.1:9999",
+          ]);
+          expect(runtimeMock.state.authHeaders).toEqual([
+            `Basic ${btoa("opencode:secret-password")}`,
+            `Basic ${btoa("opencode:secret-password")}`,
+          ]);
+
+          yield* advanceIdleClock;
+
+          expect(runtimeMock.state.closeCalls).toEqual([]);
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    );
+  },
+);

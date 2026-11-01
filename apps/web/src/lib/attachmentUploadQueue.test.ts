@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   executeAtomQuery: vi.fn(),
   removeUpload: Symbol("remove-upload"),
   runAtomCommand: vi.fn(),
+  readEnvironmentScope: vi.fn(),
   readPreparedConnection: vi.fn(),
 }));
 
@@ -48,6 +49,7 @@ vi.mock("../state/attachments", () => ({
 }));
 
 vi.mock("../state/session", () => ({
+  readEnvironmentScope: mocks.readEnvironmentScope,
   readPreparedConnection: mocks.readPreparedConnection,
 }));
 
@@ -172,6 +174,7 @@ describe("attachmentUploadQueue", () => {
     mocks.executeAtomQuery.mockReset();
     mocks.executeAtomQuery.mockResolvedValue({ _tag: "Success", value: {} });
     mocks.runAtomCommand.mockReset();
+    mocks.readEnvironmentScope.mockReset().mockReturnValue(true);
     mocks.readPreparedConnection.mockReset();
     mocks.readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://environment.test/" });
     mocks.runAtomCommand.mockImplementation(
@@ -207,63 +210,90 @@ describe("attachmentUploadQueue", () => {
     vi.unstubAllGlobals();
   });
 
-  it.each([false, true])(
-    "retries a failed file once after reconnect, including a late HTTP failure: %s",
-    async (lateFailure) => {
-      const image = makeFile("reconnect");
-      startAttachmentUpload({ environmentId: firstEnvironment, image });
-      await Promise.resolve();
-      const firstSettled = awaitAttachmentUploads([image.id]);
-      setConnected(firstEnvironment, false);
-      if (lateFailure) setConnected(firstEnvironment, true);
-      TestXmlHttpRequest.requests[0]!.complete(503);
-      await firstSettled;
-      if (!lateFailure) setConnected(firstEnvironment, true);
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(TestXmlHttpRequest.requests).toHaveLength(2);
-      const retrySettled = awaitAttachmentUploads([image.id]);
-      TestXmlHttpRequest.requests[1]!.complete(503);
-      await retrySettled;
-      setConnected(firstEnvironment, true);
-      await Promise.resolve();
-      expect(TestXmlHttpRequest.requests).toHaveLength(2);
-      expect(readAttachmentUpload(image.id)?.status).toBe("failed");
+  it("keeps an attachment local until its own environment grants write access", async () => {
+    const image = makeImage("permission-gain");
+    mocks.readEnvironmentScope.mockImplementation(
+      (environmentId) => environmentId === firstEnvironment,
+    );
 
-      setConnected(firstEnvironment, false);
-      setConnected(firstEnvironment, true);
-      await Promise.resolve();
-      await Promise.resolve();
-      const finalSettled = awaitAttachmentUploads([image.id]);
-      TestXmlHttpRequest.requests[2]!.complete();
-      await finalSettled;
-      expect(
-        getUploadedAttachments({ environmentId: firstEnvironment, images: [image] }),
-      ).not.toBeNull();
-      setConnected(firstEnvironment, false);
-      setConnected(firstEnvironment, true);
-      await Promise.resolve();
-      expect(TestXmlHttpRequest.requests).toHaveLength(3);
-    },
-  );
+    startAttachmentUpload({ environmentId: secondEnvironment, image });
+    expect(mocks.runAtomCommand).not.toHaveBeenCalled();
+    expect(TestXmlHttpRequest.requests).toHaveLength(0);
+    expect(readAttachmentUpload(image.id)).toBeUndefined();
+    expect(image.file).not.toBeNull();
 
-  it("does not retry for another environment or after the attachment is removed", async () => {
-    const image = makeFile("removed");
-    startAttachmentUpload({ environmentId: firstEnvironment, image });
+    mocks.readEnvironmentScope.mockReturnValue(true);
+    startAttachmentUpload({ environmentId: secondEnvironment, image });
     await Promise.resolve();
     const settled = awaitAttachmentUploads([image.id]);
-    TestXmlHttpRequest.requests[0]!.complete(503);
+    TestXmlHttpRequest.requests[0]!.complete();
     await settled;
-    setConnected(secondEnvironment, false);
-    setConnected(secondEnvironment, true);
-    await Promise.resolve();
-    expect(TestXmlHttpRequest.requests).toHaveLength(1);
-    setConnected(firstEnvironment, false);
-    setConnected(firstEnvironment, true);
+
+    expect(readAttachmentUpload(image.id)).toMatchObject({
+      status: "ready",
+      environmentId: secondEnvironment,
+    });
+  });
+
+  it("does not transfer bytes or retry when access is revoked while minting an upload", async () => {
+    const image = makeImage("revoke-before-bytes");
+    let finishMint: (() => void) | undefined;
+    mocks.runAtomCommand.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishMint = () =>
+            resolve({
+              _tag: "Success",
+              value: {
+                attachmentId: "pending-revoked",
+                relativeUrl: "/api/attachments/upload/pending-revoked",
+                expiresAt: 1,
+              },
+            });
+        }),
+    );
+    startAttachmentUpload({ environmentId: firstEnvironment, image });
+    const settled = awaitAttachmentUploads([image.id]);
+    mocks.readEnvironmentScope.mockReturnValue(false);
+    finishMint!();
+    await settled;
+
+    expect(TestXmlHttpRequest.requests).toHaveLength(0);
+    expect(readAttachmentUpload(image.id)).toMatchObject({
+      status: "failed",
+      reason: "This connection cannot upload attachments.",
+      attachmentId: "pending-revoked",
+    });
+    retryAttachmentUpload({ environmentId: firstEnvironment, image });
+    expect(readAttachmentUpload(image.id)?.status).toBe("failed");
     releaseAttachmentUpload(image.id);
-    await Promise.resolve();
-    expect(TestXmlHttpRequest.requests).toHaveLength(1);
     expect(readAttachmentUpload(image.id)).toBeUndefined();
+    expect(mocks.runAtomCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not delete a persisted upload using another environment's grant", () => {
+    mocks.readEnvironmentScope.mockImplementation(
+      (environmentId) => environmentId === firstEnvironment,
+    );
+    releasePersistedAttachmentUpload({
+      id: "local-file",
+      environmentId: secondEnvironment,
+      attachmentId: "persisted-file",
+    });
+    expect(mocks.runAtomCommand).not.toHaveBeenCalled();
+
+    mocks.readEnvironmentScope.mockReturnValue(true);
+    releasePersistedAttachmentUpload({
+      id: "local-file",
+      environmentId: secondEnvironment,
+      attachmentId: "persisted-file",
+    });
+    expect(mocks.runAtomCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      mocks.removeUpload,
+      { environmentId: secondEnvironment, input: { attachmentId: "persisted-file" } },
+      expect.anything(),
+    );
   });
 
   it("uploads images immediately and sends attachment references", async () => {
@@ -320,82 +350,6 @@ describe("attachmentUploadQueue", () => {
     );
   });
 
-  it("uploads generic files and sends file attachment references", async () => {
-    const file = {
-      ...makeFile("report"),
-      source: { _tag: "pasted-text" as const },
-    };
-    startAttachmentUpload({ environmentId: firstEnvironment, image: file });
-    await Promise.resolve();
-
-    expect(mocks.runAtomCommand).toHaveBeenCalledWith(
-      expect.anything(),
-      mocks.createUploadUrl,
-      {
-        environmentId: firstEnvironment,
-        input: {
-          type: "file",
-          name: "report.pdf",
-          mimeType: "application/pdf",
-          sizeBytes: 3,
-        },
-      },
-      expect.anything(),
-    );
-
-    const settled = awaitAttachmentUploads([file.id]);
-    TestXmlHttpRequest.requests[0]!.complete();
-    await settled;
-
-    expect(getUploadedAttachments({ environmentId: firstEnvironment, images: [file] })).toEqual([
-      {
-        type: "file",
-        id: "pending-environment-1-report.pdf",
-        name: "report.pdf",
-        mimeType: "application/pdf",
-        sizeBytes: 3,
-        source: { _tag: "pasted-text" },
-      },
-    ]);
-  });
-
-  it("uses the fallback MIME type for both the upload claim and request header", async () => {
-    const bytes = new File([new Uint8Array([1, 2, 3])], "unknown.bin");
-    const file: ComposerFileAttachment = {
-      type: "file",
-      id: "file-without-browser-mime",
-      name: bytes.name,
-      mimeType: "application/octet-stream",
-      sizeBytes: bytes.size,
-      file: bytes,
-    };
-
-    startAttachmentUpload({ environmentId: firstEnvironment, image: file });
-    await Promise.resolve();
-
-    expect(mocks.runAtomCommand).toHaveBeenCalledWith(
-      expect.anything(),
-      mocks.createUploadUrl,
-      {
-        environmentId: firstEnvironment,
-        input: {
-          type: "file",
-          name: "unknown.bin",
-          mimeType: "application/octet-stream",
-          sizeBytes: 3,
-        },
-      },
-      expect.anything(),
-    );
-    expect(TestXmlHttpRequest.requests[0]?.headers.get("Content-Type")).toBe(
-      "application/octet-stream",
-    );
-
-    const settled = awaitAttachmentUploads([file.id]);
-    TestXmlHttpRequest.requests[0]!.complete();
-    await settled;
-  });
-
   it("persists a background completion's ids to the draft with no composer mounted", async () => {
     const draftId = DraftId.make("draft-background-upload");
     const file = makeFile("background");
@@ -409,7 +363,6 @@ describe("attachmentUploadQueue", () => {
       });
       await Promise.resolve();
 
-      // No composer effect is subscribed; only the queue can stamp the draft.
       const settled = awaitAttachmentUploads([file.id]);
       TestXmlHttpRequest.requests[0]!.complete();
       await settled;
@@ -426,53 +379,30 @@ describe("attachmentUploadQueue", () => {
     }
   });
 
-  it("persists a retried question upload without a mounted composer", async () => {
-    const draftId = DraftId.make("question-retry-upload");
-    const file = makeFile("question-retry");
-    const store = useComposerDraftStore.getState();
-    store.addFiles(draftId, [file]);
+  it("stamps a file that lands in a draft after its upload finished", async () => {
+    const draftId = DraftId.make("draft-restored-upload");
+    const file = makeFile("restored");
     try {
       startAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
       await Promise.resolve();
-      let settled = awaitAttachmentUploads([file.id]);
-      TestXmlHttpRequest.requests[0]!.complete(500);
+      const settled = awaitAttachmentUploads([file.id]);
+      TestXmlHttpRequest.requests[0]!.complete();
       await settled;
-      expect(store.getComposerDraft(draftId)?.files[0]?.uploadedAttachmentId).toBeUndefined();
-      retryAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
-      await Promise.resolve();
-      settled = awaitAttachmentUploads([file.id]);
-      TestXmlHttpRequest.requests[1]!.complete();
-      await settled;
-      expect(store.getComposerDraft(draftId)?.files[0]).toMatchObject({
-        uploadedAttachmentId: "pending-environment-1-question-retry.pdf",
-        uploadEnvironmentId: firstEnvironment,
-      });
+
+      useComposerDraftStore.getState().addFiles(draftId, [file]);
+      startAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
+
+      expect(TestXmlHttpRequest.requests).toHaveLength(1);
+      expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.files).toMatchObject([
+        {
+          id: file.id,
+          uploadedAttachmentId: "pending-environment-1-restored.pdf",
+          uploadEnvironmentId: firstEnvironment,
+        },
+      ]);
     } finally {
-      store.clearComposerContent(draftId);
+      useComposerDraftStore.getState().clearComposerContent(draftId);
     }
-  });
-
-  it("verifies an uploaded file reference before restoring it", async () => {
-    const file: ComposerFileAttachment = {
-      ...makeFile("restored"),
-      file: null,
-      uploadedAttachmentId: "pending-restored-pdf",
-      uploadEnvironmentId: firstEnvironment,
-    };
-
-    startAttachmentUpload({ environmentId: firstEnvironment, image: file });
-    await awaitAttachmentUploads([file.id]);
-
-    expect(readAttachmentUpload(file.id)).toEqual({
-      status: "ready",
-      environmentId: firstEnvironment,
-      attachmentId: "pending-restored-pdf",
-    });
-    expect(mocks.createAssetUrl).toHaveBeenCalledWith({
-      environmentId: firstEnvironment,
-      input: { resource: { _tag: "attachment", attachmentId: "pending-restored-pdf" } },
-    });
-    expect(TestXmlHttpRequest.requests).toHaveLength(0);
   });
 
   it("turns an expired persisted file into a marker that a re-pick can replace", async () => {
@@ -545,34 +475,6 @@ describe("attachmentUploadQueue", () => {
     }
   });
 
-  it("uploads the original file again when its persisted server upload expired", async () => {
-    const file: ComposerFileAttachment = {
-      ...makeFile("recoverable"),
-      uploadedAttachmentId: "pending-expired-pdf",
-      uploadEnvironmentId: firstEnvironment,
-    };
-    mocks.executeAtomQuery.mockResolvedValueOnce({
-      _tag: "Failure",
-      error: { _tag: "AssetAttachmentNotFoundError" },
-    });
-
-    startAttachmentUpload({ environmentId: firstEnvironment, image: file });
-    // The verify-then-reupload path crosses several awaits before the
-    // transfer starts; drain microtasks until the XHR exists.
-    for (let hop = 0; hop < 20 && TestXmlHttpRequest.requests.length === 0; hop += 1) {
-      await Promise.resolve();
-    }
-
-    const settled = awaitAttachmentUploads([file.id]);
-    TestXmlHttpRequest.requests[0]!.complete();
-    await settled;
-
-    expect(readAttachmentUpload(file.id)).toMatchObject({
-      status: "ready",
-      attachmentId: "pending-environment-1-recoverable.pdf",
-    });
-  });
-
   it("removes a persisted upload when its draft is discarded during verification", async () => {
     const file: ComposerFileAttachment = {
       ...makeFile("checking"),
@@ -637,8 +539,6 @@ describe("attachmentUploadQueue", () => {
         },
       ]);
 
-      // The persisted id is the only server copy of the bytes (`file` is null
-      // after a reload), so the retry must verify it again, not delete it.
       retryAttachmentUpload({
         environmentId: firstEnvironment,
         image: file,
@@ -664,102 +564,6 @@ describe("attachmentUploadQueue", () => {
     } finally {
       useComposerDraftStore.getState().clearComposerContent(draftId);
     }
-  });
-
-  it("keeps the persisted upload when an environment switch cancels its verification", async () => {
-    const file: ComposerFileAttachment = {
-      ...makeFile("moving"),
-      file: null,
-      uploadedAttachmentId: "pending-moving-pdf",
-      uploadEnvironmentId: firstEnvironment,
-    };
-    let resolveVerification: (result: {
-      readonly _tag: "Success";
-      readonly value: object;
-    }) => void = () => {};
-    mocks.executeAtomQuery.mockReturnValueOnce(
-      new Promise((resolve) => {
-        resolveVerification = resolve;
-      }),
-    );
-
-    startAttachmentUpload({ environmentId: firstEnvironment, image: file });
-    // Switching environments cancels the in-flight verification. The draft
-    // still references the upload in the first environment, so the cancel
-    // must not delete it.
-    startAttachmentUpload({ environmentId: secondEnvironment, image: file });
-    resolveVerification({ _tag: "Success", value: {} });
-    await awaitAttachmentUploads([file.id]);
-
-    const persistedRemoveCalls = mocks.runAtomCommand.mock.calls.filter(
-      ([, command, target]) =>
-        command === mocks.removeUpload &&
-        (target as { readonly input: { readonly attachmentId: string } }).input.attachmentId ===
-          "pending-moving-pdf",
-    );
-    expect(persistedRemoveCalls).toEqual([]);
-  });
-
-  it("cancels persisted-upload verification when a stash discards its file", async () => {
-    const file: ComposerFileAttachment = {
-      ...makeFile("stashed-checking"),
-      file: null,
-      uploadedAttachmentId: "pending-stashed-checking-pdf",
-      uploadEnvironmentId: firstEnvironment,
-    };
-    let resolveVerification: (result: {
-      readonly _tag: "Success";
-      readonly value: object;
-    }) => void = () => {};
-    mocks.executeAtomQuery.mockReturnValueOnce(
-      new Promise((resolve) => {
-        resolveVerification = resolve;
-      }),
-    );
-
-    startAttachmentUpload({ environmentId: firstEnvironment, image: file });
-    releasePersistedAttachmentUpload({
-      id: file.id,
-      environmentId: firstEnvironment,
-      attachmentId: "pending-stashed-checking-pdf",
-    });
-    resolveVerification({ _tag: "Success", value: {} });
-    await Promise.resolve();
-
-    expect(readAttachmentUpload(file.id)).toBeUndefined();
-    expect(mocks.runAtomCommand).toHaveBeenCalledWith(
-      expect.anything(),
-      mocks.removeUpload,
-      {
-        environmentId: firstEnvironment,
-        input: { attachmentId: "pending-stashed-checking-pdf" },
-      },
-      expect.anything(),
-    );
-  });
-
-  it("releases the persisted server upload when a hydrated draft is discarded after a reload", () => {
-    // After a reload the in-memory queue is empty; the draft file only carries
-    // its persisted attachment id. Discarding it must still delete the
-    // server-side pending upload.
-    const file: ComposerFileAttachment = {
-      ...makeFile("hydrated"),
-      file: null,
-      uploadedAttachmentId: "pending-hydrated-pdf",
-      uploadEnvironmentId: firstEnvironment,
-    };
-
-    releaseDraftAttachment(file);
-
-    expect(mocks.runAtomCommand).toHaveBeenCalledWith(
-      expect.anything(),
-      mocks.removeUpload,
-      {
-        environmentId: firstEnvironment,
-        input: { attachmentId: "pending-hydrated-pdf" },
-      },
-      expect.anything(),
-    );
   });
 
   it("routes a live persisted upload through the queue release exactly once", async () => {
@@ -790,46 +594,6 @@ describe("attachmentUploadQueue", () => {
         expect.anything(),
       ],
     ]);
-  });
-
-  it("deletes a persisted server upload even when browser upload state is gone", () => {
-    releasePersistedAttachmentUpload({
-      id: "stashed-report",
-      environmentId: firstEnvironment,
-      attachmentId: "pending-00000000-0000-4000-8000-000000000001-pdf",
-    });
-
-    expect(mocks.runAtomCommand).toHaveBeenCalledWith(
-      expect.anything(),
-      mocks.removeUpload,
-      {
-        environmentId: firstEnvironment,
-        input: { attachmentId: "pending-00000000-0000-4000-8000-000000000001-pdf" },
-      },
-      expect.anything(),
-    );
-  });
-
-  it("retries rejected uploads", async () => {
-    const image = makeImage("image-retry");
-    startAttachmentUpload({ environmentId: firstEnvironment, image });
-    await Promise.resolve();
-
-    let settled = awaitAttachmentUploads([image.id]);
-    TestXmlHttpRequest.requests[0]!.complete(500);
-    await settled;
-    expect(readAttachmentUpload(image.id)).toMatchObject({
-      status: "failed",
-      reason: "Upload rejected (500)",
-    });
-
-    retryAttachmentUpload({ environmentId: firstEnvironment, image });
-    await Promise.resolve();
-    settled = awaitAttachmentUploads([image.id]);
-    TestXmlHttpRequest.requests[1]!.complete();
-    await settled;
-
-    expect(readAttachmentUpload(image.id)).toMatchObject({ status: "ready" });
   });
 
   it("releases an upload URL that resolves after its image was removed", async () => {

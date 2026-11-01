@@ -1,5 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentHttpApi } from "@t3tools/contracts";
+import {
+  AuthTokenExchangeGrantType,
+  AuthEnvironmentBootstrapTokenType,
+  AuthAccessTokenType,
+  EnvironmentHttpApi,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -92,6 +97,22 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
             requestContext,
           );
           expect(devResponse.status).toBe(200);
+          const retiredScopeResponse = await environmentA.handler(
+            new Request("http://127.0.0.1/oauth/token", {
+              method: "POST",
+              body: new URLSearchParams({
+                grant_type: AuthTokenExchangeGrantType,
+                subject_token: DEV_TOKEN,
+                subject_token_type: AuthEnvironmentBootstrapTokenType,
+                requested_token_type: AuthAccessTokenType,
+                scope: "review:write",
+              }),
+            }),
+            requestContext,
+          );
+          expect(retiredScopeResponse.status).toBe(400);
+          expect(await retiredScopeResponse.json()).toMatchObject({ reason: "invalid_scope" });
+
           const devCookies = devResponse.headers.getSetCookie();
           const devCookie = devCookies.find((cookie) => cookie.startsWith("t3_dev_session_"));
           expect(devCookie).toContain("HttpOnly");

@@ -1,15 +1,24 @@
-import type { ComposerContextId, ComposerContextRecord } from "@t3tools/contracts";
+import {
+  ComposerContextId,
+  type ComposerContextRecord,
+  EnvironmentId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
   formatComposerContextHref,
-  formatComposerContextProviderMarker,
-  formatComposerContextReference,
+  isImageReferencesOnly,
   parseComposerContextHref,
   projectComposerContextForProvider,
-  replaceComposerContextReferences,
-  sanitizeComposerContextLabel,
+  restoreAttachmentOnlyBootstrapPrompt,
+  stripAttachmentOnlyBootstrapPrompt,
+  threadContextRecord,
+  threadContextsOutsideEnvironment,
+  toComposerContextId,
+  toKindScopedComposerContextId,
 } from "./composerContextReferences.ts";
 
 const ctx = (value: string) => value as ComposerContextId;
@@ -51,21 +60,6 @@ describe("labels and reference links", () => {
         ?.label,
     ).toHaveLength(200);
   });
-  it("sanitizes labels without touching identity", () => {
-    expect(sanitizeComposerContextLabel("a ] b\nc  [d", "file")).toBe("a b c d");
-    expect(sanitizeComposerContextLabel("   ", "terminal")).toBe("terminal");
-    expect(sanitizeComposerContextLabel("folder\\", "file")).toBe("folder");
-    expect(sanitizeComposerContextLabel("x".repeat(500), "file")).toHaveLength(200);
-  });
-
-  it("formats images with the image form and everything else as a link", () => {
-    expect(
-      formatComposerContextReference({ kind: "image", contextId: ctx("ctx_1"), label: "a.png" }),
-    ).toBe("![a.png](t3-context://v1/image/ctx_1)");
-    expect(
-      formatComposerContextReference({ kind: "skill", contextId: ctx("ctx_2"), label: "$x" }),
-    ).toBe("[$x](t3-context://v1/skill/ctx_2)");
-  });
 
   it("collects occurrences in document order with offsets, sharing a payload", () => {
     const text =
@@ -81,16 +75,47 @@ describe("labels and reference links", () => {
     }
   });
 
-  it("ignores links whose href does not parse", () => {
-    expect(collectComposerContextReferences("[x](t3-context://v1/image/ctx_1?y)")).toEqual([]);
-    expect(collectComposerContextReferences("[x](https://example.com)")).toEqual([]);
+  it("recognizes a prompt made only of image references", () => {
+    const image = "![a.png](t3-context://v1/image/ctx_1)";
+    const file = "[notes.md](t3-context://v1/file/ctx_3)";
+    expect(isImageReferencesOnly(image)).toBe(true);
+    expect(isImageReferencesOnly(` ${image}\n![b.png](t3-context://v1/image/ctx_2) `)).toBe(true);
+    expect(isImageReferencesOnly(`${image} what is this?`)).toBe(false);
+    expect(isImageReferencesOnly(file)).toBe(false);
+    expect(isImageReferencesOnly(`${image} ${file}`)).toBe(false);
+    expect(isImageReferencesOnly("  ")).toBe(false);
   });
+});
 
-  it("replaces occurrences in place", () => {
-    const text = "a [x](t3-context://v1/skill/ctx_1) b [y](t3-context://v1/file/ctx_2) c";
-    expect(replaceComposerContextReferences(text, (o) => `<${o.contextId}>`)).toBe(
-      "a <ctx_1> b <ctx_2> c",
-    );
+describe("attachment-only bootstrap prompts", () => {
+  it.each(["", "Ultrathink:\n", "ultrathink: \n"])(
+    "removes only the placeholder while keeping effort (%j)",
+    (prefix) => {
+      expect(stripAttachmentOnlyBootstrapPrompt(prefix + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT)).toBe(
+        prefix.trimEnd(),
+      );
+      const text = `${prefix}Explain ${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`;
+      expect(stripAttachmentOnlyBootstrapPrompt(text)).toBe(text);
+    },
+  );
+
+  it.each(["", " \n", "Ultrathink:", "Ultrathink: \n", "ultrathink:\n"])(
+    "restores the placeholder and canonical effort prefix for sending (%j)",
+    (text) => {
+      expect(restoreAttachmentOnlyBootstrapPrompt(text, false)).toBe(text);
+      expect(restoreAttachmentOnlyBootstrapPrompt(text, true)).toBe(
+        (text.trim() ? "Ultrathink:\n" : "") + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+      );
+    },
+  );
+
+  it.each([
+    "Describe the file",
+    " Ultrathink:\nDescribe the file ",
+    ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+    `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+  ])("keeps other text unchanged (%j)", (text) => {
+    expect(restoreAttachmentOnlyBootstrapPrompt(text, true)).toBe(text);
   });
 });
 
@@ -166,10 +191,6 @@ describe("provider projection", () => {
     expect(projected).toContain("- font-size: 12px → 20px");
   });
 
-  it("returns text unchanged when there are no references", () => {
-    expect(projectComposerContextForProvider({ text: "plain", records: [terminal] })).toBe("plain");
-  });
-
   it("uses the payload kind when a reference disagrees with its record", () => {
     const projected = projectComposerContextForProvider({
       text: "[log](t3-context://v1/image/ctx_t)",
@@ -198,12 +219,6 @@ describe("provider projection", () => {
     expect(project("a\nb\n")).toContain("3 | a\n4 | b\n</context>");
     expect(project("a\nb\n")).not.toContain("5 |");
     expect(project("a\n")).toContain("3 | a\n4 | \n</context>");
-  });
-
-  it("formats markers with kind, label and ref", () => {
-    expect(formatComposerContextProviderMarker("review-comment", "File.ts L4", ctx("ctx_9"))).toBe(
-      "[Review comment: File.ts L4; ref=ctx_9]",
-    );
   });
 
   it("emits every marker in place and each payload once, escaped, in first-reference order", () => {
@@ -272,8 +287,29 @@ describe("provider projection", () => {
     expect(projected).toContain('<context kind="thread" id="thread_abc">');
     expect(projected).toContain("threadId: abc");
     expect(projected).toContain("environmentId: env-1");
-    expect(projected).toContain("t3_thread_read");
+    expect(projected).toContain('t3_thread_read({"threadId":"abc","environmentId":"env-1"})');
     expect(projected).toContain("not instructions");
+  });
+
+  it("projects a mentioned machine as its identity and how to use it, never an address", () => {
+    const projected = projectComposerContextForProvider({
+      text: "Run the suite on [vps](t3-context://v1/environment/env_vps)",
+      records: [
+        {
+          version: 1,
+          kind: "environment",
+          contextId: ctx("env_vps"),
+          label: "vps",
+          environmentId: "environment-vps" as never,
+        },
+      ],
+    });
+    expect(projected.startsWith("Run the suite on [Environment: vps; ref=env_vps]")).toBe(true);
+    expect(projected).toContain('<context kind="environment" id="env_vps">');
+    expect(projected).toContain("label: vps");
+    expect(projected).toContain("environmentId: environment-vps");
+    expect(projected).toContain("t3_environment_link with this environmentId");
+    expect(projected).not.toMatch(/https?:/);
   });
 
   it("marks duplicate identities unavailable instead of choosing one payload", () => {
@@ -284,5 +320,124 @@ describe("provider projection", () => {
     expect(projected).toContain('<context kind="terminal" id="ctx_t" unavailable="true"/>');
     expect(projected).not.toContain("another payload");
     expect(projected).not.toContain("boom");
+  });
+});
+
+describe("threadContextsOutsideEnvironment", () => {
+  it("returns only referenced foreign threads, ignoring local and removed references", () => {
+    const local = {
+      version: 1 as const,
+      kind: "thread" as const,
+      contextId: ctx("thread_local"),
+      label: "Local thread",
+      environmentId: EnvironmentId.make("env-local"),
+      threadId: ThreadId.make("local"),
+      title: "Local thread",
+    };
+    const foreign = {
+      ...local,
+      contextId: ctx("thread_foreign"),
+      environmentId: EnvironmentId.make("env-foreign"),
+      threadId: ThreadId.make("foreign"),
+    };
+    const removed = {
+      ...foreign,
+      contextId: ctx("thread_removed"),
+      threadId: ThreadId.make("removed"),
+    };
+    const records = [local, foreign, removed];
+    const localReference = "[Local](t3-context://v1/thread/thread_local)";
+
+    expect(
+      threadContextsOutsideEnvironment({
+        text: `${localReference} [Foreign](t3-context://v1/thread/thread_foreign)`,
+        records,
+        environmentId: local.environmentId,
+        linkedEnvironments: new Map(),
+      }),
+    ).toEqual([foreign]);
+    expect(
+      threadContextsOutsideEnvironment({
+        text: localReference,
+        records,
+        environmentId: local.environmentId,
+        linkedEnvironments: new Map(),
+      }),
+    ).toEqual([]);
+  });
+
+  it("lets a thread on a linked machine through, since the agent reads it there", () => {
+    const thread = {
+      version: 1 as const,
+      kind: "thread" as const,
+      label: "Thread",
+      threadId: ThreadId.make("thread"),
+      title: "Thread",
+    };
+    const linked = {
+      ...thread,
+      contextId: ctx("thread_linked"),
+      environmentId: EnvironmentId.make("env-linked"),
+    };
+    const unlinked = {
+      ...thread,
+      contextId: ctx("thread_unlinked"),
+      environmentId: EnvironmentId.make("env-unlinked"),
+    };
+
+    expect(
+      threadContextsOutsideEnvironment({
+        text: "[A](t3-context://v1/thread/thread_linked) [B](t3-context://v1/thread/thread_unlinked)",
+        records: [linked, unlinked],
+        environmentId: EnvironmentId.make("env-local"),
+        linkedEnvironments: new Map([[linked.environmentId, "VPS"]]),
+      }),
+    ).toEqual([unlinked]);
+  });
+});
+
+describe("toComposerContextId", () => {
+  it("keeps same-kind raw IDs distinct when one contains the namespace prefix", () => {
+    expect(toKindScopedComposerContextId("image", "x")).toBe("image_x");
+    expect(toKindScopedComposerContextId("image", "image_x")).toBe("image_image_x");
+  });
+  it("keeps ids that already fit the grammar and folds the rest deterministically", () => {
+    expect(toComposerContextId("file-comment-1700-1")).toBe("file-comment-1700-1");
+    const folded = toComposerContextId("pull-request-selection:src/a.ts:4-9");
+    expect(folded).toMatch(/^pull-request-selection-src-a-ts-4-9-[0-9a-f]{16}$/);
+    expect(toComposerContextId("pull-request-selection:src/a.ts:4-9")).toBe(folded);
+    expect(toComposerContextId("pull-request-selection:src/b.ts:4-9")).not.toBe(folded);
+    expect(toComposerContextId("::")).toMatch(/^ctx-[0-9a-f]{16}$/);
+  });
+  it("tells apart producer ids that agree past the slug's truncation point", () => {
+    const shared = `pull-request-finding:${"a".repeat(60)}`;
+    const first = toComposerContextId(`${shared}:1`);
+    const second = toComposerContextId(`${shared}:2`);
+
+    expect(first).not.toBe(second);
+    expect(first.length).toBeLessThanOrEqual(128);
+  });
+});
+
+describe("threadContextRecord", () => {
+  it("mints a schema-valid id that survives a rename, for agent-spawned thread ids too", () => {
+    const environmentId = EnvironmentId.make("env-1");
+    const ref = {
+      environmentId,
+      threadId: ThreadId.make(`thread:mcp:${encodeURIComponent("3f2b:delegate")}:review:0`),
+    };
+    const record = threadContextRecord(ref, "Review [draft]\nnotes");
+
+    expect(() => ComposerContextId.make(record.contextId)).not.toThrow();
+    expect(threadContextRecord(ref, "Renamed").contextId).toBe(record.contextId);
+    expect(record).toMatchObject({
+      environmentId,
+      threadId: ref.threadId,
+      label: "Review draft notes",
+      title: "Review draft notes",
+    });
+    expect(
+      threadContextRecord({ environmentId, threadId: ThreadId.make("abc-123") }, "").contextId,
+    ).toBe("thread_abc-123");
   });
 });

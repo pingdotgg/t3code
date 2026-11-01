@@ -1,4 +1,5 @@
 import {
+  OrchestratorMcpFailure,
   DeviceToolCloseInput,
   DeviceToolError,
   DeviceToolListResult,
@@ -15,19 +16,20 @@ import { Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
 
-const dependencies = [McpInvocationContext.McpInvocationContext, DeviceService.DeviceService];
+const dependencies = [
+  McpInvocationContext.McpInvocationContext,
+  ThreadManagementService.ThreadManagementService,
+  DeviceService.DeviceService,
+];
 
-/**
- * Deliberately a small surface: lifecycle, visibility for the user, and one
- * image-returning verb. Driving the device (taps, typing, install, logs)
- * happens through the preconfigured `agent-device` CLI, which has the
- * semantic snapshot model agents need and stays current with its own
- * releases. Wrapping its commands here would only lag behind it.
- */
+const DeviceToolFailure = Schema.Union([DeviceToolError, OrchestratorMcpFailure]);
+
 const DeviceListTool = Tool.make("device_list", {
   description:
-    "List iOS Simulators and Android Emulators on this environment's device hosts, which platforms each host can run, and which devices are already open in this thread's Device panel. Call this before device_open when you do not know a device id.",
+    "List iOS Simulators and Android Emulators on every device host, what each host can run, and what is open in this thread's Device panel. Call before `device_open` when you do not know a device id.",
   // An empty struct serializes as `anyOf [object, array]`, which some
   // providers reject and then drop every tool on the server with it.
   parameters: Schema.Struct({
@@ -36,7 +38,7 @@ const DeviceListTool = Tool.make("device_list", {
     ),
   }),
   success: DeviceToolListResult,
-  failure: DeviceToolError,
+  failure: DeviceToolFailure,
   dependencies,
 })
   .annotate(Tool.Title, "List devices")
@@ -47,11 +49,18 @@ const DeviceListTool = Tool.make("device_list", {
 
 const DeviceOpenTool = Tool.make("device_open", {
   description:
-    "Open a simulator or emulator for this thread: boots it if needed, starts its live stream, and shows it in the user's Device panel so they can watch. Returns the agent-device CLI invocation pinned to the device; drive the device with that CLI afterwards.",
+    "Open a simulator or emulator for this thread. Pass `deviceId` and `hostId` from `device_list`. Boots it if needed and shows it in the user's Device panel. Returns the `agent-device` CLI call pinned to that device. Drive the device with that CLI.",
   parameters: DeviceToolOpenInput,
   success: DeviceToolOpenResult,
-  failure: DeviceToolError,
-  dependencies: [...dependencies, FileSystem.FileSystem, Path.Path, ServerConfig.ServerConfig],
+  failure: DeviceToolFailure,
+  dependencies: [
+    ...dependencies,
+    FileSystem.FileSystem,
+    Path.Path,
+    ServerConfig.ServerConfig,
+    // The thread's project can name the EAS project a cloud device runs under.
+    ProjectService.ProjectService,
+  ],
 })
   .annotate(Tool.Title, "Open device")
   .annotate(Tool.Readonly, false)
@@ -61,10 +70,10 @@ const DeviceOpenTool = Tool.make("device_open", {
 
 export const DeviceScreenshotTool = Tool.make("device_screenshot", {
   description:
-    "Capture the current screen of an open device as a PNG image. Use it to see what the user sees; for taps and text use the agent-device CLI.",
+    "Get a PNG of an open device's screen. For taps and text, use the `agent-device` CLI.",
   parameters: DeviceToolTargetInput,
   success: DeviceToolScreenshotResult,
-  failure: DeviceToolError,
+  failure: DeviceToolFailure,
   dependencies,
 })
   .annotate(Tool.Title, "Screenshot device")
@@ -75,12 +84,10 @@ export const DeviceScreenshotTool = Tool.make("device_screenshot", {
 
 const DeviceCloseTool = Tool.make("device_close", {
   description:
-    "Remove a device from this thread's Device panel. Pass shutdown=true to also power the simulator or emulator off.",
+    "Remove a device from this thread's Device panel. `shutdown=true` also turns it off.",
   parameters: DeviceToolCloseInput,
-  success: Schema.Record(Schema.String, Schema.Never).annotate({
-    description: "The device was closed.",
-  }),
-  failure: DeviceToolError,
+  success: Schema.Record(Schema.String, Schema.Never),
+  failure: DeviceToolFailure,
   dependencies,
 })
   .annotate(Tool.Title, "Close device")

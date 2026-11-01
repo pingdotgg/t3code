@@ -1,37 +1,52 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { PullRequestAction } from "@t3tools/contracts";
+import { createContext, use, type ReactNode } from "react";
+import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
+
+import { useShortcutModifierState } from "~/shortcutModifierState";
+import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useUiStateStore } from "~/uiStateStore";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { resolvePullRequestMergeMethod } from "./pullRequestDetail.logic";
 import { PullRequestGlyph } from "./pullRequestIcons";
-import type { EnvironmentPullRequestEntry } from "./pullRequestList.logic";
+import { pullRequestQuickActions, type EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 import {
   usePullRequestActionRunner,
   usePullRequestDefaultMergeMethodResolver,
 } from "./usePullRequestActions";
 
-export interface PullRequestSpeedActionResult {
-  readonly entry: EnvironmentPullRequestEntry;
+type PullRequestSpeedActionEntry = Pick<
+  EnvironmentPullRequestEntry,
+  "environmentId" | "projectId" | "host" | "repository" | "number" | "state" | "isDraft"
+> & { readonly stack?: object | undefined };
+
+export interface PullRequestSpeedActionResult<Entry = EnvironmentPullRequestEntry> {
+  readonly entry: Entry;
   readonly action: PullRequestAction;
 }
 
-/** No detail or stack reads until a merge is clicked, even on a long list. */
-export function PullRequestSpeedActions({
+export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntry>({
   entry,
-  visible,
+  hostActions,
+  terminology,
   onActed,
   closing = false,
   sweeping = false,
   onCloseSweepStart,
 }: {
-  entry: EnvironmentPullRequestEntry;
-  visible: boolean;
-  onActed: (result: PullRequestSpeedActionResult) => void;
+  entry: Entry;
+  hostActions: ReadonlySet<PullRequestAction>;
+  terminology: ChangeRequestTerminology;
+  onActed?: (result: PullRequestSpeedActionResult<Entry>) => void;
   closing?: boolean;
   sweeping?: boolean;
-  onCloseSweepStart?: (entry: EnvironmentPullRequestEntry, event: PointerEvent) => void;
+  onCloseSweepStart?: (entry: Entry, event: PointerEvent) => void;
 }) {
+  const canWrite = useAtomValue(
+    pullRequestEnvironment.runAction.permissionAtom(entry.environmentId),
+  );
   const resolveProjectDefault = usePullRequestDefaultMergeMethodResolver(
     entry.environmentId,
     entry.projectId,
@@ -45,7 +60,8 @@ export function PullRequestSpeedActions({
   const { actionPending, perform } = usePullRequestActionRunner({
     environmentId: entry.environmentId,
     reference,
-    onSuccess: (action) => onActed({ entry, action }),
+    terminology,
+    onSuccess: (action) => onActed?.({ entry, action }),
     resolveMergeMethod: (detail) => {
       const allowed = detail.capabilities.mergeMethods.filter(
         (method) => detail.mergeCapabilities[method],
@@ -60,20 +76,14 @@ export function PullRequestSpeedActions({
       );
     },
   });
-  const actions =
-    entry.state === "closed"
-      ? (["reopen"] as const)
-      : entry.isDraft
-        ? (["close", "ready"] as const)
-        : (["close", "merge"] as const);
+  const actions = pullRequestQuickActions(entry, hostActions);
   const busy = actionPending || closing || sweeping;
+  if (actions.length === 0) return null;
   return (
-    <div
-      className="shrink-0 items-center gap-1 pr-3"
-      style={{ display: visible || busy ? "flex" : "none" }}
-      role="group"
-      aria-label={`Quick actions for pull request #${entry.number}`}
-      data-pull-request-action-pending={actionPending || closing}
+    <SpeedModeGroup
+      busy={busy}
+      pending={actionPending || closing}
+      label={`Quick actions for ${terminology.singular} #${entry.number}`}
     >
       {actions.map((action) => {
         const label = ACTIONS[action].label;
@@ -85,7 +95,7 @@ export function PullRequestSpeedActions({
                 <Button
                   variant={action === "close" ? "destructive-outline" : "outline"}
                   size="xs"
-                  disabled={busy || (action === "merge" && entry.stack !== undefined)}
+                  disabled={!canWrite || busy || (action === "merge" && entry.stack !== undefined)}
                   aria-label={`${label} #${entry.number}`}
                   onClick={() => void perform(action)}
                   onPointerDown={(event) => {
@@ -101,14 +111,53 @@ export function PullRequestSpeedActions({
             </TooltipTrigger>
             <TooltipPopup>
               {action === "merge" && entry.stack
-                ? "Open this pull request to merge its stack"
-                : action === "close"
+                ? `Open this ${terminology.singular} to merge its stack`
+                : action === "close" && onCloseSweepStart
                   ? "Close immediately, or drag across rows to close several"
                   : `${label} immediately`}
             </TooltipPopup>
           </Tooltip>
         );
       })}
+    </SpeedModeGroup>
+  );
+}
+
+/**
+ * Whether Shift is held, as context rather than a row prop: a Shift press then re-renders each
+ * row's action group, not the rows or their buttons, in one commit.
+ */
+export const PullRequestSpeedModeContext = createContext(false);
+
+/** Tracks Shift for the quick actions below it. */
+export function PullRequestSpeedModeProvider({ children }: { children: ReactNode }) {
+  const modifiers = useShortcutModifierState(true);
+  const speedMode =
+    modifiers.shiftKey && !modifiers.metaKey && !modifiers.ctrlKey && !modifiers.altKey;
+  return <PullRequestSpeedModeContext value={speedMode}>{children}</PullRequestSpeedModeContext>;
+}
+
+function SpeedModeGroup({
+  busy,
+  pending,
+  label,
+  children,
+}: {
+  busy: boolean;
+  pending: boolean;
+  label: string;
+  children: ReactNode;
+}) {
+  const speedMode = use(PullRequestSpeedModeContext);
+  return (
+    <div
+      className="shrink-0 items-center gap-1 pr-3"
+      style={{ display: speedMode || busy ? "flex" : "none" }}
+      role="group"
+      aria-label={label}
+      data-pull-request-action-pending={pending}
+    >
+      {children}
     </div>
   );
 }

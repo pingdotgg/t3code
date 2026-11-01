@@ -1,6 +1,4 @@
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
-import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { InteractionUpdate, RunResult } from "@cursor/sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -15,24 +13,21 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
-import * as ServerConfig from "../../config.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
-import * as CursorAgentSdk from "./CursorAgentSdk.ts";
+import * as CursorAgentSdk from "@t3tools/provider-cursor/server/CursorAgentSdk";
 import {
   CURSOR_DEFAULT_INSTANCE_ID,
-  CURSOR_DRIVER_KIND,
-  CursorAdapterV2Driver,
   cursorSdkModelSelection,
   makeCursorAgentOptions,
-} from "./CursorAdapterV2.ts";
-import type { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+  makeCursorAdapterV2,
+} from "@t3tools/provider-cursor/testing";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { RuntimePolicyV2Override } from "../RuntimePolicy.ts";
 
 const CursorAgentSdkReplayTranscript = Schema.Struct({
@@ -217,7 +212,7 @@ function replayRunnerError(
 
 export function makeCursorAgentSdkReplayRunner(
   transcript: CursorAgentSdkReplayTranscript,
-): CursorAgentSdk.CursorAgentSdkRunnerShape {
+): CursorAgentSdk.CursorAgentSdkRunner["Service"] {
   let cursor = 0;
   let failure: CursorAgentSdkReplayError | null = null;
   let cursorAdvanced = makeSignal();
@@ -495,7 +490,7 @@ export function makeCursorAgentSdkReplayRunner(
 function layerCursorAgentSdkReplay(
   transcript: CursorAgentSdkReplayTranscript,
   options?: {
-    readonly runner?: CursorAgentSdk.CursorAgentSdkRunnerShape;
+    readonly runner?: CursorAgentSdk.CursorAgentSdkRunner["Service"];
     readonly assertCompleteOnFinalize?: boolean;
   },
 ): Layer.Layer<CursorAgentSdk.CursorAgentSdkRunner> {
@@ -513,124 +508,35 @@ function layerCursorAgentSdkReplay(
   );
 }
 
-function makeReplayServerConfig(
-  scenario: string,
-): Effect.Effect<
-  ServerConfig.ServerConfig["Service"],
-  PlatformError.PlatformError,
-  FileSystem.FileSystem | Path.Path
-> {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const baseDir = yield* fs.makeTempDirectory({
-      prefix: `t3-orchestration-v2-cursor-${scenario}-`,
-    });
-    const stateDir = path.join(baseDir, "userdata");
-    const logsDir = path.join(stateDir, "logs");
-    const providerLogsDir = path.join(logsDir, "provider");
-    const terminalLogsDir = path.join(logsDir, "terminals");
-    const attachmentsDir = path.join(stateDir, "attachments");
-    const environmentThemesDir = path.join(stateDir, "themes");
-    const worktreesDir = path.join(baseDir, "worktrees");
-    const providerStatusCacheDir = path.join(baseDir, "caches");
-    for (const directory of [
-      stateDir,
-      logsDir,
-      providerLogsDir,
-      terminalLogsDir,
-      attachmentsDir,
-      environmentThemesDir,
-      worktreesDir,
-      providerStatusCacheDir,
-    ]) {
-      yield* fs.makeDirectory(directory, { recursive: true });
-    }
-    return {
-      logLevel: "Error",
-      traceMinLevel: "Info",
-      traceTimingEnabled: true,
-      traceBatchWindowMs: 200,
-      traceMaxBytes: 10 * 1024 * 1024,
-      traceMaxFiles: 10,
-      otelEnvironment: OtelEnvironment.none,
-      otlpTracesUrl: undefined,
-      otlpMetricsUrl: undefined,
-      otlpLogsUrl: undefined,
-      otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
-      otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
-      otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
-      mode: "web",
-      port: 0,
-      host: undefined,
-      cwd: process.cwd(),
-      baseDir,
-      staticDir: undefined,
-      devUrl: undefined,
-      devAllowedOrigins: [],
-      noBrowser: false,
-      startupPresentation: "browser",
-      tailscaleServeEnabled: false,
-      tailscaleServePort: 443,
-      desktopBootstrapToken: undefined,
-      autoBootstrapProjectFromCwd: false,
-      logWebSocketEvents: false,
-      stateDir,
-      dbPath: path.join(stateDir, "state.sqlite"),
-      keybindingsConfigPath: path.join(stateDir, "keybindings.json"),
-      settingsPath: path.join(stateDir, "settings.json"),
-      providerStatusCacheDir,
-      worktreesDir,
-      attachmentsDir,
-      browserArtifactsDir: path.join(stateDir, "browser-artifacts"),
-      environmentThemesDir,
-      logsDir,
-      serverLogPath: path.join(logsDir, "server.log"),
-      serverTracePath: path.join(logsDir, "server.trace.ndjson"),
-      providerLogsDir,
-      providerEventLogPath: path.join(providerLogsDir, "events.log"),
-      terminalLogsDir,
-      anonymousIdPath: path.join(stateDir, "anonymous-id"),
-      environmentIdPath: path.join(stateDir, "environment-id"),
-      serverRuntimeStatePath: path.join(stateDir, "server-runtime.json"),
-      secretsDir: path.join(stateDir, "secrets"),
-    };
-  });
-}
-
 export function layer(
   transcript: CursorAgentSdkReplayTranscript,
   options?: {
-    readonly runner?: CursorAgentSdk.CursorAgentSdkRunnerShape;
+    readonly runner?: CursorAgentSdk.CursorAgentSdkRunner["Service"];
     readonly assertCompleteOnFinalize?: boolean;
   },
 ) {
-  const layerServerConfig = Layer.effect(
-    ServerConfig.ServerConfig,
-    makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
-  ).pipe(Layer.provide(NodeServices.layer));
-  // Skill discovery also scans user roots under HOME; an empty HOME keeps
-  // replays from picking up the host's own skills.
+  // Empty HOME prevents skill discovery from using the host's skills.
   const layerHostEnvironment = Layer.effect(
-    HostProcessEnvironment,
+    HostProcess.Environment,
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-replay-home-" });
       return { HOME: home };
     }).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  return ProviderAdapterRegistry.layerFromDrivers({
-    drivers: [CursorAdapterV2Driver],
-    configMap: {
-      [CURSOR_DEFAULT_INSTANCE_ID]: {
-        driver: CURSOR_DRIVER_KIND,
-      },
-    },
-  }).pipe(
+  return ProviderAdapterRegistry.layerFromAdaptersEffect(
+    Effect.gen(function* () {
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId: CURSOR_DEFAULT_INSTANCE_ID,
+        environment: yield* HostProcess.Environment,
+      });
+      return [adapter];
+    }),
+  ).pipe(
     Layer.provide(
       Layer.mergeAll(
         layerCursorAgentSdkReplay(transcript, options),
-        layerServerConfig,
+        TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
         layerHostEnvironment,
         NodeServices.layer,
         IdAllocator.layer,
@@ -692,7 +598,6 @@ function sanitizeReplayValue(
   if (typeof value !== "object" || value === null) {
     return value;
   }
-  // Keys too: grep results are keyed by workspace path.
   return Object.fromEntries(
     Object.entries(value).map(([key, entry]) => [
       sanitizeReplayText(key, replacements),
@@ -718,7 +623,7 @@ function recordingRuntimePolicy(input: {
   readonly cwd: string;
   readonly interactionMode: "default" | "plan";
   readonly override?: Pick<RuntimePolicyV2Override, "approvalPolicy" | "sandboxPolicy">;
-}): ProviderAdapterV2RuntimePolicy {
+}): ProviderAdapter.ProviderAdapterV2RuntimePolicy {
   return {
     runtimeMode: "full-access",
     interactionMode: input.interactionMode,
@@ -746,14 +651,11 @@ class CursorReplayRecordingError extends Schema.TaggedError<CursorReplayRecordin
 interface CursorReplayRecordingInput {
   readonly scenario: string;
   readonly prompts: ReadonlyArray<string>;
-  /** Stable transcript representation when runtime-only paths were substituted into prompts. */
   readonly transcriptPrompts?: ReadonlyArray<string>;
   readonly modelSelection: ModelSelection;
   readonly cwd: string;
-  /** Stable fixture cwd used to sanitize runtime-only workspace paths in recorded updates. */
   readonly transcriptCwd?: string;
   readonly interactionMode?: "default" | "plan";
-  /** The replay fixture's policy override, so the recorded agent.open frame matches replay. */
   readonly runtimePolicyOverride?: Pick<
     RuntimePolicyV2Override,
     "approvalPolicy" | "sandboxPolicy"
@@ -764,11 +666,6 @@ interface CursorReplayRecordingInput {
   readonly restartBeforePromptIndex?: number;
 }
 
-/**
- * Records a live Cursor Agent SDK session as a replay transcript. The SDK is
- * driven through the same runner the adapter uses; its protocol frames are the
- * transcript entries.
- */
 export const recordCursorAgentSdkReplayTranscript = Effect.fn(
   "recordCursorAgentSdkReplayTranscript",
 )(function* (input: CursorReplayRecordingInput) {
@@ -812,13 +709,14 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
         : { override: input.runtimePolicyOverride }),
     }),
     threadId,
+    mcpSession: undefined,
+    platform: yield* HostProcess.Platform,
   });
   const sendOptions = {
     model: cursorSdkModelSelection(input.modelSelection),
     mode: interactionMode === "plan" ? "plan" : "agent",
   } as const;
-  // Agents sometimes search the workspace's parent too; map it to /tmp so the
-  // recording host's temp layout stays out of the fixture.
+  // Agents search parent directories too; normalize the recording host's temp layout.
   const replacements: ReadonlyArray<readonly [string, string]> = [
     [input.cwd, input.transcriptCwd ?? `/tmp/cursor-replay-${input.scenario}`],
     [input.cwd.slice(0, input.cwd.lastIndexOf("/")), "/tmp"],
@@ -860,10 +758,7 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
     }
   };
 
-  // In a mid-tool interrupt recording, frames after the first tool-call-started
-  // are held until run.cancel is recorded, so the cancel directly follows its
-  // trigger. Holding appends rather than waits: updates can arrive while send
-  // is still flushing them, and blocking there would never return.
+  // Hold frames after tool-call-started until run.cancel. Append without waiting because updates can arrive during send.
   let awaitingToolStart = input.interruptAfterToolStart === true;
   let heldUntilCancel: Array<ProviderReplayEntry> | undefined;
 
@@ -899,7 +794,7 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
         heldUntilCancel = [];
       }
     });
-  const runner = CursorAgentSdk.makeCursorAgentSdkRunner(() => recordFrame);
+  const runner = yield* CursorAgentSdk.makeCursorAgentSdkRunner(() => recordFrame);
 
   const awaitSignal = (signal: Deferred.Deferred<void>, description: string) =>
     Deferred.await(signal).pipe(
@@ -929,17 +824,12 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
             return;
           }
           const first = yield* Deferred.succeed(toolStarted, undefined);
-          // Also hold the SDK's callback until the cancel is sent, as the async
-          // recorder did: with the tool left running, all three live probes hit
-          // the AbortError described below. Inside send the hold would never
-          // return, so updates flushed there rely on recordFrame's ordering.
           if (first && sent) {
             yield* Deferred.await(cancelSent);
           }
         }),
     });
     sent = true;
-    // Wait on the run before cancelling it, as the adapter does.
     const waiting = yield* run.wait.pipe(Effect.forkChild({ startImmediately: true }));
     if (interruptAfterRunStart) {
       yield* awaitSignal(firstUpdate, "Cursor SDK run activity before interrupt");
@@ -947,10 +837,7 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
     }
     if (input.interruptAfterToolStart === true) {
       yield* awaitSignal(toolStarted, "Cursor SDK tool-call-started before interrupt");
-      // Cancelling synchronously from the SDK's tool-call-started callback
-      // leaves an unhandled AbortError inside @cursor/sdk that kills the
-      // process (reproduced on 1.0.22, 1.0.31, and 1.0.32). Cancelling from a
-      // later timer was clean in the same probes; 10 ms is that deferral.
+      // Synchronous tool-call-started cancellation crashes @cursor/sdk with AbortError (1.0.22, 1.0.31, 1.0.32); defer 10 ms.
       yield* Effect.sleep("10 millis");
       const cancelling = yield* run.cancel.pipe(Effect.forkChild({ startImmediately: true }));
       yield* Deferred.succeed(cancelSent, undefined);

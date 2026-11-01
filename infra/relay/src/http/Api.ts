@@ -66,7 +66,6 @@ import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
-import * as HookForwarder from "../hooks/HookForwarder.ts";
 import * as HeldHooks from "../hooks/HeldHooks.ts";
 import * as HookInbox from "../hooks/HookInbox.ts";
 import * as LiveActivities from "../agentActivity/LiveActivities.ts";
@@ -75,39 +74,18 @@ import * as AgentActivityPublisher from "../agentActivity/AgentActivityPublisher
 import * as EnvironmentConnector from "../environments/EnvironmentConnector.ts";
 import * as EnvironmentLinker from "../environments/EnvironmentLinker.ts";
 import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
+import * as ManagedTunnelLimits from "../environments/ManagedTunnelLimits.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
+import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
 import { withSpanAttributes } from "../observability.ts";
 import { isRelayHookPath, redactRelayHookUrl } from "../hooks/HookForwarder.ts";
 import * as RelayDb from "../db.ts";
 
-// Delegated thread IDs carry escaped command provenance and exceed the router's
-// default 100-character path parameter limit. Match the environment server.
+// Delegated IDs exceed the router's default 100-character limit; match the environment server.
 export const RELAY_HTTP_ROUTER_CONFIG = {
   maxParamLength: 512,
-} as const;
-
-const relayCorsAllowedMethods = ["GET", "POST", "DELETE", "OPTIONS"] as const;
-const relayCorsAllowedHeaders = [
-  "authorization",
-  "b3",
-  "traceparent",
-  "content-type",
-  "dpop",
-] as const;
-const relayCorsExposedHeaders = ["traceparent", "www-authenticate"] as const;
-
-const relayCorsHeaders = {
-  "access-control-allow-origin": "*",
-  "access-control-expose-headers": relayCorsExposedHeaders.join(","),
-} as const;
-
-const relayCorsPreflightHeaders = {
-  ...relayCorsHeaders,
-  "access-control-allow-methods": relayCorsAllowedMethods.join(","),
-  "access-control-allow-headers": relayCorsAllowedHeaders.join(","),
-  "access-control-max-age": "86400",
 } as const;
 
 const decodeManagedTunnelRecoveryProof = Schema.decodeUnknownEffect(
@@ -123,6 +101,17 @@ const appendRelayCredentialResponseHeaders = HttpEffect.appendPreResponseHandler
       }),
     ),
 );
+
+// T3 Code hosts never retry sooner than Retry-After, so during a Cloudflare
+// rate limit they wait out the pause instead of retrying into it.
+const appendCloudflareRetryAfter = (error: unknown) => {
+  const retryAfterMillis = ManagedEndpointProvider.cloudflareRetryAfterMillis(error);
+  if (retryAfterMillis === undefined) return Effect.void;
+  const seconds = String(Math.max(1, Math.ceil(retryAfterMillis / 1000)));
+  return HttpEffect.appendPreResponseHandler((_request, response) =>
+    Effect.succeed(HttpServerResponse.setHeader(response, "retry-after", seconds)),
+  );
+};
 
 const appendRelayDpopChallengeHeader = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(
@@ -146,6 +135,13 @@ const appendRelayTraceContextResponseHeader = Effect.gen(function* () {
   );
 }).pipe(Effect.ignore);
 
+const relayCorsMiddleware = HttpMiddleware.cors({
+  allowedMethods: ["GET", "POST", "DELETE", "OPTIONS"],
+  allowedHeaders: ["authorization", "b3", "traceparent", "content-type", "dpop"],
+  exposedHeaders: ["traceparent", "www-authenticate"],
+  maxAge: 86_400,
+});
+
 export const layerCors = HttpRouter.middleware(
   Effect.fnUntraced(function* <E, R>(
     httpEffect: Effect.Effect<
@@ -155,18 +151,10 @@ export const layerCors = HttpRouter.middleware(
     >,
   ) {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    // Public webhook forwarding is server-to-server: no preflight, no CORS grants.
     if (isRelayHookPath(request.url)) {
       return yield* httpEffect;
     }
-    if (request.method === "OPTIONS") {
-      return HttpServerResponse.empty({
-        status: 204,
-        headers: relayCorsPreflightHeaders,
-      });
-    }
-    const response = yield* httpEffect;
-    return HttpServerResponse.setHeaders(response, relayCorsHeaders);
+    return yield* relayCorsMiddleware(httpEffect);
   }),
   { global: true },
 );
@@ -183,20 +171,10 @@ export const layerDocsRedirectRoute = HttpRouter.add(
   HttpServerResponse.redirect("/docs"),
 );
 
-// Shorter than the mobile client's 10s request timeout on purpose: when a
-// request hangs (e.g. a stuck upstream query), the client would otherwise
-// abort first, the invocation would die with the request span still open, and
-// the batched spans would never export — leaving no server-side trace at all.
-// Failing server-side first turns the hang into a completed 504 whose trace
-// contains the exact child span that stalled, and the response still carries
-// the traceparent back to the client.
-export const RELAY_REQUEST_DEADLINE_MS = 9_000;
-/**
- * Webhook forwarding reads a body of up to 1 MiB, waits up to the upstream
- * timeout, and may then hold the request, so it needs more room than an API
- * call; cutting it off before the hold would drop a request it should keep.
- */
-export const RELAY_HOOK_REQUEST_DEADLINE_MS = 25_000;
+// Finish before the mobile client's 10 s timeout so request cancellation cannot discard unexported spans.
+const RELAY_REQUEST_DEADLINE_MS = 9_000;
+/** Allow body reading, upstream wait, and inbox hold; an API-sized deadline would drop held webhooks. */
+const RELAY_HOOK_REQUEST_DEADLINE_MS = 25_000;
 
 const relayRequestDeadline = <E, R>(
   httpEffect: Effect.Effect<
@@ -210,76 +188,92 @@ const relayRequestDeadline = <E, R>(
     Effect.timeoutOption(Duration.millis(deadlineMs)),
     Effect.flatMap(
       Option.match({
-        onNone: () =>
-          Effect.gen(function* () {
-            const request = yield* HttpServerRequest.HttpServerRequest;
-            yield* Effect.logError("relay request exceeded deadline", {
-              "http.method": request.method,
-              "http.url": request.url,
-              "relay.request.deadline_ms": deadlineMs,
-            });
-            yield* Effect.annotateCurrentSpan({
-              "relay.request.deadline_exceeded": true,
-            });
-            return HttpServerResponse.jsonUnsafe(
-              { error: "relay_request_deadline_exceeded" },
-              { status: 504 },
-            );
-          }),
+        // The enclosing operation owns the span for this inline handler.
+        onNone: Effect.fnUntraced(function* () {
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          yield* Effect.logError("relay request exceeded deadline", {
+            "http.method": request.method,
+            "http.url": request.url,
+            "relay.request.deadline_ms": deadlineMs,
+          });
+          yield* Effect.annotateCurrentSpan({
+            "relay.request.deadline_exceeded": true,
+          });
+          return HttpServerResponse.jsonUnsafe(
+            { error: "relay_request_deadline_exceeded" },
+            { status: 504 },
+          );
+        }),
         onSome: Effect.succeed,
       }),
     ),
   );
 
-/** Trace context headers in every format the tracer reads (W3C and B3). */
 const SENDER_TRACE_HEADER = /^(traceparent|tracestate|b3|x-b3-.*)$/i;
 
-export const traceRelayHttpRequest = <E, R>(
+// Where the request entered Cloudflare's network. The Worker runs near its
+// database, not at this edge, so these are the only way to split relay
+// latency by where users are.
+const annotateRelayEdgeLocation = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const cf: unknown = request.source instanceof Request ? Reflect.get(request.source, "cf") : null;
+  if (typeof cf !== "object" || cf === null) return;
+  const attributes: Record<string, string> = {};
+  for (const key of ["colo", "country", "continent"] as const) {
+    const value: unknown = Reflect.get(cf, key);
+    if (typeof value === "string" && value) attributes[`relay.edge.${key}`] = value;
+  }
+  yield* Effect.annotateCurrentSpan(attributes);
+});
+
+// The method-named server span is created below; this wrapper must not add another span.
+const traceRelayHttpRequest = Effect.fnUntraced(function* <E, R>(
   httpEffect: Effect.Effect<
     HttpServerResponse.HttpServerResponse,
     E,
     HttpServerRequest.HttpServerRequest | R
   >,
-) =>
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const traced = appendRelayTraceContextResponseHeader.pipe(
-      Effect.andThen(relayRequestDeadline(httpEffect)),
-    );
-    if (!isRelayHookPath(request.url)) {
-      // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
-      return yield* HttpMiddleware.tracer(traced).pipe(Effect.ensuring(Effect.yieldNow));
-    }
-    // Hook URLs carry a secret token: the tracer and deadline log see a redacted
-    // request, while the route itself still receives the original. A webhook
-    // sender's trace context is dropped, so it cannot pick the trace our relay
-    // and environment spans land in.
-    const redacted = request.modify({
-      url: redactRelayHookUrl(request.url),
-      headers: Headers.removeMany(
-        request.headers,
-        Object.keys(request.headers).filter((name) => SENDER_TRACE_HEADER.test(name)),
-      ),
-    });
-    return yield* HttpMiddleware.tracer(
-      appendRelayTraceContextResponseHeader.pipe(
-        Effect.andThen(
-          relayRequestDeadline(
-            httpEffect.pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request)),
-            RELAY_HOOK_REQUEST_DEADLINE_MS,
-          ),
-        ),
-      ),
-    ).pipe(
-      Effect.provideService(HttpServerRequest.HttpServerRequest, redacted),
-      // The worker disables its own span for hook paths; this one is ours.
+) {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const traced = annotateRelayEdgeLocation.pipe(
+    Effect.andThen(appendRelayTraceContextResponseHeader),
+    Effect.andThen(relayRequestDeadline(httpEffect)),
+  );
+  if (!isRelayHookPath(request.url)) {
+    return yield* HttpMiddleware.tracer(traced).pipe(
       Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
+      // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
       Effect.ensuring(Effect.yieldNow),
     );
+  }
+  // Hook URLs carry a secret token: the tracer and deadline log see a redacted
+  // request, while the route itself still receives the original. A webhook
+  // sender's trace context is dropped, so it cannot pick the trace our relay
+  // and environment spans land in.
+  const redacted = request.modify({
+    url: redactRelayHookUrl(request.url),
+    headers: Headers.removeMany(
+      request.headers,
+      Object.keys(request.headers).filter((name) => SENDER_TRACE_HEADER.test(name)),
+    ),
   });
+  return yield* HttpMiddleware.tracer(
+    annotateRelayEdgeLocation.pipe(
+      Effect.andThen(appendRelayTraceContextResponseHeader),
+      Effect.andThen(
+        relayRequestDeadline(
+          httpEffect.pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request)),
+          RELAY_HOOK_REQUEST_DEADLINE_MS,
+        ),
+      ),
+    ),
+  ).pipe(
+    Effect.provideService(HttpServerRequest.HttpServerRequest, redacted),
+    Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
+    Effect.ensuring(Effect.yieldNow),
+  );
+});
 
-// Webhook senders put shared secrets and signatures in headers such as
-// x-hub-signature-256, stripe-signature, x-gitlab-token and x-webhook-key.
 const layerWebhookHeaderRedaction = Layer.effect(
   Headers.CurrentRedactedNames,
   Effect.map(Headers.CurrentRedactedNames, (names) => [
@@ -490,38 +484,37 @@ export const layerHealthApi = HttpApiBuilder.group(
   }),
 );
 
-export const revokeEnvironmentLinkRecord = Effect.fn(
-  "relay.api.client.revokeEnvironmentLinkRecord",
-)(function* (input: {
-  readonly userId: string;
-  readonly environmentId: string;
-  readonly environmentPublicKey: string;
-}) {
-  const transactions = yield* RelayDb.RelayTransactions;
-  const links = yield* EnvironmentLinks.EnvironmentLinks;
-  const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
-  return yield* transactions.withTransaction(
-    Effect.gen(function* () {
-      const revoked = yield* links.revokeForUser({
-        userId: input.userId,
-        environmentId: input.environmentId,
-      });
-      if (revoked) {
-        yield* credentials.revokeForEnvironmentPublicKey({
+const revokeEnvironmentLinkRecord = Effect.fn("relay.api.client.revokeEnvironmentLinkRecord")(
+  function* (input: {
+    readonly userId: string;
+    readonly environmentId: string;
+    readonly environmentPublicKey: string;
+  }) {
+    const transactions = yield* RelayDb.RelayTransactions;
+    const links = yield* EnvironmentLinks.EnvironmentLinks;
+    const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
+    return yield* transactions.withTransaction(
+      Effect.gen(function* () {
+        const revoked = yield* links.revokeForUser({
+          userId: input.userId,
           environmentId: input.environmentId,
-          environmentPublicKey: input.environmentPublicKey,
         });
-      }
-      return revoked;
-    }),
-  );
-});
+        if (revoked) {
+          yield* credentials.revokeForEnvironmentPublicKey({
+            environmentId: input.environmentId,
+            environmentPublicKey: input.environmentPublicKey,
+          });
+        }
+        return revoked;
+      }),
+    );
+  },
+);
 
 export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnvironmentRecord")(
   function* (input: {
     readonly userId: string;
     readonly environmentId: string;
-    /** The stage's tunnel-name namespace, to find this link's held webhook requests. */
     readonly managedEndpointNamespace?: string | undefined;
   }) {
     const links = yield* EnvironmentLinks.EnvironmentLinks;
@@ -542,17 +535,12 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
             environmentId: link.environmentId,
             environmentPublicKey: link.environmentPublicKey,
           });
-    // External teardown cannot share the SQL transaction. Run it only after
-    // revocation commits so a database failure leaves a fully usable active
-    // link. Still run teardown when the link is already revoked, allowing a
-    // retry to finish cleanup after an earlier Cloudflare failure.
+    // Deprovision after revocation commits; retry even if already revoked to finish failed Cloudflare cleanup.
     const deprovisioned = yield* managedEndpointProvider.deprovision({
       userId: input.userId,
       environmentId: input.environmentId,
       target: deprovisionTarget,
     });
-    // Requests held for this link's endpoint go with it. Best effort: the link
-    // is already gone, and its inbox drops anything left after its TTL.
     const endpointKey =
       deprovisionTarget && input.managedEndpointNamespace
         ? HeldHooks.endpointKeyForTunnelName(
@@ -707,6 +695,7 @@ export const recoverEnvironmentTunnelRecord = Effect.fn(
     userId: input.userId,
     environmentId: input.environmentId,
     origin: input.origin,
+    reuseReadyTunnel: true,
   });
   const recoveredTunnelId = recovered.runtime.tunnelId;
   if (
@@ -836,6 +825,8 @@ export const layerClientApi = HttpApiBuilder.group(
     const links = yield* EnvironmentLinks.EnvironmentLinks;
     const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
     const devices = yield* Devices.Devices;
+    const t3Chat = yield* T3ChatAccounts.T3ChatAccounts;
+    const tunnelLimits = yield* ManagedTunnelLimits.ManagedTunnelLimits;
     return handlers
       .handle(
         "listEnvironments",
@@ -887,6 +878,7 @@ export const layerClientApi = HttpApiBuilder.group(
               cloudMintPublicKey: config.cloudMintPublicKey,
             };
           },
+          Effect.tapError(appendCloudflareRetryAfter),
           mapErrorTags({
             EnvironmentLinkProofExpired: (_error, traceId) =>
               new RelayEnvironmentLinkProofExpiredError({
@@ -905,10 +897,11 @@ export const layerClientApi = HttpApiBuilder.group(
                 reason: "managed_endpoint_not_configured",
                 traceId,
               }),
-            ManagedEndpointProvisioningFailed: (_error, traceId) =>
+            ManagedEndpointProvisioningFailed: (error, traceId) =>
               new RelayEnvironmentLinkUnavailableError({
                 code: "environment_link_unavailable",
                 reason: "managed_endpoint_provisioning_failed",
+                provisioningStage: error.stage,
                 traceId,
               }),
             ManagedEndpointOriginNotAllowed: (_error, traceId) =>
@@ -952,9 +945,9 @@ export const layerClientApi = HttpApiBuilder.group(
           const { userId } = yield* RelayClientPrincipal;
           const now = yield* DateTime.now;
           const expiresAt = DateTime.add(now, { minutes: 5 });
-          const jti = yield* crypto.randomUUIDv4.pipe(
-            Effect.catch(() => relayInternalErrorResponse("internal_error")),
-          );
+          const jti = yield* crypto
+            .randomUUIDv4()
+            .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
           const challenge = yield* relayTokens
             .issueLinkChallenge({
               userId,
@@ -991,9 +984,7 @@ export const layerClientApi = HttpApiBuilder.group(
         Effect.fn("relay.api.client.releaseEnvironmentTunnel")(function* (args) {
           const { params } = args;
           const { userId } = yield* RelayClientPrincipal;
-          // ok mirrors whether the connector token is now dead: false means a
-          // concurrent provision kept the recorded tunnel alive, so the caller
-          // must not discard its runtime config.
+          // False means concurrent provisioning retained the tunnel; the caller must keep its runtime config.
           const released = yield* managedEndpointProvider
             .release({
               userId,
@@ -1001,6 +992,49 @@ export const layerClientApi = HttpApiBuilder.group(
             })
             .pipe(Effect.catch(() => relayInternalErrorResponse("upstream_unavailable")));
           return { ok: released };
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "getT3ChatLink",
+        Effect.fn("relay.api.client.getT3ChatLink")(function* () {
+          yield* appendRelayCredentialResponseHeaders;
+          const { userId } = yield* RelayClientPrincipal;
+          const link = t3Chat.available
+            ? yield* t3Chat
+                .getLink({ userId })
+                .pipe(Effect.catch(() => relayInternalErrorResponse("upstream_unavailable")))
+            : null;
+          const maxTunnelsOverride = yield* tunnelLimits
+            .getOverride({ userId })
+            .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
+          return {
+            available: t3Chat.available,
+            link,
+            ...(maxTunnelsOverride === null ? {} : { maxTunnelsOverride }),
+          };
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "createT3ChatLinkRequest",
+        Effect.fn("relay.api.client.createT3ChatLinkRequest")(function* () {
+          const { userId } = yield* RelayClientPrincipal;
+          const url = yield* t3Chat.createLinkUrl({ userId }).pipe(
+            Effect.catchTags({
+              T3ChatNotConfigured: () => relayInternalErrorResponse("internal_error"),
+              ClerkUserLookupFailed: () => relayInternalErrorResponse("upstream_unavailable"),
+            }),
+          );
+          return { url };
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "unlinkT3Chat",
+        Effect.fn("relay.api.client.unlinkT3Chat")(function* () {
+          const { userId } = yield* RelayClientPrincipal;
+          yield* t3Chat
+            .unlink({ userId })
+            .pipe(Effect.catch(() => relayInternalErrorResponse("upstream_unavailable")));
+          return { ok: true };
         }, mapRelayCommonApiErrors("not_authorized")),
       );
   }),
@@ -1043,9 +1077,9 @@ export const layerTokenApi = HttpApiBuilder.group(
         );
         const now = yield* DateTime.now;
         const expiresAt = DateTime.addDuration(now, RelayTokens.RELAY_DPOP_ACCESS_TOKEN_TTL);
-        const jti = yield* crypto.randomUUIDv4.pipe(
-          Effect.catch(() => relayInternalErrorResponse("internal_error")),
-        );
+        const jti = yield* crypto
+          .randomUUIDv4()
+          .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
         return {
           access_token: yield* relayTokens
             .issueDpopAccessToken({
@@ -1105,10 +1139,12 @@ export const layerDpopClientApi = HttpApiBuilder.group(
                 reason: error.reason,
                 traceId,
               }),
-            EnvironmentMintRequestFailed: (_error, traceId) =>
+            EnvironmentMintRequestFailed: (error, traceId) =>
               new RelayEnvironmentEndpointUnavailableError({
                 code: "environment_endpoint_unavailable",
                 reason: "endpoint_request_failed",
+                ...(error.endpointFailure ? { endpointFailure: error.endpointFailure } : {}),
+                ...(error.endpointStatus ? { endpointStatus: error.endpointStatus } : {}),
                 traceId,
               }),
             EnvironmentMintRequestTimedOut: (_error, traceId) =>
@@ -1148,10 +1184,12 @@ export const layerDpopClientApi = HttpApiBuilder.group(
                 reason: error.reason,
                 traceId,
               }),
-            EnvironmentMintRequestFailed: (_error, traceId) =>
+            EnvironmentMintRequestFailed: (error, traceId) =>
               new RelayEnvironmentEndpointUnavailableError({
                 code: "environment_endpoint_unavailable",
                 reason: "endpoint_request_failed",
+                ...(error.endpointFailure ? { endpointFailure: error.endpointFailure } : {}),
+                ...(error.endpointStatus ? { endpointStatus: error.endpointStatus } : {}),
                 traceId,
               }),
             EnvironmentMintRequestTimedOut: (_error, traceId) =>
@@ -1178,8 +1216,9 @@ export const layerServerApi = HttpApiBuilder.group(
     const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
     const publishSignatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
     const heldHooks = yield* HeldHooks.HeldHooks;
-    const requireOwnEnvironment = (environmentId: string) =>
-      Effect.gen(function* () {
+    const requireOwnEnvironment =
+      /* Request instrumentation already owns the span; keep this helper in that context. */
+      Effect.fnUntraced(function* (environmentId: string) {
         const principal = yield* RelayEnvironmentPrincipal;
         if (principal.environmentId !== environmentId) {
           return yield* new HttpApiError.Unauthorized({});
@@ -1208,12 +1247,6 @@ export const layerServerApi = HttpApiBuilder.group(
           });
         },
         mapErrorTags({
-          EnvironmentPublishPublicKeyMissing: (_error, traceId) =>
-            new RelayAuthInvalidError({
-              code: "auth_invalid",
-              reason: "not_authorized",
-              traceId,
-            }),
           EnvironmentPublishSignatureExpired: (_error, traceId) =>
             new RelayAgentActivityPublishProofExpiredError({
               code: "agent_activity_publish_proof_expired",
@@ -1347,6 +1380,7 @@ export const layerServerApi = HttpApiBuilder.group(
               origin: payload.origin,
             });
           },
+          Effect.tapError(appendCloudflareRetryAfter),
           Effect.catchTags({
             ManagedEndpointOriginNotAllowed: () => Effect.fail(new HttpApiError.Unauthorized({})),
             ManagedEndpointProvisioningNotConfigured: () =>
@@ -1382,6 +1416,7 @@ export const layerServerApi = HttpApiBuilder.group(
               origin: payload.origin,
             });
           },
+          Effect.tapError(appendCloudflareRetryAfter),
           Effect.catchTags({
             ManagedEndpointOriginNotAllowed: () => Effect.fail(new HttpApiError.Unauthorized({})),
             ManagedEndpointProvisioningNotConfigured: () =>

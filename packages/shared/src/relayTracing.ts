@@ -18,8 +18,10 @@ export interface RelayClientTracingResource {
   readonly serviceName: string;
   readonly serviceVersion?: string;
   readonly runtime: string;
+  readonly serviceInstanceId: string;
   readonly client: string;
   readonly component?: string;
+  readonly attributes?: Readonly<Record<string, string>> | undefined;
 }
 
 export class RelayClientTracer extends Context.Reference(
@@ -29,6 +31,11 @@ export class RelayClientTracer extends Context.Reference(
   },
 ) {}
 
+class LocalTracer extends Context.Reference("@t3tools/shared/relayTracing/LocalTracer", {
+  defaultValue: () => Option.none<Tracer.Tracer>(),
+}) {}
+
+/** Export only T3 Connect spans; wrap local work with {@link withLocalTracing}. */
 export const withRelayClientTracing = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
@@ -36,7 +43,26 @@ export const withRelayClientTracing = <A, E, R>(
     Effect.flatMap(
       Option.match({
         onNone: () => effect,
-        onSome: (tracer) => effect.pipe(Effect.provideService(Tracer.Tracer, tracer)),
+        onSome: (tracer) =>
+          Tracer.Tracer.pipe(
+            Effect.flatMap((local) =>
+              effect.pipe(
+                Effect.provideService(Tracer.Tracer, tracer),
+                Effect.provideService(LocalTracer, Option.some(local)),
+              ),
+            ),
+          ),
+      }),
+    ),
+  );
+
+/** Keep local work in the local trace without exporting machine details through relay spans. */
+export const withLocalTracing = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  LocalTracer.pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => effect,
+        onSome: (local) => effect.pipe(Effect.provideService(Tracer.Tracer, local)),
       }),
     ),
   );
@@ -114,9 +140,7 @@ function nonInterferingTracer(delegate: Tracer.Tracer): Tracer.Tracer {
       span.end = (endTime, exit) => {
         try {
           end(endTime, traceSafeExit(exit));
-        } catch {
-          // Telemetry is best-effort and must never change application behavior.
-        }
+        } catch {}
       };
       return span;
     },
@@ -143,9 +167,11 @@ export function layer(
       serviceVersion: resource.serviceVersion,
       attributes: {
         "service.namespace": "t3code",
+        "service.instance.id": resource.serviceInstanceId,
         "service.runtime": resource.runtime,
-        "service.component": resource.component ?? "relay-client",
-        "t3.client.surface": resource.client,
+        "t3code.component": resource.component ?? "relay-client",
+        "t3code.client.surface": resource.client,
+        ...resource.attributes,
       },
     },
   }).pipe(Layer.provide(OtlpSerialization.layerJson));

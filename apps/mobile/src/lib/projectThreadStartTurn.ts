@@ -9,8 +9,10 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
-import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
-import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
+import {
+  deriveThreadTitleSeed,
+  threadTitleTextFromPrompt,
+} from "@t3tools/client-runtime/operations";
 
 import type { UploadedMobileAttachment } from "./attachmentUpload";
 
@@ -22,8 +24,8 @@ export interface ProjectThreadStartTurnSpec {
   readonly messageId: string;
   readonly createdAt: string;
   readonly text: string;
+  readonly titleText?: string;
   readonly context?: OrchestrationMessageContext;
-  /** New uploads or server-owned attachments from a cancelled setup. */
   readonly uploadedAttachments: ReadonlyArray<UploadedMobileAttachment | ChatAttachment>;
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
@@ -32,17 +34,14 @@ export interface ProjectThreadStartTurnSpec {
   readonly branch: string | null;
   readonly worktreePath: string | null;
   readonly startFromOrigin: boolean;
-  /** Generated temp branch for worktree mode; unused for local mode. */
   readonly worktreeBranchName: string;
 }
 
-/**
- * Single source of the `thread.turn.start` bootstrap payload used to create a
- * thread from a project draft — shared by the immediate send path and the
- * offline outbox drain so both deliver identical commands.
- */
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
-  const title = deriveThreadTitleSeed({ text: spec.text, attachments: spec.uploadedAttachments });
+  const title = deriveThreadTitleSeed({
+    text: spec.titleText ?? spec.text,
+    attachments: spec.uploadedAttachments,
+  });
   const isWorktree = spec.workspaceMode === "worktree";
   return {
     commandId: CommandId.make(spec.commandId),
@@ -87,11 +86,6 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
 }
 
 export function deriveThreadTitleFromPrompt(value: string): string {
-  const trimmed = assistantCitationsToPlainText(value).trim();
-  if (trimmed.length === 0) {
-    return "New thread";
-  }
-
-  const compact = trimmed.replace(/\s+/g, " ");
-  return compact.length <= 72 ? compact : `${compact.slice(0, 69).trimEnd()}...`;
+  const title = threadTitleTextFromPrompt(value) || "New thread";
+  return title.length <= 72 ? title : `${title.slice(0, 69).trimEnd()}...`;
 }

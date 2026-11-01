@@ -30,27 +30,22 @@ export const SAFE_IMAGE_FILE_EXTENSIONS = new Set([
   ".webp",
 ]);
 
-// Whether `code` is a character the base64 payload may contain, aside from
-// the whitespace handled separately below.
 function isBase64Char(code: number): boolean {
   return (
-    (code >= 0x61 && code <= 0x7a) || // a-z
-    (code >= 0x41 && code <= 0x5a) || // A-Z
-    (code >= 0x30 && code <= 0x39) || // 0-9
-    code === 0x2b || // +
-    code === 0x2f || // /
-    code === 0x3d // =
+    (code >= 0x61 && code <= 0x7a) ||
+    (code >= 0x41 && code <= 0x5a) ||
+    (code >= 0x30 && code <= 0x39) ||
+    code === 0x2b ||
+    code === 0x2f ||
+    code === 0x3d
   );
 }
 
 function isBase64Whitespace(code: number): boolean {
-  return code === 0x0d || code === 0x0a || code === 0x20; // \r \n space
+  return code === 0x0d || code === 0x0a || code === 0x20;
 }
 
-// Data URLs carry the full image payload, so this parser must never run a
-// regex across the payload: V8's regex engine borrows the JS call stack, and
-// matching a multi-megabyte string from a deep call stack (e.g. inside fiber
-// execution) throws "Maximum call stack size exceeded".
+// V8 regexes use the JS stack; scanning image payloads can overflow a deep fiber stack.
 export function parseBase64DataUrl(
   dataUrl: string,
 ): { readonly mimeType: string; readonly base64: string } | null {
@@ -102,8 +97,7 @@ export function parseBase64DataUrl(
   if (base64.length === 0 || base64.length % 4 !== 0) return null;
   const firstPad = base64.indexOf("=");
   if (firstPad !== -1) {
-    // '=' is only valid as one or two trailing padding characters; Node's
-    // decoder would otherwise silently truncate at the first '='.
+    // Node silently truncates at the first =; allow only one or two trailing padding characters.
     if (base64.length - firstPad > 2) return null;
     for (let index = firstPad; index < base64.length; index += 1) {
       if (base64.charCodeAt(index) !== 0x3d) return null;
@@ -122,7 +116,6 @@ export function inferImageExtension(input: { mimeType: string; fileName?: string
     return fromMime;
   }
 
-  // The registry returns bare extensions ("png"); the safe list is dotted.
   const fromMimeExtension = Option.map(Mime.getExtension(input.mimeType), (ext) => `.${ext}`);
   if (Option.isSome(fromMimeExtension) && SAFE_IMAGE_FILE_EXTENSIONS.has(fromMimeExtension.value)) {
     return fromMimeExtension.value;

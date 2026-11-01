@@ -1,15 +1,12 @@
-import { changeRequestUrlFor as changeRequestWebUrl } from "@t3tools/shared/changeRequestUrl";
-export { changeRequestUrlFor as changeRequestWebUrl } from "@t3tools/shared/changeRequestUrl";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import {
-  pullRequestHostOf,
-  type ScopedThreadRef,
-  type SourceControlProviderKind,
-} from "@t3tools/contracts";
+  pullRequestLinkProject,
+  resolveLinkPullRequestInput,
+} from "@t3tools/client-runtime/pull-request-link-input";
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { useRef, useState } from "react";
 
-import { parseChangeRequestUrl } from "~/lib/openPullRequestLink";
-import { parsePullRequestReference } from "~/pullRequestReference";
 import { useProjects, useThreadShell } from "~/state/entities";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -26,11 +23,7 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 
-/**
- * Which thread has the link dialog open, set by whichever entry point asked (command palette,
- * pull-requests surface, detail panel) and rendered once by the chat view so the dialog outlives
- * a palette that closes the moment its command runs.
- */
+// Host in chat to survive command palette dismissal.
 const linkPullRequestDialogThreadAtom = Atom.make<ScopedThreadRef | null>(null).pipe(
   Atom.keepAlive,
   Atom.withLabel("pull-requests:link-dialog-thread"),
@@ -43,12 +36,10 @@ export function openLinkPullRequestDialog(threadRef: ScopedThreadRef): void {
 interface LinkPullRequestDialogProps {
   open: boolean;
   threadRef: ScopedThreadRef;
-  /** The thread's own project: bare numbers resolve against its repository. */
   projectId: string | null;
   onOpenChange: (open: boolean) => void;
 }
 
-/** Mounted once per chat view; shows the dialog for whichever thread asked for it. */
 export function LinkPullRequestDialogHost() {
   const threadRef = useAtomValue(linkPullRequestDialogThreadAtom);
   const thread = useThreadShell(threadRef);
@@ -66,56 +57,6 @@ export function LinkPullRequestDialogHost() {
   );
 }
 
-interface ResolvedLink {
-  readonly host: string;
-  readonly repository: string;
-  readonly number: number;
-  readonly url: string;
-}
-
-/**
- * Which pull request an input names, or why it cannot. A URL carries its own host and
- * repository and may point at any repository on a host this environment has a project for; a
- * bare `#123` can only mean the thread's own repository.
- */
-export function resolveLinkPullRequestInput(input: {
-  readonly reference: string;
-  readonly project: {
-    readonly host: string;
-    readonly repository: string;
-    readonly webUrl: (number: number) => string | null;
-  } | null;
-  readonly hasProject: (reference: ResolvedLink) => boolean;
-}): { link: ResolvedLink } | { error: string } | null {
-  const parsed =
-    parseChangeRequestUrl(input.reference.trim()) !== null
-      ? input.reference.trim()
-      : parsePullRequestReference(input.reference);
-  if (parsed === null) return null;
-  const url = parseChangeRequestUrl(parsed);
-  if (url !== null) {
-    if (!input.hasProject({ ...url, url: parsed })) {
-      return { error: `No project in this environment can read ${url.host}/${url.repository}.` };
-    }
-    return {
-      link: { host: url.host, repository: url.repository, number: url.number, url: parsed },
-    };
-  }
-  const number = Number(parsed);
-  if (!Number.isSafeInteger(number) || number < 1) return null;
-  if (input.project === null) {
-    return { error: "Paste a full URL to link a pull request from another repository." };
-  }
-  const webUrl = input.project.webUrl(number);
-  const webReference = webUrl === null ? null : parseChangeRequestUrl(webUrl);
-  if (webUrl === null || webReference === null) {
-    return { error: "Paste a full URL; this project's host has no known pull request URL." };
-  }
-  return {
-    link: { ...webReference, url: webUrl },
-  };
-}
-
 function LinkPullRequestDialog({
   open,
   threadRef,
@@ -127,66 +68,46 @@ function LinkPullRequestDialog({
   const [dirty, setDirty] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const projects = useProjects();
-  const environmentProjects = useMemo(
-    () => projects.filter((project) => project.environmentId === threadRef.environmentId),
-    [projects, threadRef.environmentId],
+  const ownProject = pullRequestLinkProject(
+    projects.find(
+      (project) => project.environmentId === threadRef.environmentId && project.id === projectId,
+    )?.repositoryIdentity,
   );
-  const ownProject = useMemo(() => {
-    const project = environmentProjects.find((candidate) => candidate.id === projectId);
-    const identity = project?.repositoryIdentity;
-    if (!project || !identity) return null;
-    const repository =
-      identity.displayName ??
-      (identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null);
-    if (repository === null) return null;
-    const kind = identity.provider as SourceControlProviderKind;
-    const host = pullRequestHostOf(identity, kind);
-    return {
-      host,
-      repository,
-      webUrl: (number: number) =>
-        kind === "forgejo" && identity.webUrl
-          ? `${identity.webUrl.replace(/\/+$/, "")}/pulls/${number}`
-          : changeRequestWebUrl(kind, host, repository, number, identity.locator.remoteUrl),
-    };
-  }, [environmentProjects, projectId]);
   const linking = usePullRequestLinking(threadRef.environmentId);
   const [pending, setPending] = useState(false);
 
-  useEffect(() => {
-    if (!open) return;
-    setReference("");
-    setDirty(false);
-    setSubmitError(null);
-    const frame = window.requestAnimationFrame(() => inputRef.current?.focus());
-    return () => window.cancelAnimationFrame(frame);
-  }, [open]);
+  const [openSeen, setOpenSeen] = useState(open);
+  if (openSeen !== open) {
+    setOpenSeen(open);
+    if (open) {
+      setReference("");
+      setDirty(false);
+      setSubmitError(null);
+    }
+  }
 
-  const resolved = useMemo(
-    () =>
-      resolveLinkPullRequestInput({
-        reference,
-        project: ownProject,
-        hasProject: (reference) => linking.canLink(reference.url),
-      }),
-    [linking, ownProject, reference],
-  );
+  const resolved = resolveLinkPullRequestInput({
+    reference,
+    project: ownProject,
+    hasProject: (reference) => linking.canLink(reference.url),
+  });
 
-  const submit = useCallback(async () => {
+  const submit = async () => {
     setDirty(true);
     if (resolved === null || "error" in resolved) return;
     setSubmitError(null);
     setPending(true);
-    try {
-      await linking.changeLink(threadRef, resolved.link.url, true);
-    } catch (error) {
+    const result = await settlePromise(() =>
+      linking.changeLink(threadRef, resolved.link.url, true),
+    );
+    setPending(false);
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
       setSubmitError(error instanceof Error ? error.message : "Could not link the pull request.");
       return;
-    } finally {
-      setPending(false);
     }
     onOpenChange(false);
-  }, [linking, onOpenChange, resolved, threadRef]);
+  };
 
   const validation = !dirty
     ? null
@@ -200,12 +121,12 @@ function LinkPullRequestDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => (pending ? undefined : onOpenChange(next))}>
-      <DialogPopup className="max-w-xl">
+      <DialogPopup className="max-w-xl" initialFocus={inputRef}>
         <DialogHeader>
           <DialogTitle>Link pull request</DialogTitle>
           <DialogDescription>
-            Attach a pull request to this thread. A full URL can point at any repository on a host
-            this environment has a project for.
+            Attach a pull request to this thread by its URL, or by its number for this thread's
+            repository.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

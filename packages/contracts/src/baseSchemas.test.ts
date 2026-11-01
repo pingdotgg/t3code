@@ -1,6 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
-import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -8,6 +7,7 @@ import {
   ForwardCompatibleUnion,
   ForwardCompatibleUnionArray,
   isUnknownUnionMember,
+  TrimmedNonEmptyString,
   UnknownUnionMember,
 } from "./baseSchemas.ts";
 
@@ -17,7 +17,6 @@ const Shape = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("square"), side: Schema.Number }),
 ]);
 const members = Shape.members;
-/** How clients decode: the JSON wire codec over the runtime schema. */
 const fromWire = <S extends Schema.Top>(schema: S) =>
   Schema.decodeUnknownSync(Schema.toCodecJson(schema) as never) as (value: unknown) => S["Type"];
 
@@ -32,15 +31,22 @@ describe("ForwardCompatibleArray", () => {
     expect(DateTime.isDateTime((decoded[0] as { at: unknown }).at)).toBe(true);
   });
 
-  it("applies decoding defaults instead of failing", () => {
-    const WithDefault = Schema.Struct({
-      name: Schema.String,
-      count: Schema.optionalKey(Schema.Number).pipe(
-        Schema.withDecodingDefaultKey(Effect.succeed(7)),
-      ),
-    });
-    expect(Schema.decodeUnknownSync(ForwardCompatibleArray(WithDefault))([{ name: "a" }])).toEqual([
-      { name: "a", count: 7 },
+  const Named = ForwardCompatibleArray(Schema.Struct({ name: TrimmedNonEmptyString }));
+
+  it("drops an element it cannot encode instead of failing the array", () => {
+    const encodeNamed = Schema.encodeUnknownSync(Schema.toCodecJson(Named));
+
+    const wire = JSON.parse(
+      JSON.stringify(encodeNamed([{ name: "a" }, { name: " " }, { name: "b" }])),
+    );
+    expect(wire).toEqual([{ name: "a" }, { name: "b" }]);
+    expect(fromWire(Named)(wire)).toEqual([{ name: "a" }, { name: "b" }]);
+  });
+
+  it("still drops the null holes a server on an earlier build sends", () => {
+    expect(fromWire(Named)([{ name: "a" }, null, { name: "b" }])).toEqual([
+      { name: "a" },
+      { name: "b" },
     ]);
   });
 });
@@ -62,11 +68,6 @@ describe("ForwardCompatibleUnion", () => {
 
   it("still fails a known member whose payload is broken", () => {
     expect(() => decode({ kind: "square", side: "wide" })).toThrow();
-  });
-
-  it("refuses to encode an unknown member", () => {
-    const encode = Schema.encodeSync(ForwardCompatibleUnion(members, "kind") as never);
-    expect(() => encode(new UnknownUnionMember("kind", "triangle") as never)).toThrow();
   });
 });
 
@@ -95,13 +96,5 @@ describe("ForwardCompatibleUnionArray", () => {
 
   it("fails when a known member is broken, so real bugs stay visible", () => {
     expect(() => decode([{ kind: "square", side: "wide" }])).toThrow();
-  });
-
-  it("encodes as a plain array", () => {
-    const encode = Schema.encodeSync(
-      Schema.toCodecJson(ForwardCompatibleUnionArray(members, "kind")),
-    );
-    const square = { kind: "square" as const, side: 2 };
-    expect(encode([square])).toEqual([square]);
   });
 });

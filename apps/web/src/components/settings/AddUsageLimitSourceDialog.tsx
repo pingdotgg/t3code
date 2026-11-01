@@ -1,4 +1,4 @@
-import { type EnvironmentId, UsageLimitSourceId } from "@t3tools/contracts";
+import type { EnvironmentId, UnifiedSettings } from "@t3tools/contracts";
 import { useState } from "react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
@@ -13,42 +13,23 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { sourceIdFromUrl } from "./AddUsageLimitSourceDialog.logic";
+import { SecretInput } from "./SecretInput";
 import { Label } from "../ui/label";
 
-/**
- * Stable per hub and readable in settings.json. Dots and dashes in the host
- * are kept so `foo-bar.com` and `foo.bar.com` do not collide; anything else
- * (a port's colon, a path) is folded to a dash.
- */
-function sourceIdFromUrl(url: string): UsageLimitSourceId {
-  let host = url;
-  try {
-    host = new URL(url).host;
-  } catch {
-    // Keep the raw text; the server reports the bad URL on its row.
-  }
-  const slug = host
-    .toLowerCase()
-    .replace(/[^a-z0-9.-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return UsageLimitSourceId.make(`cliproxy-${slug || "hub"}`);
-}
-
-/**
- * Adds a CLIProxyAPI hub from provider settings on one environment. The
- * management key is sent once and kept in that server's secret store;
- * settings only ever carry a redaction marker for it afterwards.
- */
+/** Send the management key once to server secret storage; settings retain only a redaction marker. */
 export function AddUsageLimitSourceDialog({
   open,
   onOpenChange,
   environmentId,
   environmentLabel,
+  sources,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
+  readonly sources: UnifiedSettings["usageLimitSources"];
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [label, setLabel] = useState("");
@@ -65,8 +46,7 @@ export function AddUsageLimitSourceDialog({
 
   const save = () => {
     if (!canSave) return;
-    const id = sourceIdFromUrl(trimmedUrl);
-    // The patch names only this entry; the server merges it into its map.
+    const id = sourceIdFromUrl(trimmedUrl, sources);
     updateSettings({
       usageLimitSources: {
         [id]: {
@@ -118,10 +98,8 @@ export function AddUsageLimitSourceDialog({
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="usage-source-key">Management key</Label>
-              <Input
+              <SecretInput
                 id="usage-source-key"
-                type="password"
-                autoComplete="off"
                 value={managementKey}
                 onChange={(event) => setManagementKey(event.target.value)}
               />

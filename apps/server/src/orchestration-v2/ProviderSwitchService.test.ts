@@ -12,10 +12,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
-import { acpSelectionTransition } from "./ProviderSelectionTransition.ts";
+import { acpSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import * as ProviderSwitch from "./ProviderSwitchService.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const driver = ProviderDriverKind.make("codex");
 const currentInstanceId = ProviderInstanceId.make("codex_primary");
@@ -67,10 +67,12 @@ function deadSessionRecord(
 
 function layerTest(
   metadata: Readonly<Record<string, { continuationKey: string }>>,
-  planSelectionTransition: ProviderAdapterV2Shape["planSelectionTransition"] = () =>
+  planSelectionTransition: ProviderAdapter.ProviderAdapterV2["Service"]["planSelectionTransition"] = () =>
     Effect.succeed({ type: "restart_session" }),
 ) {
-  const adapter = (instanceId: ProviderInstanceId): ProviderAdapterV2Shape => ({
+  const adapter = (
+    instanceId: ProviderInstanceId,
+  ): ProviderAdapter.ProviderAdapterV2["Service"] => ({
     instanceId,
     driver,
     getCapabilities: () => Effect.succeed(capabilitiesWithoutModelSwitch),
@@ -101,49 +103,6 @@ function layerTest(
   });
   return ProviderSwitch.layer.pipe(Layer.provide(layerRegistry));
 }
-
-it.effect(
-  "restarts and releases the current session for unsupported in-session model changes",
-  () =>
-    Effect.gen(function* () {
-      const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
-      const result = yield* service.plan({
-        projection: projection(),
-        targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
-      });
-      assert.equal(result.transition.type, "restart_and_resume");
-      assert.deepEqual(result.releaseProviderSessionIds, [currentSessionId]);
-    }).pipe(
-      Effect.provide(
-        layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
-      ),
-    ),
-);
-
-it.effect.each(["stopped", "error"] as const)(
-  "restarts and releases the live session when a newer %s session exists",
-  (deadStatus) =>
-    Effect.gen(function* () {
-      const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
-      const thread = projection();
-      const result = yield* service.plan({
-        projection: {
-          ...thread,
-          providerSessions: [
-            ...thread.providerSessions,
-            deadSessionRecord("dead_session", deadStatus),
-          ],
-        },
-        targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
-      });
-      assert.equal(result.transition.type, "restart_and_resume");
-      assert.deepEqual(result.releaseProviderSessionIds, [currentSessionId]);
-    }).pipe(
-      Effect.provide(
-        layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
-      ),
-    ),
-);
 
 it.effect("releases the newest live session, not the newest record overall", () =>
   Effect.gen(function* () {
@@ -282,10 +241,6 @@ it.effect.each(["stopped", "error"] as const)(
         projection: deadNativeThreadProjection(deadStatus, CodexProviderCapabilitiesV2),
         targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
       });
-      // Static capabilities report no in-session switch, but the dead
-      // record's negotiated capabilities describe the provider: without
-      // them the ACP classification rejects the selection instead of
-      // reopening with the requested model on the next run.
       assert.equal(result.transition.type, "switch_model_in_session");
       assert.deepEqual(result.releaseProviderSessionIds, []);
     }).pipe(

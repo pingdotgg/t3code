@@ -1,0 +1,1555 @@
+import { it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Schema from "effect/Schema";
+import { describe, expect } from "vite-plus/test";
+
+import {
+  XAiExitPlanModeRequest,
+  XAI_EMPTY_PLAN_MARKDOWN,
+  isGrokPlanMarkdownPath,
+  extractXAiExitPlanMarkdown,
+  extractGrokPlanMarkdownFromToolCallData,
+  extractXAiAcpBackgroundToolMutation,
+  extractXAiAcpSubagentEndNotice,
+  extractXAiAcpSubagentUpdate,
+  extractXAiAskUserQuestions,
+  extractXAiBackgroundTaskCompletion,
+  extractXAiKilledBackgroundTasks,
+  extractXAiMonitorTaskId,
+  isXAiMonitorTool,
+  makeXAiAskUserQuestionResponse,
+  makeXAiPromptCompletionRuntime,
+  normalizeXAiAcpToolCallState,
+  xAiBackgroundTaskLifecycleMutation,
+  xAiPromptCompleteFromSessionUpdate,
+  xAiSubagentFinishedNotice,
+  XAiAskUserQuestionRequest,
+} from "./xaiAcpExtension.ts";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import {
+  type AcpToolCallState,
+  mergeToolCallState,
+  parseSessionUpdateEvent,
+} from "@t3tools/provider-acp/server/runtimeModel";
+
+const decodeXAiAskUserQuestionRequest = Schema.decodeUnknownSync(XAiAskUserQuestionRequest);
+
+describe("xAiPromptCompleteFromSessionUpdate", () => {
+  it("ignores non-turn updates and task-completed prompt ids", () => {
+    expect(
+      xAiPromptCompleteFromSessionUpdate({
+        sessionId: "root",
+        update: { sessionUpdate: "hook_execution", prompt_id: "t3-xai-prompt-1" },
+      }),
+    ).toBeNull();
+    expect(
+      xAiPromptCompleteFromSessionUpdate({
+        sessionId: "root",
+        update: {
+          sessionUpdate: "turn_completed",
+          prompt_id: "task-completed-call-abc",
+          stop_reason: "end_turn",
+        },
+      }),
+    ).toBeNull();
+    expect(
+      xAiPromptCompleteFromSessionUpdate({
+        sessionId: "root",
+        update: { sessionUpdate: "turn_completed", stop_reason: "end_turn" },
+      }),
+    ).toBeNull();
+  });
+});
+
+function parseRecordedToolCallUpdate(update: Record<string, unknown>): AcpToolCallState {
+  const [event] = parseSessionUpdateEvent({
+    sessionId: "01a0d660-c1bb-7842-91a3-02d91dc8b0d2",
+    update,
+  } as Parameters<typeof parseSessionUpdateEvent>[0]).events;
+  if (event?._tag !== "ToolCallUpdated") throw new Error("expected a tool call update");
+  return event.toolCall;
+}
+
+describe("XAiAcpExtension", () => {
+  it("recognizes Grok Task starts as native subagents", () => {
+    expect(
+      extractXAiAcpSubagentUpdate({
+        toolCallId: "task-1",
+        title: "Task",
+        status: "inProgress",
+        data: {
+          rawInput: {
+            description: "Explore server architecture",
+            prompt: "Audit apps/server.",
+            subagent_type: "generalPurpose",
+            model: "composer-2.5-fast",
+          },
+        },
+      }),
+    ).toEqual({
+      nativeTaskId: "task-1",
+      prompt: "Audit apps/server.",
+      title: "Explore server architecture",
+      model: "composer-2.5-fast",
+      status: "running",
+      childSessionId: null,
+      result: null,
+      suppressNormalTool: true,
+    });
+  });
+
+  it("extracts Grok child session lineage from completed Task output", () => {
+    expect(
+      extractXAiAcpSubagentUpdate({
+        toolCallId: "task-1",
+        title: "Task",
+        status: "completed",
+        data: {
+          rawInput: {
+            description: "Explore server architecture",
+            prompt: "Audit apps/server.",
+            subagent_type: "generalPurpose",
+          },
+          rawOutput: {
+            type: "Text",
+            text: [
+              "Server audit complete.",
+              "",
+              "Agent ID: 019f0220-e192-7c41-9e9d-b406bc3459c8 (resume supported)",
+            ].join("\n"),
+          },
+        },
+      }),
+    ).toEqual({
+      nativeTaskId: "task-1",
+      prompt: "Audit apps/server.",
+      title: "Explore server architecture",
+      model: null,
+      status: "completed",
+      childSessionId: "019f0220-e192-7c41-9e9d-b406bc3459c8",
+      result: "Server audit complete.",
+      suppressNormalTool: true,
+    });
+  });
+
+  it("keeps async spawn_subagent ACKs running and binds subagent_id", () => {
+    expect(
+      extractXAiAcpSubagentUpdate({
+        toolCallId: "call-spawn-1",
+        title: "spawn_subagent",
+        status: "completed",
+        data: {
+          rawInput: {
+            description: "Demo subagent wait and ls",
+            prompt: "Wait then ls.",
+            subagent_type: "general-purpose",
+          },
+          rawOutput: {
+            type: "Text",
+            text: [
+              "Subagent started in background.",
+              "subagent_id: 019f44a6-4820-7402-925d-bc862ee711dd",
+              "type: general-purpose",
+              "description: Demo subagent wait and ls",
+              "",
+              'Use get_command_or_subagent_output with task_ids=["019f44a6-4820-7402-925d-bc862ee711dd"] and timeout_ms to wait for results.',
+            ].join("\n"),
+          },
+        },
+      }),
+    ).toEqual({
+      nativeTaskId: "call-spawn-1",
+      prompt: "Wait then ls.",
+      title: "Demo subagent wait and ls",
+      model: null,
+      status: "running",
+      childSessionId: "019f44a6-4820-7402-925d-bc862ee711dd",
+      result: null,
+      suppressNormalTool: true,
+    });
+  });
+
+  it("hydrates subagent completion from get_command_or_subagent_output", () => {
+    expect(
+      extractXAiAcpSubagentUpdate({
+        toolCallId: "call-get-1",
+        title: "get_command_or_subagent_output",
+        status: "completed",
+        data: {
+          rawInput: {
+            task_ids: ["019f44a6-4820-7402-925d-bc862ee711dd"],
+            timeout_ms: 30000,
+          },
+          rawOutput: {
+            type: "Text",
+            text: [
+              "=== Task 019f44a6-4820-7402-925d-bc862ee711dd ===",
+              "Status: completed",
+              "Exit Code: 0",
+              "",
+              "=== Output ===",
+              "SUBAGENT_MARKER: 35 entries",
+            ].join("\n"),
+          },
+        },
+      }),
+    ).toEqual({
+      nativeTaskId: "call-get-1",
+      prompt: "",
+      title: null,
+      model: null,
+      status: "completed",
+      childSessionId: "019f44a6-4820-7402-925d-bc862ee711dd",
+      result: "SUBAGENT_MARKER: 35 entries",
+      suppressNormalTool: true,
+    });
+  });
+
+  it("attributes multi-task get_output envelopes to the result task_id", () => {
+    expect(
+      extractXAiAcpSubagentUpdate({
+        toolCallId: "call-get-multi",
+        title: "get_command_or_subagent_output",
+        status: "completed",
+        data: {
+          rawInput: {
+            task_ids: [
+              "019f44a6-4820-7402-925d-bc862ee711dd",
+              "019f44b0-1b73-7f32-bb1b-1ff696f536e3",
+            ],
+            timeout_ms: 30000,
+          },
+          rawOutput: {
+            type: "TaskOutput",
+            Result: {
+              task_id: "019f44b0-1b73-7f32-bb1b-1ff696f536e3",
+              status: "completed",
+              exit_code: 0,
+              output: "SECOND_SUB_DONE\n",
+            },
+          },
+        },
+      }),
+    ).toMatchObject({
+      childSessionId: "019f44b0-1b73-7f32-bb1b-1ff696f536e3",
+      status: "completed",
+      result: "SECOND_SUB_DONE",
+    });
+  });
+
+  it("does not treat a subagent_id mentioned in result text as the completed identity", () => {
+    const requestedTaskId = "019f44a6-4820-7402-925d-bc862ee711dd";
+    const mentionedTaskId = "019f44b0-1b73-7f32-bb1b-1ff696f536e3";
+    const toolCall = {
+      toolCallId: "call-get-mentioned-id",
+      title: "get_command_or_subagent_output",
+      status: "completed" as const,
+      data: {
+        rawInput: {
+          variant: "TaskOutput",
+          task_ids: [requestedTaskId],
+        },
+        rawOutput: {
+          type: "TaskOutput",
+          Result: {
+            status: "completed",
+            exit_code: 0,
+            output: `Audited subagent_id: ${mentionedTaskId}; no issues found.`,
+          },
+        },
+      },
+    };
+
+    expect(extractXAiAcpSubagentUpdate(toolCall)).toMatchObject({
+      childSessionId: requestedTaskId,
+      status: "completed",
+    });
+    expect(extractXAiBackgroundTaskCompletion(toolCall)).toEqual([
+      {
+        taskId: requestedTaskId,
+        status: "completed",
+        appendOutput: `Audited subagent_id: ${mentionedTaskId}; no issues found.`,
+      },
+    ]);
+  });
+
+  it("does not leak raw machine tags when get_output is only meta/result blocks", () => {
+    const metaOnlyToolCall = {
+      toolCallId: "call-get-meta-only",
+      title: "get_command_or_subagent_output",
+      status: "completed" as const,
+      data: {
+        rawInput: {
+          variant: "TaskOutput",
+          task_ids: ["019f44b0-1b73-7f32-bb1b-1ff696f536e3"],
+          timeout_ms: 20000,
+        },
+        rawOutput: {
+          type: "TaskOutput",
+          Result: {
+            task_id: "019f44b0-1b73-7f32-bb1b-1ff696f536e3",
+            status: "completed",
+            exit_code: 0,
+            output:
+              "<subagent_meta>id=019f44b0-1b73-7f32-bb1b-1ff696f536e3</subagent_meta>\n<subagent_result>done</subagent_result>\n",
+          },
+        },
+      },
+    };
+    expect(extractXAiAcpSubagentUpdate(metaOnlyToolCall)).toEqual({
+      nativeTaskId: "call-get-meta-only",
+      prompt: "",
+      title: null,
+      model: null,
+      status: "completed",
+      childSessionId: "019f44b0-1b73-7f32-bb1b-1ff696f536e3",
+      result: null,
+      suppressNormalTool: true,
+    });
+    expect(extractXAiBackgroundTaskCompletion(metaOnlyToolCall)).toEqual([
+      {
+        taskId: "019f44b0-1b73-7f32-bb1b-1ff696f536e3",
+        status: "completed",
+        appendOutput: "",
+      },
+    ]);
+  });
+
+  it("tracks text Monitor ACKs with generic titles and description-only input", () => {
+    const toolCall = {
+      toolCallId: "call-mon-generic-text",
+      title: "Tool",
+      status: "completed" as const,
+      data: {
+        rawInput: {
+          command: "echo mon_line_1",
+          description: "Demo monitor without variant",
+        },
+        rawOutput: {
+          type: "Text",
+          text: "Monitor started (task 019f44a5-87d1-7640-8e35-6a4667ffc873, timeout 36000000ms).\nYou will be notified on each event.",
+        },
+      },
+    };
+
+    const normalized = normalizeXAiAcpToolCallState(toolCall);
+    expect(isXAiMonitorTool(normalized)).toBe(true);
+    expect(normalized.status).toBe("inProgress");
+    expect(extractXAiMonitorTaskId(normalized)).toBe("019f44a5-87d1-7640-8e35-6a4667ffc873");
+  });
+
+  it("keeps Monitor ticks running while Grok reports them in progress", () => {
+    // Grok 1.0.41 ticks report in_progress with exit_code 0; only _x.ai/task_completed ends the monitor.
+    const command = "for i in 1 2 3; do sleep 8; echo tick $i; done";
+    const started = parseRecordedToolCallUpdate({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call-6b025a4e-621c-4526-a579-ba86ada2669c-0",
+      kind: "other",
+      title: "Start monitor: Watch three ticks eight seconds apart",
+      locations: [],
+      rawInput: {
+        variant: "Monitor",
+        command,
+        description: "Watch three ticks eight seconds apart",
+        timeout_ms: 36000000,
+        persistent: false,
+      },
+    });
+    const tick = parseRecordedToolCallUpdate({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call-6b025a4e-621c-4526-a579-ba86ada2669c-0",
+      status: "in_progress",
+      content: [{ type: "content", content: { type: "text", text: "tick 1\n" } }],
+      rawOutput: {
+        type: "Bash",
+        output: [116, 105, 99, 107, 32, 49, 10],
+        output_for_prompt: "tick 1\n",
+        exit_code: 0,
+        command,
+        truncated: false,
+        signal: null,
+        timed_out: false,
+        description: null,
+        current_dir: "<workspace>",
+        output_file: "",
+        total_bytes: 7,
+      },
+    });
+    const toolCall = normalizeXAiAcpToolCallState(mergeToolCallState(started, tick));
+    expect(isXAiMonitorTool(toolCall)).toBe(true);
+    expect(toolCall.status).toBe("inProgress");
+  });
+
+  it("finishes monitors from the recorded task_completed snapshot", () => {
+    const completed = {
+      sessionId: "01a0d660-c1bb-7842-91a3-02d91dc8b0d2",
+      update: {
+        sessionUpdate: "task_completed",
+        task_snapshot: {
+          task_id: "01a0d660-f98d-7ef3-a291-97af1c2b6455",
+          command: "for i in 1 2 3; do sleep 8; echo tick $i; done",
+          display_command: "[monitor] Watch three tick echoes",
+          output: "tick 1\ntick 2\ntick 3\n",
+          exit_code: 0,
+          kind: "monitor",
+          description: "Watch three tick echoes",
+        },
+      },
+    };
+    expect(xAiBackgroundTaskLifecycleMutation(completed, "completed")).toEqual({
+      sessionId: "01a0d660-c1bb-7842-91a3-02d91dc8b0d2",
+      taskId: "01a0d660-f98d-7ef3-a291-97af1c2b6455",
+      status: "completed",
+      output: "tick 1\ntick 2\ntick 3\n",
+      report: { kind: "monitor", label: "Watch three tick echoes" },
+    });
+    expect(
+      xAiBackgroundTaskLifecycleMutation(
+        {
+          ...completed,
+          update: { ...completed.update, task_snapshot: { task_id: "t", exit_code: 2 } },
+        },
+        "completed",
+      )?.status,
+    ).toBe("failed");
+  });
+
+  it("detects Monitor start ACKs from structured rawOutput when title is generic", () => {
+    const toolCall = {
+      toolCallId: "call-mon-generic-title",
+      title: "Tool",
+      status: "completed" as const,
+      data: {
+        rawInput: {
+          command: "echo mon_line",
+          description: "Demo monitor without variant",
+        },
+        rawOutput: {
+          type: "Monitor",
+          taskId: "019f44a5-87d1-7640-8e35-6a4667ffc873",
+          timeoutMs: 36000000,
+          persistent: false,
+        },
+      },
+    };
+    expect(isXAiMonitorTool(toolCall)).toBe(true);
+    expect(normalizeXAiAcpToolCallState(toolCall).status).toBe("inProgress");
+    expect(extractXAiMonitorTaskId(toolCall)).toBe("019f44a5-87d1-7640-8e35-6a4667ffc873");
+  });
+
+  it("completes status-less Bash results despite generic titles", () => {
+    const toolCall = {
+      toolCallId: "call-wake-1",
+      title: "Tool",
+      data: {
+        rawInput: {},
+        rawOutput: {
+          type: "Bash",
+          output: Array.from(new TextEncoder().encode("STREAM_1\nSTREAM_DONE\n")),
+          output_for_prompt: "STREAM_1\nSTREAM_DONE\n",
+          exit_code: 0,
+          command: "for i in 1 2; do echo STREAM_$i; done; echo STREAM_DONE",
+        },
+      },
+    };
+    expect(isXAiMonitorTool(toolCall)).toBe(false);
+    const normalized = normalizeXAiAcpToolCallState(toolCall);
+    expect(normalized.status).toBe("completed");
+    expect(normalized.title).toBe("for i in 1 2; do echo STREAM_$i; done; echo STREAM_DONE");
+    expect(
+      normalizeXAiAcpToolCallState({
+        ...toolCall,
+        data: {
+          ...toolCall.data,
+          rawOutput: { ...toolCall.data.rawOutput, exit_code: 2 },
+        },
+      }).status,
+    ).toBe("failed");
+  });
+
+  it("keeps empty successful Bash updates running until native output or turn settlement", () => {
+    const normalized = normalizeXAiAcpToolCallState({
+      toolCallId: "call-bash-permission-ack",
+      title: "Ran command",
+      status: "completed",
+      data: {
+        rawInput: { command: "sleep 40" },
+        rawOutput: { type: "Bash", exit_code: 0 },
+      },
+    });
+    expect(normalized.status).toBe("inProgress");
+  });
+
+  it("completes structured command TaskOutput ids without treating them as subagents", () => {
+    // Oracle: BackgroundTaskStarted and TaskOutput from the Grok hang incident.
+    const toolCall: AcpToolCallState = {
+      toolCallId: "call-poll",
+      title: "get_command_or_subagent_output",
+      status: "completed",
+      data: {
+        rawInput: {
+          variant: "TaskOutput",
+          task_ids: ["call-7c835a60-7bf5-4284-a5c7-cf42a4212ece-29"],
+        },
+        rawOutput: {
+          type: "TaskOutput",
+          Result: {
+            task_id: "call-7c835a60-7bf5-4284-a5c7-cf42a4212ece-29",
+            status: "completed",
+            exit_code: 0,
+            output: "done",
+          },
+        },
+      },
+    };
+    expect(extractXAiBackgroundTaskCompletion(toolCall)).toEqual([
+      {
+        taskId: "call-7c835a60-7bf5-4284-a5c7-cf42a4212ece-29",
+        status: "completed",
+        appendOutput: "done",
+      },
+    ]);
+    expect(extractXAiAcpSubagentUpdate(toolCall)).toBeUndefined();
+  });
+
+  it("keeps the normal tool frame for a command result from a mixed-ID poll", () => {
+    // Oracle: review 4325739061 requires the result ID to override requested subagent IDs.
+    const toolCall: AcpToolCallState = {
+      toolCallId: "call-mixed-poll",
+      title: "get_command_or_subagent_output",
+      status: "completed",
+      data: {
+        rawInput: {
+          variant: "TaskOutput",
+          task_ids: [
+            "019f44a6-4820-7402-925d-bc862ee711dd",
+            "call-7c835a60-7bf5-4284-a5c7-cf42a4212ece-29",
+          ],
+        },
+        rawOutput: {
+          type: "TaskOutput",
+          Result: {
+            task_id: "call-7c835a60-7bf5-4284-a5c7-cf42a4212ece-29",
+            status: "completed",
+            exit_code: 0,
+            output: "done",
+          },
+        },
+      },
+    };
+    expect(extractXAiAcpSubagentUpdate(toolCall)).toBeUndefined();
+    expect(extractXAiBackgroundTaskCompletion(toolCall)).toEqual([
+      {
+        taskId: "call-7c835a60-7bf5-4284-a5c7-cf42a4212ece-29",
+        status: "completed",
+        appendOutput: "done",
+      },
+    ]);
+  });
+
+  it("hydrates monitor completion from a standalone TaskOutput frame without rawInput", () => {
+    expect(
+      extractXAiBackgroundTaskCompletion({
+        toolCallId: "call-c29e64dd-ce5d-4eac-a6ca-c20513fefac3-1",
+        title: "[monitor] Stream numbered markers every 3s (019f54a0)",
+        status: "completed",
+        data: {
+          rawOutput: {
+            type: "TaskOutput",
+            Result: {
+              task_id: "019f54a0-06a8-77f2-8214-e24937cad564",
+              command: "[monitor] Stream numbered markers every 3s",
+              status: "completed",
+              exit_code: 0,
+              output: "STREAM_1\nSTREAM_DONE\n",
+            },
+          },
+        },
+      }),
+    ).toMatchObject([
+      {
+        taskId: "019f54a0-06a8-77f2-8214-e24937cad564",
+        status: "completed",
+      },
+    ]);
+  });
+
+  it("hydrates every requested monitor when TaskOutput has no result task_id", () => {
+    expect(
+      extractXAiBackgroundTaskCompletion({
+        toolCallId: "call-get-multi-mon",
+        title: "get_command_or_subagent_output",
+        status: "completed",
+        data: {
+          rawInput: {
+            variant: "TaskOutput",
+            task_ids: [
+              "019f44a6-4820-7402-925d-bc862ee711dd",
+              "019f44b0-1b73-7f32-bb1b-1ff696f536e3",
+            ],
+          },
+          rawOutput: {
+            type: "TaskOutput",
+            Result: {
+              status: "completed",
+              exit_code: 0,
+              output: "BOTH_DONE\n",
+            },
+          },
+        },
+      }),
+    ).toEqual([
+      {
+        taskId: "019f44a6-4820-7402-925d-bc862ee711dd",
+        status: "completed",
+        appendOutput: "BOTH_DONE",
+      },
+      {
+        taskId: "019f44b0-1b73-7f32-bb1b-1ff696f536e3",
+        status: "completed",
+        appendOutput: "BOTH_DONE",
+      },
+    ]);
+  });
+
+  it("keeps every requested monitor running when a completed poll has no terminal task status", () => {
+    expect(
+      extractXAiBackgroundTaskCompletion({
+        toolCallId: "call-get-running-monitors",
+        title: "get_command_or_subagent_output",
+        status: "completed",
+        data: {
+          rawInput: {
+            variant: "TaskOutput",
+            task_ids: [
+              "019f44a6-4820-7402-925d-bc862ee711dd",
+              "019f44b0-1b73-7f32-bb1b-1ff696f536e3",
+            ],
+          },
+          rawOutput: {
+            type: "TaskOutput",
+            Result: {
+              output: "No task has reached a terminal state.",
+            },
+          },
+        },
+      }),
+    ).toEqual([
+      {
+        taskId: "019f44a6-4820-7402-925d-bc862ee711dd",
+        status: "running",
+        appendOutput: "No task has reached a terminal state.",
+      },
+      {
+        taskId: "019f44b0-1b73-7f32-bb1b-1ff696f536e3",
+        status: "running",
+        appendOutput: "No task has reached a terminal state.",
+      },
+    ]);
+  });
+
+  it("treats Exit Code: -1 text envelopes as failed", () => {
+    expect(
+      extractXAiBackgroundTaskCompletion({
+        toolCallId: "call-get-neg",
+        title: "get_command_or_subagent_output",
+        status: "completed",
+        data: {
+          rawInput: {
+            variant: "TaskOutput",
+            task_ids: ["019f44b8-8e98-7c80-a40e-df1e26a5f9e3"],
+          },
+          rawOutput: {
+            type: "Text",
+            text: ["=== Task 019f44b8-8e98-7c80-a40e-df1e26a5f9e3 ===", "Exit Code: -1"].join("\n"),
+          },
+        },
+      }),
+    ).toMatchObject([
+      {
+        taskId: "019f44b8-8e98-7c80-a40e-df1e26a5f9e3",
+        status: "failed",
+      },
+    ]);
+  });
+
+  // KillTask replies can report killed and already_exited outcomes.
+  it.each([
+    { rawInput: { task_id: "call-bg-1" }, rawOutput: { type: "KillTask" } },
+    { rawInput: { task_id: "call-bg-1" }, rawOutput: { type: "KillTask", outcome: "killed" } },
+    { rawInput: { variant: "KillTask", task_id: "call-bg-1" } },
+    {
+      rawInput: { variant: "KillTask", task_id: "call-bg-1" },
+      rawOutput: { type: "KillTask", outcome: "already_exited" },
+    },
+  ])("closes a background command from structured KillTask fields: %j", (data) => {
+    expect(
+      extractXAiKilledBackgroundTasks({
+        toolCallId: "call-kill",
+        title: "kill call-bg-1 (killed)",
+        status: "completed",
+        data,
+      }),
+    ).toEqual([{ taskId: "call-bg-1", status: "completed", appendOutput: "" }]);
+    expect(
+      extractXAiAcpSubagentUpdate({
+        toolCallId: "call-kill",
+        title: "kill call-bg-1 (killed)",
+        status: "completed",
+        data,
+      }),
+    ).toBeUndefined();
+  });
+
+  // Native child status still comes from its lifecycle/result path, not the kill RPC.
+  it.each(["Kill", "KillTask"])(
+    "keeps %s aimed at a native child out of child result parsing",
+    (variant) => {
+      expect(
+        extractXAiAcpSubagentUpdate({
+          toolCallId: "call-kill-child",
+          title: "kill 019f44b8-8e98-7c80-a40e-df1e26a5f9e3 (killed)",
+          status: "completed",
+          data: {
+            rawInput: { variant, task_id: "019f44b8-8e98-7c80-a40e-df1e26a5f9e3" },
+            rawOutput: { type: "KillTask", outcome: "killed" },
+          },
+        }),
+      ).toBeUndefined();
+    },
+  );
+
+  // A successful RPC is not proof of a successful kill when its outcome says otherwise.
+  it.each([
+    { type: "KillTask", outcome: "failed" },
+    { type: "KillTask", Result: { task_id: "call-bg-1", outcome: "error" } },
+  ])("ignores a KillTask whose outcome is not a kill: %j", (rawOutput) => {
+    expect(
+      extractXAiKilledBackgroundTasks({
+        toolCallId: "call-kill",
+        title: "kill call-bg-1 (failed)",
+        status: "completed",
+        data: {
+          rawInput: { variant: "KillTask", task_id: "call-bg-1" },
+          rawOutput,
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it.each(["failed", "inProgress"] as const)(
+    "does not close the target of a %s KillTask call",
+    (status) => {
+      expect(
+        extractXAiKilledBackgroundTasks({
+          toolCallId: "call-kill",
+          title: "kill call-bg-1 (killed)",
+          status,
+          data: {
+            rawInput: { variant: "KillTask", task_id: "call-bg-1" },
+            rawOutput: { type: "KillTask", outcome: "killed" },
+          },
+        }),
+      ).toEqual([]);
+    },
+  );
+
+  it("tombstones confirmed kills and ignores failed kill calls", () => {
+    expect(
+      extractXAiKilledBackgroundTasks({
+        toolCallId: "call-kill-1",
+        title: "kill_command_or_subagent",
+        status: "completed",
+        data: {
+          rawInput: {
+            variant: "Kill",
+            task_ids: ["call-bg-1", "call-bg-2", "call-bg-1"],
+          },
+        },
+      }),
+    ).toEqual([
+      { taskId: "call-bg-1", status: "completed", appendOutput: "" },
+      { taskId: "call-bg-2", status: "completed", appendOutput: "" },
+    ]);
+    expect(
+      extractXAiKilledBackgroundTasks({
+        toolCallId: "call-kill-2",
+        title: "Tool",
+        status: "failed",
+        data: { rawInput: { variant: "kill", task_id: "call-bg-3" } },
+      }),
+    ).toEqual([]);
+    expect(
+      extractXAiKilledBackgroundTasks({
+        toolCallId: "call-kill-3",
+        title: "kill_command_or_subagent",
+        status: "inProgress",
+        data: { rawInput: { task_ids: ["call-bg-4"] } },
+      }),
+    ).toEqual([]);
+    expect(
+      extractXAiKilledBackgroundTasks({
+        toolCallId: "call-get",
+        title: "get_command_or_subagent_output",
+        status: "completed",
+        data: { rawInput: { variant: "TaskOutput", task_ids: ["call-bg-5"] } },
+      }),
+    ).toEqual([]);
+  });
+
+  it("maps task lifecycle notifications to background mutations", () => {
+    expect(
+      xAiBackgroundTaskLifecycleMutation(
+        {
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "task_backgrounded",
+            tool_call_id: "call-bg-1",
+            task_id: "call-bg-1",
+          },
+        },
+        "running",
+      ),
+    ).toEqual({ sessionId: "session-1", taskId: "call-bg-1", status: "running" });
+    expect(
+      xAiBackgroundTaskLifecycleMutation(
+        {
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "task_completed",
+            task_snapshot: { task_id: "call-bg-1" },
+          },
+        },
+        "completed",
+      ),
+    ).toEqual({ sessionId: "session-1", taskId: "call-bg-1", status: "completed" });
+    expect(
+      xAiBackgroundTaskLifecycleMutation(
+        { sessionId: "session-1", update: { sessionUpdate: "task_completed" } },
+        "completed",
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps a standalone TaskOutput completion terminal through normalize", () => {
+    expect(
+      normalizeXAiAcpToolCallState({
+        toolCallId: "call-c29e64dd-ce5d-4eac-a6ca-c20513fefac3-1",
+        title: "[monitor] Stream numbered markers every 3s (019f54a0)",
+        status: "completed",
+        data: {
+          rawOutput: {
+            type: "TaskOutput",
+            Result: {
+              task_id: "019f54a0-06a8-77f2-8214-e24937cad564",
+              status: "completed",
+              exit_code: 0,
+              output: "STREAM_DONE\n",
+            },
+          },
+        },
+      }).status,
+    ).toBe("completed");
+  });
+
+  it("parses monitor event lines and end reminders", () => {
+    expect(
+      extractXAiAcpBackgroundToolMutation(
+        '<monitor-event task_id="019f44a5-87d1-7640-8e35-6a4667ffc873">\n[Demo] mon_line_1\n</monitor-event>',
+      ),
+    ).toEqual([
+      {
+        taskId: "019f44a5-87d1-7640-8e35-6a4667ffc873",
+        status: "running",
+        appendOutput: "[Demo] mon_line_1\n",
+      },
+    ]);
+    expect(
+      extractXAiAcpBackgroundToolMutation(
+        [
+          "<system-reminder>",
+          'Monitor "019f44a5-87d1-7640-8e35-6a4667ffc873" ended: [monitor ended: exited (code 0)].',
+          "Description: Demo monitor",
+          "</system-reminder>",
+        ].join("\n"),
+      ),
+    ).toMatchObject([
+      {
+        taskId: "019f44a5-87d1-7640-8e35-6a4667ffc873",
+        status: "completed",
+      },
+    ]);
+    expect(
+      extractXAiAcpBackgroundToolMutation(
+        [
+          "<system-reminder>",
+          'Monitor "019f44a5-87d1-7640-8e35-6a4667ffc873" ended: [monitor ended: exited (code 0)].',
+          "Description: watch error logs for failed deploys",
+          "error: nothing found",
+          "</system-reminder>",
+        ].join("\n"),
+      ),
+    ).toMatchObject([
+      {
+        taskId: "019f44a5-87d1-7640-8e35-6a4667ffc873",
+        status: "completed",
+      },
+    ]);
+  });
+
+  it("parses batched monitor event blocks as running mutations", () => {
+    expect(
+      extractXAiAcpBackgroundToolMutation(
+        [
+          "3 monitor events from 1 monitor (use get_command_or_subagent_output to identify each monitor):",
+          "",
+          '<monitor description="Stream STREAM_i every 3s" task_id="019f545d-4d39-7001-b1c8-c7744c448ec1">',
+          "[1] STREAM_7",
+          "[2] STREAM_8",
+          "[3] STREAM_9",
+          "</monitor>",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      {
+        taskId: "019f545d-4d39-7001-b1c8-c7744c448ec1",
+        status: "running",
+        appendOutput: "[1] STREAM_7\n[2] STREAM_8\n[3] STREAM_9\n",
+      },
+    ]);
+  });
+
+  it("parses the subagent completed reminder as an end notice", () => {
+    expect(
+      extractXAiAcpSubagentEndNotice(
+        [
+          "<system-reminder>",
+          'Background subagent "019f5470-bf92-7a90-afb3-5a6cea5b34a3" (general-purpose: "Run sleep then echo token") completed successfully.',
+          "Duration: 28.8s | Tool calls: 1 | Turns: 1",
+          'Use get_task_output("019f5470-bf92-7a90-afb3-5a6cea5b34a3") to see the full output.',
+          "</system-reminder>",
+        ].join("\n"),
+      ),
+    ).toEqual({
+      childSessionId: "019f5470-bf92-7a90-afb3-5a6cea5b34a3",
+      status: "completed",
+    });
+  });
+
+  it("ignores prompt text that merely mentions subagents", () => {
+    expect(
+      extractXAiAcpSubagentEndNotice("Live-test post-settle subagent completion."),
+    ).toBeUndefined();
+    expect(
+      extractXAiAcpSubagentEndNotice(
+        'Background subagent "019f5470-bf92-7a90-afb3-5a6cea5b34a3" (general-purpose: "Run sleep then echo token") is still running.',
+      ),
+    ).toBeUndefined();
+  });
+
+  it("does not treat nested parentheses in the title as the outcome verb", () => {
+    expect(
+      extractXAiAcpSubagentEndNotice(
+        'Background subagent "019f5470-bf92-7a90-afb3-5a6cea5b34a3" (general-purpose: "Check (backend) failed tests") is still running.',
+      ),
+    ).toBeUndefined();
+    expect(
+      extractXAiAcpSubagentEndNotice(
+        'Background subagent "019f5470-bf92-7a90-afb3-5a6cea5b34a3" (general-purpose: "Check (backend) failed tests") completed successfully.',
+      ),
+    ).toEqual({
+      childSessionId: "019f5470-bf92-7a90-afb3-5a6cea5b34a3",
+      status: "completed",
+    });
+  });
+
+  it("extracts questions from the real xAI ask_user_question payload shape", () => {
+    const questions = extractXAiAskUserQuestions({
+      sessionId: "session-1",
+      toolCallId: "tool-call-1",
+      mode: "default",
+      questions: [
+        {
+          id: "scope",
+          question: "Which scope should Grok use?",
+          options: [
+            { label: "Workspace", description: "Use the current workspace" },
+            { label: "Session", description: "Only use this session" },
+          ],
+        },
+      ],
+    });
+
+    expect(questions).toEqual([
+      {
+        id: "scope",
+        header: "Question",
+        question: "Which scope should Grok use?",
+        multiSelect: false,
+        options: [
+          { label: "Workspace", description: "Use the current workspace" },
+          { label: "Session", description: "Only use this session" },
+        ],
+      },
+    ]);
+  });
+
+  it("extracts questions from wrapped _x.ai extension payloads", () => {
+    const payload = {
+      method: "_x.ai/ask_user_question",
+      params: {
+        sessionId: "session-1",
+        toolCallId: "tool-call-1",
+        mode: "plan",
+        questions: [
+          {
+            question: "Which changes should be included?",
+            multiSelect: true,
+            options: [{ label: "Tests" }, { label: "Docs" }],
+          },
+        ],
+      },
+    };
+    const decoded = decodeXAiAskUserQuestionRequest(payload);
+    const questions = extractXAiAskUserQuestions(decoded);
+
+    expect(questions).toEqual([
+      {
+        id: "Which changes should be included?",
+        header: "Question",
+        question: "Which changes should be included?",
+        multiSelect: true,
+        options: [
+          { label: "Tests", description: "Tests" },
+          { label: "Docs", description: "Docs" },
+        ],
+      },
+    ]);
+  });
+
+  it("treats nullable multiSelect from Grok as single-select", () => {
+    const questions = extractXAiAskUserQuestions({
+      sessionId: "session-1",
+      toolCallId: "tool-call-1",
+      mode: "default",
+      questions: [
+        {
+          question: "Which label should Grok use?",
+          multiSelect: null,
+          options: [
+            { label: "Alpha", description: "Use the Alpha label" },
+            { label: "Beta", description: "Use the Beta label" },
+            { label: "Other", description: "Use the Other label" },
+          ],
+        },
+      ],
+    });
+
+    expect(questions).toEqual([
+      {
+        id: "Which label should Grok use?",
+        header: "Question",
+        question: "Which label should Grok use?",
+        multiSelect: false,
+        options: [
+          { label: "Alpha", description: "Use the Alpha label" },
+          { label: "Beta", description: "Use the Beta label" },
+          { label: "Other", description: "Use the Other label" },
+        ],
+      },
+    ]);
+  });
+
+  it("maps UI question ids back to xAI question text in accepted responses", () => {
+    const response = makeXAiAskUserQuestionResponse(
+      {
+        sessionId: "session-1",
+        toolCallId: "tool-call-1",
+        mode: "default",
+        questions: [
+          {
+            id: "scope",
+            question: "Which scope should Grok use?",
+            options: [
+              { label: "workspace", description: "Use the current workspace" },
+              { label: "session", description: "Only use this session" },
+            ],
+          },
+        ],
+      },
+      { scope: "workspace" },
+    );
+
+    expect(response).toEqual({
+      outcome: "accepted",
+      answers: {
+        "Which scope should Grok use?": ["workspace"],
+      },
+    });
+  });
+
+  it("encodes typed custom answers as xAI Other annotations", () => {
+    const response = makeXAiAskUserQuestionResponse(
+      {
+        method: "x.ai/ask_user_question",
+        params: {
+          sessionId: "session-1",
+          toolCallId: "tool-call-1",
+          mode: "default",
+          questions: [
+            {
+              question: "Which ice cream flavor?",
+              options: [
+                { label: "vanilla", description: "Vanilla flavor" },
+                { label: "chocolate", description: "Chocolate flavor" },
+              ],
+            },
+          ],
+        },
+      },
+      { "Which ice cream flavor?": "pistachio" },
+    );
+
+    expect(response).toEqual({
+      outcome: "accepted",
+      answers: {
+        "Which ice cream flavor?": ["Other"],
+      },
+      annotations: {
+        "Which ice cream flavor?": {
+          notes: "pistachio",
+        },
+      },
+    });
+  });
+
+  it("does not echo preview annotations for multi-select answers", () => {
+    const response = makeXAiAskUserQuestionResponse(
+      {
+        sessionId: "session-1",
+        toolCallId: "tool-call-1",
+        mode: "default",
+        questions: [
+          {
+            question: "Which files should Grok touch?",
+            multiSelect: true,
+            options: [
+              {
+                label: "Tests",
+                description: "Update tests",
+                preview: "test preview",
+              },
+              {
+                label: "Docs",
+                description: "Update docs",
+                preview: "docs preview",
+              },
+            ],
+          },
+        ],
+      },
+      { "Which files should Grok touch?": ["Tests", "Docs"] },
+    );
+
+    expect(response).toEqual({
+      outcome: "accepted",
+      answers: {
+        "Which files should Grok touch?": ["Tests", "Docs"],
+      },
+    });
+  });
+
+  it.effect("settles a hung prompt from a root-session prompt_complete notification", () =>
+    Effect.gen(function* () {
+      const handlers = new Map<string, (notification: unknown) => Effect.Effect<void>>();
+      const hungPrompt = yield* Deferred.make<never>();
+      const baseRuntime = {
+        start: () =>
+          Effect.succeed({
+            sessionId: "root-session",
+            initializeResult: {},
+            sessionSetupResult: {},
+            modelConfigId: undefined,
+          }),
+        prompt: () => Deferred.await(hungPrompt),
+        cancel: Effect.void,
+        handleExtNotification: (
+          method: string,
+          _schema: unknown,
+          handler: (notification: unknown) => Effect.Effect<void>,
+        ) => {
+          handlers.set(method, handler);
+          return Effect.void;
+        },
+        handleExtRequest: () => Effect.void,
+      } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
+
+      const runtime = yield* makeXAiPromptCompletionRuntime(baseRuntime);
+      const promptFiber = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "hi" }] })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      const promptCompleteHandler = handlers.get("x.ai/session/prompt_complete");
+      expect(promptCompleteHandler).toBeDefined();
+      yield* promptCompleteHandler!({
+        sessionId: "root-session",
+        stopReason: "end_turn",
+      });
+      const response = yield* Fiber.join(promptFiber);
+      expect(response.stopReason).toBe("end_turn");
+      expect(handlers.has("_x.ai/session/prompt_complete")).toBe(true);
+    }),
+  );
+
+  it.effect("fails a hung prompt from an xAI rate-limit completion (#8358)", () =>
+    Effect.gen(function* () {
+      const handlers = new Map<string, (notification: unknown) => Effect.Effect<void>>();
+      const hungPrompt = yield* Deferred.make<never>();
+      const baseRuntime = {
+        start: () =>
+          Effect.succeed({
+            sessionId: "root-session",
+            initializeResult: {},
+            sessionSetupResult: {},
+            modelConfigId: undefined,
+          }),
+        prompt: () => Deferred.await(hungPrompt),
+        cancel: Effect.void,
+        handleExtNotification: (
+          method: string,
+          _schema: unknown,
+          handler: (notification: unknown) => Effect.Effect<void>,
+        ) => {
+          handlers.set(method, handler);
+          return Effect.void;
+        },
+        handleExtRequest: () => Effect.void,
+      } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
+
+      const runtime = yield* makeXAiPromptCompletionRuntime(baseRuntime);
+      const promptFiber = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "hi" }] })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      const promptCompleteHandler = handlers.get("x.ai/session/prompt_complete");
+      expect(promptCompleteHandler).toBeDefined();
+      yield* promptCompleteHandler!({
+        sessionId: "root-session",
+        stopReason: "rate_limit",
+      });
+      const error = yield* Fiber.join(promptFiber).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "AcpRequestError",
+        code: -32003,
+        errorMessage: "Grok usage limit reached. Try again later.",
+      });
+    }),
+  );
+
+  it("maps subagent_finished to a notice only for statuses Grok defines", () => {
+    const finished = (update: Record<string, unknown>) =>
+      xAiSubagentFinishedNotice({
+        sessionId: "root-session",
+        update: {
+          sessionUpdate: "subagent_finished",
+          subagent_id: "child-session",
+          child_session_id: "child-session",
+          tool_calls: 2,
+          turns: 1,
+          duration_ms: 23734,
+          ...update,
+        } as never,
+      });
+    expect(finished({ status: "completed", output: "SUBAGENT_DONE", will_wake: true })).toEqual({
+      sessionId: "root-session",
+      childSessionId: "child-session",
+      status: "completed",
+      result: "SUBAGENT_DONE",
+    });
+    expect(finished({ status: "failed", error: "tool crashed" })).toMatchObject({
+      status: "failed",
+      result: "tool crashed",
+    });
+    expect(
+      finished({ status: "cancelled", error: "interrupted by process restart" }),
+    ).toMatchObject({ status: "cancelled", result: "interrupted by process restart" });
+    expect(finished({ status: "failed", output: "partial" })).toMatchObject({ result: null });
+    expect(finished({ status: "timed_out" })).toBeNull();
+    expect(finished({})).toBeNull();
+    expect(finished({ status: "completed", child_session_id: undefined })).toBeNull();
+  });
+
+  it.effect("settles a hung prompt from released _x.ai/session_notification turns", () =>
+    Effect.gen(function* () {
+      const handlers = new Map<string, (notification: unknown) => Effect.Effect<void>>();
+      const hungPrompt = yield* Deferred.make<never>();
+      const baseRuntime = {
+        start: () =>
+          Effect.succeed({
+            sessionId: "root-session",
+            initializeResult: {},
+            sessionSetupResult: {},
+            modelConfigId: undefined,
+          }),
+        prompt: () => Deferred.await(hungPrompt),
+        cancel: Effect.void,
+        handleExtNotification: (
+          method: string,
+          _schema: unknown,
+          handler: (notification: unknown) => Effect.Effect<void>,
+        ) => {
+          handlers.set(method, handler);
+          return Effect.void;
+        },
+        handleExtRequest: () => Effect.void,
+      } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
+
+      const runtime = yield* makeXAiPromptCompletionRuntime(baseRuntime);
+      const promptFiber = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "hi" }] })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      const sessionNotificationHandler = handlers.get("_x.ai/session_notification");
+      expect(sessionNotificationHandler).toBeDefined();
+      yield* sessionNotificationHandler!({
+        sessionId: "root-session",
+        update: {
+          sessionUpdate: "turn_completed",
+          prompt_id: "t3-xai-prompt-1",
+          stop_reason: "end_turn",
+        },
+      });
+      const response = yield* Fiber.join(promptFiber);
+      expect(response.stopReason).toBe("end_turn");
+      expect(handlers.has("_x.ai/session/update")).toBe(true);
+    }),
+  );
+
+  it.effect("injects promptId and requestId into prompt _meta", () =>
+    Effect.gen(function* () {
+      let capturedMeta: Record<string, unknown> | null | undefined;
+      const baseRuntime = {
+        start: () => Effect.succeed({ sessionId: "session-1" }),
+        prompt: (payload: { readonly _meta?: Record<string, unknown> | null }) => {
+          capturedMeta = payload._meta ?? null;
+          return Effect.succeed({ stopReason: "end_turn" as const });
+        },
+        cancel: Effect.void,
+        handleExtNotification: () => Effect.void,
+        handleExtRequest: () => Effect.void,
+      } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
+
+      const runtime = yield* makeXAiPromptCompletionRuntime(baseRuntime);
+      yield* runtime.prompt({ prompt: [{ type: "text", text: "hi" }] });
+
+      expect(typeof capturedMeta?.promptId).toBe("string");
+      expect(capturedMeta).toMatchObject({
+        promptId: capturedMeta?.promptId,
+        requestId: capturedMeta?.promptId,
+      });
+    }),
+  );
+
+  it.effect("cancels pending completions without restarting a stalled runtime", () =>
+    Effect.gen(function* () {
+      const hungStart = yield* Deferred.make<never>();
+      const hungPrompt = yield* Deferred.make<never>();
+      let startCount = 0;
+      let cancelCalled = false;
+      const baseRuntime = {
+        start: () => {
+          startCount += 1;
+          return startCount === 1
+            ? Effect.succeed({
+                sessionId: "root-session",
+                initializeResult: {},
+                sessionSetupResult: {},
+                modelConfigId: undefined,
+              })
+            : Deferred.await(hungStart);
+        },
+        prompt: () => Deferred.await(hungPrompt),
+        cancel: Effect.sync(() => {
+          cancelCalled = true;
+        }),
+        handleExtNotification: () => Effect.void,
+        handleExtRequest: () => Effect.void,
+      } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
+
+      const runtime = yield* makeXAiPromptCompletionRuntime(baseRuntime);
+      const promptFiber = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "hi" }] })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      yield* runtime.cancel;
+
+      expect(cancelCalled).toBe(true);
+      expect(startCount).toBe(1);
+      expect((yield* Fiber.join(promptFiber)).stopReason).toBe("cancelled");
+    }),
+  );
+});
+
+describe("Grok exit_plan_mode capture (#8358)", () => {
+  it("extracts plan markdown from exit_plan_mode payloads", () => {
+    const decode = Schema.decodeUnknownSync(XAiExitPlanModeRequest);
+    const direct = decode({
+      sessionId: "session-1",
+      toolCallId: "exit-1",
+      planContent: "# Plan\n\n- do the thing\n",
+    });
+    expect(extractXAiExitPlanMarkdown(direct)).toBe("# Plan\n\n- do the thing");
+
+    const wrapped = decode({
+      method: "_x.ai/exit_plan_mode",
+      params: {
+        sessionId: "session-1",
+        toolCallId: "exit-1",
+        planContent: null,
+      },
+    });
+    expect(extractXAiExitPlanMarkdown(wrapped, "  # fallback plan  ")).toBe("# fallback plan");
+    expect(extractXAiExitPlanMarkdown(wrapped, "")).toBe(XAI_EMPTY_PLAN_MARKDOWN);
+    expect(extractXAiExitPlanMarkdown(wrapped)).toBe(XAI_EMPTY_PLAN_MARKDOWN);
+  });
+  it("identifies Grok plan.md paths and extracts markdown from tool call data", () => {
+    const home = "/home/ada";
+    const linuxHost = { platform: "linux" as const, environment: {}, homeDirectory: home };
+    const windowsHost = { platform: "win32" as const, environment: {}, homeDirectory: home };
+    const grokHomeHost = {
+      platform: "linux" as const,
+      environment: { GROK_HOME: "/opt/grok-data" },
+      homeDirectory: home,
+    };
+    const sessionPlan = `${home}/.grok/sessions/abc/plan.md`;
+    const nestedSessionPlan = `${home}/.grok/sessions/%2Fhome%2Fproj/019fd20e-c563-70a0-b801-a6bc51815a9b/plan.md`;
+    expect(isGrokPlanMarkdownPath(sessionPlan, linuxHost)).toBe(true);
+    expect(isGrokPlanMarkdownPath(nestedSessionPlan, linuxHost)).toBe(true);
+    expect(isGrokPlanMarkdownPath("~/.grok/sessions/abc/plan.md", linuxHost)).toBe(true);
+    expect(isGrokPlanMarkdownPath("/tmp/mock-home/.grok/sessions/sess/plan.md", linuxHost)).toBe(
+      true,
+    );
+    expect(isGrokPlanMarkdownPath("/home/other/.grok/sessions/sess/plan.md", linuxHost)).toBe(true);
+    expect(isGrokPlanMarkdownPath("/HOME/other/.grok/sessions/sess/plan.md", linuxHost)).toBe(
+      false,
+    );
+    expect(isGrokPlanMarkdownPath("C:/Users/other/.grok/sessions/id/plan.md", windowsHost)).toBe(
+      true,
+    );
+    expect(isGrokPlanMarkdownPath("c:/users/OTHER/.GROK/SESSIONS/id/PLAN.MD", windowsHost)).toBe(
+      true,
+    );
+    expect(
+      isGrokPlanMarkdownPath("C:\\Users\\other\\.grok\\sessions\\id\\plan.md", windowsHost),
+    ).toBe(true);
+    expect(isGrokPlanMarkdownPath("/opt/grok-data/sessions/sess/plan.md", grokHomeHost)).toBe(true);
+    expect(
+      isGrokPlanMarkdownPath("/OPT/GROK-DATA/sessions/sess/plan.md", {
+        platform: "win32",
+        environment: { GROK_HOME: "/opt/grok-data" },
+        homeDirectory: home,
+      }),
+    ).toBe(true);
+    expect(isGrokPlanMarkdownPath("/OPT/GROK-DATA/sessions/sess/plan.md", grokHomeHost)).toBe(
+      false,
+    );
+    expect(isGrokPlanMarkdownPath("plan.md", linuxHost)).toBe(false);
+    expect(isGrokPlanMarkdownPath("/repo/docs/plan.md", linuxHost)).toBe(false);
+    expect(isGrokPlanMarkdownPath("/tmp/other.md", linuxHost)).toBe(false);
+    expect(isGrokPlanMarkdownPath("/repo/.grok/sessions/example/plan.md", linuxHost)).toBe(false);
+    expect(
+      isGrokPlanMarkdownPath(`${home}/project/.grok/sessions/example/plan.md`, linuxHost),
+    ).toBe(false);
+    expect(
+      isGrokPlanMarkdownPath("/home/other/.grok/sessions/../../project/plan.md", linuxHost),
+    ).toBe(false);
+    expect(
+      isGrokPlanMarkdownPath("/home/other/.grok/sessions/foo/../../../project/plan.md", linuxHost),
+    ).toBe(false);
+
+    expect(
+      extractGrokPlanMarkdownFromToolCallData(
+        {
+          rawInput: {
+            file_path: sessionPlan,
+            content: "# From rawInput\n\n- a\n",
+          },
+        },
+        linuxHost,
+      ),
+    ).toBe("# From rawInput\n\n- a");
+
+    expect(
+      extractGrokPlanMarkdownFromToolCallData(
+        {
+          content: [
+            {
+              type: "diff",
+              path: sessionPlan,
+              oldText: "",
+              newText: "# From diff\n\n- b\n",
+            },
+          ],
+        },
+        linuxHost,
+      ),
+    ).toBe("# From diff\n\n- b");
+
+    expect(
+      extractGrokPlanMarkdownFromToolCallData(
+        {
+          rawInput: { file_path: sessionPlan, content: "" },
+          content: [
+            {
+              type: "diff",
+              path: sessionPlan,
+              oldText: "",
+              newText: "# From diff after empty rawInput\n",
+            },
+          ],
+        },
+        linuxHost,
+      ),
+    ).toBe("# From diff after empty rawInput");
+
+    expect(
+      extractGrokPlanMarkdownFromToolCallData(
+        {
+          rawInput: { file_path: sessionPlan, content: "" },
+        },
+        linuxHost,
+      ),
+    ).toBe("");
+
+    expect(
+      extractGrokPlanMarkdownFromToolCallData(
+        {
+          content: [{ type: "diff", path: sessionPlan, oldText: "# old", newText: "" }],
+        },
+        linuxHost,
+      ),
+    ).toBe("");
+
+    expect(
+      extractGrokPlanMarkdownFromToolCallData(
+        {
+          rawInput: { file_path: "/tmp/readme.md", content: "nope" },
+        },
+        linuxHost,
+      ),
+    ).toBeUndefined();
+
+    expect(
+      extractGrokPlanMarkdownFromToolCallData(
+        {
+          rawInput: { file_path: "/repo/docs/plan.md", content: "# Project plan\n" },
+        },
+        linuxHost,
+      ),
+    ).toBeUndefined();
+  });
+});

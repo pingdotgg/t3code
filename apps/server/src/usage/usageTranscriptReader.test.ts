@@ -4,39 +4,20 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import * as NodeSqlite from "node:sqlite";
+import * as NodeZlib from "node:zlib";
 
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
+import type { TranscriptUsageFormat } from "@t3tools/provider-core/server/usage";
+import * as Schema from "effect/Schema";
 
-import { readTranscriptRecords } from "./usageTranscriptReader.ts";
-import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
-import { readCursorAccountUsage } from "./cursorUsageReader.ts";
-import { readAntigravityUsage } from "./antigravityUsageReader.ts";
+import { TEST_FORMATS } from "./usageTestFormats.ts";
+import {
+  listTranscriptFiles,
+  readTranscriptRecords,
+  transcriptLineGate,
+} from "./usageTranscriptReader.ts";
 
 let dir: string;
-
-function protoNumber(field: number, value: number): number[] {
-  const varint = (number: number) => {
-    const bytes: number[] = [];
-    do {
-      const byte = number % 128;
-      number = Math.floor(number / 128);
-      bytes.push(byte + (number > 0 ? 128 : 0));
-    } while (number > 0);
-    return bytes;
-  };
-  return [...varint(field * 8), ...varint(value)];
-}
-
-function protoBytes(field: number, bytes: readonly number[]): number[] {
-  const encoded = protoNumber(field, bytes.length);
-  encoded[0] = encoded[0]! + 2;
-  return [...encoded, ...bytes];
-}
-
-function protoText(field: number, value: string): number[] {
-  return protoBytes(field, [...Buffer.from(value)]);
-}
 
 beforeEach(async () => {
   dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "usage-reader-test-"));
@@ -95,24 +76,186 @@ function codexUsageLine(outputTokens: number, secondsOffset: number): string {
   })}\n`;
 }
 
+describe("compressed transcripts", () => {
+  it("discovers nested plain and zstd JSONL files within the requested window", async () => {
+    const nested = NodePath.join(dir, "nested");
+    await NodeFSP.mkdir(nested);
+    const plain = NodePath.join(dir, "active.jsonl");
+    const compressed = NodePath.join(nested, "archived.jsonl.zst");
+    const old = NodePath.join(nested, "old.jsonl.zst");
+    await NodeFSP.writeFile(plain, claudeLine(1, 5));
+    await NodeFSP.writeFile(compressed, NodeZlib.zstdCompressSync(claudeLine(2, 7)));
+    await NodeFSP.writeFile(old, NodeZlib.zstdCompressSync(claudeLine(3, 11)));
+    await NodeFSP.writeFile(NodePath.join(nested, "unrelated.zst"), "ignored");
+    await NodeFSP.writeFile(NodePath.join(nested, "partial.jsonl.zst.tmp"), "ignored");
+    await NodeFSP.utimes(old, 1, 1);
+
+    const listed = await listTranscriptFiles(dir, Date.parse("2026-01-01T00:00:00Z"));
+    assert.deepStrictEqual(
+      listed.files.map((file) => file.path).sort(),
+      [plain, compressed].sort(),
+    );
+    assert.strictEqual(listed.failedPaths, 0);
+    assert.isAbove(listed.files.find((file) => file.path === compressed)?.size ?? 0, 0);
+  });
+
+  it.each([
+    { parser: "native", streamingThresholdBytes: undefined },
+    { parser: "projected", streamingThresholdBytes: 1024 },
+  ])(
+    "matches plain Codex records and unfinished tails through long lines ($parser)",
+    async ({ streamingThresholdBytes }) => {
+      const plain = NodePath.join(dir, "rollout.jsonl");
+      const compressed = plain + ".zst";
+      const large = codexUsageLine(9, 5).replace(
+        '"payload":',
+        '"padding":' + JSON.stringify("日本語 é".repeat(128 * 1024)) + ',"payload":',
+      );
+      const content =
+        codexMetaLine() +
+        codexModelLine("gpt-6-astra") +
+        codexTierLine("ultrafast") +
+        large +
+        codexUsageLine(13, 6).replace('"output_tokens":13', '"output_tokens":"invalid"') +
+        codexUsageLine(21, 8).trimEnd();
+      await NodeFSP.writeFile(plain, content);
+      await NodeFSP.writeFile(compressed, NodeZlib.zstdCompressSync(content));
+
+      const options =
+        streamingThresholdBytes === undefined ? undefined : { streamingThresholdBytes };
+      const expected = await readTranscriptRecords(plain, TEST_FORMATS.codex, undefined, options);
+      const actual = await readTranscriptRecords(
+        compressed,
+        TEST_FORMATS.codex,
+        undefined,
+        options,
+      );
+      assert.isNotNull(expected);
+      assert.isNotNull(actual);
+      assert.strictEqual(expected.records.length, 1);
+      assert.strictEqual(expected.tailRecords.length, 1);
+      assert.deepStrictEqual(actual.records, expected.records);
+      assert.deepStrictEqual(actual.tailRecords, expected.tailRecords);
+      assert.strictEqual(expected.malformedRecords, 1);
+      assert.strictEqual(actual.malformedRecords, expected.malformedRecords);
+      assert.strictEqual(actual.records[0]?.speed, "ultrafast");
+      assert.isFalse(actual.resumed);
+      assert.strictEqual(actual.position.resumeOffset, 0);
+    },
+  );
+
+  it("ignores a prior resume position and rereads compressed rollouts from their start", async () => {
+    const plain = NodePath.join(dir, "rollout.jsonl");
+    const content = codexMetaLine() + codexModelLine("gpt-6-astra") + codexUsageLine(9, 5);
+    await NodeFSP.writeFile(plain, content);
+    const first = await readTranscriptRecords(plain, TEST_FORMATS.codex);
+    assert.isNotNull(first);
+
+    const compressed = plain + ".zst";
+    await NodeFSP.writeFile(compressed, NodeZlib.zstdCompressSync(content + codexUsageLine(21, 8)));
+    const actual = await readTranscriptRecords(compressed, TEST_FORMATS.codex, first.position);
+    assert.isNotNull(actual);
+    assert.isFalse(actual.resumed);
+    assert.deepStrictEqual(
+      actual.records.map((record) => record.totals.outputTokens),
+      [9, 21],
+    );
+    const repeated = await readTranscriptRecords(compressed, TEST_FORMATS.codex, actual.position);
+    assert.isNotNull(repeated);
+    assert.isFalse(repeated.resumed);
+    assert.deepStrictEqual(repeated.records, actual.records);
+  });
+
+  it("returns null for zstd decoder errors rather than caching an empty parse", async () => {
+    const path = NodePath.join(dir, "corrupt.jsonl.zst");
+    await NodeFSP.writeFile(path, "not a zstd frame");
+    assert.isNull(await readTranscriptRecords(path, TEST_FORMATS.claude));
+  });
+});
+
 describe("readTranscriptRecords resume", () => {
+  it.each([
+    { mode: "buffered", streamingThresholdBytes: Infinity },
+    { mode: "streaming", streamingThresholdBytes: 0 },
+  ])("counts malformed tails once across $mode reads and resume", async (options) => {
+    const format: TranscriptUsageFormat<{ errors: number }> = {
+      ...TEST_FORMATS.claude,
+      selectFields: { ...TEST_FORMATS.claude.selectFields, usage: true },
+      state: {
+        initial: () => ({ errors: 0 }),
+        schema: Schema.Struct({ errors: Schema.Number }),
+      },
+      parseLine(line, state) {
+        return this.parseProjected(JSON.parse(line), state);
+      },
+      parseProjected(value, state) {
+        if (
+          typeof value === "object" &&
+          value !== null &&
+          "usage" in value &&
+          value.usage === "malformed"
+        ) {
+          state.errors += 1;
+          return [];
+        }
+        return TEST_FORMATS.claude.parseProjected(value, undefined);
+      },
+      readMalformedRecords: (state: { errors: number }) => state.errors,
+    };
+    const path = NodePath.join(dir, "diagnostics.jsonl");
+    const malformed = JSON.stringify({ usage: "malformed" });
+    // Completed lines enter the projected parser only when they cross a stream chunk.
+    const committed = `${JSON.stringify({ usage: "malformed", padding: "x".repeat(256 * 1024) })}\n${claudeLine(1, 5)}`;
+    await NodeFSP.writeFile(path, committed + malformed);
+
+    const first = await readTranscriptRecords(path, format, undefined, options);
+    assert.isNotNull(first);
+    assert.deepStrictEqual(
+      first.records.map((record) => record.totals.outputTokens),
+      [5],
+    );
+    assert.deepStrictEqual(first.tailRecords, []);
+    assert.strictEqual(first.position.resumeOffset, Buffer.byteLength(committed));
+    assert.deepStrictEqual(first.position.state, { errors: 1 });
+    assert.strictEqual(first.malformedRecords, 2);
+
+    const savedPosition = JSON.parse(JSON.stringify(first.position));
+    await NodeFSP.appendFile(path, `\n${claudeLine(2, 7)}${malformed}\n`);
+    const resumed = await readTranscriptRecords(path, format, savedPosition, options);
+    assert.isNotNull(resumed);
+    assert.isTrue(resumed.resumed);
+    assert.deepStrictEqual(
+      resumed.records.map((record) => record.totals.outputTokens),
+      [7],
+    );
+    assert.deepStrictEqual(resumed.position.state, { errors: 3 });
+    assert.strictEqual(resumed.malformedRecords, 3);
+
+    const full = await readTranscriptRecords(path, format, undefined, options);
+    assert.isNotNull(full);
+    assert.deepStrictEqual([...first.records, ...resumed.records], full.records);
+    assert.deepStrictEqual(resumed.tailRecords, full.tailRecords);
+    assert.deepStrictEqual(resumed.position, full.position);
+    assert.strictEqual(resumed.malformedRecords, full.malformedRecords);
+  });
+
   it("parses only appended lines when resuming a grown file", async () => {
     const path = NodePath.join(dir, "claude.jsonl");
     await NodeFSP.writeFile(path, claudeLine(1, 5) + claudeLine(2, 7));
-    const first = await readTranscriptRecords(path, "claude");
+    const first = await readTranscriptRecords(path, TEST_FORMATS.claude);
     assert.isNotNull(first);
     assert.strictEqual(first.records.length, 2);
     assert.isFalse(first.resumed);
+    assert.strictEqual(first.malformedRecords, 0);
 
     await NodeFSP.appendFile(path, claudeLine(3, 11));
-    const second = await readTranscriptRecords(path, "claude", first.position);
+    const second = await readTranscriptRecords(path, TEST_FORMATS.claude, first.position);
     assert.isNotNull(second);
     assert.isTrue(second.resumed);
     assert.strictEqual(second.records.length, 1);
     assert.strictEqual(second.records[0]?.totals.outputTokens, 11);
 
-    // The stitched result matches a from-scratch parse of the whole file.
-    const full = await readTranscriptRecords(path, "claude");
+    const full = await readTranscriptRecords(path, TEST_FORMATS.claude);
     assert.isNotNull(full);
     assert.deepStrictEqual([...first.records, ...second.records], [...full.records]);
   });
@@ -123,15 +266,12 @@ describe("readTranscriptRecords resume", () => {
       path,
       codexMetaLine() + codexModelLine("gpt-5.2-codex") + codexTierLine("ultrafast"),
     );
-    const first = await readTranscriptRecords(path, "codex");
+    const first = await readTranscriptRecords(path, TEST_FORMATS.codex);
     assert.isNotNull(first);
     assert.strictEqual(first.records.length, 0);
 
-    // The appended usage event has no turn_context, thread settings, or
-    // session_meta of its own; model, tier, and session must come from the
-    // state captured before the boundary.
     await NodeFSP.appendFile(path, codexUsageLine(9, 5));
-    const second = await readTranscriptRecords(path, "codex", first.position);
+    const second = await readTranscriptRecords(path, TEST_FORMATS.codex, first.position);
     assert.isNotNull(second);
     assert.isTrue(second.resumed);
     assert.strictEqual(second.records.length, 1);
@@ -146,14 +286,13 @@ describe("readTranscriptRecords resume", () => {
       path,
       codexMetaLine() + codexModelLine("gpt-5.2-codex") + codexUsageLine(9, 5),
     );
-    const first = await readTranscriptRecords(path, "codex");
+    const first = await readTranscriptRecords(path, TEST_FORMATS.codex);
     assert.isNotNull(first);
     assert.strictEqual(first.records.length, 1);
 
-    // Codex re-emits an unchanged token_count on stream boundaries; the copy
-    // lands after the resume point and must still be dropped.
+    // Codex duplicates token_count at stream boundaries, including after resume points.
     await NodeFSP.appendFile(path, codexUsageLine(9, 5) + codexUsageLine(21, 8));
-    const second = await readTranscriptRecords(path, "codex", first.position);
+    const second = await readTranscriptRecords(path, TEST_FORMATS.codex, first.position);
     assert.isNotNull(second);
     assert.isTrue(second.resumed);
     assert.deepStrictEqual(
@@ -166,16 +305,14 @@ describe("readTranscriptRecords resume", () => {
     const path = NodePath.join(dir, "claude.jsonl");
     const unterminated = claudeLine(2, 7).trimEnd();
     await NodeFSP.writeFile(path, claudeLine(1, 5) + unterminated);
-    const first = await readTranscriptRecords(path, "claude");
+    const first = await readTranscriptRecords(path, TEST_FORMATS.claude);
     assert.isNotNull(first);
     assert.strictEqual(first.records.length, 1);
     assert.strictEqual(first.tailRecords.length, 1);
     assert.strictEqual(first.tailRecords[0]?.totals.outputTokens, 7);
 
-    // Completing the line and appending another re-reads from the resume
-    // point, so the once-tail record arrives exactly once as a line record.
     await NodeFSP.appendFile(path, `\n${claudeLine(3, 11)}`);
-    const second = await readTranscriptRecords(path, "claude", first.position);
+    const second = await readTranscriptRecords(path, TEST_FORMATS.claude, first.position);
     assert.isNotNull(second);
     assert.isTrue(second.resumed);
     assert.deepStrictEqual(
@@ -185,15 +322,73 @@ describe("readTranscriptRecords resume", () => {
     assert.strictEqual(second.tailRecords.length, 0);
   });
 
+  it.each([
+    { mode: "buffered", streamingThresholdBytes: Infinity },
+    { mode: "streaming", streamingThresholdBytes: 0 },
+  ])(
+    "resumes an initial Codex carried-total tail without rebilling it ($mode)",
+    async (options) => {
+      const path = NodePath.join(dir, "continuation.jsonl");
+      const usage = (input: number, output: number) => ({
+        input_tokens: input,
+        output_tokens: output,
+      });
+      const event = (last: unknown, cumulative: unknown) =>
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-08-01T10:00:05Z",
+          payload: {
+            type: "token_count",
+            info: { last_token_usage: last, total_token_usage: cumulative },
+          },
+        });
+      const firstLine = event(usage(100, 20), usage(500, 60));
+      await NodeFSP.writeFile(
+        path,
+        codexMetaLine() + codexModelLine("gpt-6-astra") + codexTierLine("ultrafast") + firstLine,
+      );
+      const first = await readTranscriptRecords(path, TEST_FORMATS.codex, undefined, options);
+      assert.isNotNull(first);
+      assert.strictEqual(first.records.length, 0);
+      assert.deepStrictEqual(
+        first.tailRecords.map((r) => [r.totals.outputTokens, r.speed]),
+        [[20, "ultrafast"]],
+      );
+      assert.strictEqual(first.malformedRecords, 0);
+
+      await NodeFSP.appendFile(path, `\n${firstLine}\n${event(usage(10, 2), usage(510, 62))}\n`);
+      const resumed = await readTranscriptRecords(
+        path,
+        TEST_FORMATS.codex,
+        JSON.parse(JSON.stringify(first.position)),
+        options,
+      );
+      const full = await readTranscriptRecords(path, TEST_FORMATS.codex, undefined, options);
+      assert.isNotNull(resumed);
+      assert.isNotNull(full);
+      assert.isTrue(resumed.resumed);
+      assert.deepStrictEqual(resumed.records, full.records);
+      assert.deepStrictEqual(
+        resumed.records.map((r) => [r.totals.outputTokens, r.speed]),
+        [
+          [20, "ultrafast"],
+          [2, "ultrafast"],
+        ],
+      );
+      assert.deepStrictEqual(resumed.tailRecords, []);
+      assert.strictEqual(resumed.malformedRecords, 0);
+      assert.deepStrictEqual(resumed.position, full.position);
+    },
+  );
+
   it("re-parses from the start when the guard bytes no longer match", async () => {
     const path = NodePath.join(dir, "claude.jsonl");
     await NodeFSP.writeFile(path, claudeLine(1, 5));
-    const first = await readTranscriptRecords(path, "claude");
+    const first = await readTranscriptRecords(path, TEST_FORMATS.claude);
     assert.isNotNull(first);
 
-    // Same path, larger size, different content: a replaced file, not growth.
     await NodeFSP.writeFile(path, claudeLine(4, 13) + claudeLine(5, 17));
-    const second = await readTranscriptRecords(path, "claude", first.position);
+    const second = await readTranscriptRecords(path, TEST_FORMATS.claude, first.position);
     assert.isNotNull(second);
     assert.isFalse(second.resumed);
     assert.deepStrictEqual(
@@ -205,11 +400,11 @@ describe("readTranscriptRecords resume", () => {
   it("re-parses from the start when the file shrank below the resume point", async () => {
     const path = NodePath.join(dir, "claude.jsonl");
     await NodeFSP.writeFile(path, claudeLine(1, 5) + claudeLine(2, 7));
-    const first = await readTranscriptRecords(path, "claude");
+    const first = await readTranscriptRecords(path, TEST_FORMATS.claude);
     assert.isNotNull(first);
 
     await NodeFSP.writeFile(path, claudeLine(3, 11));
-    const second = await readTranscriptRecords(path, "claude", first.position);
+    const second = await readTranscriptRecords(path, TEST_FORMATS.claude, first.position);
     assert.isNotNull(second);
     assert.isFalse(second.resumed);
     assert.deepStrictEqual(
@@ -219,8 +414,6 @@ describe("readTranscriptRecords resume", () => {
   });
 
   it("parses a line larger than one stream chunk", async () => {
-    // Tool-heavy transcripts carry multi-megabyte single lines; they arrive
-    // split across many chunks and must reassemble into one record.
     const path = NodePath.join(dir, "claude.jsonl");
     const bigLine = `${JSON.stringify({
       type: "assistant",
@@ -236,7 +429,7 @@ describe("readTranscriptRecords resume", () => {
     })}\n`;
     await NodeFSP.writeFile(path, bigLine + claudeLine(2, 7));
 
-    const parsed = await readTranscriptRecords(path, "claude");
+    const parsed = await readTranscriptRecords(path, TEST_FORMATS.claude);
     assert.isNotNull(parsed);
     assert.deepStrictEqual(
       parsed.records.map((record) => record.totals.outputTokens),
@@ -244,534 +437,43 @@ describe("readTranscriptRecords resume", () => {
     );
   });
 
-  it("returns null for an unreadable file", async () => {
-    assert.isNull(await readTranscriptRecords(NodePath.join(dir, "missing.jsonl"), "claude"));
+  it("keeps a CRLF Codex reducer line whose marker straddles a stream chunk", async () => {
+    const path = NodePath.join(dir, "rollout.jsonl");
+    const crlf = (line: string) => line.replace("\n", "\r\n");
+    const modelLine = crlf(codexModelLine("gpt-5.2-codex"));
+    const head = crlf(codexMetaLine());
+    const fillerBytes =
+      256 * 1024 - Buffer.byteLength(head) - modelLine.indexOf("turn_context") - 4;
+    const fillerEnvelope = crlf(`${JSON.stringify({ type: "response_item", output: "" })}\n`);
+    const padding = "é".repeat((fillerBytes - Buffer.byteLength(fillerEnvelope)) / 2);
+    const filler = crlf(`${JSON.stringify({ type: "response_item", output: padding })}\n`);
+    const content = head + filler + modelLine + crlf(codexUsageLine(40, 2));
+    await NodeFSP.writeFile(path, content);
+
+    const result = await readTranscriptRecords(path, TEST_FORMATS.codex);
+    assert.isNotNull(result);
+    assert.strictEqual(result.records.length, 1);
+    assert.strictEqual(result.records[0]?.model, "gpt-5.2-codex");
+    assert.strictEqual(result.records[0]?.sessionId, "codex-session-1");
+    assert.strictEqual(result.position.resumeOffset, Buffer.byteLength(content));
   });
 });
 
-describe("SQLite usage readers", () => {
-  it("reads Cursor account history with the default macOS Keychain login", async () => {
-    const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
-    let keychainReads = 0;
-    const result = await readCursorAccountUsage(
-      { kind: "keychain" },
-      0,
-      1781000000000,
-      async (_url, init) => {
-        assert.include(new Headers(init.headers).get("cookie") ?? "", "demo%3A%3A");
-        return Response.json({ totalUsageEventsCount: 0, usageEventsDisplay: [] });
-      },
-      async () => {
-        keychainReads++;
-        return accessToken;
-      },
-    );
-    assert.strictEqual(keychainReads, 1);
-    assert.isNull(result.error);
-    assert.isFalse(result.missing);
-    assert.isNotNull(result.accountKey);
-  });
+describe("transcriptLineGate", () => {
+  const gates = {
+    one: transcriptLineGate(['"usage"']),
+    several: transcriptLineGate(['"token_count"', '"session_meta"', '"a.b(c)"']),
+  };
+  const markers = { one: ['"usage"'], several: ['"token_count"', '"session_meta"', '"a.b(c)"'] };
 
-  it("reads paginated Cursor account history including headless calls with separate cache tokens", async () => {
-    const authPath = NodePath.join(dir, "auth.json");
-    const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo", exp: 4102444800 })).toString("base64url")}.signature`;
-    await NodeFSP.writeFile(authPath, JSON.stringify({ accessToken }));
-    const pages: number[] = [];
-    const signals: AbortSignal[] = [];
-    const request = async (url: string, init: RequestInit) => {
-      assert.strictEqual(String(url), "https://cursor.com/api/dashboard/get-filtered-usage-events");
-      assert.strictEqual(init?.redirect, "error");
-      const headers = new Headers(init?.headers);
-      assert.strictEqual(headers.get("origin"), "https://cursor.com");
-      assert.include(headers.get("cookie") ?? "", "WorkosCursorSessionToken=demo%3A%3A");
-      const body = JSON.parse(String(init?.body));
-      pages.push(body.page);
-      if (init.signal) signals.push(init.signal);
-      return Response.json({
-        totalUsageEventsCount: 1001,
-        usageEventsDisplay: Array.from({ length: body.page === 1 ? 1000 : 1 }, (_, index) => ({
-          timestamp: String(1780000000000 + ((body.page - 1) * 1000 + index) * 1000),
-          model: "claude-sonnet-4-5",
-          conversationId: `conversation-${body.page}`,
-          isHeadless: body.page === 2,
-          chargedCents: 0,
-          tokenUsage: {
-            inputTokens: 10,
-            outputTokens: 5,
-            cacheReadTokens: 30,
-            cacheWriteTokens: 2,
-            totalCents: 25,
-          },
-        })),
-      });
-    };
-    const result = await readCursorAccountUsage(authPath, 0, 1781000000000, request);
-    assert.isNull(result.error);
-    assert.deepStrictEqual(pages, [1, 2]);
-    assert.lengthOf(signals, 2);
-    assert.notStrictEqual(signals[0], signals[1]);
-    assert.strictEqual(result.records.length, 1001);
-    assert.strictEqual(result.records.at(-1)?.sessionId, "conversation-2");
-    assert.deepStrictEqual(result.records[0]?.totals, {
-      uncachedInputTokens: 10,
-      cachedInputTokens: 30,
-      cacheCreationTokens: 2,
-      outputTokens: 5,
-      reasoningTokens: 0,
-    });
-    assert.strictEqual(result.records[0]?.reportedCostUsd, 0.25);
-    assert.isFalse(result.accountKey?.includes("demo") ?? true);
-  });
-
-  it("reads Cursor account history beyond 100 pages", async () => {
-    const authPath = NodePath.join(dir, "auth.json");
-    const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
-    await NodeFSP.writeFile(authPath, JSON.stringify({ accessToken }));
-    const fullPage = Array.from({ length: 1000 }, () => ({ tokenUsage: null }));
-    let requests = 0;
-    const result = await readCursorAccountUsage(authPath, 0, 1781000000000, async () => {
-      requests += 1;
-      return Response.json({
-        totalUsageEventsCount: 100_001,
-        usageEventsDisplay: requests <= 100 ? fullPage : [{ tokenUsage: null }],
-      });
-    });
-    assert.isNull(result.error);
-    assert.strictEqual(requests, 101);
-    assert.deepStrictEqual(result.records, []);
-  });
-
-  it("accepts confirmed empty Cursor usage but rejects error envelopes", async () => {
-    const authPath = NodePath.join(dir, "auth.json");
-    const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
-    await NodeFSP.writeFile(authPath, JSON.stringify({ accessToken }));
-    for (const body of [
-      {},
-      { totalUsageEventsCount: 0 },
-      { totalUsageEventsCount: 0, usageEventsDisplay: [] },
-    ]) {
-      const result = await readCursorAccountUsage(authPath, 0, 1781000000000, async () =>
-        Response.json(body),
-      );
-      assert.isNull(result.error);
-      assert.deepStrictEqual(result.records, []);
-      assert.isFalse(result.missing);
-    }
-    for (const body of [
-      { error: "upstream error" },
-      { detail: "unknown error envelope" },
-      { totalUsageEventsCount: 0, error: "upstream error" },
-      null,
-      [],
-      "invalid",
-      0,
-    ]) {
-      const result = await readCursorAccountUsage(authPath, 0, 1781000000000, async () =>
-        Response.json(body),
-      );
-      assert.isNotNull(result.error);
-      assert.deepStrictEqual(result.records, []);
-    }
-  });
-
-  it("requires a terminal Cursor page after a full page reaches the reported count", async () => {
-    const authPath = NodePath.join(dir, "auth.json");
-    const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
-    await NodeFSP.writeFile(authPath, JSON.stringify({ accessToken }));
-    let requests = 0;
-    const result = await readCursorAccountUsage(authPath, 0, 1781000000000, async () => {
-      requests++;
-      return Response.json(
-        requests === 1
-          ? {
-              totalUsageEventsCount: 1000,
-              usageEventsDisplay: Array.from({ length: 1000 }, (_, index) => ({
-                timestamp: String(1780000000000 + index),
-                model: "gpt-5",
-                tokenUsage: { inputTokens: 10, outputTokens: 5 },
-              })),
-            }
-          : { totalUsageEventsCount: 1000 },
-      );
-    });
-    assert.isNull(result.error);
-    assert.strictEqual(result.records.length, 1000);
-    assert.strictEqual(requests, 2);
-  });
-
-  it("removes only count-proven Cursor boundary copies and preserves identical billed events", async () => {
-    const authPath = NodePath.join(dir, "auth.json");
-    const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
-    await NodeFSP.writeFile(authPath, JSON.stringify({ accessToken }));
-    const event = (index: number) => ({
-      timestamp: String(1780000000000 + index),
-      model: "gpt-5",
-      tokenUsage: { inputTokens: 10, outputTokens: 5, totalCents: 1 },
-    });
-    for (const total of [2000, 2001]) {
-      let requests = 0;
-      const result = await readCursorAccountUsage(authPath, 0, 1781000000000, async () => {
-        requests++;
-        return Response.json({
-          totalUsageEventsCount: total,
-          usageEventsDisplay:
-            requests === 1
-              ? Array.from({ length: 1000 }, (_, index) => event(index))
-              : requests === 2
-                ? Array.from({ length: 1000 }, (_, index) => event(999 + index))
-                : [event(1999)],
-        });
-      });
-      assert.isNull(result.error);
-      assert.strictEqual(result.records.length, total);
-      assert.strictEqual(requests, 3);
-      assert.strictEqual(result.records.at(-1)?.timestampMs, 1780000001999);
-      assert.strictEqual(
-        result.records.filter((record) => record.timestampMs === 1780000000999).length,
-        total === 2000 ? 1 : 2,
-      );
-      assert.strictEqual(new Set(result.records.map((record) => record.dedupeKey)).size, total);
-    }
-    let requests = 0;
-    const inconsistent = await readCursorAccountUsage(authPath, 0, 1781000000000, async () => {
-      requests++;
-      return Response.json({
-        totalUsageEventsCount: 1001,
-        usageEventsDisplay:
-          requests === 1
-            ? Array.from({ length: 1000 }, (_, index) => event(index))
-            : [event(500), event(1000)],
-      });
-    });
-    assert.isNotNull(inconsistent.error);
-    assert.deepStrictEqual(inconsistent.records, []);
-  });
-
-  it("does not present truncated Cursor account pages or authentication failures as complete history", async () => {
-    const authPath = NodePath.join(dir, "auth.json");
-    const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo", exp: 4102444800 })).toString("base64url")}.signature`;
-    await NodeFSP.writeFile(authPath, JSON.stringify({ accessToken }));
-    const truncated = await readCursorAccountUsage(authPath, 0, 1781000000000, async () =>
-      Response.json({ totalUsageEventsCount: 101, usageEventsDisplay: [] }),
-    );
-    assert.isNotNull(truncated.error);
-    assert.deepStrictEqual(truncated.records, []);
-    const denied = await readCursorAccountUsage(
-      authPath,
-      0,
-      1781000000000,
-      async () => new Response(accessToken, { status: 401 }),
-    );
-    assert.isNotNull(denied.error);
-    assert.isFalse(denied.error?.includes(accessToken) ?? true);
-    assert.deepStrictEqual(denied.records, []);
-    let requested = false;
-    const missing = await readCursorAccountUsage(
-      NodePath.join(dir, "missing.json"),
-      0,
-      1781000000000,
-      async () => {
-        requested = true;
-        return Response.json({});
-      },
-    );
-    assert.isTrue(missing.missing);
-    assert.isFalse(requested);
-  });
-
-  it("counts migrated OpenCode messages once and sees subsequent WAL writes", async () => {
-    const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "opencode.db"));
-    try {
-      db.exec(
-        "PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; CREATE TABLE message (id TEXT, session_id TEXT, data TEXT)",
-      );
-      const message = {
-        id: "msg-1",
-        sessionID: "session-1",
-        role: "assistant",
-        modelID: "claude-sonnet-4-5",
-        time: { created: 1780000000000 },
-        cost: 0.25,
-        tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 30, write: 10 } },
-      };
-      const insert = db.prepare("INSERT INTO message VALUES (?, ?, ?)");
-      insert.run(message.id, message.sessionID, JSON.stringify(message));
-      const legacy = NodePath.join(dir, "storage", "message", message.sessionID);
-      await NodeFSP.mkdir(legacy, { recursive: true });
-      await NodeFSP.writeFile(NodePath.join(legacy, "msg-1.json"), JSON.stringify(message));
-      const first = await readOpenCodeUsage(dir, 0);
-      assert.isFalse(first.error);
-      const records = first.files.flatMap((file) => file.records);
-      assert.strictEqual(records.length, 1);
-      assert.deepStrictEqual(records[0]?.totals, {
-        uncachedInputTokens: 100,
-        cachedInputTokens: 30,
-        cacheCreationTokens: 10,
-        outputTokens: 25,
-        reasoningTokens: 5,
-      });
-      assert.strictEqual(records[0]?.reportedCostUsd, 0.25);
-      insert.run(
-        "msg-2",
-        message.sessionID,
-        JSON.stringify({ ...message, id: "msg-2", time: { created: 1780000001000 } }),
-      );
-      const next = await readOpenCodeUsage(dir, 1780000001000);
-      assert.isFalse(next.error);
-      assert.deepStrictEqual(
-        next.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
-        ["opencode:msg-2"],
-      );
-      assert.isAbove((await NodeFSP.stat(NodePath.join(dir, "opencode.db-wal"))).size, 0);
-    } finally {
-      db.close();
-    }
-  });
-
-  it("deduplicates Antigravity generation and step usage while preserving retry model and token buckets", async () => {
-    const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "session-1.db"));
-    const stamp = protoNumber(1, 1780000000);
-    const usage = [
-      ...protoNumber(2, 100),
-      ...protoNumber(3, 40),
-      ...protoNumber(4, 5),
-      ...protoNumber(5, 20),
-      ...protoNumber(9, 10),
-      ...protoText(11, "response-1"),
-    ];
-    const retry = [
-      ...protoNumber(1, 1026),
-      ...protoNumber(2, 12),
-      ...protoNumber(3, 3),
-      ...protoText(11, "retry-1"),
-    ];
-    const generation = protoBytes(1, [
-      ...protoBytes(4, usage),
-      ...protoText(19, "Gemini 3 Pro"),
-      ...protoBytes(9, protoBytes(4, stamp)),
-    ]);
-    const step = [
-      ...protoBytes(9, usage),
-      ...protoBytes(8, stamp),
-      ...protoBytes(28, protoBytes(2, retry)),
-    ];
-    try {
-      db.exec(
-        "CREATE TABLE gen_metadata (idx INTEGER, data BLOB); CREATE TABLE steps (idx INTEGER, metadata BLOB)",
-      );
-      db.prepare("INSERT INTO gen_metadata VALUES (?, ?)").run(0, new Uint8Array(generation));
-      db.prepare("INSERT INTO steps VALUES (?, ?)").run(0, new Uint8Array(step));
-    } finally {
-      db.close();
-    }
-    const result = await readAntigravityUsage(dir, 0);
-    assert.deepStrictEqual(result.errors, []);
-    const records = result.files.flatMap((file) => file.records);
-    assert.strictEqual(records.length, 2);
-    const main = records.find((record) => record.model === "gemini-3-pro");
-    assert.isDefined(main);
-    assert.strictEqual(main?.timestampMs, 1780000000000);
-    assert.strictEqual(main?.sessionId, "session-1");
-    assert.deepStrictEqual(main?.totals, {
-      uncachedInputTokens: 100,
-      cachedInputTokens: 20,
-      cacheCreationTokens: 5,
-      outputTokens: 40,
-      reasoningTokens: 10,
-    });
-    assert.strictEqual(
-      records.find((record) => record.model === "claude-opus-4-6")?.totals.uncachedInputTokens,
-      12,
-    );
-    assert.deepStrictEqual(
-      (await readAntigravityUsage(dir, 1780000000001)).files.flatMap((file) => file.records),
-      [],
-    );
-  });
-
-  it("uses the matching Antigravity generation model for each model-less step", async () => {
-    const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "model-switch.db"));
-    try {
-      db.exec(
-        "CREATE TABLE gen_metadata (idx INTEGER, data BLOB); CREATE TABLE steps (idx INTEGER, metadata BLOB)",
-      );
-      const generation = db.prepare("INSERT INTO gen_metadata VALUES (?, ?)");
-      const step = db.prepare("INSERT INTO steps VALUES (?, ?)");
-      for (const [idx, name] of ["Gemini 3 Pro", "Claude Opus 4.6"].entries()) {
-        generation.run(idx, new Uint8Array(protoBytes(1, protoText(19, name))));
-        step.run(idx, new Uint8Array(protoBytes(9, protoNumber(2, 10 + idx))));
-      }
-    } finally {
-      db.close();
-    }
-    const result = await readAntigravityUsage(dir, 0);
-    assert.deepStrictEqual(result.errors, []);
-    assert.deepStrictEqual(
-      result.files.flatMap((file) => file.records).map((record) => record.model),
-      ["gemini-3-pro", "claude-opus-4-6"],
-    );
-  });
-
-  it("merges Antigravity aliases that bridge previously separate step records", async () => {
-    const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "bridge.db"));
-    try {
-      db.exec(
-        "CREATE TABLE gen_metadata (idx INTEGER, data BLOB); CREATE TABLE steps (idx INTEGER, metadata BLOB)",
-      );
-      const step = db.prepare("INSERT INTO steps VALUES (?, ?)");
-      step.run(
-        0,
-        new Uint8Array(protoBytes(9, [...protoNumber(2, 100), ...protoText(11, "response")])),
-      );
-      step.run(
-        1,
-        new Uint8Array(protoBytes(9, [...protoNumber(3, 40), ...protoText(12, "provider")])),
-      );
-      db.prepare("INSERT INTO gen_metadata VALUES (?, ?)").run(
-        0,
-        new Uint8Array(
-          protoBytes(1, [
-            ...protoText(19, "Gemini 3 Pro"),
-            ...protoBytes(4, [
-              ...protoNumber(2, 50),
-              ...protoNumber(5, 20),
-              ...protoText(11, "response"),
-              ...protoText(12, "provider"),
-            ]),
-          ]),
-        ),
-      );
-    } finally {
-      db.close();
-    }
-    const result = await readAntigravityUsage(dir, 0);
-    assert.deepStrictEqual(result.errors, []);
-    const records = result.files.flatMap((file) => file.records);
-    assert.strictEqual(records.length, 1);
-    assert.deepStrictEqual(records[0]?.totals, {
-      uncachedInputTokens: 100,
-      cachedInputTokens: 20,
-      cacheCreationTokens: 0,
-      outputTokens: 40,
-      reasoningTokens: 0,
-    });
-  });
-
-  it("merges Antigravity provider and message aliases across configured roots while keeping original ownership", async () => {
-    const roots = [NodePath.join(dir, "first"), NodePath.join(dir, "second")];
-    for (const [index, root] of roots.entries()) {
-      await NodeFSP.mkdir(root);
-      const db = new NodeSqlite.DatabaseSync(NodePath.join(root, `session-${index}.db`));
-      try {
-        db.exec("CREATE TABLE steps (idx INTEGER, metadata BLOB)");
-        for (const identity of [7, 12]) {
-          const usage = [
-            ...protoNumber(1, 246),
-            ...protoNumber(2, index === 0 ? 100 : 150),
-            ...protoText(11, `response-${index}-${identity}`),
-            ...protoText(identity, `shared-${identity}`),
-          ];
-          db.prepare("INSERT INTO steps VALUES (?, ?)").run(
-            identity,
-            new Uint8Array(protoBytes(9, usage)),
-          );
-        }
-      } finally {
-        db.close();
+  it("matches markers beside multi-byte and malformed UTF-8", () => {
+    const invalid = Buffer.from([0xff, 0xc3]);
+    for (const kind of ["one", "several"] as const) {
+      for (const marker of markers[kind]) {
+        assert.isTrue(gates[kind](Buffer.from(`{"text":"日本語 é",${marker}:1}`)));
+        assert.isTrue(gates[kind](Buffer.concat([invalid, Buffer.from(marker), invalid])));
+        assert.isFalse(gates[kind](Buffer.from(`{"text":"日本語 é ${marker.slice(1, -1)}"}`)));
       }
     }
-    const result = await readAntigravityUsage(roots, 0);
-    assert.deepStrictEqual(result.errors, []);
-    assert.strictEqual(result.files.length, 2);
-    assert.strictEqual(result.files[0]?.root, roots[0]);
-    assert.strictEqual(result.files[0]?.records.length, 2);
-    assert.strictEqual(result.files[1]?.records.length, 0);
-    assert.deepStrictEqual(
-      result.files[0]?.records.map((record) => record.totals.uncachedInputTokens),
-      [150, 150],
-    );
-    assert.isTrue(result.files[0]?.records.every((record) => record.sessionId === "session-0"));
-  });
-
-  it("upgrades Antigravity fallback timestamps before applying the date window", async () => {
-    for (const fallback of ["mtime", "trajectory"]) {
-      const path = NodePath.join(dir, `${fallback}.db`);
-      const db = new NodeSqlite.DatabaseSync(path);
-      try {
-        db.exec(
-          "CREATE TABLE gen_metadata (idx INTEGER, data BLOB); CREATE TABLE steps (idx INTEGER, metadata BLOB)",
-        );
-        if (fallback === "trajectory") {
-          db.exec("CREATE TABLE trajectory_metadata_blob (data BLOB)");
-          db.prepare("INSERT INTO trajectory_metadata_blob VALUES (?)").run(
-            new Uint8Array(protoBytes(2, protoNumber(1, 1780000200))),
-          );
-        }
-        for (const [index, seconds] of [1780000000, 1780000200].entries()) {
-          const usage = [...protoNumber(2, 10), ...protoText(11, `${fallback}-${index}`)];
-          db.prepare("INSERT INTO steps VALUES (?, ?)").run(
-            index,
-            new Uint8Array(protoBytes(9, usage)),
-          );
-          db.prepare("INSERT INTO gen_metadata VALUES (?, ?)").run(
-            index,
-            new Uint8Array(
-              protoBytes(1, [
-                ...protoBytes(4, usage),
-                ...protoBytes(9, protoBytes(4, protoNumber(1, seconds))),
-              ]),
-            ),
-          );
-        }
-      } finally {
-        db.close();
-      }
-      await NodeFSP.utimes(path, 1780000000, 1780000000);
-    }
-    const result = await readAntigravityUsage(dir, 1780000100000);
-    assert.deepStrictEqual(result.errors, []);
-    const records = result.files.flatMap((file) => file.records);
-    assert.strictEqual(records.length, 2);
-    assert.deepStrictEqual(
-      records.map((record) => record.timestampMs),
-      [1780000200000, 1780000200000],
-    );
-  });
-
-  it("reads Antigravity step-only stores and reports malformed databases", async () => {
-    const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "steps.db"));
-    try {
-      db.exec("CREATE TABLE steps (idx INTEGER, metadata BLOB)");
-      const usage = [...protoNumber(1, 246), ...protoNumber(2, 10), ...protoNumber(3, 5)];
-      db.prepare("INSERT INTO steps VALUES (?, ?)").run(
-        0,
-        new Uint8Array([...protoBytes(9, usage), ...protoBytes(8, protoNumber(1, 1780000000))]),
-      );
-    } finally {
-      db.close();
-    }
-    await NodeFSP.writeFile(NodePath.join(dir, "broken.db"), "not a sqlite database");
-    const result = await readAntigravityUsage(dir, 0);
-    assert.strictEqual(result.errors.length, 1);
-    assert.strictEqual(result.files.flatMap((file) => file.records)[0]?.model, "gemini-2.5-pro");
-    assert.strictEqual(result.files.flatMap((file) => file.records)[0]?.totals.outputTokens, 5);
-  });
-
-  it("ignores large values in unused Antigravity protobuf fields", async () => {
-    const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "large-varint.db"));
-    try {
-      db.exec("CREATE TABLE steps (idx INTEGER, metadata BLOB)");
-      const unusedField = [...protoNumber(99, 0).slice(0, -1), ...Array(9).fill(0xff), 0x01];
-      const usage = [...protoNumber(1, 246), ...protoNumber(2, 10), ...unusedField];
-      db.prepare("INSERT INTO steps VALUES (?, ?)").run(0, new Uint8Array(protoBytes(9, usage)));
-    } finally {
-      db.close();
-    }
-    const result = await readAntigravityUsage(dir, 0);
-    assert.deepStrictEqual(result.errors, []);
-    assert.strictEqual(
-      result.files.flatMap((file) => file.records)[0]?.totals.uncachedInputTokens,
-      10,
-    );
   });
 });

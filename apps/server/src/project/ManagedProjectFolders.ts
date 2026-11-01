@@ -1,15 +1,10 @@
-/**
- * ManagedProjectFolders - the project folders T3 Code makes for the user under
- * its data dir, rather than ones the user picks:
- *
- * - `<baseDir>/scratch`: the Scratch project ("No project"), with a folder of
- *   its own for each thread;
- * - `<baseDir>/projects/<slug>`: projects started from just a name, each a new
- *   Git repository with a README, an icon, and a first commit.
- *
- * @module ManagedProjectFolders
- */
-import { CommandId, ProjectId, type ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  type GitManagerServiceError,
+  ProjectId,
+  type ThreadId,
+  VcsProcessSpawnError,
+} from "@t3tools/contracts";
 import { newProjectFolderName } from "@t3tools/shared/path";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -94,29 +89,16 @@ export type NamedProjectError = NamedProjectFolderError | NamedProjectCreateErro
 export class ManagedProjectFolders extends Context.Service<
   ManagedProjectFolders,
   {
-    /** The Scratch folder, or None when this environment does not offer one. */
     readonly scratchRoot: Effect.Effect<Option.Option<string>>;
-    /** Finds or creates the Scratch project and (re)creates its folder. */
     readonly ensureScratchProject: Effect.Effect<{ readonly projectId: ProjectId }, ScratchError>;
-    /**
-     * Claims a fresh folder for a new thread in the Scratch project, named from
-     * the date, its first message, and its id. None for every other project.
-     */
+    readonly isScratchProject: (projectId: ProjectId) => Effect.Effect<boolean>;
     readonly folderForThread: (input: {
       readonly projectId: ProjectId;
       readonly threadId: ThreadId;
       readonly text: string;
     }) => Effect.Effect<Option.Option<string>, ScratchFolderError>;
-    /** The folder that holds projects started from just a name. */
     readonly namedProjectsRoot: string;
-    /**
-     * Starts a project from just a name: claims `<namedProjectsRoot>/<slug>`
-     * (adding `-2`, `-3`, ... when taken), makes it a Git repository with a
-     * README, an icon, and a first commit, then creates the project. A failed
-     * commit (no Git identity, a signing prompt) keeps the project and returns
-     * why in `commitError`. The folder is removed when the create fails or is
-     * cancelled before the project exists, never once another project owns it.
-     */
+    /** Removes failed/cancelled creations' folders only while no project owns them. */
     readonly createNamedProject: (input: { readonly name: string }) => Effect.Effect<
       {
         readonly projectId: ProjectId;
@@ -128,8 +110,6 @@ export class ManagedProjectFolders extends Context.Service<
   }
 >()("t3/project/ManagedProjectFolders") {}
 
-// Only [a-z0-9] reaches a folder name, so it stays one path segment, and the
-// words are capped so a pasted blob cannot outgrow a file name.
 const folderWords = (text: string) =>
   text
     .toLowerCase()
@@ -140,7 +120,6 @@ const folderWords = (text: string) =>
     .slice(0, 48)
     .replace(/-+$/, "");
 
-// Tailwind 600 shades: dark enough for white initials on every hue.
 const ICON_BACKGROUNDS = [
   "#dc2626",
   "#ea580c",
@@ -169,11 +148,7 @@ function escapeXml(value: string): string {
     .replaceAll('"', "&quot;");
 }
 
-/**
- * A rounded square with the name's initials, colored by a hash of the name.
- * It lives at `assets/icon.svg`, a path ProjectFaviconResolver already checks,
- * so every machine that clones the project shows the same icon.
- */
+// ProjectFaviconResolver finds assets/icon.svg on every clone.
 function namedProjectIconSvg(name: string): string {
   const words = name.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   const initials =
@@ -207,8 +182,6 @@ function namedProjectReadme(name: string): string {
   ].join("\n");
 }
 
-// Git's own identity message runs several lines; say what to do instead.
-// Otherwise its last line ("error: gpg failed to sign the data") says enough.
 function describeCommitFailure(stderr: string): string {
   if (/identity unknown|tell me who you are|no (name|email) was given/i.test(stderr)) {
     return "Git has no name or email on this machine. Set user.name and user.email, then commit.";
@@ -220,6 +193,14 @@ function describeCommitFailure(stderr: string): string {
   return lines.at(-1) ?? "Git could not make the first commit.";
 }
 
+const isVcsProcessSpawnError = Schema.is(VcsProcessSpawnError);
+
+const isGitMissing = (error: GitManagerServiceError) =>
+  error._tag === "GitManagerError" &&
+  isVcsProcessSpawnError(error.cause) &&
+  PlatformError.isPlatformError(error.cause.cause) &&
+  error.cause.cause.reason._tag === "NotFound";
+
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -229,14 +210,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const crypto = yield* Crypto.Crypto;
 
-  /**
-   * Claims the first free folder among `folderFor(1)`, `folderFor(2)`, ...,
-   * stopping with None when `folderFor` runs out of names. Each folder is
-   * created without `recursive`, so creating it is the claim: of two racers
-   * for one name, one gets AlreadyExists and moves on to the next. Scratch
-   * thread folders and named projects both claim through this, so no two
-   * threads or projects ever share a folder.
-   */
+  // Non-recursive mkdir atomically claims a name; racers move on after AlreadyExists.
   const claimFreeFolder = Effect.fnUntraced(function* <E>(
     folderFor: (attempt: number) => Effect.Effect<Option.Option<string>, E>,
     onError: (folder: string, cause: PlatformError.PlatformError) => E,
@@ -256,13 +230,10 @@ const make = Effect.gen(function* () {
     }
   });
 
-  // Inside a checkout (a dev worktree's .t3, a dotfiles home) the folder would
-  // inherit the repo's git status and checkpoints, so Scratch is offered only
-  // when the data dir is outside any work tree. Probed once; detection
-  // failures hide Scratch rather than failing callers. An interrupted probe
-  // invalidates the cache so the next caller probes again.
+  // Scratch inside a checkout would inherit its git status and checkpoints; require a data dir outside work trees.
   const [probe, invalidate] = yield* Effect.cachedInvalidateWithTTL(
     gitWorkflow.isRepository(config.baseDir).pipe(
+      Effect.catchIf(isGitMissing, () => Effect.succeed(false)),
       Effect.map((isRepository) =>
         isRepository ? Option.none<string>() : Option.some(path.resolve(config.baseDir, "scratch")),
       ),
@@ -289,11 +260,10 @@ const make = Effect.gen(function* () {
           }),
         ),
       );
-      // Re-made on every call, so a deleted Scratch folder still runs threads.
       yield* makeScratchFolder(workspaceRoot);
-      const id = yield* crypto.randomUUIDv4.pipe(
-        Effect.mapError((cause) => new ScratchProjectError({ workspaceRoot, cause })),
-      );
+      const id = yield* crypto
+        .randomUUIDv4()
+        .pipe(Effect.mapError((cause) => new ScratchProjectError({ workspaceRoot, cause })));
       const bootstrapped = yield* projects
         .bootstrap({
           commandId: CommandId.make(`scratch-project:${id}`),
@@ -302,8 +272,7 @@ const make = Effect.gen(function* () {
           workspaceRoot,
         })
         .pipe(
-          // bootstrap looks the root up before taking the workspace lock, so a
-          // racing create loses with a conflict that names the winner.
+          // bootstrap reads before locking; racing creates return the winner in a conflict.
           Effect.catchTags({
             ProjectConflictError: (conflict) =>
               Effect.succeed({
@@ -314,8 +283,7 @@ const make = Effect.gen(function* () {
           Effect.mapError((cause) => new ScratchProjectError({ workspaceRoot, cause })),
         );
       if (bootstrapped.created) {
-        // A dashed chat bubble in neutral gray marks Scratch. Set once at
-        // create, so a user's own icon choice is never overwritten.
+        // Set once at create, so a user's own icon choice is never overwritten.
         yield* projects
           .update({
             commandId: CommandId.make(`scratch-project-icon:${id}`),
@@ -328,14 +296,22 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const isScratchProject = (projectId: ProjectId, root: string) =>
+  const isScratchRoot = (projectId: ProjectId, root: string) =>
     projects.getById(projectId).pipe(
       Effect.map(
         Option.exists((project) => path.resolve(project.workspaceRoot) === path.resolve(root)),
       ),
-      // An unreadable project is not Scratch; the launch reports its own
-      // project lookup failure.
       Effect.orElseSucceed(() => false),
+    );
+
+  const isScratchProject: ManagedProjectFolders["Service"]["isScratchProject"] = (projectId) =>
+    scratchRoot.pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.succeed(false),
+          onSome: (root) => isScratchRoot(projectId, root),
+        }),
+      ),
     );
 
   const folderForThread: ManagedProjectFolders["Service"]["folderForThread"] = Effect.fn(
@@ -343,7 +319,7 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const root = yield* scratchRoot;
     if (Option.isNone(root)) return Option.none();
-    if (!(yield* isScratchProject(input.projectId, root.value))) return Option.none();
+    if (!(yield* isScratchRoot(input.projectId, root.value))) return Option.none();
     const date = DateTime.formatIso(yield* DateTime.now).slice(0, 10);
     const words = folderWords(input.text);
     const id = input.threadId.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -351,18 +327,13 @@ const make = Effect.gen(function* () {
       path.join(root.value, [date, words, idPart].filter(Boolean).join("-"));
     yield* makeScratchFolder(root.value);
     const fullFolder = folderFor(id);
-    // Thread ids often share a prefix ("thread:..."), so the first name uses
-    // the id's tail. A taken short name falls back to the full id, which only
-    // this thread holds. Ids that normalize alike, or a launch retried without
-    // its receipt, can find the full name taken too, so later attempts add a
-    // fresh random suffix; the names never run out.
     return yield* claimFreeFolder(
       (attempt) =>
         attempt === 1
-          ? Effect.succeed(Option.some(folderFor(id.slice(-8))))
+          ? Effect.succeedSome(folderFor(id.slice(-8)))
           : attempt === 2
-            ? Effect.succeed(Option.some(fullFolder))
-            : crypto.randomUUIDv4.pipe(
+            ? Effect.succeedSome(fullFolder)
+            : crypto.randomUUIDv4().pipe(
                 Effect.map((uuid) => Option.some(`${fullFolder}-${uuid.slice(0, 8)}`)),
                 Effect.mapError((cause) => new ScratchFolderError({ folder: fullFolder, cause })),
               ),
@@ -370,9 +341,6 @@ const make = Effect.gen(function* () {
     );
   });
 
-  // Projects started from just a name live beside Scratch and worktrees, away
-  // from folders the user organizes by hand. A nested repository is fine here
-  // (unlike Scratch) because each project gets its own `git init`.
   const namedProjectsRoot = path.resolve(config.baseDir, "projects");
 
   const claimNamedFolder = Effect.fn("ManagedProjectFolders.claimNamedFolder")(function* (
@@ -407,8 +375,6 @@ const make = Effect.gen(function* () {
     });
   });
 
-  // git init, the starter files, and the first commit. Only the commit may
-  // fail softly; everything before it fails the create.
   const scaffoldRepository = Effect.fn("ManagedProjectFolders.scaffoldRepository")(function* (
     cwd: string,
     name: string,
@@ -429,7 +395,7 @@ const make = Effect.gen(function* () {
       path.join(cwd, "assets", "icon.svg"),
       namedProjectIconSvg(name),
     );
-    // Named and forced so a global ignore rule (say `*.svg`) cannot drop one.
+    // Force explicit filenames so global ignore rules cannot drop them.
     yield* git.execute({
       operation: "ManagedProjectFolders.add",
       cwd,
@@ -457,15 +423,13 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const workspaceRoot = yield* claimNamedFolder(input.name);
     const removeFolder = fileSystem.remove(workspaceRoot, { recursive: true }).pipe(Effect.ignore);
-    // Until the create is dispatched nothing else can use the folder, so any
-    // exit but success removes it, an interrupt included.
     const prepared = yield* Effect.all([
       scaffoldRepository(workspaceRoot, input.name).pipe(
         Effect.mapError((cause) => new NamedProjectFolderError({ folder: workspaceRoot, cause })),
       ),
-      crypto.randomUUIDv4.pipe(
-        Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause })),
-      ),
+      crypto
+        .randomUUIDv4()
+        .pipe(Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause }))),
     ]).pipe(Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : removeFolder)));
     const [commitError, id] = prepared;
     const project = yield* projects
@@ -476,11 +440,7 @@ const make = Effect.gen(function* () {
         workspaceRoot,
       })
       .pipe(
-        // A rejected create leaves the folder unused, so remove it. An
-        // interrupt can land after the create is committed, and a conflict
-        // means another project owns the folder, so it stays then; the owner
-        // is checked again first, since deleting another project's files is
-        // never acceptable.
+        // Re-check ownership before deleting rejected creations; interruption after commit or conflicts can leave an owner.
         Effect.tapError((error) =>
           error._tag === "ProjectConflictError"
             ? Effect.void
@@ -501,6 +461,7 @@ const make = Effect.gen(function* () {
   return ManagedProjectFolders.of({
     scratchRoot,
     ensureScratchProject,
+    isScratchProject,
     folderForThread,
     namedProjectsRoot,
     createNamedProject,

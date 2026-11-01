@@ -11,12 +11,8 @@ import {
 } from "../shared.ts";
 import { SUBAGENT_APPROVAL_PENDING_SHELL_KEY } from "./input.ts";
 
-/**
- * A multi-agent v2 child inherits the root's approval policy, and Codex asks
- * for its command approval on the child's own native thread and turn. The
- * request is asked on the parent thread and run instead, under the subagent,
- * because native subagent threads are hidden from the sidebar.
- */
+/** Codex v2 children inherit approvals and request on their own native turns; surface requests under
+ * the subagent on the parent because native child threads are hidden. */
 export function assertSubagentV2ApprovalOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -59,11 +55,24 @@ export function assertSubagentV2ApprovalOutput(
   const approval = approvalItems[0]!;
   assert.equal(approval.runId, run.id);
   assert.equal(approval.status, "completed");
+  const pendingRequestIndex = result.domainEvents.findIndex(
+    (event) =>
+      event.type === "runtime-request.updated" &&
+      event.payload.id === request.id &&
+      event.payload.status === "pending",
+  );
+  const waitingItemIndex = result.domainEvents.findIndex(
+    (event) =>
+      event.type === "turn-item.updated" &&
+      event.payload.id === approval.id &&
+      event.payload.status === "waiting",
+  );
+  assert.isAtLeast(waitingItemIndex, 0);
+  assert.isAbove(pendingRequestIndex, waitingItemIndex);
   if (approval.type !== "approval_request") throw new Error("expected an approval item");
   assert.equal(approval.requestId, request.id);
   assert.include(approval.prompt ?? "", "subagent-approval.txt");
 
-  // While Codex waited, the parent reported the approval and the child did not.
   const pendingShell = result.capturedShellSnapshots.get(SUBAGENT_APPROVAL_PENDING_SHELL_KEY);
   assert.isDefined(pendingShell);
   const parentShell = pendingShell.threads.find((thread) => thread.id === projection.thread.id);
@@ -72,7 +81,6 @@ export function assertSubagentV2ApprovalOutput(
   assert.isDefined(childShell, "the child thread exists while its approval is pending");
   assert.isNull(childShell.pendingRuntimeRequest);
 
-  // The child keeps its own work and answer, and never holds a request.
   const child = result.projections.get(subagent.childThreadId!);
   assert.isDefined(child);
   assert.lengthOf(child.runtimeRequests, 0);

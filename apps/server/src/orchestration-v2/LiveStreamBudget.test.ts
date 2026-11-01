@@ -8,9 +8,9 @@ import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
 import {
-  bufferLiveStream,
+  bufferLatestLiveStream,
   makeLiveStreamBudget,
-  replayAndBufferLiveEvents,
+  replayAndBufferProjectedLiveEvents,
   type RetainedLiveItem,
 } from "./LiveStreamBudget.ts";
 
@@ -36,12 +36,10 @@ describe("LiveStreamBudget", () => {
               ),
             );
             expect(yield* pull).toEqual([{ text: "first" }]);
-            // The other two items are in the source's pull state, not its queue.
             expect(yield* Queue.size(queue)).toBe(0);
             expect((yield* budget.usage).retainedItems).toBe(3);
             const overflow = yield* budget.retain({ text: "fourth" }).pipe(Effect.result);
             expect(overflow._tag).toBe("Failure");
-            // Do not resume the consumer. Its source scope must close now.
             yield* Deferred.await(sourceClosed);
             yield* budget.closed;
             expect((yield* budget.usage).retainedItems).toBe(1);
@@ -53,31 +51,42 @@ describe("LiveStreamBudget", () => {
   );
 });
 
-it.effect("stops draining a slow subscriber when its unacknowledged tail fills", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const input = yield* Queue.unbounded<{ text: string }>();
-      const sourceClosed = yield* Deferred.make<void>();
-      const pull = yield* Stream.toPull(
-        bufferLiveStream(
-          Stream.fromQueue(input).pipe(Stream.ensuring(Deferred.succeed(sourceClosed, undefined))),
-          { maxItems: 2 },
-        ),
-      );
-      yield* Queue.offer(input, { text: "first" });
-      expect(yield* pull).toEqual([{ text: "first" }]);
-      yield* Queue.offerAll(input, [{ text: "second" }, { text: "third" }]);
-      yield* Deferred.await(sourceClosed);
-      const next = yield* pull.pipe(Effect.result);
-      expect(next._tag).toBe("Failure");
-      if (next._tag === "Failure") expect(next.failure._tag).toBe("LiveStreamBufferError");
-    }),
-  ),
-);
-
 type Event = { readonly sequence: number; readonly text: string; readonly threadId?: string };
 
-describe("replayAndBufferLiveEvents", () => {
+describe("bufferLatestLiveStream", () => {
+  it.effect.each(["items", "bytes"] as const)(
+    "counts an unacknowledged state against the %s limit when its replacement arrives",
+    (limit) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const releaseUpdate = yield* Deferred.make<void>();
+          const closed = yield* Deferred.make<void>();
+          const first = { sequence: 1, text: "é".repeat(20) };
+          const next = { ...first, sequence: 2 };
+          const pull = yield* Stream.toPull(
+            bufferLatestLiveStream(
+              Stream.concat(
+                Stream.succeed(first),
+                Stream.fromEffect(Deferred.await(releaseUpdate)).pipe(Stream.map(() => next)),
+              ).pipe(Stream.ensuring(Deferred.succeed(closed, undefined))),
+              () => "same-thread",
+              limit === "items"
+                ? { maxItems: 1 }
+                : { maxSerializedBytes: Buffer.byteLength(JSON.stringify(first)) },
+            ),
+          );
+          expect(yield* pull).toEqual([first]);
+          yield* Deferred.succeed(releaseUpdate, undefined);
+          yield* Deferred.await(closed);
+          const result = yield* pull.pipe(Effect.result);
+          expect(result._tag).toBe("Failure");
+          if (result._tag === "Failure") expect(result.failure._tag).toBe("LiveStreamBufferError");
+        }),
+      ),
+  );
+});
+
+describe("replayAndBufferProjectedLiveEvents", () => {
   it.effect.each(["items", "bytes"] as const)(
     "replays the undelivered tail after a %s overflow without losing or duplicating events",
     (limit) =>
@@ -92,8 +101,9 @@ describe("replayAndBufferLiveEvents", () => {
           ];
           const limits = limit === "items" ? { maxItems: 1 } : { maxSerializedBytes: 40 };
           const pull = yield* Stream.toPull(
-            replayAndBufferLiveEvents(
+            replayAndBufferProjectedLiveEvents(
               {
+                project: (event: Event) => event,
                 subscribe: PubSub.subscribe(pubsub).pipe(
                   Effect.tap((subscription) => Deferred.succeed(subscribed, subscription)),
                 ),
@@ -113,8 +123,9 @@ describe("replayAndBufferLiveEvents", () => {
             expect(overflow.failure._tag).toBe("LiveStreamBufferError");
 
           const afterSequence = received.at(-1)!.sequence;
-          const resumed = yield* replayAndBufferLiveEvents(
+          const resumed = yield* replayAndBufferProjectedLiveEvents(
             {
+              project: (event: Event) => event,
               subscribe: PubSub.subscribe(pubsub),
               afterSequence,
               latestSequence: Effect.succeed(3),
@@ -147,8 +158,9 @@ describe("replayAndBufferLiveEvents", () => {
             Effect.ensuring(Deferred.succeed(readClosed, undefined)),
           );
           const pull = yield* Stream.toPull(
-            replayAndBufferLiveEvents(
+            replayAndBufferProjectedLiveEvents(
               {
+                project: (event: Event) => event,
                 subscribe: PubSub.subscribe(pubsub).pipe(
                   Effect.tap((subscription) => Deferred.succeed(subscribed, subscription)),
                 ),
@@ -172,46 +184,8 @@ describe("replayAndBufferLiveEvents", () => {
           expect(result._tag).toBe("Failure");
           if (result._tag === "Failure") expect(result.failure._tag).toBe("LiveStreamBufferError");
           expect(yield* PubSub.size(pubsub)).toBe(0);
-          // Further publications do not accumulate for the abandoned subscriber.
           yield* PubSub.publish(pubsub, { sequence: 4, text: "after overflow" });
           expect(yield* PubSub.size(pubsub)).toBe(0);
-        }),
-      ),
-  );
-
-  it.effect.each(["items", "bytes"] as const)(
-    "counts an unacknowledged replay batch toward the live %s limit",
-    (limit) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const pubsub = yield* PubSub.unbounded<Event>();
-          const subscribed = yield* Deferred.make<PubSub.Subscription<Event>>();
-          const replayed = { sequence: 1, text: "replay" };
-          const live = { sequence: 2, text: "live" };
-          const pull = yield* Stream.toPull(
-            replayAndBufferLiveEvents(
-              {
-                subscribe: PubSub.subscribe(pubsub).pipe(
-                  Effect.tap((subscription) => Deferred.succeed(subscribed, subscription)),
-                ),
-                latestSequence: Effect.succeed(1),
-                replay: () => Stream.succeed(replayed),
-              },
-              limit === "items"
-                ? { maxItems: 1 }
-                : {
-                    maxSerializedBytes: 40,
-                  },
-            ),
-          );
-          expect(yield* pull).toEqual([replayed]);
-          yield* PubSub.publish(pubsub, live);
-          // The client has not acknowledged replay; cleanup must still finish.
-          yield* (yield* Deferred.await(subscribed)).shutdownHook.await;
-          expect(yield* PubSub.size(pubsub)).toBe(0);
-          const result = yield* pull.pipe(Effect.result);
-          expect(result._tag).toBe("Failure");
-          if (result._tag === "Failure") expect(result.failure._tag).toBe("LiveStreamBufferError");
         }),
       ),
   );
@@ -224,8 +198,9 @@ describe("replayAndBufferLiveEvents", () => {
           sequence: index + 1,
           text: "historical event",
         }));
-        const replayed = yield* replayAndBufferLiveEvents(
+        const replayed = yield* replayAndBufferProjectedLiveEvents(
           {
+            project: (event: Event) => event,
             subscribe: PubSub.subscribe(pubsub),
             latestSequence: Effect.succeed(20),
             replay: () => Stream.fromIterable(events),
@@ -247,15 +222,17 @@ describe("replayAndBufferLiveEvents", () => {
           const highWaterStarted = yield* Deferred.make<void>();
           const highWater = yield* Deferred.make<number>();
           const first = { sequence: 1, text: "first", threadId: "selected" };
+          const unrelatedReplay = { sequence: 0, text: "unrelated replay", threadId: "other" };
           const overlap = { sequence: 2, text: "overlap", threadId: "selected" };
           const last = { sequence: 10, text: "last", threadId: "selected" };
-          const reader = yield* replayAndBufferLiveEvents(
+          const reader = yield* replayAndBufferProjectedLiveEvents(
             {
+              project: (event: Event) => event,
               subscribe: PubSub.subscribe(pubsub),
               latestSequence: Deferred.succeed(highWaterStarted, undefined).pipe(
                 Effect.andThen(Deferred.await(highWater)),
               ),
-              replay: () => Stream.make(first, overlap),
+              replay: () => Stream.make(unrelatedReplay, first, overlap),
               filter: (event) => event.threadId === "selected",
             },
             { maxItems: 4 },
@@ -273,60 +250,6 @@ describe("replayAndBufferLiveEvents", () => {
           yield* Deferred.succeed(highWater, 2);
           expect(yield* Fiber.join(reader)).toEqual([first, overlap, last]);
           expect(yield* PubSub.size(pubsub)).toBe(0);
-        }),
-      ),
-  );
-
-  it.effect(
-    "caps raw and projected stages while projection and client acknowledgement are blocked",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const pubsub = yield* PubSub.unbounded<Event>();
-          const subscribed = yield* Deferred.make<PubSub.Subscription<Event>>();
-          const projectionStarted = yield* Deferred.make<void>();
-          const projectionClosed = yield* Deferred.make<void>();
-          const releaseProjection = yield* Deferred.make<void>();
-          const source = replayAndBufferLiveEvents(
-            {
-              subscribe: PubSub.subscribe(pubsub).pipe(
-                Effect.tap((subscription) => Deferred.succeed(subscribed, subscription)),
-              ),
-              latestSequence: Effect.succeed(0),
-              replay: () => Stream.empty,
-            },
-            { maxItems: 2 },
-          ).pipe(
-            Stream.mapEffect((event) =>
-              event.sequence === 3
-                ? Deferred.succeed(projectionStarted, undefined).pipe(
-                    Effect.andThen(Deferred.await(releaseProjection)),
-                    Effect.as(event),
-                  )
-                : Effect.succeed(event),
-            ),
-            Stream.ensuring(Deferred.succeed(projectionClosed, undefined)),
-          );
-          const pull = yield* Stream.toPull(bufferLiveStream(source, { maxItems: 2 }));
-          const firstPull = yield* pull.pipe(Effect.forkScoped);
-          const subscription = yield* Deferred.await(subscribed);
-          yield* PubSub.publish(pubsub, { sequence: 1, text: "awaiting ACK" });
-          expect(yield* Fiber.join(firstPull)).toEqual([{ sequence: 1, text: "awaiting ACK" }]);
-          yield* PubSub.publish(pubsub, { sequence: 2, text: "projected tail" });
-          yield* PubSub.publish(pubsub, { sequence: 3, text: "projecting" });
-          yield* Deferred.await(projectionStarted);
-          yield* PubSub.publishAll(pubsub, [
-            { sequence: 4, text: "raw tail" },
-            { sequence: 5, text: "overflow" },
-          ]);
-          // Two projected slots and two raw slots cannot retain a fifth event.
-          yield* subscription.shutdownHook.await;
-          expect(yield* PubSub.size(pubsub)).toBe(0);
-          yield* Deferred.succeed(releaseProjection, undefined);
-          yield* Deferred.await(projectionClosed);
-          const result = yield* pull.pipe(Effect.result);
-          expect(result._tag).toBe("Failure");
-          if (result._tag === "Failure") expect(result.failure._tag).toBe("LiveStreamBufferError");
         }),
       ),
   );

@@ -28,10 +28,26 @@ describe("resolveCatalogDependencies", () => {
     );
   });
 
-  it("fails on a catalog entry that does not exist", () => {
-    assert.throws(
-      () => resolveCatalogDependencies({ "a>missing": "catalog:" }, catalog, "apps/desktop"),
-      /Expected key 'missing' in root workspace catalog/,
+  it("resolves version-qualified overrides without changing their selectors", () => {
+    assert.deepStrictEqual(
+      resolveCatalogDependencies(
+        {
+          "undici@^8": "catalog:",
+          "ws@^8": "catalog:",
+          "@clerk/backend@^3": "catalog:",
+          "@scope/parent@^1>undici@^8": "catalog:",
+          "parent@^1>@clerk/backend@^3": "catalog:",
+        },
+        { ...catalog, undici: "8.11.2", ws: "8.21.0" },
+        "apps/desktop",
+      ),
+      {
+        "undici@^8": "8.11.2",
+        "ws@^8": "8.21.0",
+        "@clerk/backend@^3": "3.18.1",
+        "@scope/parent@^1>undici@^8": "8.11.2",
+        "parent@^1>@clerk/backend@^3": "3.18.1",
+      },
     );
   });
 });

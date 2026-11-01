@@ -1,4 +1,5 @@
 import { ProcessSignalActions } from "./ProcessSignalActions";
+import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   ActivityIcon,
@@ -27,7 +28,8 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { RegistryContext } from "@effect/atom-react";
+import { useContext, useRef, useState, type ReactNode } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -38,10 +40,12 @@ import {
   useResourceTelemetryHistory,
 } from "../../lib/resourceTelemetryState";
 import { cn } from "../../lib/utils";
+import { formatBytes } from "../../lib/formatBytes";
 import { ensureLocalApi } from "../../localApi";
 import { serverEnvironment } from "../../state/server";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { formatRelativeTime } from "../../timestampFormat";
+import { useRelativeTimeState } from "../../hooks/useRelativeTimeState";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { ScrollArea } from "../ui/scroll-area";
@@ -49,12 +53,13 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
+  processIdentityKey,
   resourceHistoryBarHeight,
   resourceHistoryCpuScaleMax,
   shouldShowResourceMonitorRetry,
   visibleResourceTelemetryProcesses,
 } from "./ResourceTelemetryDiagnostics.logic";
-import { SettingsSection, useRelativeTimeTick } from "./settingsLayout";
+import { SettingsSection } from "./settingsLayout";
 
 const HISTORY_WINDOWS = [
   { label: "5m", windowMs: 5 * 60_000, bucketMs: 15_000 },
@@ -63,34 +68,22 @@ const HISTORY_WINDOWS = [
   { label: "1h", windowMs: 60 * 60_000, bucketMs: 2 * 60_000 },
 ] as const;
 
-function formatBytes(value: number): string {
-  if (value < 1_024) return `${Math.round(value)} B`;
-  const units = ["KB", "MB", "GB", "TB"] as const;
-  let next = value;
-  let unitIndex = -1;
-  do {
-    next /= 1_024;
-    unitIndex += 1;
-  } while (next >= 1_024 && unitIndex < units.length - 1);
-  return `${next.toFixed(next >= 100 ? 0 : next >= 10 ? 1 : 2)} ${units[unitIndex]}`;
-}
-
 function formatRate(value: number): string {
   return `${formatBytes(value)}/s`;
 }
 
 function formatCpuTime(valueMs: number): string {
   const seconds = valueMs / 1_000;
-  if (seconds < 60) return `${seconds.toFixed(seconds >= 10 ? 1 : 2)}s`;
+  if (seconds < 60) return `${seconds.toFixed(seconds >= 10 ? 1 : 2).replace(/\.0+$/, "")}s`;
   const minutes = seconds / 60;
-  if (minutes < 60) return `${minutes.toFixed(minutes >= 10 ? 1 : 2)}m`;
-  return `${(minutes / 60).toFixed(2)}h`;
+  if (minutes < 60) return `${minutes.toFixed(minutes >= 10 ? 1 : 2).replace(/\.0+$/, "")}m`;
+  return `${(minutes / 60).toFixed(2).replace(/\.0+$/, "")}h`;
 }
 
 function formatDurationMicros(value: number): string {
   if (value < 1_000) return `${Math.round(value)} µs`;
-  if (value < 1_000_000) return `${(value / 1_000).toFixed(2)} ms`;
-  return `${(value / 1_000_000).toFixed(2)} s`;
+  if (value < 1_000_000) return `${(value / 1_000).toFixed(2).replace(/\.0+$/, "")} ms`;
+  return `${(value / 1_000_000).toFixed(2).replace(/\.0+$/, "")} s`;
 }
 
 function formatSampleInterval(valueMs: number): string {
@@ -99,14 +92,6 @@ function formatSampleInterval(valueMs: number): string {
   return `${seconds.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${
     seconds === 1 ? "second" : "seconds"
   }`;
-}
-
-function processIdentityKey(process: ResourceTelemetryProcess): string {
-  return `${process.identity.pid}:${process.identity.startTimeMs}`;
-}
-
-function processSummaryIdentityKey(process: ResourceTelemetryProcessSummary): string {
-  return `${process.identity.pid}:${process.identity.startTimeMs}`;
 }
 
 function formatProcessName(process: Pick<ResourceTelemetryProcess, "command" | "name">): string {
@@ -216,12 +201,8 @@ function SourceStatusBadge({
 }
 
 function LastSampleLabel({ sampledAt }: { sampledAt: DateTime.Utc | null }) {
-  useRelativeTimeTick();
-  if (!sampledAt) {
-    return <span className="text-2xs text-muted-foreground/55">Waiting for sample</span>;
-  }
-  const relative = formatRelativeTime(DateTime.formatIso(sampledAt));
-  if (!relative) {
+  const relative = useRelativeTimeState(sampledAt ? DateTime.formatIso(sampledAt) : null);
+  if (relative.status !== "relative") {
     return <span className="text-2xs text-muted-foreground/55">Waiting for sample</span>;
   }
   return (
@@ -520,37 +501,41 @@ function canSignalProcess(process: ResourceTelemetryProcess): boolean {
 
 function ProcessActions({
   process,
+  canMaintainEnvironment,
   signalingKeys,
   onSignal,
 }: {
   process: ResourceTelemetryProcess;
+  canMaintainEnvironment: boolean;
   signalingKeys: ReadonlySet<string>;
   onSignal: (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => void;
 }) {
   if (!canSignalProcess(process)) {
-    return <span className="text-3xs text-muted-foreground/35">—</span>;
+    return <span className="text-3xs text-muted-foreground/35">-</span>;
   }
   const isSignaling = signalingKeys.has(processIdentityKey(process));
   return (
-    <ProcessSignalActions disabled={isSignaling} onSignal={(signal) => onSignal(process, signal)} />
+    <ProcessSignalActions
+      disabled={!canMaintainEnvironment || isSignaling}
+      onSignal={(signal) => onSignal(process, signal)}
+    />
   );
 }
 
 function ProcessTable({
   processes,
+  canMaintainEnvironment,
   signalingKeys,
   onSignal,
 }: {
   processes: ReadonlyArray<ResourceTelemetryProcess>;
+  canMaintainEnvironment: boolean;
   signalingKeys: ReadonlySet<string>;
   onSignal: (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => void;
 }) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
-  const visible = useMemo(
-    () => visibleResourceTelemetryProcesses(processes, collapsed),
-    [collapsed, processes],
-  );
-  const toggle = useCallback((process: ResourceTelemetryProcess) => {
+  const visible = visibleResourceTelemetryProcesses(processes, collapsed);
+  const toggle = (process: ResourceTelemetryProcess) => {
     const identityKey = processIdentityKey(process);
     setCollapsed((current) => {
       const next = new Set(current);
@@ -561,7 +546,7 @@ function ProcessTable({
       }
       return next;
     });
-  }, []);
+  };
 
   return (
     <div className="border-t border-border/60">
@@ -650,6 +635,7 @@ function ProcessTable({
                 <td className="px-2 py-2 text-right sm:pr-4">
                   <ProcessActions
                     process={process}
+                    canMaintainEnvironment={canMaintainEnvironment}
                     signalingKeys={signalingKeys}
                     onSignal={onSignal}
                   />
@@ -710,7 +696,7 @@ function HistoryProcessTable({
               </tr>
             ) : null}
             {processes.map((process) => (
-              <tr key={processSummaryIdentityKey(process)} className="hover:bg-muted/20">
+              <tr key={processIdentityKey(process)} className="hover:bg-muted/20">
                 <td className="px-4 py-2 sm:pl-5">
                   <Tooltip>
                     <TooltipTrigger
@@ -802,7 +788,7 @@ function AttributionTable({ entries }: { entries: ReadonlyArray<ResourceAttribut
               </td>
               <td className="px-3 py-2 text-right font-mono tabular-nums">{entry.count}</td>
               <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground sm:pr-5">
-                {(entry.durationMs / 1_000).toFixed(2)}s
+                {(entry.durationMs / 1_000).toFixed(2).replace(/\.0+$/, "")}s
               </td>
             </tr>
           ))}
@@ -817,9 +803,22 @@ export function ResourceTelemetryDiagnostics({
 }: {
   environmentId: EnvironmentId | null;
 }) {
+  // Pending signals and retries belong to one environment, so a switch starts fresh.
+  return (
+    <ResourceTelemetryDiagnosticsBody key={environmentId ?? ""} environmentId={environmentId} />
+  );
+}
+
+function ResourceTelemetryDiagnosticsBody({
+  environmentId,
+}: {
+  environmentId: EnvironmentId | null;
+}) {
+  const registry = useContext(RegistryContext);
   const [windowMs, setWindowMs] = useState(15 * 60_000);
   const selectedWindow =
     HISTORY_WINDOWS.find((option) => option.windowMs === windowMs) ?? HISTORY_WINDOWS[1];
+  const canMaintainEnvironment = useEnvironmentScope(environmentId, AuthEnvironmentMaintainScope);
   const telemetry = useResourceTelemetry(environmentId);
   const retryTelemetry = telemetry.retry;
   const history = useResourceTelemetryHistory(
@@ -834,98 +833,109 @@ export function ResourceTelemetryDiagnostics({
   });
   const [signalingKeys, setSignalingKeys] = useState<ReadonlySet<string>>(() => new Set());
   const signalingKeysRef = useRef<ReadonlySet<string>>(new Set());
-  const environmentIdRef = useRef(environmentId);
-  useEffect(() => {
-    environmentIdRef.current = environmentId;
-    return () => {
-      environmentIdRef.current = null;
-    };
-  }, [environmentId]);
   const [isRetrying, setIsRetrying] = useState(false);
   const snapshot = telemetry.data;
   const allT3 = snapshot?.groups.allT3;
 
-  const signalProcess = useCallback(
-    async (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => {
-      const targetEnvironmentId = environmentIdRef.current;
-      if (targetEnvironmentId === null) return;
-      const identityKey = processIdentityKey(process);
-      if (signalingKeysRef.current.has(identityKey)) return;
-      const nextSignalingKeys = new Set(signalingKeysRef.current).add(identityKey);
-      signalingKeysRef.current = nextSignalingKeys;
-      setSignalingKeys(nextSignalingKeys);
-      const clearSignaling = () => {
-        const next = new Set(signalingKeysRef.current);
-        next.delete(identityKey);
-        signalingKeysRef.current = next;
-        setSignalingKeys(next);
-      };
+  const signalProcess = async (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => {
+    const targetEnvironmentId = environmentId;
+    if (
+      targetEnvironmentId === null ||
+      !readEnvironmentScope(targetEnvironmentId, AuthEnvironmentMaintainScope)
+    )
+      return;
+    const identityKey = processIdentityKey(process);
+    if (signalingKeysRef.current.has(identityKey)) return;
+    const nextSignalingKeys = new Set(signalingKeysRef.current).add(identityKey);
+    signalingKeysRef.current = nextSignalingKeys;
+    setSignalingKeys(nextSignalingKeys);
+    const clearSignaling = () => {
+      const next = new Set(signalingKeysRef.current);
+      next.delete(identityKey);
+      signalingKeysRef.current = next;
+      setSignalingKeys(next);
+    };
 
-      if (signal === "SIGKILL") {
-        let confirmed = false;
-        try {
-          confirmed = await ensureLocalApi().dialogs.confirm(
-            `Send SIGKILL to process ${process.identity.pid}? This cannot be handled by the process.`,
-            { variant: "destructive" },
-          );
-        } catch (error) {
-          clearSignaling();
-          toastManager.add({
-            type: "error",
-            title: "Could not confirm signal",
-            description: error instanceof Error ? error.message : `Failed to send ${signal}.`,
-          });
-          return;
-        }
-        if (!confirmed) {
-          clearSignaling();
-          return;
-        }
+    if (signal === "SIGKILL") {
+      let confirmed = false;
+      try {
+        confirmed = await ensureLocalApi().dialogs.confirm(
+          `Send SIGKILL to process ${process.identity.pid}? This cannot be handled by the process.`,
+          { variant: "destructive" },
+        );
+      } catch (error) {
+        clearSignaling();
+        toastManager.add({
+          type: "error",
+          title: "Could not confirm signal",
+          description: error instanceof Error ? error.message : `Failed to send ${signal}.`,
+        });
+        return;
       }
-      if (environmentIdRef.current !== targetEnvironmentId) {
+      if (!confirmed) {
         clearSignaling();
         return;
       }
-      void signalServerProcess({
-        environmentId: targetEnvironmentId,
-        input: {
-          pid: process.identity.pid,
-          startTimeMs: process.identity.startTimeMs,
-          signal,
-        },
-      })
-        .then((result) => {
-          if (result._tag === "Failure") {
-            if (isAtomCommandInterrupted(result)) return;
-            throw squashAtomCommandFailure(result);
-          }
-          if (result.value.signaled) return;
-          toastManager.add({
-            type: "error",
-            title: `Could not send ${signal}`,
-            description: Option.getOrElse(
-              result.value.message,
-              () => `Failed to send ${signal} to process ${process.identity.pid}.`,
-            ),
-          });
-        })
-        .catch((error: unknown) => {
-          toastManager.add({
-            type: "error",
-            title: `Could not send ${signal}`,
-            description: error instanceof Error ? error.message : `Failed to send ${signal}.`,
-          });
-        })
-        .finally(() => {
-          clearSignaling();
+    }
+    if (!readEnvironmentScope(targetEnvironmentId, AuthEnvironmentMaintainScope)) {
+      clearSignaling();
+      return;
+    }
+    void signalServerProcess({
+      environmentId: targetEnvironmentId,
+      input: {
+        pid: process.identity.pid,
+        startTimeMs: process.identity.startTimeMs,
+        signal,
+      },
+    })
+      .then((result) => {
+        if (result._tag === "Failure") {
+          if (isAtomCommandInterrupted(result)) return;
+          throw squashAtomCommandFailure(result);
+        }
+        if (result.value.signaled) return;
+        toastManager.add({
+          type: "error",
+          title: `Could not send ${signal}`,
+          description: Option.getOrElse(
+            result.value.message,
+            () => `Failed to send ${signal} to process ${process.identity.pid}.`,
+          ),
         });
-    },
-    [signalServerProcess],
-  );
+      })
+      .catch((error: unknown) => {
+        toastManager.add({
+          type: "error",
+          title: `Could not send ${signal}`,
+          description: error instanceof Error ? error.message : `Failed to send ${signal}.`,
+        });
+      })
+      .finally(() => {
+        clearSignaling();
+      });
+  };
 
-  const retryCollector = useCallback(() => {
+  const retryCollector = () => {
+    if (
+      environmentId === null ||
+      !readEnvironmentScope(environmentId, AuthEnvironmentMaintainScope)
+    )
+      return;
     setIsRetrying(true);
     void retryTelemetry()
+      .then(() => {
+        // The user can pick another window while the retry runs; refreshing every window
+        // re-reads the one on screen and only invalidates the rest.
+        for (const option of HISTORY_WINDOWS) {
+          registry.refresh(
+            serverEnvironment.resourceTelemetryHistory({
+              environmentId,
+              input: { windowMs: option.windowMs, bucketMs: option.bucketMs },
+            }),
+          );
+        }
+      })
       .catch((error: unknown) => {
         toastManager.add({
           type: "error",
@@ -937,7 +947,7 @@ export function ResourceTelemetryDiagnostics({
       .finally(() => {
         setIsRetrying(false);
       });
-  }, [retryTelemetry]);
+  };
 
   const speedLimit = snapshot ? Option.getOrNull(snapshot.speedLimitPercent) : null;
   const collectorNeedsRetry = shouldShowResourceMonitorRetry({
@@ -982,7 +992,7 @@ export function ResourceTelemetryDiagnostics({
           </div>
         }
       >
-        <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm/5">
+        <div className="overflow-hidden rounded-[inherit]">
           <div className="flex flex-col gap-3 border-b border-border/60 bg-linear-to-r from-muted/45 via-muted/20 to-transparent px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
             <div>
               <div className="text-3xs font-semibold uppercase tracking-widest text-muted-foreground/70">
@@ -1052,7 +1062,7 @@ export function ResourceTelemetryDiagnostics({
           </div>
           {telemetry.error ? (
             <div className="flex items-start gap-2 border-t border-destructive/20 bg-destructive/5 px-4 py-3 text-xs text-destructive sm:px-5">
-              <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
+              <AlertTriangleIcon className="size-3.5 h-lh shrink-0" />
               <span>{telemetry.error}</span>
             </div>
           ) : null}
@@ -1090,7 +1100,7 @@ export function ResourceTelemetryDiagnostics({
           ) : null
         }
       >
-        <div className="grid overflow-hidden rounded-2xl border border-border/70 bg-card shadow-xs/5 md:grid-cols-2 md:divide-x md:divide-border/60">
+        <div className="grid overflow-hidden rounded-[inherit] md:grid-cols-2 md:divide-x md:divide-border/60">
           <div className="px-4 py-4 sm:px-5">
             <div className="mb-3 flex items-center gap-2 text-3xs font-semibold uppercase tracking-widest text-muted-foreground/70">
               <span className="flex size-6 items-center justify-center rounded-md bg-muted/60">
@@ -1227,10 +1237,10 @@ export function ResourceTelemetryDiagnostics({
           </div>
         }
       >
-        <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-xs/5">
+        <div className="overflow-hidden rounded-[inherit]">
           {history.error ? (
             <div className="flex items-start gap-2 border-b border-destructive/20 bg-destructive/5 px-4 py-3 text-xs text-destructive sm:px-5">
-              <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
+              <AlertTriangleIcon className="size-3.5 h-lh shrink-0" />
               <span>{history.error}</span>
             </div>
           ) : null}
@@ -1250,9 +1260,10 @@ export function ResourceTelemetryDiagnostics({
           ) : null
         }
       >
-        <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-xs/5">
+        <div className="overflow-hidden rounded-[inherit]">
           <ProcessTable
             processes={snapshot?.processes ?? []}
+            canMaintainEnvironment={canMaintainEnvironment}
             signalingKeys={signalingKeys}
             onSignal={signalProcess}
           />
@@ -1266,7 +1277,7 @@ export function ResourceTelemetryDiagnostics({
           <span className="text-3xs text-muted-foreground/55">Logical bytes by operation</span>
         }
       >
-        <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-xs/5">
+        <div className="overflow-hidden rounded-[inherit]">
           <div className="bg-muted/15 px-4 py-3 text-2xs leading-relaxed text-muted-foreground sm:px-5">
             Native counters identify which process is reading or writing. These application-level
             counters identify known T3 operations so process spikes can be correlated with specific

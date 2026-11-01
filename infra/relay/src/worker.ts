@@ -1,7 +1,7 @@
 import * as Alchemy from "alchemy";
-import * as Axiom from "alchemy/Axiom";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Drizzle from "alchemy/Drizzle/Postgres";
+import * as Axiom from "@alchemy.run/axiom";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Drizzle from "@alchemy.run/drizzle/Postgres";
 import * as Config from "effect/Config";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -57,18 +57,20 @@ import * as ApnsClient from "./agentActivity/ApnsClient.ts";
 import * as ApnsProviderTokens from "./agentActivity/ApnsProviderTokens.ts";
 import * as ApnsDeliveryQueue from "./agentActivity/ApnsDeliveryQueue.ts";
 import * as ApnsDeliveries from "./agentActivity/ApnsDeliveries.ts";
+import * as CloudflareApiPause from "./environments/CloudflareApiPause.ts";
 import * as EnvironmentConnector from "./environments/EnvironmentConnector.ts";
 import * as EnvironmentLinker from "./environments/EnvironmentLinker.ts";
 import * as EnvironmentPublishSignatures from "./environments/EnvironmentPublishSignatures.ts";
 import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider.ts";
 import * as ManagedEndpointReaper from "./environments/ManagedEndpointReaper.ts";
 import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
+import * as T3ChatAccounts from "./t3chat/T3ChatAccounts.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
 import * as HookForwarder from "./hooks/HookForwarder.ts";
 import * as HeldHooks from "./hooks/HeldHooks.ts";
 import * as HookInbox from "./hooks/HookInbox.ts";
-import { HookInboxObject } from "./hooks/HookInboxObject.ts";
-import * as HookInboxObjectLayer from "./hooks/HookInboxObject.ts";
+import * as HookInboxObject from "./hooks/HookInboxObject.ts";
+import * as MobileTelemetry from "./mobileTelemetry/MobileTelemetry.ts";
 
 const layerWebcrypto = Layer.succeed(
   Crypto.Crypto,
@@ -89,8 +91,12 @@ const layerHttpPlatformNotSupported = Layer.succeed(HttpPlatform.HttpPlatform, {
     algorithms: new Set<HttpPlatform.CompressionAlgorithm>(),
     compressResponse: (response) => Effect.succeed(response),
   },
-  fileResponse: () => Effect.die("Relay API does not serve filesystem responses"),
-  fileWebResponse: () => Effect.die("Relay API does not serve file responses"),
+  fileResponse: Effect.fn("HttpPlatform.fileResponse")(function () {
+    return Effect.die("Relay API does not serve filesystem responses");
+  }),
+  fileWebResponse: Effect.fn("HttpPlatform.fileWebResponse")(function () {
+    return Effect.die("Relay API does not serve file responses");
+  }),
 });
 
 const layerRelayApi = Layer.mergeAll(
@@ -118,14 +124,15 @@ export const layer = Api.make(
         date: "2026-05-22",
         flags: ["nodejs_compat"],
       },
+      // Requests run several Postgres queries in sequence. At the user's edge
+      // each one paid the round trip to the database (~300 ms from JNB); next
+      // to PlanetScale `us-west` the request pays that distance once.
+      placement: { region: "aws:us-west-2" },
       domain: relayPublicDomain,
     })),
     Effect.orDie,
   ),
   Effect.gen(function* () {
-    //
-    // 1. Provision Infrastructure for the Worker to use
-    //
     const { relayPublicOrigin, stage } = yield* RelayDeploymentConfig;
     const apnsDeliveryQueue = yield* RelayApnsDeliveryQueue;
     const apnsDeliveryDeadLetterQueue = yield* RelayApnsDeliveryDeadLetterQueue;
@@ -137,9 +144,6 @@ export const layer = Api.make(
     const randomApnsDeliveryJobSigningSecret = yield* ApnsDeliveryJobSigningSecret;
     const observability = yield* RelayObservability;
 
-    //
-    // 2. Create bindings
-    //
     const apnsEnabled = yield* Config.Boolean("APNS_ENABLED").pipe(Config.withDefault(true));
     const apnsCredentials = apnsEnabled
       ? {
@@ -160,23 +164,25 @@ export const layer = Api.make(
     const apnsDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(apnsDeliveryQueue);
     const fcmDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(fcmDeliveryQueue);
 
-    const axiomDatasetName = yield* observability.traces.name;
-    const axiomIngestToken = yield* observability.workerIngestToken.token;
-    const axiomTracesEndpoint = yield* observability.traces.otelTracesEndpoint;
-
     const clerkSecretKey = yield* Config.Redacted("CLERK_SECRET_KEY");
     const clerkPublishableKey = yield* Config.String("CLERK_PUBLISHABLE_KEY");
     const clerkJwtAudience = yield* Config.String("CLERK_JWT_AUDIENCE");
+    const t3ChatLinkSecret = Option.getOrUndefined(
+      Option.filter(
+        yield* Config.option(Config.Redacted("T3CHAT_LINK_SECRET")),
+        (value) => Redacted.value(value).trim().length > 0,
+      ),
+    );
+    const t3ChatBaseUrl = yield* Config.String("T3CHAT_URL").pipe(
+      Config.withDefault("https://t3.chat"),
+    );
 
     const cloudMintPrivateKey = yield* cloudMintKeyPair.privateKey;
     const cloudMintPublicKey = yield* cloudMintKeyPair.publicKey;
     const hyperdrive = yield* Cloudflare.Hyperdrive.Connect(yield* RelayDb.RelayHyperdrive);
-    // Named prepared statements collide behind Hyperdrive's transaction-mode
-    // pool: sql-pg < 4.0.0-rc.117 names them `effect1..N` per connection, and
-    // inside a transaction a Bind can reach another request's statement
-    // (#14070, Effect-TS/effect#8320). Unnamed statements cannot collide.
-    const db = yield* Drizzle.Postgres(hyperdrive.connectionString, undefined, {
-      prepare: false,
+    // Named statements collide behind Hyperdrive transaction pooling (Effect-TS/effect#8320); use unnamed statements.
+    const db = yield* Drizzle.Postgres(hyperdrive.connectionString, {
+      client: { prepare: false },
     });
 
     const managedEndpointTunnelBinding = yield* Cloudflare.Tunnel.ReadWriteTunnel();
@@ -185,8 +191,12 @@ export const layer = Api.make(
     const managedEndpointDnsBinding = yield* Cloudflare.DNS.ReadWriteDns(managedEndpointZone);
     const managedEndpointZoneName = yield* managedEndpointZone.name;
     const managedEndpointCleanupMode = yield* RelayConfiguration.managedEndpointCleanupModeConfig;
-    // Keys are endpoint keys or hashes over them, which already differ per
-    // stage, so stages sharing an account cannot collide in these namespaces.
+    const legacyManagedEndpointCleanupMode =
+      yield* RelayConfiguration.legacyManagedEndpointCleanupModeConfig;
+    const legacyTunnelGraceMinutes = Option.getOrUndefined(
+      yield* RelayConfiguration.legacyTunnelGraceMinutesConfig,
+    );
+    // Endpoint keys and their hashes differ by stage, including in shared accounts.
     const hookRateLimit = yield* Cloudflare.RateLimit("HOOK_RATE_LIMIT", {
       namespaceId: 1001,
       simple: {
@@ -201,11 +211,23 @@ export const layer = Api.make(
         period: HookForwarder.RELAY_HOOK_ENDPOINT_RATE_LIMIT.periodSeconds,
       },
     });
-    const hookInboxes = yield* HookInboxObject;
+    const hookInboxes = yield* HookInboxObject.HookInboxObject;
+    const mobileTelemetryRateLimit = yield* Cloudflare.RateLimit("MOBILE_TELEMETRY_RATE_LIMIT", {
+      namespaceId: 1003,
+      simple: {
+        limit: MobileTelemetry.MOBILE_TELEMETRY_RATE_LIMIT.limit,
+        period: MobileTelemetry.MOBILE_TELEMETRY_RATE_LIMIT.periodSeconds,
+      },
+    });
+    const mobileSourceMaps = yield* Cloudflare.R2.ReadBucket(observability.mobileSourceMaps);
+    const mobileTelemetryToken = yield* observability.mobileTelemetryIngestToken.token;
+    const mobileTracesUrl = yield* observability.traces.otelTracesEndpoint;
+    const mobileTracesDataset = yield* observability.traces.name;
+    const mobileLogsUrl = yield* observability.mobileLogs.otelLogsEndpoint;
+    const mobileLogsDataset = yield* observability.mobileLogs.name;
+    const mobileMetricsUrl = yield* observability.mobileMetrics.otelMetricsEndpoint;
+    const mobileMetricsDataset = yield* observability.mobileMetrics.name;
 
-    //
-    // 3. Runtime layers and app construction
-    //
     const alchemyRuntimeContext: Alchemy.BaseRuntimeContext = yield* Cloudflare.Worker;
 
     const loadSettings = Effect.gen(function* () {
@@ -222,18 +244,14 @@ export const layer = Api.make(
         managedEndpointBaseDomain: yield* managedEndpointZoneName,
         managedEndpointNamespace: stage,
         managedEndpointCleanupMode,
+        legacyManagedEndpointCleanupMode,
+        ...(legacyTunnelGraceMinutes === undefined ? {} : { legacyTunnelGraceMinutes }),
+        ...(t3ChatLinkSecret
+          ? { t3Chat: { baseUrl: t3ChatBaseUrl, linkSecret: t3ChatLinkSecret } }
+          : {}),
       });
     });
 
-    const layerRelayTrace = Layer.unwrap(
-      Effect.all({
-        tracesDatasetName: axiomDatasetName,
-        tracesEndpoint: axiomTracesEndpoint,
-        ingestToken: axiomIngestToken,
-      }).pipe(Effect.map(Observability.layer)),
-    );
-
-    // Each managed endpoint's held webhook requests live in its own Durable Object.
     const inboxCall =
       <A>(operation: HookInbox.HookInboxError["operation"], endpointKey: string) =>
       (effect: Effect.Effect<A, never, Alchemy.RuntimeContext>) =>
@@ -250,12 +268,21 @@ export const layer = Api.make(
           ),
         );
     const layerHookInbox = Layer.succeed(HookInbox.HookInbox, {
-      hold: ({ endpointKey, baseUrl, hook }) =>
-        hookInboxes.getByName(endpointKey).hold(hook, baseUrl).pipe(inboxCall("hold", endpointKey)),
-      wake: ({ endpointKey, baseUrl }) =>
-        hookInboxes.getByName(endpointKey).wake(baseUrl).pipe(inboxCall("wake", endpointKey)),
-      clear: ({ endpointKey }) =>
-        hookInboxes.getByName(endpointKey).clear().pipe(inboxCall("clear", endpointKey)),
+      hold: Effect.fn("HookInbox.hold")(function ({ endpointKey, baseUrl, hook }) {
+        return hookInboxes
+          .getByName(endpointKey)
+          .hold(hook, baseUrl)
+          .pipe(inboxCall("hold", endpointKey));
+      }),
+      wake: Effect.fn("HookInbox.wake")(function ({ endpointKey, baseUrl }) {
+        return hookInboxes
+          .getByName(endpointKey)
+          .wake(baseUrl)
+          .pipe(inboxCall("wake", endpointKey));
+      }),
+      clear: Effect.fn("HookInbox.clear")(function ({ endpointKey }) {
+        return hookInboxes.getByName(endpointKey).clear().pipe(inboxCall("clear", endpointKey));
+      }),
     });
 
     const layerRuntime = Layer.empty.pipe(
@@ -283,10 +310,12 @@ export const layer = Api.make(
         FcmDeliveries.layer.pipe(
           Layer.provide(
             Layer.succeed(FcmDeliveryQueueSender.FcmDeliveryQueueSender, {
-              send: (body) =>
-                fcmDeliveryQueueSender
-                  .send(body)
-                  .pipe(Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext)),
+              send: Effect.fn("FcmDeliveryQueueSender.send")(
+                function* (body) {
+                  return yield* fcmDeliveryQueueSender.send(body);
+                },
+                Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
+              ),
             }),
           ),
           Layer.provideMerge(
@@ -307,12 +336,13 @@ export const layer = Api.make(
       Layer.provideMerge(EnvironmentCredentials.layer),
       Layer.provideMerge(
         Layer.mergeAll(
+          CloudflareApiPause.layer,
           EnvironmentLinks.layer,
           ManagedEndpointAllocations.layer,
           ManagedTunnelLimits.layer,
         ),
       ),
-      Layer.provideMerge(LiveActivities.layer),
+      Layer.provideMerge(Layer.mergeAll(LiveActivities.layer, T3ChatAccounts.layer)),
       Layer.provideMerge(DeliveryAttempts.layer),
       Layer.provideMerge(RelayTokens.layer),
       Layer.provideMerge(
@@ -324,19 +354,19 @@ export const layer = Api.make(
       Layer.provideMerge(layerWebcrypto),
     );
 
-    // Fails open: a limiter outage must not drop webhooks the environment would accept.
+    // Fails open: a limiter outage must not drop webhooks or app telemetry.
     const allowWith =
-      (limiter: typeof hookRateLimit) =>
+      (
+        limiter: typeof hookRateLimit,
+        failedOpenAttribute = "relay.hook.rate_limiter_failed_open",
+      ) =>
       (key: string): Effect.Effect<boolean> =>
         limiter.limit({ key }).pipe(
           Effect.map((result) => result.success),
           Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
           Effect.catch((error) =>
-            Effect.logWarning("Hook rate limiter unavailable", { error: error.message }).pipe(
-              // Visible on the forward span, so an outage that disables limits shows up.
-              Effect.andThen(
-                Effect.annotateCurrentSpan({ "relay.hook.rate_limiter_failed_open": true }),
-              ),
+            Effect.logWarning("Rate limiter unavailable", { error: error.message }).pipe(
+              Effect.andThen(Effect.annotateCurrentSpan({ [failedOpenAttribute]: true })),
               Effect.as(true),
             ),
           ),
@@ -346,12 +376,64 @@ export const layer = Api.make(
       allowEndpoint: allowWith(hookEndpointRateLimit),
     });
 
-    const layerApp = Layer.merge(
+    // `fetch` rebuilds its layers per request; the source map cache must outlive one.
+    const mobileSourceMapLookups = yield* MobileTelemetry.SourceMaps.pipe(
+      Effect.provide(MobileTelemetry.layerSourceMaps),
+      Effect.provideService(MobileTelemetry.SourceMapObjects, {
+        get: (key) =>
+          mobileSourceMaps.get(key).pipe(
+            Effect.map((object) =>
+              object === null
+                ? undefined
+                : {
+                    size: object.size,
+                    text: object.text().pipe(
+                      Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
+                      Effect.mapError(
+                        (cause) => new MobileTelemetry.SourceMapObjectError({ key, cause }),
+                      ),
+                    ),
+                  },
+            ),
+            Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
+            Effect.mapError((cause) => new MobileTelemetry.SourceMapObjectError({ key, cause })),
+          ),
+      }),
+    );
+    const layerMobileTelemetry = MobileTelemetry.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.effect(
+            MobileTelemetry.MobileTelemetrySettings,
+            Effect.gen(function* () {
+              return MobileTelemetry.MobileTelemetrySettings.of({
+                axiomToken: yield* mobileTelemetryToken,
+                destinations: {
+                  traces: { url: yield* mobileTracesUrl, dataset: yield* mobileTracesDataset },
+                  logs: { url: yield* mobileLogsUrl, dataset: yield* mobileLogsDataset },
+                  metrics: { url: yield* mobileMetricsUrl, dataset: yield* mobileMetricsDataset },
+                },
+              });
+            }),
+          ),
+          Layer.succeed(MobileTelemetry.MobileTelemetryRateLimiter, {
+            allow: allowWith(
+              mobileTelemetryRateLimit,
+              "relay.mobile_telemetry.rate_limiter_failed_open",
+            ),
+          }),
+          Layer.succeed(MobileTelemetry.SourceMaps, mobileSourceMapLookups),
+        ),
+      ),
+    );
+
+    const layerApp = Layer.mergeAll(
       layerRelayApi,
       HookForwarder.layerApi.pipe(
         Layer.provide(HookForwarder.layer),
         Layer.provide(layerHookRateLimiter),
       ),
+      MobileTelemetry.layerApi.pipe(Layer.provide(layerMobileTelemetry)),
     ).pipe(
       Layer.provideMerge(RelayHttpApi.layerClientAuth),
       Layer.provideMerge(RelayHttpApi.layerDpopClientAuth),
@@ -403,7 +485,6 @@ export const layer = Api.make(
         [
           DpopProofs.DpopProofReplay.pipe(
             Effect.flatMap((dpopProofs) => dpopProofs.pruneExpired),
-            // Keep completed thread rows long enough to show their final state.
             Effect.andThen(
               Effect.all([AgentActivityRows.AgentActivityRows, DateTime.now]).pipe(
                 Effect.flatMap(([activityRows, now]) =>
@@ -411,6 +492,11 @@ export const layer = Api.make(
                     updatedBefore: DateTime.formatIso(DateTime.subtract(now, { minutes: 30 })),
                   }),
                 ),
+              ),
+            ),
+            Effect.andThen(
+              DeliveryAttempts.DeliveryAttempts.pipe(
+                Effect.flatMap((attempts) => attempts.pruneExpired),
               ),
             ),
             Effect.catchCause((cause) =>
@@ -432,12 +518,20 @@ export const layer = Api.make(
                 : Effect.logWarning("Failed to clean up inactive managed tunnels", { cause }),
             ),
           ),
+          AgentActivityPublisher.AgentActivityPublisher.pipe(
+            Effect.flatMap((publisher) => publisher.endIdleLiveActivities),
+            Effect.catchCause((cause) =>
+              Cause.hasInterrupts(cause)
+                ? Effect.interrupt
+                : Effect.logWarning("Failed to end idle Live Activities", { cause }),
+            ),
+          ),
         ],
-        { concurrency: 2, discard: true },
+        { concurrency: 3, discard: true },
       ).pipe(
         Effect.withSpan("relay.cron.prune_expired_state"),
-        // Export cron spans to Axiom like HTTP spans; the scope flushes them before the run ends.
-        Effect.provide(Layer.merge(layerRuntime, layerRelayTrace)),
+        Observability.withSchemaErrorSpanAttributes,
+        Effect.provide(layerRuntime),
       ),
     );
 
@@ -456,7 +550,11 @@ export const layer = Api.make(
       HttpRouter.toHttpEffect,
       Effect.provideService(HttpRouter.RouterConfig, RELAY_HTTP_ROUTER_CONFIG),
       withoutCapturedParentSpan,
-      Effect.flatMap((httpEffect) => traceRelayHttpRequestWith(httpEffect, layerRelayTrace)),
+      Effect.map((httpEffect) =>
+        traceRelayHttpRequestWith(httpEffect, Layer.empty).pipe(
+          Observability.withSchemaErrorSpanAttributes,
+        ),
+      ),
     );
 
     return { fetch };
@@ -470,21 +568,12 @@ export const layer = Api.make(
         Layer.provideMerge(Cloudflare.Tunnel.ReadWriteTunnelBinding),
         Layer.provideMerge(Cloudflare.DNS.ReadWriteDnsHttp),
         Layer.provideMerge(Cloudflare.Workers.RateLimitBinding),
-        Layer.provideMerge(HookInboxObjectLayer.layer),
-        // The worker runtime opens its own HTTP span around ours. For webhook
-        // paths it would record the raw URL, token included, and adopt the
-        // sender's traceparent, so only our redacted span covers those.
-        // Registered as telemetry: request-time context is assembled per
-        // event, and only these layers are built into it.
+        Layer.provideMerge(Cloudflare.R2.ReadBucketBinding),
+        Layer.provideMerge(HookInboxObject.layer),
+        // Disable the duplicate runtime span; ours applies route/header/token redaction and rejects sender traceparent.
         Layer.provideMerge(
-          Alchemy.Telemetry.layer(
-            Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) =>
-              HookForwarder.isRelayHookPath(request.url),
-            ),
-          ),
+          Alchemy.Telemetry.layer(Layer.succeed(HttpMiddleware.TracerDisabledWhen)(() => true)),
         ),
-        // Exports spans from events the HTTP tracer does not wrap, notably
-        // HookInboxObject calls and alarms, to the same Axiom dataset.
         Layer.provideMerge(
           Layer.unwrap(
             Effect.map(RelayObservability, (observability) =>
