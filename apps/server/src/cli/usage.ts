@@ -1,7 +1,10 @@
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import {
   AuthOrchestrationReadScope,
+  AuthDiagnosticsReadScope,
   UsageDay,
+  ORCHESTRATION_PROTOCOL_QUERY_PARAM,
+  ORCHESTRATION_PROTOCOL_VERSION,
   WS_METHODS,
   WsRpcGroup,
   type ServerConfig as ServerConfigSnapshot,
@@ -60,7 +63,9 @@ const runUsage = Effect.fn("cli.usage")(function* (
   if (name !== "limits" && sinceDay > untilDay) {
     return yield* new UsageCommandError({ message: "--since must not be after --until." });
   }
-  const config = yield* resolveCliAuthConfig(flags, yield* GlobalFlag.LogLevel);
+  const config = yield* resolveCliAuthConfig(flags, yield* GlobalFlag.LogLevel, {
+    quietLogs: true,
+  });
   const state = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
   if (Option.isNone(state)) {
     return yield* new UsageCommandError({
@@ -68,13 +73,14 @@ const runUsage = Effect.fn("cli.usage")(function* (
     });
   }
   const url = new URL("/ws", state.value.origin);
+  url.searchParams.set(ORCHESTRATION_PROTOCOL_QUERY_PARAM, String(ORCHESTRATION_PROTOCOL_VERSION));
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
 
   const report = yield* Effect.gen(function* () {
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
     return yield* Effect.acquireUseRelease(
       auth.issueSession({
-        scopes: [AuthOrchestrationReadScope],
+        scopes: [name === "limits" ? AuthOrchestrationReadScope : AuthDiagnosticsReadScope],
         label: "t3 usage cli",
         ttl: Duration.minutes(1),
       }),
@@ -102,17 +108,20 @@ const runUsage = Effect.fn("cli.usage")(function* (
               const result = yield* client[WS_METHODS.subscribeServerConfig]({
                 usageLimitSources: true,
               }).pipe(
-                Stream.scan(undefined as ServerConfigSnapshot | undefined, (snapshot, event) => {
-                  if (event.type === "snapshot") return event.config;
-                  if (!snapshot) return snapshot;
-                  if (event.type === "settingsUpdated")
-                    return { ...snapshot, settings: event.payload.settings };
-                  if (event.type === "providerStatuses")
-                    return { ...snapshot, providers: event.payload.providers };
-                  if (event.type === "usageLimitSourcesUpdated")
-                    return { ...snapshot, usageLimitSources: event.payload.sources };
-                  return snapshot;
-                }),
+                Stream.scan(
+                  () => undefined as ServerConfigSnapshot | undefined,
+                  (snapshot, event) => {
+                    if (event.type === "snapshot") return event.config;
+                    if (!snapshot) return snapshot;
+                    if (event.type === "settingsUpdated")
+                      return { ...snapshot, settings: event.payload.settings };
+                    if (event.type === "providerStatuses")
+                      return { ...snapshot, providers: event.payload.providers };
+                    if (event.type === "usageLimitSourcesUpdated")
+                      return { ...snapshot, usageLimitSources: event.payload.sources };
+                    return snapshot;
+                  },
+                ),
                 Stream.filter(
                   (snapshot) =>
                     snapshot !== undefined &&
@@ -230,7 +239,7 @@ const runUsage = Effect.fn("cli.usage")(function* (
     );
   }).pipe(
     Effect.provide(
-      EnvironmentAuth.runtimeLayer.pipe(
+      EnvironmentAuth.layerRuntime.pipe(
         Layer.provide(FetchHttpClient.layer),
         Layer.provide(ServerConfig.layer(config)),
       ),

@@ -2,11 +2,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import {
   DEFAULT_SERVER_SETTINGS,
-  AuthOrchestrationReadScope,
+  AuthDiagnosticsReadScope,
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   UsageDay,
+  ORCHESTRATION_PROTOCOL_QUERY_PARAM,
+  ORCHESTRATION_PROTOCOL_VERSION,
   UsageLimitSourceId,
   UsageTokenTotals,
   ServerConfig,
@@ -182,6 +184,12 @@ const setupServer = Effect.fn(function* (streamConfig: boolean | "empty" | "fail
       ),
   );
   server.on("connection", (socket, request) => {
+    assert.equal(
+      new URL(request.url!, "http://localhost").searchParams.get(
+        ORCHESTRATION_PROTOCOL_QUERY_PARAM,
+      ),
+      String(ORCHESTRATION_PROTOCOL_VERSION),
+    );
     const payload = request.headers.authorization?.slice("Bearer ".length).split(".")[0] ?? "";
     sessions.push(decodeClaims(Buffer.from(payload, "base64url").toString("utf8")));
     socket.on("message", (data) => {
@@ -367,7 +375,7 @@ describe("t3 usage", () => {
       assert.equal(output.totalTokens, 43);
       assert.deepEqual(
         sessions.map((session) => session.scopes),
-        [[AuthOrchestrationReadScope]],
+        [[AuthDiagnosticsReadScope]],
       );
       assert.equal(sessions[0]!.exp - sessions[0]!.iat, 60_000);
       assert.equal(output.totals.reasoningTokens, 3);
