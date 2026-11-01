@@ -119,7 +119,6 @@ function fixture(
   };
 }
 
-/** A hub API whose every request fails the way `fail` says. */
 const unreachableHub = (
   fail: (
     request: Parameters<Parameters<typeof HttpClient.make>[0]>[0],
@@ -156,6 +155,7 @@ describe("CLIProxyAPI hub failures", () => {
     }),
   );
 
+  // regression: #18168 Limits hub failures name their TLS, HTTP, or timeout cause
   it.effect("ignores a transport code that is not a short Node error code", () =>
     Effect.gen(function* () {
       const api = yield* unreachableHub(
@@ -316,8 +316,9 @@ describe("CLIProxyAPI built-in management API", () => {
     Effect.gen(function* () {
       const test = fixture({
         accounts: [{ ...accounts[0]!, provider: "claude" }],
-        upstream: () => ({
-          status: 200,
+        // The usage endpoint answers 429 to requests without a Claude Code user agent.
+        upstream: (request) => ({
+          status: request.header?.["User-Agent"]?.startsWith("claude-code/") ? 200 : 429,
           body: {
             five_hour: { utilization: 10, resets_at: null },
             seven_day: { utilization: 50, resets_at: "2099-01-01T00:00:00Z" },
@@ -341,6 +342,70 @@ describe("CLIProxyAPI built-in management API", () => {
         ["seven_day", 50],
         ["seven_day_fable", 80],
       ]);
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "spend budget",
+      budget: {
+        spend: {
+          enabled: true,
+          used: { amount_minor: 4_631, currency: "USD", exponent: 2 },
+          limit: { amount_minor: 50_000, currency: "USD", exponent: 2 },
+        },
+      },
+    },
+    {
+      name: "extra usage",
+      budget: {
+        extra_usage: {
+          is_enabled: true,
+          used_credits: 4_631,
+          monthly_limit: 50_000,
+          utilization: 9,
+        },
+      },
+    },
+  ])("keeps Claude monthly spend from $name beside rolling windows", ({ budget }) =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: () => ({
+          status: 200,
+          body: { five_hour: { utilization: 10, resets_at: null }, ...budget },
+        }),
+      });
+      const result = yield* (yield* test.api).readAccounts(config);
+      expect(
+        result[0]?.usageLimits.windows.map((window) => [window.id, window.usedPercent]),
+      ).toEqual([
+        ["five_hour", 10],
+        ["monthly_spend", expect.closeTo(9.262, 10)],
+      ]);
+    }),
+  );
+
+  it.effect("omits disabled Claude budgets without losing rolling windows", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: () => ({
+          status: 200,
+          body: {
+            five_hour: { utilization: 10, resets_at: null },
+            spend: { enabled: false, used: null, limit: null },
+            extra_usage: {
+              is_enabled: false,
+              used_credits: null,
+              monthly_limit: null,
+              utilization: null,
+            },
+          },
+        }),
+      });
+      const result = yield* (yield* test.api).readAccounts(config);
+      expect(result[0]?.usageLimits.windows.map((window) => window.id)).toEqual(["five_hour"]);
     }),
   );
 

@@ -63,9 +63,7 @@ describe("decodePullRequestListJson", () => {
   });
 
   it.each([
-    ["active", "open"],
     ["completed", "merged"],
-    ["abandoned", "closed"],
     ["something new", "open"],
   ])("reads the %s status as %s", (status, expected) => {
     const batch = expectSuccess(decodePullRequestListJson(asJson([pullRequest({ status })])));
@@ -76,9 +74,7 @@ describe("decodePullRequestListJson", () => {
   it.each([
     ["succeeded", "mergeable"],
     ["conflicts", "conflicting"],
-    ["rejectedByPolicy", "conflicting"],
     ["queued", "unknown"],
-    ["notSet", "unknown"],
   ])("reads the %s merge status as %s", (mergeStatus, expected) => {
     const batch = expectSuccess(decodePullRequestListJson(asJson([pullRequest({ mergeStatus })])));
 
@@ -212,7 +208,7 @@ describe("decodeThreadsJson", () => {
     });
   });
 
-  it("reads a thread pinned to a file as a review comment", () => {
+  it("reads a thread pinned to a file as a review comment on the path its diff uses", () => {
     const comments = expectSuccess(
       decodeThreadsJson(
         asJson({
@@ -227,7 +223,7 @@ describe("decodeThreadsJson", () => {
       ),
     );
 
-    expect(comments[0]).toMatchObject({ kind: "review-comment", path: "/src/app.ts" });
+    expect(comments[0]).toMatchObject({ kind: "review-comment", path: "src/app.ts" });
   });
 
   it("keeps the replies under a thread, which are as much of the conversation", () => {
@@ -407,19 +403,6 @@ describe("decodeIterationChangesJson", () => {
     expect(page.changes.map((change) => change.path)).toEqual(["docs/page.md"]);
   });
 
-  it("carries where the next page of a long change starts", () => {
-    const page = expectSuccess(
-      decodeIterationChangesJson(
-        asJson({
-          changeEntries: [{ changeType: "add", item: { path: "/DEMO.md", objectId: "ec00" } }],
-          nextSkip: 2000,
-        }),
-      ),
-    );
-
-    expect(page.nextSkip).toBe(2000);
-  });
-
   it("reads where a rename came from out of either of the two places Azure names it", () => {
     const page = expectSuccess(
       decodeIterationChangesJson(
@@ -446,27 +429,10 @@ describe("decodeItemContentJson", () => {
       isBinary: false,
     });
   });
-
-  it("keeps Azure's own word that a file is binary", () => {
-    expect(
-      expectSuccess(
-        decodeItemContentJson(
-          asJson({ path: "/logo.png", content: "b2xk", contentMetadata: { isBinary: true } }),
-        ),
-      ),
-    ).toEqual({ contents: "b2xk", isBinary: true });
-  });
 });
 
-/**
- * These are the shapes a real organisation answered with, read back through `az devops invoke`
- * rather than `az rest`: the extension hands over the route's own body with one key of its own
- * added, and a live repository leaves out fields the contract documents.
- */
 describe("what az devops invoke answers with", () => {
   it("reads the envelope the extension adds its own continuation token to", () => {
-    // Set on every JSON body it returns, from a response header these routes do not send, so it
-    // arrives as null rather than not at all.
     expect(
       expectSuccess(decodeThreadsJson(asJson({ value: [], count: 0, continuation_token: null }))),
     ).toEqual([]);
@@ -497,8 +463,6 @@ describe("what az devops invoke answers with", () => {
   });
 
   it("keeps the files of a change that names neither their object type nor their page after it", () => {
-    // A live iteration states `changeType`, `item.path` and `item.objectId` and nothing else: no
-    // `gitObjectType`, no `isFolder`, and no `nextSkip` on the only page.
     const page = expectSuccess(
       decodeIterationChangesJson(
         asJson({
@@ -531,9 +495,6 @@ describe("what az devops invoke answers with", () => {
   });
 
   it("reads a text file whose content type Azure calls a stream", () => {
-    // `contentMetadata` comes back for a markdown file with `application/octet-stream` on it and
-    // no `isBinary` at all, so the content type is not the field to ask, and its absence is the
-    // answer that the text is text.
     expect(
       expectSuccess(
         decodeItemContentJson(

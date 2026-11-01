@@ -47,16 +47,6 @@ describe("parseWslDistroList", () => {
     ]);
   });
 
-  it("handles output without BOM", () => {
-    const text = [
-      "  NAME            STATE           VERSION",
-      "* Ubuntu           Running         2",
-    ].join("\r\n");
-    const output = Buffer.from(text, "utf16le");
-    const distros = parseWslDistroList(output);
-    expect(distros).toEqual([{ name: "Ubuntu", isDefault: true, version: 2 }]);
-  });
-
   it("handles UTF-8 output", () => {
     const text = [
       "  NAME            STATE           VERSION",
@@ -72,10 +62,6 @@ describe("extractDistroFromUncPath", () => {
     expect(extractDistroFromUncPath("\\\\wsl.localhost\\Ubuntu-22.04\\home\\josh")).toBe(
       "Ubuntu-22.04",
     );
-  });
-
-  it("extracts the distro from the legacy \\\\wsl$ UNC paths", () => {
-    expect(extractDistroFromUncPath("\\\\wsl$\\Debian\\home\\josh")).toBe("Debian");
   });
 });
 

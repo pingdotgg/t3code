@@ -102,6 +102,7 @@ it.effect("always grants pull-requests and gates browser and device access indep
   }),
 );
 
+// regression: #3114 use bound host for MCP endpoint
 it.effect("builds MCP endpoints from the bound server host", () =>
   Effect.gen(function* () {
     const cases = [

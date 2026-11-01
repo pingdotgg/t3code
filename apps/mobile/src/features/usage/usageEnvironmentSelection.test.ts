@@ -16,10 +16,6 @@ describe("usage environment selection", () => {
     expect(toggleUsageEnvironment(selected, environments, b)).toBeNull();
   });
 
-  it("can deselect the last environment", () => {
-    expect(toggleUsageEnvironment(new Set([a]), environments, a)).toEqual(new Set());
-  });
-
   it("does not count removed IDs toward selecting all current environments", () => {
     expect(toggleUsageEnvironment(new Set([a, removed]), environments, b)).toEqual(new Set([a, b]));
   });

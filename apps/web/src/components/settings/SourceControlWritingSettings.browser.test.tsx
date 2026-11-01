@@ -44,8 +44,6 @@ vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
   useEnvironmentProviders: () => new Map(),
 }));
-// The real row reads write permission and overrides from live environment state; this
-// suite is about how the section writes mixed writing styles.
 vi.mock(import("./settingsLayout"), async (original) => ({
   ...(await original()),
   SettingsRow: ({ title, control, resetAction, children }) => (
@@ -63,12 +61,6 @@ import { SourceControlWritingSettingsSection } from "./SourceControlWritingSetti
 
 const resetButton = (label: string) =>
   page.getByRole("button", { name: `Reset ${label} to default` });
-const writeForAll = () => page.getByRole("button", { name: "Write custom instructions for all" });
-const applyToAll = () => page.getByRole("button", { name: "Apply instructions to all" });
-const bulkEditor = () =>
-  page.getByRole("textbox", {
-    name: "Custom source control instructions for all selected environments",
-  });
 
 const content = () => (
   <StrictMode>
@@ -107,6 +99,7 @@ describe("mixed source control instructions", () => {
       customInstructions,
     }));
 
+    await userEvent.click(page.getByRole("button", { name: "Advanced" }));
     await userEvent.click(resetButton("change request templates"));
 
     expect(state.updateSettings).toHaveBeenCalledTimes(1);
@@ -117,16 +110,5 @@ describe("mixed source control instructions", () => {
     expect(
       state.styles.map(({ mode, customInstructions }) => ({ mode, customInstructions })),
     ).toEqual(initialInstructions);
-  });
-
-  it("does not write an untouched bulk draft", async () => {
-    await using _screen = await setup();
-    const initialStyles = state.styles;
-    await userEvent.click(writeForAll());
-    await expect.element(bulkEditor()).toHaveValue("");
-    await expect.element(applyToAll()).toBeDisabled();
-
-    expect(state.updateSettings).not.toHaveBeenCalled();
-    expect(state.styles).toEqual(initialStyles);
   });
 });

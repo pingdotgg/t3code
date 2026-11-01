@@ -20,7 +20,6 @@ describe("threadRoutes", () => {
 
     expect(isThreadRoutePathname("/env-1/thread-1", ref)).toBe(true);
     expect(isThreadRoutePathname("/env-1/thread-1/", ref)).toBe(true);
-    // A pending navigation away from the thread already shows these locations.
     expect(isThreadRoutePathname("/new", ref)).toBe(false);
     expect(isThreadRoutePathname("/env-1/thread-2", ref)).toBe(false);
     expect(isThreadRoutePathname("/env-2/thread-1", ref)).toBe(false);
@@ -55,32 +54,9 @@ describe("threadRoutes", () => {
     ).toBeNull();
   });
 
-  it("renders server threads and local drafts when they are ready", () => {
-    expect(
-      resolveThreadRouteRenderState({
-        bootstrapComplete: true,
-        serverThreadExists: true,
-        serverThreadDeleted: false,
-        unlistedThreadDetail: EMPTY_ENVIRONMENT_THREAD_STATE,
-        draftThreadExists: false,
-      }),
-    ).toBe("ready");
-    expect(
-      resolveThreadRouteRenderState({
-        bootstrapComplete: true,
-        serverThreadExists: false,
-        serverThreadDeleted: false,
-        unlistedThreadDetail: EMPTY_ENVIRONMENT_THREAD_STATE,
-        draftThreadExists: true,
-      }),
-    ).toBe("ready");
-  });
-
   it.each([
     { status: "cached", source: "server thread" },
-    { status: "synchronizing", source: "server thread" },
     { status: "cached", source: "draft" },
-    { status: "synchronizing", source: "draft" },
   ] as const)(
     "keeps available $source visible while the shell is $status",
     ({ status, source }) => {

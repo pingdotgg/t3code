@@ -129,9 +129,9 @@ describe("buildGrokModelCapabilities", () => {
         type: "select",
         currentValue: "medium",
         options: [
-          { id: "xhigh", label: "Extra High Effort", isDefault: true },
-          { id: "high", label: "High Effort" },
           { id: "medium", label: "Medium Effort" },
+          { id: "high", label: "High Effort" },
+          { id: "xhigh", label: "Extra High Effort", isDefault: true },
         ],
       },
     ]);
@@ -304,7 +304,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
   );
 
   // An expired access token prints the logged-out banner, then the CLI refreshes it in the
-  // same run, so the next `grok models` reports the login (#14285).
+  // same run, so the next `grok models` reports the login.
   it.effect("reports authenticated when `grok models` logs in after refreshing a token", () =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.scoped(
@@ -349,6 +349,27 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       ]);
       expect(snapshot.message).toContain("ACP initialize failed");
       expect(snapshot.slashCommands.map((command) => command.name)).toEqual(["compact"]);
+    }),
+  );
+
+  it.effect("warns instead of reporting ready when no models are discovered", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const grokPath = yield* writeFakeGrokCli({
+            modelsOutput: "You are logged in with grok.com.\n",
+            acp: true,
+          });
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            { ...process.env, XAI_API_KEY: "", T3_ACP_OMIT_INITIALIZE_MODEL_STATE: "1" },
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("warning");
+      expect(snapshot.message).toContain("did not list any models");
+      expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-build"]);
     }),
   );
 
@@ -425,6 +446,7 @@ describe("Grok usage limits", () => {
     }
   });
 
+  // regression: #17061 show zero-use Grok billing periods
   it("rejects impossible calendar dates at either period boundary", () => {
     for (const [start, end] of [
       ["2026-02-30T00:00:00.000Z", "2026-03-09T00:00:00.000Z"],

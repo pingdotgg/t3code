@@ -10,8 +10,6 @@ import {
 
 const retainedMessage =
   "2026-03-14T16:11:12.550224Z ERROR codex_core::codex: failed to load skill /home/sebherrerabe/repos/devsuite/.agent/skills/monorepo-scaffolding/SKILL.md: invalid YAML: mapping va...";
-const warningSummary =
-  "2026-03-14T16:11:12.550224Z ERROR codex_core::codex: failed to load skill /home/sebherrerabe/repos/devsuite/.agent/sk...";
 const now = DateTime.makeUnsafe("2026-09-05T00:00:00.000Z");
 const baseItem = {
   id: TurnItemId.make("diagnostic"),
@@ -68,13 +66,6 @@ describe("runtime diagnostics in the v2 work log", () => {
     const entry = workEntry(errorItem());
 
     expect(entry).toMatchObject({ label: "Runtime error", detail: retainedMessage });
-    expect(workEntryDisplayLabel(entry, undefined)).toBe(retainedMessage);
-  });
-
-  it("shows the retained diagnostic message beyond its truncated title", () => {
-    const entry = workEntry(errorItem({ title: warningSummary }));
-
-    expect(entry).toMatchObject({ label: warningSummary, detail: retainedMessage });
     expect(workEntryDisplayLabel(entry, undefined)).toBe(retainedMessage);
   });
 

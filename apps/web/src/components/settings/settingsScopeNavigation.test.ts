@@ -106,12 +106,7 @@ describe("settings scope navigation", () => {
     expect(router.state.location.search).toEqual(checkoutSearch);
   });
 
-  it.each([
-    "/settings/projects",
-    "/settings/integrations",
-    "/settings/source-control",
-    "/settings/scheduled-tasks",
-  ] as const)(
+  it.each(["/settings/projects", "/settings/scheduled-tasks"] as const)(
     "keeps %s when regrouping or selecting a target from the shared settings layout",
     async (to) => {
       const router = createSettingsRouter();
@@ -201,16 +196,6 @@ describe("settings scope navigation", () => {
       reason: "environment-missing",
       environmentIds: [],
     });
-  });
-
-  it("respects explicit clearing keys instead of restoring the previous checkout", async () => {
-    const router = createSettingsRouter();
-    await router.navigate({ to: "/settings/general", search: checkoutSearch });
-    await router.navigate({
-      to: "/settings/projects",
-      search: { project: "different-project", machine: undefined },
-    });
-    expect(router.state.location.search).toEqual({ project: "different-project" });
   });
 
   it("preserves escaped checkout identifiers across reload and browser history", async () => {

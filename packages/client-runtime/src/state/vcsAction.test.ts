@@ -89,6 +89,7 @@ function session(client: WsRpcProtocolClient): RpcSession {
     subscribeServerConfig: (input) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
+    inboundFrames: Effect.succeed(0),
     closed: Effect.never,
   };
 }
@@ -197,33 +198,6 @@ describe("vcsActionState", () => {
       currentLabel: "Committing...",
       hookName: null,
       lastOutputLine: null,
-    });
-  });
-
-  it("keeps running presentation state and retains a terminal action error until settle", () => {
-    const initial = beginVcsActionState({
-      operation: "run_change_request",
-      label: "Running source control action",
-      actionId,
-    });
-    const failed = applyVcsActionProgressEvent(
-      initial,
-      progress({
-        actionId,
-        action,
-        cwd,
-        kind: "action_failed",
-        phase: null,
-        message: "Push failed.",
-      }),
-    );
-
-    expect(failed).toMatchObject({
-      isRunning: true,
-      operation: "run_change_request",
-      actionId,
-      action,
-      error: "Push failed.",
     });
   });
 

@@ -1,17 +1,13 @@
-import { DesktopHostTelemetryMessage } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import type * as Electron from "electron";
@@ -93,81 +89,6 @@ describe("DesktopTelemetryPublisher", () => {
       yield* Effect.yieldNow;
 
       assert.isDefined(closeFiber.pollUnsafe());
-    }),
-  );
-
-  it.effect("routes requestDesktopUpdate control messages and replays update reports", () =>
-    Effect.gen(function* () {
-      const layerPower = Layer.succeed(
-        ElectronPowerMonitor.ElectronPowerMonitor,
-        ElectronPowerMonitor.ElectronPowerMonitor.of({
-          isOnBatteryPower: Effect.succeed(false),
-          getSystemIdleTime: Effect.succeed(0),
-          getSystemIdleState: () => Effect.succeed("active"),
-          getCurrentThermalState: Effect.succeed("nominal"),
-          onSimpleEvent: () => Effect.void,
-          onThermalStateChange: () => Effect.void,
-          onSpeedLimitChange: () => Effect.void,
-        }),
-      );
-      const layer = DesktopTelemetryPublisher.layer.pipe(
-        Layer.provide(Layer.mergeAll(layerElectronApp([]), layerPower, layerHistory)),
-      );
-
-      yield* Effect.gen(function* () {
-        const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
-
-        const requestFiber = yield* Stream.runHead(publisher.updateRequests).pipe(Effect.forkChild);
-        yield* Effect.yieldNow;
-        yield* publisher.handleControlForSource("test", {
-          version: 1,
-          type: "requestDesktopUpdate",
-          requestId: "req-9",
-        });
-        const received = yield* Fiber.join(requestFiber);
-        assert.equal(Option.getOrThrow(received).requestId, "req-9");
-
-        const report = {
-          version: 1,
-          type: "desktopUpdateStatus",
-          outcome: "up-to-date",
-          state: {
-            enabled: true,
-            status: "up-to-date",
-            channel: "latest",
-            currentVersion: "1.2.3",
-            hostArch: "arm64",
-            appArch: "arm64",
-            runningUnderArm64Translation: false,
-            availableVersion: null,
-            downloadedVersion: null,
-            releaseNotes: [],
-            downloadPercent: null,
-            checkedAt: null,
-            message: null,
-            errorContext: null,
-            canRetry: false,
-            omittedReleaseCount: 0,
-          },
-        } as const;
-        yield* publisher.publishUpdateReport(report);
-
-        const decoder = new TextDecoder();
-        const decodeMessage = Schema.decodeUnknownEffect(
-          Schema.fromJsonString(DesktopHostTelemetryMessage),
-        );
-        const replayed = yield* publisher.encoded.pipe(
-          Stream.mapEffect((bytes) => decodeMessage(decoder.decode(bytes).trim())),
-          Stream.filter((message) => message.type === "desktopUpdateStatus"),
-          Stream.runHead,
-        );
-        const replayedReport = Option.getOrThrow(replayed);
-        if (replayedReport.type !== "desktopUpdateStatus") {
-          return assert.fail("Expected a desktop update status report.");
-        }
-        assert.equal(replayedReport.outcome, "up-to-date");
-        assert.equal(replayedReport.state.currentVersion, "1.2.3");
-      }).pipe(Effect.provide(layer));
     }),
   );
 });

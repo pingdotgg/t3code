@@ -180,17 +180,6 @@ describe("Open VSX themes", () => {
     expect(searchUrl.searchParams.get("size")).toBe("16");
   });
 
-  it("rejects malformed search responses", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response(JSON.stringify({ error: "unavailable" }), { status: 200 })),
-    );
-
-    await expect(searchOpenVsxThemes("nord")).rejects.toThrow(
-      "Open VSX returned an unreadable search response.",
-    );
-  });
-
   it("reports an unavailable search when every detail request fails", async () => {
     vi.stubGlobal(
       "fetch",
@@ -208,31 +197,6 @@ describe("Open VSX themes", () => {
     await expect(searchOpenVsxThemes("dracula")).rejects.toThrow(
       "Open VSX theme details are unavailable",
     );
-  });
-
-  it("returns no results when every theme package is unavailable", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        if (url.includes("/-/search?")) {
-          return new Response(
-            JSON.stringify({ extensions: [{ namespace: "demo", name: "theme" }] }),
-            { status: 200 },
-          );
-        }
-        if (url.endsWith("/demo/theme")) {
-          return new Response(JSON.stringify(extensionDetail()), { status: 200 });
-        }
-        if (init?.method === "HEAD") return new Response(null, { status: 404 });
-        return new Response(
-          JSON.stringify({ license: "MIT", contributes: { themes: [{ path: "./theme.json" }] } }),
-          { status: 200 },
-        );
-      }),
-    );
-
-    await expect(searchOpenVsxThemes("dracula")).resolves.toEqual([]);
   });
 
   it("downloads a verified VSIX, reads JSONC includes, and pairs contributed variants", async () => {

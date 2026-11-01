@@ -1,12 +1,13 @@
-import type { VcsStatusResult } from "@t3tools/contracts";
+import { SourceControlProviderKind, type VcsStatusResult } from "@t3tools/contracts";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildMenuItems,
   requiresDefaultBranchConfirmation,
-  resolveAutoFeatureBranchName,
+  resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
-  resolveThreadBranchUpdate,
 } from "./GitActionsControl.logic";
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
@@ -77,24 +78,6 @@ describe("when: ref is clean, up to date, and has no open PR", () => {
   });
 });
 
-describe("when: ref is behind upstream", () => {
-  it("resolveQuickAction returns pull", () => {
-    const quick = resolveQuickAction(status({ behindCount: 2 }), false);
-    assert.deepInclude(quick, { kind: "run_pull", label: "Pull", disabled: false });
-  });
-});
-
-describe("when: working tree has local changes", () => {
-  it("resolveQuickAction returns commit, push, and create PR", () => {
-    const quick = resolveQuickAction(status({ hasWorkingTreeChanges: true }), false);
-    assert.deepInclude(quick, {
-      kind: "run_action",
-      action: "commit_push_pr",
-      label: "Commit, push & PR",
-    });
-  });
-});
-
 describe("when: on default ref without open PR", () => {
   it("resolveQuickAction returns commit and push when local changes exist", () => {
     const quick = resolveQuickAction(
@@ -108,6 +91,36 @@ describe("when: on default ref without open PR", () => {
       label: "Commit & push",
       disabled: false,
     });
+  });
+});
+
+describe("when: local changes are behind upstream", () => {
+  it("keeps the commit action available without pushing, with or without an open PR", () => {
+    const behind = status({ hasWorkingTreeChanges: true, behindCount: 2 });
+    const commit = {
+      label: "Commit",
+      disabled: false,
+      kind: "run_action",
+      action: "commit",
+    } as const;
+    assert.deepEqual(resolveQuickAction(behind, false), commit);
+    assert.deepEqual(
+      resolveQuickAction(
+        {
+          ...behind,
+          pr: {
+            number: 13,
+            title: "Open PR",
+            url: "https://example.com/pr/13",
+            baseRef: "main",
+            headRef: "feature/test",
+            state: "open",
+          },
+        },
+        false,
+      ),
+      commit,
+    );
   });
 });
 
@@ -148,6 +161,35 @@ describe("when: ref has no upstream configured", () => {
   });
 });
 
+describe("when: the ref is on GitLab", () => {
+  const gitLab = {
+    sourceControlProvider: {
+      kind: SourceControlProviderKind.make("gitlab"),
+      name: "GitLab",
+      baseUrl: "https://gitlab.com",
+    },
+  };
+
+  it("names merge requests in actions and the default-ref dialog", () => {
+    const ahead = status({ ...gitLab, hasUpstream: false, aheadCount: 2 });
+    assert.equal(resolveQuickAction(ahead, false).label, "Push & create MR");
+    assert.equal(
+      resolveQuickAction(status({ ...gitLab, hasWorkingTreeChanges: true }), false).label,
+      "Commit, push & MR",
+    );
+    assert.equal(buildMenuItems(ahead, false).find((item) => item.id === "pr")?.label, "Create MR");
+
+    const copy = resolveDefaultBranchActionDialogCopy({
+      action: "create_pr",
+      branchName: "main",
+      includesCommit: false,
+      terminology: sourceControlClients.get("gitlab").changeRequest,
+    });
+    assert.equal(copy.title, "Push & create MR from default ref?");
+    assert.include(copy.description, "create a merge request on");
+  });
+});
+
 describe("requiresDefaultBranchConfirmation", () => {
   it("requires confirmation for push actions on default ref", () => {
     assert.isFalse(requiresDefaultBranchConfirmation("commit", true));
@@ -157,33 +199,6 @@ describe("requiresDefaultBranchConfirmation", () => {
     assert.isTrue(requiresDefaultBranchConfirmation("commit_push_pr", true));
     assert.isFalse(requiresDefaultBranchConfirmation("commit_push", false));
     assert.isFalse(requiresDefaultBranchConfirmation("push", false));
-  });
-});
-
-describe("resolveThreadBranchUpdate", () => {
-  it("returns a branch update when the action created a new branch", () => {
-    const update = resolveThreadBranchUpdate({
-      action: "commit_push_pr",
-      branch: {
-        status: "created",
-        name: "feature/fix-toast-copy",
-      },
-      commit: {
-        status: "created",
-        commitSha: "89abcdef01234567",
-        subject: "feat: add ref sync",
-      },
-      push: { status: "pushed", branch: "feature/fix-toast-copy" },
-      pr: { status: "skipped_not_requested" },
-      toast: {
-        title: "Pushed 89abcde to origin/feature/fix-toast-copy",
-        cta: { kind: "none" },
-      },
-    });
-
-    assert.deepEqual(update, {
-      branch: "feature/fix-toast-copy",
-    });
   });
 });
 

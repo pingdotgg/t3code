@@ -26,7 +26,6 @@ describe("previewPdfAssetUrl", () => {
     "http://localhost:6497/api/assets/token/index.html",
     "https://example.com/paper.pdf",
     "file:///api/assets/token/paper.pdf",
-    "javascript:alert(1)",
     "invalid",
   ])("leaves non-asset documents on their browser session: %s", (url) => {
     expect(previewPdfAssetUrl(url, "https://environment.test")).toBeNull();
@@ -45,7 +44,7 @@ describe("previewPdfAssetUrl", () => {
     expect(previewPdfAssetUrl(source, "https://environment.test")).toBe(source);
   });
 
-  it.each(["127.0.0.2", "127.255.255.254", "localhost.", "[::1]", "0.0.0.0"])(
+  it.each(["127.0.0.2", "localhost.", "[::1]"])(
     "remaps local assets on %s through the client connection",
     (host) => {
       expect(

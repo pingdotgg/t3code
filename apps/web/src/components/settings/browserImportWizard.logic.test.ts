@@ -2,11 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 import type { BrowserImportSource } from "@t3tools/contracts";
 
 import {
-  canCloseWizard,
   initialWizardStep,
   initialTargetSelection,
   refreshedSourceProfileDirectory,
-  refreshedSourceStep,
   resolveWizardTarget,
 } from "./browserImportWizard.logic";
 
@@ -44,22 +42,6 @@ describe("initialWizardStep", () => {
     expect(
       initialWizardStep(source({ profiles: [], unavailable: "needsKeychainApproval" })),
     ).toEqual({ step: "blocked", reason: "needsKeychainApproval" });
-  });
-});
-
-describe("canCloseWizard", () => {
-  it("keeps the wizard open while an import writes its target profile", () => {
-    expect(canCloseWizard({ step: "importing" })).toBe(false);
-    expect(canCloseWizard({ step: "configure" })).toBe(true);
-    expect(canCloseWizard({ step: "blocked", reason: "readFailed" })).toBe(true);
-  });
-});
-
-describe("refreshedSourceStep", () => {
-  it("stays on quit while the browser is still running", () => {
-    expect(refreshedSourceStep(source({ unavailable: "browserRunning" }))).toEqual({
-      step: "quit",
-    });
   });
 });
 

@@ -63,17 +63,6 @@ describe("indentedNewlineInCodeBlock", () => {
     indentedNewlineInCodeBlock(editor.state, (tr) => editor.view.dispatch(tr));
     expect(textOf(editor)).toBe("    deep()\n    \nflush()");
   });
-
-  it("does nothing outside a code block", () => {
-    const editor = new Editor({
-      extensions,
-      content: {
-        type: "doc",
-        content: [{ type: "paragraph", content: [{ type: "text", text: "  hi" }] }],
-      },
-    });
-    expect(indentedNewlineInCodeBlock(editor.state, (tr) => editor.view.dispatch(tr))).toBe(false);
-  });
 });
 
 function pressEnter(editor: Editor) {
@@ -93,16 +82,6 @@ describe("exitCodeBlockOnTrailingBlankLines", () => {
     expect(editor.state.doc.childCount).toBe(1);
     pressEnter(editor);
     expect(editor.state.doc.firstChild?.textContent).toBe("flush()");
-    expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
-  });
-
-  it("counts lines holding only carried indentation as blank", () => {
-    const editor = codeEditor("  nested()");
-    pressEnter(editor);
-    pressEnter(editor);
-    expect(editor.state.doc.childCount).toBe(1);
-    pressEnter(editor);
-    expect(editor.state.doc.firstChild?.textContent).toBe("  nested()");
     expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
   });
 

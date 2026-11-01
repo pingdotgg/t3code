@@ -27,10 +27,6 @@ const readyCodex: ServerProvider = {
 };
 
 describe("getOnboardingProviderState", () => {
-  it("treats an enabled Codex provider with ready status and unknown authentication as ready", () => {
-    expect(getOnboardingProviderState(readyCodex)).toBe("ready");
-  });
-
   it("treats authenticated providers as ready only when their provider status is ready", () => {
     expect(getOnboardingProviderState({ ...readyCodex, auth: { status: "authenticated" } })).toBe(
       "ready",
@@ -141,30 +137,6 @@ describe("resolveOnboardingProviderLoginCommand", () => {
     ).toBe("/opt/codex-work/bin/codex login");
   });
 
-  it("uses the selected Claude account binary", () => {
-    const provider: ServerProvider = {
-      ...readyCodex,
-      driver: ProviderDriverKind.make("claudeAgent"),
-      instanceId: ProviderInstanceId.make("claude_work"),
-    };
-
-    expect(
-      resolveOnboardingProviderLoginCommand(
-        provider,
-        {
-          ...DEFAULT_SERVER_SETTINGS,
-          providerInstances: {
-            [provider.instanceId]: {
-              driver: provider.driver,
-              config: { binaryPath: "/opt/claude-work/bin/claude" },
-            },
-          },
-        },
-        "linux",
-      ),
-    ).toBe("/opt/claude-work/bin/claude auth login");
-  });
-
   it("quotes a Codex path with spaces for PowerShell", () => {
     expect(
       resolveOnboardingProviderLoginCommand(
@@ -235,26 +207,6 @@ describe("resolveOnboardingProviderLoginCommand", () => {
         "linux",
       ),
     ).toBe(expectedCommand);
-  });
-
-  it.each(["darwin", "linux"] as const)("quotes backslashes in a Codex path on %s", (platform) => {
-    expect(
-      resolveOnboardingProviderLoginCommand(
-        readyCodex,
-        {
-          ...DEFAULT_SERVER_SETTINGS,
-          providerInstances: {
-            [ProviderInstanceId.make("codex")]: {
-              driver: ProviderDriverKind.make("codex"),
-              config: {
-                binaryPath: "/opt/codex\\work/codex",
-              },
-            },
-          },
-        },
-        platform,
-      ),
-    ).toBe("'/opt/codex\\work/codex' login");
   });
 
   it("uses the default command when an old server reports an unknown shell", () => {

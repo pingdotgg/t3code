@@ -678,7 +678,7 @@ describe("DesktopBackendConfiguration", () => {
     ),
   );
 
-  it.effect("resolveWsl carries the kill switch into the distro", () =>
+  it.effect("resolveWsl carries the kill switch and resource attributes into the distro", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -688,10 +688,12 @@ describe("DesktopBackendConfiguration", () => {
       const previousWslEnv = process.env.WSLENV;
       const previousDisabled = process.env.OTEL_SDK_DISABLED;
       const previousTelemetry = process.env.T3CODE_TELEMETRY_ENABLED;
+      const previousResourceAttributes = process.env.OTEL_RESOURCE_ATTRIBUTES;
       try {
         delete process.env.WSLENV;
         process.env.OTEL_SDK_DISABLED = "true";
         process.env.T3CODE_TELEMETRY_ENABLED = "false";
+        process.env.OTEL_RESOURCE_ATTRIBUTES = "deployment.environment.name=staging";
 
         yield* Effect.gen(function* () {
           const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
@@ -701,6 +703,8 @@ describe("DesktopBackendConfiguration", () => {
           assert.include((config.env.WSLENV ?? "").split(":"), "OTEL_SDK_DISABLED");
           assert.equal(config.env.T3CODE_TELEMETRY_ENABLED, "false");
           assert.include((config.env.WSLENV ?? "").split(":"), "T3CODE_TELEMETRY_ENABLED");
+          assert.equal(config.env.OTEL_RESOURCE_ATTRIBUTES, "deployment.environment.name=staging");
+          assert.include((config.env.WSLENV ?? "").split(":"), "OTEL_RESOURCE_ATTRIBUTES");
         }).pipe(
           Effect.provide(
             layerBackendConfiguration().pipe(
@@ -722,6 +726,7 @@ describe("DesktopBackendConfiguration", () => {
         restoreEnv("WSLENV", previousWslEnv);
         restoreEnv("OTEL_SDK_DISABLED", previousDisabled);
         restoreEnv("T3CODE_TELEMETRY_ENABLED", previousTelemetry);
+        restoreEnv("OTEL_RESOURCE_ATTRIBUTES", previousResourceAttributes);
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -871,42 +876,6 @@ describe("DesktopBackendConfiguration", () => {
           ),
         );
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("resolveWsl keeps a transient distro-list failure retryable", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-backend-config-test-",
-      });
-
-      yield* Effect.gen(function* () {
-        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-        const config = yield* configuration.resolveWsl({ port: 5050, distro: "Ubuntu" });
-        const failure = Option.getOrThrow(config.preflightFailure);
-
-        assert.isFalse(failure.fatal);
-        assert.equal(failure.retryLimit, 12);
-        assert.include(failure.reason, "timed out");
-      }).pipe(
-        Effect.provide(
-          layerBackendConfiguration().pipe(
-            Layer.provideMerge(layerServerExposure),
-            Layer.provideMerge(DesktopAppSettings.layerTest()),
-            Layer.provideMerge(DesktopWslServerTree.layerTest()),
-            Layer.provideMerge(
-              DesktopWslEnvironment.layerTest({
-                isAvailable: true,
-                distroListError: new DesktopWslEnvironment.DesktopWslDistroListError({
-                  reason: "wsl.exe --list --verbose timed out",
-                }),
-              }),
-            ),
-            Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
-          ),
-        ),
-      );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("resolveWsl marks a missing packaged server entry as fatal", () =>

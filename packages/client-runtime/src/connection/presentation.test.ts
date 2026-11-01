@@ -13,11 +13,7 @@ import {
   RelayConnectionTarget,
   type SupervisorConnectionState,
 } from "./model.ts";
-import {
-  environmentMcpUrl,
-  presentEnvironmentConnection,
-  presentConnectionState,
-} from "./presentation.ts";
+import { environmentMcpUrl, presentConnectionState } from "./presentation.ts";
 
 const TARGET = new BearerConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -86,6 +82,7 @@ describe("connection presentation", () => {
     expect(environmentMcpUrl({ entry })).toBe("http://192.168.4.53:3773/mcp");
   });
 
+  // regression: #16909 Copy MCP URL falls back to an alternate route when the relay route has no address
   it("passes over routes without an address of their own", () => {
     const relay = new RelayConnectionTarget({
       environmentId: TARGET.environmentId,
@@ -155,7 +152,7 @@ describe("connection presentation", () => {
 
   it("preserves an explicitly available environment while offline", () => {
     expect(
-      presentEnvironmentConnection(
+      presentConnectionState(
         supervisorState({
           desired: false,
           network: "offline",

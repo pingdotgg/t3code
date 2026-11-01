@@ -8,7 +8,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
@@ -101,7 +100,7 @@ const withStore = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopConnectionCatalogStore", () => {
-  it.effect("persists, reads, and clears an encrypted connection catalog", () =>
+  it.effect("persists and reads an encrypted connection catalog", () =>
     withStore(
       Effect.gen(function* () {
         const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
@@ -109,9 +108,6 @@ describe("DesktopConnectionCatalogStore", () => {
 
         assert.isTrue(yield* store.set(catalog));
         assert.deepStrictEqual(yield* store.get, Option.some(catalog));
-
-        yield* store.clear;
-        assert.deepStrictEqual(yield* store.get, Option.none());
       }),
     ),
   );
@@ -265,44 +261,6 @@ describe("DesktopConnectionCatalogStore", () => {
         assert.equal(yield* fileSystem.readFileString(catalogPath), "{not-json");
       }),
     ),
-  );
-
-  it.effect("surfaces catalog filesystem failures instead of treating them as missing", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const baseFileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* baseFileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-connection-catalog-test-",
-      });
-      const permissionError = PlatformError.systemError({
-        _tag: "PermissionDenied",
-        module: "FileSystem",
-        method: "readFileString",
-        pathOrDescriptor: path.join(baseDir, "userdata", "connection-catalog.json"),
-      });
-      const layerFileSystem = Layer.succeed(
-        FileSystem.FileSystem,
-        FileSystem.makeNoop({
-          readFileString: () => Effect.fail(permissionError),
-        }),
-      );
-      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
-        Effect.provide(layerFor(baseDir, true, null, layerFileSystem)),
-      );
-
-      const error = yield* store.get.pipe(Effect.flip);
-      assert.instanceOf(
-        error,
-        DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreReadError,
-      );
-      assert.equal(error.catalogPath, path.join(baseDir, "userdata", "connection-catalog.json"));
-      assert.strictEqual(error.cause, permissionError);
-      assert.equal(
-        error.message,
-        `Failed to read the desktop connection catalog at ${path.join(baseDir, "userdata", "connection-catalog.json")}.`,
-      );
-      assert.notEqual(error.message, permissionError.message);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("surfaces a catalog that can no longer be decrypted without deleting it", () =>

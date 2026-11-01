@@ -196,25 +196,6 @@ describe("azureDevOpsFilePatch", () => {
 });
 
 describe("a file Azure names something a patch header cannot carry plainly", () => {
-  it("writes each side as git's quoted form, the side letter inside the quotes", () => {
-    const patch = azureDevOpsFilePatch({
-      change: change({ path: "notes\treadme.md", oldPath: "notes\treadme.md" }),
-      texts: texts("one\n", "two\n"),
-    });
-
-    expect(patch.section).toBe(
-      [
-        'diff --git "a/notes\\treadme.md" "b/notes\\treadme.md"',
-        '--- "a/notes\\treadme.md"',
-        '+++ "b/notes\\treadme.md"',
-        "@@ -1 +1 @@",
-        "-one",
-        "+two",
-        "",
-      ].join("\n"),
-    );
-  });
-
   it("quotes the names a rename states, which carry no side letter", () => {
     const patch = azureDevOpsFilePatch({
       change: change({

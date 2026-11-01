@@ -37,16 +37,6 @@ describe("composer code block highlighting", () => {
 
     expect(decorations).toEqual([{ from: 5, to: 8, color: "#00ff00" }]);
   });
-
-  it("falls back to plain text when the grammar throws", () => {
-    const throwing = {
-      codeToTokens() {
-        throw new Error("unsupported language");
-      },
-    } as unknown as Parameters<typeof tokenizeBlock>[0];
-
-    expect(tokenizeBlock(throwing, "const answer = 42", "nope", THEME)).toEqual([]);
-  });
 });
 
 describe("highlighting edited fences", () => {

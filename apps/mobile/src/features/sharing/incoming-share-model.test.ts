@@ -253,32 +253,6 @@ describe("incoming native shares", () => {
     ]);
   });
 
-  it("records the stored copy's measured size when a content URI under-reports", async () => {
-    const file: SharePayload = {
-      shareType: "file",
-      value: "content://shared/report",
-      mimeType: "application/pdf",
-    };
-    const persistFile = vi.fn(async () => "file:///documents/report.pdf");
-    const readSize = vi.fn(async (uri: string) => (uri.startsWith("content:") ? 42 : 4200));
-
-    const result = await buildIncomingShareDraft({
-      id: "share-android-report",
-      createdAt: "2026-07-15T10:00:00.000Z",
-      payloads: [file],
-      resolvedPayloads: [],
-      fileReader: {
-        readBase64: async () => "unused",
-        persistFile,
-        readSize,
-        removeOwnedFile: async () => undefined,
-      },
-    });
-
-    expect(result.attachments).toHaveLength(1);
-    expect(result.attachments[0]?.sizeBytes).toBe(4200);
-  });
-
   it("rejects a shared file whose persisted copy measures empty and releases the copy", async () => {
     const file: SharePayload = {
       shareType: "file",
@@ -360,36 +334,6 @@ describe("incoming native shares", () => {
     expect(removeOwnedFile.mock.calls.map(([uri]) => uri)).toEqual([resolvedUri, payloadUri]);
   });
 
-  it("keeps images and rejects shared files on servers without file support", () => {
-    const image = {
-      id: "image-1",
-      type: "image" as const,
-      name: "image.png",
-      mimeType: "image/png",
-      sizeBytes: 3,
-      dataUrl: "data:image/png;base64,YWJj",
-      previewUri: "data:image/png;base64,YWJj",
-    };
-    const file = {
-      id: "file-1",
-      type: "file" as const,
-      name: "report.pdf",
-      mimeType: "application/pdf",
-      sizeBytes: 42,
-      fileUri: "file:///documents/report.pdf",
-    };
-
-    expect(
-      selectIncomingShareAttachments({
-        attachments: [image, file],
-        maxFileAttachmentBytes: null,
-      }),
-    ).toEqual({
-      attachments: [image],
-      warnings: ["'report.pdf' was skipped because this server does not support files."],
-    });
-  });
-
   it("uses current server support and limits when selecting a reserved share", () => {
     const file = {
       id: "file-1",
@@ -406,7 +350,7 @@ describe("incoming native shares", () => {
     expect(
       selectIncomingShareAttachmentsForServer({
         attachments: [file],
-        serverConfig: { environment: { capabilities: { attachmentUploads: true } } },
+        serverConfig: { environment: { capabilities: {} } },
       }),
     ).toMatchObject({ status: "ready", attachments: [] });
     expect(
@@ -415,7 +359,6 @@ describe("incoming native shares", () => {
         serverConfig: {
           environment: {
             capabilities: {
-              attachmentUploads: true,
               fileAttachments: { maxUploadBytes: 5 * 1024 * 1024 },
             },
           },
@@ -428,7 +371,6 @@ describe("incoming native shares", () => {
         serverConfig: {
           environment: {
             capabilities: {
-              attachmentUploads: true,
               fileAttachments: { maxUploadBytes: 10 * 1024 * 1024 },
             },
           },
@@ -574,15 +516,6 @@ describe("share cleanup ownership", () => {
     "file:///var/mobile/Containers/Shared/AppGroup/GROUP",
   ];
 
-  it("allows deleting files inside the app's own directories", () => {
-    expect(
-      isShareFileUriUnderOwnedRoots(
-        "file:///var/mobile/Containers/Shared/AppGroup/GROUP/shared.pdf",
-        ownedRoots,
-      ),
-    ).toBe(true);
-  });
-
   it("treats /private/var and /var as the same iOS location", () => {
     expect(
       isShareFileUriUnderOwnedRoots(
@@ -608,8 +541,6 @@ describe("share cleanup ownership", () => {
   });
 
   it("refuses traversal segments that escape an owned root", () => {
-    // An encoded separator survives URL normalization: "..%2F.." decodes to
-    // "../..", so the lexical check must reject it before containment.
     expect(
       isShareFileUriUnderOwnedRoots(
         "file:///var/mobile/Containers/Shared/AppGroup/GROUP/..%2F..%2FsenderDoc.pdf",

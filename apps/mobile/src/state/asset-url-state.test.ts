@@ -18,6 +18,7 @@ describe("deriveAssetUrlState", () => {
     }
   });
 
+  // regression: #9123 show an error instead of an endless preview spinner
   it("reports disconnected when the query failed while the environment is down", () => {
     for (const connectionPhase of ["available", "offline", "reconnecting", "error"] as const) {
       expect(deriveAssetUrlState({ connectionPhase, shared: { _tag: "Failure" } })).toEqual({

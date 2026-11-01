@@ -11,15 +11,7 @@ import {
   parseThreadSegmentFromAttachmentId,
 } from "../../../attachmentStore.ts";
 import * as ServerConfig from "../../../config.ts";
-import { claimPreviewRecording, normalizePreviewOpenInput } from "./handlers.ts";
-
-describe("normalizePreviewOpenInput", () => {
-  it("leaves an unstated visibility for the client preference to decide", () => {
-    // Filling `open` in here would outrank `browserAutoShowFloatingPreview`,
-    // which is desktop-local and cannot be read from the server.
-    expect(normalizePreviewOpenInput({})).toEqual({ reuseExistingTab: true });
-  });
-});
+import { claimPreviewRecording } from "./handlers.ts";
 
 describe("claimPreviewRecording", () => {
   it.effect("overlapping and repeated claims return the same retained recording", () =>

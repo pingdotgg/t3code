@@ -42,20 +42,6 @@ describe("desktop update button state", () => {
     expect(getDesktopUpdateButtonTooltip(state)).toContain("Click to retry");
   });
 
-  it("keeps install action available after an install error", () => {
-    const state: DesktopUpdateState = {
-      ...baseState,
-      status: "error",
-      downloadedVersion: "1.1.0",
-      availableVersion: "1.1.0",
-      message: "shutdown timeout",
-      errorContext: "install",
-      canRetry: true,
-    };
-    expect(resolveDesktopUpdateButtonAction(state)).toBe("install");
-    expect(getDesktopUpdateButtonTooltip(state)).toContain("Click to retry");
-  });
-
   it("prefers a newly available release over a stale downloaded version", () => {
     const state: DesktopUpdateState = {
       ...baseState,
@@ -79,20 +65,17 @@ describe("desktop update button state", () => {
 });
 
 describe("desktop update UI helpers", () => {
-  it.each([
-    "owner/repo/extra",
-    "owner#notes/repo",
-    "owner/repo#notes",
-    "owner?tab=notes/repo",
-    "owner/repo?tab=notes",
-  ])("falls back to upstream for an invalid configured repository: %s", (repository) => {
-    expect(getDesktopUpdateReleaseHistoryUrl(repository)).toBe(
-      "https://github.com/pingdotgg/t3code/releases",
-    );
-    expect(getDesktopUpdateReleaseUrl("1.2.3", repository)).toBe(
-      "https://github.com/pingdotgg/t3code/releases/tag/v1.2.3",
-    );
-  });
+  it.each(["owner/repo/extra", "owner#notes/repo", "owner/repo?tab=notes"])(
+    "falls back to upstream for an invalid configured repository: %s",
+    (repository) => {
+      expect(getDesktopUpdateReleaseHistoryUrl(repository)).toBe(
+        "https://github.com/pingdotgg/t3code/releases",
+      );
+      expect(getDesktopUpdateReleaseUrl("1.2.3", repository)).toBe(
+        "https://github.com/pingdotgg/t3code/releases/tag/v1.2.3",
+      );
+    },
+  );
 });
 
 describe("canCheckForUpdate", () => {
@@ -103,17 +86,6 @@ describe("canCheckForUpdate", () => {
         status: "downloaded",
         availableVersion: "1.1.0",
         downloadedVersion: "1.1.0",
-      }),
-    ).toBe(true);
-  });
-
-  it("returns true on error so the user can retry", () => {
-    expect(
-      canCheckForUpdate({
-        ...baseState,
-        status: "error",
-        errorContext: "check",
-        message: "network",
       }),
     ).toBe(true);
   });

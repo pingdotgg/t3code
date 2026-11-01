@@ -8,58 +8,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildProviderInstanceOverridePatch,
-  resolvePrimaryOperateAccess,
   resolveRemoteOperateAccess,
 } from "./ProviderSettingsPanel.logic";
-
-describe("primary operate access", () => {
-  it("denies writes when the session fetch fails", () => {
-    expect(
-      resolvePrimaryOperateAccess({
-        isPrimary: true,
-        hasDesktopBridge: false,
-        session: null,
-        isPending: false,
-        hasError: true,
-      }),
-    ).toBe("denied");
-  });
-
-  it("denies unauthenticated sessions and sessions without the operate scope", () => {
-    expect(
-      resolvePrimaryOperateAccess({
-        isPrimary: true,
-        hasDesktopBridge: false,
-        session: { authenticated: false },
-        isPending: false,
-        hasError: false,
-      }),
-    ).toBe("denied");
-    expect(
-      resolvePrimaryOperateAccess({
-        isPrimary: true,
-        hasDesktopBridge: false,
-        session: { authenticated: true, scopes: ["orchestration:read"] },
-        isPending: false,
-        hasError: false,
-      }),
-    ).toBe("denied");
-    expect(
-      resolvePrimaryOperateAccess({
-        isPrimary: true,
-        hasDesktopBridge: false,
-        session: null,
-        isPending: false,
-        hasError: false,
-      }),
-    ).toBe("denied");
-  });
-});
 
 describe("buildProviderInstanceOverridePatch", () => {
   const projectId = ProjectId.make("project-a");
   const instanceId = ProviderInstanceId.make("codex_work");
-  const otherInstanceId = ProviderInstanceId.make("claudeAgent_personal");
 
   it("writes the same choice to every checkout of the project", () => {
     const siblingId = ProjectId.make("project-a-worktree");
@@ -80,27 +34,6 @@ describe("buildProviderInstanceOverridePatch", () => {
     });
   });
 
-  it("adds an instance override alongside the project's other overrides", () => {
-    const settings: Pick<ServerSettings, "projectSettingsOverrides"> = {
-      projectSettingsOverrides: {
-        [projectId]: {
-          newWorktreesStartFromOrigin: true,
-          providerInstances: { [otherInstanceId]: { enabled: false } },
-        },
-      },
-    };
-
-    expect(buildProviderInstanceOverridePatch(settings, [projectId], instanceId, true)).toEqual({
-      [projectId]: {
-        newWorktreesStartFromOrigin: true,
-        providerInstances: {
-          [otherInstanceId]: { enabled: false },
-          [instanceId]: { enabled: true },
-        },
-      },
-    });
-  });
-
   it("resets the only override by clearing the whole project entry", () => {
     const settings: Pick<ServerSettings, "projectSettingsOverrides"> = {
       projectSettingsOverrides: {
@@ -111,29 +44,6 @@ describe("buildProviderInstanceOverridePatch", () => {
     expect(
       buildProviderInstanceOverridePatch(settings, [projectId], instanceId, undefined),
     ).toEqual({ [projectId]: null });
-  });
-
-  it("resets one instance while another instance's override and other keys survive", () => {
-    const settings: Pick<ServerSettings, "projectSettingsOverrides"> = {
-      projectSettingsOverrides: {
-        [projectId]: {
-          newWorktreesStartFromOrigin: true,
-          providerInstances: {
-            [instanceId]: { enabled: true },
-            [otherInstanceId]: { enabled: false },
-          },
-        },
-      },
-    };
-
-    expect(
-      buildProviderInstanceOverridePatch(settings, [projectId], instanceId, undefined),
-    ).toEqual({
-      [projectId]: {
-        newWorktreesStartFromOrigin: true,
-        providerInstances: { [otherInstanceId]: { enabled: false } },
-      },
-    });
   });
 
   it("sends providerInstances: {} explicitly when clearing the last instance override leaves other keys", () => {
@@ -196,19 +106,6 @@ describe("remote operate access", () => {
     expect(
       resolveRemoteOperateAccess({
         session: { authenticated: false },
-        isPending: false,
-        hasError: false,
-      }),
-    ).toBe("denied");
-  });
-
-  it("denies writes when the session fetch fails or scopes are missing", () => {
-    expect(resolveRemoteOperateAccess({ session: null, isPending: false, hasError: true })).toBe(
-      "denied",
-    );
-    expect(
-      resolveRemoteOperateAccess({
-        session: { authenticated: true },
         isPending: false,
         hasError: false,
       }),

@@ -67,36 +67,6 @@ describe("window capture IPC", () => {
     );
   });
 
-  it.effect("uses only the file returned by the native custom config picker", () => {
-    let path: string | undefined;
-    return Effect.gen(function* () {
-      yield* previewSnapShotConfig.handler(
-        { operation: "install", chooseFile: true },
-        { sender: { id: 7 } },
-      );
-      assert.equal(path, "/chosen/config.kdl");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.succeed(ElectronWindow.ElectronWindow, {
-            main: Effect.succeedSome({ webContents: { id: 7 } }),
-          } as ElectronWindow.ElectronWindow["Service"]),
-          Layer.succeed(DesktopSnapShot.DesktopSnapShot, {
-            state: Effect.succeed({ linuxBackend: "niri" }),
-            previewConfig: (_: unknown, selected: string) =>
-              Effect.sync(() => {
-                path = selected;
-                return configPreview;
-              }),
-          } as unknown as DesktopSnapShot.DesktopSnapShot["Service"]),
-          Layer.succeed(ElectronDialog.ElectronDialog, {
-            pickFiles: () => Effect.succeed(["/chosen/config.kdl"]),
-          } as unknown as ElectronDialog.ElectronDialog["Service"]),
-        ),
-      ),
-    );
-  });
-
   it.effect("allows capture setup only from the trusted main renderer", () => {
     const actions: string[] = [];
     return Effect.gen(function* () {

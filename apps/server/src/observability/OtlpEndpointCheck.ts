@@ -58,9 +58,7 @@ const make = Effect.gen(function* () {
       return emptyExport(serialization, signal);
     }).pipe(Effect.provide(layerOtlpSerialization(signalExport.protocol)));
     const startedAt = yield* Clock.currentTimeMillis;
-    // Only the status matters. The scope aborts the request once it is read, so a receiver
-    // that keeps its body open cannot hold the connection. Tracing stays off, as it does for
-    // real exports, because request spans record the URL and custom credential headers.
+    // Close after reading status so open bodies cannot hang; disable tracing to keep URLs and credentials out of spans.
     const response = yield* HttpClient.withScope(httpClient)
       .post(url, { body, headers })
       .pipe(

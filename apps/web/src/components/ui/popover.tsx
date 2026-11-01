@@ -1,8 +1,8 @@
-"use client";
-
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 
 import { cn } from "~/lib/utils";
+
+import { renderClosingPositioner } from "./closing-positioner";
 
 const PopoverCreateHandle = PopoverPrimitive.createHandle;
 
@@ -59,15 +59,13 @@ function PopoverPopup({
   width?: keyof typeof popoverPopupWidthClassName;
   touchBackdrop?: boolean;
 }) {
-  // Viewport rekeys its children when the active trigger clears on close. Persistent
-  // single-trigger forms need a stable container to retain drafts and submit guards.
+  // Viewport rekeys on close; persistent single-trigger forms need stable containers for drafts and submit
+  // guards.
   const Viewport = keepMounted ? "div" : PopoverPrimitive.Viewport;
   return (
     <PopoverPrimitive.Portal keepMounted={keepMounted}>
       {touchBackdrop ? (
-        // A non-modal popover closes on an outside tap and lets that tap reach the
-        // control under the finger. On touch screens the backdrop takes the tap, so
-        // tapping away only closes the popover, as it does for modal menus and selects.
+        // On touch, the backdrop consumes outside taps so closing cannot also activate the control beneath.
         <PopoverPrimitive.Backdrop
           className="fixed inset-0 z-[130] hidden pointer-coarse:block"
           data-slot="popover-backdrop"
@@ -86,6 +84,7 @@ function PopoverPopup({
             : "z-[130]",
         )}
         data-slot="popover-positioner"
+        render={renderClosingPositioner}
         side={side}
         sideOffset={sideOffset}
       >
