@@ -13,6 +13,8 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import { useEnvironmentServerConfig, useProject, useThreadShell } from "../../state/entities";
+import { useEnvironmentQuery } from "../../state/query";
+import { threadFamilies } from "../../state/threads";
 import { subagentCardDetail } from "./subagent-card-presentation";
 import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
 import { resolveSubagentRowPresentation } from "./threadAgentsPresentation";
@@ -111,9 +113,27 @@ function SubagentMetadata(props: {
     (candidate) => candidate.instanceId === subagent.providerInstanceId,
   );
   const parent = useThreadShell(scopeThreadRef(environmentId, subagent.threadId))?.source;
-  const child = useThreadShell(
-    subagent.childThreadId === null ? null : scopeThreadRef(environmentId, subagent.childThreadId),
-  )?.source;
+  const childRef =
+    subagent.childThreadId !== null
+      ? scopeThreadRef(environmentId, subagent.childThreadId)
+      : subagent.remoteChild
+        ? scopeThreadRef(subagent.remoteChild.environmentId, subagent.remoteChild.threadId)
+        : null;
+  const childShell = useThreadShell(childRef)?.source;
+  const family = useEnvironmentQuery(
+    childRef !== null &&
+      childShell === undefined &&
+      subagent.origin === "app_owned" &&
+      subagent.modelSelection === undefined
+      ? threadFamilies.familyAtom(
+          childRef.environmentId,
+          subagent.childThreadId !== null ? subagent.threadId : childRef.threadId,
+        )
+      : null,
+  );
+  const selectionChild =
+    childShell ?? family.data?.threads.find((row) => row.id === childRef?.threadId);
+  const child = subagent.childThreadId === null ? undefined : childShell;
   const parentProject = useProject(
     parent ? scopeProjectRef(environmentId, parent.projectId) : null,
   );
@@ -131,7 +151,7 @@ function SubagentMetadata(props: {
     providerInstanceId: subagent.providerInstanceId,
     origin: subagent.origin,
     modelSelection: subagent.modelSelection,
-    childThread: child,
+    childThread: selectionChild,
     provider,
   });
   const traits = [

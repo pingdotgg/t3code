@@ -9,7 +9,8 @@ import { useNavigate } from "@tanstack/react-router";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef, scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { environmentThreadDetails } from "../../state/threads";
+import { environmentThreadDetails, threadFamilies } from "../../state/threads";
+import { useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import * as DateTime from "effect/DateTime";
@@ -422,11 +423,26 @@ function SubagentTimelineLink(props: {
     completedAt: isoOrNull(agent?.completedAt ?? props.completedAt),
   };
   // Older app-owned records keep their selection only on the child thread.
-  const childModelSelection = useThreadShell(
-    props.origin === "app_owned" && threadId !== null && agent?.modelSelection === undefined
-      ? scopeThreadRef(props.parentRef.environmentId, threadId)
+  const fallbackChild =
+    props.origin === "app_owned" && agent?.modelSelection === undefined
+      ? threadId !== null
+        ? scopeThreadRef(props.parentRef.environmentId, threadId)
+        : remote
+          ? scopeThreadRef(remote.environmentId, remote.threadId)
+          : null
+      : null;
+  const childShell = useThreadShell(fallbackChild)?.source;
+  const family = useEnvironmentQuery(
+    fallbackChild !== null && childShell === undefined
+      ? threadFamilies.familyAtom(
+          fallbackChild.environmentId,
+          threadId !== null ? props.parentRef.threadId : fallbackChild.threadId,
+        )
       : null,
-  )?.source.modelSelection;
+  );
+  const childModelSelection = (
+    childShell ?? family.data?.threads.find((child) => child.id === fallbackChild?.threadId)
+  )?.modelSelection;
   const model = agent?.model ?? null;
   // Select only the derived labels so provider status pushes, which replace
   // the provider objects, do not re-render every row.
@@ -552,7 +568,7 @@ function SubagentTimelineLink(props: {
           {...props}
           elapsed={agent ? <AgentElapsed agent={projectedSubagentsToRuntime([agent])[0]!} /> : null}
           model={agent?.model ?? null}
-          modelSelection={agent?.modelSelection}
+          modelSelection={agent?.modelSelection ?? childModelSelection}
           status={liveStatus}
           result={agent?.result ?? props.result}
           progress={agent?.progress ?? props.progress}
