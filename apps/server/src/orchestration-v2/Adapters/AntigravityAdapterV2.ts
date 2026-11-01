@@ -204,6 +204,8 @@ export function makeAntigravityAcpAdapterFlavor(
     // Loading history replays tool calls; resume avoids replay.
     subagentsIdleOnTurnCompletion: true,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
+    modelSelectionGuidance:
+      "Antigravity model access can depend on the sign-in method and ACP client, and can differ from the Antigravity app. Update T3 Code and refresh Antigravity models, then choose an available model and retry.",
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
       runtime,
       modelSelection,

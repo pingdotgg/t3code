@@ -218,11 +218,12 @@ class AcpModelSelectionError extends Schema.TaggedError<AcpModelSelectionError>(
   "AcpModelSelectionError",
   {
     model: Schema.String,
+    guidance: Schema.optional(Schema.String),
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `The agent did not accept the model "${this.model}". Choose another model for this provider, then retry.`;
+    return `The agent did not accept the model "${this.model}". ${this.guidance ?? "Choose another model for this provider, then retry."}`;
   }
 }
 
@@ -328,6 +329,7 @@ export interface AcpAdapterV2Flavor {
     readonly startResult: AcpSessionRuntime.AcpSessionRuntimeStartResult;
     readonly modelSelection: ModelSelection;
   }) => Effect.Effect<string | undefined, EffectAcpErrors.AcpError>;
+  readonly modelSelectionGuidance?: string;
   readonly sessionModeForPolicy?: (
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   ) => string | undefined;
@@ -6824,7 +6826,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           // own error.
           const rejectedModel = (error: EffectAcpErrors.AcpError) =>
             error._tag === "AcpRequestError" && error.code === -32602
-              ? new AcpModelSelectionError({ model: modelSelection.model, cause: error })
+              ? new AcpModelSelectionError({
+                  model: modelSelection.model,
+                  guidance: flavor.modelSelectionGuidance,
+                  cause: error,
+                })
               : error;
           let appliedModel: string | undefined;
           if (flavor.applyModelSelection !== undefined) {

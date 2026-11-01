@@ -187,7 +187,7 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
       return yield* Effect.fail(
         input.mapError(
           EffectAcpErrors.AcpRequestError.invalidParams(
-            `Antigravity model '${resolved}' is unavailable for this Google account. Select an available model.`,
+            `Antigravity model '${resolved}' is unavailable in this ACP session. Select an available model.`,
           ),
         ),
       );
