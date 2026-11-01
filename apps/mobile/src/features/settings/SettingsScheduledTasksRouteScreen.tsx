@@ -714,6 +714,9 @@ function TaskForm({
     }
   };
 
+  const offersOnce =
+    config?.environment.capabilities.oneTimeSchedules === true ||
+    draft.task?.schedule.type === "once";
   const save = async () => {
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
@@ -738,6 +741,13 @@ function TaskForm({
       Dialog.alert(
         "Invalid age limit",
         `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
+      );
+      return;
+    }
+    if (draft.schedule.mode === "once" && !offersOnce) {
+      Dialog.alert(
+        "Once is not available here",
+        "This environment runs an older T3 Code. Update it to schedule a one-time task, or pick another schedule.",
       );
       return;
     }
@@ -978,8 +988,7 @@ function TaskForm({
               options={[
                 { value: "fixed_time", label: "At a time" },
                 // Older servers reject one-time schedules on save.
-                ...(config?.environment.capabilities.oneTimeSchedules === true ||
-                draft.schedule.mode === "once"
+                ...(offersOnce || draft.schedule.mode === "once"
                   ? [{ value: "once" as const, label: "Once" }]
                   : []),
                 { value: "interval", label: "Interval" },

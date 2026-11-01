@@ -716,19 +716,11 @@ export const layer = Layer.effect(
       readonly status: "succeeded" | "failed";
       readonly error: string | null;
       readonly startedAtIso: string;
-      /** The schedule and enabled state the next run was computed from. */
-      readonly source: Pick<ScheduledTask, "schedule" | "enabled">;
     }) =>
       sql`
         UPDATE scheduled_tasks
         SET updated_at = ${input.completedAtIso},
-            -- An edit saved after the run read the row already set its own next run.
-            next_run_at = CASE
-              WHEN schedule_json = ${JSON.stringify(input.source.schedule)}
-                AND enabled = ${input.source.enabled ? 1 : 0}
-              THEN ${input.nextRunAtIso}
-              ELSE next_run_at
-            END,
+            next_run_at = ${input.nextRunAtIso},
             last_run_status = ${input.status},
             last_run_error = ${input.error},
             run_count = run_count + 1
@@ -950,22 +942,25 @@ export const layer = Layer.effect(
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
         const lastRunError = runSucceeded ? null : errorMessage(result.cause);
         const threadId = runSucceeded ? result.value : null;
-        const current = yield* findTask(task.id);
-        const scheduleSource = current ?? task;
-        const completed: ScheduledTask = {
-          ...scheduleSource,
-          updatedAt: iso(completedAt),
-          lastRunAt: startedAtIso,
-          // A manual run that starts before a one-time run must not use it up.
-          nextRunAt: nextRunAt(
-            scheduleSource,
-            scheduleSource.schedule.type === "once" ? startedAt : completedAt,
-          ),
-          lastRunStatus,
-          lastRunError,
-          runCount: scheduleSource.runCount + 1,
-        };
-        if (current !== null) {
+        // One transaction, so an edit cannot land between reading the schedule and
+        // writing the next run computed from it.
+        const record = Effect.gen(function* () {
+          const current = yield* findTask(task.id);
+          const scheduleSource = current ?? task;
+          const completed: ScheduledTask = {
+            ...scheduleSource,
+            updatedAt: iso(completedAt),
+            lastRunAt: startedAtIso,
+            // A manual run that starts before a one-time run must not use it up.
+            nextRunAt: nextRunAt(
+              scheduleSource,
+              scheduleSource.schedule.type === "once" ? startedAt : completedAt,
+            ),
+            lastRunStatus,
+            lastRunError,
+            runCount: scheduleSource.runCount + 1,
+          };
+          if (current === null) return { completed, written: false };
           // startedAtIso in the guard ensures this writes only to the row this
           // run marked as running — a task deleted mid-run and recreated with
           // the same id (idempotent commandId replay) must not be stamped.
@@ -976,31 +971,36 @@ export const layer = Layer.effect(
             status: lastRunStatus,
             error: lastRunError,
             startedAtIso,
-            source: current,
           });
           if (webhook === undefined) yield* completion;
-          else
-            yield* sql
-              .withTransaction(
-                Effect.gen(function* () {
-                  const pending =
-                    yield* sql`SELECT 1 FROM scheduled_task_webhook_pending WHERE delivery_id = ${webhook.deliveryId}`;
-                  if (pending.length === 0) yield* completion;
-                  else {
-                    const counted =
-                      yield* sql`UPDATE scheduled_task_webhook_pending SET state = ${runSucceeded ? "completed" : "failed"}
-                      WHERE delivery_id = ${webhook.deliveryId} AND state NOT IN ('completed', 'failed') RETURNING delivery_id`;
-                    if (counted.length > 0) yield* completion;
-                  }
-                }),
-              )
-              .pipe(
-                Effect.mapError((cause) =>
-                  taskError("Could not record webhook completion.", { taskId: task.id, cause }),
-                ),
-              );
-          yield* notifyChanged;
-        }
+          else {
+            const pending =
+              yield* sql`SELECT 1 FROM scheduled_task_webhook_pending WHERE delivery_id = ${webhook.deliveryId}`;
+            if (pending.length === 0) yield* completion;
+            else {
+              const counted =
+                yield* sql`UPDATE scheduled_task_webhook_pending SET state = ${runSucceeded ? "completed" : "failed"}
+                WHERE delivery_id = ${webhook.deliveryId} AND state NOT IN ('completed', 'failed') RETURNING delivery_id`;
+              if (counted.length > 0) yield* completion;
+            }
+          }
+          return { completed, written: true };
+        });
+        const { completed, written } = yield* sql
+          .withTransaction(record)
+          .pipe(
+            Effect.mapError((cause) =>
+              isScheduledTaskError(cause)
+                ? cause
+                : taskError(
+                    webhook === undefined
+                      ? "Could not record schedule task run."
+                      : "Could not record webhook completion.",
+                    { taskId: task.id, cause },
+                  ),
+            ),
+          );
+        if (written) yield* notifyChanged;
         return { task: completed, threadId };
       }).pipe(
         Effect.onError((cause) =>

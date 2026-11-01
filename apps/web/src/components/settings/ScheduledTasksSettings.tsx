@@ -1311,6 +1311,13 @@ function ScheduledTaskEditorForm({
       reportFailure("Invalid interval", "Enter an interval of at least one minute.");
       return;
     }
+    if (schedule.type === "once" && !offersOnce) {
+      reportFailure(
+        "Once is not available here",
+        "This environment runs an older T3 Code. Update it to schedule a one-time task, or pick another schedule.",
+      );
+      return;
+    }
     if (draft.workspaceMode === "existing_worktree" && !draft.existingWorktreePath.trim()) {
       reportFailure("Checkout path is required", "Enter the path of the checkout to run in.");
       return;
@@ -1624,7 +1631,9 @@ function ScheduledTaskEditorForm({
                 }}
               >
                 <Toggle value="fixed">At a time</Toggle>
-                {offersOnce ? <Toggle value="once">Once</Toggle> : null}
+                {offersOnce || draft.scheduleMode === "once" ? (
+                  <Toggle value="once">Once</Toggle>
+                ) : null}
                 <Toggle value="interval">Every interval</Toggle>
                 <Toggle value="webhook">On webhook</Toggle>
               </ToggleGroup>
