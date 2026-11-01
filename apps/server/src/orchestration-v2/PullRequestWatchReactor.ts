@@ -34,7 +34,11 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { evaluatePullRequestWatch, pullRequestWatchMessage } from "./pullRequestWatch.ts";
+import {
+  evaluatePullRequestWatch,
+  PULL_REQUEST_WATCH_NO_CHECKS_MS,
+  pullRequestWatchMessage,
+} from "./pullRequestWatch.ts";
 
 /** Checks take minutes; faster sweeps waste the account's shared host quota. */
 const SWEEP_MINUTES = 2;
@@ -150,6 +154,12 @@ function planRead(
     group.targets.some(
       ({ watch }) => watch.failedChecks.length > 0 && !watch.passed && !watch.finished,
     );
+  // Nothing on the host changes when the no-checks deadline passes, so it alone prompts a read.
+  const checksDue = group.targets.some(
+    ({ watch }) =>
+      watch.checksAwaitedSince != null &&
+      now - Date.parse(watch.checksAwaitedSince) >= PULL_REQUEST_WATCH_NO_CHECKS_MS,
+  );
   if (fingerprint === null) {
     const read =
       finishing ||
@@ -157,7 +167,7 @@ function planRead(
       !last.remarksComplete ||
       last.fingerprint !== group.fingerprint ||
       now - last.at >= QUIET_REREAD_MS;
-    return { detail: read, activity: read, finishing };
+    return { detail: read || checksDue, activity: read, finishing };
   }
   const activity =
     finishing ||
@@ -165,7 +175,7 @@ function planRead(
     !last.remarksComplete ||
     now - last.at >= FINGERPRINT_REREAD_MS;
   return {
-    detail: activity || last.status !== fingerprint.status || last.inFlight,
+    detail: activity || checksDue || last.status !== fingerprint.status || last.inFlight,
     activity,
     finishing,
   };
