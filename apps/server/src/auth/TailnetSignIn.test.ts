@@ -135,6 +135,7 @@ const withCaller = (tailnet: Tailnet, status: JsonObject): JsonObject => {
         ID: node.StableID,
         TailscaleIPs: addresses.map((address) => address.replace(/\/\d+$/u, "")),
         UserID: node.User,
+        ...(node.Tags === undefined ? {} : { Tags: node.Tags }),
       },
     },
   };
@@ -411,6 +412,20 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       name: "Tailscale is too old",
       status: hostStatus({ Version: "1.62.0" }),
       refused: "tailscale_outdated",
+    },
+    {
+      name: "the device was tagged after its lookup",
+      status: hostStatus({
+        Peer: {
+          phone: {
+            ID: "nPhone",
+            TailscaleIPs: [PHONE_ADDRESS],
+            UserID: `int64:${OWNER_ID}`,
+            Tags: ["tag:ci"],
+          },
+        },
+      }),
+      refused: "tailscale_unavailable",
     },
     {
       name: "the device's node key expired",
@@ -912,6 +927,7 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       const ciBox = { ...laptop, Tags: ["tag:ci"] };
       const tailnet: Tailnet = {
         ...withLaptop(),
+        status: hostStatus({ Peer: { ...peers, laptop: { ...peers.laptop, Tags: ["tag:ci"] } } }),
         devices: { [LAPTOP_ADDRESS]: { node: ciBox, capMap: granted({ scopes: ["standard"] }) } },
       };
       return Effect.gen(function* () {

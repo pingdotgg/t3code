@@ -291,7 +291,8 @@ export const make = Effect.gen(function* () {
       if (
         after.selfNodeId !== account ||
         (yield* Ref.get(switchSeen)) ||
-        (after.selfTags.length === 0) !== (status.selfTags.length === 0)
+        TailscaleHost.tailnetOwnerUserId(after, config.tailscaleOwnerUserId) !==
+          TailscaleHost.tailnetOwnerUserId(status, config.tailscaleOwnerUserId)
       ) {
         return yield* Effect.fail(["this host"]);
       }
@@ -474,6 +475,10 @@ export const make = Effect.gen(function* () {
         if (peer === undefined) return yield* refuse("tailscale_unavailable");
         // Off the tailnet until it logs in to Tailscale again, which only the device can do.
         if (peer.keyExpired) return yield* refuse("not_direct_tailnet", "node key expired");
+        // Tagged or untagged since its lookup, the device would be judged as it no longer is.
+        if ((peer.tags.length === 0) !== (node.tags.length === 0)) {
+          return yield* refuse("tailscale_unavailable", "device tags changed during sign-in");
+        }
       }
       const decision = yield* decide(node, status);
       // The policy names this device, so it decides here now, even when the grant is refused

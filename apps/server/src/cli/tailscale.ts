@@ -226,7 +226,7 @@ const requireGrantCommand = Command.make("require-grant", {
                   ? [
                       "This is this shell's scan. The server notices a first grant within a minute",
                       "(five if it cannot read that device).",
-                      ...(ownerless
+                      ...(ownerless || scan.noNode
                         ? []
                         : [
                             "After you remove the last grant, your own untagged devices can sign in again",
