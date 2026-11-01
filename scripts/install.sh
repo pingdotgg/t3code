@@ -205,6 +205,7 @@ resolve_path() (
 )
 # Spelled as every t3 spells its T3 home, so released t3 still owns the links made from it.
 # Like the CLI, a quoted ~ at the start means the home folder.
+# shellcheck disable=SC2088 # The ~ here is the literal text to expand.
 case "$t3_home" in "~") t3_home="$HOME" ;; "~/"*) t3_home="${HOME}/${t3_home#"~/"}" ;; esac
 t3_home="$(resolve_path "$t3_home")"
 stem="t3-${version}-${platform}-${arch}"
@@ -300,7 +301,8 @@ link_kind() {
   # `..` can mean another folder once a link is followed, and a target naming a folder (`t3/`,
   # `t3/.`) never runs the file it would resolve to. `//` and `/./` collapse as text.
   case "/${existing}/" in */../*) return 0 ;; esac
-  case "$existing" in */ | */. | . | *"$newline"*) return 0 ;; esac
+  # A trailing newline would be lost in $(...) below, so such a target could pass as ours.
+  case "$existing" in */ | */. | . | *"$newline") return 0 ;; esac
   # A relative target starts from the bin folder's real path, as the OS follows it.
   case "$existing" in /*) ;; *) existing="${real_bin_dir}/${existing}" ;; esac
   existing="$(resolve_path "$existing")"
@@ -337,10 +339,14 @@ if [ -e "$public" ] || [ -L "$public" ]; then
   kind="$(link_kind "$public")"
   [ -n "$kind" ] || fail "another t3 is already at ${public}. Remove it and run this again, or run ${target_dir}/t3 directly."
 fi
-# Created without -f and removed only once it is this install's own.
-staging="${command_link}.$$.tmp"
-ln -s "${target_dir}/t3" "$staging" || fail "could not link ${command_link}"
-mv -f "$staging" "$command_link" || { rm -f "$staging"; fail "could not link ${command_link}"; }
+# Made in a new folder of its own, so nothing already in current is reused or removed.
+staging_dir="$(mktemp -d "${current_dir}/.t3.XXXXXX")" || fail "could not link ${command_link}"
+if ! { ln -s "${target_dir}/t3" "${staging_dir}/t3" && mv -f "${staging_dir}/t3" "$command_link"; }; then
+  rm -f "${staging_dir}/t3"
+  rmdir "$staging_dir"
+  fail "could not link ${command_link}"
+fi
+rmdir "$staging_dir"
 case "$kind" in
   # An empty spot is linked without -f, so a file that appears after the check above is kept.
   # Into the folder, so an entry of any kind already named t3 makes ln fail instead of filling it.

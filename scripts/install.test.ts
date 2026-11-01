@@ -274,6 +274,16 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         cwd: root,
       });
       expect(relativeHome.code, relativeHome.output).toBe(0);
+      // A T3 home with a newline in its name is still recognized on the next install.
+      const oddHome = NodePath.join(root, "odd\nhome");
+      const oddBin = NodePath.join(root, "odd-bin");
+      for (const run of [1, 2]) {
+        const odd = await installOver({ script: "install.sh", home: oddHome, binDir: oddBin });
+        expect(odd.code, `run ${run}: ${odd.output}`).toBe(0);
+      }
+      expect(await NodeFSP.readlink(NodePath.join(oddBin, "t3"))).toBe(
+        NodePath.join(oddHome, "runtime/versions/current/t3"),
+      );
       // A quoted ~ means the home folder, as the CLI reads it.
       await NodeFSP.rm(link, { force: true });
       const tilde = await installOver({
@@ -499,6 +509,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chec
             "mkdir",
             "mktemp",
             "rm",
+            "rmdir",
             "mv",
             "ln",
             checksumTool,
