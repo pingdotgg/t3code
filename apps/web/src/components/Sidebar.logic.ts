@@ -775,13 +775,22 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
 }
 
 /** Unopened threads' failures still count as unseen, unlike completions. */
-function hasUnseenFailure(thread: ThreadStatusInput): boolean {
-  if (thread.latestRun?.status !== "failed") return false;
+function hasUnseenFailure(
+  thread: Pick<ThreadStatusInput, "latestRun" | "runtime" | "lastVisitedAt">,
+): boolean {
+  // Failed runs can lack completedAt, and a session can fail before any run.
+  const failedAt =
+    thread.latestRun?.status === "failed"
+      ? (thread.latestRun.completedAt ?? thread.runtime?.updatedAt)
+      : thread.runtime?.status === "failed"
+        ? thread.runtime.updatedAt
+        : undefined;
+  if (failedAt === undefined) return false;
   if (!thread.lastVisitedAt) return true;
-  const completedAt = Date.parse(thread.latestRun.completedAt ?? "");
-  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
-  if (Number.isNaN(completedAt) || Number.isNaN(lastVisitedAt)) return true;
-  return completedAt > lastVisitedAt;
+  const failedAtMs = Date.parse(failedAt ?? "");
+  const lastVisitedAtMs = Date.parse(thread.lastVisitedAt);
+  if (Number.isNaN(failedAtMs) || Number.isNaN(lastVisitedAtMs)) return true;
+  return failedAtMs > lastVisitedAtMs;
 }
 
 // Suppress trailing double-click navigation; keyboard and synthetic clicks use detail 0.
@@ -952,6 +961,14 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   return "ready";
 }
 
+/** Sidebar row status: a failure the user has already opened settles to ready, like Done. */
+export function resolveSidebarRowStatus(
+  thread: SidebarThreadStatusInput & Pick<ThreadStatusInput, "latestRun" | "lastVisitedAt">,
+): SidebarThreadStatus {
+  const status = resolveSidebarThreadStatus(thread);
+  return status === "failed" && !hasUnseenFailure(thread) ? "ready" : status;
+}
+
 /**
  * The dot on a closed boring-sidebar folder: the most urgent state among its
  * hidden threads. Waiting threads stay quiet, like their rows.
@@ -959,7 +976,7 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
 export function resolveSidebarFolderDot(
   threads: ReadonlyArray<ThreadStatusInput & SidebarThreadStatusInput>,
 ): "attention" | "failed" | "unread" | "working" | null {
-  const statuses = new Set(threads.map(resolveSidebarThreadStatus));
+  const statuses = new Set(threads.map(resolveSidebarRowStatus));
   if (
     statuses.has("input") ||
     statuses.has("approval") ||
@@ -971,7 +988,7 @@ export function resolveSidebarFolderDot(
   if (statuses.has("failed")) return "failed";
   // Rows show Done only for ready threads, so the dot follows the same rule.
   const hasUnread = threads.some(
-    (thread) => resolveSidebarThreadStatus(thread) === "ready" && hasUnseenCompletion(thread),
+    (thread) => resolveSidebarRowStatus(thread) === "ready" && hasUnseenCompletion(thread),
   );
   if (hasUnread) return "unread";
   if (statuses.has("working")) return "working";
