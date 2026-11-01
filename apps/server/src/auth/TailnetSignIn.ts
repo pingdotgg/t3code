@@ -516,12 +516,14 @@ export const make = Effect.gen(function* () {
         );
       }
       const { scopes, via } = decision;
-      // The owner rule waited on a policy scan, during which the device, this host's owner, or
-      // the require-grant setting may have changed.
+      // The owner rule may have waited on a policy scan, during which the device, this host,
+      // its owner, or the require-grant setting may have changed.
       if (via === "owner") {
         const final = yield* host.freshStatus.pipe(
           Effect.catch((cause) => refuse("tailscale_unavailable", cause)),
         );
+        const finalRefusal = hostRefusal(final);
+        if (finalRefusal !== null) return yield* refuse(finalRefusal);
         yield* checkCaller(final);
         if (
           final.selfNodeId !== status.selfNodeId ||

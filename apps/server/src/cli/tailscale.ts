@@ -186,7 +186,7 @@ const requireGrantCommand = Command.make("require-grant", {
                   `Grant required: yes, because your tailnet policy grants ${TAILNET_APP_CAPABILITY} here to: ${granted.join(", ")}.`,
                   ownerless
                     ? "This tagged host has no owner, so only granted devices get in either way."
-                    : read !== "changed" && read.noNode
+                    : scan?.noNode === true
                       ? "Tailscale names no node for this host, so only granted devices get in either way."
                       : "Remove those grants to let your own untagged devices in without one.",
                 ]
@@ -224,7 +224,7 @@ const requireGrantCommand = Command.make("require-grant", {
           ...(scan !== null && scan.blocker === null
             ? [
                 "Devices with a grant get the scopes it names: read, standard, admin, or single scopes.",
-                // Where only grants decide, a grant change moves no one, so no delay applies.
+                // No owner access turns off or back on there, so no delay applies.
                 ...(since === null && !ownerless && !scan.noNode
                   ? [
                       "This is this shell's scan. The server notices a first grant within a minute",
