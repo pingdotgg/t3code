@@ -16,6 +16,7 @@ import {
   DeviceOperationError,
   DeviceSummary,
   OrchestratorMcpTaskRole,
+  OrchestrationV2UserInputQuestion,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -33,6 +34,7 @@ import * as McpSchema from "effect/ai/McpSchema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
+import { formatAsyncUserInputAnswer } from "../../apps/server/src/orchestration-v2/asyncUserInputAnswer.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
 import {
@@ -245,6 +247,13 @@ export const McpToolUseCase = Schema.Struct({
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     context: Schema.optional(Schema.String),
+    /** Builds the latest user turn with the production async-answer formatter. */
+    asyncAnswer: Schema.optional(
+      Schema.Struct({
+        question: OrchestrationV2UserInputQuestion,
+        answer: Schema.Union([Schema.String, Schema.Array(Schema.String)]),
+      }),
+    ),
     priorTurns: Schema.optional(
       Schema.Array(
         Schema.Struct({
@@ -912,10 +921,15 @@ export const buildMessages = (sample: Sample) => {
     }
     if (turn.text) push(turn.role, text(turn.text));
   }
+  const asyncAnswer = testCase.setup.asyncAnswer;
+  const userPrompt =
+    asyncAnswer === undefined
+      ? testCase.prompt
+      : formatAsyncUserInputAnswer(asyncAnswer.question, asyncAnswer.answer);
   const userText =
     testCase.promptContext === undefined
-      ? testCase.prompt
-      : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
+      ? userPrompt
+      : projectComposerContextForProvider({ text: userPrompt, ...testCase.promptContext });
   const sideChat = testCase.setup.sideChat;
   const prompt =
     sideChat === undefined

@@ -97,6 +97,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "./ProjectStore.ts";
+import { formatAsyncUserInputAnswer } from "./asyncUserInputAnswer.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
@@ -9031,8 +9032,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               cause: "Answer each question before sending.",
             });
           }
-          const text = typeof answer === "string" ? answer : answer.join(", ");
-          replies.push(`${question.question}\n${text.trim()}`);
+          replies.push(formatAsyncUserInputAnswer(question, answer));
         }
         if (replies.length === 0) {
           return yield* new OrchestratorDispatchError({

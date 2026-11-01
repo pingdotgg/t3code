@@ -20,6 +20,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2UserInputQuestion,
   ProjectId,
   type PullRequestDetail,
   type PullRequestComment,
@@ -1301,6 +1302,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     threadId: ThreadId,
     runId: RunId | null,
     responseCapability: OrchestrationV2RuntimeRequest["responseCapability"],
+    colorQuestion: OrchestrationV2UserInputQuestion = {
+      id: "color",
+      header: "Color",
+      question: "Which color?",
+      options: [],
+    },
   ) {
     const eventSink = yield* EventSink.EventSinkV2;
     const now = yield* DateTime.now;
@@ -1376,7 +1383,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
             updatedAt: now,
             requestId,
             questions: [
-              { id: "color", header: "Color", question: "Which color?", options: [] },
+              colorQuestion,
               {
                 id: "sizes",
                 header: "Sizes",
@@ -1563,7 +1570,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         assert.equal(answered.messages.at(-1)?.runId, answered.runs.at(-1)?.id);
         assert.equal(
           answered.messages.at(-1)?.text,
-          "Which color?\nBlue\n\nWhich sizes?\nSmall, Large",
+          "Question (from assistant):\nWhich color?\n\nUser answer:\nBlue\n\nQuestion (from assistant):\nWhich sizes?\n\nUser answer:\nSmall, Large",
         );
         assert.deepEqual(
           (yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
@@ -1574,100 +1581,172 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       }),
   );
 
-  it.effect("answers an async question after its provider exits and commits the answer once", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const eventSink = yield* EventSink.EventSinkV2;
-      const threadId = ThreadId.make("runtime-async-question");
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("runtime-async-question-create"),
-        createdBy: "user",
-        creationSource: "web",
-        threadId,
-        projectId: ProjectId.make("runtime-async-question-project"),
-        title: "Async question",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: process.cwd(),
-      });
-      const { requestId, nodeId, itemId } = yield* seedPendingQuestion(threadId, null, {
-        type: "message",
-      });
-      const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const beforeInvalid = yield* orchestrator.getThreadProjection(threadId);
-      const beforeSequence = yield* eventSink.latestSequence();
-      for (const [index, answers] of [
-        { color: " ", sizes: ["Small"] },
-        { color: "Blue", sizes: [] },
-        { color: "Blue", sizes: ["Small", " "] },
-        { color: "Blue", sizes: ["Small"], extra: " " },
-      ].entries()) {
-        const commandId = CommandId.make(`runtime-async-question-invalid:${index}`);
-        const invalid = yield* orchestrator
-          .dispatch({
-            type: "runtime-request.respond",
-            commandId,
-            threadId,
+  it.effect.each([
+    {
+      scenario: "free text",
+      question: { id: "color", header: "Color", question: "Which color?", options: [] },
+      answer: "  Blue  ",
+      expectedReply: "Question (from assistant):\nWhich color?\n\nUser answer:\nBlue",
+    },
+    {
+      scenario: "selected option",
+      question: {
+        id: "color",
+        header: "Color",
+        question: "Which color?",
+        options: [
+          { label: "Blue", description: "Use blue" },
+          { label: "Red", description: "Use red" },
+        ],
+      },
+      answer: "  Blue  ",
+      expectedReply: "Question (from assistant):\nWhich color?\n\nSelected option:\nBlue",
+    },
+    {
+      scenario: "opaque option value",
+      question: {
+        id: "color",
+        header: "Color",
+        question: "Which color?",
+        options: [{ label: "Blue", description: "Use blue", value: "blue-value" }],
+      },
+      answer: "blue-value",
+      expectedReply: "Question (from assistant):\nWhich color?\n\nSelected option:\nblue-value",
+    },
+    {
+      scenario: "multiple selected options",
+      question: {
+        id: "color",
+        header: "Color",
+        question: "Which colors?",
+        options: [
+          { label: "Blue", description: "Use blue" },
+          { label: "Red", description: "Use red" },
+        ],
+        multiSelect: true,
+      },
+      answer: ["Blue", "Red"],
+      expectedReply: "Question (from assistant):\nWhich colors?\n\nSelected options:\nBlue, Red",
+    },
+    {
+      scenario: "custom alternative",
+      question: {
+        id: "color",
+        header: "Settings",
+        question: "Use the saved configuration?",
+        options: [
+          { label: "Use these saved settings", description: "Keep the saved destination" },
+          { label: "Use different settings", description: "Change the destination" },
+        ],
+      },
+      answer: "https://example.test/test-plans?planId=1&suiteId=2",
+      expectedReply:
+        "Question (from assistant):\nUse the saved configuration?\n\nCustom answer (instead of the listed options):\nhttps://example.test/test-plans?planId=1&suiteId=2",
+    },
+  ])(
+    "answers an async question after its provider exits and commits the answer once ($scenario)",
+    ({ scenario, question, answer, expectedReply }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`runtime-async-question-${scenario.replaceAll(" ", "-")}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${threadId}:create`),
+          createdBy: "user",
+          creationSource: "web",
+          threadId,
+          projectId: ProjectId.make(`${threadId}:project`),
+          title: "Async question",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        const { requestId, nodeId, itemId } = yield* seedPendingQuestion(
+          threadId,
+          null,
+          {
+            type: "message",
+          },
+          question,
+        );
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const beforeInvalid = yield* orchestrator.getThreadProjection(threadId);
+        const beforeSequence = yield* eventSink.latestSequence();
+        for (const [index, answers] of [
+          { color: " ", sizes: ["Small"] },
+          { color: "Blue", sizes: [] },
+          { color: "Blue", sizes: ["Small", " "] },
+          { color: "Blue", sizes: ["Small"], extra: " " },
+        ].entries()) {
+          const commandId = CommandId.make(`${threadId}:invalid:${index}`);
+          const invalid = yield* orchestrator
+            .dispatch({
+              type: "runtime-request.respond",
+              commandId,
+              threadId,
+              requestId,
+              answers,
+            })
+            .pipe(Effect.result);
+          assert.equal(invalid._tag, "Failure", JSON.stringify(answers));
+          assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), beforeInvalid);
+          assert.equal(yield* eventSink.latestSequence(), beforeSequence);
+          assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+        }
+
+        const command = {
+          type: "runtime-request.respond" as const,
+          commandId: CommandId.make(`${threadId}:answer`),
+          threadId,
+          requestId,
+          answers: { color: answer, sizes: ["Small", "Large"], note: "" },
+        };
+        const accepted = yield* orchestrator.dispatch(command);
+        const repeated = yield* orchestrator.dispatch(command);
+        assert.equal(repeated.sequence, accepted.sequence);
+        const answered = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(answered.runtimeRequests[0]?.status, "resolved");
+        assert.deepEqual(answered.runtimeRequests[0]?.answers, command.answers);
+        assert.equal(answered.nodes.find((node) => node.id === nodeId)?.status, "completed");
+        assert.equal(answered.turnItems.find((item) => item.id === itemId)?.status, "completed");
+        const answeredItem = answered.turnItems.find((item) => item.id === itemId);
+        assert.equal(answeredItem?.type, "user_input_request");
+        if (answeredItem?.type === "user_input_request") {
+          assert.deepEqual(answeredItem.questionAnswer, {
             requestId,
-            answers,
+            answers: command.answers,
+            attachmentsByQuestionId: {},
+            questionTextById: {
+              color: question.question,
+              sizes: "Which sizes?",
+              note: "Anything else?",
+            },
+          });
+        }
+        assert.equal(answered.messages.length, 1);
+        assert.equal(
+          answered.messages[0]?.text,
+          `${expectedReply}\n\nQuestion (from assistant):\nWhich sizes?\n\nUser answer:\nSmall, Large`,
+        );
+        assert.equal(answered.messages[0]?.role, "user");
+        assert.equal(answered.runs.length, 1);
+        assert.deepEqual(
+          (yield* outbox.listByCommandId(command.commandId)).map((effect) => effect.request.type),
+          ["provider-turn.start"],
+        );
+
+        const duplicate = yield* orchestrator
+          .dispatch({
+            ...command,
+            commandId: CommandId.make(`${threadId}:duplicate`),
           })
           .pipe(Effect.result);
-        assert.equal(invalid._tag, "Failure", JSON.stringify(answers));
-        assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), beforeInvalid);
-        assert.equal(yield* eventSink.latestSequence(), beforeSequence);
-        assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
-      }
-
-      const command = {
-        type: "runtime-request.respond" as const,
-        commandId: CommandId.make("runtime-async-question-answer"),
-        threadId,
-        requestId,
-        answers: { color: "  Blue  ", sizes: ["Small", "Large"], note: "" },
-      };
-      const accepted = yield* orchestrator.dispatch(command);
-      const repeated = yield* orchestrator.dispatch(command);
-      assert.equal(repeated.sequence, accepted.sequence);
-      const answered = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(answered.runtimeRequests[0]?.status, "resolved");
-      assert.deepEqual(answered.runtimeRequests[0]?.answers, command.answers);
-      assert.equal(answered.nodes.find((node) => node.id === nodeId)?.status, "completed");
-      assert.equal(answered.turnItems.find((item) => item.id === itemId)?.status, "completed");
-      const answeredItem = answered.turnItems.find((item) => item.id === itemId);
-      assert.equal(answeredItem?.type, "user_input_request");
-      if (answeredItem?.type === "user_input_request") {
-        assert.deepEqual(answeredItem.questionAnswer, {
-          requestId,
-          answers: command.answers,
-          attachmentsByQuestionId: {},
-          questionTextById: {
-            color: "Which color?",
-            sizes: "Which sizes?",
-            note: "Anything else?",
-          },
-        });
-      }
-      assert.equal(answered.messages.length, 1);
-      assert.equal(answered.messages[0]?.text, "Which color?\nBlue\n\nWhich sizes?\nSmall, Large");
-      assert.equal(answered.messages[0]?.role, "user");
-      assert.equal(answered.runs.length, 1);
-      assert.deepEqual(
-        (yield* outbox.listByCommandId(command.commandId)).map((effect) => effect.request.type),
-        ["provider-turn.start"],
-      );
-
-      const duplicate = yield* orchestrator
-        .dispatch({
-          ...command,
-          commandId: CommandId.make("runtime-async-question-duplicate"),
-        })
-        .pipe(Effect.result);
-      assert.equal(duplicate._tag, "Failure");
-      assert.equal((yield* orchestrator.getThreadProjection(threadId)).messages.length, 1);
-    }),
+        assert.equal(duplicate._tag, "Failure");
+        assert.equal((yield* orchestrator.getThreadProjection(threadId)).messages.length, 1);
+      }),
   );
 
   it.effect("reports an answer that never reaches its provider without reopening it", () =>
