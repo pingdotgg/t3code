@@ -27,6 +27,7 @@ import {
   type VcsStatusLocalResult,
   type VcsStatusRemoteResult,
   type VcsStatusResult,
+  type VcsError,
 } from "@t3tools/contracts";
 
 import * as GitManager from "./GitManager.ts";
@@ -183,82 +184,66 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((cwd) => withWorkspaceLease(cwd, effect)),
     );
 
-  const ensureGit = Effect.fn("GitWorkflowService.ensureGit")(function* (
+  const toWorkflowError = (operation: string, cwd: string, detail: string) => (cause: VcsError) =>
+    new GitManagerError({ operation, cwd, detail, cause });
+
+  const toCommandError = (operation: string, cwd: string, detail: string) => (cause: VcsError) =>
+    new GitCommandError({ operation, command: "vcs-route", cwd, detail, cause });
+
+  const ensureGit = Effect.fn("GitWorkflowService.ensureGit")(function (
     operation: string,
     cwd: string,
   ) {
-    const handle = yield* registry.resolve({ cwd }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new GitManagerError({
+    return registry
+      .resolve({ cwd })
+      .pipe(
+        Effect.mapError(
+          toWorkflowError(
             operation,
             cwd,
-            detail: "Failed to resolve the VCS driver for this Git workflow.",
-            cause,
-          }),
-      ),
-    );
-    return handle;
+            "Failed to resolve the VCS driver for this Git workflow.",
+          ),
+        ),
+      );
   });
 
-  const ensureGitCommand = Effect.fn("GitWorkflowService.ensureGitCommand")(function* (
+  const ensureGitCommand = Effect.fn("GitWorkflowService.ensureGitCommand")(function (
     operation: string,
     cwd: string,
   ) {
-    const handle = yield* registry.resolve({ cwd }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new GitCommandError({
-            operation,
-            command: "vcs-route",
-            cwd,
-            detail: "Failed to resolve the VCS driver for this Git command.",
-            cause,
-          }),
-      ),
-    );
-    return handle;
+    return registry
+      .resolve({ cwd })
+      .pipe(
+        Effect.mapError(
+          toCommandError(operation, cwd, "Failed to resolve the VCS driver for this Git command."),
+        ),
+      );
   });
 
   const detectGitRepositoryForStatus = Effect.fn("GitWorkflowService.detectGitRepositoryForStatus")(
-    function* (operation: string, cwd: string) {
-      const handle = yield* registry.detect({ cwd }).pipe(
+    function (operation: string, cwd: string) {
+      return registry.detect({ cwd }).pipe(
         Effect.mapError(
-          (cause) =>
-            new GitManagerError({
-              operation,
-              cwd,
-              detail: "Failed to detect a VCS repository for this Git workflow.",
-              cause,
-            }),
+          toWorkflowError(
+            operation,
+            cwd,
+            "Failed to detect a VCS repository for this Git workflow.",
+          ),
         ),
+        Effect.map((handle) => handle !== null),
       );
-      if (!handle) {
-        return false;
-      }
-      return true;
     },
   );
 
   const detectGitRepositoryForCommand = Effect.fn(
     "GitWorkflowService.detectGitRepositoryForCommand",
-  )(function* (operation: string, cwd: string) {
-    const handle = yield* registry.detect({ cwd }).pipe(
+  )(function (operation: string, cwd: string) {
+    return registry.detect({ cwd }).pipe(
       Effect.mapError(
-        (cause) =>
-          new GitCommandError({
-            operation,
-            command: "vcs-route",
-            cwd,
-            detail: "Failed to detect a VCS repository for this Git command.",
-            cause,
-          }),
+        toCommandError(operation, cwd, "Failed to detect a VCS repository for this Git command."),
       ),
+      Effect.map((handle) => handle !== null),
     );
-    if (!handle) {
-      return false;
-    }
-    return true;
   });
 
   const routeGitManager =
@@ -274,13 +259,11 @@ export const make = Effect.gen(function* () {
       return registry.detect({ cwd }).pipe(
         Effect.map((handle) => handle?.kind === "git"),
         Effect.mapError(
-          (cause) =>
-            new GitManagerError({
-              operation: "GitWorkflowService.isRepository",
-              cwd,
-              detail: "Failed to detect a VCS repository for this Git workflow.",
-              cause,
-            }),
+          toWorkflowError(
+            "GitWorkflowService.isRepository",
+            cwd,
+            "Failed to detect a VCS repository for this Git workflow.",
+          ),
         ),
       );
     }),
