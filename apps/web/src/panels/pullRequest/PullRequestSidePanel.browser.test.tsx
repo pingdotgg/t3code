@@ -295,6 +295,7 @@ describe("pull request side panel", () => {
   // Runs first, while the body's code is still held back.
   it("shows the pull request loading state until its body is ready", async () => {
     resetFixture();
+    // PanelHostContext supplies the thread; these interactions do not use route navigation.
     await using screen = await renderScreen(null, { router: false });
     await renderFor(screen, refOn("environment-new"));
     expect(isLoading(screen)).toBe(true);
@@ -311,6 +312,7 @@ describe("pull request side panel", () => {
 
   it("follows the host environment's pull request support", async () => {
     resetFixture();
+    // PanelHostContext supplies the thread; these interactions do not use route navigation.
     await using screen = await renderScreen(null, { router: false });
     await loadBody();
     await renderFor(screen, refOn("environment-loading"));
@@ -331,6 +333,7 @@ describe("pull request side panel", () => {
 
   it("writes a question into the host thread's composer only", async () => {
     resetFixture();
+    // PanelHostContext supplies the thread; these interactions do not use route navigation.
     await using screen = await renderScreen(null, { router: false });
     await loadBody();
     const threadRef = refOn("environment-new");
@@ -345,6 +348,7 @@ describe("pull request side panel", () => {
 
   it("opens a stack layer as a tab in the host's own thread", async () => {
     resetFixture();
+    // PanelHostContext supplies the thread; these interactions do not use route navigation.
     await using screen = await renderScreen(null, { router: false });
     await loadBody();
     const threadRef = refOn("environment-new");

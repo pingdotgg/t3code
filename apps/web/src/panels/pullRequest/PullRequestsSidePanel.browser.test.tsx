@@ -171,6 +171,7 @@ describe("linked pull requests side panel", () => {
   it("lists and unlinks the host thread's pull requests", async () => {
     resetFixture();
     await import("./PullRequestsSidePanel");
+    // PanelHostContext supplies the thread; these interactions do not use route navigation.
     await using screen = await renderScreen(null, { router: false });
     await renderFor(screen, refOn("environment-new"));
     expect(hasText(screen, "owner/alpha")).toBe(true);
@@ -195,6 +196,7 @@ describe("linked pull requests side panel", () => {
   it("follows the host to a thread whose environment cannot link pull requests", async () => {
     resetFixture();
     await import("./PullRequestsSidePanel");
+    // PanelHostContext supplies the thread; these interactions do not use route navigation.
     await using screen = await renderScreen(null, { router: false });
     await renderFor(screen, refOn("environment-new"));
     expect(hasText(screen, "owner/alpha")).toBe(true);

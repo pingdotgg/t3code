@@ -261,6 +261,7 @@ describe("files side panel", () => {
   it("opens a sibling file as a tab in the host's own thread", async () => {
     resetFixture();
     await import("./FilesSidePanel");
+    // PanelHostContext supplies the thread; these interactions do not use route navigation.
     await using screen = await renderScreen(null, { router: false });
     const threadRef = refOn("environment-a");
     await renderFileFor(screen, threadRef);
@@ -277,6 +278,7 @@ describe("files side panel", () => {
   it("follows the host to another environment's thread with the same id", async () => {
     resetFixture();
     await import("./FilesSidePanel");
+    // PanelHostContext supplies the thread; these interactions do not use route navigation.
     await using screen = await renderScreen(null, { router: false });
     await renderFileFor(screen, refOn("environment-a"));
     const threadRef = refOn("environment-b");
