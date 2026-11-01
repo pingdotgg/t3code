@@ -31,6 +31,7 @@ import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, readMcpAppHtml, resolveAsset } from "./assets/AssetAccess.ts";
+import * as RemoteImage from "./assets/RemoteImage.ts";
 import { sourceControlMediaResponse } from "./assets/sourceControlMediaResponse.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
@@ -430,6 +431,22 @@ export const layerAssetRoute = HttpRouter.add(
         contentType: asset.mimeType,
         headers: { "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" },
       });
+    }
+    if (asset.kind === "remote-image") {
+      const images = yield* RemoteImage.RemoteImage;
+      return yield* images.read(asset.url).pipe(
+        Effect.map(({ bytes, mimeType }) =>
+          HttpServerResponse.uint8Array(bytes, {
+            contentType: mimeType,
+            headers: {
+              "cache-control": "private, no-store",
+              "x-content-type-options": "nosniff",
+              "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+            },
+          }),
+        ),
+        Effect.orElseSucceed(() => HttpServerResponse.empty({ status: 502 })),
+      );
     }
     if (asset.kind === "source-control-media") {
       return yield* sourceControlMediaResponse(asset, request.headers).pipe(

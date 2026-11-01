@@ -28,6 +28,7 @@ import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
 import { withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
+import * as RemoteImage from "./assets/RemoteImage.ts";
 import {
   guardHttpResponseWriteErrors,
   rejectRequestsUntilServing,
@@ -1078,6 +1079,7 @@ const layerMakeServer = Layer.unwrap(
       disableLogger: !config.logWebSocketEvents,
       routerConfig: HTTP_ROUTER_CONFIG,
     }).pipe(
+      Layer.provide(RemoteImage.layerPublic),
       withUntracedRequests,
       Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)),
     );

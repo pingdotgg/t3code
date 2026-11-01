@@ -381,6 +381,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     kind: props.kind ?? "image",
     name: props.alt || (props.kind ?? "image"),
     src,
+    environmentId: props.environmentId,
     ...(fallbackSrc === undefined
       ? { asset: { environmentId: props.environmentId, resource } }
       : {}),

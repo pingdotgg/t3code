@@ -77,7 +77,7 @@ const isLocal = (address: string, family: number): boolean => {
 };
 
 // Connect only to checked addresses to prevent DNS rebinding.
-const publicAddresses = async (host: string) => {
+export const publicAddresses = async (host: string) => {
   const addresses = NodeNet.isIP(host)
     ? [{ address: host, family: NodeNet.isIP(host) }]
     : await NodeDnsPromises.lookup(host, { all: true, verbatim: true }).catch(() => []);

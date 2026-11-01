@@ -1467,6 +1467,25 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("signs remote image URLs without allowing the target to be replaced", () =>
+    Effect.gen(function* () {
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "remote-image",
+          url: "https://images.example.com/shot.png?signature=example",
+        },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const token = suffix.slice(0, separator);
+      expect(yield* resolveAsset(token, "other.png")).toEqual({
+        kind: "remote-image",
+        url: "https://images.example.com/shot.png?signature=example",
+      });
+      expect(yield* resolveAsset(`${token}tampered`, "shot.png")).toBeNull();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("serves a host's credentialed media through that host's driver", () => {
     const fetched: Array<{ url: string; headers: Readonly<Record<string, string>> }> = [];
     const url = "https://github.com/owner/repo/blob/main/docs/shot.png";
