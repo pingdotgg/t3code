@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The process fixture runs real shell commands with isolated config files.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -90,7 +91,7 @@ function runShellEnvironment(input: {
     command: ChildProcess.Command,
   ) => string | { output: string; exitCode: number };
   readonly failure?: PlatformError.PlatformError;
-  readonly spawn?: ChildProcessSpawner.ChildProcessSpawner["Service"]["spawn"];
+  readonly processSpawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
 }) {
   const layerEnvironment = Layer.succeed(
     DesktopEnvironment.DesktopEnvironment,
@@ -101,7 +102,7 @@ function runShellEnvironment(input: {
   const layerSpawner = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
-      if (input.spawn !== undefined) return input.spawn(command);
+      if (input.processSpawner) return input.processSpawner.spawn(command);
       if (input.failure !== undefined) return Effect.fail(input.failure);
       const result = input.handler(command);
       return Effect.succeed(
@@ -138,6 +139,41 @@ function runShellEnvironment(input: {
 }
 
 describe("DesktopShellEnvironment", () => {
+  it.effect(
+    "captures the login-shell PATH when startup writes more than a pipe buffer to stderr",
+    () =>
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner.pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        const executable = yield* HostProcess.ExecutablePath;
+        const env: NodeJS.ProcessEnv = { SHELL: "/test-shell", PATH: "/usr/bin" };
+        const commands: string[] = [];
+        const source = [
+          "setTimeout(() => process.exit(99), 3000).unref();",
+          "process.stderr.write(Buffer.alloc(2 * 1024 * 1024, 120), () => {",
+          `process.stdout.write(${JSON.stringify(envOutput({ PATH: "/shell-only/bin:/usr/bin" }))});`,
+          "});",
+        ].join("\n");
+
+        yield* runShellEnvironment({
+          env,
+          platform: "linux",
+          handler: () => "",
+          processSpawner: ChildProcessSpawner.make((command) => {
+            if (command._tag !== "StandardCommand") return Effect.succeed(makeProcess(""));
+            commands.push(command.command);
+            return command.command === "/test-shell"
+              ? spawner.spawn(ChildProcess.make(executable, ["-e", source], command.options))
+              : Effect.succeed(makeProcess(""));
+          }),
+        }).pipe(Effect.provide(Logger.layer([])));
+
+        assert.equal(env.PATH, "/shell-only/bin:/usr/bin");
+        assert.deepEqual(commands, ["/test-shell"]);
+      }),
+  );
+
   it.effect("rejects PATH output from a failed shell and tries the next candidate", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = { SHELL: "/bin/failing", PATH: "/usr/bin" };
@@ -397,10 +433,10 @@ describe("DesktopShellEnvironment", () => {
         env: { PATH: "C:\\Windows", APPDATA: "C:\\Roaming" },
         platform: "win32",
         handler: () => "",
-        spawn: (command) => {
+        processSpawner: ChildProcessSpawner.make((command) => {
           commands.push(command._tag === "StandardCommand" ? command.command : "");
           return Effect.acquireRelease(Effect.succeed(makeHungProcess()), () => Effect.never);
-        },
+        }),
       }).pipe(Effect.forkChild({ startImmediately: true }));
 
       for (let probe = 0; probe < 4; probe++) yield* TestClock.adjust("5 seconds");
