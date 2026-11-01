@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { FileFinder } from "@ff-labs/fff-node";
 import { it, afterEach, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -671,6 +672,53 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const match = result.matches[0]!;
         const range = match.matchRanges[0]!;
         expect(match.lineContent.slice(range.start, range.end)).toBe("wörld");
+      }),
+    );
+
+    it.effect("keeps answering from the live index when a refresh outlasts the scan wait", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-refresh-" });
+        yield* writeTextFile(cwd, "src/notes.ts", "const needle = 1;\n");
+        let scansOutlastWait = false;
+        let finders = 0;
+        let rescans = 0;
+        const createFinder = FileFinder.create.bind(FileFinder);
+        vi.spyOn(FileFinder, "create").mockImplementation((options) => {
+          const created = createFinder(options);
+          if (created.ok) {
+            const finder = created.value;
+            finders += 1;
+            const scanFiles = finder.scanFiles.bind(finder);
+            finder.scanFiles = () => {
+              rescans += 1;
+              return scanFiles();
+            };
+            const waitForIndexReady = finder.waitForIndexReady.bind(finder);
+            finder.waitForIndexReady = (timeoutMs) =>
+              scansOutlastWait
+                ? Promise.resolve({ ok: true, value: false })
+                : waitForIndexReady(timeoutMs);
+          }
+          return created;
+        });
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const searchNeedle = workspaceEntries.searchContents({
+          cwd,
+          query: "needle",
+          limit: 100,
+          caseSensitive: true,
+          wholeWord: false,
+          useRegex: false,
+        });
+        yield* searchNeedle;
+
+        scansOutlastWait = true;
+        yield* workspaceEntries.refresh(cwd);
+        const result = yield* searchNeedle;
+
+        expect(result.matches.map((match) => match.path)).toEqual(["src/notes.ts"]);
+        // The second search ran on the rescanned live finder, not a rebuild.
+        expect({ finders, rescans }).toEqual({ finders: 1, rescans: 1 });
       }),
     );
   });
