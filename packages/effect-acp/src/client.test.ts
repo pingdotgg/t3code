@@ -1054,6 +1054,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         const { stdio, input, output } = yield* makeInMemoryStdio();
         const scope = yield* Scope.make();
         const acp = yield* AcpClient.make(stdio).pipe(Effect.provideService(Scope.Scope, scope));
+        const deleteSession = acp.agent.deleteSession({ sessionId: "kiro-session-1" });
 
         const initializeFiber = yield* acp.agent
           .initialize({
@@ -1097,7 +1098,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         yield* Fiber.join(initializeFiber);
 
         const deleteFailed = yield* Deferred.make<AcpError.AcpError>();
-        const deleteFiber = yield* acp.agent.deleteSession({ sessionId: "kiro-session-1" }).pipe(
+        const deleteFiber = yield* deleteSession.pipe(
           Effect.tapError((error) => Deferred.succeed(deleteFailed, error)),
           Effect.forkScoped,
         );

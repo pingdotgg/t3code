@@ -1185,9 +1185,11 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
           Effect.map((response) => response as AcpSchema.CloseSessionResponse),
         ),
       deleteSession: (payload) =>
-        sessionDeleteSupported
-          ? callRpc(AGENT_METHODS.session_delete, rpc[AGENT_METHODS.session_delete](payload))
-          : Effect.fail(AcpError.AcpRequestError.methodNotFound(AGENT_METHODS.session_delete)),
+        Effect.suspend(() =>
+          sessionDeleteSupported
+            ? callRpc(AGENT_METHODS.session_delete, rpc[AGENT_METHODS.session_delete](payload))
+            : Effect.fail(AcpError.AcpRequestError.methodNotFound(AGENT_METHODS.session_delete)),
+        ),
       listProviders: (payload) =>
         negotiatedProtocolGeneration === 1
           ? Effect.fail(AcpError.AcpRequestError.methodNotFound(AGENT_METHODS.providers_list))
