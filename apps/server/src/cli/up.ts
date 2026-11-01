@@ -27,6 +27,8 @@ import { compareExactServiceVersions } from "../cloud/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { renderTerminalQrCode } from "../startupAccess.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as ServerOwnership from "../serverOwnership.ts";
 import * as TailscaleServe from "../tailscaleServe.ts";
 import {
   isSupportedTailscaleVersion,
@@ -628,24 +630,37 @@ const setUp = Effect.fn("cli.up")(function* (
       runtime,
       (state) => state.serviceManaged !== true && isProcessAlive(state.pid),
     );
-    if (handStarted) {
-      return yield* Console.log(
-        "T3 Code is running here outside the background service, with the access it started with. In the desktop app, turn access off in Settings → Sharing & access. Otherwise, stop the server.",
-      );
-    }
-    // Nothing runs here to remove a Serve mapping a stopped server left, so do it now.
-    yield* TailscaleServe.releaseRecorded(config.stateDir).pipe(
-      Effect.flatMap((released) =>
-        released
-          ? Console.log("Removed a Tailscale Serve mapping an earlier run left.")
-          : Effect.void,
-      ),
-      Effect.catch(() =>
-        Console.log(
-          "Tailscale did not answer, so a Serve mapping an earlier run left may remain. Run this again once Tailscale runs.",
+    const runningElsewhere =
+      "T3 Code is running here outside the background service, with the access it started with. In the desktop app, turn access off in Settings → Sharing & access. Otherwise, stop the server.";
+    if (handStarted) return yield* Console.log(runningElsewhere);
+    // Nothing runs here to remove a Serve mapping a stopped server left, so do it now,
+    // holding the T3 home's lock so no server starts meanwhile.
+    if (yield* TailscaleServe.hasRecord(config.stateDir)) {
+      const leftover = yield* ServerOwnership.acquireServerOwnership(
+        config.serverRuntimeStatePath,
+      ).pipe(
+        Effect.provide(ProcessRunner.layer),
+        Effect.andThen(TailscaleServe.releaseRecorded(config.stateDir)),
+        Effect.scoped,
+        Effect.catchTags({ ServerAlreadyRunningError: () => Effect.succeed(null) }),
+        Effect.catch((error) =>
+          upError(
+            error._tag === "ServeRecordError" && error.reason === "unreadable"
+              ? error.message
+              : "Could not remove a Tailscale Serve mapping an earlier run left. Run this again once Tailscale runs.",
+          ),
         ),
-      ),
-    );
+      );
+      if (leftover === null) return yield* Console.log(runningElsewhere);
+      if (leftover.released) {
+        yield* Console.log("Removed a Tailscale Serve mapping an earlier run left.");
+      }
+      if (leftover.otherAccounts > 0) {
+        return yield* upError(
+          "A Tailscale Serve mapping an earlier run left is on another Tailscale account. Switch Tailscale to it and run this again.",
+        );
+      }
+    }
     return yield* Console.log(formatNextSteps(routes, false));
   }
   // Tailscale left on while it is down here keeps its settings; turning it on needs it.
@@ -712,7 +727,7 @@ const setUp = Effect.fn("cli.up")(function* (
           ? "Update and restart T3 Code? Running agent turns will stop."
           : changed
             ? "Apply changes and restart? Running agent turns will stop."
-            : "Write Tailscale off, so the service cannot inherit it, and restart? Running agent turns will stop.",
+            : `Write Tailscale ${tailscaleOffChosen ? "" : "Serve "}off, so the service cannot inherit it, and restart? Running agent turns will stop.`,
         initial: true,
       }),
     ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) }));

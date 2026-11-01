@@ -1,9 +1,12 @@
-import { claimTailscaleServe, releaseTailscaleServe } from "@t3tools/tailscale";
+import {
+  claimTailscaleServe,
+  readTailscaleStatus,
+  releaseTailscaleServe,
+} from "@t3tools/tailscale";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
@@ -13,10 +16,17 @@ import { HttpServer } from "effect/http";
 
 import { loopbackUrlHostForAddress } from "./startupAccess.ts";
 
+/** The Serve record cannot be used: it is unreadable, or Tailscale names no account here. */
+export class ServeRecordError extends Schema.TaggedError<ServeRecordError>()("ServeRecordError", {
+  reason: Schema.Literals(["unreadable", "no_account", "other_account"]),
+  message: Schema.String,
+}) {}
+
 type ClaimError =
   | Effect.Error<ReturnType<typeof claimTailscaleServe>>
-  | Effect.Error<ReturnType<typeof releaseTailscaleServe>>
-  | PlatformError.PlatformError;
+  | Effect.Error<ReturnType<typeof readTailscaleStatus>>
+  | PlatformError.PlatformError
+  | ServeRecordError;
 
 // Serve is often refused only for now: Tailscale still starting at login, the
 // operator or HTTPS certs not yet granted, or another server on the port.
@@ -35,7 +45,7 @@ const remedyFor = (cause: ClaimError, manualCommand: string) => {
   if (cause._tag === "TailscaleServeOccupiedError") {
     return "Another server holds this port. T3 Code leaves it alone and takes over once it stops.";
   }
-  if (cause._tag === "PlatformError") {
+  if (cause._tag === "PlatformError" || cause._tag === "ServeRecordError") {
     return "Could not save the record that lets a later run remove the mapping, so Serve waits until it can.";
   }
   switch (cause._tag === "TailscaleCommandExitError" ? cause.stderrDiagnostic : undefined) {
@@ -49,35 +59,70 @@ const remedyFor = (cause: ClaimError, manualCommand: string) => {
 };
 
 /**
- * The mapping this server set up, kept until it is removed. A run with Serve off removes
- * one that is left, such as when Tailscale was down as the last run stopped.
+ * The mapping this T3 home set up, per Tailscale account, since each account keeps its own
+ * Serve config. A run with Serve off removes the current account's, such as one left when
+ * Tailscale was down as the last run stopped.
  */
-const CLAIM_FILE = "tailscale-serve-claim.json";
-const ServeClaim = Schema.fromJsonString(
-  Schema.Struct({ localPort: Schema.Number, localHost: Schema.String, servePort: Schema.Number }),
-);
-type ServeClaim = typeof ServeClaim.Type;
-const encodeClaim = Schema.encodeEffect(ServeClaim);
-const decodeClaim = Schema.decodeUnknownEffect(ServeClaim);
-const sameTarget = (a: ServeClaim, b: ServeClaim) =>
+const RECORD_FILE = "tailscale-serve-claim.json";
+const ServeTarget = Schema.Struct({
+  localPort: Schema.Number,
+  localHost: Schema.String,
+  servePort: Schema.Number,
+});
+type ServeTarget = typeof ServeTarget.Type;
+const ServeRecords = Schema.fromJsonString(Schema.Record(Schema.String, ServeTarget));
+type ServeRecords = typeof ServeRecords.Type;
+const NO_RECORDS: ServeRecords = {};
+const encodeRecords = Schema.encodeEffect(ServeRecords);
+const decodeRecords = Schema.decodeUnknownEffect(ServeRecords);
+const sameTarget = (a: ServeTarget, b: ServeTarget) =>
   a.localPort === b.localPort && a.localHost === b.localHost && a.servePort === b.servePort;
-const readClaim = (fs: FileSystem.FileSystem, claimPath: string) =>
-  fs.readFileString(claimPath).pipe(Effect.flatMap(decodeClaim), Effect.option);
-// Serve waits for the record, so a crash never leaves a mapping that nothing removes.
-const writeClaim = (
-  fs: FileSystem.FileSystem,
-  stateDir: string,
-  claimPath: string,
-  claim: ServeClaim,
-) =>
-  encodeClaim(claim).pipe(
-    Effect.orDie,
-    Effect.flatMap((json) =>
-      fs
-        .makeDirectory(stateDir, { recursive: true })
-        .pipe(Effect.andThen(fs.writeFileString(claimPath, json))),
+
+const recordPath = Effect.fn("TailscaleServe.recordPath")(function* (stateDir: string) {
+  return (yield* Path.Path).join(stateDir, RECORD_FILE);
+});
+
+const readRecords = Effect.fn("TailscaleServe.readRecords")(function* (stateDir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* recordPath(stateDir);
+  if (!(yield* fs.exists(path))) return NO_RECORDS;
+  return yield* fs.readFileString(path).pipe(
+    Effect.flatMap(decodeRecords),
+    Effect.mapError(
+      () =>
+        new ServeRecordError({
+          reason: "unreadable",
+          message: `The Tailscale Serve record at ${path} could not be read. Check \`tailscale serve status\`, then delete the file.`,
+        }),
     ),
   );
+});
+
+// Written to a temporary file and renamed, so a crash never leaves half a record.
+const writeRecords = Effect.fn("TailscaleServe.writeRecords")(function* (
+  stateDir: string,
+  records: ServeRecords,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* recordPath(stateDir);
+  if (Object.keys(records).length === 0) return yield* fs.remove(path, { force: true });
+  const json = yield* encodeRecords(records).pipe(Effect.orDie);
+  yield* fs.makeDirectory(stateDir, { recursive: true });
+  yield* fs.writeFileString(`${path}.tmp`, json);
+  yield* fs.rename(`${path}.tmp`, path);
+});
+
+/** The Tailscale account (this machine's node) whose Serve config is live now. */
+const currentAccount = Effect.fn("TailscaleServe.currentAccount")(function* () {
+  const { selfNodeId } = yield* readTailscaleStatus("active");
+  if (selfNodeId === null) {
+    return yield* new ServeRecordError({
+      reason: "no_account",
+      message: "Tailscale named no account here.",
+    });
+  }
+  return selfNodeId;
+});
 
 const failureKey = (cause: ClaimError) =>
   cause._tag === "TailscaleCommandExitError" ? `exit:${cause.stderrDiagnostic}` : cause._tag;
@@ -111,26 +156,26 @@ export const layer = (options: {
         localHost: loopbackUrlHostForAddress(address),
       };
       const logContext = { localPort: target.localPort, servePort: target.servePort };
-      const fs = yield* FileSystem.FileSystem;
-      const claimPath = (yield* Path.Path).join(options.stateDir, CLAIM_FILE);
       const manualCommand = `tailscale serve --bg --https=${target.servePort} http://${target.localHost}:${target.localPort}`;
-      // A record for another target is a mapping an earlier run left, so it is removed
-      // first, and only while Serve still points there.
-      const previous = yield* Ref.make(
-        Option.filter(yield* readClaim(fs, claimPath), (claim) => !sameTarget(claim, target)),
-      );
-      const recorded = yield* Ref.make(false);
+      // The account this run's mapping is recorded under, once it is.
+      const account = yield* Ref.make<string | null>(null);
+      // An earlier run's mapping on this account that must go before this one is recorded.
+      const releasing = yield* Ref.make<ServeTarget | null>(null);
       // Added before the retry fiber is forked, so it runs after that fiber is interrupted.
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
-          if (!(yield* Ref.get(recorded))) return;
+          const recordedUnder = yield* Ref.get(account);
+          if (recordedUnder === null) return;
+          // After a switch to another account, the mapping is not visible, so its record stays.
+          if ((yield* currentAccount()) !== recordedUnder) return;
           const released = yield* releaseTailscaleServe(target).pipe(
             Effect.tapError((cause) =>
               Effect.logWarning("Failed to disable Tailscale Serve", { cause, ...logContext }),
             ),
           );
           if (released) yield* Effect.logInfo("Tailscale Serve disabled", logContext);
-          yield* fs.remove(claimPath, { force: true });
+          const { [recordedUnder]: _ours, ...rest } = yield* readRecords(options.stateDir);
+          yield* writeRecords(options.stateDir, rest);
         }).pipe(
           Effect.catch((cause) =>
             Effect.logDebug("Left the Tailscale Serve record for the next run", { cause }),
@@ -143,16 +188,24 @@ export const layer = (options: {
       // between the two would leave it behind with nothing to remove it.
       // Shutdown waits for the commands' own timeouts instead.
       const attempt = Effect.gen(function* () {
-        const pending = yield* Ref.get(previous);
-        if (Option.isSome(pending)) {
-          yield* releaseTailscaleServe(pending.value);
-          yield* Ref.set(previous, Option.none());
-        }
         // Recorded before the claim, since a claim can apply the mapping and still fail.
         // Release removes only a root that points here, so it is safe when none landed.
-        if (!(yield* Ref.get(recorded))) {
-          yield* writeClaim(fs, options.stateDir, claimPath, target);
-          yield* Ref.set(recorded, true);
+        if ((yield* Ref.get(account)) === null) {
+          const now = yield* currentAccount();
+          const records = yield* readRecords(options.stateDir).pipe(
+            Effect.catchTags({
+              ServeRecordError: (error) =>
+                Effect.logWarning(error.message).pipe(Effect.as(NO_RECORDS)),
+            }),
+          );
+          const earlier = records[now];
+          if (earlier !== undefined && !sameTarget(earlier, target)) {
+            yield* Ref.set(releasing, earlier);
+            yield* releaseTailscaleServe(earlier);
+            yield* Ref.set(releasing, null);
+          }
+          yield* writeRecords(options.stateDir, { ...records, [now]: target });
+          yield* Ref.set(account, now);
         }
         yield* claimTailscaleServe(target);
       }).pipe(
@@ -164,10 +217,10 @@ export const layer = (options: {
             const repeated = key === lastFailure;
             lastFailure = key;
             const log = repeated ? Effect.logDebug : Effect.logWarning;
-            const pending = yield* Ref.get(previous);
+            const earlier = yield* Ref.get(releasing);
             yield* log(
-              Option.isSome(pending)
-                ? `Could not remove the Tailscale Serve mapping an earlier run left on port ${pending.value.servePort}, so Serve waits. Retrying in the background.`
+              earlier !== null
+                ? `Could not remove the Tailscale Serve mapping an earlier run left on port ${earlier.servePort}, so Serve waits. Retrying in the background.`
                 : `Failed to configure Tailscale Serve. ${remedyFor(cause, manualCommand)} Retrying in the background.`,
               { cause, ...logContext },
             );
@@ -180,40 +233,58 @@ export const layer = (options: {
     }),
   );
 
+/** Whether an earlier run left a Serve record here. */
+export const hasRecord = Effect.fn("TailscaleServe.hasRecord")(function* (stateDir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.exists(yield* recordPath(stateDir));
+});
+
 /**
- * Removes the Serve mapping an earlier run recorded, while Serve still points there, then
- * its record. Returns whether a mapping was removed.
+ * Removes the Serve mapping an earlier run recorded for the current Tailscale account, while
+ * Serve still points there, then its record. Records for other accounts stay.
  */
 export const releaseRecorded = Effect.fn("TailscaleServe.releaseRecorded")(function* (
   stateDir: string,
 ) {
-  const fs = yield* FileSystem.FileSystem;
-  const claimPath = (yield* Path.Path).join(stateDir, CLAIM_FILE);
-  const claim = yield* readClaim(fs, claimPath);
-  if (Option.isNone(claim)) return false;
-  const released = yield* releaseTailscaleServe(claim.value);
-  yield* fs.remove(claimPath, { force: true });
-  return released;
+  const records = yield* readRecords(stateDir);
+  if (Object.keys(records).length === 0) return { released: false, otherAccounts: 0 };
+  const now = yield* currentAccount();
+  const { [now]: ours, ...rest } = records;
+  const released = ours === undefined ? false : yield* releaseTailscaleServe(ours);
+  yield* writeRecords(stateDir, rest);
+  return { released, otherAccounts: Object.keys(rest).length };
 });
 
 /**
- * With Serve off, removes the mapping an earlier run set up but could not remove, and
- * retries until Tailscale answers. Does nothing when no such mapping was recorded.
+ * With Serve off, removes the mappings earlier runs set up but could not remove. Retries
+ * until Tailscale answers, and until a record left on another account can be removed too.
  */
 export const layerReleaseLeftover = (options: { readonly stateDir: string }) =>
   Layer.effectDiscard(
     releaseRecorded(options.stateDir).pipe(
-      Effect.tapError((cause) =>
-        Effect.logDebug("Tailscale did not answer; retrying the leftover Serve removal", {
-          cause,
-        }),
-      ),
-      Effect.retry(leftoverSchedule),
-      Effect.tap((released) =>
+      Effect.tap(({ released }) =>
         released
           ? Effect.logInfo("Removed the Tailscale Serve mapping left from when Serve was on")
           : Effect.void,
       ),
+      Effect.flatMap(({ otherAccounts }) =>
+        otherAccounts > 0
+          ? Effect.fail(
+              new ServeRecordError({
+                reason: "other_account",
+                message: "A Serve mapping is recorded for another Tailscale account.",
+              }),
+            )
+          : Effect.void,
+      ),
+      Effect.tapError((cause) =>
+        Effect.logDebug("Retrying the leftover Tailscale Serve removal", { cause }),
+      ),
+      Effect.retry({
+        schedule: leftoverSchedule,
+        // An unreadable record stays unreadable, so it is reported once.
+        while: (error) => error._tag !== "ServeRecordError" || error.reason !== "unreadable",
+      }),
       Effect.catch((cause) =>
         Effect.logWarning("Could not remove the leftover Tailscale Serve record", { cause }),
       ),

@@ -23,6 +23,8 @@ vi.mock("@t3tools/tailscale", async (importOriginal) => ({
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as ServerOwnership from "../serverOwnership.ts";
 import { upsertServiceEnv } from "./service.ts";
 import { connectEnabled, planRoutes, resolveOwner, upCommand, upPortCheck } from "./up.ts";
 
@@ -198,8 +200,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     readonly tailscale?: Tailscale.TailscaleStatus;
     /** A server started by hand runs for this T3 home. */
     readonly handStarted?: boolean;
-    /** A stopped server left a Serve mapping record. */
-    readonly serveRecord?: boolean;
+    /** A stopped server left this Serve mapping record. */
+    readonly serveRecord?: string;
+    /** A server holds the T3 home's lock. */
+    readonly serverHoldsLock?: boolean;
     /** `t3 up` exits with an error. */
     readonly fails?: boolean;
     /** Runs as if in a terminal, answering each question with this text. */
@@ -393,7 +397,33 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       label: "with nothing running, a Serve mapping a stopped server left is removed",
       prints: "Removed a Tailscale Serve mapping an earlier run left.",
       installed: false,
-      serveRecord: true,
+      tailscale: TAGGED_HOST,
+      serveRecord: `{"n1":{"localPort":3773,"localHost":"127.0.0.1","servePort":443}}`,
+      env: "",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      label: "an unreadable Serve record is reported, not called off",
+      prints: "could not be read",
+      fails: true,
+      installed: false,
+      serveRecord: "{",
+      env: "",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      // The server owns its Serve mapping, so cleanup waits for it to stop.
+      label: "a server that started after the check keeps its Serve record",
+      prints: "T3 Code is running here outside the background service",
+      installed: false,
+      serverHoldsLock: true,
+      serveRecord: `{"n1":{"localPort":3773,"localHost":"127.0.0.1","servePort":443}}`,
       env: "",
       args: ["--no-tailscale"],
       installs: 0,
@@ -438,13 +468,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-up-test-" });
       yield* fs.writeFileString(`${baseDir}/service.env`, input.env);
-      if (input.serveRecord === true) {
+      if (input.serveRecord !== undefined) {
         yield* fs.makeDirectory(`${baseDir}/userdata`, { recursive: true });
         yield* fs.writeFileString(
           `${baseDir}/userdata/tailscale-serve-claim.json`,
-          `{"localPort":3773,"localHost":"127.0.0.1","servePort":443}`,
+          input.serveRecord,
         );
         vi.spyOn(Tailscale, "releaseTailscaleServe").mockReturnValue(Effect.succeed(true));
+      }
+      if (input.serverHoldsLock === true) {
+        yield* ServerOwnership.acquireServerOwnership(
+          `${baseDir}/userdata/server-runtime.json`,
+        ).pipe(Effect.provide(ProcessRunner.layer));
       }
       if (input.handStarted === true) {
         yield* fs.makeDirectory(`${baseDir}/userdata`, { recursive: true });

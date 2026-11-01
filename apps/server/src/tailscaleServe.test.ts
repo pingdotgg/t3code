@@ -42,6 +42,8 @@ interface FakeOptions {
   readonly recorded?: string;
   /** Writing the claim record fails, as on a read-only state dir. */
   readonly recordFails?: boolean;
+  /** The Tailscale account (node ID) that is live. */
+  readonly account?: string;
 }
 
 // Stands in for the tailscale CLI and keeps the Serve root like the daemon does.
@@ -53,6 +55,7 @@ const makeFakeTailscale = (options: FakeOptions) => {
     root: options.heldBy ?? null,
     otherRoot: options.heldOnOtherPort ?? null,
     statusFailurePending: false,
+    account: options.account ?? "n1",
   };
   // Completes when the daemon takes the mapping, before the CLI exits.
   const mappingApplied = Deferred.makeUnsafe<void>();
@@ -77,6 +80,12 @@ const makeFakeTailscale = (options: FakeOptions) => {
     args: ReadonlyArray<string>,
   ): { code: number; stdout?: string; stderr?: string; ackDelay?: Duration.Input } | undefined => {
     const command = args.join(" ");
+    if (command === "status --json") {
+      return {
+        code: 0,
+        stdout: JSON.stringify({ BackendState: "Running", Self: { ID: state.account } }),
+      };
+    }
     if (command === "serve status --json") {
       state.statusCalls += 1;
       if (state.statusCalls <= (options.statusFailures ?? 0) || state.statusFailurePending) {
@@ -138,6 +147,8 @@ const makeFakeTailscale = (options: FakeOptions) => {
 
 const STATE_DIR = "/state";
 const CLAIM_PATH = "/state/tailscale-serve-claim.json";
+const record = (localPort: number, servePort: number, account = "n1") =>
+  JSON.stringify({ [account]: { localPort, localHost: "127.0.0.1", servePort } });
 
 // In memory, so writes land within the test clock's steps.
 const memoryFileSystem = (files: Map<string, string>, writeFails = false) => {
@@ -152,6 +163,13 @@ const memoryFileSystem = (files: Map<string, string>, writeFails = false) => {
         ? missing.writeFileString(path, data)
         : Effect.sync(() => void files.set(path, data)),
     makeDirectory: () => Effect.void,
+    exists: (path) => Effect.succeed(files.has(path)),
+    rename: (from, to) =>
+      Effect.sync(() => {
+        const contents = files.get(from);
+        if (contents !== undefined) files.set(to, contents);
+        files.delete(from);
+      }),
     remove: (path) => Effect.sync(() => void files.delete(path)),
   });
 };
@@ -254,7 +272,7 @@ describe("TailscaleServe", () => {
     Effect.gen(function* () {
       const { state, settled, files } = yield* startTailscaleServe({
         heldOnOtherPort: LOCAL_TARGET,
-        recorded: `{"localPort":18638,"localHost":"127.0.0.1","servePort":${OTHER_PORT}}`,
+        recorded: record(18638, OTHER_PORT),
       });
       yield* Deferred.await(settled);
 
@@ -266,7 +284,7 @@ describe("TailscaleServe", () => {
 
   it.effect("keeps the record of an older local port until its mapping is removed", () =>
     Effect.gen(function* () {
-      const older = `{"localPort":18637,"localHost":"127.0.0.1","servePort":${SERVE_PORT}}`;
+      const older = record(18637, SERVE_PORT);
       const { scope, settled, files } = yield* startTailscaleServe({
         heldBy: "http://127.0.0.1:18637",
         recorded: older,
@@ -294,9 +312,7 @@ describe("TailscaleServe", () => {
   it.effect("with Serve off, removes a mapping a stopped run left, once Tailscale answers", () =>
     Effect.gen(function* () {
       const fake = makeFakeTailscale({ heldBy: LOCAL_TARGET, statusFailures: 2 });
-      const files = new Map([
-        [CLAIM_PATH, `{"localPort":18638,"localHost":"127.0.0.1","servePort":${SERVE_PORT}}`],
-      ]);
+      const files = new Map([[CLAIM_PATH, record(18638, SERVE_PORT)]]);
       const scope = yield* Scope.make();
       yield* Layer.buildWithScope(
         TailscaleServe.layerReleaseLeftover({ stateDir: STATE_DIR }).pipe(
@@ -310,6 +326,44 @@ describe("TailscaleServe", () => {
       assert.equal(fake.state.root, null);
       assert.isFalse(files.has(CLAIM_PATH));
       yield* Scope.close(scope, Exit.void);
+    }),
+  );
+
+  // Each Tailscale account keeps its own Serve config, so the mapping is only visible there.
+  it.effect("with Serve off, keeps another account's record until Tailscale switches to it", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeTailscale({ heldBy: LOCAL_TARGET, account: "work" });
+      const files = new Map([[CLAIM_PATH, record(18638, SERVE_PORT, "personal")]]);
+      const scope = yield* Scope.make();
+      yield* Layer.buildWithScope(
+        TailscaleServe.layerReleaseLeftover({ stateDir: STATE_DIR }).pipe(
+          Layer.provide(fakeLayers(fake, files)),
+        ),
+        scope,
+      );
+      yield* TestClock.adjust("1 minute");
+      assert.equal(fake.state.releases, 0);
+      assert.isTrue(files.has(CLAIM_PATH));
+
+      fake.state.account = "personal";
+      yield* TestClock.adjust("10 minutes");
+
+      assert.equal(fake.state.releases, 1);
+      assert.isFalse(files.has(CLAIM_PATH));
+      yield* Scope.close(scope, Exit.void);
+    }),
+  );
+
+  it.effect("keeps its record on shutdown after Tailscale switched to another account", () =>
+    Effect.gen(function* () {
+      const { state, scope, settled, files } = yield* startTailscaleServe();
+      yield* Deferred.await(settled);
+      state.account = "work";
+
+      yield* Scope.close(scope, Exit.void);
+
+      assert.equal(state.releases, 0);
+      assert.equal(files.get(CLAIM_PATH), record(18638, SERVE_PORT));
     }),
   );
 
