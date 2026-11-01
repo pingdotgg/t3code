@@ -2,7 +2,7 @@ export type CloneProtocol = "ssh" | "https";
 
 const SCP_LIKE_URL = /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)(.+)$/;
 const SSH_URL = /^ssh:\/\/(?:[^@/\s]+@)?([^:/\s]+)(:\d+)?\/(.+)$/;
-const HTTPS_URL = /^https?:\/\/(?:[^@/\s]+@)?([^:/\s]+)(:\d+)?\/(.+)$/;
+const HTTPS_URL = /^https?:\/\/(?:[^/\s]+@)?([^:/\s]+)(:\d+)?\/(.+)$/;
 
 function parseCloneUrl(
   url: string,
