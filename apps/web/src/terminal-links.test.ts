@@ -187,6 +187,25 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
+  it.each([
+    "connected to redis://127.0.0.1:6379/0",
+    "connected to postgres://localhost:5432/app",
+    "uploaded s3://bucket/reports/today.csv",
+    "    at main (file:///Users/jane/app/src/index.mjs:3:7)",
+    "+redis://localhost:6379/0",
+    "-redis://localhost:6379/0",
+  ])("does not turn part of a non-web URL into an editor link: %s", (line) => {
+    expect(extractTerminalLinks(line)).toEqual([]);
+  });
+
+  it("keeps file links beside a non-web URL", () => {
+    const line = "src/db.ts:4 redis://localhost:6379/0 C:/app/src/db.ts:9";
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "path", text: "src/db.ts:4", start: 0, end: 11 },
+      { kind: "path", text: "C:/app/src/db.ts:9", start: 37, end: 55 },
+    ]);
+  });
+
   it("keeps a question mark inside a filesystem path", () => {
     const path = "/tmp/report?draft";
     expect(extractTerminalLinks(`wrote ${path}`)).toEqual([
