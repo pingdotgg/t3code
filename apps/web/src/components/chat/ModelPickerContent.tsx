@@ -638,7 +638,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return [...available, ...disabled];
   })();
   const showSidebar = !isSearching && sidebarInstanceEntries.length > 0;
-  const instanceOrder = instanceEntries.map((entry) => entry.instanceId);
 
   const filteredModels = (() => {
     let result = flatModels;
@@ -670,9 +669,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
 
     return sortProviderModelItems(result, {
+      favoriteModelOrder:
+        selectedInstanceId === "favorites"
+          ? favorites.map((favorite) => providerModelKey(favorite.provider, favorite.model))
+          : [],
       favoriteModelKeys: favoritesSet,
       groupFavorites: selectedInstanceId !== "favorites",
-      instanceOrder: selectedInstanceId === "favorites" ? instanceOrder : [],
     });
   })();
 
