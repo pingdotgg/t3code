@@ -40,14 +40,18 @@ export function deriveEmptyState(props: {
     };
   }
 
-  if (
-    catalogState.hasConnectingEnvironment &&
-    !catalogState.hasLoadedShellSnapshot &&
-    catalogState.connectionError === null
-  ) {
+  if (catalogState.hasConnectingEnvironment && !catalogState.hasLoadedShellSnapshot) {
     return {
       title: "Connecting to environment",
       detail: "Loading projects and threads from the saved environment.",
+      loading: true,
+    };
+  }
+
+  if (catalogState.hasPendingShellSnapshot && !catalogState.hasLoadedShellSnapshot) {
+    return {
+      title: "Loading threads",
+      detail: "Loading projects and threads from the connected environment.",
       loading: true,
     };
   }
