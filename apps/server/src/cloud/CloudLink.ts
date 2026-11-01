@@ -31,6 +31,7 @@ import {
 } from "@t3tools/contracts/relay";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
+  decodeRelayJwt,
   normalizeRelayIssuer,
   RELAY_HEALTH_REQUEST_TYP,
   RELAY_HEALTH_RESPONSE_TYP,
@@ -600,16 +601,22 @@ const make = Effect.gen(function* () {
       return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
     }
     const now = yield* DateTime.now;
-    const expiresAt = DateTime.add(now, { minutes: 5 });
     const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
+    // Borrow only the relay clock; the relay still verifies and consumes the challenge.
+    const issuedAt = yield* Effect.try(() => decodeRelayJwt(request.challenge)).pipe(
+      Effect.map(({ iat }) =>
+        typeof iat === "number" && Number.isSafeInteger(iat) && iat > 0 ? iat : nowSeconds,
+      ),
+      Effect.orElseSucceed(() => nowSeconds),
+    );
     const descriptor = yield* environment.getDescriptor;
     const payload = {
       iss: `t3-env:${descriptor.environmentId}`,
       aud: normalizeRelayIssuer(request.relayIssuer),
       sub: descriptor.environmentId,
       jti: yield* crypto.randomUUIDv4(),
-      iat: nowSeconds,
-      exp: Math.floor(expiresAt.epochMilliseconds / 1_000),
+      iat: issuedAt,
+      exp: issuedAt + 5 * 60,
       challenge: request.challenge,
       descriptor,
       environmentId: descriptor.environmentId,

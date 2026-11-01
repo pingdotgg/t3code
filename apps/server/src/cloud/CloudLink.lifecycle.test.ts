@@ -8,10 +8,24 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse, HttpServer, type HttpClientRequest } from "effect/http";
+import * as TestClock from "effect/testing/TestClock";
+import {
+  HttpClient,
+  HttpClientResponse,
+  HttpServer,
+  HttpServerRequest,
+  type HttpClientRequest,
+} from "effect/http";
+import { exportPKCS8, exportSPKI, generateKeyPair } from "jose";
+import { RELAY_LINK_PROOF_TYP, signRelayJwt, verifyRelayJwt } from "@t3tools/shared/relayJwt";
 import * as NetAddress from "effect/net/NetAddress";
 
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthSessionId,
+  type AuthEnvironmentScope,
+  EnvironmentAuthenticatedPrincipal,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfigModule from "../config.ts";
@@ -41,6 +55,7 @@ import * as CloudLink from "./CloudLink.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
 import { consumeCloudReplayGuards } from "./CloudLink.ts";
 import { pendingServiceUpdateExists } from "./updateHandoff.ts";
+import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 import { managedTunnelStartupAction } from "./managedTunnelStartup.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
@@ -177,7 +192,13 @@ describe("releaseManagedTunnelOnShutdown", () => {
           ServerEnvironment.ServerEnvironment,
           ServerEnvironment.ServerEnvironment.of({
             getEnvironmentId: Effect.succeed(EnvironmentId.make("env_123")),
-            getDescriptor: Effect.die("unused"),
+            getDescriptor: Effect.succeed({
+              environmentId: EnvironmentId.make("env_123"),
+              label: "Test environment",
+              platform: { os: "linux", arch: "x64" },
+              serverVersion: "0.0.0-test",
+              capabilities: { repositoryIdentity: true },
+            }),
           }),
         ),
         Effect.provideService(
@@ -241,6 +262,96 @@ describe("releaseManagedTunnelOnShutdown", () => {
         ),
         Effect.scoped,
       );
+
+  it.effect.each([
+    { direction: "ahead", skewSeconds: 600 },
+    { direction: "behind", skewSeconds: -600 },
+  ])(
+    "signs a link proof accepted at relay time when the host clock is $direction",
+    ({ skewSeconds }) => {
+      const { store } = makeMemorySecretStore();
+
+      return Effect.gen(function* () {
+        const relayNow = 1_800_000_000;
+        const relayIssuer = "https://relay.example.test";
+        const relayKeys = yield* Effect.promise(async () => {
+          const { privateKey, publicKey } = await generateKeyPair("EdDSA", { extractable: true });
+          return {
+            privateKey: await exportPKCS8(privateKey),
+            publicKey: await exportSPKI(publicKey),
+          };
+        });
+        const challenge = yield* signRelayJwt({
+          privateKey: relayKeys.privateKey,
+          typ: "t3-link-challenge+jwt",
+          payload: {
+            kind: "environment_link_challenge",
+            iss: relayIssuer,
+            aud: relayIssuer,
+            sub: "user-123",
+            jti: "challenge-jti",
+            iat: relayNow,
+            exp: relayNow + 300,
+            notificationsEnabled: true,
+            liveActivitiesEnabled: false,
+            managedTunnelsEnabled: false,
+          },
+        });
+        yield* verifyRelayJwt({
+          publicKey: relayKeys.publicKey,
+          token: challenge,
+          typ: "t3-link-challenge+jwt",
+          issuer: relayIssuer,
+          audience: relayIssuer,
+          nowEpochSeconds: relayNow,
+        });
+
+        yield* TestClock.setTime((relayNow + skewSeconds) * 1_000);
+        const link = yield* CloudLink.CloudLink;
+        const proof = yield* link
+          .linkProof(
+            {
+              challenge,
+              relayIssuer,
+              endpoint: {
+                httpBaseUrl: "http://127.0.0.1:3773",
+                wsBaseUrl: "ws://127.0.0.1:3773",
+                providerKind: "manual",
+              },
+              origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+            },
+            HttpServerRequest.fromWeb(
+              new Request("http://127.0.0.1:3773/api/t3-connect/link-proof"),
+            ),
+          )
+          .pipe(
+            Effect.provideService(EnvironmentAuthenticatedPrincipal, {
+              sessionId: AuthSessionId.make("test-session"),
+              subject: "test",
+              method: "bearer-access-token",
+              scopes: new Set<AuthEnvironmentScope>(),
+            }),
+          );
+        const environmentKeys = yield* getOrCreateEnvironmentKeyPairFromSecretStore(store);
+        const verified = yield* verifyRelayJwt({
+          publicKey: environmentKeys.publicKey,
+          token: proof,
+          typ: RELAY_LINK_PROOF_TYP,
+          issuer: "t3-env:env_123",
+          audience: relayIssuer,
+          nowEpochSeconds: relayNow,
+        });
+
+        expect(verified).toMatchObject({
+          iat: relayNow,
+          exp: relayNow + 300,
+          challenge,
+          environmentId: "env_123",
+          scopes: ["agent_activity_notifications"],
+        });
+      }).pipe(provideReleaseHarness({ store, applyConfigCalls: [], requests: [] }));
+    },
+  );
 
   const managedLinkSecrets = [
     [CLOUD_ENDPOINT_RUNTIME_CONFIG, "runtime-config"],
