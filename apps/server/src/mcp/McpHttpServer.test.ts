@@ -146,7 +146,7 @@ const callSnapshot = (args: Record<string, unknown>) => callTool("preview_snapsh
 it.effect.each([
   { input: {}, open: false, message: "No device is open in this thread. Call device_open first." },
   {
-    input: { deviceId: "missing", hostId: "local" },
+    input: { deviceId: "missing" },
     open: false,
     message: "Device missing is not open in this thread. Call device_open first.",
   },
