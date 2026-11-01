@@ -12,6 +12,7 @@ import type { FoundationHotModule } from "../lib/foundation-fast-refresh";
 import { hotSwappableAtomRuntime } from "../lib/hot-swappable-atom-runtime";
 import * as Runtime from "../lib/runtime";
 import { appAtomRegistry } from "../state/atom-registry";
+import * as FocusFilter from "../features/focus-filter/focusFilter";
 import * as BackgroundActivity from "./background-activity";
 import * as ConnectionPlatform from "./platform";
 
@@ -32,11 +33,16 @@ type ConnectionLayerSource =
   | typeof Runtime.layer
   | typeof ConnectionPlatform.layer
   | typeof BackgroundActivity.layerObserver
-  | typeof BackgroundActivity.layerReporter;
+  | typeof BackgroundActivity.layerReporter
+  | typeof FocusFilter.layer;
 
 const layerProvidedClientConnection = layerSnapshotLoader.pipe(
   Layer.provideMerge(
-    Connection.layerWithOptions({ usageLimitSources: true, usageLimitsCommand: true }),
+    Connection.layerWithOptions({
+      usageLimitSources: true,
+      usageLimitsCommand: true,
+      initialFocusAllowlist: FocusFilter.initialAllowlist,
+    }),
   ),
   Layer.provideMerge(
     Layer.mergeAll(
@@ -47,7 +53,7 @@ const layerProvidedClientConnection = layerSnapshotLoader.pipe(
   ),
 );
 
-const layerConnection = BackgroundActivity.layerReporter.pipe(
+const layerConnection = Layer.mergeAll(BackgroundActivity.layerReporter, FocusFilter.layer).pipe(
   Layer.provideMerge(layerProvidedClientConnection),
 );
 

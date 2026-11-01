@@ -20,7 +20,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/reactivity";
 
-import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
+import type { ConnectionCatalogEntry, FocusAllowlist } from "../connection/catalog.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -126,6 +126,7 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
       new Map(),
     ),
     networkStatus: yield* SubscriptionRef.make<NetworkStatus>("online"),
+    focusAllowlist: yield* SubscriptionRef.make<FocusAllowlist>(null),
     start: Effect.void,
     register: () => Effect.die("Unexpected environment registration"),
     assertKnownAddress: () => Effect.die("Unexpected address check"),
@@ -136,6 +137,7 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
     removeRelayEnvironments: () => Effect.die("Unexpected environment removal"),
     retryNow: () => Effect.void,
     setEnabled: () => Effect.die("Unexpected environment toggle"),
+    setFocusAllowlist: () => Effect.die("Unexpected Focus allowlist update"),
     setCompatibility: () => Effect.die("Unexpected compatibility update"),
     state: () => SubscriptionRef.get(supervisor.state),
     stateChanges: () => SubscriptionRef.changes(supervisor.state),

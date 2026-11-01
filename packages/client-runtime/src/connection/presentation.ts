@@ -31,6 +31,8 @@ export interface EnvironmentPresentation {
   readonly entry: ConnectionCatalogEntry;
   readonly connection: EnvironmentConnectionPresentation;
   readonly serverConfig: EnvironmentServerConfig | null;
+  /** Switched on, but an iOS Focus filter leaves it out. */
+  readonly pausedByFocus: boolean;
 }
 
 export function presentConnectionState(

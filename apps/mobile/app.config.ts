@@ -465,6 +465,9 @@ const config: ExpoConfig = {
   experiments: {
     // Metro only runs babel-plugin-react-compiler when this is set; see src/reactCompilerCoverage.test.ts.
     reactCompiler: true,
+    // The Focus filter intent must compile into the app target: App Intents metadata extraction
+    // skips CocoaPods pods.
+    inlineModules: { watchedDirectories: ["focus-filter"] },
   },
 };
 

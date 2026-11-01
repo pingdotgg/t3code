@@ -29,6 +29,7 @@ function presentation(): EnvironmentPresentation {
     },
     connection: { phase: "connected", error: null, traceId: null },
     serverConfig: null,
+    pausedByFocus: false,
   };
 }
 function harness() {
