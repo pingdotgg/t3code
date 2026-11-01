@@ -201,13 +201,9 @@ describe("resolveThreadFeedLiveFollow", () => {
 });
 
 describe("shouldShowThreadFeedScrollToEnd", () => {
-  it("stays hidden while a drag at the end pauses follow", () => {
-    const endFollowEnabled = resolveThreadFeedLiveFollow(true, { type: "user-scroll-begin" });
-    expect(shouldShowThreadFeedScrollToEnd({ endFollowEnabled, isAtEnd: true })).toBe(false);
-  });
-
   it.each([
     { endFollowEnabled: false, isAtEnd: false, expected: true },
+    { endFollowEnabled: false, isAtEnd: true, expected: false },
     { endFollowEnabled: true, isAtEnd: false, expected: false },
     { endFollowEnabled: true, isAtEnd: true, expected: false },
   ])("shows only when follow is paused away from the end: %j", ({ expected, ...state }) => {
