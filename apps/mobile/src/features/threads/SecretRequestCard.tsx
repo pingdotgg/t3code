@@ -20,6 +20,7 @@ import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../../components/ui/Button";
+import { IconButton } from "../../components/ui/IconButton";
 
 const LOCK_SYMBOL: AppSymbolName = { ios: "lock", android: "lock" };
 const PRIVATE_SYMBOL: AppSymbolName = { ios: "checkmark.shield", android: "lock" };
@@ -70,6 +71,7 @@ function PendingSecretRequestForm(props: {
     reportDefect: false,
   });
   const [secret, setSecret] = useState("");
+  const [revealed, setRevealed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Submit then a tap can both run before a re-render; this guard is synchronous.
@@ -89,6 +91,7 @@ function PendingSecretRequestForm(props: {
     });
     if (result._tag === "Success") {
       setSecret("");
+      setRevealed(false);
       return;
     }
     if (!isAtomCommandInterrupted(result)) {
@@ -106,22 +109,33 @@ function PendingSecretRequestForm(props: {
           </Text>
         ) : null}
       </View>
-      <TextInput
-        accessibilityLabel={item.label}
-        placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
-        value={secret}
-        onChangeText={setSecret}
-        editable={!submitting}
-        secureTextEntry
-        autoCorrect={false}
-        autoCapitalize="none"
-        autoComplete="off"
-        textContentType="none"
-        importantForAutofill="no"
-        spellCheck={false}
-        returnKeyType="done"
-        onSubmitEditing={() => void send({ type: "save", secret })}
-      />
+      <View className="flex-row items-center gap-2">
+        <View className="min-w-0 flex-1">
+          <TextInput
+            accessibilityLabel={item.label}
+            placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
+            value={secret}
+            onChangeText={setSecret}
+            editable={!submitting}
+            secureTextEntry={!revealed}
+            autoCorrect={false}
+            autoCapitalize="none"
+            autoComplete="off"
+            textContentType="none"
+            importantForAutofill="no"
+            spellCheck={false}
+            returnKeyType="done"
+            onSubmitEditing={() => void send({ type: "save", secret })}
+          />
+        </View>
+        <IconButton
+          accessibilityLabel={revealed ? "Hide secret" : "Show secret"}
+          icon={revealed ? "eye.slash" : "eye"}
+          selected={revealed}
+          disabled={submitting}
+          onPress={() => setRevealed((current) => !current)}
+        />
+      </View>
       {error !== null ? (
         <Text
           accessibilityRole="alert"
