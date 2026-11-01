@@ -274,6 +274,7 @@ function makeLocalCommandHarness(input: {
   readonly fileSystem?: FileSystem.FileSystem;
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
+  readonly createdBy?: "agent" | "system";
   readonly logoutFailure?: string;
   readonly openFailure?: unknown;
   readonly ensureThreadFailure?: unknown;
@@ -356,8 +357,8 @@ function makeLocalCommandHarness(input: {
     text: input.text,
     attachments: [],
     streaming: false,
-    createdBy: "user",
-    creationSource: "web",
+    createdBy: input.createdBy ?? "user",
+    creationSource: input.createdBy === undefined ? "web" : "mcp",
     createdAt: now,
     updatedAt: now,
   };
@@ -1722,6 +1723,30 @@ effectIt.effect(
       expect(projection.providerTurns).toEqual([]);
       expect(projection.checkpoints).toEqual([]);
     }),
+);
+
+effectIt.effect("refuses a provider sign-out that an agent or scheduled task sent", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: " /LOGOUT ",
+      createdBy: "agent",
+      previousNativeSession: true,
+    });
+
+    yield* harness.start;
+
+    expect(harness.tryHandlePromptCommand).not.toHaveBeenCalled();
+    expect(harness.open).not.toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+    expect(harness.projection().turnItems).toMatchObject([
+      {
+        type: "error",
+        title: "Provider sign-out failed",
+        failure: { class: "permission_error" },
+      },
+    ]);
+  }),
 );
 
 for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {

@@ -23,6 +23,9 @@ import {
   AuthRelayWriteScope,
   AuthTerminalOperateScope,
   ORCHESTRATION_V2_WS_METHODS,
+  type OrchestrationV2Command,
+  type OrchestrationV2ThreadLaunchInput,
+  type ScheduledTaskUpsertInput,
   AuthTerminalReadScope,
   type AuthEnvironmentScope,
   EnvironmentAuthorizationError,
@@ -246,6 +249,29 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
 
+// A chat `/logout` signs the provider account out and stops its sessions, like providerAuthLogout.
+const isProviderSignOutPrompt = (text: string) => text.trim().toLowerCase() === "/logout";
+
+const promptTextForRpcCall = (method: string, payload: unknown): string | undefined => {
+  if (method === ORCHESTRATION_V2_WS_METHODS.launchThread) {
+    return (payload as OrchestrationV2ThreadLaunchInput).initialMessage?.text;
+  }
+  if (method === WS_METHODS.scheduledTasksUpsert) {
+    return (payload as ScheduledTaskUpsertInput).prompt;
+  }
+  if (method !== ORCHESTRATION_V2_WS_METHODS.dispatchCommand) return undefined;
+  const command = payload as OrchestrationV2Command;
+  switch (command.type) {
+    case "message.dispatch":
+    case "queued-run.edit":
+      return command.text;
+    case "delegated_task.request":
+      return command.task;
+    default:
+      return undefined;
+  }
+};
+
 const requiredScopesForRpcCall = (
   method: string,
   payload: unknown,
@@ -268,8 +294,11 @@ const requiredScopesForRpcCall = (
     return requiredScopesForProjectMutation(decodeProjectMutation(payload));
   }
   const guarded = clientRpcRequiredScopes(method, payload);
-  if (guarded.length > 0) return guarded;
-  return [requiredScopeForRpcMethod(method)];
+  const scopes = guarded.length > 0 ? guarded : [requiredScopeForRpcMethod(method)];
+  const prompt = promptTextForRpcCall(method, payload);
+  return prompt !== undefined && isProviderSignOutPrompt(prompt)
+    ? [...scopes, AuthProvidersManageScope]
+    : scopes;
 };
 
 /**
