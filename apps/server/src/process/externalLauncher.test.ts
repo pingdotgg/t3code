@@ -60,6 +60,7 @@ function makeMockDetachedHandle(input: MockSpawnResult & { readonly onUnref?: ()
 const layerTest = (input: {
   readonly platform: NodeJS.Platform;
   readonly env?: Record<string, string>;
+  readonly fileSystem?: FileSystem.FileSystem;
   readonly resolveExecutable?: (command: string) => string | undefined;
   readonly onSpawn?: (command: ChildProcess.StandardCommand) => void;
   readonly onUnref?: () => void;
@@ -85,7 +86,15 @@ const layerTest = (input: {
   );
 
   return Layer.mergeAll(
-    ExternalLauncher.layer.pipe(Layer.provide(Layer.merge(NodeServices.layer, layerSpawner))),
+    ExternalLauncher.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          layerSpawner,
+          input.fileSystem ? Layer.succeed(FileSystem.FileSystem, input.fileSystem) : Layer.empty,
+        ),
+      ),
+    ),
     Layer.succeed(HostProcess.Platform, input.platform),
     Layer.succeed(
       SpawnExecutableResolution,
@@ -554,6 +563,83 @@ it.effect.each([
         "/workspace with spaces/file.ts",
       ]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each(["Applications", "Qt"])(
+  "discovers and launches Qt Creator from its macOS bundle under ~/%s",
+  (directory) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-native-bundle-" });
+      const executable = path.join(home, directory, "Qt Creator.app/Contents/MacOS/Qt Creator");
+      yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+      yield* fs.writeFileString(executable, "#!/bin/sh\n");
+      yield* fs.chmod(executable, 0o755);
+
+      let spawned: ChildProcess.StandardCommand | undefined;
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        assert.include(yield* launcher.resolveAvailableEditors(), "qtcreator");
+        yield* launcher.launchEditor({
+          editor: "qtcreator",
+          cwd: "/workspace with spaces/file.ts:12:4",
+        });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "darwin",
+            env: { HOME: home, PATH: path.join(home, "empty") },
+            onSpawn: (command) => {
+              spawned = command;
+            },
+          }),
+        ),
+      );
+
+      assert.ok(spawned);
+      assert.equal(spawned.command, executable);
+      assert.deepEqual(spawned.args, ["-client", "/workspace with spaces/file.ts:12:4"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("discovers and launches Qt Creator from the Windows online installer location", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-qtcreator-windows-" });
+    const fixture = path.join(home, "qtcreator.exe");
+    yield* fs.writeFileString(fixture, "");
+    const executable = "C:\\Qt\\Tools\\QtCreator\\bin\\qtcreator.exe";
+    const cwd = "C:\\workspace with spaces\\file.cpp:12:4";
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      assert.include(yield* launcher.resolveAvailableEditors(), "qtcreator");
+      yield* launcher.launchEditor({ editor: "qtcreator", cwd });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "win32",
+          env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+          // Map the default installation into a temp file without touching the host's C: drive.
+          fileSystem: {
+            ...fs,
+            stat: (candidate) => fs.stat(candidate === executable ? fixture : candidate),
+          },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, executable);
+    assert.deepEqual(spawned.args, ["-client", cwd]);
+    assert.equal(spawned.options.shell, false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("matches macOS bundles on the name boundary only", () =>
