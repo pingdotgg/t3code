@@ -162,7 +162,7 @@ const decodeElicitationComplete = Schema.decodeUnknownEffect(
 );
 const parserFactory = RpcSerialization.ndJsonRpc();
 // ndJsonRpc skips lines that are not JSON. A malformed agent line has to end the
-// session, so frames are split here and each one goes through the strict codec.
+// session, so frames are split here and each nonblank one goes through the strict codec.
 const makeStrictNdJsonRpcParser = () => {
   const codec = RpcSerialization.jsonRpc().makeUnsafe();
   const decoder = new TextDecoder();
@@ -172,7 +172,7 @@ const makeStrictNdJsonRpcParser = () => {
       buffer += typeof bytes === "string" ? bytes : decoder.decode(bytes, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
-      return lines.flatMap((line) => codec.decode(line));
+      return lines.flatMap((line) => (line.trim() === "" ? [] : codec.decode(line)));
     },
     encode: (response: Parameters<typeof codec.encode>[0]) => {
       const encoded = codec.encode(response);
