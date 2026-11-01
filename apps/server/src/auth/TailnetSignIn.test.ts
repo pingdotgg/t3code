@@ -86,6 +86,11 @@ interface Tailnet {
   loginName?: string;
   /** Other devices whois answers for, by address. */
   devices?: Record<string, { readonly node: JsonObject | null; readonly capMap?: JsonObject }>;
+  /** Holds the next sign-in code a sign-in creates until `release`. */
+  holdCodeIssue?: {
+    readonly started: Deferred.Deferred<void>;
+    readonly release: Deferred.Deferred<void>;
+  };
   /** Holds the next read of the sign-in codes the recheck lists until `release`. */
   holdCodeList?: {
     readonly started: Deferred.Deferred<void>;
@@ -213,12 +218,34 @@ const layerCodeList = (tailnet: Tailnet) =>
     }),
   );
 
+const layerCodeIssue = (tailnet: Tailnet) =>
+  Layer.effect(
+    EnvironmentAuth.EnvironmentAuth,
+    Effect.gen(function* () {
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      return EnvironmentAuth.EnvironmentAuth.of({
+        ...auth,
+        createPairingLink: (input) =>
+          Effect.gen(function* () {
+            const hold = tailnet.holdCodeIssue;
+            if (hold !== undefined) {
+              delete tailnet.holdCodeIssue;
+              yield* Deferred.succeed(hold.started, undefined);
+              yield* Deferred.await(hold.release);
+            }
+            return yield* auth.createPairingLink(input);
+          }),
+      });
+    }),
+  );
+
 const layerTest = (
   tailnet: Tailnet,
   overrides: Partial<ServerConfig.ServerConfig["Service"]> = {},
 ) =>
   TailnetSignIn.layer.pipe(
     Layer.provide(layerCodeList(tailnet)),
+    Layer.provide(layerCodeIssue(tailnet)),
     Layer.provideMerge(EnvironmentAuth.layer),
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerSecretStore.layer),
@@ -1672,6 +1699,16 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
         tailnet.node = phoneNode();
         session = yield* exchange((yield* signIn(key)).credential, key);
       }
+
+      // A sign-in that checked the block list before the block landed gets no code.
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      tailnet.holdCodeIssue = { started, release };
+      const racing = yield* refusalOf(signIn(key)).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* service.blockDevice("nPhone");
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* Fiber.join(racing)).toBe("blocked");
     }).pipe(Effect.provide(layerTest(tailnet)));
   });
 });

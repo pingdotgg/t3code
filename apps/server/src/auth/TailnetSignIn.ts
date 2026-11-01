@@ -476,11 +476,11 @@ export const make = Effect.gen(function* () {
       ) {
         yield* recheckSessions.pipe(Effect.forkDetach);
       }
-      // Checked before any refusal, as a grant it suggests would not let a blocked device in.
-      const blocked = yield* blocks
+      const isBlocked = blocks
         .isBlocked({ stableNodeId: node.stableNodeId })
         .pipe(Effect.mapError((cause) => new TailnetDeviceBlockLookupError({ cause })));
-      if (blocked) return yield* refuse("blocked");
+      // Checked before any refusal, as a grant it suggests would not let a blocked device in.
+      if (yield* isBlocked) return yield* refuse("blocked");
       if (decision._tag === "Refused") {
         return yield* refuse(
           decision.reason,
@@ -507,6 +507,11 @@ export const make = Effect.gen(function* () {
         scopes,
         ...(deviceLabel === null ? {} : { label: deviceLabel }),
       });
+      // A block that landed since the check above may have revoked codes before this one.
+      if (yield* isBlocked) {
+        yield* environmentAuth.revokePairingLink(issued.id);
+        return yield* refuse("blocked");
+      }
       // Counted once its code exists, so a recheck that sees the count can list the code.
       if (via === "owner") yield* Ref.update(ownerRuleAdmissions, (count) => count + 1);
       const device = node.computedName ?? node.stableNodeId;
