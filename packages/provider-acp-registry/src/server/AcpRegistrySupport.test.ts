@@ -780,6 +780,7 @@ describe("AcpRegistrySupport", () => {
       id: "other-agent",
       name: "Other Agent",
       description: "An adapter for Codex workflows",
+      icon: "https://cdn.agentclientprotocol.com/registry/icons/other.svg",
     } satisfies AcpRegistrySupport.AcpRegistryAgent;
     const incompatible = {
       ...makeAgent({
@@ -804,6 +805,8 @@ describe("AcpRegistrySupport", () => {
       const result = yield* resolver.search({ query: "codex" });
 
       expect(result.agents.map((agent) => agent.id)).toEqual(["codex-acp", "other-agent"]);
+      expect(result.agents[0]?.icon).toBeNull();
+      expect(result.agents[1]?.icon).toBe(descriptionMatch.icon);
       expect(result.agents[0]).toMatchObject({
         authors: ["OpenAI", "Zed Industries"],
         distribution: "npx",

@@ -186,9 +186,7 @@ describe("deriveProviderEntriesByEnvironment", () => {
       ),
     );
     expect(byEnvironment.get("devin")?.get(instanceId)?.acpRegistryAgentId).toBe("devin");
-    expect(byEnvironment.get("devin")?.get(instanceId)?.iconUrl).toBe(
-      "https://example.com/devin.svg",
-    );
+    expect(byEnvironment.get("devin")?.get(instanceId)?.iconUrl).toBeUndefined();
     expect(byEnvironment.get("other-agent")?.get(instanceId)?.acpRegistryAgentId).toBe(
       "other-agent",
     );
