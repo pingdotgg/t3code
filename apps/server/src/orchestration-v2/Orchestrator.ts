@@ -3158,6 +3158,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is already archived.`,
       });
     }
+    if (command.type === "thread.archive") {
+      const records = yield* projectionStore
+        .getThreadRecords(command.threadId, ["subagents"])
+        .pipe(mapDispatchError(command));
+      if (
+        records.subagents.some(
+          (task) => task.origin === "app_owned" && isOrchestrationV2WorkActive(task.status),
+        )
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has running delegated tasks. Wait for them or cancel them before archiving.`,
+        });
+      }
+    }
     if (command.type === "thread.unarchive" && thread.archivedAt === null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,

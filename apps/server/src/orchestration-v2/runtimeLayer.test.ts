@@ -4614,6 +4614,127 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("rejects archiving an idle parent until its delegated child completes", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("archive-delegated-parent");
+      const projectId = ProjectId.make("archive-delegated-project");
+      yield* seedProject({
+        projectId,
+        title: "Delegated archive",
+        workspaceRoot: "/workspace/archive-delegated",
+        defaultModelSelection: null,
+        createdAt: "2026-09-07T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("archive-delegated-create"),
+        threadId,
+        projectId,
+        title: "Delegated archive",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("archive-delegated-message"),
+        threadId,
+        messageId: MessageId.make("archive-delegated-message"),
+        text: "Delegate the work, then finish your turn.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const parentRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      yield* orchestrator.dispatch({
+        type: "delegated_task.request",
+        createdBy: "agent",
+        creationSource: "mcp",
+        commandId: CommandId.make("archive-delegated-request"),
+        parentThreadId: threadId,
+        parentRunId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId!,
+        task: "Keep working after the parent finishes.",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        completionWake: "always",
+      });
+      const delegatedParentRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("archive-delegated-parent-completed"),
+            type: "run.updated",
+            threadId,
+            runId: parentRun.id,
+            occurredAt: now,
+            payload: { ...delegatedParentRun, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      const parent = yield* orchestrator.getThreadProjection(threadId);
+      const task = parent.subagents[0]!;
+      assert.equal(parent.runs[0]?.status, "completed");
+      assert.equal(task.origin, "app_owned");
+      assert.equal(task.status, "running");
+      assert.isNotNull(task.childThreadId);
+
+      // Archive must preserve the idle parent's path for receiving this child's result.
+      const error = yield* orchestrator
+        .dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("archive-delegated-blocked"),
+          threadId,
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
+      assert.equal(
+        error.cause,
+        `Thread ${threadId} has running delegated tasks. Wait for them or cancel them before archiving.`,
+      );
+      assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.archivedAt);
+
+      const childThreadId = task.childThreadId!;
+      const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("archive-delegated-child-run-completed"),
+            type: "run.updated",
+            threadId: childThreadId,
+            runId: childRun.id,
+            occurredAt: now,
+            payload: { ...childRun, status: "completed", completedAt: now },
+          },
+          {
+            id: EventId.make("archive-delegated-child-completed"),
+            type: "subagent.updated",
+            threadId,
+            nodeId: task.id,
+            occurredAt: now,
+            payload: { ...task, status: "completed", result: "Done", completedAt: now },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("archive-delegated-allowed"),
+        threadId,
+      });
+      assert.isNotNull((yield* orchestrator.getThreadProjection(threadId)).thread.archivedAt);
+    }),
+  );
+
   it.effect("cancels preparing work on archive and keeps it cancelled through replay", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
