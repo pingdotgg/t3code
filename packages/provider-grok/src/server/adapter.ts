@@ -235,7 +235,7 @@ export function makeGrokAcpAdapterFlavor(
     preserveRuntimeOnSettledInterrupt: true,
     // Grok accepts image blocks despite advertising promptCapabilities.image:false.
     supportsImagePrompts: true,
-    supportsCompaction: true,
+    compaction: "marker",
     // Grok expands only a leading `/name`, while the `$` picker inserts `$name` from the
     // `grok inspect` catalog. Ask that catalog again so other `$` text is left alone.
     rewriteUserText: (text, turnInput) => {

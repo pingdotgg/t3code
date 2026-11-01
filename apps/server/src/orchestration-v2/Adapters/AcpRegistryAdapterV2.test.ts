@@ -471,6 +471,12 @@ describe("AcpRegistryAdapterV2", () => {
       readonly storedModePick?: string;
       readonly turnModels?: ReadonlyArray<string>;
       readonly rejectedModel?: string;
+      readonly agentId?: string;
+      readonly turnText?: string;
+      readonly expectedCompaction?: { readonly status: string; readonly summary: string };
+      readonly expectedRunStatus?: string;
+      readonly interruptCompaction?: boolean;
+      readonly terminateCompaction?: boolean;
     }) {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       // Scope release gives the replay agent at most a second to exit, so the status
@@ -513,25 +519,32 @@ describe("AcpRegistryAdapterV2", () => {
       );
       const instanceId = ProviderInstanceId.make("acp-registry-stored-picks");
       let published: AcpRegistryLiveConfiguration | undefined;
+      let terminateRuntime = Effect.void;
+      const scriptPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+      );
       const adapter = yield* makeAcpRegistryAdapterV2({
         selfInvocation: yield* resolveSelfInvocation(),
         instanceId,
         settings: yield* decodeAcpRegistryAdapterSettings({
-          agentId: "fixture-agent",
+          agentId: input.agentId ?? "fixture-agent",
           authMethodId: "test",
           customModels: input.customModels ?? [],
         }),
         environment: {},
-        makeRuntime: makeAcpReplayRuntime({
-          customModels: input.customModels,
-          transcript,
-          statusPath,
-          scriptPath: yield* path.fromFileUrl(
-            new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
-          ),
-          childProcessSpawner,
-          fileSystem,
-        }),
+        makeRuntime: (runtimeInput) => {
+          terminateRuntime = runtimeInput.onTermination(
+            new EffectAcpErrors.AcpRequestError({ code: -32603, errorMessage: "transport exited" }),
+          );
+          return makeAcpReplayRuntime({
+            customModels: input.customModels,
+            transcript,
+            statusPath,
+            scriptPath,
+            childProcessSpawner,
+            fileSystem,
+          })(runtimeInput);
+        },
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -592,15 +605,48 @@ describe("AcpRegistryAdapterV2", () => {
               runtimePolicy,
               now,
               ordinal: index + 1,
+              ...(input.turnText === undefined ? {} : { messageText: input.turnText }),
               modelSelection: target,
             }),
           );
+          let compactionObserved = false;
           yield* runtime.events.pipe(
             Stream.takeUntil((event) => event.type === "turn.terminal"),
             Stream.runForEach((event) =>
-              Effect.sync(() => {
+              Effect.gen(function* () {
+                if (
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.type === "compaction" &&
+                  event.turnItem.status === "running"
+                ) {
+                  if (input.terminateCompaction) yield* terminateRuntime;
+                  if (input.interruptCompaction)
+                    yield* runtime.interruptTurn({
+                      providerThread,
+                      providerTurnId: event.turnItem.providerTurnId!,
+                    });
+                }
+                if (
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.type === "compaction" &&
+                  event.turnItem.status !== "running"
+                ) {
+                  assert.equal(event.turnItem.status, input.expectedCompaction?.status);
+                  assert.equal(event.turnItem.summary, input.expectedCompaction?.summary);
+                  assert.isNotNull(event.turnItem.completedAt);
+                  compactionObserved = true;
+                }
                 if (event.type === "turn.terminal") {
-                  assert.equal(event.status, "completed", event.failure?.message);
+                  assert.equal(
+                    event.status,
+                    input.expectedRunStatus ?? "completed",
+                    event.failure?.message,
+                  );
+                  if (input.expectedCompaction)
+                    assert.isTrue(
+                      compactionObserved,
+                      "native compaction must persist before turn settlement",
+                    );
                 }
               }),
             ),
@@ -625,6 +671,92 @@ describe("AcpRegistryAdapterV2", () => {
       yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
       return { configurations };
     });
+
+    it.effect.each([
+      { ordering: "before", outcome: "completed", runStatus: "completed" },
+      { ordering: "after", outcome: "completed", runStatus: "completed" },
+      { ordering: "terminal-first", outcome: "completed", runStatus: "completed" },
+      { ordering: "after", outcome: "failed", runStatus: "failed" },
+      { ordering: "after", outcome: "cancelled", runStatus: "cancelled" },
+      { ordering: "prompt-error", outcome: "failed", runStatus: "failed" },
+      { ordering: "prompt-cancel", outcome: "cancelled", runStatus: "cancelled" },
+      { ordering: "transport-exit", outcome: "failed", runStatus: "failed" },
+      { ordering: "interrupt", outcome: "interrupted", runStatus: "interrupted" },
+    ])(
+      "preserves Devin native compaction: $ordering / $outcome",
+      ({ ordering, outcome, runStatus }) => {
+        const notice = (status: string) => ({
+          type: "emit_inbound",
+          frame: {
+            kind: "notification",
+            method: "_cognition.ai/compaction",
+            params: { sessionId: "agent-session", status, summary: "Retained native summary" },
+          },
+        });
+        const response =
+          ordering === "prompt-error"
+            ? {
+                type: "emit_inbound",
+                frame: {
+                  kind: "response",
+                  method: "session/prompt",
+                  error: { code: -32603, message: "compact failed" },
+                },
+              }
+            : answer("session/prompt", {
+                stopReason:
+                  ordering === "prompt-error"
+                    ? "error"
+                    : ordering === "prompt-cancel"
+                      ? "cancelled"
+                      : "end_turn",
+              });
+        const updates =
+          ordering === "terminal-first"
+            ? [notice("started"), notice(outcome), response]
+            : ordering === "transport-exit"
+              ? [response, notice("started")]
+              : ordering === "interrupt"
+                ? [
+                    notice("started"),
+                    {
+                      type: "expect_outbound",
+                      frame: {
+                        kind: "notification",
+                        method: "session/cancel",
+                        params: { sessionId: "agent-session" },
+                      },
+                    },
+                    response,
+                    notice("completed"),
+                  ]
+                : ordering.startsWith("prompt-")
+                  ? [notice("started"), response]
+                  : [
+                      ...(ordering === "before"
+                        ? [notice("started"), response]
+                        : [response, notice("started")]),
+                      notice(outcome),
+                    ];
+        return openWithStoredPicks({
+          setup: {},
+          agentId: "devin",
+          turnModels: ["default"],
+          turnText: "/compact",
+          expectedCompaction: { status: outcome, summary: "Retained native summary" },
+          expectedRunStatus: runStatus,
+          interruptCompaction: ordering === "interrupt",
+          terminateCompaction: ordering === "transport-exit",
+          pickFrames: [
+            outbound("session/prompt", {
+              sessionId: "agent-session",
+              prompt: [{ type: "text", text: "/compact" }],
+            }),
+            ...updates,
+          ],
+        }).pipe(Effect.provide(layerTest), Effect.scoped);
+      },
+    );
 
     it.effect("switches an agent that only advertises modes with session/set_mode", () =>
       openWithStoredPicks({

@@ -67,6 +67,12 @@ import { assertMuseWorkflowOutput } from "./muse_workflow/output.ts";
 import { assertMuseSubagentV2Output } from "./subagent_v2/muse_output.ts";
 import { assertMuseMultiTurnOutput } from "./multi_turn/muse_output.ts";
 import { assertMuseTurnInterruptOutput } from "./turn_interrupt/muse_output.ts";
+import { acpRegistryCompactionInput } from "./acp_registry_compaction/input.ts";
+import {
+  assertAcpRegistryCompactionOutput,
+  assertAcpRegistryUnfinishedCompactionOutput,
+  assertAcpRegistryUnsupportedCompactionOutput,
+} from "./acp_registry_compaction/output.ts";
 import { piCompactionInput } from "./pi_compaction/input.ts";
 import { assertPiCompactionOutput } from "./pi_compaction/output.ts";
 import { providerThreadResumeInput } from "./provider_thread_resume/input.ts";
@@ -1325,6 +1331,51 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: MUSE_MODEL_SELECTION,
         runContinuationWorker: true,
         assertOutput: assertMuseWorkflowOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_registry_compaction",
+    buildInput: acpRegistryCompactionInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_registry_compaction/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        assertOutput: assertAcpRegistryCompactionOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_registry_compaction_unsupported",
+    buildInput: acpRegistryCompactionInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_registry_compaction/unsupported_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        assertOutput: assertAcpRegistryUnsupportedCompactionOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_registry_compaction_unfinished",
+    buildInput: acpRegistryCompactionInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_registry_compaction/unfinished_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        assertOutput: assertAcpRegistryUnfinishedCompactionOutput,
       },
     ],
   },

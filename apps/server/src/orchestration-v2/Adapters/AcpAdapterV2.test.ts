@@ -470,7 +470,7 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
     flavor: {
       driver: ACP_TEST_DRIVER,
       capabilities: AcpProviderCapabilitiesV2,
-      supportsCompaction: true,
+      compaction: "marker",
       makeRuntime: makeMockRuntime({
         childProcessSpawner,
         mockAgentPath,
@@ -3194,6 +3194,78 @@ describe("AcpAdapterV2", () => {
         "omitted late message content must preserve the authoritative text",
       );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect.each([
+    ["marker", ["Context compacted"]],
+    ["native", []],
+  ] as const)(
+    "%s compaction: /compact without compaction_update projects %j",
+    ([compaction, expectedCompactions]) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const instanceId = ProviderInstanceId.make(`acp-test-compaction-${compaction}`);
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            compaction,
+            makeRuntime: makeMockRuntime({ childProcessSpawner, mockAgentPath }),
+          },
+          selfInvocation: yield* resolveSelfInvocation(),
+        });
+        const threadId = ThreadId.make(`thread-acp-compaction-${compaction}`);
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`provider-session-compaction-${compaction}`),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.isDefined(runtime.compactThread);
+        yield* runtime.compactThread!(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            messageText: "/compact",
+          }),
+        );
+        const events = Array.from(
+          yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          ),
+        );
+        assert.isTrue(
+          events.some((event) => event.type === "turn.terminal" && event.status === "completed"),
+        );
+        assert.deepEqual(
+          events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+              ? [event.turnItem.title]
+              : [],
+          ),
+          [...expectedCompactions],
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("projects only the tail of long ACP terminal output", () =>
