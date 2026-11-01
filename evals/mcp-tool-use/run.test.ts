@@ -116,6 +116,7 @@ it("passes a good run and names every rule a bad run breaks", () => {
     textMust: ["t3-thread://v2/"],
     textMustNot: ["Paste .*token"],
     linked: ["~/pull/124"],
+    linkedNumbers: [124],
   };
   const good: SampleRun = {
     calls: [
@@ -158,6 +159,7 @@ it("passes a good run and names every rule a bad run breaks", () => {
     "textMust /t3-thread://v2//",
     "textMustNot /Paste .*token/",
     "linked ~/pull/124",
+    "linkedNumbers",
   ]);
 });
 

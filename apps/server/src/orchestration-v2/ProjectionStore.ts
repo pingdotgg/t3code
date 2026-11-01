@@ -330,6 +330,7 @@ export interface ProjectionRuntimeResponseContext {
 
 export interface ProjectionRecordFilter {
   readonly messageRoles?: ReadonlyArray<OrchestrationV2ConversationMessage["role"]>;
+  readonly monitorNotificationsOnly?: boolean;
   readonly turnItemRunId?: RunId;
   readonly messageIds?: ReadonlyArray<MessageId>;
   readonly messageRunIds?: ReadonlyArray<RunId>;
@@ -2975,6 +2976,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     )
                     AND request.type = 'run_interrupt_request'
                   UNION
+                  -- An open question or approval stays in the window: clients
+                  -- build the answer panel from its row, and a run that kept
+                  -- working pushes the row out of the newest turns.
+                  SELECT question.rowid AS item_rowid, question.ordinal, question.turn_item_id
+                  FROM orchestration_v2_projection_runtime_requests AS pending
+                  JOIN orchestration_v2_projection_turn_items AS question
+                    ON question.node_id = pending.node_id
+                  WHERE pending.thread_id = ${threadId}
+                    AND pending.status = 'pending'
+                    AND question.thread_id = ${threadId}
+                    AND question.type IN ('user_input_request', 'approval_request')
+                    AND ${window.rowLimit} > 0
+                    AND ${window.anchorItemId ?? null} IS NULL
+                    AND ${window.requiredRunId ?? null} IS NULL
+                  UNION
                   SELECT latest.item_rowid, latest.ordinal, latest.turn_item_id
                   FROM (
                     SELECT rowid AS item_rowid, ordinal, turn_item_id
@@ -3431,6 +3447,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE thread_id = ${threadId}
                   ${filter?.messageIds === undefined ? sql`` : sql`AND message_id IN (SELECT value FROM json_each(${encodeIdList(filter.messageIds)}))`}
                   ${filter?.messageRoles === undefined ? sql`` : sql`AND role IN (SELECT value FROM json_each(${encodeIdList(filter.messageRoles)}))`}
+                  ${filter?.monitorNotificationsOnly === true ? sql`AND json_extract(payload_json, '$.notification.source.kind') = 'monitor'` : sql``}
                   ${filter?.messageRunIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.messageRunIds)}))`}
                 ORDER BY created_at ASC, message_id ASC
               `
