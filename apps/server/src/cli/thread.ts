@@ -602,7 +602,7 @@ const threadStartCommand = Command.make("start", {
   ),
   generateTitle: Flag.Boolean("generate-title").pipe(
     Flag.withDescription(
-      "Generate a title from the message, as the app does. Until then the thread shows --title or the first line.",
+      "Generate the thread's title from the message. Until it's ready, the thread shows --title or the first line.",
     ),
     Flag.withDefault(false),
   ),
