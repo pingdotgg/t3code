@@ -125,7 +125,7 @@ describe("createLazyVoiceRecorder", () => {
       expect(created).toHaveLength(0);
     });
 
-    it("cancels a pending input route before recording and deletes the prepared audio", async () => {
+    it("reuses the recorder after canceling a pending input route", async () => {
       const selecting = Promise.withResolvers<void>();
       const selected = Promise.withResolvers<void>();
       let routeActive = false;
@@ -139,6 +139,9 @@ describe("createLazyVoiceRecorder", () => {
             if (prepared) throw new Error("Recorder is already prepared");
             prepared = true;
             native.uri = native.prepared;
+          });
+          native.stop.mockImplementation(async () => {
+            prepared = false;
           });
           native.setInput.mockImplementationOnce(() => {
             if (!waitingForRoute) return;
@@ -164,7 +167,9 @@ describe("createLazyVoiceRecorder", () => {
 
       await harness.controller.start();
       expect(harness.controller.currentState.phase).toBe("recording");
+      expect(harness.created).toHaveLength(1);
       await harness.controller.stop();
+      harness.recorder.release();
     });
   });
 });

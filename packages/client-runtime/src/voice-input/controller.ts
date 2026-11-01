@@ -37,7 +37,6 @@ export interface VoiceRecorder {
   prepareToRecordAsync(signal?: AbortSignal): Promise<void>;
   record(options: { readonly forDuration: number }): void;
   stop(): Promise<void>;
-  release?(): void;
 }
 
 export type VoiceInputControllerDependencies = {
@@ -458,6 +457,11 @@ export class VoiceInputController {
     try {
       this.rememberRecordingUri(this.dependencies.recorder.uri);
     } catch {}
+    if (this.recordingConfigured) {
+      try {
+        await this.dependencies.recorder.stop();
+      } catch {}
+    }
     this.recordingUri = null;
     for (const uri of this.ownedRecordingUris) {
       try {
@@ -466,9 +470,6 @@ export class VoiceInputController {
     }
     this.ownedRecordingUris.clear();
     await this.releaseAudioSession();
-    try {
-      this.dependencies.recorder.release?.();
-    } catch {}
     releaseSession(this.sessionToken);
     this.sessionToken = null;
     this.capturedDraft = null;
