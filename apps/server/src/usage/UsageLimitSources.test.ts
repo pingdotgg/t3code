@@ -10,6 +10,7 @@ import * as Fiber from "effect/Fiber";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -116,7 +117,19 @@ const decodeProbe = Schema.decodeUnknownSync(
 );
 const encodeBody = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const makeHubTest = Effect.fn("test.makeHubTest")(function* (failed: string[] = []) {
-  const settings = yield* ServerSettings.ServerSettingsService;
+  const baseSettings = yield* ServerSettings.ServerSettingsService;
+  const changeObserved = yield* Deferred.make<void>();
+  const changes = yield* Queue.unbounded<import("@t3tools/contracts").ServerSettings>();
+  const settings = {
+    ...baseSettings,
+    streamChanges: Stream.fromQueue(changes).pipe(
+      Stream.flatMap((next) =>
+        Stream.make(next).pipe(Stream.ensuring(Deferred.succeed(changeObserved, undefined))),
+      ),
+    ),
+    updateSettings: (...args: Parameters<typeof baseSettings.updateSettings>) =>
+      baseSettings.updateSettings(...args).pipe(Effect.tap((next) => Queue.offer(changes, next))),
+  };
   const readStarted = yield* Deferred.make<void>();
   const releaseRead = yield* Deferred.make<void>();
   const mode = yield* Ref.make({
@@ -196,7 +209,7 @@ const makeHubTest = Effect.fn("test.makeHubTest")(function* (failed: string[] = 
     Stream.filter((snapshots) => snapshots.length === 1),
     Stream.runHead,
   );
-  return { sources, settings, mode, readStarted, releaseRead };
+  return { sources, settings, mode, readStarted, releaseRead, changeObserved };
 });
 const provideHubTest = <A, E>(
   effect: Effect.Effect<A, E, ServerSettings.ServerSettingsService | import("effect/Scope").Scope>,
@@ -328,7 +341,8 @@ it.effect(
   () =>
     provideHubTest(
       Effect.gen(function* () {
-        const { sources, settings, mode, readStarted, releaseRead } = yield* makeHubTest();
+        const { sources, settings, mode, readStarted, releaseRead, changeObserved } =
+          yield* makeHubTest();
         yield* Ref.update(mode, (m) => ({ ...m, blocked: true, listFailed: true }));
         const pending = yield* sources.refresh.pipe(Effect.forkChild);
         yield* Deferred.await(readStarted);
@@ -339,6 +353,7 @@ it.effect(
         yield* Ref.update(mode, (m) => ({ ...m, blocked: false }));
         yield* Deferred.succeed(releaseRead, undefined);
         yield* Fiber.join(pending);
+        yield* Deferred.await(changeObserved);
         yield* sources.refresh;
         expect((yield* sources.current)[0]?.accounts).toEqual([]);
       }),

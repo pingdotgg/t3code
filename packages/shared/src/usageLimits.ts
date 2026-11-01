@@ -418,7 +418,7 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
       }
     }
   }
-  return notices;
+  return [...new Set(notices)];
 }
 
 export interface LimitPoolMember {

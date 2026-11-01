@@ -232,6 +232,30 @@ describe("pools", () => {
         " (stale).",
       "hub: The hub could not read this account's usage.",
     ]);
+    expect(
+      collectLimitNotices(
+        new Map([
+          [
+            EnvironmentId.make("env-a"),
+            {
+              ...laptop,
+              serverConfig: {
+                providers: [],
+                usageLimitSources: [
+                  {
+                    ...source,
+                    accounts: [
+                      accounts[1]!,
+                      { ...accounts[1]!, id: "c.json", email: "private@example.com" },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        ]),
+      ),
+    ).toEqual(["hub: The hub could not read this account's usage."]);
     const selected = provider({ driver: claude });
     const report = collectProviderUsageLimits(
       selected.instanceId,
