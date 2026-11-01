@@ -3,15 +3,12 @@ import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeI
 
 import {
   T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
+  T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_ORCHESTRATION_SECTIONS,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 /** Codex silently truncates additionalContext values over 1,000 tokens, counted as UTF-8 bytes / 4. */
 export const CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES = 4_000;
-
-const T3_CODE_DEVICE_TOOL_INSTRUCTIONS = `## T3 Code devices
-
-For iOS Simulators and Android Emulators here, call \`device_list\`, then \`device_open\`. Drive the device with the exact \`agent-device\` launcher and flags it returns, on every command. Prefer \`agent-device snapshot -i\` refs over coordinates. Use \`device_screenshot\` to see the screen. Use \`xcrun simctl\` or \`adb\` only for builds, logs, and ports. If a platform is unavailable, say so.`;
 
 export interface T3CodeToolAvailability {
   readonly browser: boolean;

@@ -19,11 +19,13 @@ import {
   RunId,
   ThreadId,
   type OrchestrationV2ServerCommand,
+  type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -1128,6 +1130,155 @@ describe("OrchestratorMcpService provider resolution", () => {
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
 
+  it.effect.each([
+    "parent completion",
+    "nested child completion",
+    "child run completion",
+    "child question",
+    "child approval",
+  ] as const)("a task wait still returns on %s", (wake) =>
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+      const subscribed = yield* Deferred.make<void>();
+      const nestedId = NodeId.make("node:mcp-wait-nested");
+      const childRunId = RunId.make("run:mcp-wait-child");
+      const childRootId = NodeId.make("node:mcp-wait-child-root");
+      const eventThreadId = wake === "parent completion" ? parentThreadId : childThreadId;
+      const eventType =
+        wake === "child run completion"
+          ? "run.updated"
+          : wake === "child question" || wake === "child approval"
+            ? "runtime-request.updated"
+            : "subagent.updated";
+      const terminal = wake.endsWith("completion");
+      let ready = false;
+      const task = () => ({
+        id: taskId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId,
+        origin: "app_owned",
+        providerInstanceId: codexInstanceId,
+        driver: "codex",
+        childThreadId,
+        model: "gpt-5.4",
+        status: ready && terminal ? "completed" : "running",
+        result: ready && wake === "parent completion" ? "done" : null,
+      });
+      const child = () =>
+        ({
+          ...childProjection,
+          runs: [
+            {
+              id: childRunId,
+              ordinal: 1,
+              status:
+                wake === "nested child completion" || (ready && terminal) ? "completed" : "running",
+              startedAt: DateTime.makeUnsafe(0),
+              completedAt: ready && terminal ? DateTime.makeUnsafe(1) : null,
+            },
+          ],
+          subagents:
+            wake === "nested child completion"
+              ? [{ id: nestedId, status: ready ? "completed" : "running" }]
+              : [],
+          nodes: [{ id: childRootId, runId: childRunId }],
+          runtimeRequests:
+            ready && !terminal
+              ? [
+                  {
+                    id: "request:mcp-wait-answer",
+                    nodeId: childRootId,
+                    kind: wake === "child question" ? "user_input" : "command",
+                    status: "pending",
+                    responseCapability: { type: "live" },
+                    createdAt: DateTime.makeUnsafe(0),
+                  },
+                ]
+              : [],
+        }) as unknown as OrchestrationV2ThreadProjection;
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          assertProviderInstanceEnabled: () => Effect.void,
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          getThreadRecords: (threadId) =>
+            Effect.sync(() => (threadId === parentThreadId ? parentProjection([task()]) : child())),
+          getThreadEventSequence: () => Effect.succeed(0),
+          delegatedTaskResultPending: () => Effect.succeed(false),
+          streamStoredEventsFrom: (input) =>
+            input?.threadId === eventThreadId && input.eventType === eventType
+              ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                  Stream.drain,
+                  Stream.concat(Stream.fromQueue(events)),
+                )
+              : Stream.never,
+          dispatch: () =>
+            Effect.succeed({
+              sequence: 1,
+              storedEvents: [{ event: { type: "subagent.updated", payload: task() } }],
+            } as never),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const waiting = yield* service
+          .delegateTask(scope, { task: "Review the change.", mode: "wait" })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(subscribed);
+        ready = true;
+        if (wake === "parent completion") {
+          yield* Queue.offer(events, {
+            sequence: 2,
+            event: {
+              type: "subagent.updated",
+              threadId: parentThreadId,
+              payload: { ...task(), id: nestedId },
+            },
+          } as unknown as OrchestrationV2StoredEvent);
+        }
+        yield* Queue.offer(events, {
+          sequence: 3,
+          event: {
+            type: eventType,
+            threadId: eventThreadId,
+            payload: { id: wake === "parent completion" ? taskId : nestedId },
+          },
+        } as unknown as OrchestrationV2StoredEvent);
+        const result = yield* Fiber.join(waiting);
+        assert.isFalse(result.waitTimedOut);
+        if (terminal) {
+          assert.equal(result.status, "completed");
+          if (wake === "parent completion") assert.equal(result.summary, "done");
+        } else {
+          assert.equal(result.status, "running");
+          if (wake === "child question") assert.isTrue(result.hasPendingQuestion);
+          else {
+            assert.deepEqual(result.pendingApproval, {
+              requestId: "request:mcp-wait-answer",
+              kind: "command",
+              runId: childRunId,
+            });
+          }
+        }
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+    }),
+  );
+
   it.effect(
     "advertises orchestration capability from registered adapters rather than a driver allowlist",
     () =>
@@ -1303,6 +1454,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           instanceId: codexInstanceId,
           driver: ProviderDriverKind.make("codex"),
         }),
+        displayName: "Codex",
         models: [
           model("gpt-6", {
             name: "Sol",
@@ -1330,7 +1482,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               ],
             },
           }),
-          model("gpt-5", { isLegacy: true }),
+          model("gpt-5", { name: "Code Legacy", isLegacy: true }),
           model("gpt-4", { isLegacy: true }),
           model("gpt-3", { name: "GPT-3", isLegacy: true }),
           model("my-alpha", { isCustom: true }),
@@ -1436,6 +1588,18 @@ describe("OrchestratorMcpService provider resolution", () => {
           { id: codexInstanceId, models: ["gpt-6", "gpt-4", "gpt-3", "my-alpha"], omitted: 1 },
           { id: opencodeInstanceId, models: [], omitted: 0 },
         ]);
+        assert.deepEqual(listing(yield* capabilitiesWith(" ")), listing(yield* capabilitiesWith()));
+        for (const search of ["code", "codex code", "  CODE  "]) {
+          assert.deepEqual(listing(yield* capabilitiesWith(search))[0], {
+            id: codexInstanceId,
+            models: ["gpt-5"],
+            omitted: 0,
+          });
+        }
+        assert.deepEqual(
+          listing(yield* capabilitiesWith("open"))[1],
+          listing(yield* capabilitiesWith())[1],
+        );
         assert.deepEqual(listing(yield* capabilitiesWith("codex gpt 5"))[0], {
           id: codexInstanceId,
           models: ["gpt-5"],
@@ -2653,7 +2817,11 @@ describe("OrchestratorMcpService thread lookup", () => {
     capabilities: new Set(["orchestration"]),
     issuedAt: 1,
   };
-  const service = (shells: ReadonlyArray<OrchestrationV2ThreadShell>, sent: Ref.Ref<number>) =>
+  const service = (
+    shells: ReadonlyArray<OrchestrationV2ThreadShell>,
+    sent: Ref.Ref<number>,
+    overrides: Partial<ThreadManagementService.ThreadManagementService["Service"]> = {},
+  ) =>
     layerOrchestratorService.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -2662,6 +2830,7 @@ describe("OrchestratorMcpService thread lookup", () => {
             getThreadShell: (threadId) =>
               Effect.succeed(shells.find((shell) => shell.id === threadId) ?? null),
             sendToThread: () => Ref.update(sent, (count) => count + 1).pipe(Effect.as({} as never)),
+            ...overrides,
           }),
           ServerSettings.layerTest(),
           Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -2684,14 +2853,15 @@ describe("OrchestratorMcpService thread lookup", () => {
         const send = yield* mcp
           .sendToThread(client, { threadId: bareId, message: "hello" })
           .pipe(Effect.flip);
-        return { read, send, sends: yield* Ref.get(sent) };
+        const wait = yield* mcp.waitForThread(client, { threadId: bareId }).pipe(Effect.flip);
+        return { read, send, wait, sends: yield* Ref.get(sent) };
       }).pipe(Effect.provide(service(shells, sent)));
     });
 
   it.effect("points a bare uuid at the mcp: thread it belongs to", () =>
     Effect.gen(function* () {
-      const { read, send, sends } = yield* failuresFor([launched]);
-      for (const error of [read, send]) {
+      const { read, send, wait, sends } = yield* failuresFor([launched]);
+      for (const error of [read, send, wait]) {
         assert.equal(error.code, "thread_not_found");
         assert.include(error.message, `mcp:${bareId}`);
       }
@@ -2701,19 +2871,76 @@ describe("OrchestratorMcpService thread lookup", () => {
 
   it.effect("keeps the plain message for an id that matches nothing", () =>
     Effect.gen(function* () {
-      const { read, send } = yield* failuresFor([]);
+      const { read, send, wait } = yield* failuresFor([]);
       assert.equal(read.code, "thread_not_found");
       assert.equal(read.message, `Thread ${bareId} is no longer available.`);
       assert.equal(send.code, "thread_not_found");
       assert.equal(send.message, `Thread ${bareId} was not found.`);
+      assert.equal(wait.code, "thread_not_found");
+      assert.equal(wait.message, send.message);
     }),
   );
 
   it.effect("does not name an mcp: thread that was deleted", () =>
     Effect.gen(function* () {
-      const { read, send } = yield* failuresFor([deletedLaunched]);
+      const { read, send, wait } = yield* failuresFor([deletedLaunched]);
       assert.equal(read.message, `Thread ${bareId} is no longer available.`);
       assert.equal(send.message, `Thread ${bareId} was not found.`);
+      assert.equal(wait.message, send.message);
+    }),
+  );
+
+  it.effect("refuses waiting without orchestration capability before reading the target", () =>
+    Effect.gen(function* () {
+      const sent = yield* Ref.make(0);
+      return yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const error = yield* mcp
+          .waitForThread({ ...client, capabilities: new Set() }, { threadId: bareId })
+          .pipe(Effect.flip);
+        assert.equal(error.code, "capability_denied");
+      }).pipe(
+        Effect.provide(
+          service([], sent, {
+            getThreadShell: () => Effect.die("Unauthorized target access"),
+          }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("waits on the caller's own thread without a separate shell lookup", () =>
+    Effect.gen(function* () {
+      const sent = yield* Ref.make(0);
+      return yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const result = yield* mcp.waitForThread(
+          {
+            ...client,
+            thread: {
+              threadId: launched.id,
+              providerSessionId: "provider-session:wait-self",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+            },
+          },
+          { threadId: launched.id },
+        );
+        assert.deepEqual(result, {
+          threadId: launched.id,
+          runId: null,
+          status: "idle",
+          timedOut: false,
+        });
+      }).pipe(
+        Effect.provide(
+          service([], sent, {
+            getThreadShell: () => Effect.die("Unexpected shell lookup for the caller"),
+            getThreadRecords: () => Effect.succeed(idleThreadProjection(launched)),
+            waitForThread: () =>
+              Effect.succeed({ threadId: launched.id, run: null, timedOut: false }),
+          }),
+        ),
+      );
     }),
   );
 });

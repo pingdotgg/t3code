@@ -644,6 +644,51 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.skipIf(!symlinksSupported)("does not issue URLs for server state files", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const stateFile = path.join(config.secretsDir, "example.bin");
+      yield* fs.makeDirectory(config.secretsDir, { recursive: true });
+      yield* fs.writeFile(stateFile, new Uint8Array(32).fill(7));
+      yield* fs.writeFileString(config.dbPath, "SQLite format 3");
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-state-" });
+      const alias = path.join(root, "alias");
+      yield* fs.symlink(stateFile, alias);
+      const threadId = ThreadId.make("thread-1");
+      for (const resource of [
+        { _tag: "media-file", threadId, path: stateFile, disposition: "attachment" },
+        { _tag: "media-file", threadId, path: alias, disposition: "attachment" },
+        {
+          _tag: "media-file",
+          threadId,
+          path: path.join(config.secretsDir, "..", "secrets", "example.bin"),
+          disposition: "attachment",
+        },
+        { _tag: "media-file", threadId, path: config.dbPath },
+        { _tag: "draft-workspace-file", cwd: config.stateDir, path: "statev2.sqlite" },
+      ] as const) {
+        const error = yield* issueAssetUrl({ resource }).pipe(Effect.flip);
+        expect(error._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      }
+
+      const icon = path.join(config.baseDir, "icon.png");
+      yield* fs.symlink(stateFile, icon);
+      yield* fs.writeFileString(path.join(config.baseDir, "page.html"), '<img src="icon.png">');
+      const page = yield* issueAssetUrl({
+        resource: { _tag: "draft-workspace-file", cwd: config.baseDir, path: "page.html" },
+      });
+      const pageToken = page.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length).split("/")[0]!;
+      expect(yield* resolveAsset(pageToken, "icon.png")).toBeNull();
+      const faviconError = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root },
+        projectFaviconPath: icon,
+      }).pipe(Effect.flip);
+      expect(faviconError._tag).toBe("AssetProjectFaviconNotFoundError");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.skipIf(!symlinksSupported)(
     "binds media URLs to the canonical target and rejects symlink substitution",
     () =>
@@ -1197,6 +1242,33 @@ describe("AssetAccess", () => {
         }
       }
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "reports image attachment dimensions when the attachments directory is a symlink",
+    () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-attachments-link-" });
+        const realAttachmentsDir = path.join(root, "real");
+        const linkedAttachmentsDir = path.join(root, "linked");
+        yield* fs.makeDirectory(realAttachmentsDir);
+        yield* fs.symlink(realAttachmentsDir, linkedAttachmentsDir);
+        const attachmentId = "thread-1-00000000-0000-4000-8000-000000000041";
+        yield* fs.writeFile(path.join(realAttachmentsDir, `${attachmentId}.png`), screenshotPng);
+
+        const result = yield* issueAssetUrl({
+          resource: { _tag: "attachment", attachmentId },
+        }).pipe(
+          Effect.provideService(ServerConfig.ServerConfig, {
+            ...config,
+            attachmentsDir: linkedAttachmentsDir,
+          }),
+        );
+        expect(result.imageDimensions).toEqual({ width: 390, height: 844 });
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("serves document attachments inline when a viewer requests it", () =>

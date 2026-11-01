@@ -84,7 +84,11 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
     ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   );
   const handleReconnectActiveEnvironment = async (environmentId: EnvironmentId) => {
-    const result = await retryEnvironment(environmentId);
+    // A retry does nothing while the environment is switched off.
+    const result =
+      activeEnvironment?.entry.enabled === false
+        ? await setEnvironmentEnabled({ environmentId, enabled: true })
+        : await retryEnvironment(environmentId);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add(

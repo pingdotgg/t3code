@@ -212,6 +212,11 @@ describe("server browser element refs", () => {
     expect(tree).not.toContain("PAYLOAD");
   });
 
+  it("shows a data: page's own URL by media type only", async () => {
+    await page.goto("data:text/html,<title>Key</title>PAYLOAD");
+    expect((await takeSnapshot()).url).toBe("data:text/html,…");
+  });
+
   it("rejects refs from another tab", async () => {
     await page.setContent("<button>same label</button>");
     const locator = buttonLocator((await takeSnapshot()).accessibilityTree, "same label");
@@ -386,5 +391,19 @@ describe("server browser drag", () => {
     } finally {
       process.off("unhandledRejection", onUnhandled);
     }
+  });
+});
+
+describe("server browser net errors", () => {
+  it.each([
+    ["net::ERR_CONNECTION_REFUSED", "ERR_CONNECTION_REFUSED", -102],
+    [
+      "page.goto: net::ERR_HTTP2_PROTOCOL_ERROR at https://localhost:5173/",
+      "ERR_HTTP2_PROTOCOL_ERROR",
+      -2,
+    ],
+    ["net::ERR_TLS13_DOWNGRADE_DETECTED", "ERR_TLS13_DOWNGRADE_DETECTED", -2],
+  ])("reads the whole error name from %j", (errorText, description, code) => {
+    expect(ServerBrowserPage.parseNetError(errorText)).toEqual({ description, code });
   });
 });
