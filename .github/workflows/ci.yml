@@ -254,6 +254,9 @@ jobs:
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
 
+      - name: Test thread transfer report publisher
+        run: node --test .github/scripts/thread-transfer-report.test.cjs
+
       - name: Test preview artifact validation
         run: python3 -B .github/scripts/stage-preview-bundle.test.py
 
