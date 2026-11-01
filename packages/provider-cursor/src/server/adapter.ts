@@ -892,9 +892,7 @@ const MAX_CURSOR_STREAMED_OUTPUT_CHARS = 256 * 1024;
 const CURSOR_RESUME_NO_PROGRESS_MESSAGE =
   "Agent turn stopped after repeated resume attempts made no progress";
 
-// Full-text snapshots of a streaming segment are at least this far apart, instead
-// of one per delta, which grew with the square of the reply length. A delta after
-// a quiet interval and the segment's close still emit at once. The flush is
+// Minimum gap between full-text snapshots of a streaming segment. The flush is
 // scheduled, not a deadline, so it can land later under host load.
 const CURSOR_TEXT_FLUSH_INTERVAL_MS = 50;
 
@@ -923,8 +921,7 @@ interface ActiveCursorTextSegment {
   readonly nativeItemId: string;
   readonly startedAt: DateTime.Utc;
   text: string;
-  // When the last snapshot was emitted, or null before the running node and
-  // first text.
+  // Null until the first snapshot, which also emits the running node.
   emittedAtMs: number | null;
   // Text changed since the last emission; a delayed flush is scheduled.
   dirty: boolean;
@@ -1054,11 +1051,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         });
 
         const textEmissionPermit = yield* Semaphore.make(1);
-        /**
-         * Claims the stream's current segment for one emission. A `flushOf` call
-         * is a delayed flush: it emits only while that segment is still current
-         * and has unsent text.
-         */
+        // Claims the current segment for one emission. With `flushOf` it is a delayed
+        // flush, emitting only while that segment is still current and dirty.
         const takeTextSnapshot = (
           stream: ActiveCursorTextStream,
           completed: boolean,
@@ -1068,14 +1062,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           const segment = stream.current;
           if (segment === null || segment.text.length === 0) return null;
           if (flushOf !== undefined && (segment !== flushOf || !segment.dirty)) return null;
-          // The node carries no text, so it changes only when the segment opens
-          // and when it completes.
+          // The node carries no text, so it changes only on open and on completion.
           const emitsNode = completed || segment.emittedAtMs === null;
           segment.emittedAtMs = DateTime.toEpochMillis(now);
           segment.dirty = false;
-          // Read the text in the same step that clears `dirty`. Deltas appended
-          // while this emission yields mark the segment dirty again and reach the
-          // next flush or the close.
+          // Read the text in the step that clears `dirty`; deltas appended while this
+          // emission yields mark it dirty again for the next flush or the close.
           return { segment, text: segment.text, emitsNode };
         };
 
@@ -1283,13 +1275,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           context.reasoning.current = null;
         });
 
-        /**
-         * Publishes a text change. It emits at once when the segment's last
-         * snapshot is at least CURSOR_TEXT_FLUSH_INTERVAL_MS old, so live output
-         * starts immediately and a slow stream is never delayed. Faster changes
-         * share one flush at the end of that interval. Completing the segment
-         * emits its final text and makes a pending flush a no-op.
-         */
+        // Runs per delta, so untraced. Emits at once when the last snapshot is at least
+        // the flush interval old; faster changes share one delayed flush, which
+        // completing the segment turns into a no-op.
         const publishTextSegment = Effect.fnUntraced(function* (
           context: ActiveCursorTurn,
           kind: "assistant" | "reasoning",

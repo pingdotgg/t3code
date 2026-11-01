@@ -464,7 +464,6 @@ describe("CursorAdapterV2", () => {
       let sendUpdate: ((update: InteractionUpdate) => Effect.Effect<void>) | undefined;
       const adapter = yield* makeCursorAdapterV2({
         instanceId,
-        settings: yield* decodeCursorSettings({}),
         environment: { HOME: workspace },
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
