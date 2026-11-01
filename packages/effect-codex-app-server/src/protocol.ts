@@ -502,17 +502,30 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
         nextRequestId,
         (current) => [current, current + 1] as const,
       );
+      const attributes = {
+        "rpc.system": "jsonrpc",
+        "rpc.method": method,
+        "rpc.request_id": requestId,
+      };
+      yield* Effect.annotateCurrentSpan(attributes);
       const deferred = yield* Deferred.make<unknown, CodexError.CodexAppServerError>();
-      yield* Ref.update(pending, (current) =>
-        new Map(current).set(String(requestId), { deferred, method }),
-      );
-      yield* offerOutgoing({
-        id: requestId,
-        method,
-        ...(payload !== undefined ? { params: payload } : {}),
-      }).pipe(Effect.tapError(() => removePending(String(requestId))));
-      return yield* Deferred.await(deferred).pipe(
-        Effect.onInterrupt(() => removePending(String(requestId))),
+      return yield* Effect.acquireUseRelease(
+        Ref.update(pending, (current) =>
+          new Map(current).set(String(requestId), { deferred, method }),
+        ),
+        () =>
+          Effect.gen(function* () {
+            yield* offerOutgoing({
+              id: requestId,
+              method,
+              ...(payload !== undefined ? { params: payload } : {}),
+            }).pipe(Effect.withSpan("CodexAppServerProtocol.request.enqueue", { attributes }));
+            // Includes queue/stdin delivery, Codex work and response routing, not just T3 CPU.
+            return yield* Deferred.await(deferred).pipe(
+              Effect.withSpan("CodexAppServerProtocol.request.awaitResponse", { attributes }),
+            );
+          }),
+        () => removePending(String(requestId)),
       );
     });
 
