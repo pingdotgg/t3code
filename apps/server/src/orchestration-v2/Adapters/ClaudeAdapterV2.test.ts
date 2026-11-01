@@ -11419,6 +11419,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(outer?.status, "completed");
         assert.equal(nested?.status, "completed");
         assert.equal(nested?.parentNodeId, outer?.id);
+        const nestedThread = harness.events.find(
+          (event) =>
+            event.type === "app_thread.created" && event.appThread.id === nested?.childThreadId,
+        );
+        assert.equal(
+          nestedThread?.type === "app_thread.created" &&
+            nestedThread.appThread.lineage.parentThreadId,
+          outer?.childThreadId,
+        );
         assert.deepEqual(
           subagentRouting(harness.events, []).assistantTexts(outer?.childThreadId ?? undefined),
           ["OUTER_WORKING", "OUTER_DONE"],
