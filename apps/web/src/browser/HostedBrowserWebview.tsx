@@ -23,6 +23,11 @@ import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab, withDesktopTab } from "./desktopTabLifetime";
 import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewStyle";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
+import {
+  approveRemotePreviewPorts,
+  needsRemotePreviewProxy,
+  remotePreviewPort,
+} from "./remotePreviewProxy";
 import { useBrowserLayoutZoomFactor } from "./useBrowserLayoutZoomFactor";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
 import {
@@ -77,6 +82,10 @@ export function HostedBrowserWebview(props: {
   const clientSettingsHydrated = useClientSettingsHydrated();
   const config = usePreviewWebviewConfig(threadRef.environmentId, profileId);
   const [initialSrc] = useState(() => initialUrl ?? "about:blank");
+  const [initialRemotePort] = useState(() =>
+    needsRemotePreviewProxy(threadRef.environmentId) ? remotePreviewPort(initialSrc) : null,
+  );
+  const [remotePortSettled, setRemotePortSettled] = useState(initialRemotePort === null);
   const tabLeaseRef = useRef<AcquiredDesktopTab | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const webviewRef = useRef<ElectronWebview | null>(null);
@@ -120,6 +129,21 @@ export function HostedBrowserWebview(props: {
     };
   }, [clientSettingsHydrated, runtimeTabId, serverDriven, tabId, threadRef.threadId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- approves a restored tab's environment port before its first load
+  useEffect(() => {
+    if (initialRemotePort === null) return;
+    let disposed = false;
+    // A failure still mounts the guest: the proxy explains the problem and retries on reconnect.
+    void approveRemotePreviewPorts(threadRef.environmentId, [initialRemotePort])
+      .catch(() => undefined)
+      .finally(() => {
+        if (!disposed) setRemotePortSettled(true);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [initialRemotePort, threadRef.environmentId]);
+
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies the server color scheme to the desktop preview tab through the desktop bridge
   useEffect(() => {
     const bridge = window.desktopBridge?.preview;
@@ -148,7 +172,7 @@ export function HostedBrowserWebview(props: {
   useEffect(() => {
     const webview = webviewRef.current;
     const bridge = previewBridge;
-    if (!clientSettingsHydrated || !webview || !config || !bridge) return;
+    if (!clientSettingsHydrated || !remotePortSettled || !webview || !config || !bridge) return;
     let disposed = false;
     let recoveryTimeout: ReturnType<typeof setTimeout> | null = null;
     const register = () => {
@@ -198,6 +222,7 @@ export function HostedBrowserWebview(props: {
   }, [
     clientSettingsHydrated,
     config,
+    remotePortSettled,
     runtimeTabId,
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A crash recovery remounts the webview under a new key, so the listeners attach to the new element.
     webviewGeneration,
@@ -289,7 +314,7 @@ export function HostedBrowserWebview(props: {
     viewportWidth,
   ]);
 
-  if (!clientSettingsHydrated || !config) return null;
+  if (!clientSettingsHydrated || !config || !remotePortSettled) return null;
 
   const renderingActive = active || backgroundActivity || pictureInPicture || recordingActive;
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({

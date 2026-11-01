@@ -9,6 +9,10 @@ import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { previewBridge } from "~/components/preview/previewBridge";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
+
+import { needsRemotePreviewProxy } from "./remotePreviewProxy";
 
 const PREVIEW_CONFIG_STALE_TIME_MS = 5 * 60_000;
 const PREVIEW_CONFIG_IDLE_TTL_MS = 10 * 60_000;
@@ -51,8 +55,11 @@ const loadPreviewWebviewConfig = (
     return Effect.fail(new PreviewWebviewBridgeUnavailableError({ environmentId }));
   }
 
+  const remoteProxy =
+    environmentId !== appAtomRegistry.get(primaryEnvironmentIdAtom) &&
+    needsRemotePreviewProxy(environmentId);
   return Effect.tryPromise({
-    try: () => bridge.getPreviewConfig(environmentId, profileId),
+    try: () => bridge.getPreviewConfig(environmentId, profileId, { remoteProxy }),
     catch: (cause) => new PreviewWebviewConfigLoadError({ environmentId, cause }),
   });
 };

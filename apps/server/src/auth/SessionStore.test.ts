@@ -90,6 +90,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         const sessions = yield* SessionStore.SessionStore;
         const owner = yield* sessions.issue({ subject: "owner" });
         const client = yield* sessions.issue(relaySessionInput);
+        expect(yield* sessions.isActive(client.sessionId)).toBe(true);
         const ownerInvalidated = yield* Deferred.make<void>();
         yield* sessions
           .awaitInvalidation(owner.sessionId)
@@ -109,6 +110,8 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         yield* Fiber.join(first);
         yield* Fiber.join(second);
         expect(yield* Deferred.isDone(ownerInvalidated)).toBe(false);
+        expect(yield* sessions.isActive(owner.sessionId)).toBe(true);
+        expect(yield* sessions.isActive(client.sessionId)).toBe(false);
         yield* sessions.awaitInvalidation(client.sessionId);
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
@@ -125,11 +128,13 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
           Effect.andThen(Deferred.succeed(invalidated, undefined)),
           Effect.forkScoped({ startImmediately: true }),
         );
+      expect(yield* sessions.isActive(client.sessionId)).toBe(true);
       yield* TestClock.adjust(Duration.minutes(59));
       expect(yield* Deferred.isDone(invalidated)).toBe(false);
       yield* TestClock.adjust(Duration.minutes(1));
       yield* Fiber.join(watcher);
       yield* sessions.awaitInvalidation(client.sessionId);
+      expect(yield* sessions.isActive(client.sessionId)).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
@@ -172,6 +177,8 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       const renewal = yield* sessions.issue({ ...relaySessionInput, ...testCase.renewal });
       yield* TestClock.adjust(Duration.millis((testCase.closesAtMinute - 59) * 60_000 - 1));
       expect(yield* Deferred.isDone(invalidated)).toBe(false);
+      const isActive = sessions.isActive(client.sessionId, relaySessionInput.proofKeyThumbprint);
+      expect(yield* isActive).toBe(true);
       yield* TestClock.adjust(Duration.millis(1));
       if ("revoke" in testCase) {
         yield* sessions.revoke(
@@ -179,6 +186,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         );
       }
       yield* Fiber.join(watcher);
+      expect(yield* isActive).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
