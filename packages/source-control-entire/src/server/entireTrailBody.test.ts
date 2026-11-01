@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { trailBodyMarkdown, unpreservedMarkdown } from "./entireTrailBody.ts";
+import { trailBodyMarkdown, unpreservedMarkdown, unrenderedContent } from "./entireTrailBody.ts";
 
 const text = (value: string, marks?: ReadonlyArray<Record<string, unknown>>) => ({
   type: "text",
@@ -163,6 +163,63 @@ describe("trailBodyMarkdown", () => {
       ],
     };
     expect(trailBodyMarkdown({ text_snapshot: "", content_json })).toBe("click");
+  });
+
+  it.each([
+    [
+      "a link that isn't a web or mail link",
+      paragraph(text("click", [{ type: "link", attrs: { href: "javascript:alert(1)" } }])),
+      "links that aren't web or mail links",
+    ],
+    [
+      "a block it has no markdown for",
+      { type: "image", attrs: { src: "https://entire.io/a.png" } },
+      "unsupported content: image",
+    ],
+    [
+      "an inline node it has no markdown for",
+      paragraph(text("Hi "), { type: "mention", attrs: { id: "u1" } }),
+      "unsupported content: mention",
+    ],
+    [
+      "a list item it has no markdown for",
+      { type: "bulletList", content: [{ type: "taskItem", content: [paragraph(text("todo"))] }] },
+      "unsupported content: taskItem",
+    ],
+    [
+      "a mark it has no markdown for",
+      paragraph(text("under", [{ type: "underline" }])),
+      "unsupported text formatting",
+    ],
+    [
+      "formatting on code",
+      paragraph(text("x", [{ type: "code" }, { type: "bold" }])),
+      "formatted or linked code",
+    ],
+  ] as const)("reports %s as left out", (_, block, lost) => {
+    const document = { text_snapshot: "", content_json: { type: "doc", content: [block] } };
+    expect(unrenderedContent(document)).toBe(lost);
+  });
+
+  it("reports nothing left out of a document it renders in full", () => {
+    const content_json = {
+      type: "doc",
+      content: [
+        { type: "heading", attrs: { level: 2 }, content: [text("Summary")] },
+        paragraph(
+          text("Keeps "),
+          text("secrets", [{ type: "bold" }]),
+          { type: "hardBreak" },
+          text("docs", [{ type: "link", attrs: { href: "https://entire.io/docs" } }]),
+        ),
+        { type: "bulletList", content: [{ type: "listItem", content: [paragraph(text("one"))] }] },
+        { type: "codeBlock", content: [text("a = 1")] },
+        { type: "blockquote", content: [paragraph(text("quoted"))] },
+        { type: "horizontalRule" },
+      ],
+    };
+    expect(unrenderedContent({ text_snapshot: "", content_json })).toBeNull();
+    expect(unrenderedContent({ text_snapshot: "Plain" })).toBeNull();
   });
 
   it("falls back to the snapshot without the trail self-link", () => {

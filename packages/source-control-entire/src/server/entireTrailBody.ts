@@ -27,6 +27,14 @@ const children = (node: ProseMirrorNode): ReadonlyArray<ProseMirrorNode> =>
 const safeHref = (href: unknown): string | null =>
   typeof href === "string" && /^(https?:|mailto:)/iu.test(href) ? href : null;
 
+/** Records what the renderer leaves out; only the first loss is reported. */
+type Lose = (what: string) => void;
+
+const MARKS = new Set(["bold", "italic", "strike", "code", "link"]);
+
+const unsupported = (node: ProseMirrorNode) =>
+  typeof node.type === "string" ? `unsupported content: ${node.type}` : "unsupported content";
+
 const longestBacktickRun = (text: string) =>
   Math.max(0, ...(text.match(/`+/gu) ?? []).map((run) => run.length));
 
@@ -43,12 +51,15 @@ function escapeText(text: string): string {
     .replace(/\[(?=[^\]]*\]\()/gu, "\\[");
 }
 
-function renderText(node: ProseMirrorNode): string {
+function renderText(node: ProseMirrorNode, lose: Lose): string {
   const raw = typeof node.text === "string" ? node.text : "";
   if (raw === "") return "";
   const marks = Array.isArray(node.marks) ? node.marks : [];
   const has = (type: string) => marks.some((mark) => mark?.type === type);
+  if (marks.some((mark) => typeof mark?.type !== "string" || !MARKS.has(mark.type)))
+    lose("unsupported text formatting");
   if (has("code")) {
+    if (marks.some((mark) => mark?.type !== "code")) lose("formatted or linked code");
     const delimiter = "`".repeat(longestBacktickRun(raw) + 1);
     const pad = raw.startsWith("`") || raw.endsWith("`") ? " " : "";
     return `${delimiter}${pad}${raw}${pad}${delimiter}`;
@@ -60,19 +71,19 @@ function renderText(node: ProseMirrorNode): string {
   if (has("strike")) text = `~~${text}~~`;
   const link = marks.find((mark) => mark?.type === "link");
   const href = link ? safeHref(link.attrs?.href) : null;
+  if (link && href === null) lose("links that aren't web or mail links");
   return href ? `[${text}](${href})` : text;
 }
 
-function renderInline(node: ProseMirrorNode): string {
+function renderInline(node: ProseMirrorNode, lose: Lose): string {
   return children(node)
-    .map((child) =>
-      child.type === "text"
-        ? renderText(child)
-        : child.type === "hardBreak"
-          ? // A trailing backslash is a hard break Entire's converter keeps; a bare newline joins.
-            "\\\n"
-          : renderInline(child),
-    )
+    .map((child) => {
+      if (child.type === "text") return renderText(child, lose);
+      // A trailing backslash is a hard break Entire's converter keeps; a bare newline joins.
+      if (child.type === "hardBreak") return "\\\n";
+      lose(unsupported(child));
+      return renderInline(child, lose);
+    })
     .join("");
 }
 
@@ -82,65 +93,97 @@ const indent = (text: string, prefix: string) =>
     .map((line, index) => (index === 0 || line === "" ? line : `${prefix}${line}`))
     .join("\n");
 
-function renderList(node: ProseMirrorNode, ordered: boolean): string {
+function renderList(node: ProseMirrorNode, ordered: boolean, lose: Lose): string {
   const start = typeof node.attrs?.start === "number" ? node.attrs.start : 1;
   return children(node)
     .map((item, index) => {
+      if (item.type !== "listItem") lose(unsupported(item));
       const marker = ordered ? `${start + index}.` : "-";
-      const body = children(item).map(renderBlock).filter(Boolean).join("\n");
+      const body = children(item)
+        .map((child) => renderBlock(child, lose))
+        .filter(Boolean)
+        .join("\n");
       return `${marker} ${indent(body, " ".repeat(marker.length + 1))}`;
     })
     .join("\n");
 }
 
-function renderBlock(node: ProseMirrorNode): string {
+function renderBlock(node: ProseMirrorNode, lose: Lose): string {
   switch (node.type) {
     case "paragraph":
-      return renderInline(node).replace(
+      return renderInline(node, lose).replace(
         /^( {0,3})(#{1,6}(?=\s|$)|[>*+-](?=\s|$)|-(?=(?:[ \t]*-){2,}[ \t]*$)|\d{1,9}[.)](?=\s))/gmu,
         (_, indent: string, marker: string) =>
           indent + marker.replace(/[#>*+.)-]/u, (char) => `\\${char}`),
       );
     case "heading": {
       const level = typeof node.attrs?.level === "number" ? node.attrs.level : 1;
-      return `${"#".repeat(Math.min(Math.max(level, 1), 6))} ${renderInline(node)}`;
+      return `${"#".repeat(Math.min(Math.max(level, 1), 6))} ${renderInline(node, lose)}`;
     }
     case "bulletList":
-      return renderList(node, false);
+      return renderList(node, false, lose);
     case "orderedList":
-      return renderList(node, true);
+      return renderList(node, true, lose);
     case "codeBlock": {
       const language = typeof node.attrs?.language === "string" ? node.attrs.language : "";
       const code = children(node)
-        .map((child) => (typeof child.text === "string" ? child.text : ""))
+        .map((child) => {
+          if (child.type !== "text") lose(unsupported(child));
+          return typeof child.text === "string" ? child.text : "";
+        })
         .join("");
       const fence = "`".repeat(Math.max(3, longestBacktickRun(code) + 1));
       return `${fence}${language}\n${code}\n${fence}`;
     }
     case "blockquote":
       return children(node)
-        .map(renderBlock)
+        .map((child) => renderBlock(child, lose))
         .join("\n\n")
         .split("\n")
         .map((line) => `> ${line}`)
         .join("\n");
     case "horizontalRule":
       return "---";
+    case "doc":
+      return renderChildren(node, lose);
+    case "text":
+      return renderText(node, lose);
     default:
-      return children(node).length > 0
-        ? children(node).map(renderBlock).filter(Boolean).join("\n\n")
-        : renderText(node);
+      lose(unsupported(node));
+      return children(node).length > 0 ? renderChildren(node, lose) : renderText(node, lose);
   }
 }
 
-export function trailBodyMarkdown(document: {
+function renderChildren(node: ProseMirrorNode, lose: Lose): string {
+  return children(node)
+    .map((child) => renderBlock(child, lose))
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+interface TrailBodyDocument {
   readonly text_snapshot: string;
   readonly content_json?: unknown;
-}): string {
+}
+
+function render(document: TrailBodyDocument): { markdown: string; lost: string | null } {
+  let lost: string | null = null;
+  const lose: Lose = (what) => {
+    lost ??= what;
+  };
   const doc = document.content_json;
-  const rendered = isNode(doc) && doc.type === "doc" ? renderBlock(doc) : "";
+  const rendered = isNode(doc) && doc.type === "doc" ? renderBlock(doc, lose) : "";
   const body = rendered.trim() === "" ? document.text_snapshot : rendered;
-  return collapseBlankLines(body.replace(TRAIL_LINK, "")).trim();
+  return { markdown: collapseBlankLines(body.replace(TRAIL_LINK, "")).trim(), lost };
+}
+
+export function trailBodyMarkdown(document: TrailBodyDocument): string {
+  return render(document).markdown;
+}
+
+/** What the markdown shown for a description leaves out of Entire's document, or null. */
+export function unrenderedContent(document: TrailBodyDocument): string | null {
+  return render(document).lost;
 }
 
 /** Blank lines inside a code block are its content; elsewhere one separates blocks. */

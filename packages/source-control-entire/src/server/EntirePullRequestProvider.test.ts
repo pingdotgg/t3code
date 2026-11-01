@@ -247,6 +247,94 @@ describe("EntirePullRequestProvider", () => {
       }).pipe(Effect.provide(server.layer));
     });
 
+    it.effect("saves over a project trail description it renders in full", () => {
+      const server = fakeEntire(
+        {
+          "GET /trails/7": change,
+          [`GET ${trailPath}`]: {
+            bodyDocument: {
+              text_snapshot: "Old intent",
+              content_json: {
+                type: "doc",
+                content: [
+                  {
+                    type: "paragraph",
+                    content: [
+                      {
+                        type: "text",
+                        text: "Old intent",
+                        marks: [{ type: "link", attrs: { href: "https://entire.io/docs" } }],
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+          [`PATCH ${trailPath}`]: {},
+        },
+        { etag: 'W/"p1"' },
+      );
+      return Effect.gen(function* () {
+        const provider = yield* EntirePullRequestProvider.make;
+        yield* provider.updateChangeRequest!({ ...target, body: `${link}\n\nNew intent` });
+        assert.deepStrictEqual(server.writes(), [`PATCH ${trailPath}`]);
+      }).pipe(Effect.provide(server.layer));
+    });
+
+    it.effect.each([
+      [
+        "a link it can't show",
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "text",
+              text: "click",
+              marks: [{ type: "link", attrs: { href: "javascript:alert(1)" } }],
+            },
+          ],
+        },
+        "links that aren't web or mail links",
+      ],
+      [
+        "content it can't show",
+        { type: "image", attrs: { src: "https://entire.io/a.png" } },
+        "unsupported content: image",
+      ],
+    ] as const)("refuses to save over a description with %s", ([, block, lost]) => {
+      const server = fakeEntire(
+        {
+          "GET /trails/7": change,
+          [`GET ${trailPath}`]: {
+            bodyDocument: {
+              text_snapshot: "click",
+              content_json: {
+                type: "doc",
+                content: [{ type: "paragraph", content: [{ type: "text", text: "Intro" }] }, block],
+              },
+            },
+          },
+          [`PATCH ${trailPath}`]: {},
+        },
+        { etag: 'W/"p1"' },
+      );
+      return Effect.gen(function* () {
+        const provider = yield* EntirePullRequestProvider.make;
+        // Shown as far as T3 Code can, but not saved over.
+        assert.include((yield* provider.getChangeRequest(target)).body, "Intro");
+        const error = yield* provider.updateChangeRequest!({
+          ...target,
+          body: `${link}\n\nNew intent`,
+        }).pipe(Effect.flip);
+        assert.strictEqual(
+          error.detail,
+          `This description has formatting T3 Code can't preserve; edit it on entire.com (${lost}).`,
+        );
+        assert.deepStrictEqual(server.writes(), []);
+      }).pipe(Effect.provide(server.layer));
+    });
+
     it.effect("asks for a refresh when the project trail changed since it was read", () => {
       const server = fakeEntire(
         {

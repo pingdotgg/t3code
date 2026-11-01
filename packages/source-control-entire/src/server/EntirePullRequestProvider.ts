@@ -662,11 +662,12 @@ export const make = Effect.gen(function* () {
     const projectTrail = route
       ? yield* readProjectTrail("updateChangeRequest", input, route)
       : null;
-    const current = projectTrail
-      ? Json.changeBody(trail, projectTrail.body.bodyDocument ?? null)
-      : Json.changeBody(trail);
-    // Entire converts the markdown back to rich text; refuse what the round trip would drop.
+    const document = projectTrail ? (projectTrail.body.bodyDocument ?? null) : trail.body_document;
+    const current = Json.changeBody(trail, document);
+    // Entire converts the markdown back to rich text; refuse what the round trip would drop,
+    // and what the markdown read from Entire's document had already left out.
     const lost =
+      (document ? EntireTrailBody.unrenderedContent(document) : null) ??
       EntireTrailBody.unpreservedMarkdown(Json.ownBody(trail, current)) ??
       EntireTrailBody.unpreservedMarkdown(markdown);
     if (lost !== null)
