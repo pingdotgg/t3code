@@ -140,6 +140,8 @@ export function RightPanelColumns(props: {
     });
   }, [enabled, chatRevealRequestId]);
 
+  const activeSurface = surfaces.find((surface) => surface.id === activeSurfaceId);
+  const fileRevealRequestId = activeSurface?.kind === "file" ? activeSurface.revealRequestId : 0;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scroll the selected surface DOM column into view, including repeated selections
   useEffect(() => {
     if (!enabled || !activeSurfaceId) return;
@@ -153,7 +155,7 @@ export function RightPanelColumns(props: {
     });
     // A repeated selection must reveal the column again even when its id is unchanged.
     // eslint-disable-next-line react/exhaustive-effect-dependencies
-  }, [enabled, activeSurfaceId, revealRequestId]);
+  }, [enabled, activeSurfaceId, revealRequestId, fileRevealRequestId]);
 
   // Every column, the chat included, takes half the strip when it shares it,
   // never narrower than a usable column, and later ones scroll past the edge.

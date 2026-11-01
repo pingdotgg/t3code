@@ -864,15 +864,24 @@ export function PreviewView({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to preview actions while the view is visible
   useEffect(() => {
     if (!shortcutsEnabled) return;
-    const unsubscribeAction = subscribePreviewAction((action) => onPreviewAction(action));
-    const unsubscribeMenu = window.desktopBridge?.onMenuAction((action) => {
-      if (action === "preview.focusUrl") onPreviewAction("focus-url");
-    });
-    return () => {
-      unsubscribeAction();
-      unsubscribeMenu?.();
-    };
+    return subscribePreviewAction((action) => onPreviewAction(action));
   }, [shortcutsEnabled]);
+
+  const onDesktopMenuAction = useEffectEvent((action: string, sourceTabId?: string) => {
+    if (
+      action === "preview.focusUrl" &&
+      (sourceTabId ? sourceTabId === runtimeTabId : shortcutsEnabled)
+    ) {
+      onPreviewAction("focus-url");
+    }
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- routes native guest menu actions to their visible browser column
+  useEffect(() => {
+    if (!visible) return;
+    return window.desktopBridge?.onMenuAction((action, sourceTabId) =>
+      onDesktopMenuAction(action, sourceTabId),
+    );
+  }, [visible]);
 
   return (
     <div
