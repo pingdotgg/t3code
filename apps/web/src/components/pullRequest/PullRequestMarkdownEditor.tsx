@@ -42,9 +42,10 @@ export function PullRequestMarkdownEditor({
   const [draft, setDraft] = useState(value);
   const [preview, setPreview] = useState(false);
   const [seed, setSeed] = useState(value);
+  // A refresh, say after a save is refused as stale, must not replace unsaved edits.
   if (seed !== value) {
     setSeed(value);
-    setDraft(value);
+    if (draft === seed) setDraft(value);
   }
   const empty = draft.trim().length === 0;
   const saveDisabled = !canWriteSourceControl || saving || (empty && !allowEmpty);
