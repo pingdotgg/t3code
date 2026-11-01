@@ -22,8 +22,9 @@ import { resolveProtocolRelativeMediaUrl } from "../media/mediaContent";
 export interface ExpandedImageItem {
   src: string | null;
   name: string;
+  mimeType?: string;
   type?: "video";
-  /** The preview created this object URL and must revoke it; other blob URLs belong to the timeline. */
+  /** Revoke this owned object URL; other blob URLs belong to the timeline. */
   ownsSrc?: boolean;
   source?: SnapShotSource;
   autoPlay?: boolean;
@@ -35,10 +36,6 @@ export interface ExpandedImageItem {
 export interface ExpandedImagePreview {
   images: ExpandedImageItem[];
   index: number;
-}
-
-export function wrapExpandedImageIndex(index: number, imageCount: number): number {
-  return imageCount > 0 ? ((index % imageCount) + imageCount) % imageCount : 0;
 }
 
 export async function resolveMarkdownMediaPreview(input: {
@@ -182,7 +179,15 @@ export function buildExpandedImagePreview(
   }
   const previewableImages = images.flatMap((image) =>
     image.type === "image" && image.previewUrl
-      ? [{ id: image.id, src: image.previewUrl, name: image.name, source: image.source }]
+      ? [
+          {
+            id: image.id,
+            src: image.previewUrl,
+            name: image.name,
+            mimeType: image.mimeType,
+            source: image.source,
+          },
+        ]
       : [],
   );
   if (previewableImages.length === 0) {
@@ -196,6 +201,7 @@ export function buildExpandedImagePreview(
     images: previewableImages.map((image) => ({
       src: image.src,
       name: image.name,
+      mimeType: image.mimeType,
       ...(image.source?.kind === "snap-shot" ? { source: image.source } : {}),
     })),
     index: selectedIndex,

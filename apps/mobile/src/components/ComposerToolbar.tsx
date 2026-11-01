@@ -1,7 +1,6 @@
 import type { ComponentProps, ReactNode } from "react";
-import { useCallback, useMemo, useState } from "react";
+import { useState } from "react";
 import {
-  Platform,
   Pressable,
   ScrollView,
   View,
@@ -13,6 +12,8 @@ import {
   type ViewStyle,
 } from "react-native";
 
+import Animated, { FadeIn, useReducedMotion } from "react-native-reanimated";
+
 import { cn } from "../lib/cn";
 import { AppText as Text } from "./ui/AppText";
 import { SymbolView } from "./ui/AppSymbol";
@@ -21,8 +22,9 @@ import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
 const COMPOSER_TOOLBAR_GAP = 8;
 const COMPOSER_TOOLBAR_FADE_WIDTH = 18;
 const COMPOSER_TOOLBAR_SCROLL_EPSILON = 4;
-
+const INLINE_CONTROL_LABEL_ENTERING = FadeIn.duration(160);
 export function ComposerInlineControl(props: {
+  readonly size?: "regular" | "large";
   readonly accessibilityHint?: string;
   readonly accessibilityLabel?: string;
   readonly disabled?: boolean;
@@ -30,6 +32,9 @@ export function ComposerInlineControl(props: {
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
   readonly renderIcon?: (size: number) => ReactNode;
   readonly label: string;
+  readonly suffix?: ReactNode;
+  /** Show only the icon and chevron; the label still names the control for accessibility. */
+  readonly iconOnly?: boolean;
   readonly maxWidth?: ViewStyle["maxWidth"];
   readonly onPress?: () => void;
   readonly selected?: boolean;
@@ -38,56 +43,77 @@ export function ComposerInlineControl(props: {
   readonly showChevron?: boolean;
 }) {
   const { scale, smallIconSize } = useAndroidControlSizing();
+  const reducedMotion = useReducedMotion();
+  // Keep the picker anchored to its parent while the editor changes height.
+  const animatesLabel = props.iconOnly !== undefined;
+  const iconSize = props.size === "large" ? 20 : smallIconSize;
   return (
-    <Pressable
-      accessibilityLabel={props.accessibilityLabel ?? props.label}
-      accessibilityHint={props.accessibilityHint}
-      accessibilityRole={props.static ? undefined : "button"}
-      accessibilityState={
-        props.static ? undefined : { disabled: props.disabled, selected: props.selected }
-      }
-      className="h-11 flex-row items-center gap-2 rounded-xl px-2 active:bg-subtle"
-      disabled={props.disabled || props.static}
-      onPress={props.onPress}
-      style={{ maxWidth: props.maxWidth ?? 190, opacity: props.disabled ? 0.45 : 1 }}
+    <Animated.View
+      style={{
+        maxWidth: props.maxWidth ?? 190,
+        overflow: animatesLabel ? "hidden" : undefined,
+      }}
     >
-      {props.renderIcon ? (
-        <View
-          className="size-4 shrink-0 items-center justify-center"
-          style={Platform.OS === "android" ? { width: 14 * scale, height: 14 * scale } : undefined}
-        >
-          {props.renderIcon(smallIconSize)}
-        </View>
-      ) : props.icon ? (
-        <SymbolView
-          name={props.icon}
-          size={smallIconSize}
-          tintColorClassName={
-            props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
-          }
-          type="monochrome"
-        />
-      ) : null}
-      <Text
-        className={cn(
-          "shrink text-sm font-t3-medium",
-          props.emphasized || props.selected ? "text-foreground" : "text-foreground-muted",
-        )}
-        numberOfLines={1}
+      <Pressable
+        accessibilityLabel={props.accessibilityLabel ?? props.label}
+        accessibilityHint={props.accessibilityHint}
+        accessibilityRole={props.static ? undefined : "button"}
+        accessibilityState={
+          props.static ? undefined : { disabled: props.disabled, selected: props.selected }
+        }
+        className="h-[44px] flex-row items-center gap-2 rounded-xl px-2 active:bg-subtle"
+        disabled={props.disabled || props.static}
+        onPress={props.onPress}
+        style={{ opacity: props.disabled ? 0.45 : 1 }}
       >
-        {props.label}
-      </Text>
-      {props.showChevron === false ? null : (
-        <SymbolView
-          name={props.chevronDirection === "right" ? "chevron.right" : "chevron.down"}
-          size={Math.round(10 * scale)}
-          tintColorClassName={
-            props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
-          }
-          type="monochrome"
-        />
-      )}
-    </Pressable>
+        {props.renderIcon ? (
+          <View
+            className="size-4 shrink-0 items-center justify-center"
+            style={{ width: iconSize, height: iconSize }}
+          >
+            {props.renderIcon(iconSize)}
+          </View>
+        ) : props.icon ? (
+          <SymbolView
+            name={props.icon}
+            size={iconSize}
+            tintColorClassName={
+              props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
+            }
+            type="monochrome"
+          />
+        ) : null}
+        {props.iconOnly ? null : (
+          <Animated.View
+            className="shrink"
+            entering={animatesLabel && !reducedMotion ? INLINE_CONTROL_LABEL_ENTERING : undefined}
+          >
+            <Text
+              className={cn(
+                props.size === "large" ? "text-base font-t3-medium" : "text-sm font-t3-medium",
+                props.emphasized || props.selected ? "text-foreground" : "text-foreground-muted",
+              )}
+              numberOfLines={1}
+            >
+              {props.label}
+            </Text>
+          </Animated.View>
+        )}
+        {!props.iconOnly && props.suffix ? (
+          <View className="min-w-0 shrink">{props.suffix}</View>
+        ) : null}
+        {props.showChevron === false ? null : (
+          <SymbolView
+            name={props.chevronDirection === "right" ? "chevron.right" : "chevron.down"}
+            size={Math.round((props.size === "large" ? 12 : 10) * scale)}
+            tintColorClassName={
+              props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
+            }
+            type="monochrome"
+          />
+        )}
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -129,33 +155,31 @@ export function ComposerToolbarScroller(props: {
     viewportWidth: 0,
   });
 
-  const scrollEdges = useMemo(() => {
-    const maxOffset = Math.max(0, metrics.contentWidth - metrics.viewportWidth);
-    return {
-      showLeftFade: metrics.offsetX > COMPOSER_TOOLBAR_SCROLL_EPSILON,
-      showRightFade: metrics.offsetX < maxOffset - COMPOSER_TOOLBAR_SCROLL_EPSILON,
-    };
-  }, [metrics]);
+  const maxOffset = Math.max(0, metrics.contentWidth - metrics.viewportWidth);
+  const scrollEdges = {
+    showLeftFade: metrics.offsetX > COMPOSER_TOOLBAR_SCROLL_EPSILON,
+    showRightFade: metrics.offsetX < maxOffset - COMPOSER_TOOLBAR_SCROLL_EPSILON,
+  };
 
-  const handleLayout = useCallback((event: LayoutChangeEvent) => {
+  const handleLayout = (event: LayoutChangeEvent) => {
     const viewportWidth = event.nativeEvent.layout.width;
     setMetrics((current) =>
       current.viewportWidth === viewportWidth ? current : { ...current, viewportWidth },
     );
-  }, []);
+  };
 
-  const handleContentSizeChange = useCallback((contentWidth: number) => {
+  const handleContentSizeChange = (contentWidth: number) => {
     setMetrics((current) =>
       current.contentWidth === contentWidth ? current : { ...current, contentWidth },
     );
-  }, []);
+  };
 
-  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const offsetX = event.nativeEvent.contentOffset.x;
     setMetrics((current) =>
       Math.abs(current.offsetX - offsetX) < 1 ? current : { ...current, offsetX },
     );
-  }, []);
+  };
 
   return (
     <View className="relative min-w-0 flex-1">
@@ -219,24 +243,25 @@ export function ComposerToolbarScroller(props: {
 }
 
 export function ComposerActionButton(props: {
+  readonly size?: "regular" | "large";
   readonly accessibilityLabel: string;
   readonly disabled?: boolean;
   readonly icon: ComponentProps<typeof SymbolView>["name"];
   readonly onPress: () => void;
   readonly variant?: "primary" | "danger";
-  // Forwarded so a Menu can drive this button as its long-press
-  // anchor: Android injects onLongPress, iOS injects onTouchStart and onPress.
+  // Menu injects onLongPress on Android and onTouchStart/onPress on iOS.
   readonly onLongPress?: PressableProps["onLongPress"];
   readonly onTouchStart?: PressableProps["onTouchStart"];
 }) {
   const { scale, smallIconSize } = useAndroidControlSizing();
-  const circleSize = Math.round(30 * scale);
+  const circleSize = Math.round((props.size === "large" ? 44 : 30) * scale);
   return (
     <Pressable
       accessibilityLabel={props.accessibilityLabel}
       accessibilityRole="button"
       accessibilityState={{ disabled: props.disabled }}
       className="size-[44px] shrink-0 items-center justify-center active:opacity-70"
+      style={props.size === "large" ? { width: 62 } : undefined}
       disabled={props.disabled}
       onPress={props.onPress}
       onLongPress={props.onLongPress}
@@ -249,16 +274,20 @@ export function ComposerActionButton(props: {
           props.variant === "danger"
             ? "bg-danger"
             : props.disabled
-              ? "bg-primary/15"
+              ? "bg-foreground/12"
               : "bg-primary",
         )}
       >
         <SymbolView
           name={props.icon}
-          size={smallIconSize}
+          size={props.size === "large" ? Math.round(20 * scale) : smallIconSize}
           weight="semibold"
           tintColorClassName={
-            props.variant === "danger" ? "accent-danger-foreground" : "accent-primary-foreground"
+            props.variant === "danger"
+              ? "accent-danger-foreground"
+              : props.disabled
+                ? "accent-foreground/38"
+                : "accent-primary-foreground"
           }
           type="monochrome"
         />

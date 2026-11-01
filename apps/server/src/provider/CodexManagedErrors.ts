@@ -2,39 +2,35 @@ const legacyFailures = {
   subscription_sharing_v2_user_not_eligible: {
     message:
       "ChatGPT sharing is unavailable for this account or workspace. Use another provider or check its sharing policy.",
-    revoke: false,
   },
   subscription_sharing_usage_limit_exceeded: {
     message:
       "Your ChatGPT usage limit was reached. Check ChatGPT Usage settings for your available allowance.",
-    revoke: false,
+  },
+  subscription_sharing_workplace_individual_usage_limit_exceeded: {
+    message:
+      "You reached your workspace's limit for using ChatGPT in other apps. Ask your workspace admin to increase it.",
   },
   subscription_sharing_usage_unavailable: {
     message: "ChatGPT usage is temporarily unavailable. Try again shortly.",
-    revoke: false,
   },
   subscription_sharing_unsupported_capability: {
     message:
       "Codex used a feature that ChatGPT sharing does not support. Use another provider for this request.",
-    revoke: false,
   },
   subscription_sharing_v2_client_not_enabled: {
     message:
       "This app is not enabled for this ChatGPT connection. Use your existing CLI or another provider.",
-    revoke: false,
   },
   subscription_sharing_v2_route_not_supported: {
     message: "ChatGPT does not support this request route.",
-    revoke: false,
   },
   subscription_sharing_v2_invalid_user: {
     message:
       "ChatGPT could not validate this connection. Check the selected account and sharing permissions.",
-    revoke: false,
   },
   subscription_sharing_v2_user_unavailable: {
     message: "ChatGPT is temporarily unavailable. Try again shortly.",
-    revoke: false,
   },
 } as const;
 const failures = {
@@ -47,12 +43,10 @@ const failures = {
   chatpass_v2_scope_not_authorized: {
     message:
       "This ChatGPT grant does not authorize the request. Check the connection's sharing permissions.",
-    revoke: false,
   },
   chatpass_v2_invalid_authorization_context: {
     message:
       "ChatGPT could not authorize this connection. Check the client and sharing permissions.",
-    revoke: false,
   },
 };
 export function classifyCodexManagedError(value: unknown) {

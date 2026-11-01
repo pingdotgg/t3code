@@ -1,7 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
+import { secondTick } from "@t3tools/client-runtime/clock";
 import { type VcsActionState, type VcsActionTarget } from "@t3tools/client-runtime/state/vcs";
 import { Atom } from "effect/reactivity";
-import { useCallback, useEffect, useRef, useState } from "react";
+import * as Haptics from "expo-haptics";
+import { useSyncExternalStore } from "react";
 
 import { appAtomRegistry } from "./atom-registry";
 import { vcsActionManager } from "./vcs";
@@ -30,6 +32,12 @@ function broadcast(result: GitActionResultNotification | null): void {
 }
 
 export function showGitActionResult(result: GitActionResultNotification): void {
+  // Best effort: devices without a haptics engine reject.
+  Haptics.notificationAsync(
+    result.type === "success"
+      ? Haptics.NotificationFeedbackType.Success
+      : Haptics.NotificationFeedbackType.Error,
+  ).catch(() => undefined);
   if (dismissTimer) clearTimeout(dismissTimer);
   broadcast(result);
   dismissTimer = setTimeout(() => {
@@ -44,7 +52,7 @@ export function dismissGitActionResult(): void {
   broadcast(null);
 }
 
-export function useGitActionResultNotification(): {
+function useGitActionResultNotification(): {
   readonly result: GitActionResultNotification | null;
   readonly dismiss: () => void;
 } {
@@ -61,15 +69,17 @@ export interface GitActionProgress {
   readonly prUrl?: string;
 }
 
+const subscribeNever = () => () => {};
+
 const EMPTY_PROGRESS: GitActionProgress = {
   phase: "idle",
   label: null,
   description: null,
 };
 
-function formatElapsedSeconds(ms: number | null): string | null {
+function formatElapsedSeconds(ms: number | null, nowMs: number): string | null {
   if (ms === null) return null;
-  const elapsed = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+  const elapsed = Math.max(0, Math.floor((nowMs - ms) / 1000));
   if (elapsed < 2) return null;
   return `Running for ${elapsed}s`;
 }
@@ -78,34 +88,16 @@ export function useGitActionProgress(target: VcsActionTarget): GitActionProgress
   const actionState = useVcsActionState(target);
   const { result } = useGitActionResultNotification();
 
-  const [, forceUpdate] = useState(0);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const startElapsedTimer = useCallback(() => {
-    if (intervalRef.current) return;
-    intervalRef.current = setInterval(() => forceUpdate((n) => n + 1), 1000);
-  }, []);
-
-  const stopElapsedTimer = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (actionState.isRunning) {
-      startElapsedTimer();
-    } else {
-      stopElapsedTimer();
-    }
-    return stopElapsedTimer;
-  }, [actionState.isRunning, startElapsedTimer, stopElapsedTimer]);
+  // Only a running action shows elapsed time, so only it subscribes to the second tick.
+  const nowMs = useSyncExternalStore(
+    actionState.isRunning ? secondTick.subscribe : subscribeNever,
+    secondTick.getSnapshot,
+  );
 
   if (actionState.isRunning) {
     const description =
       actionState.lastOutputLine ??
-      formatElapsedSeconds(actionState.hookStartedAtMs ?? actionState.phaseStartedAtMs);
+      formatElapsedSeconds(actionState.hookStartedAtMs ?? actionState.phaseStartedAtMs, nowMs);
     return {
       phase: "running",
       label: actionState.currentLabel,

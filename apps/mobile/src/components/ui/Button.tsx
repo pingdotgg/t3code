@@ -6,6 +6,7 @@ import { cn } from "../../lib/cn";
 
 export interface ButtonProps {
   readonly label: string;
+  readonly accessibilityLabel?: string;
   readonly icon?: AppSymbolName;
   readonly onPress: () => void;
   readonly disabled?: boolean;
@@ -29,7 +30,7 @@ export function Button(props: ButtonProps) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={props.label}
+      accessibilityLabel={props.accessibilityLabel ?? props.label}
       accessibilityHint={props.accessibilityHint}
       accessibilityState={{ disabled, busy: Boolean(props.loading) }}
       disabled={disabled}

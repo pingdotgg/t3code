@@ -1,5 +1,7 @@
+import { isWebhookDedupeTemplate } from "@t3tools/contracts";
 import {
   EnvironmentId,
+  MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   type ProjectId,
   ScheduledTaskId,
   type ScheduledTask,
@@ -9,7 +11,13 @@ import {
   type ProviderInteractionMode,
   type ServerSettings,
 } from "@t3tools/contracts";
-import { parseMaxDeliveryAge } from "@t3tools/client-runtime/scheduled-task-webhook";
+import {
+  parseMaxDeliveryAge,
+  parseWebhookFilterDrafts,
+  webhookFilterDrafts,
+  webhookFilterDraftsChanged,
+  type WebhookFilterDraft,
+} from "@t3tools/client-runtime/scheduled-task-webhook";
 
 import {
   resolveProjectSettings,
@@ -65,10 +73,7 @@ export interface DraftState {
   readonly modelKey: string;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
-  /**
-   * The picker only edits `instanceId:model`; keeping the source object preserves provider
-   * options (reasoning, temperature, …) when the model itself is left unchanged.
-   */
+  /** Retain the source selection's provider options when the picker leaves instanceId:model unchanged. */
   readonly baseModelSelection: ModelSelection | null;
   readonly signatureEnabled: boolean;
   readonly signatureHeader: string;
@@ -77,6 +82,12 @@ export interface DraftState {
   /** Write-only: empty keeps the secret already stored on the server. */
   readonly signatureSecret: string;
   readonly maxDeliveryAgeMinutes: string;
+  readonly replayKey: string;
+  readonly coalesceKey: string;
+  readonly coalesceWindowSeconds: string;
+  readonly filters: ReadonlyArray<WebhookFilterDraft>;
+  /** The filter rows the form opened with. */
+  readonly savedFilters: ReadonlyArray<WebhookFilterDraft>;
 }
 
 export const WEBHOOK_SIGNATURE_DEFAULTS = {
@@ -85,10 +96,65 @@ export const WEBHOOK_SIGNATURE_DEFAULTS = {
   signaturePrefix: "sha256=",
 } as const;
 
+export function webhookDraftErrors(draft: DraftState) {
+  if (draft.scheduleMode !== "webhook") return [];
+  if (parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes) === undefined)
+    return [
+      {
+        title: "Invalid age limit",
+        description: `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
+      },
+    ];
+  const errors: Array<{ title: string; description: string }> = [];
+  for (const [label, value] of [
+    ["Duplicate request key", draft.replayKey],
+    ["Coalesce key", draft.coalesceKey],
+  ] as const) {
+    if (value.trim() && !isWebhookDedupeTemplate(value.trim()))
+      errors.push({
+        title: "Invalid webhook settings",
+        description: `${label} must contain a valid request placeholder.`,
+      });
+  }
+  const window = draft.coalesceWindowSeconds.trim();
+  if (window && (!Number.isInteger(Number(window)) || Number(window) < 10 || Number(window) > 3600))
+    errors.push({
+      title: "Invalid webhook settings",
+      description: "Coalesce window must be whole seconds from 10 to 3600.",
+    });
+  return errors;
+}
+
+export function webhookDeliveryLabel(delivery: {
+  readonly outcome: string;
+  readonly pendingWindow?: boolean | undefined;
+}) {
+  if (delivery.outcome === "accepted") return delivery.pendingWindow ? "Opened window" : "Ran";
+  const labels: Record<string, string> = {
+    dispatch_failed: "Run failed",
+    duplicate: "Duplicate",
+    coalesced: "Coalesced",
+    filtered: "Filtered",
+    rejected_signature: "Bad signature",
+    disabled: "Task paused",
+    rate_limited: "Rate limited",
+    expired: "Too old",
+  };
+  return labels[delivery.outcome] ?? delivery.outcome.replaceAll("_", " ");
+}
+
 export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedule | null {
   if (draft.scheduleMode === "webhook") {
+    if (webhookDraftErrors(draft).length > 0) return null;
     const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);
+    const replayKey = draft.replayKey.trim();
+    const coalesceKey = draft.coalesceKey.trim();
+    const coalesceWindowSeconds = draft.coalesceWindowSeconds.trim()
+      ? Number(draft.coalesceWindowSeconds)
+      : undefined;
     if (maxDeliveryAgeMinutes === undefined) return null;
+    const parsedFilters = parseWebhookFilterDrafts(draft.filters);
+    if (!("filters" in parsedFilters)) return null;
     const secret = draft.signatureSecret.trim();
     return {
       type: "webhook",
@@ -101,6 +167,19 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
           }
         : null,
       maxDeliveryAgeMinutes,
+      ...(replayKey || coalesceKey || coalesceWindowSeconds !== undefined
+        ? {
+            dedupe: {
+              ...(replayKey ? { replayKey } : {}),
+              ...(coalesceKey ? { coalesceKey } : {}),
+              ...(coalesceWindowSeconds === undefined ? {} : { coalesceWindowSeconds }),
+            },
+          }
+        : { dedupe: {} }),
+      // Only edited filters are sent; the server keeps the stored ones otherwise.
+      ...(webhookFilterDraftsChanged(draft.savedFilters, draft.filters)
+        ? { filters: parsedFilters.filters }
+        : {}),
     };
   }
   if (draft.scheduleMode === "interval") {
@@ -117,6 +196,7 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
 
 export function taskToDraft(task: ScheduledTask): DraftState {
   const schedule = task.schedule;
+  const filters = webhookFilterDrafts(schedule.type === "webhook" ? schedule.filters : undefined);
   const weekdays =
     schedule.type === "fixed_time" && schedule.weekdays && schedule.weekdays.length > 0
       ? new Set(schedule.weekdays)
@@ -157,10 +237,18 @@ export function taskToDraft(task: ScheduledTask): DraftState {
         }
       : { signatureEnabled: false, ...WEBHOOK_SIGNATURE_DEFAULTS }),
     signatureSecret: "",
+    replayKey: schedule.type === "webhook" ? (schedule.dedupe?.replayKey ?? "") : "",
+    coalesceKey: schedule.type === "webhook" ? (schedule.dedupe?.coalesceKey ?? "") : "",
+    coalesceWindowSeconds:
+      schedule.type === "webhook" && schedule.dedupe?.coalesceWindowSeconds !== undefined
+        ? String(schedule.dedupe.coalesceWindowSeconds)
+        : "",
     maxDeliveryAgeMinutes:
       schedule.type === "webhook" && schedule.maxDeliveryAgeMinutes != null
         ? String(schedule.maxDeliveryAgeMinutes)
         : "",
+    filters,
+    savedFilters: filters,
   };
 }
 
@@ -196,4 +284,26 @@ export function scheduledTaskDefaultModel(
   );
   const fallback = models.find(({ model }) => model.isDefault) ?? models[0];
   return fallback ? { instanceId: fallback.instanceId, model: fallback.model.slug } : null;
+}
+
+/**
+ * A new task's project: a pinned open project, then any open one. An archived
+ * project only when Settings is scoped to it, so that scope can still save.
+ */
+export function defaultScheduledTaskProjectId<
+  TProject extends {
+    readonly id: ProjectId;
+    readonly pinnedAt?: string | null | undefined;
+    readonly archivedAt?: string | null | undefined;
+  },
+>(scopedProjects: ReadonlyArray<TProject>, scope: ResolvedSettingsScope): ProjectId | "" {
+  const open = scopedProjects.filter((project) => project.archivedAt == null);
+  const scopedToProject = scope.kind === "project" || scope.kind === "checkout";
+  return (
+    (
+      open.find((project) => project.pinnedAt != null) ??
+      open[0] ??
+      (scopedToProject ? scopedProjects[0] : undefined)
+    )?.id ?? ""
+  );
 }

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { T3_MCP_TOOL_NAMES, resolveT3McpToolPresentation } from "./t3McpToolPresentation.ts";
+import {
+  T3_MCP_TOOL_NAMES,
+  resolveT3McpSummaryAction,
+  resolveT3McpToolDefinition,
+  resolveT3McpToolPresentation,
+} from "./t3McpToolPresentation.ts";
 
 describe("resolveT3McpToolPresentation", () => {
   it("recognizes every T3 tool across provider prefixes and completion suffixes", () => {
@@ -24,68 +29,6 @@ describe("resolveT3McpToolPresentation", () => {
       expect(resolveT3McpToolPresentation(`mcp__another-server__${tool}`), tool).toBeNull();
     }
   });
-  it("pretty prints Claude and Cursor T3 MCP tool names", () => {
-    expect(resolveT3McpToolPresentation("mcp__t3-code__t3_thread_read")).toEqual({
-      displayName: "Read a T3 thread",
-      logo: "t3-code",
-    });
-  });
-
-  it("pretty prints Codex T3 MCP tool names", () => {
-    expect(resolveT3McpToolPresentation("t3-code.create_threads")).toEqual({
-      displayName: "Create T3 threads",
-      logo: "t3-code",
-    });
-  });
-
-  it("pretty prints thread metadata updates", () => {
-    expect(resolveT3McpToolPresentation("mcp__t3-code__t3_thread_update")).toEqual({
-      displayName: "Update T3 thread metadata",
-      logo: "t3-code",
-    });
-  });
-
-  it("pretty prints bare T3 MCP toolkit names", () => {
-    expect(resolveT3McpToolPresentation("list_scheduled_tasks")).toEqual({
-      displayName: "List scheduled tasks",
-      logo: "t3-code",
-    });
-  });
-
-  it("pretty prints worktree T3 MCP tool names", () => {
-    expect(resolveT3McpToolPresentation("mcp__t3-code__t3_worktree_handoff")).toEqual({
-      displayName: "Hand off thread to a git worktree",
-      logo: "t3-code",
-    });
-    expect(resolveT3McpToolPresentation("t3-code.t3_worktree_status")).toEqual({
-      displayName: "Get thread worktree status",
-      logo: "t3-code",
-    });
-  });
-
-  it("pretty prints preview T3 MCP tool names", () => {
-    expect(resolveT3McpToolPresentation("T3-code.preview_open")).toEqual({
-      displayName: "Open a page in the preview browser",
-      logo: "t3-code",
-    });
-    expect(resolveT3McpToolPresentation("mcp__t3-code__preview_status")).toEqual({
-      displayName: "Get preview browser status",
-      logo: "t3-code",
-    });
-  });
-
-  it("matches the separator variants ACP registry agents emit", () => {
-    for (const name of [
-      "mcp_t3-code_delegate_task",
-      "t3_code:delegate_task",
-      "t3code/delegate_task",
-      "t3-code delegate_task",
-      "T3 Code delegate_task",
-      "t3-code__delegate_task",
-    ]) {
-      expect(resolveT3McpToolPresentation(name)?.displayName).toBe("Delegate a child task");
-    }
-  });
 
   it("matches OpenCode 2's per-thread server names, whose thread ids hold underscores", () => {
     expect(
@@ -93,9 +36,35 @@ describe("resolveT3McpToolPresentation", () => {
     ).toBe("Delegate a child task");
     expect(resolveT3McpToolPresentation("t3-code-thread_opencode2-adapter_not_a_tool")).toBeNull();
   });
+});
 
-  it("keeps unknown MCP tools on the generic renderer path", () => {
-    expect(resolveT3McpToolPresentation("mcp__github__search_issues")).toBeNull();
-    expect(resolveT3McpToolPresentation("t3-code.not_a_real_tool")).toBeNull();
+describe("resolveT3McpToolDefinition", () => {
+  it("labels an action tool call as the action it ran", () => {
+    expect(
+      resolveT3McpToolDefinition("mcp__t3-code__preview_act", { action: "type" })?.labels,
+    ).toEqual(resolveT3McpToolDefinition("preview_type")?.labels);
+    expect(resolveT3McpToolDefinition("t3_thread_transfer", { action: "fork" })?.displayName).toBe(
+      resolveT3McpToolDefinition("t3_thread_fork")?.displayName,
+    );
+    expect(resolveT3McpToolDefinition("preview_act", { action: "unknown" })?.labels[2]).toBe(
+      "Used",
+    );
+  });
+});
+
+describe("resolveT3McpSummaryAction", () => {
+  it("summarizes an action tool by the action each call ran", () => {
+    expect(resolveT3McpSummaryAction("mcp__t3-code__t3_queue", { action: "list" })).toBe(
+      "queue-list",
+    );
+    expect(resolveT3McpSummaryAction("t3_queue", { action: "edit" })).toBe("queue-edit");
+    expect(resolveT3McpSummaryAction("t3_thread_transfer", { action: "status" })).toBe(
+      "thread-transfers",
+    );
+    expect(resolveT3McpSummaryAction("t3_thread_configure", {})).toBe("thread-configuration");
+    expect(resolveT3McpSummaryAction("schedule_task", { scheduledTaskId: "task-1" })).toBe(
+      "schedule-update",
+    );
+    expect(resolveT3McpSummaryAction("delegate_task", { task: "x" })).toBe("delegate");
   });
 });

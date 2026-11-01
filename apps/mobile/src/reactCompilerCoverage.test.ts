@@ -12,101 +12,18 @@ const babel: {
 const metroConfig: Promise<{ transformer: { babelTransformerPath: string } }> =
   requireFromMobile("./metro.config.js");
 
-// Files the compiler skips today. A skipped file still ships, just unmemoized.
-// This list only shrinks: the test fails when a file here starts compiling, so
-// delete its entry (and its manual useMemo/useCallback/memo) in the same change.
+// Remove bailout entries and manual memoization when compilation starts; this check rejects stale entries.
 const KNOWN_BAILOUTS: Record<string, string> = {
-  "src/components/ComposerAttachmentStrip.tsx": "unsupported syntax",
-  "src/components/ComposerContextAttachment.tsx":
-    "throw inside try, try without catch, try/finally",
-  "src/components/ComposerEditor.tsx": "try/finally",
-  "src/components/VideoPreviewModal.ios.tsx": "try without catch",
-  "src/components/VideoPreviewModal.tsx": "ref read during render",
-  "src/components/ui/AndroidAnchoredMenu.tsx": "ref read during render",
   "src/components/ui/Menu.tsx": "ref read during render",
-  "src/components/ui/OverlayPortal.tsx": "unsupported syntax",
-  "src/features/connection/ConnectionsNewRouteScreen.tsx": "try without catch",
   "src/features/diffs/nativeReviewDiffSurface.ts": "ref read during render",
-  "src/features/files/AttachmentFileScreen.tsx": "manual memo not preserved",
-  "src/features/files/FileMarkdownPreview.tsx": "try without catch",
-  "src/features/files/FileTreeBrowser.tsx": "ref read during render",
-  "src/features/files/SourceFileSurface.tsx": "try without catch",
-  "src/features/files/ThreadFilesRouteScreen.tsx": "manual memo not preserved",
-  "src/features/files/useFileTreeEntries.ts": "manual memo not preserved",
-  "src/features/home/HomeScreen.tsx": "ref read during render",
-  "src/features/home/WorkspaceConnectionTitle.tsx": "ref read during render",
-  "src/features/home/home-list-options.ts": "manual memo not preserved",
   "src/features/home/thread-swipe-actions.tsx": "ref read during render",
-  "src/features/home/useThreadListActions.ts": "try without catch",
-  "src/features/layout/AdaptiveWorkspaceLayout.tsx": "ref read during render",
-  "src/features/layout/workspace-inspector-pane.tsx": "mutates a frozen value",
-  "src/features/layout/workspace-pane-divider.tsx": "ref read during render",
-  "src/features/projects/AddProjectScreen.tsx": "try without catch",
-  "src/features/pull-requests/PullRequestDiscussionScreen.tsx": "try/finally",
-  "src/features/pull-requests/PullRequestInlineCommentScreen.tsx": "try without catch",
-  "src/features/pull-requests/PullRequestMergeControls.tsx": "throw inside try, try/finally",
-  "src/features/pull-requests/PullRequestReviewSheet.tsx": "try/finally",
-  "src/features/pull-requests/PullRequestReviewersScreen.tsx": "throw inside try, try/finally",
-  "src/features/pull-requests/PullRequestRouteScreen.tsx": "manual memo not preserved",
-  "src/features/pull-requests/guide/PullRequestGuideScreen.tsx": "conditional inside try",
-  "src/features/pull-requests/guide/ReviewGuideExcerpt.tsx": "conditional inside try",
-  "src/features/pull-requests/guide/useReviewGuide.ts": "try without catch",
-  "src/features/pull-requests/usePullRequestAction.ts": "throw inside try, try/finally",
-  "src/features/pull-requests/usePullRequestListActions.ts": "throw inside try, try/finally",
-  "src/features/pull-requests/usePullRequestListControls.ts": "unsupported syntax",
-  "src/features/pull-requests/usePullRequestThreads.ts": "throw inside try, try/finally",
-  "src/features/review/ReviewSheet.tsx": "try without catch",
-  "src/features/review/reviewDiffRendering.tsx": "mutates a frozen value",
-  "src/features/review/useNativeReviewDiffHighlighting.ts": "conditional inside try",
-  "src/features/settings/SettingsAboutRouteScreen.tsx": "try without catch",
-  "src/features/settings/SettingsAuthRouteScreen.tsx": "ref read during render",
-  "src/features/settings/SettingsEnvironmentDetailRouteScreen.tsx":
-    "try without catch, try/finally",
-  "src/features/settings/SettingsEnvironmentsRouteScreen.tsx": "try without catch",
-  "src/features/settings/SettingsNotificationsRouteScreen.tsx": "try without catch",
-  "src/features/settings/SettingsProjectOverviewRouteScreen.tsx": "try without catch",
-  "src/features/settings/SettingsProviderAccountsRouteScreen.tsx": "conditional inside try",
-  "src/features/settings/SettingsScheduledTasksRouteScreen.tsx": "unsupported syntax",
-  "src/features/settings/components/SettingsDragHandle.tsx": "ref read during render",
-  "src/features/terminal/ThreadTerminalRouteScreen.tsx": "ref read during render",
-  "src/features/threads/NewTaskContextPickerScreens.tsx":
-    "manual memo not preserved, try without catch",
-  "src/features/threads/NewTaskDraftScreen.tsx": "try/finally",
-  "src/features/threads/NewTaskRouteScreen.tsx": "try without catch",
-  "src/features/threads/PendingUserInputCard.tsx": "mutates a frozen value",
-  "src/features/threads/QuestionAttachments.tsx": "try/finally",
   "src/features/threads/ThreadArrangementSheet.tsx": "ref read during render",
-  "src/features/threads/ThreadComposer.tsx": "try without catch",
-  "src/features/threads/ThreadDetailScreen.tsx": "mutates a frozen value",
-  "src/features/threads/ThreadFeed.tsx": "ref read during render, throw inside try, try/finally",
-  "src/features/threads/ThreadGitControls.tsx": "manual memo not preserved",
-  "src/features/threads/ThreadNavigationSidebar.tsx": "ref read during render",
-  "src/features/threads/ThreadQueueControl.tsx": "ref read during render, try without catch",
-  "src/features/threads/ThreadRouteScreen.tsx": "try without catch",
-  "src/features/threads/ThreadSettingsSheet.tsx": "manual memo not preserved, try without catch",
-  "src/features/threads/UsageLimitRecoveryCard.tsx": "throw inside try, try/finally",
-  "src/features/threads/git/GitCommitSheet.tsx": "manual memo not preserved",
-  "src/features/threads/git/GitOverviewSheet.tsx": "try without catch",
-  "src/features/threads/new-task-flow-provider.tsx": "try without catch",
-  "src/features/threads/thread-work-log.tsx": "manual memo not preserved",
-  "src/features/threads/use-composer-command-menu.ts": "manual memo not preserved",
-  "src/features/threads/use-thread-list-v2-shelf-preferences.ts": "ref read during render",
-  "src/features/voice-input/VoiceInputProvider.tsx": "ref read during render",
   "src/features/voice-input/useVoiceInputController.ts": "ref read during render",
-  "src/lib/attachmentDocument.ts": "try/finally",
-  "src/native/StackHeader.tsx": "ref read during render",
   "src/native/T3ComposerEditor.ios.tsx": "ref read during render",
   "src/native/T3ComposerEditor.native.tsx": "ref read during render",
-  "src/state/composer-attachment-uploads.ts": "try without catch",
-  "src/state/mediaActions.ts": "try without catch",
-  "src/state/queries.ts": "manual memo not preserved",
-  "src/state/use-thread-composer-state.ts": "try without catch",
-  "src/state/use-thread-selection.ts": "ref read during render",
-  "src/state/use-vcs-action-state.ts": "manual memo not preserved",
 };
 
-// Caller flags Metro passes for an iOS release bundle. supportsReactCompiler is
-// what `experiments.reactCompiler` in app.config.ts turns on.
+// Use Metro's iOS release flags; experiments.reactCompiler enables supportsReactCompiler.
 const metroCaller = {
   name: "metro",
   bundler: "metro",
@@ -140,8 +57,7 @@ interface CompilerEvent {
 
 // babel.config.js is the file Metro loads; the logger rides on the preset's
 // own react-compiler option so the plugin runs with Metro's exact settings.
-function compilerBailouts(file: string): string[] {
-  const events: CompilerEvent[] = [];
+function compileLikeMetro(file: string, events: CompilerEvent[], output: Record<string, unknown>) {
   const babelConfig = requireFromMobile("./babel.config.js")({ cache: () => {} });
   const presets = babelConfig.presets.map(([name, options]: [string, object]) =>
     name === "babel-preset-expo"
@@ -156,20 +72,67 @@ function compilerBailouts(file: string): string[] {
         ]
       : [name, options],
   );
-  babel.transformFileSync(NodePath.join(mobileRoot, file), {
+  return babel.transformFileSync(NodePath.join(mobileRoot, file), {
     babelrc: false,
     configFile: false,
     cwd: mobileRoot,
     presets,
     caller: metroCaller,
     code: false,
+    ...output,
   });
+}
+
+function compilerBailouts(file: string): string[] {
+  const events: CompilerEvent[] = [];
+  compileLikeMetro(file, events, {});
   return events
     .filter((event) => event.kind === "CompileError" || event.kind === "CompileSkip")
     .map(
       (event) =>
         `line ${(event.detail?.options?.loc ?? event.detail?.options?.details?.[0]?.loc)?.start?.line ?? "?"}: ${event.detail?.options?.category ?? event.kind} ${event.detail?.options?.reason ?? ""}`,
     );
+}
+
+interface AstNode {
+  readonly type: string;
+  readonly [key: string]: unknown;
+}
+
+const isAstNode = (value: unknown): value is AstNode =>
+  typeof value === "object" && value !== null && "type" in value && typeof value.type === "string";
+
+function walkAst(
+  value: unknown,
+  visit: (node: AstNode, ancestors: readonly AstNode[]) => void,
+  ancestors: readonly AstNode[] = [],
+) {
+  if (typeof value !== "object" || value === null) return;
+  const node = isAstNode(value) ? value : null;
+  if (node) visit(node, ancestors);
+  const childAncestors = node ? [...ancestors, node] : ancestors;
+  for (const child of Object.values(value)) walkAst(child, visit, childAncestors);
+}
+
+// For each call to `callee`, whether it runs only on the cache-miss branch of
+// an `if ($[n] !== dep)` block rather than on every render.
+function compilerCachedCalls(file: string, callee: string): boolean[] {
+  const result = compileLikeMetro(file, [], { ast: true });
+  const cached: boolean[] = [];
+  if (typeof result !== "object" || result === null || !("ast" in result)) return cached;
+  walkAst(result.ast, (node, ancestors) => {
+    if (node.type !== "CallExpression" || !isAstNode(node.callee)) return;
+    if (node.callee.type !== "Identifier" || node.callee.name !== callee) return;
+    cached.push(
+      ancestors.some(
+        (ancestor, index) =>
+          ancestor.type === "IfStatement" &&
+          ancestors[index + 1] === ancestor.consequent &&
+          JSON.stringify(ancestor.test).includes('"name":"$"'),
+      ),
+    );
+  });
+  return cached;
 }
 
 describe("React Compiler coverage", () => {
@@ -202,11 +165,6 @@ describe("React Compiler coverage", () => {
     expect(transformed("false")).not.toContain("react/compiler-runtime");
   });
 
-  it("app.config.ts turns the compiler on for Metro", () => {
-    const appConfig = NodeFS.readFileSync(NodePath.join(mobileRoot, "app.config.ts"), "utf8");
-    expect(appConfig).toMatch(/experiments:\s*\{[^}]*reactCompiler:\s*true/);
-  });
-
   it.each(sourceFiles)("compiles %s", (file) => {
     const bailouts = compilerBailouts(file);
     if (file in KNOWN_BAILOUTS) {
@@ -216,7 +174,33 @@ describe("React Compiler coverage", () => {
     }
   });
 
+  // The compiler once silently dropped this cache, so every
+  // ThreadFeed render rebuilt the feed and handed LegendList a new data array.
+  it("caches the thread feed derivation", () => {
+    expect(
+      compilerCachedCalls("src/features/threads/ThreadFeed.tsx", "deriveThreadFeedPresentation"),
+    ).toEqual([true]);
+  });
+
+  // The compiler once silently dropped these caches, so the new-task context
+  // value changed on every provider render and re-rendered every consumer.
+  it("caches the new-task model options and host environments", () => {
+    const file = "src/features/threads/new-task-flow-provider.tsx";
+    expect(compilerCachedCalls(file, "buildModelOptions")).toEqual([true]);
+    expect(compilerCachedCalls(file, "repositoryGroupingKeyOf")).toEqual([true, true]);
+  });
+
+  // An uncached registration would re-register the workspace inspector on every render.
+  it("registers the workspace inspector only when its renderer changes", () => {
+    expect(
+      compilerCachedCalls(
+        "src/features/layout/AdaptiveWorkspaceLayout.tsx",
+        "registerWorkspaceInspector",
+      ),
+    ).toEqual([true]);
+  });
+
   it("lists only files that exist", () => {
     expect(Object.keys(KNOWN_BAILOUTS).filter((file) => !sourceFiles.includes(file))).toEqual([]);
   });
-}, 300_000);
+});

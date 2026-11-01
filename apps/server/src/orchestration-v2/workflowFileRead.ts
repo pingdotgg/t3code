@@ -7,6 +7,11 @@ import { OrchestrationWorkflowFileError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+export interface WorkflowFileIdentity {
+  readonly dev: number;
+  readonly ino: number;
+}
+
 function workflowFilesRoot(home: string, configDir?: string): string {
   return NodePath.join(configDir?.trim() || NodePath.join(home, ".claude"), "projects");
 }
@@ -18,6 +23,11 @@ export const readContainedWorkflowFile = Effect.fn("orchestration.readContainedW
     readonly byteCap: number;
     readonly tail?: boolean;
     readonly configDir?: string;
+    /** Reads complete lines from a byte offset; resets to zero after shrinkage or inode changes. */
+    readonly fromOffset?: {
+      readonly offset: number;
+      readonly identity: WorkflowFileIdentity | null;
+    };
   }) {
     if (!NodePath.isAbsolute(input.path) || NodePath.extname(input.path) !== input.extension) {
       return yield* new OrchestrationWorkflowFileError({
@@ -37,8 +47,7 @@ export const readContainedWorkflowFile = Effect.fn("orchestration.readContainedW
         }),
     });
 
-    // Realpath the FILE itself (not just its directory): a symlink named
-    // like a transcript inside a contained directory must not escape.
+    // Resolve the file itself; contained directories can still hold escaping symlinks.
     const resolved = yield* Effect.tryPromise({
       try: () => NodeFSP.realpath(input.path),
       catch: (cause) =>
@@ -55,8 +64,7 @@ export const readContainedWorkflowFile = Effect.fn("orchestration.readContainedW
       });
     }
 
-    // fd inode vs path inode catches a swapped leaf, not a swapped intermediate
-    // dir; root is 0700 ~/.claude, so that already needs the uid we run as.
+    // Inode checks catch leaf swaps, not intermediate directory swaps; the 0700 ~/.claude root restricts those to our uid.
     const read = yield* Effect.tryPromise({
       try: async () => {
         const handle = await NodeFSP.open(
@@ -72,6 +80,31 @@ export const readContainedWorkflowFile = Effect.fn("orchestration.readContainedW
           if (stat.ino !== pathStat.ino || stat.dev !== pathStat.dev) {
             return { failure: "changed-during-read" as const };
           }
+          const identity = { dev: stat.dev, ino: stat.ino };
+          if (input.fromOffset !== undefined) {
+            const previous = input.fromOffset.identity;
+            const start =
+              previous !== null &&
+              previous.dev === identity.dev &&
+              previous.ino === identity.ino &&
+              input.fromOffset.offset <= stat.size
+                ? input.fromOffset.offset
+                : 0;
+            const buffer = Buffer.alloc(Math.min(stat.size - start, input.byteCap));
+            const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+            const read = buffer.subarray(0, bytesRead);
+            // Defer partial lines; skip single over-cap lines so the cursor can advance.
+            const lineEnd = read.lastIndexOf(0x0a) + 1;
+            const consumed = lineEnd === 0 && bytesRead === input.byteCap ? bytesRead : lineEnd;
+            return {
+              contents: read.subarray(0, lineEnd).toString("utf8"),
+              // Only the cap signals truncation; a half-written last line does not.
+              truncated: stat.size - start > input.byteCap,
+              startOffset: start,
+              endOffset: start + consumed,
+              identity,
+            };
+          }
           const buffer = Buffer.alloc(Math.min(stat.size, input.byteCap + (input.tail ? 1 : 0)));
           const truncated = stat.size > buffer.length;
           const offset = input.tail ? stat.size - buffer.length : 0;
@@ -79,6 +112,9 @@ export const readContainedWorkflowFile = Effect.fn("orchestration.readContainedW
           return {
             contents: buffer.subarray(0, bytesRead).toString("utf8"),
             truncated,
+            startOffset: offset,
+            endOffset: offset + bytesRead,
+            identity,
           };
         } finally {
           await handle.close();
@@ -91,6 +127,13 @@ export const readContainedWorkflowFile = Effect.fn("orchestration.readContainedW
       return yield* new OrchestrationWorkflowFileError({ reason: read.failure, path: resolved });
     }
 
-    return { path: resolved, contents: read.contents, truncated: read.truncated };
+    return {
+      path: resolved,
+      contents: read.contents,
+      truncated: read.truncated,
+      startOffset: read.startOffset,
+      endOffset: read.endOffset,
+      identity: read.identity,
+    };
   },
 );

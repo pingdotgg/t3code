@@ -31,7 +31,7 @@ export function reuseUnchangedThreadShells(
 ): OrchestrationV2ShellSnapshot {
   if (previous === null || previous.threads.length === 0) return next;
   const previousById = new Map(previous.threads.map((thread) => [thread.id, thread] as const));
-  let reused = 0;
+  let changed = false;
   const threads = next.threads.map((thread) => {
     const prior = previousById.get(thread.id);
     if (prior === undefined) return thread;
@@ -39,11 +39,11 @@ export function reuseUnchangedThreadShells(
       thread.pullRequests === undefined && prior.pullRequests !== undefined
         ? { ...thread, pullRequests: prior.pullRequests }
         : thread;
-    if (!sameThreadShell(prior, candidate)) return thread;
-    reused += 1;
-    return prior;
+    const retained = sameThreadShell(prior, candidate) ? prior : candidate;
+    if (retained !== thread) changed = true;
+    return retained;
   });
-  return reused === 0 ? next : { ...next, threads };
+  return changed ? { ...next, threads } : next;
 }
 
 function upsertById<T extends { readonly id: unknown }>(
@@ -92,27 +92,27 @@ export function mergeShellSnapshotProjects(
 
   if (isEnrichment) {
     const nextById = new Map(next.projects.map((project) => [project.id, project] as const));
-    return {
-      ...previous,
-      projects: previous.projects.map((project) => {
-        const candidate = nextById.get(project.id);
-        if (candidate === undefined || candidate.workspaceRoot !== project.workspaceRoot) {
+    const projects = previous.projects.map((project) => {
+      const candidate = nextById.get(project.id);
+      if (candidate === undefined || candidate.workspaceRoot !== project.workspaceRoot) {
+        return project;
+      }
+      if (resolvedRootSet?.has(project.workspaceRoot) === true) {
+        // Refreshes re-resolve every root; an unchanged identity keeps the project's identity
+        // so every subscriber (each pull request row, the sidebar) skips re-rendering.
+        if (sameRepositoryIdentity(project.repositoryIdentity, candidate.repositoryIdentity)) {
           return project;
         }
-        if (resolvedRootSet?.has(project.workspaceRoot) === true) {
-          // Refreshes re-resolve every root; an unchanged identity keeps the project's identity
-          // so every subscriber (each pull request row, the sidebar) skips re-rendering.
-          if (sameRepositoryIdentity(project.repositoryIdentity, candidate.repositoryIdentity)) {
-            return project;
-          }
-          return { ...project, repositoryIdentity: candidate.repositoryIdentity };
-        }
-        if (project.repositoryIdentity == null && candidate.repositoryIdentity != null) {
-          return { ...project, repositoryIdentity: candidate.repositoryIdentity };
-        }
-        return project;
-      }),
-    };
+        return { ...project, repositoryIdentity: candidate.repositoryIdentity };
+      }
+      if (project.repositoryIdentity == null && candidate.repositoryIdentity != null) {
+        return { ...project, repositoryIdentity: candidate.repositoryIdentity };
+      }
+      return project;
+    });
+    return projects.every((project, index) => project === previous.projects[index])
+      ? previous
+      : { ...previous, projects };
   }
 
   const previousById = new Map(previous.projects.map((project) => [project.id, project] as const));

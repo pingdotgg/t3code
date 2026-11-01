@@ -2,10 +2,13 @@ import {
   type AuthEnvironmentScope,
   AuthStandardClientScopes,
   ExecutionEnvironmentDescriptor,
+  ORCHESTRATION_PROTOCOL_VERSION,
   PortSchema,
 } from "@t3tools/contracts";
 import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
+import { buildPairingAppLink } from "@t3tools/shared/remote";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import {
   buildTailscaleHttpsBaseUrl,
@@ -46,28 +49,42 @@ import { baseDirFlag, DurationFromString } from "./config.ts";
 
 const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
 const PAIR_PROBE_TIMEOUT = Duration.millis(2_500);
-// Tailscale provisions an HTTPS certificate on the first request to a fresh
-// serve mapping, which can take a few seconds.
+// Tailscale's first HTTPS request may take seconds to provision a certificate.
 const TAILSCALE_PROBE_ATTEMPTS = 5;
 const TAILSCALE_PROBE_RETRY_DELAY = Duration.seconds(1);
 
 export type PairStateVariant = "userdata" | "dev";
 
-// deriveServerPaths only checks devUrl for undefined-ness when picking the
-// dev-vs-userdata state directory; the value itself is not used.
+// Only devUrl's presence selects dev state; its value is unused.
 const DEV_VARIANT_PLACEHOLDER_URL = new URL("http://localhost");
 
 export class NoRunningServerError extends Schema.TaggedError<NoRunningServerError>()(
   "NoRunningServerError",
   {
     checkedStatePaths: Schema.Array(Schema.String),
+    inLinkedWorktree: Schema.Boolean,
   },
 ) {
   override get message(): string {
     return [
       "No running T3 Code server found.",
       ...this.checkedStatePaths.map((statePath) => `  checked ${statePath}`),
+      ...(this.inLinkedWorktree
+        ? ["In a linked worktree, pass --base-dir to pair with a server outside it."]
+        : []),
       "Start one with `npx t3 serve`, or connect this machine with T3 Connect: `npx t3 connect`.",
+    ].join("\n");
+  }
+}
+
+export class IncompatibleServerProtocolError extends Schema.TaggedError<IncompatibleServerProtocolError>()(
+  "IncompatibleServerProtocolError",
+  { serverVersion: Schema.String, serverProtocolVersion: Schema.Number },
+) {
+  override get message(): string {
+    return [
+      `The running T3 Code server (${this.serverVersion}) speaks orchestration protocol ${String(this.serverProtocolVersion)}, but this CLI speaks protocol ${String(ORCHESTRATION_PROTOCOL_VERSION)}.`,
+      `Pair with the matching CLI instead: \`npx t3@${this.serverVersion} pair\`.`,
     ].join("\n");
   }
 }
@@ -87,6 +104,15 @@ export class MagicDnsNameMissingError extends Schema.TaggedError<MagicDnsNameMis
 ) {
   override get message(): string {
     return "This machine has no MagicDNS name. Run `tailscale up` and enable MagicDNS.";
+  }
+}
+
+export class TailscaleServeNotEnabledError extends Schema.TaggedError<TailscaleServeNotEnabledError>()(
+  "TailscaleServeNotEnabledError",
+  {},
+) {
+  override get message(): string {
+    return "Tailscale Serve is not enabled on your tailnet. Enable HTTPS certificates at https://login.tailscale.com/admin/dns, then run this command again.";
   }
 }
 
@@ -117,8 +143,11 @@ export class ServePortOccupiedError extends Schema.TaggedError<ServePortOccupied
   }
 }
 
-export const resolveDirectPairingBaseUrl = (state: PersistedServerRuntimeState): string =>
-  state.devUrl ?? resolveHeadlessConnectionString(state.host, state.port);
+const resolveDirectPairingBaseUrl = (state: PersistedServerRuntimeState): string =>
+  state.devUrl ??
+  resolveHeadlessConnectionString(state.host, state.port, {
+    privateNetworkOnly: state.privateNetworkOnly,
+  });
 
 export class DevServerNotProxiableError extends Schema.TaggedError<DevServerNotProxiableError>()(
   "DevServerNotProxiableError",
@@ -131,11 +160,7 @@ export class DevServerNotProxiableError extends Schema.TaggedError<DevServerNotP
 
 const isDevServerNotProxiableError = Schema.is(DevServerNotProxiableError);
 
-/**
- * Dev servers are single-origin, so the web dev server's port is the one to publish; the
- * backend rides along behind Vite's proxy. Serve targets are always plain HTTP, so an HTTPS dev
- * URL cannot be proxied and is rejected.
- */
+/** Publish the single-origin web dev port, which proxies the backend. Serve requires HTTP targets. */
 export const resolveTailscaleLocalTarget = (
   state: PersistedServerRuntimeState,
 ): { readonly localPort: number; readonly localHost?: string } | DevServerNotProxiableError => {
@@ -149,7 +174,7 @@ export const resolveTailscaleLocalTarget = (
       ? { localPort }
       : { localPort, localHost: devUrl.hostname };
   }
-  if (state.host !== undefined && !isWildcardHost(state.host) && !isLoopbackHost(state.host)) {
+  if (state.host !== undefined && !isWildcardHost(state.host)) {
     return { localPort: state.port, localHost: formatHostForUrl(state.host) };
   }
   return { localPort: state.port };
@@ -169,6 +194,7 @@ const formatPairOutput = (input: {
     renderTerminalQrCode(input.pairingUrl),
     "",
     `Pairing URL: ${input.pairingUrl}`,
+    `App link: ${buildPairingAppLink(input.pairingUrl)}`,
     `Token: ${input.token}`,
     `Expires: ${DateTime.formatIso(input.expiresAt)}`,
     ...input.notes.flatMap((note) => ["", `Note: ${note}`]),
@@ -180,20 +206,19 @@ type EnvironmentProbeResult =
   | { readonly _tag: "unreachable" }
   | { readonly _tag: "not-a-t3-server" };
 
-const probeEnvironmentDescriptor = (
+const probeEnvironmentDescriptor: (
   baseUrl: string,
-): Effect.Effect<EnvironmentProbeResult, never, HttpClient.HttpClient> =>
-  Effect.gen(function* () {
+) => Effect.Effect<EnvironmentProbeResult, never, HttpClient.HttpClient> = Effect.fn(
+  "pair.probeEnvironmentDescriptor",
+)(
+  function* (baseUrl: string) {
     const client = yield* HttpClient.HttpClient;
     const request = HttpClientRequest.get(new URL(WELL_KNOWN_ENVIRONMENT_PATH, baseUrl).toString());
     const response = yield* client.execute(request).pipe(
       Effect.timeout(PAIR_PROBE_TIMEOUT),
       Effect.mapError(() => ({ _tag: "unreachable" }) as const),
     );
-    // Bad-gateway family means a proxy (Tailscale Serve) answered for a
-    // backend that is gone — a stale mapping, not a live occupant. Treating
-    // it as unreachable lets `t3 pair --tailscale` repair its own mapping
-    // after the server's port changed.
+    // Gateway errors identify stale proxy mappings that pairing may repair.
     if (response.status === 502 || response.status === 503 || response.status === 504) {
       return { _tag: "unreachable" } as const;
     }
@@ -202,7 +227,9 @@ const probeEnvironmentDescriptor = (
       Effect.mapError(() => ({ _tag: "not-a-t3-server" }) as const),
     );
     return { _tag: "descriptor", descriptor } as const;
-  }).pipe(Effect.catch((outcome) => Effect.succeed(outcome)));
+  },
+  Effect.catch((outcome) => Effect.succeed(outcome)),
+);
 
 interface DiscoveredPairTarget {
   readonly baseDir: string;
@@ -215,18 +242,22 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
   explicitBaseDir: string | undefined,
 ) {
   const bases: Array<string> = [];
+  let inLinkedWorktree = false;
   if (explicitBaseDir !== undefined && explicitBaseDir.trim().length > 0) {
     bases.push(yield* resolveBaseDir(explicitBaseDir));
   } else {
-    // Same precedence as dev-runner: inside a linked worktree its own `.t3`
-    // outranks the shared home, so `t3 pair` in a worktree pairs with the dev
-    // server under test rather than the daily-driver install.
-    const worktreeHome = yield* resolveWorktreeT3Home(process.cwd());
+    // Same precedence as dev-runner: inside a linked worktree only its own
+    // `.t3` counts. Minting opens the target database with this checkout's
+    // migrations, so falling back to the shared home could migrate the live
+    // install with unreleased schema.
+    const worktreeHome = yield* resolveWorktreeT3Home(yield* HostProcess.WorkingDirectory);
     if (worktreeHome !== undefined) {
       bases.push(worktreeHome);
+      inLinkedWorktree = true;
+    } else {
+      const envHome = yield* Config.String("T3CODE_HOME").pipe(Config.option);
+      bases.push(yield* resolveBaseDir(Option.getOrUndefined(envHome)));
     }
-    const envHome = yield* Config.String("T3CODE_HOME").pipe(Config.option);
-    bases.push(yield* resolveBaseDir(Option.getOrUndefined(envHome)));
   }
 
   const checkedStatePaths: Array<string> = [];
@@ -243,9 +274,7 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
       if (Option.isNone(state)) {
         continue;
       }
-      // The pid check guards against a dead server's state file whose port
-      // was since reused by a different server: pairing would then mint a
-      // token in the old database while the QR code points at the new server.
+      // A dead server's port may be reused; do not mint tokens in its old database for another server.
       if (!isProcessAlive(state.value.pid)) {
         continue;
       }
@@ -261,22 +290,16 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
       } satisfies DiscoveredPairTarget;
     }
   }
-  return yield* new NoRunningServerError({ checkedStatePaths });
+  return yield* new NoRunningServerError({ checkedStatePaths, inLinkedWorktree });
 });
 
-/**
- * Built by hand rather than through `resolveServerConfig` to keep the dev-vs-userdata choice
- * pinned to where the runtime state was actually found, independent of ambient environment
- * variables.
- */
+/** Use the discovered state directory, independent of ambient config variables. */
 const makePairServerConfig = Effect.fn(function* (input: {
   readonly target: DiscoveredPairTarget;
   readonly logLevel: ServerConfig.ServerConfig["Service"]["logLevel"];
 }) {
   const { baseDir, variant, state } = input.target;
-  // The state-dir variant does not imply dev-ness: a worktree dev server uses
-  // an explicit home and therefore lands in `userdata`. The recorded devUrl is
-  // what actually marks a dev server.
+  // Worktree dev servers can use `userdata`; only the recorded devUrl marks a dev server.
   const devUrl = state.devUrl !== undefined ? new URL(state.devUrl) : undefined;
   const derivedPaths = yield* ServerConfig.deriveServerPaths(
     baseDir,
@@ -342,24 +365,23 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
     if (status.magicDnsName === null) {
       return yield* new MagicDnsNameMissingError();
     }
+    // Without the capability `tailscale serve` blocks on an enablement URL
+    // until it times out, which names neither the setting nor where to change it.
+    if (status.httpsServeEnabled === false) {
+      return yield* new TailscaleServeNotEnabledError();
+    }
     const baseUrl = buildTailscaleHttpsBaseUrl({
       magicDnsName: status.magicDnsName,
       servePort: input.servePort,
     });
 
-    // Only an unreachable port, or a mapping already fronting this exact
-    // environment, is safe to (re)configure. Any other responder — T3 or not
-    // — must not have its mapping silently replaced.
+    // Only unreachable ports or this environment's mappings are safe to reconfigure.
     const existing = yield* probeEnvironmentDescriptor(baseUrl);
     if (existing._tag === "descriptor") {
       if (existing.descriptor.environmentId !== input.target.descriptor.environmentId) {
         return yield* new ServesOtherEnvironmentError({ servePort: input.servePort });
       }
-      // Matching environment id proves the mapping reaches this server, but
-      // not through which port: for a dev server it may front the backend
-      // (whose /.well-known also answers) while /pair only renders through
-      // the web origin. Reuse as-is for regular servers; fall through and
-      // repoint our own mapping at the web port for dev servers.
+      // A dev backend also answers /.well-known, but /pair needs the web origin.
       if (input.target.state.devUrl === undefined) {
         return { baseUrl, notes };
       }
@@ -466,6 +488,16 @@ export const pairCommand = Command.make("pair", {
       const logLevel = Option.getOrElse(cliLogLevel, () => "Warn" as const);
 
       const target = yield* discoverPairTarget(Option.getOrUndefined(flags.baseDir));
+      // Each protocol keeps auth in its own database, so a token minted here
+      // for another protocol's server would never be accepted by it. Refuse
+      // before any local layer opens (and migrates) that database.
+      const serverProtocolVersion = target.descriptor.orchestrationProtocolVersion ?? 1;
+      if (serverProtocolVersion !== ORCHESTRATION_PROTOCOL_VERSION) {
+        return yield* new IncompatibleServerProtocolError({
+          serverVersion: target.descriptor.serverVersion,
+          serverProtocolVersion,
+        });
+      }
 
       const notes: Array<string> = [];
       let pairingBaseUrl: string;
@@ -480,7 +512,11 @@ export const pairCommand = Command.make("pair", {
         pairingBaseUrl = resolveDirectPairingBaseUrl(target.state);
         if (isLoopbackHost(new URL(pairingBaseUrl).hostname)) {
           notes.push(
-            "This URL is only reachable from this machine. Re-run with --tailscale, or restart the server with a reachable --host.",
+            "This URL is only reachable from this machine. To reach it from your other devices, run `t3 up`, or re-run with --tailscale.",
+          );
+        } else if (target.state.privateNetworkOnly) {
+          notes.push(
+            "This URL works only from this machine's local network. From elsewhere, re-run with --tailscale or use T3 Connect.",
           );
         }
         if (target.variant === "dev" && target.state.devUrl === undefined) {

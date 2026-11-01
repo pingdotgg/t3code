@@ -31,8 +31,8 @@ The composer banners are the reference.
   renders `Button`.
 - [`ComposerBannerStack.tsx`](../../apps/web/src/components/chat/ComposerBannerStack.tsx) composes
   the slots and owns only stack behavior: priority, expand and collapse, dismiss transitions.
-- Consumers are a few lines of slots, and the slots carry the styling:
-  [`ComposerActivityStatus.tsx`](../../apps/web/src/components/chat/ComposerActivityStatus.tsx).
+- Consumers are a few lines of slots, and the slots carry the banner styling:
+  [`ComposerPlanFollowUpBanner.tsx`](../../apps/web/src/components/chat/ComposerPlanFollowUpBanner.tsx).
 
 Build new UI the same way. Compose or extend a component instead of copying its markup and classes.
 When a call site repeats a treatment another one already uses, make it a variant or a slot on the
@@ -66,7 +66,10 @@ Every file under `apps/web/src` must compile. Lint makes those rules errors ther
 no upstream rule bans them outright. It also rejects `"use memo"`. The compiler withholds a cache
 scope when a value reaches plain function calls on both sides of a hook call. A `"use memo"`
 helper forces one, but hides the ordering problem. Fix the order instead: plain uses of a value go
-before the hook, or the helper is inlined. Lint misses some bailouts, notably `try` with `finally` and
+before the hook, or the helper is inlined. A `use*` helper that calls no hook is compiled as a
+plain function and caches nothing, so a derived-value helper reads its source hook itself instead
+of taking the value as an argument. `t3code/no-hookless-use-function` rejects a `use*` function
+that calls no hook. Lint misses some bailouts, notably `try` with `finally` and
 `throw` inside `try`, so [`reactCompilerCoverage.test.ts`](../../apps/web/src/reactCompilerCoverage.test.ts)
 compiles every file and fails on any skip. Async handlers rarely need `try`: an
 atom command settles into a result, so cleanup can follow the `await`. `useStableCallback` still
