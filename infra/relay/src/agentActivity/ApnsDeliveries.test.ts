@@ -379,6 +379,7 @@ describe("ApnsDeliveries", () => {
             preferences_json: disabledPreferences,
           },
           aggregate: inputAggregate,
+          notificationAggregate: inputAggregate,
           nowMs: 5_000,
         });
 
@@ -483,6 +484,7 @@ describe("ApnsDeliveries", () => {
             remote_started_at: null,
           },
           aggregate: inputAggregate,
+          notificationAggregate: inputAggregate,
           nowMs: 5_000,
         });
 
@@ -544,6 +546,17 @@ describe("ApnsDeliveries", () => {
         });
 
         expect(queuedJobs.map((job) => job.payload.notification ?? null)).toEqual([]);
+
+        yield* publisher.publish({
+          environmentId: waiting.environmentId,
+          environmentPublicKey: "environment-public-key",
+          threadId: waiting.threadId,
+          state: waiting,
+        });
+
+        expect(queuedJobs.map((job) => job.payload.notification ?? null)).toMatchObject([
+          { threadId: "thread-a", body: "Input: Project" },
+        ]);
       }).pipe(
         Effect.provide(
           AgentActivityPublisher.layer.pipe(
@@ -626,6 +639,7 @@ describe("ApnsDeliveries", () => {
           remote_started_at: null,
         },
         aggregate: inputAggregate,
+        notificationAggregate: inputAggregate,
         nowMs: 5_000,
       });
 
