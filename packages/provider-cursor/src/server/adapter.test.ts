@@ -13,6 +13,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -38,6 +39,251 @@ import { loadCursorSdk } from "./sdk.ts";
 const { ConfigurationError } = loadCursorSdk();
 
 describe("CursorAdapterV2", () => {
+  it.effect.each([
+    {
+      name: "sums usage across turn-ended updates",
+      usage: [
+        {
+          inputTokens: 1000,
+          outputTokens: 50,
+          cacheReadTokens: 600,
+          cacheWriteTokens: 100,
+          reasoningTokens: 20,
+        },
+        {
+          inputTokens: 500,
+          outputTokens: 30,
+          cacheReadTokens: 300,
+          cacheWriteTokens: 0,
+          reasoningTokens: 10,
+        },
+      ],
+      status: "finished" as const,
+      expectedStatus: "completed",
+      expectedUsage: {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        inputTokens: 1500,
+        cachedInputTokens: 900,
+        cacheCreationTokens: 100,
+        outputTokens: 80,
+        reasoningTokens: 30,
+        hasSubagents: false,
+      },
+    },
+    {
+      name: "marks a sum with an unreported turn partial",
+      usage: [
+        {
+          inputTokens: 1000,
+          outputTokens: 50,
+          cacheReadTokens: 600,
+          cacheWriteTokens: 100,
+        },
+        undefined,
+      ],
+      status: "finished" as const,
+      expectedStatus: "completed",
+      expectedUsage: {
+        usageScope: "main_agent",
+        usageStatus: "partial",
+        inputTokens: 1000,
+        cachedInputTokens: 600,
+        cacheCreationTokens: 100,
+        outputTokens: 50,
+        hasSubagents: false,
+      },
+    },
+    {
+      name: "keeps valid counts when another turn reports invalid counts",
+      usage: [
+        { inputTokens: 100, outputTokens: 20, cacheReadTokens: 60, cacheWriteTokens: 50 },
+        { inputTokens: NaN, outputTokens: Infinity, cacheReadTokens: -10, cacheWriteTokens: 0 },
+      ],
+      status: "finished" as const,
+      expectedStatus: "completed",
+      expectedUsage: {
+        usageScope: "main_agent",
+        usageStatus: "partial",
+        inputTokens: 100,
+        cachedInputTokens: 60,
+        cacheCreationTokens: 40,
+        outputTokens: 20,
+        hasSubagents: false,
+      },
+    },
+    {
+      name: "marks missing usage unavailable",
+      usage: [],
+      status: "finished" as const,
+      expectedStatus: "completed",
+      expectedUsage: {
+        usageScope: "main_agent",
+        usageStatus: "unavailable",
+        hasSubagents: false,
+      },
+    },
+    {
+      name: "retains usage when interrupted",
+      usage: [
+        {
+          inputTokens: 1000,
+          outputTokens: 50,
+          cacheReadTokens: 600,
+          cacheWriteTokens: 100,
+          reasoningTokens: 20,
+        },
+      ],
+      status: "cancelled" as const,
+      expectedStatus: "interrupted",
+      expectedUsage: {
+        usageScope: "main_agent",
+        usageStatus: "partial",
+        inputTokens: 1000,
+        cachedInputTokens: 600,
+        cacheCreationTokens: 100,
+        outputTokens: 50,
+        reasoningTokens: 20,
+        hasSubagents: false,
+      },
+    },
+  ] as const)("projects token usage: $name", ({ usage, status, expectedStatus, expectedUsage }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-usage-" });
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-usage-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const usageDelivered = yield* Deferred.make<void>();
+      const cancelled = yield* Deferred.make<void>();
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        settings: yield* decodeCursorSettings({}),
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-usage",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              send: (input) =>
+                Effect.gen(function* () {
+                  for (const step of usage) {
+                    yield* input.onDelta!(
+                      step === undefined
+                        ? { type: "turn-ended" }
+                        : { type: "turn-ended", usage: step },
+                    ).pipe(Effect.orDie);
+                  }
+                  yield* Deferred.succeed(usageDelivered, undefined);
+                  return {
+                    agentId: "native-cursor-usage",
+                    runId: "native-cursor-run",
+                    wait: (status === "cancelled" ? Deferred.await(cancelled) : Effect.void).pipe(
+                      Effect.as({
+                        id: "native-cursor-run",
+                        requestId: "native-request",
+                        status,
+                        model: { id: "composer-2.5" },
+                        durationMs: 1,
+                      }),
+                    ),
+                    cancel: Deferred.succeed(cancelled, undefined),
+                  };
+                }),
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-usage-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn({
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+        runId: RunId.make("cursor-usage-run"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("cursor-usage-attempt"),
+        rootNodeId: NodeId.make("cursor-usage-root"),
+        appThread: {
+          id: threadId,
+          projectId: ProjectId.make("cursor-usage-project"),
+          createdBy: "user",
+          creationSource: "web",
+          title: "Cursor usage",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        message: {
+          messageId: MessageId.make("cursor-usage-message"),
+          createdBy: "user",
+          creationSource: "web",
+          text: "hi",
+          attachments: [],
+        },
+      });
+      const events = yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          status === "cancelled" &&
+          event.type === "provider_turn.updated" &&
+          event.providerTurn.status === "running"
+            ? Effect.andThen(
+                Deferred.await(usageDelivered),
+                runtime.interruptTurn({
+                  providerThread,
+                  providerTurnId: event.providerTurn.id,
+                }),
+              )
+            : Effect.void,
+        ),
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+      );
+      const terminal = events.findLast((event) => event.type === "turn.terminal");
+      const providerTurn = events.findLast((event) => event.type === "provider_turn.updated");
+      assert.equal(terminal?.status, expectedStatus);
+      assert.deepStrictEqual(providerTurn?.providerTurn.turnTokenUsage, expectedUsage);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
   it.effect.each([
     { status: "finished", model: undefined, lateModel: undefined },
     { status: "cancelled", model: "claude-opus-4-6", lateModel: undefined },
