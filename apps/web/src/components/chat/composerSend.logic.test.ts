@@ -6,6 +6,7 @@ import { threadContextReference } from "../../lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import {
   approvalRedirectNotice,
+  autoBalanceLabel,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
@@ -22,6 +23,16 @@ describe("referencedThreadContexts", () => {
     expect(
       referencedThreadContexts({ prompt, threadContexts: [localThread, remoteThread] }),
     ).toEqual([remoteThread]);
+  });
+});
+
+describe("autoBalanceLabel", () => {
+  it.each([
+    ["stays neutral with no candidate machine", false, 0, null, "Auto balance"],
+    ["stays neutral once a machine is picked", false, 2, remote, "Auto balance"],
+    ["is unavailable when every candidate is too busy", false, 2, null, "Auto balance unavailable"],
+  ] as const)("%s", (_case, pending, candidateCount, environmentId, label) => {
+    expect(autoBalanceLabel({ pending, candidateCount, environmentId })).toBe(label);
   });
 });
 
