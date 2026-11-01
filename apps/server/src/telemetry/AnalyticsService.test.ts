@@ -410,6 +410,32 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
     }),
   );
 
+  it.effect("turning the setting off and on during a flush stops the batches after it", () =>
+    Effect.gen(function* () {
+      let settings: ServerSettings.ServerSettingsService["Service"] | undefined;
+      const batches = yield* sendFor(
+        1,
+        (request) =>
+          Effect.gen(function* () {
+            yield* settings!.updateSettings({ telemetryEnabled: false }).pipe(Effect.orDie);
+            yield* settings!.updateSettings({ telemetryEnabled: true }).pipe(Effect.orDie);
+            // Let the settings listener see both changes before this request completes.
+            for (let turn = 0; turn < 10; turn += 1) yield* Effect.yieldNow;
+            return yield* respondWithStatus(204)(request);
+          }),
+        Effect.gen(function* () {
+          settings = yield* ServerSettings.ServerSettingsService;
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          for (let index = 0; index < 45; index += 1) {
+            yield* analytics.record("test.batches", { index });
+          }
+        }),
+        { variable: null },
+      );
+      assert.equal(batches.length, 1);
+    }),
+  );
+
   it.effect("turning the setting off during a flush stops the batches after it", () =>
     Effect.gen(function* () {
       let settings: ServerSettings.ServerSettingsService["Service"] | undefined;
