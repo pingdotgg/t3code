@@ -27,6 +27,7 @@
       "entry": [
         // These fixture scripts are injected into a browser page by path.
         "fixtures/*/*.js",
+        "bench-terminal-output.mjs",
         "knip-schemas.ts",
         "mobile-behavior/run.ts",
         "mobile-native-client.ts",

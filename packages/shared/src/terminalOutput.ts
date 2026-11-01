@@ -42,6 +42,8 @@ const LIVE_LINES = 64;
 
 const MAX_PENDING_ESCAPE = 64;
 
+const CONTROL_PATTERN = /[\x00-\x08\x0a-\x1f\x7f-\x9f]/g;
+
 const ESC = "\u001b";
 
 function sgr(pen: string): string {
@@ -478,11 +480,11 @@ class Terminal {
     const flush = (end: number) => {
       if (end > printable) this.write(input.slice(printable, end));
     };
-    for (let index = 0; index < input.length; index += 1) {
+    const controls = CONTROL_PATTERN;
+    controls.lastIndex = 0;
+    while (controls.test(input)) {
+      let index = controls.lastIndex - 1;
       const code = input.charCodeAt(index);
-      if (code === 0x09 || (code >= 0x20 && code !== 0x7f && (code < 0x80 || code > 0x9f))) {
-        continue;
-      }
       flush(index);
       printable = index + 1;
       if (code === 0x0a) this.newline();
@@ -502,6 +504,7 @@ class Terminal {
         this.escape(input.slice(index, index + length));
         index += length - 1;
         printable = index + 1;
+        controls.lastIndex = printable;
       }
     }
     flush(input.length);

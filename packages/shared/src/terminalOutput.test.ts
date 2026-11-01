@@ -42,7 +42,33 @@ describe("appendTerminalOutput", () => {
   it("holds an escape sequence split across chunks until it finishes", () => {
     const first = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, "red: \u001b[3");
     expect(first.text).toBe("red: ");
+    expect(first.pending).toBe("\u001b[3");
     expect(feed(["red: \u001b[3", "1mR\u001b[0m"]).text).toBe("red: \u001b[0;31mR\u001b[0m");
+  });
+
+  it("preserves tabs and Unicode while ignoring non-cursor C0, DEL and C1 controls", () => {
+    const ignored = Array.from({ length: 160 }, (_, code) => code)
+      .filter((code) => code < 32 || code >= 127)
+      .filter((code) => ![8, 9, 10, 13, 27].includes(code));
+    for (const code of ignored) {
+      const state = feed([`a\t界é😀${String.fromCharCode(code)}z`]);
+      expect(state.text).toBe("a\t界é😀z");
+      expect(state.pending).toBe("");
+      expect(state.screen.col).toBe(8);
+    }
+    expect(feed(["a\t界é\ud83d", "\ude00z"]).text).toBe("a\t界é😀z");
+    expect(feed(["ab\bc\rd\ne"]).text).toBe("dc\ne");
+  });
+
+  it("keeps pending escapes and control scanning independent between interleaved feeds", () => {
+    const first = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, "alpha\u001b[3");
+    const second = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, "\rB\t界😀\u009f");
+    const completed = appendTerminalOutput(first, "1mR\u001b[0m\bX");
+    expect(completed.text).toBe("alphaX");
+    expect(completed.pending).toBe("");
+    expect(appendTerminalOutput(second, "\rC").text).toBe("C\t界😀");
+    expect(first.pending).toBe("\u001b[3");
+    expect(second.text).toBe("B\t界😀");
   });
 
   it("keeps a bounded tail that starts on a fresh line", () => {
@@ -72,6 +98,15 @@ describe("appendTerminalOutput", () => {
   });
 
   it("hides a long string sequence's payload however it is split into chunks", () => {
+    for (const introducer of ["]", "P", "X", "_", "^"]) {
+      const start = `a\u001b${introducer}title\r\b\u009f\u001b[31m`;
+      expect(feed([`${start}\u0007b`]).text).toBe("ab");
+      const pending = feed([start]);
+      expect(pending.text).toBe("a");
+      expect(pending.pending).toBe(start.slice(1));
+      expect(appendTerminalOutput(pending, "\u001b\\b").text).toBe("ab");
+      expect(feed([start, "\u001b", "\\b"]).text).toBe("ab");
+    }
     const input = `a\u001b]0;${"t".repeat(100)}\u0007b`;
     expect(feed([input]).text).toBe("ab");
     expect(feed(["a\u001b]0;", "t".repeat(100), "\u0007b"]).text).toBe("ab");
