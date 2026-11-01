@@ -35,9 +35,12 @@ export function enrichedContextLinkPresentation(
 
 export function enrichedThreadLinkPresentation(
   href: string,
+  available = true,
 ): { accent?: string; icon: ContextChipIconRef } | undefined {
   if (!parseThreadLinkHref(href)) return undefined;
-  const presentation = contextChipPresentation("thread");
+  const presentation = available
+    ? contextChipPresentation("thread")
+    : UNAVAILABLE_CONTEXT_CHIP_PRESENTATION;
   return {
     ...(presentation.accent ? { accent: presentation.accent } : {}),
     icon: contextChipIcon(presentation, ""),
