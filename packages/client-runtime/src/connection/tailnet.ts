@@ -256,8 +256,8 @@ export function tailnetRefusalVerdict(
       return {
         headline: `${host} blocked this device`,
         steps: [
-          `On another device with access:write and orchestration:read on ${host} (one paired with a default t3 pair code, one granted admin, or yours while nothing is granted), open Settings > Environments and unblock this device.`,
-          `Or run \`t3 pair\` on ${host}, pair this device with the code, and unblock it. Then, on ${host}, revoke that pairing (\`t3 auth session list\`, then \`t3 auth session revoke <id>\`) so it signs in through Tailscale again.`,
+          `On another device with access:write and orchestration:read on ${host} (one paired with a default t3 pair code, one granted admin, or yours while nothing is granted), open Settings > Environments (Sharing & access on that machine itself) and unblock this device.`,
+          `Or run \`t3 pair\` on ${host}, pair this device with the code, and unblock it. Then, on ${host}, revoke that pairing (\`t3 auth session list\`, then \`t3 auth session revoke <id>\`, or Settings > Sharing & access there) so it signs in through Tailscale again.`,
         ],
       };
     case "rate_limited":
