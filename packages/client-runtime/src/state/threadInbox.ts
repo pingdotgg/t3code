@@ -21,7 +21,6 @@ function heldBySideChat(thread: WorkingThreadInput): boolean {
   return (
     thread.hasWorkingSideChat === true &&
     thread.runtime?.status !== "failed" &&
-    thread.runtime?.lastError == null &&
     (thread.pendingGuestMessageCount ?? 0) === 0
   );
 }
