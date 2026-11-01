@@ -1939,6 +1939,74 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("status keeps real divergence for a squash-merged branch that tracks its base", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const branch = "feature/squash-tracks-main";
+      const headSha = yield* squashMergeIntoRemoteMain(repoDir, branch);
+      yield* runGit(repoDir, ["fetch", "origin"]);
+      yield* runGit(repoDir, ["branch", "--set-upstream-to", "origin/main"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: { prListSequence: [[squashMergedPr(branch, headSha)]] },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr?.state).toBe("merged");
+      expect({ aheadCount: status.aheadCount, behindCount: status.behindCount }).toEqual({
+        aheadCount: 1,
+        behindCount: 1,
+      });
+    }),
+  );
+
+  it.effect("status reports nothing to ship after a squash merge into a non-origin default", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["branch", "-m", "develop"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "upstream", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "upstream", "develop"]);
+      yield* runGit(repoDir, ["remote", "set-head", "upstream", "develop"]);
+      const branch = "feature/squash-develop";
+      yield* runGit(repoDir, ["checkout", "-b", branch]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "squash.txt"), "one\ntwo\n");
+      yield* runGit(repoDir, ["add", "squash.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Feature work"]);
+      yield* runGit(repoDir, ["push", "-u", "upstream", branch]);
+      const headSha = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      const squash = yield* runGit(repoDir, [
+        "commit-tree",
+        "HEAD^{tree}",
+        "-p",
+        "upstream/develop",
+        "-m",
+        "Feature work (#217)",
+      ]);
+      yield* runGit(repoDir, ["push", "upstream", `${squash.stdout.trim()}:refs/heads/develop`]);
+      yield* runGit(repoDir, ["fetch", "upstream"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          prListSequence: [[{ ...squashMergedPr(branch, headSha), baseRefName: "develop" }]],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr?.state).toBe("merged");
+      expect({
+        aheadCount: status.aheadCount,
+        aheadOfDefaultCount: status.aheadOfDefaultCount,
+      }).toEqual({ aheadCount: 0, aheadOfDefaultCount: 0 });
+    }),
+  );
+
   it.each([
     [
       "https://github.example.com/team/repository/pull/42?tab=files",

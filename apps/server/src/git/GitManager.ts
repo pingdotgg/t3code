@@ -1404,18 +1404,29 @@ export const make = Effect.gen(function* () {
     // Squash and rebase merges land new commits, so HEAD never becomes reachable from the base.
     const shippedByMergedPr =
       pr?.state === "merged" &&
-      (details.defaultBranch === null
-        ? pr.baseRef === "main" || pr.baseRef === "master"
-        : pr.baseRef === details.defaultBranch) &&
       headSha !== null &&
-      (yield* gitCore.resolveCommit({ cwd, revision: "HEAD" }).pipe(
-        Effect.map(({ commitSha }) => commitSha === headSha),
-        Effect.orElseSucceed(() => false),
-      ));
+      (yield* Effect.gen(function* () {
+        const defaultBranch =
+          details.defaultBranch ??
+          (yield* gitCore.resolvePrimaryRemoteName(cwd).pipe(
+            Effect.flatMap((remoteName) => gitCore.resolveDefaultBranchName(cwd, remoteName)),
+            Effect.orElseSucceed(() => null),
+          ));
+        const mergedIntoDefault =
+          defaultBranch === null
+            ? pr.baseRef === "main" || pr.baseRef === "master"
+            : pr.baseRef === defaultBranch;
+        if (!mergedIntoDefault) return false;
+        return yield* gitCore.resolveCommit({ cwd, revision: "HEAD" }).pipe(
+          Effect.map(({ commitSha }) => commitSha === headSha),
+          Effect.orElseSucceed(() => false),
+        );
+      }));
 
     return {
       hasUpstream: details.hasUpstream,
-      aheadCount: shippedByMergedPr ? 0 : details.aheadCount,
+      // A real upstream delta stays; only the no-upstream fallback counts against the base.
+      aheadCount: shippedByMergedPr && !details.hasUpstream ? 0 : details.aheadCount,
       behindCount: details.behindCount,
       aheadOfDefaultCount: shippedByMergedPr ? 0 : details.aheadOfDefaultCount,
       pr,
