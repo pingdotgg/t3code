@@ -25,6 +25,8 @@ import {
   ScheduledTaskId,
   type ServerProvider,
   ThreadId,
+  TextGenerationError,
+  ServerSettingsError,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -130,6 +132,7 @@ interface HarnessOptions {
   readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
   readonly generateBranchName?: TextGeneration.TextGeneration["Service"]["generateBranchName"];
   readonly serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
+  readonly getLaunchSettings?: ServerSettings.ServerSettingsService["Service"]["getSettings"];
   readonly providers?: ReadonlyArray<ServerProvider>;
   readonly git?: Partial<GitWorkflow.GitWorkflowService["Service"]>;
 }
@@ -233,6 +236,11 @@ function makeHarness(options: HarnessOptions = {}) {
         layerThreadManagement,
         layerReceipts,
         IdAllocator.layer,
+        options.getLaunchSettings === undefined
+          ? Layer.empty
+          : Layer.mock(ServerSettings.ServerSettingsService)({
+              getSettings: options.getLaunchSettings,
+            }),
       ),
     ),
   );
@@ -925,6 +933,111 @@ const preparationSettled = (threadId: ThreadId) =>
     );
     return yield* threads.getThreadProjection(threadId);
   });
+
+it.effect.each([
+  { prefix: "my-prefix", collision: null, expected: /^my-prefix\/[0-9a-f]{8}$/ },
+  { prefix: "my-prefix", collision: "my-prefix", expected: /^my-prefix-[0-9a-f]{8}$/ },
+  { prefix: "team/topic", collision: "team", expected: /^team-topic-[0-9a-f]{8}$/ },
+  { prefix: "team/topic", collision: "team/topic", expected: /^team-topic-[0-9a-f]{8}$/ },
+  { prefix: "", collision: null, expected: /^[0-9a-f]{8}$/ },
+])("keeps prefix '$prefix' with collision '$collision' when naming fails", (scenario) =>
+  Effect.gen(function* () {
+    const namingAttempted = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      serverSettings: {
+        branchNamePrefix: "global-prefix",
+        projectSettingsOverrides: {
+          [projectId]: { branchNamingMode: "static", branchNamePrefix: scenario.prefix },
+        },
+      },
+      hasCommit: ({ refName }) => Effect.succeed(refName === `refs/heads/${scenario.collision}`),
+      generateBranchName: () =>
+        Deferred.succeed(namingAttempted, undefined).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new TextGenerationError({ operation: "generateBranchName", detail: "Unavailable" }),
+            ),
+          ),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "prefix-launch",
+          thread: "prefix-thread",
+          message: "Fix the parser",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      const projection = yield* preparationSettled(launched.threadId);
+      assert.match(projection.thread.branch!, scenario.expected);
+      yield* Deferred.await(namingAttempted);
+      assert.equal(projection.runs[0]?.status, "starting");
+      assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.newRefName, projection.thread.branch);
+      assert.equal(harness.renameBranch.mock.calls.length, 0);
+      assert.isFalse(projection.turnItems.some((item) => item.type === "error"));
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect(
+  "starts a worktree with the default temporary name when settings secrets cannot be read",
+  () => {
+    const harness = makeHarness({
+      getLaunchSettings: Effect.fail(
+        new ServerSettingsError({ settingsPath: "/settings.json", operation: "read-secret" }),
+      ),
+    });
+    return Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "settings-fallback",
+          thread: "settings-fallback-thread",
+          message: "Fix the parser",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      const projection = yield* preparationSettled(launched.threadId);
+      assert.equal(projection.runs[0]?.status, "starting");
+      assert.match(projection.thread.branch!, /^t3\/[0-9a-f]{8}$/);
+      assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.newRefName, projection.thread.branch);
+      assert.equal(harness.runSetup.mock.calls.length, 1);
+      assert.equal(harness.renameBranch.mock.calls.length, 0);
+      assert.isFalse(projection.turnItems.some((item) => item.type === "error"));
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect("renames a temporary branch with a configured prefix when generation succeeds", () => {
+  const harness = makeHarness({
+    serverSettings: { branchNamingMode: "static", branchNamePrefix: "my-prefix" },
+    generateBranchName: () => Effect.succeed({ branch: "my-prefix/fix-parser" }),
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "prefix-rename",
+        thread: "prefix-rename-thread",
+        message: "Fix the parser",
+        workspace: { type: "worktree", baseRef: "main" },
+      }),
+    );
+    yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+      Stream.filter((stored) => stored.commandId === "prefix-rename:branch-rename"),
+      Stream.runHead,
+    );
+    const projection = yield* threads.getThreadProjection(launched.threadId);
+    assert.equal(projection.thread.branch, "my-prefix/fix-parser");
+    assert.match(
+      harness.renameBranch.mock.calls[0]?.[0]?.oldBranch ?? "",
+      /^my-prefix\/[0-9a-f]{8}$/,
+    );
+  }).pipe(Effect.provide(harness.layer));
+});
 
 function scheduledTaskInput(id: string, targetProjectId: ProjectId) {
   return {
