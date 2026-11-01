@@ -134,7 +134,8 @@ import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useBoringSidebarEnabled, useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
-import { useLocalStorage, writeLocalStorageValue } from "../hooks/useLocalStorage";
+import { toggleExpandedParent, useExpandedParentKeys } from "../hooks/useExpandedParents";
+import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
 import {
   useEnvironmentIdentities,
@@ -334,24 +335,6 @@ const EMPTY_THREADS: readonly EnvironmentThreadShell[] = [];
 
 const SETTLED_TAIL_PAGE_COUNT = 25;
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
-const EXPANDED_PARENTS_KEY = "t3code:sidebar:expanded-parents";
-// Bounds the saved list; the oldest expansions fall off first.
-const EXPANDED_PARENTS_LIMIT = 200;
-const NO_EXPANDED_PARENTS: readonly string[] = [];
-const EXPANDED_PARENTS_SCHEMA = Schema.Array(Schema.String);
-
-// Module scope keeps it stable, so memoized toggle rows skip unrelated renders.
-function toggleThreadChildren(parentKey: string) {
-  writeLocalStorageValue(
-    EXPANDED_PARENTS_KEY,
-    (keys) =>
-      keys.includes(parentKey)
-        ? keys.filter((key) => key !== parentKey)
-        : [...keys, parentKey].slice(-EXPANDED_PARENTS_LIMIT),
-    NO_EXPANDED_PARENTS,
-    EXPANDED_PARENTS_SCHEMA,
-  );
-}
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
 
@@ -499,12 +482,7 @@ function useSidebarThreads(input: {
     false,
     Schema.Boolean,
   );
-  // Parents whose child chats are open; every other parent starts collapsed.
-  const [expandedParentKeys] = useLocalStorage(
-    EXPANDED_PARENTS_KEY,
-    NO_EXPANDED_PARENTS,
-    EXPANDED_PARENTS_SCHEMA,
-  );
+  const expandedParentKeys = useExpandedParentKeys();
   // Shared with the old per-project sidebar, so folders keep their open state.
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
@@ -3554,7 +3532,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 ? `shelf:${section}`
                                 : undefined)
                             }
-                            onToggle={toggleThreadChildren}
+                            onToggle={toggleExpandedParent}
                           />,
                         );
                         for (const child of shownChildrenByKey.get(threadKey) ?? []) {

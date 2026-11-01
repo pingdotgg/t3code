@@ -632,8 +632,11 @@ from any connected machine.
 
 On the Agents board, children appear inside the card of the chat that created them, including
 chats by other agents, on the full board and in the side list next to an open chat. Subagents are
-not cards: they appear only in the **Lineage** panel of the chat that owns them. Each one shows its
-agent, title, and status; click it to open that chat.
+not cards: they appear only in the **Lineage** panel of the chat that owns them. On web and
+desktop, a card's children start collapsed to one line counting them by state (need input,
+running, waiting, failed, done); click it to show or hide them. Each card remembers your choice on
+this device, shared with the same parent's row in the sidebar. Open, each child shows its agent,
+title, and status; click it to open that chat.
 Children that need your input come first, then ones still working or waiting, then failed, idle,
 and finished ones, newest first within each group. The list re-sorts at most once a minute so rows
 stay put while you read them. A card shows eight children until you choose **Show more**, but a

@@ -1,4 +1,11 @@
+import {
+  agentChildStatusBucket,
+  countChildStatusBuckets,
+} from "@t3tools/client-runtime/state/child-status-counts";
+import { toggleExpandedParent, useExpandedParentKeys } from "../../hooks/useExpandedParents";
 import { useNowMinute } from "../../hooks/useNowMinute";
+import { cn } from "../../lib/utils";
+import { ChildStatusCountIcons, childStatusCountsLabel } from "../ChildStatusCounts";
 import { formatRelativeTime } from "../../timestampFormat";
 import { ProviderPackageIcon } from "../chat/ProviderPackageIcon";
 import { PROVIDER_ICON_BY_PROVIDER } from "../chat/providerIconUtils";
@@ -150,12 +157,65 @@ function DraggableAgentChildRun(props: ChildRunRowProps & { anchorKey: string })
 const expandedChildLists = new Set<string>();
 
 /**
- * This card's child chats, each linking to its own chat with its own live
+ * This card's child chats, collapsed by default to one line counting them by
+ * the status each row shows; the line opens the list. The open state is shared
+ * with the sidebar's parent rows and saved per device.
+ */
+function AgentChildRuns(props: {
+  runs: AgentCardChildren<EnvironmentThreadShell>;
+  anchorKey: string;
+  profiles: readonly McpGatewayProfile[] | undefined;
+  childPendingWork: ReadonlyMap<string, AgentRunPendingWork> | undefined;
+  onContextMenu: AgentRunContextMenu;
+}) {
+  const { runs, anchorKey, childPendingWork } = props;
+  const open = useExpandedParentKeys().includes(anchorKey);
+  const counts = countChildStatusBuckets([...runs.live, ...runs.settled], ({ thread }) =>
+    agentChildStatusBucket(
+      agentThreadStatus(
+        thread,
+        childPendingWork?.get(`${thread.environmentId}:${thread.id}`) ?? null,
+      ),
+    ),
+  );
+  const label = childStatusCountsLabel(counts);
+  return (
+    <ul className="agent-thread-children" aria-label="Child chats">
+      <li>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                className="flex h-6 w-full cursor-pointer items-center gap-2 rounded-md px-1.5 text-left text-xs tabular-nums text-muted-foreground hover:bg-accent hover:text-foreground"
+                aria-expanded={open}
+                aria-label={label}
+                data-testid="agent-child-runs-toggle"
+                onClick={() => toggleExpandedParent(anchorKey)}
+              />
+            }
+          >
+            <ChevronDownIcon
+              aria-hidden
+              className={cn("size-3 shrink-0 transition-transform", !open && "-rotate-90")}
+            />
+            <ChildStatusCountIcons counts={counts} />
+          </TooltipTrigger>
+          <TooltipPopup side="right">{label}</TooltipPopup>
+        </Tooltip>
+      </li>
+      {open && <AgentChildRunList {...props} />}
+    </ul>
+  );
+}
+
+/**
+ * The open child list: each row links to its own chat with its own live
  * status and the same menu as a card, ordered by arrangeAgentChildRuns.
  * Settled children collapse at the bottom.
  * Subagents never appear here; they live in their owner's Lineage panel.
  */
-function AgentChildRuns({
+function AgentChildRunList({
   runs,
   anchorKey,
   profiles,
@@ -217,7 +277,7 @@ function AgentChildRuns({
   };
   const settledCount = runs.settled.filter((child) => child.depth === 0).length;
   return (
-    <ul className="agent-thread-children" aria-label="Child chats">
+    <>
       {arranged.rows.map(row)}
       {arranged.overflow > 0 && (
         <li>
@@ -244,7 +304,7 @@ function AgentChildRuns({
         </li>
       )}
       {settledOpen && runs.settled.map(row)}
-    </ul>
+    </>
   );
 }
 

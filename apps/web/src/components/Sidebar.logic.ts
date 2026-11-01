@@ -1,5 +1,10 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  emptyChildStatusCounts,
+  type ChildStatusBucket,
+  type ChildStatusCounts,
+} from "@t3tools/client-runtime/state/child-status-counts";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -994,13 +999,9 @@ export function resolveSidebarFolderDot(
  * status its own row shows. Guest requests wait on the owner, so they count as
  * input; a settled child is done unless it still asks for something.
  */
-export type SidebarChildBucket = "needsInput" | "running" | "waiting" | "failed" | "done";
-
-export type SidebarChildCounts = Readonly<Record<SidebarChildBucket, number>>;
-
 export function sidebarChildBucket(
   thread: SidebarThreadStatusInput & Pick<SidebarThreadSummary, "settledOverride">,
-): SidebarChildBucket {
+): ChildStatusBucket {
   const status = resolveSidebarThreadStatus(thread);
   if (status === "approval" || status === "input" || status === "request") return "needsInput";
   if (thread.settledOverride === "settled") return "done";
@@ -1038,7 +1039,7 @@ export interface SidebarThreadNesting<T> {
   /** Direct children under each parent, in the order `threads` lists them. */
   readonly childrenByParentKey: ReadonlyMap<string, readonly T[]>;
   /** Bucket counts over each parent's whole subtree. */
-  readonly countsByParentKey: ReadonlyMap<string, SidebarChildCounts>;
+  readonly countsByParentKey: ReadonlyMap<string, ChildStatusCounts>;
   readonly parentKeyByKey: ReadonlyMap<string, string>;
 }
 
@@ -1086,7 +1087,7 @@ export function nestSidebarChildThreads<T extends SidebarNestingThread>(input: {
     if (siblings === undefined) childrenByParentKey.set(parentKey, [thread]);
     else siblings.push(thread);
   }
-  const countsByParentKey = new Map<string, Record<SidebarChildBucket, number>>();
+  const countsByParentKey = new Map<string, Record<ChildStatusBucket, number>>();
   for (const [key, thread] of byKey) {
     if (!parentKeyByKey.has(key)) continue;
     const bucket = sidebarChildBucket(thread);
@@ -1099,7 +1100,7 @@ export function nestSidebarChildThreads<T extends SidebarNestingThread>(input: {
       seen.add(parentKey);
       let counts = countsByParentKey.get(parentKey);
       if (counts === undefined) {
-        counts = { needsInput: 0, running: 0, waiting: 0, failed: 0, done: 0 };
+        counts = emptyChildStatusCounts();
         countsByParentKey.set(parentKey, counts);
       }
       counts[bucket] += 1;

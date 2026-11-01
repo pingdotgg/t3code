@@ -491,6 +491,10 @@
       "types": "./src/state/agents.ts",
       "default": "./src/state/agents.ts"
     },
+    "./state/child-status-counts": {
+      "types": "./src/state/childStatusCounts.ts",
+      "default": "./src/state/childStatusCounts.ts"
+    },
     "./diff-count": {
       "types": "./src/diffCount.ts",
       "default": "./src/diffCount.ts"

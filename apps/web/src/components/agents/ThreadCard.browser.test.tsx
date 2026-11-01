@@ -143,11 +143,16 @@ describe("agent card linked chats", () => {
     settled: [child("Settled worker", { settledAt: "2026-09-10T00:00:00Z" })],
   };
 
-  it("lists children needing input first, caps the list, and expands settled chats", async () => {
+  it("collapses children to status counts, then lists them needing input first", async () => {
+    // The open state persists per device; start every run collapsed.
+    localStorage.removeItem("t3code:sidebar:expanded-parents");
     await using screen = await renderCard(
       <ThreadCard thread={parent} childRuns={runs} onContextMenu={vi.fn()} />,
     );
     const { container } = screen;
+    const summary = container.querySelector<HTMLButtonElement>(
+      '[data-testid="agent-child-runs-toggle"]',
+    )!;
     const titles = () =>
       [...container.querySelectorAll(".agent-thread-child-title")].map(
         (title) => title.textContent,
@@ -156,6 +161,14 @@ describe("agent card linked chats", () => {
       [...container.querySelectorAll<HTMLButtonElement>(".agent-thread-children-toggle")].find(
         (candidate) => candidate.textContent?.startsWith(label),
       )!;
+    expect(summary.getAttribute("aria-expanded")).toBe("false");
+    expect(summary.getAttribute("aria-label")).toBe(
+      "23 child chats: 1 need input, 1 running, 21 done",
+    );
+    expect(summary.textContent).toBe("1 need input121");
+    expect(titles()).toHaveLength(0);
+    await act(async () => summary.click());
+    expect(summary.getAttribute("aria-expanded")).toBe("true");
     expect(titles().slice(0, 2)).toEqual(["Waiting worker", "Running worker"]);
     expect(titles()).toHaveLength(8);
     expect(container.textContent).toContain("Cody");
@@ -168,6 +181,8 @@ describe("agent card linked chats", () => {
     expect(container.textContent).toContain("Settled worker");
     await act(async () => button("Settled children").click());
     expect(container.textContent).not.toContain("Settled worker");
+    await act(async () => summary.click());
+    expect(titles()).toHaveLength(0);
   });
 });
 
