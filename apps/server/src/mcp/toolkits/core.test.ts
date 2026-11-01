@@ -695,13 +695,8 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
         Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
         Layer.provide(
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({
-            list: () =>
-              Effect.succeed({
-                tasks: [
-                  scheduledTask("task-full-access", "full-access"),
-                  scheduledTask("task-auto", "auto"),
-                ],
-              }),
+            find: (id) =>
+              Effect.succeed(scheduledTask(id, id === "task-full-access" ? "full-access" : "auto")),
             upsert: (input) =>
               Effect.succeed({
                 task: { ...(scheduledTask(input.id ?? "task-auto", "auto") as object), ...input },
@@ -719,34 +714,81 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
   ),
 );
 
+const runnableTask = Schema.decodeSync(ScheduledTask)(scheduledTask("task-a", "full-access"));
+
 it.effect.each([
   {
-    scenario: "explains why a webhook task cannot run manually",
-    tasks: [
-      {
-        ...Schema.decodeSync(ScheduledTask)(scheduledTask("task-webhook", "full-access")),
-        schedule: { type: "webhook" as const, signature: null },
+    scenario: "runs an existing task by its id",
+    find: Effect.succeed(runnableTask),
+    runNow: Effect.succeed({ task: { ...runnableTask, runCount: 1 }, threadId: null }),
+    expected: {
+      structuredContent: {
+        taskId: "task-a",
+        threadId: null,
+        lastRunStatus: "never",
+        runCount: 1,
+        nextRunAt: null,
       },
-    ],
-    error: new ScheduledTaskError({
-      message: "Webhook tasks run when their URL receives a request.",
-      cause: new Error("private-webhook-cause"),
+      failure: undefined,
+    },
+  },
+  {
+    scenario: "explains why a webhook task cannot run manually",
+    find: Effect.succeed({
+      ...runnableTask,
+      schedule: { type: "webhook" as const, signature: null },
     }),
-    code: "orchestration_error",
-    message: "Webhook tasks run when their URL receives a request.",
+    runNow: Effect.fail(
+      new ScheduledTaskError({
+        message: "Webhook tasks run when their URL receives a request.",
+        cause: new Error("private-webhook-cause"),
+      }),
+    ),
+    expected: {
+      structuredContent: undefined,
+      failure: {
+        _tag: "OrchestratorMcpFailure",
+        code: "orchestration_error",
+        message: "Webhook tasks run when their URL receives a request.",
+      },
+    },
   },
   {
     scenario: "reports a missing task before trying to run it",
-    tasks: [],
-    error: new ScheduledTaskError({ message: "must not run a missing task" }),
-    code: "invalid_request",
-    message: "The scheduled task was not found.",
+    find: Effect.succeed(null),
+    runNow: Effect.die("must not run a missing task"),
+    expected: {
+      structuredContent: undefined,
+      failure: {
+        _tag: "OrchestratorMcpFailure",
+        code: "invalid_request",
+        message: "The scheduled task was not found.",
+      },
+    },
   },
-])("run_scheduled_task_now $scenario", ({ tasks, error, code, message }) =>
+  {
+    scenario: "hides a storage failure while looking up the task",
+    find: Effect.fail(
+      new ScheduledTaskError({
+        message: "Could not load schedule task.",
+        cause: new Error("private-storage-cause"),
+      }),
+    ),
+    runNow: Effect.die("must not run after a failed lookup"),
+    expected: {
+      structuredContent: undefined,
+      failure: {
+        _tag: "OrchestratorMcpFailure",
+        code: "orchestration_error",
+        message: "The operation could not be completed.",
+      },
+    },
+  },
+])("run_scheduled_task_now $scenario", ({ find, runNow, expected }) =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     const result = yield* server
-      .callTool({ name: "run_scheduled_task_now", arguments: { taskId: "task-webhook" } })
+      .callTool({ name: "run_scheduled_task_now", arguments: { taskId: "task-a" } })
       .pipe(
         Effect.provideService(
           McpInvocationContext.McpInvocationContext,
@@ -754,9 +796,10 @@ it.effect.each([
         ),
         Effect.provideService(McpSchema.McpServerClient, client),
       );
-    expect(result.isError).toBe(true);
-    expect(result.structuredContent).toBeUndefined();
-    expect(declaredFailure(result)).toEqual({ _tag: "OrchestratorMcpFailure", code, message });
+    expect({
+      structuredContent: result.structuredContent,
+      failure: declaredFailure(result),
+    }).toEqual(expected);
     expect(JSON.stringify(result)).not.toContain("private-");
   }).pipe(
     Effect.provide(
@@ -770,8 +813,9 @@ it.effect.each([
         Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
         Layer.provide(
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({
-            list: () => Effect.succeed({ tasks }),
-            runNow: () => Effect.fail(error),
+            list: () => Effect.die("must not list every task to run one"),
+            find: () => find,
+            runNow: () => runNow,
           }),
         ),
       ),
