@@ -116,6 +116,35 @@ describe("HTML in native Markdown", () => {
   it("keeps anchor text unlinked for unsafe hrefs", () => {
     expect(markdownWithHtml('Run <a href="javascript:alert(1)">this</a> now')).toBe("Run this now");
   });
+
+  it("keeps anchor labels and escaped bangs intact across nested formatting and table cells", () => {
+    const markdown =
+      '> **!<a href="https://x.test">[one]</a>** and <span>tail</span>\n\n| A |\n| - |\n| !<a href="https://x.test">x[y]</a><br><img src="x.png"> |';
+    expect(markdownWithHtml(markdown)).toBe(
+      "> **\\![\\[one\\]](<https://x.test>)** and tail\n\n| A |\n| - |\n| \\![x\\[y\\]](<https://x.test>) ![](<x.png>) |",
+    );
+    expect(
+      markdownWithHtml(
+        String.raw`Before \!<a href="https://x.test">escaped</a> \\!<a href="mailto:a@b">even</a>`,
+      ),
+    ).toBe(String.raw`Before \![escaped](<https://x.test>) \\\![even](<mailto:a@b>)`);
+  });
+
+  it("converts separated HTML without changing code examples or an unfinished tag", () => {
+    const literal = '`<br>`\n\n```html\n<img src="literal.png">\n```\n\n<broken';
+    expect(markdownWithHtml(literal)).toBe(literal);
+    const rows = Array.from(
+      { length: 100 },
+      (_, index) => `row ${index} <span>text</span><br>!<a href="https://x.test/${index}">go</a>`,
+    );
+    const expected = Array.from(
+      { length: 100 },
+      (_, index) => `row ${index} text  \n\\![go](<https://x.test/${index}>)`,
+    );
+    expect(markdownWithHtml(rows.join("\n\n") + "\n\n" + literal)).toBe(
+      expected.join("\n\n") + "\n\n" + literal,
+    );
+  });
 });
 
 describe("file embeds in native thread and file Markdown", () => {
