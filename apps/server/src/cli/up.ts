@@ -255,7 +255,8 @@ const formatNextSteps = (routes: Routes, serviceInstalled: boolean) =>
   ].join("\n");
 
 // Serve only runs with Tailscale on in `t3 up`, so turning Tailscale off stops it too.
-const TAILSCALE_OFF = { T3CODE_TAILSCALE_SIGN_IN: undefined, T3CODE_TAILSCALE_SERVE: undefined };
+// Written as false, not removed, so a value the service inherits cannot turn them back on.
+const TAILSCALE_OFF = { T3CODE_TAILSCALE_SIGN_IN: "false", T3CODE_TAILSCALE_SERVE: "false" };
 
 const interactiveTerminal = () => Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
@@ -461,7 +462,7 @@ const tailscaleEntries = Effect.fn("cli.up.tailscale_entries")(function* (
       ...(owner === null ? {} : { T3CODE_TAILSCALE_OWNER: tagged ? owner.userId : undefined }),
       ...Option.match(flags.tailscaleServe, {
         onNone: () => ({}),
-        onSome: (on) => ({ T3CODE_TAILSCALE_SERVE: on ? "true" : undefined }),
+        onSome: (on) => ({ T3CODE_TAILSCALE_SERVE: on ? "true" : "false" }),
       }),
     },
   };
@@ -498,7 +499,7 @@ const formatTailscale = (
           "Let your untagged devices in without a grant: `t3 tailscale require-grant off`.",
         ]
       : [
-          "Your untagged devices can sign in, agents on them included.",
+          "While your tailnet policy grants no device here, your untagged devices can sign in, agents on them included.",
           "Require policy grants: `t3 tailscale require-grant on`.",
         ]),
   ].join("\n");
@@ -743,8 +744,9 @@ const setUp = Effect.fn("cli.up")(function* (
     if ("failed" in result && before.service.installed) {
       // The old service still runs, so a foreground server would clash with it.
       yield* restoreServiceEnv;
-      yield* Console.log(
-        `Service setup failed: ${result.failed} Fix that, then run \`t3 up\` again.`,
+      // A failure, so a script sees that the running service kept its old access.
+      return yield* upError(
+        `Service setup failed: ${result.failed} Nothing changed. Fix that, then run \`t3 up\` again.`,
       );
     } else if ("failed" in result) {
       yield* printServeCommand(`Service setup failed: ${result.failed}`);
@@ -866,7 +868,7 @@ export const upCommand = Command.make("up", {
     const tailscaleOnly = [
       ...(Option.isSome(flags.owner) ? ["--owner"] : []),
       ...(flags.requireGrant ? ["--require-grant"] : []),
-      ...(Option.isSome(flags.tailscaleServe) ? ["--tailscale-serve"] : []),
+      ...(Option.getOrUndefined(flags.tailscaleServe) === true ? ["--tailscale-serve"] : []),
     ];
     if (Option.getOrUndefined(flags.tailscale) === false && tailscaleOnly.length > 0) {
       return Effect.fail(upError(`--no-tailscale conflicts with ${tailscaleOnly.join(", ")}.`));

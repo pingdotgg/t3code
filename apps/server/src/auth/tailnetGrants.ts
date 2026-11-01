@@ -40,11 +40,19 @@ export const policyGrantedPeers = Effect.fn("tailnetGrants.policyGrantedPeers")(
   status: TailscaleStatus,
   whois: (address: string) => Effect.Effect<TailscaleWhois, E, R>,
 ) {
-  const results = yield* Effect.forEach(
-    status.peers,
-    (peer) => {
+  const peers = [
+    ...status.peers.map((peer) => {
       const address = peer.tailnetIpv4Addresses[0] ?? peer.tailnetIpv6Addresses[0];
-      const name = peer.hostName ?? address ?? peer.stableNodeId;
+      return { address, name: peer.hostName ?? address ?? peer.stableNodeId };
+    }),
+    ...status.unidentifiedPeerAddresses.map((address) => ({
+      address: address ?? undefined,
+      name: address ?? "a peer with no ID",
+    })),
+  ];
+  const results = yield* Effect.forEach(
+    peers,
+    ({ address, name }) => {
       if (address === undefined) return Effect.succeed({ name, granted: null });
       return whois(address).pipe(
         Effect.map((node) => ({

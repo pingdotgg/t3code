@@ -167,6 +167,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     readonly status?: Partial<BootService.BootServiceStatus>;
     readonly installFails?: boolean;
     readonly restartFails?: boolean;
+    /** `t3 up` exits with an error. */
+    readonly fails?: boolean;
     /** Runs as if in a terminal, answering each question with this text. */
     readonly answer?: string;
     readonly prints?: string;
@@ -225,7 +227,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     {
       label: "a failed update keeps service.env matching the old service",
       // The old service still runs, so no foreground server is offered.
-      prints: "Fix that, then run `t3 up` again.",
+      prints: "Nothing changed. Fix that, then run `t3 up` again.",
+      fails: true,
       installed: true,
       status: { current: false },
       installFails: true,
@@ -278,12 +281,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=true\n",
     },
     {
-      label: "turning Tailscale off stops Serve too",
+      label: "turning Tailscale off stops Serve too, written as false",
       installed: true,
       env: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=true\nT3CODE_TAILSCALE_SERVE=true\n",
       args: ["--no-tailscale"],
       installs: 0,
       restarts: 1,
+      envAfter: "T3CODE_LAN=false\nT3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
+      // Only turning Serve on implies Tailscale.
+      label: "--no-tailscale-serve leaves Tailscale off",
+      installed: true,
+      env: "T3CODE_LAN=false\n",
+      args: ["--no-tailscale-serve"],
+      installs: 0,
+      restarts: 0,
       envAfter: "T3CODE_LAN=false\n",
     },
     {
@@ -362,9 +375,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
         ),
       );
       if (input.prints !== undefined) {
-        expect(lines.join("\n")).toContain(input.prints);
+        const failure = exit._tag === "Failure" ? Cause.pretty(exit.cause) : "";
+        expect(`${lines.join("\n")}\n${failure}`).toContain(input.prints);
       }
-      expect(exit._tag).toBe(input.restartFails === true ? "Failure" : "Success");
+      expect(exit._tag).toBe(
+        input.restartFails === true || input.fails === true ? "Failure" : "Success",
+      );
       expect({ installs, restarts }).toEqual({
         installs: input.installs,
         restarts: input.restarts,
@@ -420,6 +436,7 @@ it.effect("a rerun on a tagged host keeps the owner saved before, with no prompt
       certDomains: [],
       userspaceNetworking: false,
       peers: [],
+      unidentifiedPeerAddresses: [],
       users: [{ userId: "123", loginName: "me@example.com" }],
     };
     // Not interactive, as with --yes, so asking would fail with "Pass --owner".

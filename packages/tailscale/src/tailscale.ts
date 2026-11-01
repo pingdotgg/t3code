@@ -291,6 +291,11 @@ export interface TailscaleStatus {
    */
   readonly userspaceNetworking: boolean | null;
   readonly peers: readonly TailscalePeer[];
+  /**
+   * The first tailnet address of each peer with no ID, or null with none. It cannot be
+   * tracked, but a scan of the tailnet policy must still read it.
+   */
+  readonly unidentifiedPeerAddresses: ReadonlyArray<string | null>;
   /** Users this node can see, by user ID. */
   readonly users: ReadonlyArray<{ readonly userId: string; readonly loginName: string | null }>;
 }
@@ -340,7 +345,16 @@ export const parseTailscaleStatus = (
   decodeTailscaleStatusJson(rawStatusJson).pipe(
     Effect.map((parsed): TailscaleStatus => {
       const self = parsed.Self;
-      const peers = Object.values(parsed.Peer ?? {}).flatMap((peer): TailscalePeer[] => {
+      const peerEntries = Object.values(parsed.Peer ?? {});
+      const unidentifiedPeerAddresses = peerEntries
+        .filter((peer) => nonEmptyOrNull(peer.ID) === null)
+        .map(
+          (peer) =>
+            tailnetIpv4AddressesOf(peer.TailscaleIPs)[0] ??
+            tailnetIpv6AddressesOf(peer.TailscaleIPs)[0] ??
+            null,
+        );
+      const peers = peerEntries.flatMap((peer): TailscalePeer[] => {
         const stableNodeId = nonEmptyOrNull(peer.ID);
         if (stableNodeId === null) return [];
         return [
@@ -382,6 +396,7 @@ export const parseTailscaleStatus = (
         certDomains: parsed.CertDomains ?? [],
         userspaceNetworking: parsed.TUN === undefined ? null : !parsed.TUN,
         peers,
+        unidentifiedPeerAddresses,
         users: Object.entries(parsed.User ?? {}).map(([userId, user]) => ({
           userId,
           loginName: nonEmptyOrNull(user.LoginName),

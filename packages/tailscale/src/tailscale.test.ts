@@ -231,6 +231,7 @@ describe("tailscale", () => {
         certDomains: [],
         userspaceNetworking: null,
         peers: [],
+        unidentifiedPeerAddresses: [],
         users: [],
       });
     }),

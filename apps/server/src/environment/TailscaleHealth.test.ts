@@ -36,6 +36,7 @@ const running: TailscaleStatus = {
   certDomains: ["studio.tail1234.ts.net"],
   userspaceNetworking: false,
   peers: [],
+  unidentifiedPeerAddresses: [],
 };
 
 const context = { executable: "tailscale", subcommand: "status", argumentCount: 2 } as const;

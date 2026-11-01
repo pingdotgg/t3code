@@ -561,6 +561,18 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       }).pipe(Effect.provide(layerTest(withLaptop(granted({ scopes: ["standard"] }))))),
     );
 
+    it.effect(
+      "a granted peer that Tailscale lists with no ID still turns the owner rule off",
+      () => {
+        const { ID: _, ...unidentified } = peers.laptop;
+        const tailnet = withLaptop(granted({ scopes: ["standard"] }));
+        tailnet.status = hostStatus({ Peer: { ...peers, laptop: unidentified } });
+        return Effect.gen(function* () {
+          expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("no_grant");
+        }).pipe(Effect.provide(layerTest(tailnet)));
+      },
+    );
+
     it.effect("a device that loses or narrows its grant, or leaves, is cut off", () => {
       const tailnet = withLaptop();
       return Effect.gen(function* () {
