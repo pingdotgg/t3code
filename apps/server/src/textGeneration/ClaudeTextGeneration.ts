@@ -202,7 +202,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           "--json-schema",
           jsonSchemaStr,
           "--model",
-          resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection),
+          resolveClaudeCatalogApiModelId(catalog, modelSelection),
           ...(cliEffort ? ["--effort", cliEffort] : []),
           "--settings",
           settingsJson,

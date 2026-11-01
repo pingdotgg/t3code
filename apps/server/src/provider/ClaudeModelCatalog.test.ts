@@ -196,7 +196,14 @@ describe("Claude model catalog", () => {
     const catalog = catalogFromManifest(input);
     assert.strictEqual(
       resolveClaudeModelSlug(catalog, "claude-synthetic-next-20251001"),
-      "claude-synthetic-next-20251001",
+      "claude-synthetic-next",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(catalog, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-synthetic-next-20251001",
+      }),
+      "claude-synthetic-next-20251001[large]",
     );
     assert.strictEqual(resolveClaudeModelSlug(catalog, "synthetic"), "claude-synthetic-next");
     assert.strictEqual(
