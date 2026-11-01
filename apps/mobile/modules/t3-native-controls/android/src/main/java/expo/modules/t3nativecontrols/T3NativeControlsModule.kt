@@ -2,6 +2,7 @@ package expo.modules.t3nativecontrols
 
 import android.content.Intent
 import android.text.format.DateFormat
+import android.util.Base64
 import androidx.core.content.FileProvider
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
@@ -15,6 +16,17 @@ class T3NativeControlsModule : Module() {
   @Suppress("TooGenericExceptionCaught") // Clear the pending promise before rethrowing.
   override fun definition() = ModuleDefinition {
     Name("T3NativeControls")
+
+    Function("signDpopProof") { privateD: String, publicX: String, publicY: String, input: String ->
+      val flags = Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+      val signature = DpopSigner.sign(
+        Base64.decode(privateD, flags),
+        Base64.decode(publicX, flags),
+        Base64.decode(publicY, flags),
+        input
+      )
+      Base64.encodeToString(signature, flags)
+    }
 
     Function("is24HourFormat") {
       val context = appContext.reactContext ?: error("The app is not active.")
