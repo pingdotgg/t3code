@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  type UsageLimitSourceAccount,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -180,6 +181,154 @@ describe("pools", () => {
     checkedAt,
   };
   const laptop = { entry: { target: { label: "Laptop" } } };
+
+  it("shows retained failed windows and account notices without fabricating missing quota or redeeming stale credits", () => {
+    const failed = {
+      reason: "probeFailed" as const,
+      message: "The hub could not read this account's usage.",
+    };
+    const stale = {
+      checkedAt,
+      windows: [window],
+      unavailable: failed,
+      resetCredits: { availableCount: 1, nextCreditId: "stale-credit" },
+    };
+    const accounts: UsageLimitSourceAccount[] = [
+      { id: "a.json", driver: claude, usageLimits: stale },
+      {
+        id: "b.json",
+        driver: claude,
+        usageLimits: { checkedAt, windows: [], unavailable: failed },
+      },
+      {
+        id: "unsupported.json",
+        driver: claude,
+        usageLimits: {
+          checkedAt,
+          windows: [],
+          unavailable: { reason: "unsupported", message: "Hidden account" },
+        },
+      },
+    ];
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: { providers: [], usageLimitSources: [{ ...source, accounts }] },
+        },
+      ],
+    ]);
+    const shown = collectLimitAccounts(input);
+    expect(shown).toHaveLength(1);
+    expect(shown[0]?.limits.windows).toEqual([window]);
+    expect(shown[0]?.limits.checkedAt).toBe(checkedAt);
+    expect(shown[0]?.redeem).toBeNull();
+    expect(shown[0]?.limits.resetCredits).toBeUndefined();
+    expect(collectLimitPools(shown, now)[0]?.windows[0]?.remainingPercent).toBe(60);
+    expect(collectLimitNotices(input)).toEqual([
+      "hub: The hub could not read this account's usage. Last known limits from " +
+        checkedAt +
+        " (stale).",
+      "hub: The hub could not read this account's usage.",
+    ]);
+    expect(
+      collectLimitNotices(
+        new Map([
+          [
+            EnvironmentId.make("env-a"),
+            {
+              ...laptop,
+              serverConfig: {
+                providers: [],
+                usageLimitSources: [
+                  {
+                    ...source,
+                    accounts: [
+                      accounts[1]!,
+                      { ...accounts[1]!, id: "c.json", email: "private@example.com" },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        ]),
+      ),
+    ).toEqual(["hub: The hub could not read this account's usage."]);
+    const selected = provider({ driver: claude });
+    const report = collectProviderUsageLimits(
+      selected.instanceId,
+      [selected],
+      [{ ...source, accounts }],
+      now,
+    );
+    expect(report?.accounts[0]?.limits.resetCredits).toBeUndefined();
+    expect(report?.accounts[0]?.resetCreditInput).toBeUndefined();
+    expect(report?.accounts[1]?.limits.windows).toEqual([]);
+  });
+
+  it("keeps stale native windows visible with a failure notice and no reset action", () => {
+    const stale = provider({
+      usageLimits: {
+        checkedAt,
+        windows: [window],
+        resetCredits: { availableCount: 1 },
+        unavailable: { reason: "probeFailed" },
+      },
+    });
+    const input = new Map([
+      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: [stale] } }],
+    ]);
+    expect(collectLimitAccounts(input)[0]?.limits.windows).toEqual([window]);
+    expect(collectLimitAccounts(input)[0]?.redeem).toBeNull();
+    expect(collectLimitNotices(input)[0]).toContain("stale");
+    const report = collectProviderUsageLimits(stale.instanceId, [stale], [], now);
+    expect(report?.accounts[0]?.resetCreditInput).toBeUndefined();
+    expect(report?.accounts[0]?.limits.resetCredits).toBeUndefined();
+  });
+
+  it("prefers a healthy same-account sample over a newer failed sample while retaining its notice", () => {
+    const native = provider({
+      driver: claude,
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [native],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [
+                  {
+                    id: "a.json",
+                    driver: claude,
+                    email: "same@example.com",
+                    usageLimits: {
+                      checkedAt: "2026-09-03T12:00:00.000Z",
+                      windows: [{ ...window, usedPercent: 90 }],
+                      unavailable: { reason: "probeFailed" as const },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    const shown = collectLimitAccounts(input);
+    expect(shown).toHaveLength(1);
+    expect(shown[0]?.limits.windows[0]?.usedPercent).toBe(40);
+    expect(shown[0]?.limits.unavailable).toBeUndefined();
+    expect(collectLimitNotices(input)[0]).not.toContain("same@example.com");
+    expect(collectLimitNotices(input)[0]).toContain("hub:");
+  });
 
   it("merges one account reported natively on two environments and by a hub into one entry", () => {
     const native = provider({

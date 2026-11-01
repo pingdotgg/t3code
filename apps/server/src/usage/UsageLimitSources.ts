@@ -3,8 +3,9 @@ import {
   UsageLimitSourceError,
   type UsageLimitSourceConsumeResetCreditInput,
   type ProviderConsumeResetCreditResult,
-  type ServerSettings,
   type UsageLimitSourceConfig,
+  type UsageLimitSourceAccount,
+  type ServerProviderUsageLimits,
   type UsageLimitSourceId,
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
@@ -46,6 +47,33 @@ function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   }
 }
 
+function failedLimits(
+  limits: ServerProviderUsageLimits,
+  message: string,
+): ServerProviderUsageLimits {
+  return { ...limits, resetCredits: undefined, unavailable: { reason: "probeFailed", message } };
+}
+
+function sameSourceConfig(left: UsageLimitSourceConfig, right: UsageLimitSourceConfig): boolean {
+  return (
+    left.kind === right.kind &&
+    left.url === right.url &&
+    left.label === right.label &&
+    left.enabled === right.enabled &&
+    left.managementKey === right.managementKey
+  );
+}
+
+function sameAccount(left: UsageLimitSourceAccount, right: UsageLimitSourceAccount): boolean {
+  return (
+    left.id === right.id &&
+    left.driver === right.driver &&
+    left.email === right.email &&
+    left.workspaceId === right.workspaceId &&
+    left.usageLimits.credentialFingerprint === right.usageLimits.credentialFingerprint
+  );
+}
+
 /** @public */
 export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
@@ -57,21 +85,71 @@ export const make = Effect.gen(function* () {
     PubSub.shutdown,
   );
 
+  // Only current source configurations and their latest account list are retained.
+  // Credentials participate in equality but never leave this service's memory.
+  const cache = new Map<
+    UsageLimitSourceId,
+    {
+      config: UsageLimitSourceConfig;
+      snapshot: UsageLimitSourceSnapshot;
+    }
+  >();
+
+  let configRevision = 0;
   const readSource = Effect.fn("UsageLimitSources.readSource")(function* (
     id: UsageLimitSourceId,
     config: UsageLimitSourceConfig,
   ) {
+    const revision = configRevision;
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const base = { id, kind: config.kind, label: sourceLabel(id, config), checkedAt } as const;
-    if (config.managementKey.length === 0) {
-      return { ...base, accounts: [], error: "No management key configured." };
-    }
-    const accounts = yield* api.readAccounts(config).pipe(Effect.result);
+    const cached = cache.get(id);
+    const previous =
+      cached && sameSourceConfig(cached.config, config) ? cached.snapshot : undefined;
+    const read =
+      config.managementKey.length === 0
+        ? Effect.fail(new UsageLimitSourceError({ detail: "No management key configured." }))
+        : api.readAccounts(config);
+    const accounts = yield* read.pipe(Effect.result);
+    let snapshot: UsageLimitSourceSnapshot;
     if (accounts._tag === "Failure") {
       yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
-      return { ...base, accounts: [], error: accounts.failure.detail };
+      snapshot = {
+        ...base,
+        accounts: (previous?.accounts ?? []).map((account) => ({
+          ...account,
+          usageLimits: failedLimits(
+            account.usageLimits,
+            "The hub could not refresh this account's usage.",
+          ),
+        })),
+        error: accounts.failure.detail,
+      };
+    } else {
+      snapshot = {
+        ...base,
+        accounts: accounts.success.map((account) => {
+          if (account.usageLimits.unavailable?.reason !== "probeFailed") return account;
+          const good = previous?.accounts.find(
+            (old) =>
+              sameAccount(old, account) &&
+              old.usageLimits.windows.length > 0 &&
+              old.usageLimits.unavailable?.reason !== "unsupported",
+          );
+          return {
+            ...account,
+            ...(good?.plan ? { plan: good.plan } : {}),
+            usageLimits: failedLimits(
+              good?.usageLimits ?? account.usageLimits,
+              account.usageLimits.unavailable.message ??
+                "The hub could not read this account's usage.",
+            ),
+          };
+        }),
+      };
     }
-    return { ...base, accounts: accounts.success };
+    if (revision === configRevision) cache.set(id, { config: { ...config }, snapshot });
+    return snapshot;
   });
 
   const publish = Effect.fn("UsageLimitSources.publish")(function* (
@@ -86,12 +164,13 @@ export const make = Effect.gen(function* () {
   // Serialize refreshes so slow old-settings reads cannot resurrect removed sources after newer refreshes.
   const refreshLock = yield* Semaphore.make(1);
   const refresh = Effect.gen(function* () {
-    const settings = yield* settingsService.getSettings.pipe(
-      Effect.orElseSucceed((): ServerSettings | null => null),
-    );
-    const entries = Object.entries(settings?.usageLimitSources ?? {}).filter(
+    const settings = yield* settingsService.getSettings;
+    const entries = Object.entries(settings.usageLimitSources).filter(
       ([, config]) => config.enabled,
     );
+    for (const id of cache.keys()) {
+      if (!entries.some(([currentId]) => currentId === id)) cache.delete(id);
+    }
     const snapshots = yield* Effect.forEach(
       entries,
       ([id, config]) => readSource(id as UsageLimitSourceId, config),
@@ -123,7 +202,16 @@ export const make = Effect.gen(function* () {
   yield* settingsService.streamChanges.pipe(
     Stream.map((settings) => settings.usageLimitSources),
     Stream.changes,
-    Stream.runForEach(() => refresh),
+    Stream.runForEach((configs) =>
+      Effect.gen(function* () {
+        configRevision++;
+        for (const [id, cached] of cache) {
+          const config = configs[id];
+          if (!config?.enabled || !sameSourceConfig(cached.config, config)) cache.delete(id);
+        }
+        yield* refresh.pipe(Effect.forkScoped);
+      }),
+    ),
     Effect.forkScoped,
   );
 

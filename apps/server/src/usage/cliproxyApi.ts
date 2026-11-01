@@ -321,7 +321,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
                 : { windowDurationMins: window.limit_window_seconds / 60 }),
             }
           : null;
-      const available = yield* credits(config, account).pipe(Effect.orElseSucceed(() => undefined));
+      // Disabled accounts still report usage, but cannot redeem through this hub.
+      const available = account.disabled
+        ? undefined
+        : yield* credits(config, account).pipe(Effect.orElseSucceed(() => undefined));
       const next = available?.[0];
       const planType =
         usage.plan_type ?? account.id_token?.plan_type ?? account.id_token?.chatgpt_plan_type;
@@ -376,10 +379,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ),
     );
     return yield* Effect.forEach(
-      accounts.filter(
-        (account) =>
-          !account.disabled && (account.provider === "codex" || account.provider === "claude"),
-      ),
+      // Routing-disabled accounts still have quota worth reporting, especially
+      // exhausted accounts. Redemption keeps its separate disabled-account guard.
+      accounts.filter((account) => account.provider === "codex" || account.provider === "claude"),
       (account) => readAccount(config, account),
       { concurrency: 4 },
     );

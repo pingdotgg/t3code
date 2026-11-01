@@ -1,5 +1,13 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+  UsageLimitSourceId,
+} from "@t3tools/contracts";
+import { collectLimitAccounts, collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -194,6 +202,152 @@ describe("CLIProxyAPI hub failures", () => {
 });
 
 describe("CLIProxyAPI built-in management API", () => {
+  const now = 1788710400000;
+  const native: ServerProvider = {
+    instanceId: ProviderInstanceId.make("native"),
+    driver: ProviderDriverKind.make("codex"),
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated", email: "first@example.com", workspaceId: "account-a" },
+    checkedAt: "2026-09-06T15:59:00.000Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+    usageLimits: {
+      checkedAt: "2026-09-06T15:59:00.000Z",
+      windows: [{ id: "primary", kind: "session", label: "Session", usedPercent: 11 }],
+      resetCredits: { availableCount: 3, nextCreditId: "native-credit" },
+    },
+  };
+
+  it.effect.each(
+    [true, false].flatMap((disabled) =>
+      ["native-first", "hub-first"].map((order) => ({ disabled, order })),
+    ),
+  )(
+    "keeps redemption usable with disabled=$disabled and $order presentations",
+    ({ disabled, order }) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(now);
+        // The fixture offers two valid hub credits even when routing is disabled.
+        const test = fixture({ accounts: [{ ...accounts[0]!, disabled }] });
+        const api = yield* test.api;
+        const result = yield* api.readAccounts(config);
+        const sources = [
+          {
+            id: UsageLimitSourceId.make("hub"),
+            kind: "cliproxy" as const,
+            label: "Hub",
+            checkedAt: result[0]!.usageLimits.checkedAt,
+            accounts: result,
+          },
+        ];
+        const presentations = [
+          [
+            EnvironmentId.make("native-env"),
+            {
+              entry: { target: { label: "Native" } },
+              serverConfig: { providers: [native], usageLimitSources: [] },
+            },
+          ],
+          [
+            EnvironmentId.make("hub-env"),
+            {
+              entry: { target: { label: "Hub" } },
+              serverConfig: { providers: [], usageLimitSources: sources },
+            },
+          ],
+        ] as const;
+        const rows = collectLimitAccounts(
+          new Map<EnvironmentId, (typeof presentations)[number][1]>(
+            order === "native-first" ? presentations : presentations.toReversed(),
+          ),
+        );
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.redeem).toEqual(
+          disabled
+            ? { environmentId: "native-env", input: { instanceId: "native" } }
+            : {
+                environmentId: "hub-env",
+                input: { sourceId: "hub", accountId: "first.json", creditId: "first" },
+              },
+        );
+        expect(rows[0]?.limits.windows[0]?.usedPercent).toBe(78);
+        expect(rows[0]?.limits.resetCredits?.availableCount).toBe(disabled ? 3 : 2);
+
+        // This selector takes natives and sources separately, so their traversal order is fixed.
+        const report = collectProviderUsageLimits(native.instanceId, [native], sources, now);
+        expect(report?.accounts).toHaveLength(1);
+        expect(report?.accounts[0]?.resetCreditInput).toEqual(
+          disabled
+            ? { instanceId: "native" }
+            : { sourceId: "hub", accountId: "first.json", creditId: "first" },
+        );
+        expect(report?.accounts[0]?.limits.resetCredits?.availableCount).toBe(disabled ? 3 : 2);
+        expect(result[0]?.usageLimits.resetCredits).toEqual(
+          disabled
+            ? undefined
+            : {
+                availableCount: 2,
+                nextCreditId: "first",
+                nextExpiresAt: "2099-01-01T00:00:00.000Z",
+              },
+        );
+        expect(
+          test.requests.filter((request) =>
+            request.body?.url?.endsWith("/rate-limit-reset-credits"),
+          ),
+        ).toHaveLength(disabled ? 0 : 1);
+      }),
+  );
+
+  it.effect("shows disabled-only Codex usage without offering redemption", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(now);
+      const test = fixture({ accounts: [{ ...accounts[0]!, disabled: true }] });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      const sources = [
+        {
+          id: UsageLimitSourceId.make("hub"),
+          kind: "cliproxy" as const,
+          label: "Hub",
+          checkedAt: result[0]!.usageLimits.checkedAt,
+          accounts: result,
+        },
+      ];
+      const rows = collectLimitAccounts(
+        new Map([
+          [
+            EnvironmentId.make("hub-env"),
+            {
+              entry: { target: { label: "Hub" } },
+              serverConfig: { providers: [], usageLimitSources: sources },
+            },
+          ],
+        ]),
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.limits.windows[0]?.usedPercent).toBe(78);
+      expect(rows[0]?.redeem).toBeNull();
+      expect(rows[0]?.limits.resetCredits).toBeUndefined();
+      const report = collectProviderUsageLimits(
+        native.instanceId,
+        [{ ...native, usageLimits: undefined }],
+        sources,
+        now,
+      );
+      expect(report?.accounts).toHaveLength(1);
+      expect(report?.accounts[0]?.limits.windows[0]?.usedPercent).toBe(78);
+      expect(report?.accounts[0]?.resetCreditInput).toBeUndefined();
+      expect(report?.accounts[0]?.limits.resetCredits).toBeUndefined();
+      expect(result[0]?.usageLimits.resetCredits).toBeUndefined();
+      expect(test.requests.filter((request) => request.body)).toHaveLength(1);
+    }),
+  );
+
   it.effect(
     "reads both accounts and their earliest unexpired credits without plugin endpoints",
     () =>
@@ -443,16 +597,73 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
-  it.effect("skips disabled accounts and rejects redemption on them", () =>
-    Effect.gen(function* () {
-      const test = fixture({ accounts: [{ ...accounts[0]!, disabled: true }] });
-      const api = yield* test.api;
-      expect(yield* api.readAccounts(config)).toEqual([]);
-      expect((yield* api.consume(config, "first.json", "credit").pipe(Effect.result))._tag).toBe(
-        "Failure",
-      );
-      expect(test.requests.every((request) => request.path.endsWith("/auth-files"))).toBe(true);
-    }),
+  it.effect.each(["codex", "claude"])(
+    "reads exhausted routing-disabled %s accounts without mutations",
+    (provider) =>
+      Effect.gen(function* () {
+        const test = fixture({
+          accounts: [{ ...accounts[0]!, provider, disabled: true }],
+          upstream: (request) => ({
+            status: 200,
+            body: request.url?.endsWith("/rate-limit-reset-credits")
+              ? { credits: [] }
+              : provider === "codex"
+                ? {
+                    rate_limit: {
+                      primary_window: { used_percent: 100, limit_window_seconds: 18000 },
+                    },
+                  }
+                : {
+                    five_hour: { utilization: 100, resets_at: null },
+                    seven_day: { utilization: 100, resets_at: null },
+                  },
+          }),
+        });
+        const api = yield* test.api;
+        const read = yield* api.readAccounts(config);
+        expect(read).toHaveLength(1);
+        expect(read[0]?.usageLimits.windows.length).toBeGreaterThan(0);
+        expect(read[0]?.usageLimits.windows.every((window) => window.usedPercent === 100)).toBe(
+          true,
+        );
+        expect(
+          test.requests.every((request) => !request.body || request.body.method === "GET"),
+        ).toBe(true);
+      }),
+  );
+
+  it.effect.each(["codex", "claude"])(
+    "reports failed first reads for routing-disabled %s accounts",
+    (provider) =>
+      Effect.gen(function* () {
+        const test = fixture({
+          accounts: [{ ...accounts[0]!, provider, disabled: true }],
+          upstream: () => ({ status: 503, body: {} }),
+        });
+        const api = yield* test.api;
+        const read = yield* api.readAccounts(config);
+        expect(read).toHaveLength(1);
+        expect(read[0]?.usageLimits).toMatchObject({
+          windows: [],
+          unavailable: {
+            reason: "probeFailed",
+            message: "The hub could not read this account's usage.",
+          },
+        });
+      }),
+  );
+
+  it.effect.each(["codex", "claude"])(
+    "rejects redemption on disabled %s accounts without forwarding any mutation",
+    (provider) =>
+      Effect.gen(function* () {
+        const test = fixture({ accounts: [{ ...accounts[0]!, provider, disabled: true }] });
+        const api = yield* test.api;
+        expect((yield* api.consume(config, "first.json", "credit").pipe(Effect.result))._tag).toBe(
+          "Failure",
+        );
+        expect(test.requests.every((request) => request.path.endsWith("/auth-files"))).toBe(true);
+      }),
   );
 
   it.effect("keeps the same redemption id after an uncertain upstream failure", () =>
