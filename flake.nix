@@ -30,7 +30,9 @@
       t3code = pkgs.appimageTools.wrapType2 {
         inherit pname version src;
         profile = "export T3CODE_DISABLE_AUTO_UPDATE=true";
+        nativeBuildInputs = [ pkgs.makeWrapper ];
         extraInstallCommands = ''
+          wrapProgram $out/bin/${pname} --set APPIMAGE $out/bin/${pname}
           install -Dm644 ${desktopItem}/share/applications/${pname}.desktop \
             $out/share/applications/${pname}.desktop
           for icon in ${contents}/usr/share/icons/hicolor/*/apps/t3code.png; do
