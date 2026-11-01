@@ -1106,6 +1106,45 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
     ),
   );
 
+  // regression: #26631 `~/` launch argument paths resolved under the project cwd
+  it.effect.each([
+    [
+      "--settings ~/.claude/settings.json",
+      (options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions) =>
+        assert.deepInclude(options.settings, { skillOverrides: { lint: "off" } }),
+    ],
+    [
+      "--append-system-prompt-file ~/.claude/settings.json",
+      (options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions) =>
+        assert.include(appendSystemPrompt(options), '{"skillOverrides":{"lint":"off"}}'),
+    ],
+  ] as const)("reads %s from the home directory", ([launchArgs, assertOptions]) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-cwd-" });
+        yield* fileSystem.makeDirectory(NodePath.join(home, ".claude"));
+        yield* fileSystem.writeFileString(
+          NodePath.join(home, ".claude", "settings.json"),
+          '{"skillOverrides":{"lint":"off"}}',
+        );
+        const { exit, opened } = yield* startTurnWithLaunchArgs(launchArgs, cwd).pipe(
+          Effect.provideService(HostProcess.HomeDirectory, home),
+        );
+        if (Exit.isFailure(exit)) {
+          assert.fail(makeProviderFailure({ cause: exit.cause, class: "provider_error" }).message);
+        }
+        assert.lengthOf(opened, 1);
+        assertOptions(opened[0]!);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   // regression: #20413 malformed append-system-prompt launch args fail before a query opens
   it.effect.each([
     [
