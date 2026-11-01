@@ -200,9 +200,9 @@ const resolveResourceMonitorPath = Effect.fn(
   return Option.none<string>();
 });
 
-// macOS files every descendant under its responsible app, so bundle-less browsers that agents
-// start check in as T3 Code. The launcher disclaims responsibility and execs the accessory
-// Helper in place, keeping the PID and descriptors the backend manager owns.
+// Agent commands inherit the desktop app's macOS responsibility and privacy identity.
+// The launcher makes the accessory Helper responsible for the backend's descendants,
+// keeping the PID and descriptors the backend manager owns.
 const resolveBackendExecutable = Effect.fn("desktop.backendConfiguration.resolveBackendExecutable")(
   function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
