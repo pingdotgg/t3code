@@ -16,15 +16,10 @@ vi.mock("~/browser/browserDefaults", () => ({
 
 import { RightPanelTabs } from "./RightPanelTabs";
 
-let opened: string[];
-
 // Records Browser opens the way ChatView's createBrowserSurface does: one
 // handler for the default open and the profile chooser, where an omitted
 // profile means the default one.
-function Harness() {
-  const openBrowser = (profileId?: string) => {
-    opened.push(profileId ?? DEFAULT_BROWSER_PROFILE_ID);
-  };
+function Harness({ onOpen: openBrowser }: { onOpen: (profileId?: string) => void }) {
   return (
     <RightPanelTabs
       mode="inline"
@@ -94,7 +89,10 @@ async function click(element: Element) {
 
 describe("opening Browser from the launcher", () => {
   it("opens the default profile from the row and another profile from the chooser", async () => {
-    resetFixture();
+    const opened: string[] = [];
+    const onOpen = (profileId?: string) => {
+      opened.push(profileId ?? DEFAULT_BROWSER_PROFILE_ID);
+    };
     using _desktopBridge = stubGlobal("desktopBridge", { preview: {} });
     using _resizeObserver = stubGlobal(
       "ResizeObserver",
@@ -106,7 +104,7 @@ describe("opening Browser from the launcher", () => {
     );
     // The panel tabs do not use router hooks.
     await using screen = await renderScreen(null, { router: false });
-    await screen.rerender(<Harness />);
+    await screen.rerender(<Harness onOpen={onOpen} />);
 
     await click(launcherRow(screen, "Browser"));
     expect(opened).toEqual([DEFAULT_BROWSER_PROFILE_ID]);
@@ -116,7 +114,3 @@ describe("opening Browser from the launcher", () => {
     expect(opened).toEqual([DEFAULT_BROWSER_PROFILE_ID, INCOGNITO_BROWSER_PROFILE_ID]);
   });
 });
-
-function resetFixture() {
-  opened = [];
-}
