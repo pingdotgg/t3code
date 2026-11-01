@@ -10,7 +10,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
-import { readCursorUsageLimits } from "./usageLimits.ts";
+import {
+  cursorUsageEndpoint,
+  DEFAULT_CURSOR_API_ENDPOINT,
+  readCursorUsageLimits,
+} from "./usageLimits.ts";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeCursorTextGeneration } from "./textGeneration.ts";
@@ -236,7 +240,10 @@ export const CursorDriver: ProviderDriver<
                 Effect.flatMap((settings) =>
                   readCursorUsageLimits(
                     effectiveConfig,
-                    { ...processEnv, CURSOR_API_KEY: apiKey },
+                    // Browser sign-in falls back to the host CLI login only for Cursor's own endpoint.
+                    cursorUsageEndpoint(effectiveConfig, processEnv) === DEFAULT_CURSOR_API_ENDPOINT
+                      ? processEnv
+                      : { ...processEnv, CURSOR_API_KEY: apiKey },
                     settings.cursorKeychainUsageEnabled,
                   ),
                 ),
