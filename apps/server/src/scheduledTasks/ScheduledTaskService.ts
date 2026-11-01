@@ -727,7 +727,9 @@ export const layer = Layer.effect(
         WHERE task_id = ${input.id}
           AND last_run_status = 'running'
           AND last_run_at = ${input.startedAtIso}
+        RETURNING task_id
       `.pipe(
+        Effect.map((rows) => rows.length > 0),
         Effect.mapError((cause) =>
           taskError("Could not record schedule task run.", { taskId: input.id, cause }),
         ),
@@ -943,9 +945,12 @@ export const layer = Layer.effect(
         const lastRunError = runSucceeded ? null : errorMessage(result.cause);
         const threadId = runSucceeded ? result.value : null;
         // One transaction, so an edit cannot land between reading the schedule and
-        // writing the next run computed from it.
+        // writing the next run computed from it. The origin is read first: it reads
+        // files, and the transaction holds SQLite's writer lock.
+        const origin = yield* readWebhookOrigin;
         const record = Effect.gen(function* () {
-          const current = yield* findTask(task.id);
+          const [row] = yield* getRows(task.id);
+          const current = row === undefined ? null : yield* decodeRow(row, origin);
           const scheduleSource = current ?? task;
           const completed: ScheduledTask = {
             ...scheduleSource,
@@ -960,7 +965,7 @@ export const layer = Layer.effect(
             lastRunError,
             runCount: scheduleSource.runCount + 1,
           };
-          if (current === null) return { completed, written: false };
+          if (current === null) return { recorded: completed, written: false };
           // startedAtIso in the guard ensures this writes only to the row this
           // run marked as running — a task deleted mid-run and recreated with
           // the same id (idempotent commandId replay) must not be stamped.
@@ -972,21 +977,23 @@ export const layer = Layer.effect(
             error: lastRunError,
             startedAtIso,
           });
-          if (webhook === undefined) yield* completion;
+          let written = false;
+          if (webhook === undefined) written = yield* completion;
           else {
             const pending =
               yield* sql`SELECT 1 FROM scheduled_task_webhook_pending WHERE delivery_id = ${webhook.deliveryId}`;
-            if (pending.length === 0) yield* completion;
+            if (pending.length === 0) written = yield* completion;
             else {
               const counted =
                 yield* sql`UPDATE scheduled_task_webhook_pending SET state = ${runSucceeded ? "completed" : "failed"}
                 WHERE delivery_id = ${webhook.deliveryId} AND state NOT IN ('completed', 'failed') RETURNING delivery_id`;
-              if (counted.length > 0) yield* completion;
+              if (counted.length > 0) written = yield* completion;
             }
           }
-          return { completed, written: true };
+          // A row recreated mid-run is not this run's, so report what is stored.
+          return { recorded: written ? completed : current, written };
         });
-        const { completed, written } = yield* sql
+        const { recorded, written } = yield* sql
           .withTransaction(record)
           .pipe(
             Effect.mapError((cause) =>
@@ -1001,7 +1008,7 @@ export const layer = Layer.effect(
             ),
           );
         if (written) yield* notifyChanged;
-        return { task: completed, threadId };
+        return { task: recorded, threadId };
       }).pipe(
         Effect.onError((cause) =>
           releaseStuckRun(task, startedAtIso, errorMessage(cause), webhook?.deliveryId),

@@ -280,3 +280,35 @@ it.effect("keeps a one-time run after a restart interrupts an earlier manual run
     Effect.provide(SqlitePersistence.layerMemory),
   ),
 );
+
+it.effect("reports the stored task when the row was replaced during the run", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-11-01T07:00:00.000Z"));
+    // The launch stands in for a delete and same-id recreate while the run is out.
+    const replaceRowDuringLaunch = Layer.unwrap(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        return Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+          launch: () =>
+            sql`UPDATE scheduled_tasks SET last_run_status = 'never', last_run_at = NULL, run_count = 0`.pipe(
+              Effect.orDie,
+              Effect.andThen(Effect.die("synthetic dispatch failure")),
+            ),
+        });
+      }),
+    );
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(Layer.merge(dependencies, replaceRowDuringLaunch)),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const created = yield* service.upsert(yield* decodeInput(onceInput));
+      const ran = yield* service.runNow({ id: created.task.id });
+      expect(ran.task.runCount).toBe(0);
+      expect(ran.task.lastRunStatus).toBe("never");
+    }).pipe(Effect.provide(layer));
+  }).pipe(
+    Effect.provideService(ServerActivation, Effect.never),
+    Effect.provide(SqlitePersistence.layerMemory),
+  ),
+);
