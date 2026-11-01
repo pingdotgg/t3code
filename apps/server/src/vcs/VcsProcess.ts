@@ -65,6 +65,8 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const VCS_PROCESS_CONCURRENCY = 8;
+// Forge CLIs can take seconds per call; cap them together so git, checkpoints included, keeps slots.
+const NON_GIT_PROCESS_CONCURRENCY = VCS_PROCESS_CONCURRENCY / 2;
 
 /** Shown to users when a Git command fails because another process holds the index lock. */
 export const GIT_INDEX_LOCKED_DETAIL =
@@ -183,6 +185,7 @@ export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const hostPlatform = yield* HostProcess.Platform;
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
+  const nonGitProcesses = yield* Semaphore.make(NON_GIT_PROCESS_CONCURRENCY);
   const keyedProcesses = new Map<string, Semaphore.Semaphore>();
   const keyedPermit = (concurrency: NonNullable<VcsProcessInput["concurrency"]>) => {
     let semaphore = keyedProcesses.get(concurrency.key);
@@ -365,9 +368,8 @@ export const make = Effect.gen(function* () {
         }),
       );
     }
-    return yield* input.concurrency === undefined
-      ? bounded
-      : keyedPermit(input.concurrency)(bounded);
+    const shared = input.command === "git" ? bounded : nonGitProcesses.withPermits(1)(bounded);
+    return yield* input.concurrency === undefined ? shared : keyedPermit(input.concurrency)(shared);
   });
 
   return VcsProcess.of({ run });
