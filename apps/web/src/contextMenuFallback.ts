@@ -378,9 +378,12 @@ export function showContextMenuFallback<T extends string>(
     };
 
     const onContextMenu = (event: MouseEvent) => {
-      if (!canDismissFromPointer || isNodeWithinMenuStack(event.target, menuStack)) {
+      // A right-click on the menu itself opens nothing, as on a native menu.
+      if (isNodeWithinMenuStack(event.target, menuStack)) {
+        event.preventDefault();
         return;
       }
+      if (!canDismissFromPointer) return;
       event.preventDefault();
       cleanup(null);
     };

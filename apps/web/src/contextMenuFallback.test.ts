@@ -174,6 +174,13 @@ class FakeDocument {
     }
   }
 
+  dispatchEvent(event: FakeDomEvent) {
+    for (const listener of this.listeners.get(event.type) ?? []) {
+      listener(event);
+    }
+    return true;
+  }
+
   querySelectorAll(tagName: string) {
     return this.body.querySelectorAll(tagName);
   }
@@ -236,6 +243,16 @@ describe("showContextMenuFallback", () => {
     renameButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     await expect(selectionPromise).resolves.toBe("rename");
+  });
+
+  it("opens no other menu on a right-click inside the open menu", () => {
+    void showContextMenuFallback([{ id: "rename", label: "Rename" }]);
+    const rightClick = new FakeDomEvent("contextmenu", { target: findButton("Rename") });
+
+    (document as unknown as FakeDocument).dispatchEvent(rightClick);
+
+    expect(rightClick.defaultPrevented).toBe(true);
+    expect(findButton("Rename")).toBeDefined();
   });
 
   it.each([
