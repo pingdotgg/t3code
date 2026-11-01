@@ -220,7 +220,7 @@ export const layer = (options: {
             const earlier = yield* Ref.get(releasing);
             yield* log(
               earlier !== null
-                ? `Could not remove the Tailscale Serve mapping an earlier run left on port ${earlier.servePort}, so Serve waits. Retrying in the background.`
+                ? `Could not remove the Tailscale Serve mapping an earlier run left on port ${earlier.servePort}, so Serve waits. ${remedyFor(cause, `tailscale serve --https=${earlier.servePort} --set-path=/ off`)} Retrying in the background.`
                 : `Failed to configure Tailscale Serve. ${remedyFor(cause, manualCommand)} Retrying in the background.`,
               { cause, ...logContext },
             );

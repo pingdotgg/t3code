@@ -647,7 +647,9 @@ const setUp = Effect.fn("cli.up")(function* (
           upError(
             error._tag === "ServeRecordError" && error.reason === "unreadable"
               ? error.message
-              : "Could not remove a Tailscale Serve mapping an earlier run left. Run this again once Tailscale runs.",
+              : error._tag === "PlatformError"
+                ? `Could not update the Tailscale Serve record: ${error.message}`
+                : "Tailscale did not answer, so a Serve mapping an earlier run left may remain. Run this again once Tailscale runs.",
           ),
         ),
       );
