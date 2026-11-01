@@ -58,6 +58,7 @@ describe("resolvePastedPath", () => {
     ["after a prefilled folder", "~/", "~/'/Users/me/My Code'", "/Users/me/My Code"],
     ["plain, after a prefilled folder", "~/", "~//Users/me/code", "/Users/me/code"],
     ["after a Windows folder", "C:\\Users\\", 'C:\\Users\\"D:\\My Code"', "D:\\My Code"],
+    ["a shell's quoted apostrophe", "", "'/Users/me/Bob'\\''s Work'", "/Users/me/Bob's Work"],
     ["after a clone destination", "~/code/repo", "~/code/repo'/a b'", "/a b"],
     ["over part of the box", "~/code/old", "~/code/'/a b'", "/a b"],
   ])("reads the path copied from %s", (_source, previous, next, expected) => {
@@ -74,6 +75,7 @@ describe("resolvePastedPath", () => {
     ["a longer path after a folder", "/Users/me/", "/Users/me/code"],
     ["quoted text that is no path", "", "'hello world'"],
     ["a quoted relative path", "", "'code/my app'"],
+    ["a search ending in a quoted path", "", "find '/tmp/repo'"],
     ["a quote left open", "", "'/Users/me/My Code"],
     ["a quote inside the quotes", "", "'/Users/me/it's here'"],
     ["Windows separators", "", "C:\\Users\\me\\code"],
