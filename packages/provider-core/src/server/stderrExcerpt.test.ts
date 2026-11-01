@@ -123,4 +123,28 @@ describe("stderrExcerpt", () => {
     expect(tail.length).toBeLessThanOrEqual(4_096);
     expect(sanitizeStderrExcerpt(tail, "/Users/ada", {})).toBe(`${"x".repeat(4_080)}\nError: boom`);
   });
+
+  it("drops a secret whose name was cut off by truncation within one long line", () => {
+    let tail = "";
+    for (const chunk of [`${"a".repeat(5_000)} API_KEY=`, "super-secret\nError: boom\n"]) {
+      tail = appendStderrTail(tail, chunk);
+    }
+    expect(sanitizeStderrExcerpt(tail, "/Users/ada", {})).toBe("Error: boom");
+
+    let unterminated = "";
+    for (const chunk of ["API_KEY=", "s".repeat(5_000)]) {
+      unterminated = appendStderrTail(unterminated, chunk);
+    }
+    expect(sanitizeStderrExcerpt(unterminated, "/Users/ada", {})).toBe("");
+  });
+
+  it("strips credentials, query and fragment from URLs", () => {
+    expect(
+      sanitizeStderrExcerpt(
+        "fetch https://alice:p4ss@example.test/api?token=abc#frag failed",
+        "/Users/ada",
+        {},
+      ),
+    ).toBe("fetch https://example.test/api failed");
+  });
 });

@@ -1,4 +1,4 @@
-import { redactSecretAssignments } from "./failure.ts";
+import { redactSecretAssignments, redactUrls } from "./failure.ts";
 
 const STDERR_TAIL_MAX_CHARS = 4_096;
 
@@ -11,13 +11,16 @@ const API_KEY_HEADER_PATTERN = /\bx-api-key:[ \t]*\S+/gi;
 const SECRET_TOKEN_PATTERN =
   /\b(?:sk-[A-Za-z0-9][A-Za-z0-9_-]{7,}|ghp_[A-Za-z0-9]+|xox[a-zA-Z]-[A-Za-z0-9-]+)\b/g;
 
-// A truncated tail starts at the next line so a secret's name is never cut off from its value.
 export function appendStderrTail(current: string, chunk: string): string {
   const next = `${current}${chunk}`;
-  if (next.length <= STDERR_TAIL_MAX_CHARS) return next;
-  const window = next.slice(-STDERR_TAIL_MAX_CHARS);
-  const lineStart = window.indexOf("\n");
-  return lineStart < 0 ? "" : window.slice(lineStart + 1);
+  return next.length <= STDERR_TAIL_MAX_CHARS ? next : next.slice(-STDERR_TAIL_MAX_CHARS);
+}
+
+// A full tail may start mid-line, cutting a secret's name off from its value, so drop that line.
+function dropPartialFirstLine(tail: string): string {
+  if (tail.length < STDERR_TAIL_MAX_CHARS) return tail;
+  const lineStart = tail.indexOf("\n");
+  return lineStart < 0 ? "" : tail.slice(lineStart + 1);
 }
 
 export function sanitizeStderrExcerpt(
@@ -25,7 +28,7 @@ export function sanitizeStderrExcerpt(
   homeDirectory: string,
   environment: NodeJS.ProcessEnv = process.env,
 ): string {
-  let result = text.replaceAll("\0", "");
+  let result = dropPartialFirstLine(text).replaceAll("\0", "");
   const homes = [environment.HOME, environment.USERPROFILE, homeDirectory].filter(
     (value): value is string => typeof value === "string" && value.length > 1,
   );
@@ -39,5 +42,5 @@ export function sanitizeStderrExcerpt(
     .replace(API_KEY_HEADER_PATTERN, "x-api-key: [REDACTED]")
     .replace(BEARER_TOKEN_PATTERN, "Bearer [redacted]")
     .replace(SECRET_TOKEN_PATTERN, "[redacted]");
-  return redactSecretAssignments(result).trim();
+  return redactSecretAssignments(redactUrls(result)).trim();
 }

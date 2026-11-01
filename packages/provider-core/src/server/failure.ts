@@ -202,11 +202,16 @@ export function redactSecretAssignments(value: string): string {
     );
 }
 
+export function redactUrls(value: string): string {
+  return value.replace(/\bhttps?:\/\/[^\s<>"']+/giu, redactUrl);
+}
+
 function redactProviderFailureText(value: string): string {
   return redactSecretAssignments(
-    replaceUnsafeControlCharacters(value)
-      .replace(/\bhttps?:\/\/[^\s<>"']+/giu, redactUrl)
-      .replace(/\b(Bearer|Basic)\s+[^\s,;]+/giu, "$1 [REDACTED]"),
+    redactUrls(replaceUnsafeControlCharacters(value)).replace(
+      /\b(Bearer|Basic)\s+[^\s,;]+/giu,
+      "$1 [REDACTED]",
+    ),
   )
     .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/gu, "[REDACTED]")
     .trim();
