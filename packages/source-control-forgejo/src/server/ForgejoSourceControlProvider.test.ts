@@ -33,6 +33,73 @@ const requestJson = (request: HttpClientRequest.HttpClientRequest): unknown => {
 };
 const encodeJsonEffect = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
+it.effect("reads clone URLs on the given host rather than the checkout's", () => {
+  const urls: string[] = [];
+  const client = HttpClient.make((request) => {
+    urls.push(request.url);
+    return Effect.succeed(
+      HttpClientResponse.fromWeb(
+        request,
+        new Response(
+          encodeJson({
+            full_name: "maria/project",
+            clone_url: "https://forgejo.test/maria/project.git",
+            ssh_url: "git@forgejo.test:maria/project.git",
+          }),
+        ),
+      ),
+    );
+  });
+  return Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    const provider = yield* ForgejoSourceControlProvider.make.pipe(
+      Effect.provideService(ForgejoCli.ForgejoCli, cli),
+    );
+    const cloneUrls = yield* provider.getRepositoryCloneUrls({
+      cwd: "/repo",
+      repository: "maria/project",
+      host: "forgejo.test",
+    });
+    assert.strictEqual(cloneUrls.url, "https://forgejo.test/maria/project.git");
+    assert.deepStrictEqual(urls, ["https://forgejo.test/api/v1/repos/maria/project"]);
+  }).pipe(
+    Effect.provideService(HttpClient.HttpClient, client),
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(true),
+        readFileString: () =>
+          Effect.succeed(
+            encodeJson({
+              hosts: {
+                "forgejo.test": { type: "Application", token: "test-token" },
+                "code.example": { type: "Application", token: "other-token" },
+              },
+            }),
+          ),
+      }),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        process: {
+          run: (input) => {
+            if (input.command === "git") {
+              assert.deepStrictEqual(input.args, ["remote", "-v"]);
+              // The checkout is on another Forgejo server with a same-named repository.
+              return Effect.succeed(
+                processOutput("origin\thttps://code.example/maria/project.git (fetch)"),
+              );
+            }
+            assert.strictEqual(input.command, "fj");
+            assert.deepStrictEqual(input.args, ["--host", "https://forgejo.test", "whoami"]);
+            return Effect.succeed(processOutput(""));
+          },
+        },
+      }),
+    ),
+  );
+});
+
 const requiredChecksPullRequest = {
   number: 7,
   title: "Required checks",
@@ -182,6 +249,37 @@ it("treats a required pattern's `*` as a wildcard even when the check name has o
     ],
   );
 });
+
+const tiedStatuses = [
+  { id: 15, status: "success" },
+  { id: 14, status: "pending" },
+].map(({ id, status }) => ({
+  id,
+  context: "ci/required-build",
+  status,
+  description: null,
+  target_url: null,
+  updated_at: "2026-10-12T10:14:29Z",
+}));
+
+it.effect.each([
+  ["newest first", tiedStatuses],
+  ["oldest first", tiedStatuses.toReversed()],
+] as const)("reads the status created last when two share a second, listed %s", ([, statuses]) =>
+  Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const readChecks = provider.getChangeRequestChecks;
+    if (readChecks === undefined) return yield* Effect.die("checks read missing");
+    const summary = yield* readChecks(requiredChecksInput);
+    const detail = yield* provider.getChangeRequest(requiredChecksInput);
+    for (const checks of [summary.checks, detail.checks]) {
+      assert.deepStrictEqual(
+        checks.map((check) => [check.name, check.status]),
+        [["ci/required-build", "success"]],
+      );
+    }
+  }).pipe(Effect.provide(requiredChecksLayer(Effect.succeed({}), statuses))),
+);
 
 const forgejoMergeProvider = (repository: Effect.Effect<string, ForgejoCli.ForgejoCliError>) => {
   const writes: Array<ForgejoCli.ForgejoApiInput> = [];
@@ -984,6 +1082,45 @@ it.effect(
     );
   },
 );
+
+it.effect("lists each Forgejo assignee once as a reviewer candidate", () => {
+  const paths: string[] = [];
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const result = yield* provider.listReviewerCandidates(requiredChecksInput);
+    assert.deepStrictEqual(
+      result.candidates.map((candidate) => [candidate.id, candidate.isRequested]),
+      [
+        ["ana", true],
+        ["noor", false],
+      ],
+    );
+    assert.strictEqual(result.truncated, false);
+    assert.strictEqual(paths.filter((path) => path.includes("/assignees")).length, 1);
+  }).pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          paths.push(input.path);
+          const respond = (response: unknown) =>
+            encodeJsonEffect(response).pipe(Effect.orDie, Effect.map(processOutput));
+          switch (input.path.split("?")[0]) {
+            case "repos/acme/web/pulls/7":
+              return respond({
+                ...requiredChecksPullRequest,
+                requested_reviewers: [{ login: "ana" }],
+              });
+            // Forgejo ignores paging here: every page is the full list, with no Link header.
+            case "repos/acme/web/assignees":
+              return respond([{ login: "maria" }, { login: "ana" }, { login: "noor" }]);
+            default:
+              return Effect.die(`Unexpected Forgejo request: ${input.path}`);
+          }
+        },
+      }),
+    ),
+  );
+});
 
 it.effect("discovers Forgejo accounts and retains the server port", () =>
   Effect.gen(function* () {
