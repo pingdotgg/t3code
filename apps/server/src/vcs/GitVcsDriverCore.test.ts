@@ -3205,6 +3205,23 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect("lists untracked files that status is configured to hide", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["config", "status.showUntrackedFiles", "no"]);
+        yield* writeTextFile(cwd, "notes.txt", "draft\n");
+
+        const status = yield* driver.statusDetailsLocal(cwd);
+        assert.isTrue(status.hasWorkingTreeChanges);
+        assert.deepStrictEqual(
+          status.workingTree.files.map((file) => file.path),
+          ["notes.txt"],
+        );
+      }),
+    );
+
     it.effect("reports changes to a file named HEAD", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
