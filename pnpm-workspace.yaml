@@ -398,6 +398,8 @@ patchedDependencies:
   # Observe the owned host exit independently of descendants retaining its stdio.
   "@muse-code/sdk@1.4.6": patches/@muse-code__sdk@1.4.6.patch
   app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
+  # Grep content results are grouped per file; the converter read them as flat matches (#24919).
+  "@cursor/sdk@1.0.38": patches/@cursor__sdk@1.0.38.patch
 
 peerDependencyRules:
   allowAny:
