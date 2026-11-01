@@ -101,8 +101,10 @@ To count only some models, or to leave some out, add `usageModelFilter` to the s
 }
 ```
 
-`include` keeps only the listed models and `exclude` leaves the listed models out. Omit
-`provider` to match a model ID from any provider. Filters match the model ID your provider
+`include` keeps only the listed models and `exclude` leaves the listed models out. `provider` is
+one of `claude`, `codex`, `cursor`, `grok`, `opencode`, `antigravity`, `pi`, or `muse`; omit it
+to match a model ID from any provider. If the setting is invalid, Usage ignores it and shows every
+model. Filters match the model ID your provider
 recorded, before **Map to** applies, so a model you leave out is not counted under its mapped
 name. Usage applies each environment's own filter. Remove the setting to show every model again.
 
