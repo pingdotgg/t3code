@@ -66,6 +66,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverUpdateProvider]: AuthProvidersManageScope,
   [WS_METHODS.providerAuthStart]: AuthProvidersManageScope,
   [WS_METHODS.providerConsumeResetCredit]: AuthProvidersManageScope,
+  // Account emails and login status come from the management key.
+  [WS_METHODS.providerProxyGetState]: AuthProvidersManageScope,
+  [WS_METHODS.providerProxyGetLoginStatus]: AuthProvidersManageScope,
   [WS_METHODS.providerAuthComplete]: AuthProvidersManageScope,
   [WS_METHODS.chatGptReconnectProfile]: AuthProvidersManageScope,
   [WS_METHODS.chatGptImportProfile]: AuthProvidersManageScope,

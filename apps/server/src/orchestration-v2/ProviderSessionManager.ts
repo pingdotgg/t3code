@@ -216,6 +216,7 @@ export class ProviderSessionManagerV2 extends Context.Service<
 >()("t3/orchestration-v2/ProviderSessionManager/ProviderSessionManagerV2") {}
 
 interface LiveSessionEntry {
+  readonly runtimeIdentity: object | undefined;
   readonly attachedThreadIds: ReadonlySet<ThreadId>;
   readonly loadedProviderThreadKeyByThread: ReadonlyMap<ThreadId, string>;
   /** Scope revocation to recorded credential ids so superseded sessions cannot revoke replacements opened before detach. */
@@ -2135,7 +2136,44 @@ export const layerWithOptions = (
                 }
               }
               const key = sessionKey(input.providerSessionId);
-              const existing = (yield* Ref.get(sessions)).get(key);
+              const runtimeIdentity =
+                registry.getRuntimeIdentity === undefined
+                  ? undefined
+                  : yield* registry.getRuntimeIdentity(input.modelSelection.instanceId);
+              let existing = (yield* Ref.get(sessions)).get(key);
+              if (existing !== undefined && existing.runtimeIdentity !== runtimeIdentity) {
+                const changedSettings = () =>
+                  new ProviderSessionOpenError({
+                    instanceId: input.modelSelection.instanceId,
+                    providerSessionId: input.providerSessionId,
+                    cause:
+                      "Provider settings changed. Wait for its active work to finish before starting another turn.",
+                  });
+                const pending =
+                  existing.runtime.hasPendingBackgroundWork === undefined
+                    ? false
+                    : yield* existing.runtime.hasPendingBackgroundWork;
+                if (existing.busyTurns.size > 0 || pending) {
+                  return yield* changedSettings();
+                }
+                yield* releaseEntry({
+                  providerSessionId: input.providerSessionId,
+                  reason: "manual_shutdown",
+                  detail: "Provider settings changed.",
+                  onlyIfIdleGeneration: existing.idleGeneration,
+                }).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderSessionOpenError({
+                        instanceId: input.modelSelection.instanceId,
+                        providerSessionId: input.providerSessionId,
+                        cause,
+                      }),
+                  ),
+                );
+                if ((yield* Ref.get(sessions)).has(key)) return yield* changedSettings();
+                existing = undefined;
+              }
               if (existing !== undefined) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
                 if (!attached && !existing.supportsMultipleProviderThreads) {
@@ -2234,6 +2272,7 @@ export const layerWithOptions = (
               >(new Map());
               const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
               const entry: LiveSessionEntry = {
+                runtimeIdentity,
                 attachedThreadIds: new Set([input.threadId]),
                 loadedProviderThreadKeyByThread: new Map(),
                 mcpCredentialIdByThread:

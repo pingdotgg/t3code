@@ -26,7 +26,7 @@ import {
   probeCodexSkillsForCwd,
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
-import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
+import { applyCodexProxyRuntime, resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 import { applyCodexModelCatalog } from "../codexModelCatalog.ts";
@@ -131,7 +131,15 @@ export const CodexDriver: ProviderDriver<
     environment,
     enabled,
     config,
+    proxy,
   }) {
+    if (config.setupMode === "managed" && proxy !== undefined) {
+      return yield* new ProviderDriverError({
+        driver: DRIVER_KIND,
+        instanceId,
+        detail: "T3-managed ChatGPT sign-in cannot route through a proxy. Turn off Use proxy.",
+      });
+    }
     if (config.setupMode === "managed")
       return yield* makeManagedCodexProvider({
         instanceId,
@@ -150,10 +158,12 @@ export const CodexDriver: ProviderDriver<
     const installation = yield* CodexInstallation.CodexInstallation;
     const modelCatalog = yield* ModelCatalog.ModelCatalog;
     const currentCatalog = modelCatalog.current(DRIVER_KIND);
-    const processEnv = yield* mergeProviderInstanceEnvironment(
-      environment,
-      yield* HostProcess.Environment,
+    const routed = applyCodexProxyRuntime(
+      config,
+      yield* mergeProviderInstanceEnvironment(environment, yield* HostProcess.Environment),
+      proxy,
     );
+    const processEnv = routed.environment;
     const homeLayout = yield* resolveCodexHomeLayout(config);
     const continuationIdentity = codexContinuationIdentity(homeLayout);
     const stampIdentity = withInstanceIdentity({
@@ -175,7 +185,7 @@ export const CodexDriver: ProviderDriver<
       ),
     );
     const effectiveConfig = {
-      ...config,
+      ...routed.config,
       enabled,
       binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
       homePath: homeLayout.effectiveHomePath ?? "",
@@ -202,6 +212,7 @@ export const CodexDriver: ProviderDriver<
         environment,
         enabled,
         config,
+        proxy,
       },
       {
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
@@ -224,7 +235,13 @@ export const CodexDriver: ProviderDriver<
     const checkProvider = modelCatalog.refreshInBackground.pipe(
       Effect.andThen(
         Effect.zipWith(
-          checkCodexProviderStatus(effectiveConfig, undefined, processEnv),
+          checkCodexProviderStatus(
+            effectiveConfig,
+            undefined,
+            processEnv,
+            undefined,
+            proxy !== undefined,
+          ),
           currentCatalog,
           (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
           { concurrent: true },

@@ -18,6 +18,7 @@ import * as Result from "effect/Result";
 import { Fragment, useState, type ReactElement, type ReactNode } from "react";
 import {
   isProviderDriverKind,
+  PROXY_ROUTED_DRIVERS,
   resolveProviderInstanceEnabled,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
@@ -257,6 +258,51 @@ export function nextProviderEnvironmentWithFieldValue(
   }
 
   return next;
+}
+
+function proxyBlockedReason(instance: ProviderInstanceConfig): string | undefined {
+  if (instance.driver === "codex" && readCodexSetupMode(instance.config) === "managed") {
+    return "T3-managed ChatGPT sign-in can't use a proxy.";
+  }
+  const serverUrl = (instance.config as { readonly serverUrl?: unknown } | undefined)?.serverUrl;
+  if (instance.driver === "opencode" && typeof serverUrl === "string" && serverUrl.trim() !== "") {
+    return "An external OpenCode server can't use this environment's proxy.";
+  }
+  return undefined;
+}
+
+function ProviderProxyRow(props: {
+  readonly instanceId: ProviderInstanceId;
+  readonly instance: ProviderInstanceConfig;
+  readonly proxyConfigured: boolean;
+  readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
+}) {
+  const enabled = props.instance.useProxy === true;
+  const blocked = proxyBlockedReason(props.instance);
+  const switchId = `provider-instance-${props.instanceId}-use-proxy`;
+  return (
+    <SettingsRow
+      title={<label htmlFor={switchId}>Use proxy</label>}
+      description={
+        blocked ??
+        (props.proxyConfigured
+          ? "Send this provider's requests through the proxy and its accounts."
+          : "Choose where the proxy runs under Proxy in these settings first.")
+      }
+      control={
+        <Switch
+          id={switchId}
+          checked={enabled}
+          // Turning it off stays possible so a blocked instance can recover.
+          disabled={!enabled && (blocked !== undefined || !props.proxyConfigured)}
+          onCheckedChange={(useProxy) => {
+            const { useProxy: _previous, ...rest } = props.instance;
+            props.onUpdate(useProxy ? { ...rest, useProxy: true } : rest);
+          }}
+        />
+      }
+    />
+  );
 }
 
 export function nextProviderEnvironmentWithFieldSecret(
@@ -674,6 +720,8 @@ interface ProviderInstanceCardProps {
   readonly environmentId?: EnvironmentId | undefined;
   readonly secretSources?: ReadonlyArray<SecretSource>;
   readonly projectOverride?: ProjectOverrideControl | undefined;
+  /** Whether this environment has a proxy for `useProxy` to route through. */
+  readonly proxyConfigured?: boolean | undefined;
   readonly acpProjects?:
     | ReadonlyArray<{
         readonly id: ProjectId;
@@ -692,6 +740,7 @@ const NO_CUSTOM_MODELS: ReadonlyArray<CustomModelDefinition> = [];
 export function ProviderInstanceCard({
   instanceId,
   instance,
+  proxyConfigured = false,
   driverOption,
   liveProvider,
   mode,
@@ -1331,6 +1380,22 @@ export function ProviderInstanceCard({
           className={readOnly ? "opacity-50 select-none" : undefined}
         >
           {runtimeFields}
+        </SettingsSection>
+      ) : null}
+
+      {PROXY_ROUTED_DRIVERS.has(instance.driver) ? (
+        <SettingsSection
+          title="Proxy"
+          inert={readOnly}
+          aria-disabled={readOnly || undefined}
+          className={readOnly ? "opacity-50 select-none" : undefined}
+        >
+          <ProviderProxyRow
+            instanceId={instanceId}
+            instance={instance}
+            proxyConfigured={proxyConfigured}
+            onUpdate={onUpdate}
+          />
         </SettingsSection>
       ) : null}
 

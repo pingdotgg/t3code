@@ -6,11 +6,39 @@ import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 
 import {
+  applyClaudeProxyEnvironment,
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
   makeClaudeEnvironment,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
+
+describe("applyClaudeProxyEnvironment", () => {
+  it("replaces every ambient route with the proxy", () => {
+    expect(
+      applyClaudeProxyEnvironment(
+        {
+          PATH: "/bin",
+          ANTHROPIC_API_KEY: "sk-ant-direct",
+          ANTHROPIC_BASE_URL: "https://api.anthropic.com",
+          CLAUDE_CODE_OAUTH_TOKEN: "oauth",
+          CLAUDE_CODE_USE_BEDROCK: "1",
+        },
+        { url: "http://proxy:8317", apiKey: "sk-proxy" },
+      ),
+    ).toEqual({
+      PATH: "/bin",
+      ANTHROPIC_API_KEY: "",
+      ANTHROPIC_BASE_URL: "http://proxy:8317",
+      ANTHROPIC_AUTH_TOKEN: "sk-proxy",
+    });
+    // Claude Code reports "Not logged in" without contacting a proxy when no credential is set.
+    expect(
+      applyClaudeProxyEnvironment({}, { url: "http://proxy:8317", apiKey: "" })
+        .ANTHROPIC_AUTH_TOKEN,
+    ).toBe("t3-proxy");
+  });
+});
 
 it.layer(NodeServices.layer)("ClaudeHome", (it) => {
   describe("Claude home resolution", () => {

@@ -17,6 +17,7 @@ import type * as Scope from "effect/Scope";
 
 import type * as ProviderAdapter from "./ProviderAdapter.ts";
 import type { ProviderAuthController } from "./auth.ts";
+import type { ProviderProxyRoute } from "./providerProxy.ts";
 import type { ProviderDriverError } from "./errors.ts";
 import type { ManagedServerProvider } from "./snapshot.ts";
 import type { ProviderTextGeneration } from "./textGeneration.ts";
@@ -99,6 +100,8 @@ export interface ProviderDriverCreateInput<Config> {
   readonly environment: ResolvedProviderInstanceEnvironment;
   readonly enabled: boolean;
   readonly config: Config;
+  /** Set when the instance routes through the environment's proxy; only PROXY_ROUTED_DRIVERS receive it. */
+  readonly proxy?: ProviderProxyRoute | undefined;
 }
 
 /** create calls with different instanceId/config must share no mutable state. */

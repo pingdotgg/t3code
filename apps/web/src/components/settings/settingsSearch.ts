@@ -808,6 +808,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "provider-proxy",
+    title: "Proxy",
+    to: "/settings/providers",
+    searchTerms: [
+      "proxy CLIProxyAPI CLI proxy route account pool load balance api key management key base url host this environment managed external accounts add account sign in",
+    ],
+    providerSettingsOnly: true,
+  },
+  {
     id: "usage-providers",
     title: "Usage providers",
     to: "/settings/providers",

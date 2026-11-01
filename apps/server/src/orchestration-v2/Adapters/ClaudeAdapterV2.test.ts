@@ -1006,12 +1006,17 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
 });
 
 describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
-  const startTurnWithLaunchArgs = Effect.fnUntraced(function* (launchArgs: string, cwd: string) {
+  const startTurnWithLaunchArgs = Effect.fnUntraced(function* (
+    launchArgs: string,
+    cwd: string,
+    proxy?: { readonly url: string; readonly apiKey: string },
+  ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const opened: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOptions> = [];
     const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
       instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
       settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs },
+      ...(proxy === undefined ? {} : { proxy }),
       environment: {},
       attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-append-" }),
       fileSystem,
@@ -1106,7 +1111,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
 
   // regression: #15073 the SDK replaced the --settings launch argument with T3's settings
   it.effect.each([
-    `--settings '{"skillOverrides":{"lint":"off"},"showThinkingSummaries":false}'`,
+    `--settings '{"skillOverrides":{"lint":"off"},"showThinkingSummaries":false,"env":{"OTHER":"kept","ANTHROPIC_BASE_URL":"https://old.example.test"}}'`,
     "--settings user-settings.json",
   ])("merges %s beneath T3's settings", (launchArgs) =>
     Effect.scoped(
@@ -1115,7 +1120,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
         const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-settings-" });
         yield* fileSystem.writeFileString(
           NodePath.join(cwd, "user-settings.json"),
-          '{"skillOverrides":{"lint":"off"},"showThinkingSummaries":false}',
+          '{"skillOverrides":{"lint":"off"},"showThinkingSummaries":false,"env":{"OTHER":"kept","ANTHROPIC_BASE_URL":"https://old.example.test"}}',
         );
         const { exit, opened } = yield* startTurnWithLaunchArgs(launchArgs, cwd);
         assert.isTrue(Exit.isSuccess(exit));
@@ -1124,6 +1129,22 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
           showThinkingSummaries: true,
         });
         assert.isUndefined(opened[0]!.extraArgs?.["settings"]);
+        const proxy = { url: "http://proxy.test:8317", apiKey: "proxy-test-key" };
+        const routed = yield* startTurnWithLaunchArgs(launchArgs, cwd, proxy);
+        assert.isTrue(Exit.isSuccess(routed.exit));
+        assert.deepInclude(routed.opened[0]!.settings, {
+          skillOverrides: { lint: "off" },
+          env: {
+            OTHER: "kept",
+            ANTHROPIC_BASE_URL: proxy.url,
+            ANTHROPIC_AUTH_TOKEN: proxy.apiKey,
+            ANTHROPIC_API_KEY: "",
+            CLAUDE_CODE_OAUTH_TOKEN: "",
+            CLAUDE_CODE_USE_BEDROCK: "",
+            CLAUDE_CODE_USE_VERTEX: "",
+            CLAUDE_CODE_USE_FOUNDRY: "",
+          },
+        });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

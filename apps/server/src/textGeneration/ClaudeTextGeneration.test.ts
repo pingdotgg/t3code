@@ -66,14 +66,22 @@ function withFakeClaudeEnv<A, E, R>(
     configDirMustBe?: string;
     cwdMustNotBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
+    proxy?: { readonly url: string; readonly apiKey: string };
   },
-  effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
+  effectFn: (
+    textGeneration: TextGeneration.TextGeneration["Service"],
+    tempDir: string,
+  ) => Effect.Effect<A, E, R>,
 ) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-text-" });
     const binDir = yield* makeFakeClaudeBinary(tempDir, input.lifecyclePort);
     const pathDelimiter = (yield* HostProcess.isWindows) ? ";" : ":";
+    const path = yield* Path.Path;
+    const platform = yield* HostProcess.Platform;
+    const previousSettingsExpected = process.env.T3_FAKE_CLAUDE_SETTINGS_EXPECTED;
+    const previousSettingsReceipt = process.env.T3_FAKE_CLAUDE_SETTINGS_RECEIPT;
     const previousPath = process.env.PATH;
     const previousOutput = process.env.T3_FAKE_CLAUDE_OUTPUT;
     const previousExitCode = process.env.T3_FAKE_CLAUDE_EXIT_CODE;
@@ -86,6 +94,16 @@ function withFakeClaudeEnv<A, E, R>(
 
     yield* Effect.acquireRelease(
       Effect.sync(() => {
+        if (input.proxy === undefined) {
+          delete process.env.T3_FAKE_CLAUDE_SETTINGS_EXPECTED;
+          delete process.env.T3_FAKE_CLAUDE_SETTINGS_RECEIPT;
+        } else {
+          process.env.T3_FAKE_CLAUDE_SETTINGS_EXPECTED = JSON.stringify({
+            ...input.proxy,
+            platform,
+          });
+          process.env.T3_FAKE_CLAUDE_SETTINGS_RECEIPT = path.join(tempDir, "settings-path.txt");
+        }
         process.env.PATH = `${binDir}${pathDelimiter}${previousPath ?? ""}`;
         process.env.T3_FAKE_CLAUDE_OUTPUT = input.output;
 
@@ -133,6 +151,12 @@ function withFakeClaudeEnv<A, E, R>(
       }),
       () =>
         Effect.sync(() => {
+          if (previousSettingsExpected === undefined)
+            delete process.env.T3_FAKE_CLAUDE_SETTINGS_EXPECTED;
+          else process.env.T3_FAKE_CLAUDE_SETTINGS_EXPECTED = previousSettingsExpected;
+          if (previousSettingsReceipt === undefined)
+            delete process.env.T3_FAKE_CLAUDE_SETTINGS_RECEIPT;
+          else process.env.T3_FAKE_CLAUDE_SETTINGS_RECEIPT = previousSettingsReceipt;
           process.env.PATH = previousPath;
 
           if (previousOutput === undefined) {
@@ -190,15 +214,16 @@ function withFakeClaudeEnv<A, E, R>(
       config,
       undefined,
       Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
+      input.proxy,
     );
-    return yield* effectFn(textGeneration);
+    return yield* effectFn(textGeneration, tempDir);
   }).pipe(Effect.scoped);
 }
 
 it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
-  it.effect(
-    "keeps canonical built-in capabilities when a custom model collides with its alias",
-    () =>
+  it.effect.each([false, true])(
+    "keeps canonical built-in capabilities when a custom model collides with its alias (proxy: %s)",
+    (proxied) =>
       withFakeClaudeEnv(
         {
           output: JSON.stringify({
@@ -207,10 +232,16 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
               body: "Body",
             },
           }),
-          argsMustContain: `--model ${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded] --effort max --settings {"disableAllHooks":true,"fastMode":true}`,
+          ...(proxied ? { argsMustNotContain: "proxy-test-key" } : {}),
+          argsMustContain: proxied
+            ? "--effort max --settings"
+            : `--model ${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded] --effort max --settings {"disableAllHooks":true,"fastMode":true}`,
+          ...(proxied
+            ? { proxy: { url: "http://proxy.test:8317", apiKey: "proxy-test-key" } }
+            : {}),
           claudeConfig: { customModels: [SYNTHETIC_CLAUDE_COLLIDING_ALIAS] },
         },
-        (textGeneration) =>
+        (textGeneration, tempDir) =>
           Effect.gen(function* () {
             const generated = yield* textGeneration.generatePrContent({
               cwd: process.cwd(),
@@ -232,6 +263,14 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             });
 
             expect(generated.title).toBe("Improve orchestration flow");
+            if (proxied) {
+              const fs = yield* FileSystem.FileSystem;
+              const path = yield* Path.Path;
+              const settingsPath = yield* fs.readFileString(
+                path.join(tempDir, "settings-path.txt"),
+              );
+              expect(yield* fs.exists(settingsPath)).toBe(false);
+            }
           }),
       ),
   );

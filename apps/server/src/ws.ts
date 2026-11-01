@@ -270,6 +270,7 @@ import {
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
+import * as ProxyAccounts from "./providerProxy/ProxyAccounts.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
@@ -1342,6 +1343,7 @@ export const layerWsRpc = (
             );
       const usage = yield* UsageService.UsageService;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
+      const proxyAccounts = yield* ProxyAccounts.ProxyAccounts;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
       const repositoryIdentityResolver =
@@ -2478,6 +2480,14 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.serverUpdateProvider]: (input) =>
           providerMaintenanceRunner.updateProvider(input),
+        [WS_METHODS.providerProxyGetState]: () => proxyAccounts.getState,
+        [WS_METHODS.providerProxyStartLogin]: ({ provider }) => proxyAccounts.startLogin(provider),
+        [WS_METHODS.providerProxyGetLoginStatus]: ({ state }) =>
+          proxyAccounts.getLoginStatus(state),
+        [WS_METHODS.providerProxyCompleteLogin]: (input) => proxyAccounts.completeLogin(input),
+        [WS_METHODS.providerProxySetAccountDisabled]: (input) =>
+          proxyAccounts.setAccountDisabled(input),
+        [WS_METHODS.providerProxyRemoveAccount]: ({ name }) => proxyAccounts.removeAccount(name),
         [WS_METHODS.providerConsumeResetCredit]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {

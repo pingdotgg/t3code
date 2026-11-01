@@ -1,8 +1,8 @@
 import {
+  PROXY_ROUTED_DRIVERS,
   providerInstanceConfigEnabledFlag,
   ProviderInstanceId,
   type ProviderInstanceConfig,
-  type ProviderInstanceConfigMap,
   type ProviderInstanceEnvironment,
   type ProviderDriverKind,
   type ResolvedProviderInstanceEnvironment,
@@ -51,7 +51,7 @@ interface InstanceSecrets {
 interface LiveEntry {
   readonly instance: ProviderInstance;
   readonly scope: Scope.Closeable;
-  readonly entry: ProviderInstanceConfig;
+  readonly entry: ProviderInstanceRegistryMutator.ProviderInstanceRuntimeEntry;
   readonly secrets: InstanceSecrets;
 }
 
@@ -61,8 +61,24 @@ interface RegistryState {
   readonly changes: PubSub.PubSub<void>;
 }
 
-const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
-  Equal.equals(a, b);
+const entryEqual = (
+  a: ProviderInstanceRegistryMutator.ProviderInstanceRuntimeEntry,
+  b: ProviderInstanceRegistryMutator.ProviderInstanceRuntimeEntry,
+): boolean => Equal.equals(a, b);
+
+const proxyUnavailableReason = (
+  entry: ProviderInstanceRegistryMutator.ProviderInstanceRuntimeEntry,
+): string | undefined => {
+  if (entry.useProxy !== true) return undefined;
+  if (!PROXY_ROUTED_DRIVERS.has(entry.driver)) {
+    return `Driver '${entry.driver}' cannot route through a proxy. Turn off Use proxy for this instance.`;
+  }
+  // Falling back to the instance's own login would silently spend a different account.
+  if (entry.proxy === undefined) {
+    return "Use proxy is on, but this environment has no proxy. Choose one in Settings → Providers → Proxy, or turn off Use proxy.";
+  }
+  return undefined;
+};
 
 const secretReferencesIn = (environment: ProviderInstanceEnvironment): Array<SecretReference> =>
   environment.flatMap((variable) => (typeof variable.value === "string" ? [] : [variable.value]));
@@ -149,7 +165,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   readonly parentScope: Scope.Scope;
   readonly instanceId: ProviderInstanceId;
   readonly rawInstanceId: string;
-  readonly entry: ProviderInstanceConfig;
+  readonly entry: ProviderInstanceRegistryMutator.ProviderInstanceRuntimeEntry;
   readonly deferSecrets: boolean;
 }): Effect.fn.Return<
   | { readonly kind: "live"; readonly live: LiveEntry }
@@ -181,6 +197,20 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         displayName: entry.displayName,
         accentColor: entry.accentColor,
         reason: `Driver '${entry.driver}' is not registered in this build.`,
+      }),
+    };
+  }
+
+  const proxyReason = proxyUnavailableReason(entry);
+  if (proxyReason !== undefined) {
+    return {
+      kind: "unavailable" as const,
+      snapshot: yield* buildUnavailableProviderSnapshot({
+        driverKind: entry.driver,
+        instanceId,
+        displayName: entry.displayName,
+        accentColor: entry.accentColor,
+        reason: proxyReason,
       }),
     };
   }
@@ -255,6 +285,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         Object.keys(secrets.config).length === 0
           ? typedConfig
           : { ...typedConfig, ...secrets.config },
+      proxy: entry.useProxy === true ? entry.proxy : undefined,
     })
     .pipe(Effect.provideService(Scope.Scope, childScope), Effect.result);
   if (createResult._tag === "Failure") {
@@ -293,7 +324,7 @@ const makeReconcile = <R>(input: {
   readonly blockedReason: BlockedReason;
   readonly parentScope: Scope.Scope;
 }): ((
-  configMap: ProviderInstanceConfigMap,
+  configMap: ProviderInstanceRegistryMutator.ProviderInstanceRuntimeMap,
   rebuild?: ReadonlySet<ProviderInstanceId>,
   deferSecrets?: boolean,
 ) => Effect.Effect<void, never, R | SecretResolver.SecretResolver>) => {
@@ -419,7 +450,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
   "ProviderInstanceRegistry.makeProviderInstanceRegistry",
 )(function* <R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderDriver<R>>;
-  readonly configMap: ProviderInstanceConfigMap;
+  readonly configMap: ProviderInstanceRegistryMutator.ProviderInstanceRuntimeMap;
   /** A reason to show instead of running a driver, such as an administrator's policy. */
   readonly blockedReason?: BlockedReason | undefined;
 }): Effect.fn.Return<
@@ -559,7 +590,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
 
 export const layer = <R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderDriver<R>>;
-  readonly configMap: ProviderInstanceConfigMap;
+  readonly configMap: ProviderInstanceRegistryMutator.ProviderInstanceRuntimeMap;
   readonly blockedReason?: BlockedReason | undefined;
 }): Layer.Layer<
   ProviderInstanceRegistry | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,

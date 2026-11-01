@@ -8,6 +8,12 @@ import {
   type UsageLimitSourceId,
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
+import { normalizeProviderProxyUrl } from "@t3tools/provider-core/server/providerProxy";
+import {
+  resolveProxyManagement,
+  type ManagedProxyEndpoint,
+} from "../providerProxy/effectiveProxy.ts";
+import * as ManagedProviderProxy from "../providerProxy/ManagedProviderProxy.ts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -46,10 +52,43 @@ function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   }
 }
 
+export const PROVIDER_PROXY_SOURCE_ID = "provider-proxy" as UsageLimitSourceId;
+
+/** The routing proxy reports its accounts without a separate hub entry, unless one already points at it. */
+export function effectiveUsageLimitSources(
+  settings: ServerSettings,
+  managedProxy?: ManagedProxyEndpoint,
+): Readonly<Record<string, UsageLimitSourceConfig>> {
+  const management = resolveProxyManagement(settings, managedProxy);
+  if (management === undefined) return settings.usageLimitSources;
+  const { url, managementKey } = management;
+  const alreadyListed = Object.values(settings.usageLimitSources).some(
+    (source) =>
+      source.enabled &&
+      source.managementKey === managementKey &&
+      normalizeProviderProxyUrl(source.url) === url,
+  );
+  // A hand-written source may already use the synthetic id; it keeps the slot.
+  if (alreadyListed || PROVIDER_PROXY_SOURCE_ID in settings.usageLimitSources) {
+    return settings.usageLimitSources;
+  }
+  return {
+    ...settings.usageLimitSources,
+    [PROVIDER_PROXY_SOURCE_ID]: {
+      kind: "cliproxy",
+      label: "Proxy",
+      url,
+      managementKey,
+      enabled: true,
+    },
+  };
+}
+
 /** @public */
 export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
   const settingsService = yield* Settings.ServerSettingsService;
+  const managedProxy = yield* ManagedProviderProxy.ManagedProviderProxy;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const stateRef = yield* Ref.make<ReadonlyArray<UsageLimitSourceSnapshot>>([]);
   const changes = yield* Effect.acquireRelease(
@@ -89,9 +128,10 @@ export const make = Effect.gen(function* () {
     const settings = yield* settingsService.getSettings.pipe(
       Effect.orElseSucceed((): ServerSettings | null => null),
     );
-    const entries = Object.entries(settings?.usageLimitSources ?? {}).filter(
-      ([, config]) => config.enabled,
-    );
+    const endpoint = yield* managedProxy.endpoint;
+    const entries = Object.entries(
+      settings === null ? {} : effectiveUsageLimitSources(settings, endpoint),
+    ).filter(([, config]) => config.enabled);
     const snapshots = yield* Effect.forEach(
       entries,
       ([id, config]) => readSource(id as UsageLimitSourceId, config),
@@ -107,7 +147,9 @@ export const make = Effect.gen(function* () {
     const settings = yield* settingsService.getSettings.pipe(
       Effect.mapError(() => new UsageLimitSourceError({ detail: "Could not read hub settings." })),
     );
-    const config = settings.usageLimitSources[input.sourceId];
+    const config = effectiveUsageLimitSources(settings, yield* managedProxy.endpoint)[
+      input.sourceId
+    ];
     if (!config?.enabled || !config.managementKey) {
       return yield* new UsageLimitSourceError({
         detail: "The usage limit source is missing or disabled.",
@@ -120,9 +162,14 @@ export const make = Effect.gen(function* () {
     return result;
   }, refreshLock.withPermits(1));
 
-  yield* settingsService.streamChanges.pipe(
-    Stream.map((settings) => settings.usageLimitSources),
-    Stream.changes,
+  yield* Stream.merge(
+    settingsService.streamChanges.pipe(
+      Stream.map((settings) => effectiveUsageLimitSources(settings)),
+      Stream.changes,
+    ),
+    // Starting makes the managed proxy answer; stopping must drop its accounts.
+    managedProxy.statusChanges.pipe(Stream.drop(1)),
+  ).pipe(
     Stream.runForEach(() => refresh),
     Effect.forkScoped,
   );

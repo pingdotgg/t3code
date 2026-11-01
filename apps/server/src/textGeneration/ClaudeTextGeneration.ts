@@ -1,12 +1,14 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { type ClaudeSettings, TextGenerationError } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import type { ProviderProxyRoute } from "@t3tools/provider-core/server/providerProxy";
 
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import {
@@ -31,6 +33,7 @@ import {
 } from "../provider/ClaudeModelCatalog.ts";
 import {
   hasClaudeManagedMcpConfig,
+  claudeProxySettingsEnvironment,
   makeClaudeEnvironment,
 } from "../provider/Drivers/ClaudeHome.ts";
 
@@ -81,9 +84,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   modelCatalog: Effect.Effect<ClaudeModelCatalog> = Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
+  proxy?: ProviderProxyRoute,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
@@ -171,6 +176,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
     const settings = {
       disableAllHooks: true,
+      ...(proxy === undefined ? {} : { env: claudeProxySettingsEnvironment(proxy) }),
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),
       ...(ultracode ? { ultracode: true } : {}),
@@ -192,6 +198,27 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
                 ),
               )
           : cwd;
+      const settingsArgument =
+        proxy === undefined
+          ? settingsJson
+          : yield* Effect.gen(function* () {
+              const directory = yield* fileSystem.makeTempDirectoryScoped({
+                prefix: "t3code-claude-settings-",
+              });
+              yield* fileSystem.chmod(directory, 0o700);
+              const settingsPath = path.join(directory, "settings.json");
+              yield* fileSystem.writeFileString(settingsPath, settingsJson, { mode: 0o600 });
+              return settingsPath;
+            }).pipe(
+              Effect.mapError((cause) =>
+                normalizeCliError(
+                  "claude",
+                  operation,
+                  cause,
+                  "Failed to prepare Claude CLI settings",
+                ),
+              ),
+            );
       const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
       const spawnCommand = yield* resolveSpawnCommand(
         claudeSettings.binaryPath || "claude",
@@ -205,7 +232,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection),
           ...(cliEffort ? ["--effort", cliEffort] : []),
           "--settings",
-          settingsJson,
+          settingsArgument,
           ...(investigate
             ? [
                 "--tools",

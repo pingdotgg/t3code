@@ -464,6 +464,7 @@ function layerTest(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
   readonly idleTimeoutMs: number;
   readonly maxIdlePinMs?: number;
+  readonly runtimeIdentity?: Ref.Ref<object>;
   readonly failEventStream?: boolean;
   readonly capabilities?: OrchestrationV2ProviderCapabilities;
   readonly mcpConfigs?: Ref.Ref<
@@ -528,7 +529,17 @@ function layerTest(input: {
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
-    }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
+    }).pipe(
+      Effect.map((adapter) =>
+        input.runtimeIdentity === undefined
+          ? ProviderAdapterRegistry.layerSingle(adapter)
+          : Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistryV2, {
+              get: () => Effect.succeed(adapter),
+              list: () => Effect.succeed([adapter.instanceId]),
+              getRuntimeIdentity: () => Ref.get(input.runtimeIdentity!),
+            }),
+      ),
+    ),
   );
   const layerConfiguredMcpRegistry =
     input.pauseResolve === undefined
@@ -3408,6 +3419,51 @@ it.effect(
       });
 
       yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 replaces a cached session when its provider route changes",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const runtimeIdentity = yield* Ref.make<object>({});
+      const pendingWork = yield* Ref.make(false);
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const threadId = ThreadId.make("proxy-route-change");
+        const now = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const input = { threadId, providerSessionId, modelSelection, runtimePolicy };
+        const direct = yield* manager.open(input);
+        assert.strictEqual(yield* manager.open(input), direct);
+        yield* Ref.set(runtimeIdentity, {});
+        yield* Ref.set(pendingWork, true);
+        assert.isTrue(Exit.isFailure(yield* Effect.exit(manager.open(input))));
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        yield* Ref.set(pendingWork, false);
+        const proxied = yield* manager.open(input);
+        assert.notStrictEqual(proxied, direct);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        assert.strictEqual(yield* manager.open(input), proxied);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            runtimeIdentity,
+            idleTimeoutMs: 60000,
+            hasPendingBackgroundWork: Ref.get(pendingWork),
+          }),
+        ),
+      );
     }),
 );
 

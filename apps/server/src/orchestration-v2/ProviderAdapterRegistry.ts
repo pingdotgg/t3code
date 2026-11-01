@@ -42,6 +42,9 @@ export interface ProviderAdapterRegistryV2Shape {
   readonly get: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderAdapter.ProviderAdapterV2["Service"], ProviderAdapterRegistryV2Error>;
+  readonly getRuntimeIdentity?: (
+    instanceId: ProviderInstanceId,
+  ) => Effect.Effect<object | undefined>;
   readonly list: () => Effect.Effect<ReadonlyArray<ProviderInstanceId>>;
   readonly getMetadata?: (instanceId: ProviderInstanceId) => Effect.Effect<
     {
@@ -68,6 +71,11 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
   Effect.gen(function* () {
     const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     return ProviderAdapterRegistryV2.of({
+      getRuntimeIdentity: Effect.fn("ProviderAdapterRegistryV2.getRuntimeIdentity")((instanceId) =>
+        instances
+          .getInstance(instanceId)
+          .pipe(Effect.map((instance) => instance?.orchestrationAdapter)),
+      ),
       get: Effect.fn("ProviderAdapterRegistryV2.get")(function (instanceId) {
         return instances.getInstance(instanceId).pipe(
           Effect.flatMap((instance) => {
