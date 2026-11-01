@@ -29,6 +29,7 @@
       };
       t3code = pkgs.appimageTools.wrapType2 {
         inherit pname version src;
+        extraPkgs = pkgs: [ pkgs.git ];
         profile = "export T3CODE_DISABLE_AUTO_UPDATE=true";
         nativeBuildInputs = [ pkgs.makeWrapper ];
         extraInstallCommands = ''
