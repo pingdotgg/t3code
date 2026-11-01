@@ -6,11 +6,14 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
+  shouldCreateNewThreadInCurrentProject,
   archiveSelectedThreadEntries,
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
   resolveSidebarRowThreadId,
+  belongsInSidebarWorkingShelf,
+  isSidebarEnvironmentDisconnected,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   resolveProjectStatusIndicator,
@@ -1088,6 +1091,53 @@ describe("Working shelf (beta)", () => {
     ).toBe(false);
   });
 
+  it.each([
+    ["connected", true, false],
+    ["connected", false, true],
+    ["connecting", false, false],
+    ["reconnecting", false, true],
+    ["offline", false, true],
+    ["error", false, true],
+    ["unsupported", false, true],
+    ["available", false, true],
+  ] as const)(
+    "lists threads outside the shelf on a %s environment: %s",
+    (phase, shellIsLive, disconnected) => {
+      expect(isSidebarEnvironmentDisconnected(phase, shellIsLive)).toBe(disconnected);
+    },
+  );
+
+  it("lists a running thread outside the shelf while its environment is disconnected", () => {
+    const thread = { ...idle, runtime, environmentId: localEnvironmentId };
+    const shelve = (disconnected: ReadonlyArray<EnvironmentId>, enabled = true) =>
+      belongsInSidebarWorkingShelf(thread, {
+        enabled,
+        disconnectedEnvironmentIds: new Set(disconnected),
+        isWorking: isSidebarThreadWorking,
+      });
+
+    expect(shelve([])).toBe(true);
+    expect(shelve([localEnvironmentId])).toBe(false);
+    expect(shelve([])).toBe(true);
+    expect(shelve([EnvironmentId.make("environment-other")])).toBe(true);
+    expect(shelve([], false)).toBe(false);
+
+    const watching = {
+      ...waiting,
+      environmentId: localEnvironmentId,
+      pendingBackgroundTasks: [{ ...backgroundTask, taskId: "pull-request-watch:github.com/acme/app#1" }],
+      pendingGuestMessageCount: 1,
+    };
+    expect(isSidebarThreadWorking(watching)).toBe(true);
+    expect(
+      belongsInSidebarWorkingShelf(watching, {
+        enabled: true,
+        disconnectedEnvironmentIds: new Set(),
+        isWorking: isSidebarThreadWorking,
+      }),
+    ).toBe(false);
+  });
+
   describe("sortInboxThreadsByReturn", () => {
     const thread = (
       id: string,
@@ -1637,6 +1687,12 @@ describe("groupSidebarThreadsByProject", () => {
         projectKey: "fleet",
         memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: fleet }],
       },
+      {
+        projectKey: "notes",
+        memberProjectRefs: [
+          { environmentId: localEnvironmentId, projectId: ProjectId.make("notes") },
+        ],
+      },
     ];
 
     const threads = [
@@ -1644,17 +1700,23 @@ describe("groupSidebarThreadsByProject", () => {
       thread("orphan", localEnvironmentId, ProjectId.make("deleted")),
       thread("b", remoteEnvironmentId, t3codeRemote),
     ];
-    const summarize = (keepEmpty: boolean) =>
+    const summarize = (keepEmpty: (group: (typeof groups)[number]) => boolean) =>
       groupSidebarThreadsByProject(groups, threads, keepEmpty).map((folder) => ({
         projectKey: folder.group.projectKey,
         threads: folder.threads.map((entry) => entry.id),
       }));
 
-    expect(summarize(true)).toEqual([
+    expect(summarize(() => true)).toEqual([
+      { projectKey: "t3code", threads: ["a", "b"] },
+      { projectKey: "fleet", threads: [] },
+      { projectKey: "notes", threads: [] },
+    ]);
+    expect(summarize(() => false)).toEqual([{ projectKey: "t3code", threads: ["a", "b"] }]);
+    // A pinned project keeps its empty folder while other empty projects drop out.
+    expect(summarize((group) => group.projectKey === "fleet")).toEqual([
       { projectKey: "t3code", threads: ["a", "b"] },
       { projectKey: "fleet", threads: [] },
     ]);
-    expect(summarize(false)).toEqual([{ projectKey: "t3code", threads: ["a", "b"] }]);
   });
 });
 
@@ -1692,5 +1754,15 @@ describe("resolveSidebarFolderDot", () => {
     expect(resolveSidebarFolderDot([idle, working])).toBe("working");
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
+  });
+});
+
+describe("shouldCreateNewThreadInCurrentProject", () => {
+  it("opens the picker when several projects are open, or only archived ones exist", () => {
+    expect(shouldCreateNewThreadInCurrentProject(false, 2, 3)).toBe(false);
+    expect(shouldCreateNewThreadInCurrentProject(false, 0, 2)).toBe(false);
+    expect(shouldCreateNewThreadInCurrentProject(false, 1, 3)).toBe(true);
+    expect(shouldCreateNewThreadInCurrentProject(false, 0, 0)).toBe(true);
+    expect(shouldCreateNewThreadInCurrentProject(true, 2, 2)).toBe(true);
   });
 });
