@@ -2,12 +2,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   DEFAULT_TERMINAL_ID,
+  ProjectId,
+  ThreadId,
+  TerminalCwdNotFoundError,
   type TerminalAttachStreamEvent,
   type TerminalEvent,
   type TerminalOpenInput,
   ProviderDriverKind,
   ProviderInstanceId,
-  ProjectId,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -32,12 +34,16 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as TestClock from "effect/testing/TestClock";
 import { expect, vi } from "vite-plus/test";
 
+import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as TerminalManager from "./Manager.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import { makeWithWorktreeRecovery } from "../workspace/restoreMissingWorktree.ts";
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
@@ -409,6 +415,88 @@ it.layer(
   Layer.merge(NodeServices.layer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
   { excludeTestServices: true },
 )("TerminalManager", (it) => {
+  it.effect.each([
+    { method: "open", location: "managed" },
+    { method: "attach", location: "managed" },
+    { method: "open", location: "subdirectory" },
+    { method: "attach", location: "subdirectory" },
+    { method: "open", location: "unmanaged" },
+    { method: "open", location: "no-worktree" },
+  ] as const)(
+    "recovers $method with a $location cwd without a cleanup gap",
+    ({ method, location }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { manager, ptyAdapter, baseDir } = yield* createManager();
+        const worktreesDir = path.join(baseDir, "worktrees");
+        const worktreePath =
+          location === "unmanaged"
+            ? path.join(baseDir, "missing")
+            : path.join(worktreesDir, "project", "feature");
+        const cwd = location === "subdirectory" ? path.join(worktreePath, "src") : worktreePath;
+        const cleanupQueued = yield* Deferred.make<Fiber.Fiber<void>>();
+        let creations = 0;
+        const withRecovery = yield* makeWithWorktreeRecovery(() =>
+          Effect.succeed({
+            id: ThreadId.make("thread-1"),
+            projectId: ProjectId.make("project-1"),
+            worktreePath: location === "no-worktree" ? null : worktreePath,
+            branch: "feature",
+          }),
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(ServerConfig.ServerConfig)({
+                worktreesDir,
+              } as ServerConfig.ServerConfig["Service"]),
+              ServerSettings.layerTest(),
+              Layer.mock(ProjectService.ProjectService)({
+                getById: () => Effect.succeedSome({ workspaceRoot: baseDir } as never),
+              }),
+              Layer.mock(GitWorkflowService.GitWorkflowService)({
+                pruneWorktrees: () => Effect.void,
+                listLocalBranchNames: () => Effect.succeed(["feature"]),
+                createWorktree: () =>
+                  Effect.gen(function* () {
+                    creations++;
+                    yield* fs.makeDirectory(cwd, { recursive: true }).pipe(Effect.orDie);
+                    const cleanup = yield* withWorkspaceLease(
+                      worktreePath,
+                      Effect.sync(() => {
+                        assert.equal(ptyAdapter.spawnInputs.length, 1);
+                      }),
+                    ).pipe(Effect.forkChild({ startImmediately: true }));
+                    yield* Deferred.succeed(cleanupQueued, cleanup);
+                    return {} as never;
+                  }),
+              }),
+            ),
+          ),
+        );
+        const input = openInput({
+          cwd,
+          worktreePath: location === "subdirectory" ? null : worktreePath,
+        });
+        const launch = (input: TerminalOpenInput) =>
+          method === "attach"
+            ? manager.attachStream(input, () => Effect.void).pipe(Effect.asVoid)
+            : manager.open(input).pipe(Effect.asVoid);
+        if (location === "unmanaged" || location === "no-worktree") {
+          const error = yield* withRecovery(input, launch).pipe(Effect.flip);
+          assert.deepEqual(error, new TerminalCwdNotFoundError({ cwd }));
+          assert.equal(creations, 0);
+          assert.equal(ptyAdapter.spawnInputs.length, 0);
+          return;
+        }
+        yield* withRecovery(input, launch);
+        yield* Fiber.join(yield* Deferred.await(cleanupQueued));
+        assert.equal(creations, 1);
+        assert.equal(ptyAdapter.spawnInputs.length, 1);
+        assert.isTrue(yield* fs.exists(cwd));
+      }),
+  );
+
   it.effect("spawns lazily and reuses running terminal per thread", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
