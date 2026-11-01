@@ -4,6 +4,7 @@ import type {
   ProviderInstanceConfig,
   PreviewViewportSetting,
   ProviderInstanceId,
+  ServerConfig,
   ServerSettings,
   SidebarProjectGroupingMode,
   UnifiedSettings,
@@ -21,6 +22,8 @@ import {
 } from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
+
+import { managedTelemetryOffMessage } from "../../state/managedPolicy";
 
 export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
   return mode !== "separate";
@@ -344,4 +347,37 @@ export function failAutoSettleDaysField(
 ): AutoSettleDaysField {
   if (field.revision !== revision) return field;
   return { ...field, pending: null, draft: field.dirty ? field.draft : String(field.saved) };
+}
+
+export interface TelemetrySettingLock {
+  readonly value: boolean;
+  readonly reason: string;
+  /** Set when an administrator's policy, not the environment variable, decides. */
+  readonly managed: boolean;
+}
+
+/**
+ * Where something decides over the `telemetryEnabled` setting, per environment: a managed policy
+ * that turns telemetry off, else `T3CODE_TELEMETRY_ENABLED` as the server reports it.
+ */
+export function telemetrySettingLocks(
+  environments: ReadonlyArray<{
+    readonly label: string;
+    readonly serverConfig?: Pick<ServerConfig, "observability" | "managedPolicy"> | null;
+  }>,
+): TelemetrySettingLock[] {
+  return environments.flatMap((environment): TelemetrySettingLock[] => {
+    const policyOff = managedTelemetryOffMessage(environment.serverConfig?.managedPolicy);
+    if (policyOff !== undefined) return [{ value: false, reason: policyOff, managed: true }];
+    const value = environment.serverConfig?.observability.telemetryEnabledByEnvironment;
+    return value === undefined
+      ? []
+      : [
+          {
+            value,
+            reason: `Set by T3CODE_TELEMETRY_ENABLED=${value} on ${environment.label}.`,
+            managed: false,
+          },
+        ];
+  });
 }
