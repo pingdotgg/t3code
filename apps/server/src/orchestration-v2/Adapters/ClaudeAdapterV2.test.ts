@@ -8722,6 +8722,126 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("lets the native SDK acknowledge Stop before closing its own query", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let closes = 0;
+        let acknowledge = Effect.void;
+        const harness = yield* makeWakeHarnessWithOptions({
+          interrupt: Effect.suspend(() => {
+            assert.equal(closes, 0);
+            return acknowledge;
+          }),
+          close: (messages) =>
+            Effect.sync(() => {
+              closes++;
+            }).pipe(Effect.andThen(Queue.shutdown(messages))),
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("graceful-stop"),
+            text: "Work until stopped",
+            attachments: [],
+          }),
+        );
+        acknowledge = harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000620",
+            result: "",
+            subtype: "error_during_execution",
+            errors: ["Error: Request was aborted."],
+            terminalReason: "aborted_streaming",
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+          ),
+        );
+        const active = harness.events.find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+        );
+        if (active?.type !== "provider_turn.updated")
+          return yield* Effect.die("Missing running native turn");
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: active.providerTurn.id,
+          requestRuntimeRestart: true,
+        });
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+        assert.equal(closes, 1);
+        assert.lengthOf(harness.terminalEvents(), 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("bounds an unacknowledged native Stop and settles its turn once", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let closes = 0;
+        const interruptStarted = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          interrupt: Deferred.succeed(interruptStarted, undefined).pipe(
+            Effect.andThen(Effect.never),
+          ),
+          close: (messages) =>
+            Effect.sync(() => {
+              closes++;
+            }).pipe(Effect.andThen(Queue.shutdown(messages))),
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("unacknowledged-stop"),
+            text: "Work until stopped",
+            attachments: [],
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+          ),
+        );
+        const active = harness.events.find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+        );
+        if (active?.type !== "provider_turn.updated")
+          return yield* Effect.die("Missing running native turn");
+        const stop = yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: active.providerTurn.id,
+            requestRuntimeRestart: true,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(interruptStarted);
+        assert.equal(closes, 0);
+        yield* TestClock.adjust("11 seconds");
+        yield* Fiber.join(stop);
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+        assert.equal(closes, 1);
+        assert.lengthOf(harness.terminalEvents(), 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("preserves settled background work until an explicit stop", () =>
     Effect.scoped(
       Effect.gen(function* () {
