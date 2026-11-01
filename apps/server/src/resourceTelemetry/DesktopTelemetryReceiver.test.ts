@@ -5,7 +5,9 @@ import * as NodeTls from "node:tls";
 import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as Cause from "effect/Cause";
 import * as FileSystem from "effect/FileSystem";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -127,7 +129,17 @@ NodeAssert.deepEqual(fingerprints(NodeTls.getCACertificates("default")), expecte
         fingerprints([baseline, replacement]),
       );
       yield* fs.remove(certificatePath);
-      yield* applySnapshot(message);
+      const warnings: Array<Logger.Options<unknown>> = [];
+      yield* applySnapshot(message).pipe(
+        Effect.provide(
+          Logger.layer([Logger.make((entry) => warnings.push(entry))], {
+            mergeWithExisting: false,
+          }),
+        ),
+      );
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]!.message).toEqual(["Failed to update desktop shell TLS certificates."]);
+      expect(Cause.squash(warnings[0]!.cause)).toMatchObject({ _tag: "PlatformError" });
       expect(fingerprints(NodeTls.getCACertificates("default"))).toEqual(
         fingerprints([baseline, replacement]),
       );

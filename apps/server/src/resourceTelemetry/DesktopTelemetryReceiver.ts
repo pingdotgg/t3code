@@ -17,6 +17,7 @@ import {
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { applyShellEnvironment } from "@t3tools/shared/shell";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -263,7 +264,7 @@ export function makeApplyDesktopShellEnvironmentSnapshot(
         });
       }).pipe(
         Effect.catch((cause) =>
-          Effect.logWarning("Failed to update desktop shell TLS certificates.", cause),
+          Effect.logWarning("Failed to update desktop shell TLS certificates.", Cause.fail(cause)),
         ),
       );
     }
