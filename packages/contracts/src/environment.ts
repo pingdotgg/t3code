@@ -123,6 +123,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Absent on older servers and on Windows hosts, which cannot stop a discovered server. */
   localServerStop: Schema.optionalKey(Schema.Boolean),
   threadPullRequests: Schema.optionalKey(Schema.Boolean),
+  threadPullRequestStackUnlink: Schema.optionalKey(Schema.Boolean),
   threadPullRequestWatch: Schema.optionalKey(Schema.Boolean),
   pullRequestStackActions: Schema.optionalKey(Schema.Boolean),
   serverSelfUpdate: Schema.optionalKey(ServerSelfUpdateCapability),

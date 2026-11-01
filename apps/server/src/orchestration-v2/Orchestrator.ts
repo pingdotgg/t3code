@@ -14,6 +14,7 @@ import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-defin
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import {
   normalizeThreadPullRequestKey,
+  resolveThreadPullRequestChains,
   visibleThreadPullRequests,
   threadPullRequestKeysEqual,
   legacyThreadPullRequestKey,
@@ -662,6 +663,21 @@ function withPullRequestWatch(
   if (watch !== undefined) return { ...rest, watch };
   const ended = previous ?? endedWatch;
   return ended === undefined ? rest : { ...rest, endedWatch: ended };
+}
+
+/** Keep a tombstone when stack sync could rediscover this link, including through a sibling. */
+function needsStackDismissal(
+  link: ThreadPullRequestLink,
+  links: ReadonlyArray<ThreadPullRequestLink>,
+): boolean {
+  if (link.source === "stack" || link.stack !== null) return true;
+  const key = normalizeThreadPullRequestKey(link);
+  return links.some(
+    (sibling) =>
+      sibling.host.toLowerCase() === key.host &&
+      sibling.repository.toLowerCase() === key.repository &&
+      sibling.stack?.layers.some((layer) => layer.number === key.number),
+  );
 }
 
 function legacyPullRequestLink(
@@ -3656,26 +3672,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               link,
             ];
           } else if (command.type === "thread.pull-request.unlink") {
-            if (!existing) return thread;
-            const belongsToStack =
-              existing.source === "stack" ||
-              existing.stack !== null ||
-              links.some(
-                (link) =>
-                  link.host.toLowerCase() === key.host &&
-                  link.repository.toLowerCase() === key.repository &&
-                  link.stack?.layers.some((layer) => layer.number === key.number),
+            if (!existing || existing.source === "stack-dismissed") return thread;
+            let targets = new Set([existing]);
+            if (command.wholeStack) {
+              const stack = resolveThreadPullRequestChains(links).find((chain) =>
+                chain.layers.includes(existing),
               );
-            pullRequests = belongsToStack
-              ? links.map((link) =>
-                  link === existing
-                    ? {
-                        ...withPullRequestWatch(link, undefined),
-                        source: "stack-dismissed" as const,
-                      }
-                    : link,
-                )
-              : links.filter((link) => link !== existing);
+              if (!stack) return thread;
+              targets = new Set(stack.layers);
+              for (const layer of stack.layers.flatMap((link) => link.stack?.layers ?? [])) {
+                const member = links.find((link) =>
+                  threadPullRequestKeysEqual(link, { ...key, number: layer.number }),
+                );
+                if (member && member.source !== "stack-dismissed") targets.add(member);
+              }
+              if (targets.size < 2) return thread;
+            }
+            pullRequests = links.flatMap((link) => {
+              if (!targets.has(link)) return [link];
+              if (!needsStackDismissal(link, links)) return [];
+              return [
+                { ...withPullRequestWatch(link, undefined), source: "stack-dismissed" as const },
+              ];
+            });
           } else {
             if (!existing) return thread;
             pullRequests = links.map((link) =>
