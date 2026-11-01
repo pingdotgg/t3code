@@ -80,9 +80,9 @@ vi.mock("./modelScene.ts", async () => {
   };
 });
 
-import { Group, Quaternion } from "three";
+import { Box3, Group, Quaternion, Vector3 } from "three";
 import { createPhoneViewer } from "./phoneViewer.ts";
-import { type DeviceShapeProfile } from "./shapeProfile.ts";
+import { ANDROID_PHONE_SHAPE, type DeviceShapeProfile } from "./shapeProfile.ts";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -91,7 +91,7 @@ afterEach(() => {
   models.pending.length = 0;
 });
 
-function fixture(profile?: DeviceShapeProfile) {
+function fixture(profile?: DeviceShapeProfile, foldAngle?: number) {
   const pending = new Map<number, FrameRequestCallback>();
   let id = 0;
   let now = 0;
@@ -111,6 +111,7 @@ function fixture(profile?: DeviceShapeProfile) {
     onUnavailable,
     onFramingAspect,
     ...(profile ? { profile } : {}),
+    ...(foldAngle === undefined ? {} : { foldAngle }),
   });
   const draw = (time = now) => {
     now = time;
@@ -150,5 +151,34 @@ it("rejects incompatible accessories and releases an accessory that finishes aft
   await Promise.resolve();
   expect(asset.parent).toBeNull();
   expect(dispose).toHaveBeenCalledOnce();
+  viewer.dispose();
+});
+
+it("uses the fold model only for a closed hinge or an inner display frame", () => {
+  const { viewer, draw, source, state } = fixture(ANDROID_PHONE_SHAPE, 180);
+  const shown = () => {
+    draw();
+    const phone = state.frames.at(-1)!.phone!;
+    const size = new Box3().setFromObject(phone).getSize(new Vector3());
+    return {
+      fold: phone.getObjectByName("continuous-inner-screen") !== undefined,
+      aspect: size.x / size.y,
+    };
+  };
+  const showFrame = (width: number, height: number) => {
+    source.width = width;
+    source.height = height;
+    viewer.setScreen({ width, height, orientation: "portrait" });
+    viewer.frameUpdated();
+    return shown();
+  };
+  expect(shown()).toEqual({ fold: false, aspect: expect.closeTo(1206 / 2622, 1) });
+  expect(showFrame(2076, 2152)).toEqual({ fold: true, aspect: expect.closeTo(2076 / 2152, 1) });
+  expect(showFrame(1080, 2400)).toEqual({ fold: false, aspect: expect.closeTo(1080 / 2400, 1) });
+  viewer.setFoldAngle(0);
+  expect(shown().fold).toBe(true);
+  viewer.setFoldAngle(180);
+  expect(shown().fold).toBe(true);
+  expect(showFrame(2400, 1080).fold).toBe(false);
   viewer.dispose();
 });
