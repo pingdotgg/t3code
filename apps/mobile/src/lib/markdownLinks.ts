@@ -2,6 +2,7 @@ import { fileBasename } from "@t3tools/shared/path";
 import { fileLinkLabel } from "@t3tools/shared/fileLinks";
 import {
   inlineCodeFilePathCandidate,
+  isLinearAppLinkHref,
   normalizeMarkdownLinkDestination,
   parseMarkdownFileLink,
 } from "@t3tools/shared/markdownLinks";
@@ -281,7 +282,9 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
   return {
     kind: "link",
     href:
-      /^(?:mailto|tel):/i.test(normalized) || parseThreadLinkHref(normalized) !== null
+      /^(?:mailto|tel):/i.test(normalized) ||
+      parseThreadLinkHref(normalized) !== null ||
+      isLinearAppLinkHref(normalized)
         ? normalized
         : null,
   };

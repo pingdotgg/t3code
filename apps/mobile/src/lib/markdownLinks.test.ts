@@ -85,4 +85,15 @@ describe("resolveMarkdownLinkPresentation", () => {
       href: null,
     });
   });
+
+  it("hands Linear desktop app links to the OS", () => {
+    expect(resolveMarkdownLinkPresentation("linear://linear.app/acme/issue/ENG-123")).toEqual({
+      kind: "link",
+      href: "linear://linear.app/acme/issue/ENG-123",
+    });
+    expect(resolveMarkdownLinkPresentation("linear://example.com/acme")).toEqual({
+      kind: "link",
+      href: null,
+    });
+  });
 });

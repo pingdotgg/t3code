@@ -93,6 +93,21 @@ describe("ElectronShell", () => {
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
+  it.effect("opens Linear desktop app links only for linear.app pages", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const results = yield* Effect.all([
+        electronShell.openExternal("linear://linear.app/acme/issue/ENG-123"),
+        electronShell.openExternal("linear://example.com/acme/issue/ENG-123"),
+      ]);
+
+      assert.deepEqual(results, [true, false]);
+      assert.deepEqual(openExternalMock.mock.calls, [["linear://linear.app/acme/issue/ENG-123"]]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
   it.effect("does not open unsafe external URLs", () =>
     Effect.gen(function* () {
       const electronShell = yield* ElectronShell.ElectronShell;
