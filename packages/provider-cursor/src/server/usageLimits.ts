@@ -127,22 +127,36 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
     }
     if (!token) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     const client = yield* HttpClient.HttpClient;
-    const response = yield* client.execute(
-      HttpClientRequest.post(`${endpoint}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`).pipe(
-        HttpClientRequest.bearerToken(token),
-        HttpClientRequest.setHeaders({
-          "connect-protocol-version": "1",
-          "x-cursor-client-type": "cli",
-        }),
-        HttpClientRequest.bodyJsonUnsafe({}),
-      ),
-    );
-    const body = yield* HttpClientResponse.schemaBodyJson(CursorUsageResponse)(
-      yield* HttpClientResponse.filterStatusOk(response),
-    );
+    const body = yield* client
+      .execute(
+        HttpClientRequest.post(
+          `${endpoint}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`,
+        ).pipe(
+          HttpClientRequest.bearerToken(token),
+          HttpClientRequest.setHeaders({
+            "connect-protocol-version": "1",
+            "x-cursor-client-type": "cli",
+          }),
+          HttpClientRequest.bodyJsonUnsafe({}),
+        ),
+      )
+      .pipe(
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap(HttpClientResponse.schemaBodyJson(CursorUsageResponse)),
+        Effect.timeout("10 seconds"),
+      );
     return cursorUsageResponseToLimits(body, checkedAt);
   }).pipe(
-    Effect.timeout("10 seconds"),
+    Effect.catchTags({
+      CursorKeychainTimeoutError: () =>
+        Effect.succeed(
+          makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "probeFailed",
+            message: "Allow Keychain access on the Mac running T3 Code, then refresh limits.",
+          }),
+        ),
+    }),
     Effect.orElseSucceed(() =>
       makeUnavailableUsageLimits({
         checkedAt,
