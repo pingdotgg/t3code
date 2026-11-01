@@ -1,9 +1,19 @@
 import type * as NodeOS from "node:os";
+import * as NodeUtil from "node:util";
 
 import { describe, expect, it } from "@effect/vitest";
+import * as Console from "effect/Console";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as NetAddress from "effect/net/NetAddress";
+import { HttpServer } from "effect/http";
 
+import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as ServerConfig from "./config.ts";
 import {
   acceptsPrivateNetworkConnection,
+  announceHeadlessAccess,
   resolveHeadlessConnectionString,
 } from "./startupAccess.ts";
 
@@ -73,3 +83,48 @@ describe("acceptsPrivateNetworkConnection", () => {
     expect(accepts(undefined, "192.168.1.31")).toBe(false);
   });
 });
+
+it.effect.each([
+  { serviceManaged: false, issued: 1, printsToken: true },
+  { serviceManaged: true, issued: 0, printsToken: false },
+])(
+  "prints a startup pairing token only outside the background service: %o",
+  ({ serviceManaged, issued, printsToken }) =>
+    Effect.gen(function* () {
+      const printed: Array<string> = [];
+      let issuedCount = 0;
+      yield* announceHeadlessAccess({ serviceManaged }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(ServerConfig.ServerConfig)({
+              host: "127.0.0.1",
+              port: 3773,
+              privateNetworkOnly: false,
+            } as never),
+            Layer.mock(HttpServer.HttpServer)({
+              address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 3773),
+            }),
+            Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+              issueStartupPairingCredential: () =>
+                Effect.sync(() => {
+                  issuedCount += 1;
+                  return {
+                    id: "startup",
+                    credential: "startup-secret",
+                    expiresAt: DateTime.makeUnsafe(0),
+                  };
+                }),
+            }),
+          ),
+        ),
+        Effect.provideService(Console.Console, {
+          ...globalThis.console,
+          log: (...args: ReadonlyArray<unknown>) => {
+            printed.push(NodeUtil.format(...args));
+          },
+        }),
+      );
+      expect(issuedCount).toBe(issued);
+      expect(printed.join("\n").includes("startup-secret")).toBe(printsToken);
+    }),
+);
