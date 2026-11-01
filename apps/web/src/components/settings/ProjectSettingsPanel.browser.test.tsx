@@ -39,7 +39,7 @@ const state = vi.hoisted(() => ({
       (request: {
         environmentId: EnvironmentId;
         input: UpdateProjectInput;
-      }) => Promise<AsyncResult.Success<void>>
+      }) => Promise<AsyncResult.Success<void> | AsyncResult.Failure<void, Error>>
     >(),
   delete:
     vi.fn<
@@ -134,6 +134,7 @@ vi.mock(import("../files/projectFilesQueryState"), async (original) => ({
 
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { assetEnvironment } from "../../state/assets";
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 import { ProjectsSettings } from "./ProjectsSettings";
@@ -531,6 +532,40 @@ describe("project identity reset", () => {
         input: { projectId: remote!.id, faviconPath: null, projectIcon: null },
       },
     ]);
+  });
+
+  it("refreshes a saved checkout's icon when a later checkout update fails", async () => {
+    setup();
+    state.projects = state.projects.map((project) => ({ ...project, faviconPath: "logo.png" }));
+    let iconExists = false;
+    const iconUrl = Atom.make(() =>
+      AsyncResult.success({
+        expiresAt: 4_000_000_000_000,
+        relativeUrl: iconExists ? "/restored-icon.svg" : "/project-favicon-missing",
+      }),
+    );
+    using _mount = { [Symbol.dispose]: appAtomRegistry.mount(iconUrl) };
+    const createUrl = assetEnvironment.createUrl;
+    using _createUrl = vi
+      .spyOn(assetEnvironment, "createUrl")
+      .mockImplementation((target) =>
+        target.environmentId === primaryId ? iconUrl : createUrl(target),
+      );
+    state.update
+      .mockResolvedValueOnce(AsyncResult.success(undefined))
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Save failed"))));
+    await using screen = await mountPanel();
+    expect(appAtomRegistry.get(iconUrl).value.relativeUrl).toBe("/project-favicon-missing");
+
+    iconExists = true;
+    await userEvent.click(resetButton(screen, "project icon")!);
+
+    await vi.waitFor(() =>
+      expect(appAtomRegistry.get(iconUrl).value.relativeUrl).toBe("/restored-icon.svg"),
+    );
+    expect(state.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Failed to update project icon on remote" }),
+    );
   });
 });
 
