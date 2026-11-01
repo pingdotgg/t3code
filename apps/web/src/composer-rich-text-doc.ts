@@ -879,11 +879,12 @@ export interface RichRun {
   nodeName?: string;
 }
 
+// Shared by every caller that serializes the same doc, so it must not be mutated.
 export interface RichDocMap {
-  value: string;
-  runs: RichRun[];
-  docLength: number;
-  contextIds: string[];
+  readonly value: string;
+  readonly runs: ReadonlyArray<Readonly<RichRun>>;
+  readonly docLength: number;
+  readonly contextIds: ReadonlyArray<string>;
 }
 
 function readAtomSource(node: ProseMirrorNode): string {
@@ -1354,7 +1355,20 @@ export function serializeSelection(doc: ProseMirrorNode, from: number, to: numbe
   return serializeEditorDoc(doc.type.create(null, content)).value;
 }
 
+// Docs are immutable, and one keystroke serializes the same doc from the marker
+// plugin, onUpdate, and onSelectionUpdate.
+const serializedDocs = new WeakMap<ProseMirrorNode, RichDocMap>();
+
 export function serializeEditorDoc(doc: ProseMirrorNode): RichDocMap {
+  let map = serializedDocs.get(doc);
+  if (!map) {
+    map = serializeDoc(doc);
+    serializedDocs.set(doc, map);
+  }
+  return map;
+}
+
+function serializeDoc(doc: ProseMirrorNode): RichDocMap {
   const acc: RichAccumulator = { runs: [], value: "", flat: 0, md: 0 };
   const blocks: ProseMirrorNode[] = [];
   doc.content.forEach((node) => {
