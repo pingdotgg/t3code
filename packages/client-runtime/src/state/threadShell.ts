@@ -590,14 +590,32 @@ export function createEnvironmentThreadShellAtoms(input: {
   }).pipe(Atom.withLabel("environment-thread-shell-list"));
 
   // Lists that arrange threads read this, so a running thread's streaming
-  // ticks reach only what reads its live shell.
+  // ticks reach only what reads its live shell. It holds shells itself rather
+  // than reading quietThreadShellAtom per thread, so a shell update rebuilds
+  // the list once instead of once per changed thread.
   let previousQuietThreadShells: ReadonlyArray<EnvironmentThreadShell> = [];
+  let previousQuietShellsById = new Map<EnvironmentId, Map<ThreadId, EnvironmentThreadShell>>();
   const quietThreadShellsAtom = Atom.make((get) => {
     const next: EnvironmentThreadShell[] = [];
-    for (const ref of get(threadRefsAtom)) {
-      const shell = get(quietThreadShellAtomFamily(threadKey(ref)));
-      if (shell !== null) next.push(shell);
+    const byId = new Map<EnvironmentId, Map<ThreadId, EnvironmentThreadShell>>();
+    for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
+      const subagentRequests = get(pendingSubagentRequestsAtom(environmentId));
+      const previousShells = previousQuietShellsById.get(environmentId);
+      const shells = new Map<ThreadId, EnvironmentThreadShell>();
+      for (const thread of get(environmentThreadsAtom(environmentId))) {
+        const current = scopedThread(environmentId, thread, subagentRequests);
+        const previous = previousShells?.get(thread.id);
+        const shell =
+          previous !== undefined &&
+          (previous === current || sameApartFromStreaming(previous, current))
+            ? previous
+            : current;
+        shells.set(thread.id, shell);
+        next.push(shell);
+      }
+      byId.set(environmentId, shells);
     }
+    previousQuietShellsById = byId;
     if (arrayElementsEqual(previousQuietThreadShells, next)) return previousQuietThreadShells;
     previousQuietThreadShells = next;
     return next;
