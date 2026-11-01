@@ -262,7 +262,9 @@ export function makeApplyDesktopShellEnvironmentSnapshot(
           catch: (cause) => new DesktopShellCertificatesUpdateFailed({ cause }),
         });
       }).pipe(
-        Effect.catch(() => Effect.logWarning("Failed to update desktop shell TLS certificates.")),
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to update desktop shell TLS certificates.", cause),
+        ),
       );
     }
     if (message.discovered) delete environment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING;
