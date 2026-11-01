@@ -16,6 +16,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as TestClock from "effect/testing/TestClock";
 import * as HostProcess from "./HostProcess.ts";
 
 import * as RelayClient from "./relayClient.ts";
@@ -461,6 +462,47 @@ describe("RelayClient", () => {
           ),
         ),
       ),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "installs when the downloaded binary's first launch is held by an antivirus scan",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-cloudflared-test-",
+        });
+        const scanning = yield* Deferred.make<void>();
+        const manager = yield* RelayClient.makeCloudflaredRelayClient({
+          baseDir,
+          releaseAsset: testReleaseAsset,
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Deferred.succeed(scanning, undefined).pipe(
+                Effect.andThen(Effect.sleep("25 seconds")),
+                Effect.as(
+                  makeHandle(
+                    0,
+                    `cloudflared version ${RelayClient.CLOUDFLARED_VERSION} (built 2026-01-01-00:00 UTC)\n`,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        const installing = yield* manager.install.pipe(Effect.forkChild);
+        yield* Deferred.await(scanning);
+        yield* TestClock.adjust("25 seconds");
+
+        expect(yield* Fiber.join(installing)).toMatchObject({
+          status: "available",
+          source: "managed",
+          version: RelayClient.CLOUDFLARED_VERSION,
+        });
+      }).pipe(Effect.scoped, Effect.provide(layerInstallRuntime("linux"))),
   );
 
   it.effect("rejects downloads whose checksum does not match the pinned manifest", () =>
