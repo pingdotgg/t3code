@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { sanitizeAcpStderrExcerpt } from "./stderr.ts";
+import { sanitizeStderrExcerpt } from "./stderrExcerpt.ts";
 
-describe("AcpStderr", () => {
+describe("stderrExcerpt", () => {
   it("redacts home paths, pairing URLs, and tokens from stderr excerpts", () => {
-    const excerpt = sanitizeAcpStderrExcerpt(
+    const excerpt = sanitizeStderrExcerpt(
       [
         "Invalid project config at /Users/ada/.cursor/cli.json",
         "Authorization: Bearer secret-token-value",
@@ -28,7 +28,7 @@ describe("AcpStderr", () => {
   });
 
   it("redacts hyphenated OpenAI project keys and header credentials", () => {
-    const excerpt = sanitizeAcpStderrExcerpt(
+    const excerpt = sanitizeStderrExcerpt(
       [
         "openai=sk-proj-abcdefghijklmnopqrstuvwxyz012345",
         "svc=sk-svcacct-abcdefghijklmnopqrstuvwxyz012345",
@@ -52,7 +52,7 @@ describe("AcpStderr", () => {
   });
 
   it("redacts the whole key when its body contains underscores", () => {
-    const excerpt = sanitizeAcpStderrExcerpt(
+    const excerpt = sanitizeStderrExcerpt(
       [
         "anthropic=sk-ant-api03-AbCdEf_GhIjKlMnOpQr-StUvWx_yz0123456789-AA",
         "openai=sk-proj-AbCdEfGhIj_KlMnOpQrStUv-WxYz_0123456789",
@@ -62,5 +62,27 @@ describe("AcpStderr", () => {
     );
 
     expect(excerpt).toBe("anthropic=[redacted]\nopenai=[redacted]");
+  });
+
+  it("redacts values assigned to secret-named variables", () => {
+    const excerpt = sanitizeStderrExcerpt(
+      [
+        "API_KEY=super-secret",
+        "github_token: gh-value",
+        '{"dbPassword": "hunter2"}',
+        "Error: config missing at line 3",
+      ].join("\n"),
+      "/Users/ada",
+      {},
+    );
+
+    expect(excerpt).toBe(
+      [
+        "API_KEY=[redacted]",
+        "github_token: [redacted]",
+        '{"dbPassword": [redacted]',
+        "Error: config missing at line 3",
+      ].join("\n"),
+    );
   });
 });

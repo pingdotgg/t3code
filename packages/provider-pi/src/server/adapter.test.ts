@@ -4406,10 +4406,8 @@ describe("PiRpc early process exit", () => {
       const error = yield* Queue.take(connection.events).pipe(Effect.flip);
       assert.equal(error._tag, "PiRpcError");
       assert.equal(error.operation, "read");
-      assert.equal(error.detail, "pi process exited with code 1");
-      assert.isFalse((error.detail ?? "").includes("API_KEY"));
+      assert.isTrue((error.detail ?? "").startsWith("pi process exited with code 1"));
       assert.isFalse((error.detail ?? "").includes("super-secret"));
-      assert.isFalse(error.message.includes("API_KEY"));
       assert.isFalse(error.message.includes("super-secret"));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

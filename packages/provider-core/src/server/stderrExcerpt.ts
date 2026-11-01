@@ -1,4 +1,4 @@
-const ACP_STDERR_TAIL_MAX_CHARS = 4_096;
+const STDERR_TAIL_MAX_CHARS = 4_096;
 
 const PAIRING_URL_PATTERN = /https?:\/\/[^\s]*\/pair#[^\s]*/gi;
 const SIGN_IN_URL_PATTERN = /https?:\/\/accounts\.google\.com[^\s]*/gi;
@@ -7,13 +7,16 @@ const BASIC_AUTH_PATTERN = /\bAuthorization:\s*Basic\s+\S+/gi;
 const API_KEY_HEADER_PATTERN = /\bx-api-key:\s*\S+/gi;
 const SECRET_TOKEN_PATTERN =
   /\b(?:sk-[A-Za-z0-9][A-Za-z0-9_-]{7,}|ghp_[A-Za-z0-9]+|xox[a-zA-Z]-[A-Za-z0-9-]+)\b/g;
+// The name class excludes every separator character, so a failed match never backtracks into it.
+const ASSIGNMENT_PATTERN = /\b([A-Za-z0-9_]+)(["']?[ \t]*[=:][ \t]*)\S+/g;
+const SECRET_NAME_PATTERN = /KEY|TOKEN|SECRET|PASSWORD/i;
 
-export function appendAcpStderrTail(current: string, chunk: string): string {
+export function appendStderrTail(current: string, chunk: string): string {
   const next = `${current}${chunk}`;
-  return next.length <= ACP_STDERR_TAIL_MAX_CHARS ? next : next.slice(-ACP_STDERR_TAIL_MAX_CHARS);
+  return next.length <= STDERR_TAIL_MAX_CHARS ? next : next.slice(-STDERR_TAIL_MAX_CHARS);
 }
 
-export function sanitizeAcpStderrExcerpt(
+export function sanitizeStderrExcerpt(
   text: string,
   homeDirectory: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -31,6 +34,9 @@ export function sanitizeAcpStderrExcerpt(
     .replace(BEARER_TOKEN_PATTERN, "Bearer [redacted]")
     .replace(BASIC_AUTH_PATTERN, "Authorization: Basic [redacted]")
     .replace(API_KEY_HEADER_PATTERN, "x-api-key: [redacted]")
-    .replace(SECRET_TOKEN_PATTERN, "[redacted]");
+    .replace(SECRET_TOKEN_PATTERN, "[redacted]")
+    .replace(ASSIGNMENT_PATTERN, (match, name: string, separator: string) =>
+      SECRET_NAME_PATTERN.test(name) ? `${name}${separator}[redacted]` : match,
+    );
   return result.trim();
 }

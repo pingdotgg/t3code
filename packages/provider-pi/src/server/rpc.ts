@@ -19,6 +19,10 @@ import {
 } from "@t3tools/shared/toolOutput";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
+import {
+  appendStderrTail,
+  sanitizeStderrExcerpt,
+} from "@t3tools/provider-core/server/stderrExcerpt";
 
 export class PiRpcError extends Schema.TaggedError<PiRpcError>()("PiRpcError", {
   operation: Schema.String,
@@ -151,11 +155,12 @@ function summarizePiError(error: unknown): string {
 }
 
 // Pi 0.84+ may exit 1 during import without any protocol output.
-function describePiStdoutClosure(exitCode: number | undefined): string {
-  if (exitCode === undefined || !Number.isFinite(exitCode)) {
-    return "pi process closed stdout";
-  }
-  return `pi process exited with code ${exitCode}`;
+function describePiStdoutClosure(exitCode: number | undefined, stderrExcerpt: string): string {
+  const closure =
+    exitCode === undefined || !Number.isFinite(exitCode)
+      ? "pi process closed stdout"
+      : `pi process exited with code ${exitCode}`;
+  return stderrExcerpt.length === 0 ? closure : `${closure}: ${stderrExcerpt}`;
 }
 
 function parsePiRecord(line: string): PiRpcRecord | undefined {
@@ -186,6 +191,7 @@ const terminatePiProcess = Effect.fn("PiRpc.terminatePiProcess")(function* (
 export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSpawnOptions) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const platform = yield* HostProcess.Platform;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
   const scope = yield* Effect.scope;
 
   const spawnCommand = yield* resolveSpawnCommand(options.command, [...options.args], {
@@ -250,6 +256,8 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   const outgoing = yield* Queue.unbounded<Uint8Array, PiRpcError>();
   const transportDown = yield* Deferred.make<never, PiRpcError>();
   const exitDeferred = yield* Deferred.make<number, PiRpcError>();
+  const stderrDrained = yield* Deferred.make<void>();
+  let stderrTail = "";
   let nextRequestId = 0;
 
   const failTransport = Effect.fn("PiRpc.failTransport")(function* (error: PiRpcError) {
@@ -337,22 +345,31 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
         // Claim stdout-close diagnosis before waiting so broken stdin cannot replace the exit error.
         diagnosingStdoutClose = true;
         const polled = yield* Deferred.poll(exitDeferred);
-        const maybeExitCode = Option.isSome(polled)
-          ? yield* polled.value.pipe(
-              Effect.asSome,
-              Effect.orElseSucceed(() => Option.none<number>()),
-            )
-          : yield* Deferred.await(exitDeferred).pipe(
-              Effect.timeoutOption(Duration.millis(250)),
-              // Stdout-close waits need wall time; TestClock would strand Stop-with-restart without an exit.
-              Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
-              Effect.orElseSucceed(() => Option.none<number>()),
-            );
+        const [maybeExitCode] = yield* Effect.all(
+          [
+            Option.isSome(polled)
+              ? polled.value.pipe(
+                  Effect.asSome,
+                  Effect.orElseSucceed(() => Option.none<number>()),
+                )
+              : Deferred.await(exitDeferred).pipe(
+                  Effect.timeoutOption(Duration.millis(250)),
+                  Effect.orElseSucceed(() => Option.none<number>()),
+                ),
+            // Stderr can still hold the crash trace when stdout closes first.
+            Deferred.await(stderrDrained).pipe(Effect.timeoutOption(Duration.millis(250))),
+          ],
+          { concurrency: "unbounded" },
+        ).pipe(
+          // Stdout-close waits need wall time; TestClock would strand Stop-with-restart without an exit.
+          Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+        );
         return yield* failTransport(
           new PiRpcError({
             operation: "read",
             detail: describePiStdoutClosure(
               Option.isSome(maybeExitCode) ? maybeExitCode.value : undefined,
+              sanitizeStderrExcerpt(stderrTail, homeDirectory, options.env),
             ),
           }),
         );
@@ -363,12 +380,13 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
 
   yield* child.stderr.pipe(
     Stream.decodeText(),
+    // Keep only a bounded tail; it is sanitized before it reaches an error detail.
     Stream.runForEach((chunk) =>
-      chunk.trim().length === 0
-        ? Effect.void
-        : // Log stderr length only; unbounded text may contain credentials or prompts.
-          Effect.logDebug("pi stderr", { stderrLength: chunk.length }),
+      Effect.sync(() => {
+        stderrTail = appendStderrTail(stderrTail, chunk);
+      }),
     ),
+    Effect.ensuring(Deferred.succeed(stderrDrained, undefined)),
     Effect.ignore,
     Effect.forkIn(scope),
   );
