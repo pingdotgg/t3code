@@ -126,6 +126,8 @@ describe("isLocalLoopbackHost", () => {
       "::ffff:127..0.1",
       "::ffff:0x7f.0.0.1",
       "[::ffff:7f00:1",
+      "[[::ffff:7f00:1]]",
+      "[::ffff:7f00:1.]",
     ]) {
       expect(isLocalLoopbackHost(host), host).toBe(false);
     }
