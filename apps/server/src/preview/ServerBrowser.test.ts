@@ -503,7 +503,9 @@ it.live("preview_open reports its navigation timeout instead of the request budg
         _tag: "PreviewAutomationTimeoutError",
         timeoutMs: 15_000,
       });
-      expect(error.message).toBe("Preview automation open timed out after 15000ms.");
+      expect(error.message).toBe(
+        "Preview automation open exceeded the browser's operation deadline. The browser responded; check preview_status.tabs for the opened or reused tab and use its tabId before retrying.",
+      );
     }),
   ).pipe(Effect.provide(layer)),
 );

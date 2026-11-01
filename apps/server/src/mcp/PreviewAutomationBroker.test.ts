@@ -5,6 +5,7 @@ import {
   PreviewAutomationClientDisconnectedError,
   PreviewAutomationMalformedResponseError,
   PreviewAutomationNoAvailableHostError,
+  PreviewAutomationTimeoutError,
   PreviewTabId,
   ProviderInstanceId,
   ThreadId,
@@ -1042,6 +1043,54 @@ it.effect("keeps each thread's current tab when threads share a provider session
         ["thread-2", "tab-thread-2"],
       ]);
       expect(routed[0]!.agentSessionId).not.toBe(routed[1]!.agentSessionId);
+    }),
+  ),
+);
+
+it.effect("reports a browser operation timeout without claiming the broker deadline elapsed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const connected = yield* Deferred.make<void>();
+      const requests = requestsFrom(yield* broker.connect(makeHost()), () => {
+        Deferred.doneUnsafe(connected, Effect.void);
+      });
+      const connections: string[] = [];
+      yield* Stream.runForEach(requests, (request) => {
+        connections.push(request.connectionId);
+        return broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ...(request.operation === "snapshot"
+            ? {
+                ok: false,
+                error: {
+                  _tag: "PreviewAutomationTimeoutError",
+                  message: "The page was too busy to capture a snapshot in time.",
+                },
+              }
+            : { ok: true, result: "responsive" }),
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+
+      const tabId = PreviewTabId.make("tab-1");
+      const error = yield* broker
+        .invoke<void>({ scope, operation: "snapshot", input: {}, tabId })
+        .pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(PreviewAutomationTimeoutError);
+      expect(error.message).toContain("browser's operation deadline");
+      expect(error.message).not.toContain("15000ms");
+      expect(error.message).toContain("preview_status");
+      expect(yield* broker.invoke({ scope, operation: "status", input: {}, tabId })).toBe(
+        "responsive",
+      );
+      expect(yield* broker.invoke({ scope, operation: "evaluate", input: {}, tabId })).toBe(
+        "responsive",
+      );
+      expect(new Set(connections).size).toBe(1);
     }),
   ),
 );
