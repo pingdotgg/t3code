@@ -15,7 +15,7 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { PlusIcon } from "lucide-react";
-import { useId, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
 import { mintPairingCodeOn } from "~/state/peerPairingCode";
@@ -59,6 +59,11 @@ export function LinkedEnvironmentsSettings({
   readonly isSearchTarget: boolean;
 }) {
   const links = useEnvironmentQuery(peerLinkEnvironment.list({ environmentId, input: {} }));
+  const reloadLoadedLinks = useEffectEvent(() => {
+    if (links.data !== null) links.refresh();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the CLI, agents and other devices link machines too, and an open composer keeps the shared list loaded past its stale time, so opening the panel asks again
+  useEffect(() => reloadLoadedLinks(), []);
   const canLink = useAtomValue(peerLinkEnvironment.link.permissionAtom(environmentId));
   const search = searchableSetting("linked-environments");
   return (

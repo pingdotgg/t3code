@@ -23,6 +23,14 @@ export function LinkedEnvironmentsSection(props: {
   const links = useEnvironmentQuery(
     supported ? peerLinkEnvironment.list({ environmentId: props.environmentId, input: {} }) : null,
   );
+  // The CLI, agents and other devices link machines too, and an open composer keeps the
+  // shared list loaded past its stale time, so returning to this screen asks again.
+  const refreshLinks = links.refresh;
+  useFocusEffect(
+    useCallback(() => {
+      refreshLinks();
+    }, [refreshLinks]),
+  );
   const [nowMs, setNowMs] = useState(Date.now);
   const hasLinks = supported && (links.data?.links.length ?? 0) > 0;
   useFocusEffect(
