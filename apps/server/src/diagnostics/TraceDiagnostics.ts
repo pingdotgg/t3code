@@ -18,17 +18,6 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-interface TraceRecordLike {
-  readonly name?: unknown;
-  readonly traceId?: unknown;
-  readonly spanId?: unknown;
-  readonly startTimeUnixNano?: unknown;
-  readonly endTimeUnixNano?: unknown;
-  readonly durationMs?: unknown;
-  readonly exit?: unknown;
-  readonly events?: unknown;
-}
-
 interface TraceEventLike {
   readonly name?: unknown;
   readonly timeUnixNano?: unknown;
@@ -85,7 +74,7 @@ export function toRotatedTracePaths(
   return [...backups, traceFilePath];
 }
 
-function isRecordObject(value: unknown): value is TraceRecordLike {
+function isRecordObject(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null;
 }
 
@@ -253,8 +242,13 @@ export function makeTraceDiagnosticsAggregator(
       lastSpanAt === null || DateTime.isGreaterThan(endedAt, lastSpanAt) ? endedAt : lastSpanAt;
 
     const exitTag = readExitTag(parsed.exit);
-    const isFailure = exitTag === "Failure";
-    const isInterrupted = exitTag === "Interrupted";
+    const status = isRecordObject(parsed.status) ? parsed.status : {};
+    const attributes = isRecordObject(parsed.attributes) ? parsed.attributes : {};
+    const isFailure = exitTag === "Failure" || status.code === "2";
+    const isInterrupted =
+      exitTag === "Interrupted" ||
+      attributes["effect.fiber.interrupted"] === true ||
+      status.message === "Interrupted";
     if (isFailure) failureCount += 1;
     if (isInterrupted) interruptionCount += 1;
 
@@ -277,7 +271,10 @@ export function makeTraceDiagnosticsAggregator(
     insertBounded(slowestSpans, spanItem, TOP_LIMIT, slowestFirst);
 
     if (isFailure) {
-      const cause = readExitCause(parsed.exit);
+      const cause =
+        exitTag === "Failure"
+          ? readExitCause(parsed.exit)
+          : (toStringValue(status.message)?.trim() ?? "Failure");
       insertBounded(latestFailures, { ...spanItem, cause }, RECENT_LIMIT, latestEndedFirst);
 
       const failureKey = `${name}\0${cause}`;
@@ -376,9 +373,7 @@ export function makeTraceDiagnosticsAggregator(
   return { addLine, finish };
 }
 
-/**
- * Succeeds with false when the file does not exist.
- */
+/** Succeeds with false if the file is absent. */
 export function streamTraceFileLines(
   fileSystem: FileSystem.FileSystem,
   path: string,
@@ -404,7 +399,7 @@ export function streamTraceFileLines(
   );
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
 
