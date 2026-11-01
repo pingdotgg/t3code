@@ -1155,6 +1155,15 @@ export const make = Effect.gen(function* () {
         prLookupEpochByCwd.set(cacheKey, prLookupEpoch(cacheKey) + 1);
       }),
     );
+  // Separate from the PR lookup epoch because a checkout keeps PR lookups but changes git state.
+  const prLookupGitStateEpochByCwd = new Map<string, number>();
+  const prLookupGitStateEpoch = (cwd: string) => prLookupGitStateEpochByCwd.get(cwd) ?? 0;
+  const bumpPrLookupGitStateEpoch = (cwd: string) =>
+    normalizeStatusCacheKey(cwd).pipe(
+      Effect.map((cacheKey) => {
+        prLookupGitStateEpochByCwd.set(cacheKey, prLookupGitStateEpoch(cacheKey) + 1);
+      }),
+    );
   const prLookupCacheKey = (
     cwd: string,
     details: {
@@ -2407,10 +2416,13 @@ export const make = Effect.gen(function* () {
     }
     // invalidateStatus bumps the epoch. A read that started before a T3 git
     // action, or before a newer read finished, must not replace their state.
-    const epoch = prLookupEpoch(cwd);
+    const epoch = prLookupGitStateEpoch(cwd);
     const value = yield* read;
     const latest = prLookupGitStateByKey.get(entryKey);
-    if (prLookupEpoch(cwd) !== epoch || (latest !== undefined && latest.readAtMs > readAtMs)) {
+    if (
+      prLookupGitStateEpoch(cwd) !== epoch ||
+      (latest !== undefined && latest.readAtMs > readAtMs)
+    ) {
       return value;
     }
     prLookupGitStateByKey.delete(entryKey);
@@ -2673,6 +2685,7 @@ export const make = Effect.gen(function* () {
       yield* invalidateLocalStatusResultCache(cwd);
       yield* invalidateRemoteStatusResultCache(cwd);
       if (!options?.keepPullRequestLookups) yield* bumpPrLookupEpoch(cwd);
+      yield* bumpPrLookupGitStateEpoch(cwd);
       yield* forgetPrLookupGitState(cwd);
     },
   );
