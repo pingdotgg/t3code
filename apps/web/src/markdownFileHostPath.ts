@@ -56,10 +56,18 @@ export function buildWslMarkdownFileUrl(input: {
   line: number | undefined;
   column: number | undefined;
 }) {
+  const path = input.cwd ? resolvePathLinkTarget(input.path, input.cwd) : input.path;
+  const segments: string[] = [];
+  if (path.startsWith("/") && !path.includes("\\")) {
+    for (const segment of path.split("/")) {
+      if (segment === "..") segments.pop();
+      else if (segment !== "" && segment !== ".") segments.push(segment);
+    }
+  }
   return buildWslOpenUrl({
     editor: input.editor,
     distro: input.distro,
-    absolutePath: input.cwd ? resolvePathLinkTarget(input.path, input.cwd) : input.path,
+    absolutePath: path.startsWith("/") && !path.includes("\\") ? `/${segments.join("/")}` : path,
     isFile: true,
     ...(input.line !== undefined ? { line: input.line } : {}),
     ...(input.column !== undefined ? { column: input.column } : {}),
