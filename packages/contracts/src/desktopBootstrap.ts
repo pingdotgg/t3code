@@ -1,9 +1,16 @@
 import * as Schema from "effect/Schema";
 
-import { PortSchema, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EnvironmentId, PortSchema, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 // A supervisor must not restart a server refused by the state-directory owner.
 export const SERVER_EXIT_CODE_STATE_DIR_OWNED = 78;
+
+/** Marks a desktop app's secondary backend, such as WSL, which updates only with that app. */
+export const DesktopHost = Schema.Struct({
+  // Best effort: absent when the primary's id could not be read before this backend started.
+  environmentId: Schema.optionalKey(EnvironmentId),
+});
+export type DesktopHost = typeof DesktopHost.Type;
 
 export const DesktopBackendBootstrap = Schema.Struct({
   mode: Schema.Literal("desktop"),
@@ -27,6 +34,7 @@ export const DesktopBackendBootstrap = Schema.Struct({
   desktopBrowserFd: Schema.optionalKey(PositiveInt),
   desktopBrowserControlFd: Schema.optionalKey(PositiveInt),
   resourceMonitorPath: Schema.optionalKey(TrimmedNonEmptyString),
+  desktopHost: Schema.optionalKey(DesktopHost),
 });
 
 export type DesktopBackendBootstrap = typeof DesktopBackendBootstrap.Type;

@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { EnvironmentId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
 import * as Clock from "effect/Clock";
@@ -328,6 +329,12 @@ describe("DesktopBackendConfiguration", () => {
       const observedDistros: Array<string | null> = [];
       const config = yield* Effect.gen(function* () {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(environment.stateDir, "environment-id"),
+          "windows-primary\n",
+        );
         return yield* configuration.resolveWsl({ port: 5000, distro: null });
       }).pipe(
         Effect.provide(
@@ -368,6 +375,9 @@ describe("DesktopBackendConfiguration", () => {
       );
 
       assert.equal(config.runningDistro, "Ubuntu");
+      assert.deepEqual(config.bootstrap.desktopHost, {
+        environmentId: EnvironmentId.make("windows-primary"),
+      });
       assert.deepEqual(config.args.slice(0, 2), ["-d", "Ubuntu"]);
       assert.deepEqual(observedDistros, ["Ubuntu", "Ubuntu", "Ubuntu"]);
       assert.isTrue(Option.isNone(config.preflightFailure));
@@ -761,6 +771,7 @@ describe("DesktopBackendConfiguration", () => {
           assert.equal(config.bootstrap.host, "0.0.0.0");
           assert.equal(config.bootstrap.tailscaleServeEnabled, false);
           assert.notProperty(config.bootstrap, "desktopTelemetryFd");
+          assert.deepEqual(config.bootstrap.desktopHost, {});
           assert.notProperty(config.bootstrap, "resourceMonitorPath");
           assert.equal(config.httpBaseUrl.href, "http://172.27.0.99:5050/");
           assert.equal(config.env.OPENAI_API_KEY, "openai-key");

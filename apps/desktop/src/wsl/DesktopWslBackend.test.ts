@@ -88,11 +88,19 @@ describe("DesktopWslBackend", () => {
     let registeredSpec: DesktopBackendPool.BackendInstanceSpec | undefined;
     let registeredWsl: DesktopBackendPool.DesktopBackendInstance | undefined;
     let startCount = 0;
-    const primary = makeStubInstance({
-      id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
-      label: "Windows",
-      snapshot: primarySnapshot,
-    });
+    let primaryReadyChecked = false;
+    const primary = {
+      ...makeStubInstance({
+        id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
+        label: "Windows",
+        snapshot: primarySnapshot,
+      }),
+      waitForReady: () =>
+        Effect.sync(() => {
+          primaryReadyChecked = true;
+          return true;
+        }),
+    };
     const layerPool = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
       get: (id) =>
         Effect.succeed(
@@ -104,6 +112,7 @@ describe("DesktopWslBackend", () => {
       primary: Effect.succeed(primary),
       register: (spec) =>
         Effect.sync(() => {
+          assert.isTrue(primaryReadyChecked);
           registeredSpec = spec;
           registeredWsl = makeStubInstance({
             id: spec.id,

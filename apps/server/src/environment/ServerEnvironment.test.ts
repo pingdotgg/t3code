@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
+import { EnvironmentId, ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -119,6 +119,32 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
           worktreesDirectory: true,
           threadAutoSettlementScope: true,
         });
+      }
+    }),
+  );
+  it.effect("publishes the desktop host environment only for a hosted backend", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped();
+      const config = yield* makeServerConfig(baseDir);
+      yield* fs.makeDirectory(config.stateDir, { recursive: true });
+      for (const desktopHost of [
+        { environmentId: EnvironmentId.make("windows-primary") },
+        {},
+        undefined,
+      ]) {
+        const descriptor = yield* Effect.gen(function* () {
+          const environment = yield* ServerEnvironment.ServerEnvironment;
+          return yield* environment.getDescriptor;
+        }).pipe(
+          Effect.provide(
+            ServerEnvironment.layer.pipe(
+              Layer.provide(layerEmptySecretStore),
+              Layer.provide(ServerConfig.layer({ ...config, mode: "desktop", desktopHost })),
+            ),
+          ),
+        );
+        expect(descriptor.desktopHost).toEqual(desktopHost);
       }
     }),
   );
