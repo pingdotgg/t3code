@@ -53,6 +53,12 @@ describe("semver helpers", () => {
     expect(compareSemverVersions("1.2.3-alpha.1+build-2", "1.2.3-alpha.1+build-3")).toBe(0);
   });
 
+  it("compares nonnumeric prerelease identifiers in ASCII order", () => {
+    expect(compareSemverVersions("1.2.3-Beta", "1.2.3-alpha")).toBeLessThan(0);
+    expect(compareSemverVersions("1.2.3-alpha-Z", "1.2.3-alpha-a")).toBeLessThan(0);
+    expect(compareSemverVersions("1.2.3-a-b", "1.2.3-aB")).toBeLessThan(0);
+  });
+
   it("supports comparison comparators", () => {
     expect(satisfiesSemverRange("24.9.0", ">=24.0 <24.10")).toBe(true);
     expect(satisfiesSemverRange("24.10.0", ">=24.0 <24.10")).toBe(false);
