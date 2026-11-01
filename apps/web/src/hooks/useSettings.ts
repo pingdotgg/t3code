@@ -258,9 +258,7 @@ export async function persistClientSettingsUpdate(
   persist: (settings: ClientSettings) => Promise<void> = defaultClientSettingsPersistence,
 ): Promise<ClientSettings> {
   return enqueueClientSettingsPersistence(async () => {
-    if (clientSettingsHydrationStatus !== "ready" || clientSettingsStale) {
-      await ensureFreshClientSettings();
-    }
+    await ensureFreshClientSettings();
     for (;;) {
       const current = getClientSettingsSnapshot();
       const next = update(current);
