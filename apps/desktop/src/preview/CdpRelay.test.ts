@@ -209,7 +209,7 @@ describe("CDP relay downloads", () => {
   it("keeps denial scoped to the preview and restores Electron's save handling when allowed", async () => {
     const send = vi.fn(async () => ({}));
     const directories: Array<string | null> = [];
-    const relay = createCdpRelayConnection(
+    const relay = makeRelay(
       makeTarget(send, (directory) => directories.push(directory)),
       () => {},
     );
@@ -232,7 +232,7 @@ describe("CDP relay downloads", () => {
 
   it("does not publish download events when the connection has disabled them", async () => {
     const written: Array<Record<string, unknown>> = [];
-    const relay = createCdpRelayConnection(makeTarget(vi.fn(async () => ({}))), (raw) =>
+    const relay = makeRelay(makeTarget(vi.fn(async () => ({}))), (raw) =>
       written.push(JSON.parse(raw)),
     );
     relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
@@ -258,9 +258,7 @@ describe("CDP relay downloads", () => {
         .mockResolvedValueOnce({})
         .mockRejectedValueOnce(new Error("Page command rejected"));
       const written: Array<Record<string, unknown>> = [];
-      const relay = createCdpRelayConnection(makeTarget(send), (raw) =>
-        written.push(JSON.parse(raw)),
-      );
+      const relay = makeRelay(makeTarget(send), (raw) => written.push(JSON.parse(raw)));
       relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
       for (const [id, eventsEnabled] of [enabled, !enabled].entries()) {
         relay.receive(
