@@ -288,8 +288,13 @@ export const make = Effect.gen(function* () {
       dispatcher = new undici.Agent({
         connect: (_options, callback) => {
           const socket = NodeNet.connect(path);
-          socket.once("connect", () => callback(null, socket));
-          socket.once("error", (error) => callback(error, null));
+          const failed = (error: Error) => callback(error, null);
+          // Once connected, undici handles the socket's errors itself.
+          socket.once("error", failed);
+          socket.once("connect", () => {
+            socket.off("error", failed);
+            callback(null, socket);
+          });
         },
       });
       unixSocketDispatchers.set(path, dispatcher);
