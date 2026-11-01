@@ -31,6 +31,12 @@ describe("microphoneOrder", () => {
       "kind:bluetooth",
       "kind:carPlay",
     ]);
+    expect(keys(microphoneOrder([{ kind: "carPlay" }, ...saved], "android"))).toEqual([
+      "kind:wired",
+      "kind:builtIn",
+      "airpods",
+      "kind:bluetooth",
+    ]);
   });
 });
 
@@ -44,6 +50,11 @@ describe("rememberMicrophones", () => {
       "kind:builtIn",
       "kind:carPlay",
     ]);
+    const headset = { uid: "android:7:headset", name: "Headset", type: "BluetoothSCO" };
+    const leHeadset = { uid: "android:26:buds", name: "Buds", type: "BluetoothLE" };
+    expect(
+      keys(rememberMicrophones(microphoneOrder([], "android"), [headset, leHeadset, usb])),
+    ).toEqual(["usb", "kind:wired", headset.uid, leHeadset.uid, "kind:bluetooth", "kind:builtIn"]);
   });
 
   it("refreshes renamed devices and returns the same order when nothing changed", () => {
@@ -75,5 +86,9 @@ describe("preferredMicrophoneInput", () => {
     expect(preferredMicrophoneInput([airPods, usb], order)).toBe(usb);
     expect(preferredMicrophoneInput([airPods, carPlay], order)).toBe(airPods);
     expect(preferredMicrophoneInput([airPods, iPhone], order)).toBe(iPhone);
+    const headset = { uid: "android:7:headset", name: "Headset", type: "BluetoothSCO" };
+    expect(preferredMicrophoneInput([headset, iPhone], microphoneOrder([], "android"))).toBe(
+      headset,
+    );
   });
 });
