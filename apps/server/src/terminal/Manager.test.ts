@@ -735,6 +735,54 @@ it.layer(
     }),
   );
 
+  it.effect("clear preserves queued process exit and discards pending scrollback", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, getEvents, logsDir } = yield* createManager();
+      yield* manager.open(openInput());
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined));
+      yield* manager.subscribe((event) =>
+        event.type === "output" && event.data === "blocked"
+          ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))
+          : Effect.void,
+      );
+      const process = ptyAdapter.processes[0]!;
+      process.emitData("blocked");
+      yield* Deferred.await(entered);
+      process.emitData("discarded");
+      process.emitExit({ exitCode: 7, signal: 0 });
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      expect(yield* readFileString(yield* historyLogPath(logsDir))).toBe("");
+      const drained = yield* Deferred.make<void>();
+      yield* manager.subscribe((event) =>
+        event.type === "exited" || (event.type === "output" && event.data === "barrier")
+          ? Deferred.succeed(drained, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      yield* Deferred.succeed(release, undefined);
+      // Output behind the exit also completes this barrier when the exit is incorrectly dropped.
+      process.emitData("barrier");
+      yield* Deferred.await(drained);
+      const events = yield* getEvents;
+      expect(events.filter((event) => event.type === "exited")).toMatchObject([{ exitCode: 7 }]);
+      expect(events.filter((event) => event.type === "output").map((event) => event.data)).toEqual([
+        "blocked",
+      ]);
+      const observed: TerminalAttachStreamEvent[] = [];
+      const unsubscribe = yield* manager.observeStream(openInput(), (event) =>
+        Effect.sync(() => {
+          observed.push(event);
+        }),
+      );
+      unsubscribe();
+      expect(observed).toMatchObject([
+        { type: "snapshot", snapshot: { status: "exited", exitCode: 7, history: "" } },
+      ]);
+      expect(yield* readFileString(yield* historyLogPath(logsDir))).toBe("");
+    }),
+  );
+
   it.effect("closes only a thread's idle shells, ignoring a helper forked from the shell", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {
