@@ -23,12 +23,14 @@ import {
   UserRoundIcon,
   type LucideIcon,
 } from "lucide-react";
-import { memo, useLayoutEffect, useRef } from "react";
+import { LegendList, type LegendListRef } from "@legendapp/list/react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
-import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
+import { Command, CommandItem, CommandListVirtualized } from "../ui/command";
+import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { ComposerBanner } from "./ComposerBanner";
@@ -101,21 +103,24 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   onHighlightedItemChange: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
-  const listRef = useRef<HTMLDivElement>(null);
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the highlighted menu item's DOM node into view
-  useLayoutEffect(() => {
-    if (!props.activeItemId || !listRef.current) return;
-    const el = listRef.current.querySelector<HTMLElement>(
-      `[data-composer-item-id="${CSS.escape(props.activeItemId)}"]`,
+  const listRef = useRef<LegendListRef | null>(null);
+  const [scrollFade, setScrollFade] = useState({ top: false, bottom: false });
+  const updateScrollFade = () => {
+    const scrollElement = listRef.current?.getScrollableNode?.();
+    if (!(scrollElement instanceof HTMLElement)) return;
+    const top = scrollElement.scrollTop > 1;
+    const bottom =
+      scrollElement.scrollHeight - scrollElement.clientHeight - scrollElement.scrollTop > 1;
+    setScrollFade((current) =>
+      current.top === top && current.bottom === bottom ? current : { top, bottom },
     );
-    el?.scrollIntoView({ block: "nearest" });
-  }, [props.activeItemId]);
+  };
 
   return (
     <Command
       autoHighlight={false}
       mode="none"
+      virtualized
       onItemHighlighted={(highlightedValue) => {
         props.onHighlightedItemChange(
           typeof highlightedValue === "string" ? highlightedValue : null,
@@ -123,20 +128,28 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
       }}
     >
       <ComposerBanner.Surface
-        ref={listRef}
-        className="flex min-h-0 w-full flex-col overflow-hidden pb-(--chat-composer-attachment-overlap) **:data-[slot=command-item]:rounded-lg **:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4"
+        className="flex min-h-0 w-full flex-col overflow-hidden pb-(--chat-composer-attachment-overlap) **:data-[slot=command-item]:rounded-lg"
         data-composer-command-drawer="true"
       >
         {props.items.length > 0 ? (
-          <CommandList
+          <CommandListVirtualized
             id={props.listId}
             aria-label={props.triggerKind ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind] : undefined}
-            className="max-h-72 min-h-0 scroll-pb-6"
           >
-            <CommandGroup>
-              {props.items.map((item) => (
+            <LegendList<ComposerCommandItem>
+              ref={listRef}
+              data={props.items}
+              keyExtractor={(item) => item.id}
+              // The highlighted row stays mounted, for aria-activedescendant and so it can scroll itself into view.
+              alwaysRender={{ keys: props.activeItemId ? [props.activeItemId] : [] }}
+              // Legend needs a data refresh to mount a new pin without a scroll event.
+              dataVersion={props.activeItemId ?? ""}
+              // Rows also render from the highlight, theme, trigger and callbacks.
+              extraData={props}
+              renderItem={({ item, index }) => (
                 <ComposerCommandMenuItem
-                  key={item.id}
+                  index={index}
+                  setSize={props.items.length}
                   optionId={composerSuggestionOptionId(props.listId, item.id)}
                   item={item}
                   triggerKind={props.triggerKind}
@@ -145,9 +158,21 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                   onHighlight={props.onHighlightedItemChange}
                   onSelect={props.onSelect}
                 />
-              ))}
-            </CommandGroup>
-          </CommandList>
+              )}
+              estimatedItemSize={28}
+              recycleItems
+              onLayout={updateScrollFade}
+              onItemSizeChanged={updateScrollFade}
+              onScroll={updateScrollFade}
+              // LegendList sizes its first window from this element before its rows give it height;
+              // reserving the rows' minimum height (1.75rem each, plus p-2) fills the first frame.
+              style={{ minHeight: `min(${props.items.length * 1.75 + 1}rem, 18rem)` }}
+              className={cn(
+                "max-h-72 min-h-0 scroll-py-6 overflow-x-hidden overscroll-y-contain p-2 [&::-webkit-scrollbar-track]:my-4",
+                getVirtualizedScrollFadeClassName(scrollFade),
+              )}
+            />
+          </CommandListVirtualized>
         ) : (
           <div className="px-5 pt-3.5 pb-7">
             <p className="text-secondary-label text-xs">
@@ -172,6 +197,8 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
 });
 
 const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
+  index: number;
+  setSize: number;
   optionId: string;
   item: ComposerCommandItem;
   triggerKind: ComposerTriggerKind | null;
@@ -186,10 +213,21 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
     props.triggerKind === "slash-command" && props.item.type === "skill" ? props.item.skill : null;
   const pullRequestPresentation =
     props.item.type === "pull-request" ? resolvePullRequestState(props.item.pullRequest) : null;
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the externally highlighted row into the list's view
+  useLayoutEffect(() => {
+    if (props.isActive) rowRef.current?.scrollIntoView({ block: "nearest" });
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A recycled row can become the active one while it stays active.
+  }, [props.isActive, props.item.id]);
 
   return (
     <CommandItem
-      render={<div id={props.optionId} />}
+      render={<div id={props.optionId} ref={rowRef} />}
+      index={props.index}
+      // Only a window of options is mounted, so the browser cannot count the set itself.
+      aria-posinset={props.index + 1}
+      aria-setsize={props.setSize}
       aria-selected={props.isActive}
       value={props.item.id}
       data-composer-item-id={props.item.id}
