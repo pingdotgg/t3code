@@ -1389,6 +1389,19 @@ jobs:
 
           git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml
           git commit --no-verify -m "chore(release): prepare $RELEASE_TAG"
+          bump="$(git rev-parse HEAD)"
+
+          # main can advance while the release builds.
+          for attempt in 1 2 3; do
+            git push origin HEAD:main && exit 0
+            git fetch origin main
+            if git merge-base --is-ancestor FETCH_HEAD HEAD; then
+              echo "Push failed but main has not moved." >&2
+              exit 1
+            fi
+            echo "main moved; replaying the version bump (attempt $attempt)."
+            git rebase --onto FETCH_HEAD "$bump~1" "$bump"
+          done
           git push origin HEAD:main
 
   announce_discord:
