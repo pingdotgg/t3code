@@ -33,7 +33,9 @@ import {
   nestedToolCallFromEnvelope,
 } from "./adapter.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
-import { ConfigurationError } from "./sdk.ts";
+import { loadCursorSdk } from "./sdk.ts";
+
+const { ConfigurationError } = loadCursorSdk();
 
 describe("CursorAdapterV2", () => {
   it.effect.each([
@@ -43,7 +45,7 @@ describe("CursorAdapterV2", () => {
     { status: "finished", model: undefined, lateModel: "gpt-6-sol" },
     { status: "finished", model: "gpt-6-sol", lateModel: null },
   ] as const)(
-    "projects Cursor tasks: $status, late model $lateModel",
+    "projects Cursor tasks and unfinished tools: $status, late model $lateModel",
     ({ status, model, lateModel }) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -114,6 +116,34 @@ describe("CursorAdapterV2", () => {
                           },
                         },
                       }).pipe(Effect.orDie);
+                    }
+                    const readUpdates: ReadonlyArray<InteractionUpdate> = [
+                      {
+                        type: "tool-call-started",
+                        modelCallId: "native-model-call",
+                        callId: "read-secret",
+                        toolCall: { type: "read", args: { path: "secret.txt" } },
+                      },
+                      ...(["tool-call-started", "tool-call-completed"] as const).map((type) => ({
+                        type,
+                        modelCallId: "native-model-call",
+                        callId: "read-open",
+                        toolCall: {
+                          type: "read" as const,
+                          args: { path: "open.txt" },
+                          ...(type === "tool-call-completed"
+                            ? {
+                                result: {
+                                  status: "success" as const,
+                                  value: { fileSize: 3, content: "ok\n", totalLines: 1 },
+                                },
+                              }
+                            : {}),
+                        },
+                      })),
+                    ];
+                    for (const update of readUpdates) {
+                      yield* input.onDelta!(update).pipe(Effect.orDie);
                     }
                     return {
                       agentId: "native-cursor-lifecycle",
@@ -205,6 +235,40 @@ describe("CursorAdapterV2", () => {
                 : "failed",
         );
         assert.isNotNull(rows.at(-1)?.subagent.completedAt);
+        const unfinished =
+          status === "finished" ? "interrupted" : status === "error" ? "failed" : "cancelled";
+        const finalReads = new Map<string, { status: string; output: unknown; done: boolean }>();
+        for (const event of events) {
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.toolName === "Read"
+          ) {
+            finalReads.set(String(event.turnItem.title), {
+              status: event.turnItem.status,
+              output: event.turnItem.output,
+              done: event.turnItem.completedAt !== null,
+            });
+          }
+        }
+        const finalNodes = new Map<string, string>();
+        for (const event of events) {
+          if (event.type === "node.updated" && event.node.kind === "tool_call") {
+            finalNodes.set(String(event.node.nativeItemRef?.nativeId), event.node.status);
+          }
+        }
+        assert.deepEqual(Object.fromEntries(finalReads), {
+          "Read secret.txt": { status: unfinished, output: undefined, done: true },
+          "Read open.txt": {
+            status: "completed",
+            output: { fileSize: 3, content: "ok\n", totalLines: 1 },
+            done: true,
+          },
+        });
+        assert.deepEqual(Object.fromEntries(finalNodes), {
+          "read-secret": unfinished,
+          "read-open": "completed",
+        });
       }).pipe(
         Effect.scoped,
         Effect.provide(
