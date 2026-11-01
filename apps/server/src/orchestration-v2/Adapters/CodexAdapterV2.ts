@@ -491,11 +491,19 @@ function codexMcpAppResourceUri(item: CodexDynamicToolItem): string | undefined 
   return typeof uri === "string" && uri.startsWith(MCP_APP_RESOURCE_SCHEME) ? uri : undefined;
 }
 
-function codexDynamicToolOutput(
+const CODEX_IMAGE_DATA_URL = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/i;
+
+export function codexDynamicToolOutput(
   item: Extract<CodexDynamicToolItem, { readonly type: "dynamicToolCall" }>,
 ): unknown | undefined {
   if (item.contentItems !== null && item.contentItems !== undefined) {
-    return item.contentItems;
+    return item.contentItems.map((content) => {
+      if (content.type !== "inputImage") return content;
+      const match = CODEX_IMAGE_DATA_URL.exec(content.imageUrl);
+      return match?.[1] && match[2]
+        ? { type: "image", mimeType: match[1].toLowerCase(), data: match[2] }
+        : content;
+    });
   }
   return item.success === false ? { success: false } : undefined;
 }
@@ -579,10 +587,15 @@ function approvalDecisionToLegacyReviewDecision(
 function providerRequestKindFromPermissions(
   permissions: CodexSchema.PermissionsRequestApprovalParams["permissions"],
 ): ProviderRequestKind {
-  if ((permissions.fileSystem?.write?.length ?? 0) > 0) {
+  // Codex leaves the legacy `read`/`write` lists out when a path is a glob or
+  // special path, and is replacing them with `entries`.
+  const requests = (access: "read" | "write") =>
+    (permissions.fileSystem?.[access]?.length ?? 0) > 0 ||
+    permissions.fileSystem?.entries?.some((entry) => entry.access === access);
+  if (requests("write")) {
     return "file-change";
   }
-  if ((permissions.fileSystem?.read?.length ?? 0) > 0) {
+  if (requests("read")) {
     return "file-read";
   }
   return "command";
