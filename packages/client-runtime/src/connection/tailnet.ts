@@ -254,7 +254,7 @@ export function tailnetRefusalVerdict(
       return {
         headline: `${host} blocked this device`,
         steps: [
-          `On another device that can manage access on ${host} (one paired with a code, one granted admin, or yours while nothing is granted), open Settings > Environments and unblock this device.`,
+          `On another device on ${host} whose access includes managing access (the access:write scope: one paired with a full code, one granted admin, or yours while nothing is granted), open Settings > Environments and unblock this device.`,
           `Or run \`t3 pair\` on ${host}, pair this device with the code, then unblock it.`,
         ],
       };

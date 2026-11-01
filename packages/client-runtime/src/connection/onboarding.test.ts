@@ -322,8 +322,8 @@ describe("connection onboarding", () => {
         host: "100.88.1.2",
         pairingCode: "pairing-token",
       }).pipe(Effect.provide(layerPairingOnboarding()));
-      expect(tailnet.profile.httpBaseUrl).toBe("http://100.88.1.2:3773/");
-      // A one-word name could be a LAN host, so the code goes over HTTPS.
+      // A code is a secret, so a bare address keeps the HTTPS default, tailnet or not.
+      expect(tailnet.profile.httpBaseUrl).toBe("https://100.88.1.2/");
       const shortName = yield* preparePairingRegistration({
         host: "studio",
         pairingCode: "pairing-token",

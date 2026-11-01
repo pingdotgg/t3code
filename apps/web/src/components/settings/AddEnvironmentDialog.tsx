@@ -229,7 +229,9 @@ export function AddEnvironmentDialog({
         onErrorChange(error instanceof Error ? error.message : "Failed to add backend.");
       }
       if (result._tag === "Success") {
-        onErrorChange("That machine does not offer Tailscale sign-in. Enter its pairing code.");
+        onErrorChange(
+          "That machine does not offer Tailscale sign-in. Paste a pairing link from it instead.",
+        );
       }
       setIsAddingSavedBackend(false);
       return;

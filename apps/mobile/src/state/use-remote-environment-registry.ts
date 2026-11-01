@@ -100,7 +100,8 @@ export async function signInOverTailnet(
     if (Option.isNone(result.value)) {
       return {
         ok: false,
-        error: "That machine does not offer Tailscale sign-in. Enter its pairing code.",
+        error:
+          "That machine does not offer Tailscale sign-in. Paste a pairing link from it instead.",
       };
     }
     appAtomRegistry.set(connectionPairingUrlAtom, "");

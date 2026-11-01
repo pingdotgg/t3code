@@ -117,14 +117,10 @@ export class ConnectionOnboarding extends Context.Service<
 
 const resolvePairingTarget = Effect.fn("clientRuntime.connection.onboarding.resolvePairingTarget")(
   function* (input: PairingConnectionInput) {
-    // A 100.x address or a MagicDNS name means T3 Code's port on the tailnet. A one-word name
-    // with a code keeps the HTTPS default: it could resolve on a LAN, and the code is a secret.
-    const tailnetUrl = input.host === undefined ? null : tailnetSignInBaseUrl(input.host);
-    const tailnetHost =
-      tailnetUrl !== null && new URL(tailnetUrl).hostname.includes(".") ? tailnetUrl : null;
+    // A code is a secret, so its address resolves as it always has; an address alone means
+    // Tailscale sign-in, which goes through `registerTailnet`, not here.
     return yield* Effect.try({
-      try: () =>
-        resolveRemotePairingTarget(tailnetHost === null ? input : { ...input, host: tailnetHost }),
+      try: () => resolveRemotePairingTarget(input),
       catch: (cause) =>
         new ConnectionBlockedError({
           reason: "configuration",
