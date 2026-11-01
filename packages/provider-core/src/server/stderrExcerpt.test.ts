@@ -72,6 +72,7 @@ describe("stderrExcerpt", () => {
         'PASSWORD="first second third"',
         '{"message":"failed","apiKey":"custom-credential-value"}',
         "env:API_KEY=abc123",
+        "Authorization: Token abc123",
         "Unknown key: model-x",
       ].join("\n"),
       "/Users/ada",
@@ -85,6 +86,7 @@ describe("stderrExcerpt", () => {
         "PASSWORD=[REDACTED]",
         '{"message":"failed","apiKey":"[REDACTED]"}',
         "env:API_KEY=[REDACTED]",
+        "Authorization: [REDACTED]",
         "Unknown key: model-x",
       ].join("\n"),
     );

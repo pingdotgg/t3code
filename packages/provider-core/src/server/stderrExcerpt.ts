@@ -5,8 +5,6 @@ const STDERR_TAIL_MAX_CHARS = 4_096;
 const PAIRING_URL_PATTERN = /https?:\/\/[^\s]*\/pair#[^\s]*/gi;
 const SIGN_IN_URL_PATTERN = /https?:\/\/accounts\.google\.com[^\s]*/gi;
 const BEARER_TOKEN_PATTERN = /\bBearer\s+[A-Za-z0-9._\-+=/]+/gi;
-const BASIC_AUTH_PATTERN = /\bAuthorization:\s*Basic\s+\S+/gi;
-const API_KEY_HEADER_PATTERN = /\bx-api-key:\s*\S+/gi;
 const SECRET_TOKEN_PATTERN =
   /\b(?:sk-[A-Za-z0-9][A-Za-z0-9_-]{7,}|ghp_[A-Za-z0-9]+|xox[a-zA-Z]-[A-Za-z0-9-]+)\b/g;
 
@@ -31,8 +29,6 @@ export function sanitizeStderrExcerpt(
     .replace(PAIRING_URL_PATTERN, "[pairing-url]")
     .replace(SIGN_IN_URL_PATTERN, "[sign-in-url]")
     .replace(BEARER_TOKEN_PATTERN, "Bearer [redacted]")
-    .replace(BASIC_AUTH_PATTERN, "Authorization: Basic [redacted]")
-    .replace(API_KEY_HEADER_PATTERN, "x-api-key: [redacted]")
     .replace(SECRET_TOKEN_PATTERN, "[redacted]");
   return redactSecretAssignments(result).trim();
 }

@@ -343,11 +343,10 @@ describe("AcpSessionRuntime", () => {
       expect(error.signal).toBe(testCase.signal);
       expect(error).toMatchObject({
         pid: expect.any(Number),
-        stderr:
-          "Invalid project config: Unrecognized key in cli.json\nAuthorization: Bearer [redacted]",
+        stderr: "Invalid project config: Unrecognized key in cli.json\nAuthorization: [REDACTED]",
       });
       expect(error.message).toBe(
-        `${testCase.signal ? "ACP process exited after signal SIGTERM" : "ACP process exited with code 1"}\nInvalid project config: Unrecognized key in cli.json\nAuthorization: Bearer [redacted]`,
+        `${testCase.signal ? "ACP process exited after signal SIGTERM" : "ACP process exited with code 1"}\nInvalid project config: Unrecognized key in cli.json\nAuthorization: [REDACTED]`,
       );
       if (testCase.signal) {
         expect(error.cause).toMatchObject({
