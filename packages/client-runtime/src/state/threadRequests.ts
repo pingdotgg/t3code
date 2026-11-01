@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  ScopedThreadRef,
   ThreadId,
   OrchestrationV2ThreadProjection,
   OrchestrationV2RuntimeRequest,
@@ -10,6 +11,9 @@ import type {
   ProviderRequestKind,
   RuntimeRequestId,
 } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
+import { parseThreadKey, threadKey } from "./entities.ts";
+import type { EnvironmentThreadShell } from "./models.ts";
 import * as DateTime from "effect/DateTime";
 import type { AtomCommandResult } from "./runtime.ts";
 import type { ThreadStructure, ThreadStructureVisibleTurnItem } from "./models.ts";
@@ -338,4 +342,49 @@ export function createQuestionHistoryProjector<
     previousResult = result ?? rows;
     return previousResult;
   };
+}
+
+export interface ChildThreadApproval {
+  readonly thread: ScopedThreadRef;
+  readonly title: string;
+  readonly approval: ThreadPendingApproval;
+}
+
+export function createChildThreadApprovalsAtom(input: {
+  readonly childThreadInputsAtom: (
+    ref: ScopedThreadRef,
+  ) => Atom.Atom<ReadonlyArray<EnvironmentThreadShell>>;
+  readonly pendingRequestsAtom: (ref: ScopedThreadRef) => Atom.Atom<PendingThreadRequests | null>;
+}) {
+  const family = Atom.family((key: string) => {
+    let previous: ReadonlyArray<ChildThreadApproval> = [];
+    return Atom.make((get) => {
+      const next = get(input.childThreadInputsAtom(parseThreadKey(key))).flatMap((child) => {
+        if (!child.hasPendingApprovals) return [];
+        const thread = { environmentId: child.environmentId, threadId: child.id };
+        // Only children asking for approval need a detail subscription.
+        return (get(input.pendingRequestsAtom(thread))?.approvals ?? []).map((approval) => ({
+          thread,
+          title: child.title,
+          approval,
+        }));
+      });
+      if (
+        next.length === previous.length &&
+        next.every((entry, index) => {
+          const old = previous[index]!;
+          return (
+            old.approval === entry.approval &&
+            old.title === entry.title &&
+            threadKey(old.thread) === threadKey(entry.thread)
+          );
+        })
+      )
+        return previous;
+      previous = next;
+      return next;
+    });
+  });
+  const empty = Atom.make<ReadonlyArray<ChildThreadApproval>>([]);
+  return (ref: ScopedThreadRef | null) => (ref === null ? empty : family(threadKey(ref)));
 }

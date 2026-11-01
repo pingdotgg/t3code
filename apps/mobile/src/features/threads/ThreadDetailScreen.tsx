@@ -1,3 +1,4 @@
+import { ChildThreadApprovals } from "./ChildThreadApprovals";
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
@@ -306,6 +307,8 @@ export interface ThreadDetailScreenProps {
   readonly showContent?: boolean;
 }
 
+// iOS questions overlay the controls; Android questions stack with child approvals.
+const ComposerPanels = Platform.OS === "android" ? Animated.ScrollView : Animated.View;
 const USAGE_LIMITS_PANEL_GAP = 12;
 const USAGE_LIMITS_PANEL_MIN_HEIGHT = 44;
 
@@ -960,6 +963,10 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
       composerOverlapHeight: composerBottomInset,
     }),
   );
+  const composerPanelsHeightStyle = useAnimatedStyle(() => ({
+    maxHeight: pendingUserInputMaxHeight.value,
+    flexGrow: 0,
+  }));
   // The usage panel stacks with the composer and any approval card, so it gets
   // whatever room they leave below the header. Measured only while it is open
   // so typing in the composer does not re-render the screen.
@@ -1504,130 +1511,141 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                       });
                     }}
                   />
-                  {props.queuedRunEdit !== null ? (
-                    <Animated.View
-                      className="shrink-0"
-                      entering={FadeInDown.duration(180)}
-                      exiting={FadeOut.duration(120)}
-                    >
-                      <ComposerQueuedEditBanner
-                        saving={props.isSavingQueuedEdit}
-                        onCancel={() => {
-                          voiceInputSession.cancel(props.composerDraftKey);
-                          props.onCancelQueuedRunEdit();
-                        }}
-                      />
-                    </Animated.View>
-                  ) : null}
-                  <UsageLimitRecoveryCard
-                    key={props.selectedThread.latestRun?.runId}
-                    thread={props.selectedThread}
-                    environmentId={props.environmentId}
-                  />
-                  <ChatGptUsageLimitNotice
-                    key={`chatgpt-limit:${props.selectedThread.latestRun?.runId}`}
-                    thread={props.selectedThread}
-                  />
-                  <ThreadGuestShareBar
-                    threadRef={props.selectedThreadDetailRef}
-                    canOperateThread={props.canOperateThread}
-                  />
-                  {props.draftMode ? null : (
-                    <ThreadSideChatsRow
+                  <ComposerPanels
+                    className="w-full"
+                    style={Platform.OS === "android" ? composerPanelsHeightStyle : undefined}
+                    keyboardShouldPersistTaps="handled"
+                    nestedScrollEnabled
+                  >
+                    {props.queuedRunEdit !== null ? (
+                      <Animated.View
+                        className="shrink-0"
+                        entering={FadeInDown.duration(180)}
+                        exiting={FadeOut.duration(120)}
+                      >
+                        <ComposerQueuedEditBanner
+                          saving={props.isSavingQueuedEdit}
+                          onCancel={() => {
+                            voiceInputSession.cancel(props.composerDraftKey);
+                            props.onCancelQueuedRunEdit();
+                          }}
+                        />
+                      </Animated.View>
+                    ) : null}
+                    <UsageLimitRecoveryCard
+                      key={props.selectedThread.latestRun?.runId}
+                      thread={props.selectedThread}
                       environmentId={props.environmentId}
-                      threadId={props.selectedThread.id}
                     />
-                  )}
-                  {props.feedbackSubmissions.map((submission) => (
-                    <ComposerFeedback
-                      key={submission.id}
-                      submission={submission}
-                      onDismiss={() => props.onDismissFeedback(submission.id)}
+                    <ChatGptUsageLimitNotice
+                      key={`chatgpt-limit:${props.selectedThread.latestRun?.runId}`}
+                      thread={props.selectedThread}
                     />
-                  ))}
-                  {composerError !== null ? (
-                    <Animated.View
-                      className="shrink-0"
-                      entering={FadeInDown.duration(180)}
-                      exiting={FadeOut.duration(120)}
-                    >
-                      <ComposerErrorNotice
-                        message={composerError}
-                        onDismiss={() => clearThreadComposerError(selectedThreadKey)}
-                      />
-                    </Animated.View>
-                  ) : null}
-                  {usageLimitsReport && activeUserInputRequestId === null ? (
-                    <Animated.View
-                      className="shrink-0 px-4"
-                      style={{ paddingBottom: USAGE_LIMITS_PANEL_GAP }}
-                      onLayout={handleUsageLimitsLayout}
-                      entering={FadeInDown.duration(220)}
-                      exiting={FadeOut.duration(140)}
-                    >
-                      <ComposerUsageLimits
-                        report={usageLimitsReport}
+                    <ChildThreadApprovals
+                      threadRef={props.selectedThreadDetailRef}
+                      maxHeight={pendingUserInputMaxHeight}
+                    />
+                    <ThreadGuestShareBar
+                      threadRef={props.selectedThreadDetailRef}
+                      canOperateThread={props.canOperateThread}
+                    />
+                    {props.draftMode ? null : (
+                      <ThreadSideChatsRow
                         environmentId={props.environmentId}
-                        maxHeight={usageLimitsMaxHeight}
-                        onClose={dismissUsageLimits}
+                        threadId={props.selectedThread.id}
                       />
-                    </Animated.View>
-                  ) : null}
-                  {props.creationState?.kind === "failed" ? (
-                    <Animated.View
-                      className="shrink-0 px-4"
-                      style={{ paddingBottom: composerBottomInset }}
-                      entering={FadeInDown.duration(220)}
-                      exiting={FadeOut.duration(140)}
-                    >
-                      <ThreadCreationFailedCard
-                        reason={props.creationState.reason}
-                        onEditTask={props.creationState.onEditTask}
+                    )}
+                    {props.feedbackSubmissions.map((submission) => (
+                      <ComposerFeedback
+                        key={submission.id}
+                        submission={submission}
+                        onDismiss={() => props.onDismissFeedback(submission.id)}
                       />
-                    </Animated.View>
-                  ) : null}
-                  {props.activePendingApproval || props.activePendingUserInput ? (
-                    <Animated.View
-                      className="shrink-0 gap-3 px-4 pb-3"
-                      style={
-                        activeUserInputRequestId !== null
-                          ? { paddingBottom: composerBottomInset }
-                          : undefined
-                      }
-                      entering={FadeInDown.duration(220)}
-                      exiting={FadeOut.duration(140)}
-                    >
-                      {props.activePendingApproval ? (
-                        <PendingApprovalCard
-                          canOperateThread={props.canOperateThread}
-                          approval={props.activePendingApproval}
-                          respondingApprovalId={props.respondingApprovalId}
-                          onRespond={props.onRespondToApproval}
+                    ))}
+                    {composerError !== null ? (
+                      <Animated.View
+                        className="shrink-0"
+                        entering={FadeInDown.duration(180)}
+                        exiting={FadeOut.duration(120)}
+                      >
+                        <ComposerErrorNotice
+                          message={composerError}
+                          onDismiss={() => clearThreadComposerError(selectedThreadKey)}
                         />
-                      ) : null}
-                      {props.activePendingUserInput ? (
-                        <PendingUserInputCard
+                      </Animated.View>
+                    ) : null}
+                    {usageLimitsReport && activeUserInputRequestId === null ? (
+                      <Animated.View
+                        className="shrink-0 px-4"
+                        style={{ paddingBottom: USAGE_LIMITS_PANEL_GAP }}
+                        onLayout={handleUsageLimitsLayout}
+                        entering={FadeInDown.duration(220)}
+                        exiting={FadeOut.duration(140)}
+                      >
+                        <ComposerUsageLimits
+                          report={usageLimitsReport}
                           environmentId={props.environmentId}
-                          canOperateThread={props.canOperateThread}
-                          pendingUserInput={props.activePendingUserInput}
-                          maxHeight={pendingUserInputMaxHeight}
-                          collapsed={userInputCollapsed}
-                          onToggleCollapsed={handleToggleUserInputCollapsed}
-                          onStopThread={props.onStopThread}
-                          cardProgress={userInputCardProgress}
-                          cardCoverage={userInputCardCoverage}
-                          onInputFocusChange={handleOwnedInputFocusChange}
-                          drafts={props.activePendingUserInputDrafts}
-                          answers={props.activePendingUserInputAnswers}
-                          respondingUserInputId={props.respondingUserInputId}
-                          onSelectOption={props.onSelectUserInputOption}
-                          onChangeCustomAnswer={props.onChangeUserInputCustomAnswer}
-                          onSubmit={props.onSubmitUserInput}
-                          onDismiss={props.onDismissUserInput}
+                          maxHeight={usageLimitsMaxHeight}
+                          onClose={dismissUsageLimits}
                         />
-                      ) : null}
-                    </Animated.View>
-                  ) : null}
+                      </Animated.View>
+                    ) : null}
+                    {props.creationState?.kind === "failed" ? (
+                      <Animated.View
+                        className="shrink-0 px-4"
+                        style={{ paddingBottom: composerBottomInset }}
+                        entering={FadeInDown.duration(220)}
+                        exiting={FadeOut.duration(140)}
+                      >
+                        <ThreadCreationFailedCard
+                          reason={props.creationState.reason}
+                          onEditTask={props.creationState.onEditTask}
+                        />
+                      </Animated.View>
+                    ) : null}
+                    {props.activePendingApproval || props.activePendingUserInput ? (
+                      <Animated.View
+                        className="shrink-0 gap-3 px-4 pb-3"
+                        style={
+                          activeUserInputRequestId !== null
+                            ? { paddingBottom: composerBottomInset }
+                            : undefined
+                        }
+                        entering={FadeInDown.duration(220)}
+                        exiting={FadeOut.duration(140)}
+                      >
+                        {props.activePendingApproval ? (
+                          <PendingApprovalCard
+                            canOperateThread={props.canOperateThread}
+                            approval={props.activePendingApproval}
+                            respondingApprovalId={props.respondingApprovalId}
+                            onRespond={props.onRespondToApproval}
+                          />
+                        ) : null}
+                        {props.activePendingUserInput ? (
+                          <PendingUserInputCard
+                            environmentId={props.environmentId}
+                            canOperateThread={props.canOperateThread}
+                            pendingUserInput={props.activePendingUserInput}
+                            maxHeight={pendingUserInputMaxHeight}
+                            collapsed={userInputCollapsed}
+                            onToggleCollapsed={handleToggleUserInputCollapsed}
+                            onStopThread={props.onStopThread}
+                            cardProgress={userInputCardProgress}
+                            cardCoverage={userInputCardCoverage}
+                            onInputFocusChange={handleOwnedInputFocusChange}
+                            drafts={props.activePendingUserInputDrafts}
+                            answers={props.activePendingUserInputAnswers}
+                            respondingUserInputId={props.respondingUserInputId}
+                            onSelectOption={props.onSelectUserInputOption}
+                            onChangeCustomAnswer={props.onChangeUserInputCustomAnswer}
+                            onSubmit={props.onSubmitUserInput}
+                            onDismiss={props.onDismissUserInput}
+                          />
+                        ) : null}
+                      </Animated.View>
+                    ) : null}
+                  </ComposerPanels>
                 </View>
 
                 <View style={composerSlotHidden ? { display: "none" } : undefined}>
