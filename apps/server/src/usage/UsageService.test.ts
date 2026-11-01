@@ -2639,6 +2639,7 @@ describe("UsageService", () => {
 
   it.live("reports saved usage of a removed directory only for windows it reaches", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-08-12T00:00:00Z"));
       const { transcript, settings, home } = yield* setup;
       // Saved usage is pruned after the retention window, so pin "now" near the write.
       yield* TestClock.setTime(Date.parse("2026-08-15T00:00:00Z"));
