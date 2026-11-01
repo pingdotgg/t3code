@@ -592,29 +592,38 @@ export const make = Effect.gen(function* () {
         ),
       );
     };
-    const batchesByHost = new Map<string, boolean>();
-    const batched: Array<string> = [];
-    const unbatched: Array<string> = [];
+    const keysByHost = new Map<string, Array<string>>();
     for (const [key, entries] of groups) {
       if (scope === "requested" && !requested.has(key)) continue;
-      const first = entries[0]!;
-      const pauseKey = pauseKeyOf(first);
-      let batches = batchesByHost.get(pauseKey);
-      if (batches === undefined) {
-        batches = yield* pullRequests.batchesReads(referenceOf(first));
-        batchesByHost.set(pauseKey, batches);
-      }
-      (batches ? batched : unbatched).push(key);
+      const pauseKey = pauseKeyOf(entries[0]!);
+      const keys = keysByHost.get(pauseKey) ?? [];
+      keys.push(key);
+      keysByHost.set(pauseKey, keys);
     }
-    yield* Effect.all(
-      [
-        // Wider than one summary batch, so reads that finish their cache checks at different
-        // times still share batches.
-        Effect.forEach(batched, readIfDue, { concurrency: 100, discard: true }),
-        // One read per pull request, often a CLI process, so these keep the narrower width.
-        Effect.forEach(unbatched, readIfDue, { concurrency: 25, discard: true }),
-      ],
-      { concurrency: 2, discard: true },
+    // Wider than one summary batch, so reads that finish their cache checks at different times
+    // still share batches.
+    const batchedReads = yield* Semaphore.make(100);
+    // One read per pull request, often a CLI process, so these keep the narrower width.
+    const unbatchedReads = yield* Semaphore.make(25);
+    yield* Effect.forEach(
+      keysByHost.values(),
+      (keys) => {
+        // Stack retries only flag groups on the flagging group's host, so a host with nothing
+        // due yet stays that way this sweep.
+        if (!keys.some((key) => isDue(key, groups.get(key)!, nowMs))) return Effect.void;
+        return pullRequests
+          .batchesReads(referenceOf(groups.get(keys[0]!)![0]!))
+          .pipe(
+            Effect.flatMap((batches) =>
+              Effect.forEach(
+                keys,
+                (key) => (batches ? batchedReads : unbatchedReads).withPermits(1)(readIfDue(key)),
+                { concurrency: "unbounded", discard: true },
+              ),
+            ),
+          );
+      },
+      { concurrency: "unbounded", discard: true },
     );
     for (const [reason, { count, key }] of skips) {
       yield* Effect.logWarning("pull request sync skipped", { count, key, reason });

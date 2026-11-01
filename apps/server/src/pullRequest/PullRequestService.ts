@@ -2949,11 +2949,15 @@ export const make = Effect.gen(function* () {
         );
   };
 
-  const batchesReads: PullRequestService["Service"]["batchesReads"] = (input) =>
-    requireProject(input).pipe(
-      Effect.map((project) => project.api.batchesReads === true),
-      Effect.orElseSucceed(() => false),
-    );
+  const batchesReads: PullRequestService["Service"]["batchesReads"] = Effect.fn(
+    "PullRequestService.batchesReads",
+  )(
+    function* (input) {
+      const project = yield* requireProject(input);
+      return project.api.batchesReads === true;
+    },
+    Effect.orElseSucceed(() => false),
+  );
 
   const stack: PullRequestService["Service"]["stack"] = (input, options) =>
     persistedRead(
