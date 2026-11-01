@@ -5395,6 +5395,90 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  // regression: #28032 an unlisted codexErrorInfo dropped the failed turn/completed
+  it.effect("fails the turn when Codex reports an error info the schema does not list", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "native-unlisted-error-info";
+        const nativeTurnId = "turn-unlisted-error-info";
+        const message =
+          "The 'gpt-5-codex' model is not supported when using Codex with a ChatGPT account.";
+        const error = { message, codexErrorInfo: "modelNotFound", additionalDetails: null };
+        const usage = {
+          totalTokens: 1,
+          inputTokens: 1,
+          cachedInputTokens: 0,
+          outputTokens: 0,
+          reasoningOutputTokens: 0,
+        };
+        const transcript = makeCodexReplayTranscript({
+          scenario: "codex-unlisted-error-info",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "say hi" }),
+            {
+              type: "emit_inbound",
+              label: "error",
+              frame: {
+                method: "error",
+                params: { threadId: nativeThreadId, turnId: nativeTurnId, willRetry: false, error },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: { ...makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }), error },
+                },
+              },
+            },
+            // Notifications dispatch in order, so this marks turn/completed as handled.
+            {
+              type: "emit_inbound",
+              label: "usage",
+              frame: {
+                method: "thread/tokenUsage/updated",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  tokenUsage: { total: usage, last: usage, modelContextWindow: 200_000 },
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            text: "say hi",
+            attemptId: RunAttemptId.make("attempt-unlisted-error-info"),
+          }),
+        );
+        yield* harness.until(
+          () =>
+            harness.terminalEvents().length > 0 ||
+            harness.events.some(
+              (event) =>
+                event.type === "provider_turn.updated" && event.providerTurn.tokenUsage != null,
+            ),
+        );
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.message, message);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   const FAILED_SCENARIO = "codex-failed-mid-command";
   const FAILED_NATIVE_THREAD = "native-codex-failed-thread";
   const FAILED_NATIVE_TURN = "native-codex-failed-turn";
