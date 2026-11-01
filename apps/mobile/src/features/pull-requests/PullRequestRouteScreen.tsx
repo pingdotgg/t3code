@@ -97,7 +97,11 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import { useNativeReviewDiffBridge } from "../review/useNativeReviewDiffBridge";
 import { pullRequestTimelineRows } from "./PullRequestTimeline";
-import { PullRequestActionToolbar, PullRequestCardGroup } from "./PullRequestControls";
+import {
+  PullRequestActionToolbar,
+  PullRequestCardGroup,
+  usePullRequestFilesInMenu,
+} from "./PullRequestControls";
 import {
   pullRequestTarget as requestTarget,
   usePullRequestDiff,
@@ -342,6 +346,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const sidebarHeaderItem = useWorkspaceSidebarHeaderItem();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const filesInMenu = usePullRequestFilesInMenu();
   const [toolbarHeight, setToolbarHeight] = usePullRequestToolbarHeight(insets.bottom);
   // Only iOS lists run under the bars; Android lists start below the header.
   const barInsets = Platform.OS === "ios" ? insets : { top: 0, bottom: 0 };
@@ -578,6 +583,11 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
             accessibilityLabel={`${capitalizeTerm(terminology.singular)} actions`}
             icon="ellipsis"
           >
+            {filesInMenu ? (
+              <Toolbar.MenuAction icon="plusminus" onPress={openFiles}>
+                <Toolbar.Label>Changed files</Toolbar.Label>
+              </Toolbar.MenuAction>
+            ) : null}
             {permissions.verdicts.length ? (
               <Toolbar.MenuAction
                 icon="text.bubble"
@@ -943,6 +953,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const filesInMenu = usePullRequestFilesInMenu();
   const [toolbarHeight, setToolbarHeight] = usePullRequestToolbarHeight(insets.bottom);
   const commit = route.params.commit;
   const detail = useEnvironmentQuery(composerPullRequests.detail(requestTarget(route.params)));
@@ -1182,6 +1193,14 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       ) : null}
       <Toolbar placement="right">
         <Toolbar.Menu title="Diff options" accessibilityLabel="Diff options" icon="ellipsis">
+          {filesInMenu ? (
+            <Toolbar.MenuAction
+              icon="plusminus"
+              onPress={() => navigation.navigate("PullRequestFiles", route.params)}
+            >
+              <Toolbar.Label>Changed files</Toolbar.Label>
+            </Toolbar.MenuAction>
+          ) : null}
           {permissions.verdicts.length ? (
             <Toolbar.MenuAction
               icon="text.bubble"
