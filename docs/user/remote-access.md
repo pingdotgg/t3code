@@ -265,8 +265,9 @@ that port is in use, Settings shows the port it uses, and other devices add the
 laptop by name with that port.
 
 To cut off one device on one machine, open **Settings → Environments** on a
-device that can manage access there (your own devices, or one whose grant
-includes `admin`), and **Block** it under **Tailscale devices on <machine>**. Its sessions there end now, and **Unblock** undoes it. A browser
+device that can manage access there (one paired with a code, one whose grant
+includes `admin`, or your own devices while your policy grants none), and
+**Block** it under **Tailscale devices on <machine>**. Its sessions there end now, and **Unblock** undoes it. A browser
 preview or device screen it already has open keeps working, clicks and typing
 included, until it closes. A device that rejoins Tailscale gets a new ID, so
 block it again or remove it from your tailnet.
