@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
+import * as NodeTls from "node:tls";
 
 import * as NodeStream from "@effect/platform-node/NodeStream";
 import {
@@ -20,6 +21,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -205,14 +207,57 @@ export class DesktopTelemetryReceiver extends Context.Service<
   }
 >()("t3/resourceTelemetry/DesktopTelemetryReceiver") {}
 
-export function applyDesktopShellEnvironmentSnapshot(
+class DesktopShellCertificatesUpdateFailed extends Schema.TaggedError<DesktopShellCertificatesUpdateFailed>()(
+  "DesktopShellCertificatesUpdateFailed",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to update desktop shell TLS certificates.";
+  }
+}
+
+export function makeApplyDesktopShellEnvironmentSnapshot(
   environment: NodeJS.ProcessEnv,
   platform: NodeJS.Platform,
-  message: DesktopShellEnvironmentSnapshot,
-): void {
-  if (message.platform !== platform) return;
-  applyShellEnvironment(environment, message.environment);
-  if (message.discovered) delete environment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING;
+) {
+  let baseCertificates: Array<string> | undefined;
+  return Effect.fn("resourceTelemetry.desktopTelemetryReceiver.applyShellEnvironment")(function* (
+    message: DesktopShellEnvironmentSnapshot,
+  ) {
+    if (message.platform !== platform) return;
+    applyShellEnvironment(environment, message.environment);
+    if (message.environment.NODE_EXTRA_CA_CERTS !== undefined) {
+      yield* Effect.gen(function* () {
+        if (baseCertificates === undefined) {
+          // Remove only the startup extras, preserving duplicates from bundled or system trust.
+          const extras = [...NodeTls.getCACertificates("extra")];
+          baseCertificates = NodeTls.getCACertificates("default").filter((certificate) => {
+            const index = extras.indexOf(certificate);
+            if (index === -1) return true;
+            extras.splice(index, 1);
+            return false;
+          });
+        }
+        const fs = yield* FileSystem.FileSystem;
+        const file = message.environment.NODE_EXTRA_CA_CERTS;
+        const bundle = file ? yield* fs.readFileString(file) : undefined;
+        yield* Effect.try({
+          try: () => {
+            const extras =
+              bundle?.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [];
+            if (bundle?.trim() && extras.length === 0) {
+              throw new Error("No PEM certificates found.");
+            }
+            NodeTls.setDefaultCACertificates([...baseCertificates!, ...extras]);
+          },
+          catch: (cause) => new DesktopShellCertificatesUpdateFailed({ cause }),
+        });
+      }).pipe(
+        Effect.catch(() => Effect.logWarning("Failed to update desktop shell TLS certificates.")),
+      );
+    }
+    if (message.discovered) delete environment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING;
+  });
 }
 
 const decodeMessage = Schema.decodeUnknownEffect(DesktopHostTelemetryMessage);
@@ -343,6 +388,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
   const config = yield* ServerConfig.ServerConfig;
   const environment = yield* HostProcess.Environment;
   const platform = yield* HostProcess.Platform;
+  const applyShellSnapshot = makeApplyDesktopShellEnvironmentSnapshot(environment, platform);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const latest = yield* Ref.make(Option.none<DesktopHostTelemetrySnapshot>());
   const receiverStartedAt = yield* DateTime.now;
@@ -539,13 +585,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
         }
 
         if (message.type === "shellEnvironment") {
-          return recordContact.pipe(
-            Effect.andThen(
-              Effect.sync(() => {
-                applyDesktopShellEnvironmentSnapshot(environment, platform, message);
-              }),
-            ),
-          );
+          return recordContact.pipe(Effect.andThen(applyShellSnapshot(message)));
         }
 
         if (message.type === "desktopUpdateStatus") {
