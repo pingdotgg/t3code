@@ -1,6 +1,7 @@
 // @effect-diagnostics globalDate:off -- Usage windows are calendar days in the viewer's zone, derived from wall-clock "now" via Intl.
 import {
   UsageDay,
+  type UsageProviderKind,
   type UsageResolution,
   type UsageSource,
   type UsageSummaryInput,
@@ -21,7 +22,30 @@ export function formatMalformedUsageWarning(count: number): string {
   return `${count} malformed or inconsistent usage record(s) were skipped; usage may be incomplete.`;
 }
 
-export function usageSourceMessages(sources: readonly UsageSource[]): readonly string[] {
+function formatSkippedUsageRecords(count: number): string {
+  return count === 1
+    ? "1 usage record couldn't be read, so totals may be low."
+    : `${formatCount(count)} usage records couldn't be read, so totals may be low.`;
+}
+
+export function usageSourceMessagesByProvider(
+  sources: readonly UsageSource[],
+): ReadonlyMap<UsageProviderKind, readonly string[]> {
+  const byProvider = new Map<UsageProviderKind, UsageSource[]>();
+  for (const source of sources) {
+    const providerSources = byProvider.get(source.fingerprint.provider);
+    if (providerSources) providerSources.push(source);
+    else byProvider.set(source.fingerprint.provider, [source]);
+  }
+  const messages = new Map<UsageProviderKind, readonly string[]>();
+  for (const [provider, providerSources] of byProvider) {
+    const providerMessages = usageSourceMessages(providerSources);
+    if (providerMessages.length > 0) messages.set(provider, providerMessages);
+  }
+  return messages;
+}
+
+function usageSourceMessages(sources: readonly UsageSource[]): readonly string[] {
   const messages = new Set<string>();
   const malformedBySource = new Map<string, number>();
   for (const source of sources) {
@@ -52,7 +76,7 @@ export function usageSourceMessages(sources: readonly UsageSource[]): readonly s
     (total, count) => total + count,
     0,
   );
-  if (malformedRecords > 0) messages.add(formatMalformedUsageWarning(malformedRecords));
+  if (malformedRecords > 0) messages.add(formatSkippedUsageRecords(malformedRecords));
   return [...messages];
 }
 

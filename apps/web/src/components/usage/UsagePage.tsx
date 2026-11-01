@@ -56,7 +56,7 @@ import {
   formatUsageContractMismatch,
   formatUsd,
   makeWindow,
-  usageSourceMessages,
+  usageSourceMessagesByProvider,
 } from "@t3tools/shared/usageFormat";
 import { Button, InlineButton } from "../ui/button";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -643,21 +643,27 @@ function UsageOverview({
     PROVIDER_ORDER.filter((provider) => loading.everyProvider || loading.providers.has(provider)),
   );
   const providersWithData = new Set(providersWithUsage(merged.providers));
-  // Only loading.providers excludes hidden providers without data. Filter a fresh array so the compiler can
-  // cache independently.
-  const activeProviders = [...PROVIDER_ORDER].filter(
-    (provider) => providersWithData.has(provider) || loading.providers.has(provider),
-  );
-  const chartLoadingProviders = new Set(
-    activeProviders.filter((provider) => loadingProviders.has(provider)),
-  );
-  const sourceMessages = usageSourceMessages(
+  const sourceMessages = usageSourceMessagesByProvider(
     selectedEnvironments.flatMap(
       (environment) =>
         environment.summary?.sources.filter(
           (source) => !hiddenProviders.has(source.fingerprint.provider),
         ) ?? [],
     ),
+  );
+  // Only loading.providers excludes hidden providers without data. Filter a fresh array so the compiler can
+  // cache independently.
+  const activeProviders = [...PROVIDER_ORDER].filter(
+    (provider) =>
+      providersWithData.has(provider) ||
+      loading.providers.has(provider) ||
+      sourceMessages.has(provider),
+  );
+  const chartProviders = activeProviders.filter(
+    (provider) => providersWithData.has(provider) || loading.providers.has(provider),
+  );
+  const chartLoadingProviders = new Set(
+    chartProviders.filter((provider) => loadingProviders.has(provider)),
   );
   const breakdownPeriods: readonly (DailyTotals | HourlyTotals)[] = (
     shownHourly ? merged.hourly : merged.daily
@@ -687,11 +693,6 @@ function UsageOverview({
 
   return (
     <div aria-busy={loadingPartial} className="flex flex-col gap-6">
-      {sourceMessages.map((message) => (
-        <p key={message} className="mb-4 text-sm text-muted-foreground">
-          {message}
-        </p>
-      ))}
       <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
         <div className="flex min-w-0 flex-col gap-5">
           <div className="flex flex-col gap-1">
@@ -755,6 +756,7 @@ function UsageOverview({
               providerSessions === 1 ? "session" : "sessions"
             }`;
             const providerLoading = loadingProviders.has(provider);
+            const providerMessages = sourceMessages.get(provider);
             const awaitingData = providerLoading && !providersWithData.has(provider);
             return (
               <div key={provider} className="flex flex-col gap-1">
@@ -780,6 +782,24 @@ function UsageOverview({
                         {sessionLabel}
                       </span>
                     </span>
+                    {providerMessages ? (
+                      <Popover>
+                        <PopoverTrigger
+                          openOnHover
+                          render={<InlineButton tone="muted" />}
+                          aria-label={`${PROVIDER_PRESENTATION[provider].label} usage may be incomplete`}
+                        >
+                          <CircleAlertIcon className="size-3 text-warning-foreground" aria-hidden />
+                        </PopoverTrigger>
+                        <PopoverPopup side="top" tooltipStyle>
+                          <div className="flex flex-col gap-1">
+                            {providerMessages.map((message) => (
+                              <p key={message}>{message}</p>
+                            ))}
+                          </div>
+                        </PopoverPopup>
+                      </Popover>
+                    ) : null}
                   </span>
                   <span
                     className={cn(
@@ -815,7 +835,7 @@ function UsageOverview({
             {shownHourly ? "Hourly" : "Daily"} {metric === "tokens" ? "processed tokens" : "cost"}
           </h2>
           <UsageProviderChart
-            providers={activeProviders}
+            providers={chartProviders}
             loadingProviders={chartLoadingProviders}
             days={days}
             daily={merged.daily}
