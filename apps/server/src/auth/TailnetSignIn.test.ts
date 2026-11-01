@@ -1180,6 +1180,27 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       },
     );
 
+    it.effect("a sign-in refused for an unusable grant still turns the owner rule off", () => {
+      const tailnet = withLaptop();
+      tailnet.status = hostStatus({ Peer: { ...peers, stranger: strangerPeer } });
+      tailnet.devices = { ...tailnet.devices, [STRANGER_ADDRESS]: { node: stranger } };
+      return Effect.gen(function* () {
+        // A scan that finds no grants, from the refused stranger.
+        yield* refusalOf(signIn(makeDpopKey(), { remoteAddress: STRANGER_ADDRESS }));
+        tailnet.devices = {
+          ...tailnet.devices,
+          [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["raed"] }) },
+        };
+        expect(yield* refusalOf(signIn(makeDpopKey(), { remoteAddress: LAPTOP_ADDRESS }))).toBe(
+          "grant_unusable",
+        );
+        // Once the laptop cannot be read, the older "no grants" does not let the phone in.
+        tailnet.devices = { ...tailnet.devices, [LAPTOP_ADDRESS]: { node: null } };
+        yield* TestClock.adjust("61 seconds");
+        expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("no_grant");
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
     it.effect("a grant sign-in on another account does not lock the owner out here", () => {
       const tailnet = withLaptop();
       const home = tailnet.status;

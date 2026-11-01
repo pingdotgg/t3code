@@ -218,12 +218,18 @@ export const make = Effect.gen(function* () {
   const pairingLinks = yield* AuthPairingLinks.AuthPairingLinkRepository;
   const requireGrantPath = path.join(config.stateDir, REQUIRE_GRANT_FILE);
 
-  // Sign-ins through a grant since the last scan that found none, per Tailscale account. The
-  // first stops the owner rule there before the next scan. A scan that finds no grants clears
-  // its account's count, unless one came meanwhile.
+  // Grants that sign-ins or rechecks saw since the last scan that found none, usable or not,
+  // per Tailscale account. The first stops the owner rule there before the next scan. A scan
+  // that finds no grants clears its account's count, unless one came meanwhile.
   const grantSignIns = yield* Ref.make<ReadonlyMap<string | null, number>>(new Map());
   const grantSignInsOn = (account: string | null) =>
     Ref.get(grantSignIns).pipe(Effect.map((counts) => counts.get(account) ?? 0));
+  /** Counts a grant seen on `account`; true when it is the first there. */
+  const countGrant = (account: string | null) =>
+    Ref.modify(grantSignIns, (counts) => {
+      const before = counts.get(account) ?? 0;
+      return [before === 0, new Map(counts).set(account, before + 1)] as const;
+    });
   // The last scan that settled the question: it read every peer, or found a grant. A scan
   // that could not reuses it for a while, so one failed lookup does not lock the owner out.
   // Each scan names the Tailscale account (this machine's node) it read, since switching
@@ -446,6 +452,14 @@ export const make = Effect.gen(function* () {
         return yield* refuse("tailscale_unavailable");
       }
       const decision = yield* decide(node, status);
+      // The policy names this device, so it decides here now, even when the grant is refused
+      // as unusable; owner-rule sessions end on the recheck this starts.
+      if (
+        tailnetGrantScopes(node.capabilities) !== null &&
+        (yield* countGrant(status.selfNodeId))
+      ) {
+        yield* recheckSessions.pipe(Effect.forkDetach);
+      }
       if (decision._tag === "Refused") {
         return yield* refuse(
           decision.reason,
@@ -487,16 +501,6 @@ export const make = Effect.gen(function* () {
           scopes: scopes.join(" "),
         }),
       );
-      // The policy names who gets in here now; owner-rule sessions end on the next check.
-      const firstOnAccount =
-        via === "grant" &&
-        (yield* Ref.modify(grantSignIns, (counts) => {
-          const before = counts.get(status.selfNodeId) ?? 0;
-          return [before === 0, new Map(counts).set(status.selfNodeId, before + 1)] as const;
-        }));
-      if (firstOnAccount) {
-        yield* recheckSessions.pipe(Effect.forkDetach);
-      }
       return { credential: issued.credential, expiresAt: issued.expiresAt };
     },
   );
@@ -558,7 +562,7 @@ export const make = Effect.gen(function* () {
     ) {
       const now = yield* host.freshStatus.pipe(Effect.option);
       if (Option.isSome(now) && now.value.selfNodeId === status.selfNodeId) {
-        yield* Ref.update(grantSignIns, (counts) => new Map(counts).set(status.selfNodeId, 1));
+        yield* countGrant(status.selfNodeId);
       } else {
         yield* Ref.update(lastCleanScan, (last) => (last?.granted === false ? null : last));
         yield* rescanPolicy;
