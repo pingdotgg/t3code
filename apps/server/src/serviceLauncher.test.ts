@@ -1,5 +1,6 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off - observes the children the launcher spawns with Node built-ins.
 import type * as NodeChildProcess from "node:child_process";
+import * as NodeSqlite from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -16,6 +17,7 @@ import {
   readServiceEnvironment,
   type BackupSpaceProbe,
   readServiceState,
+  stateDirOwned,
   writeServiceState,
 } from "./serviceLauncher.ts";
 import {
@@ -28,12 +30,16 @@ import {
 } from "./cloud/serviceProtocol.ts";
 
 const spawnedChildren = vi.hoisted((): Array<NodeChildProcess.ChildProcess> => []);
+const spawnHook = vi.hoisted(() => ({
+  current: undefined as ((child: NodeChildProcess.ChildProcess) => void) | undefined,
+}));
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeChildProcess>();
   const spawn = (...args: Parameters<typeof actual.spawn>) => {
     const child = actual.spawn(...args);
     spawnedChildren.push(child);
+    spawnHook.current?.(child);
     return child;
   };
   return { ...actual, spawn: spawn as typeof actual.spawn };
@@ -213,17 +219,25 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     }),
   );
 
-  it.effect("stays idle instead of exiting when another server owns the T3 home", () =>
+  it.effect("waits without exiting and restarts once the other owner releases the T3 home", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-refused-" });
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-reclaim-" });
       const statePath = path.join(root, "runtime", "service-state.json");
+      const ownerPath = path.join(root, "userdata", "server-owner.sqlite");
+      yield* fs.makeDirectory(path.dirname(ownerPath), { recursive: true });
       yield* writeFakeRuntime(
         fs,
         path,
         path.join(root, "runtime", "versions", "1.0.0"),
-        `process.exit(${SERVER_EXIT_CODE_STATE_DIR_OWNED});\n`,
+        [
+          `const db = new (require("node:sqlite").DatabaseSync)(${JSON.stringify(ownerPath)});`,
+          `try { db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;"); }`,
+          `catch { process.exit(${SERVER_EXIT_CODE_STATE_DIR_OWNED}); }`,
+          'process.send("owner");',
+          "setInterval(() => {}, 1_000);",
+        ].join("\n"),
       );
       yield* Effect.promise(() =>
         writeServiceState(statePath, {
@@ -231,7 +245,10 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
           activeVersion: "1.0.0",
         }),
       );
-      const refused = Promise.withResolvers<void>();
+      using otherOwner = new NodeSqlite.DatabaseSync(ownerPath);
+      otherOwner.exec("BEGIN EXCLUSIVE;");
+      let refused = Promise.withResolvers<void>();
+      const owned = Promise.withResolvers<void>();
       yield* Effect.acquireRelease(
         Effect.sync(() =>
           vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
@@ -241,7 +258,23 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
         ),
         (spy) => Effect.sync(() => spy.mockRestore()),
       );
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          spawnHook.current = (child) => child.once("message", () => owned.resolve());
+        }),
+        () =>
+          Effect.sync(() => {
+            spawnHook.current = undefined;
+          }),
+      );
+      const spawnsBefore = spawnedChildren.length;
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        {
+          stateDirOwnerPollMs: 10,
+        },
+      );
       let completed = false;
       const running = launcher.run().finally(() => {
         completed = true;
@@ -250,6 +283,47 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       assert.isFalse(completed);
       yield* Effect.promise(() => launcher.stop("SIGTERM"));
       yield* Effect.promise(() => running);
+
+      refused = Promise.withResolvers<void>();
+      const restarted = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        {
+          stateDirOwnerPollMs: 10,
+        },
+      );
+      const recovering = restarted.run();
+      yield* Effect.promise(() => refused.promise);
+      otherOwner.close();
+      yield* Effect.promise(() => owned.promise);
+      yield* Effect.promise(() => restarted.stop("SIGTERM"));
+      yield* Effect.promise(() => recovering);
+      assert.strictEqual(spawnedChildren.length - spawnsBefore, 3);
+    }),
+  );
+
+  it.effect("treats the T3 home as owned while the lock or a pre-lock server holds it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-owned-" });
+      const stateDir = path.join(root, "userdata");
+      const recordPath = path.join(stateDir, "server-runtime.json");
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      assert.isFalse(stateDirOwned(root));
+
+      using owner = new NodeSqlite.DatabaseSync(path.join(stateDir, "server-owner.sqlite"));
+      owner.exec("BEGIN EXCLUSIVE;");
+      assert.isTrue(stateDirOwned(root));
+      owner.close();
+
+      const record = { version: 1, pid: process.pid, port: 1, origin: "", startedAt: "" };
+      yield* fs.writeFileString(recordPath, JSON.stringify(record));
+      assert.isTrue(stateDirOwned(root));
+      yield* fs.writeFileString(recordPath, JSON.stringify({ ...record, ownerId: "lock-aware" }));
+      assert.isFalse(stateDirOwned(root));
+      yield* fs.writeFileString(recordPath, JSON.stringify({ ...record, pid: 2 ** 22 + 1 }));
+      assert.isFalse(stateDirOwned(root));
     }),
   );
 
