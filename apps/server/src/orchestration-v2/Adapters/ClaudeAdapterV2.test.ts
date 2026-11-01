@@ -11531,6 +11531,93 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("settles background subagents after a later parent turn hits a usage limit", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const startTurn = (ordinal: number) =>
+          harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-background-parent-failure-${ordinal}`),
+              providerTurnOrdinal: ordinal,
+              text: "Continue the background work.",
+              attachments: [],
+            }),
+          );
+        yield* startTurn(1);
+        for (const taskId of ["agent-a", "agent-b"]) {
+          yield* harness.offerAndWait(
+            makeSubagentTaskStartedFrame({
+              taskId,
+              toolUseId: `toolu-${taskId}`,
+              uuid: `started-${taskId}`,
+            }),
+          );
+        }
+        yield* Queue.take(harness.subagentReceipts);
+        yield* Queue.take(harness.subagentReceipts);
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "background-launched", result: "Both agents are working." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        yield* startTurn(2);
+        yield* harness.offerAndWait(
+          makeAssistantErrorFrame({ uuid: "parent-limit", error: "rate_limit" }),
+        );
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "parent-failed",
+            result: "Session limit reached.",
+            isError: true,
+            terminalReason: "api_error",
+          }),
+        );
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        for (const taskId of ["agent-a", "agent-b"]) {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_notification",
+              task_id: taskId,
+              tool_use_id: `toolu-${taskId}`,
+              status: "failed",
+              summary: "Agent stopped after reaching the session limit.",
+              output_file: `/tmp/${taskId}.output`,
+              uuid: `failed-${taskId}`,
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          assert.equal(yield* harness.hasPendingBackgroundWork, taskId === "agent-a");
+        }
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        for (const taskId of ["agent-a", "agent-b"]) {
+          const ended = yield* Queue.take(harness.subagentReceipts);
+          assert.equal(ended.subagent.nativeTaskRef?.nativeId, taskId);
+          assert.equal(ended.subagent.status, "failed");
+          assert.isNotNull(ended.subagent.completedAt);
+          assert.equal(ended.subagent.result, "Agent stopped after reaching the session limit.");
+        }
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => event.status),
+          ["completed", "failed"],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["exit", "Stop"] as const)(
     "settles a plain background subagent and its open call on %s after the root turn completes",
     (reason) =>
