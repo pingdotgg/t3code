@@ -128,8 +128,9 @@ function moveColorSchemeSourcesToImage(picture: MarkdownImageHastNode) {
     // A candidate's URL runs to the first space (a descriptor such as `2x` may follow).
     const url =
       typeof candidate === "string" ? candidate.trim().split(/\s/, 1)[0]?.replace(/,+$/, "") : "";
-    if (scheme && url) {
-      const key = scheme.toLowerCase() === "dark" ? "dataDarkSrc" : "dataLightSrc";
+    const key = scheme?.toLowerCase() === "dark" ? "dataDarkSrc" : "dataLightSrc";
+    // As in a browser, the first source that matches a scheme is the one shown.
+    if (scheme && url && image.properties?.[key] === undefined) {
       // The sanitizer reads a drive letter as a protocol; as a file URL it resolves to the same path.
       const value = isWindowsDrivePathHref(url) ? `file:///${url.replaceAll("\\", "/")}` : url;
       image.properties = { ...image.properties, [key]: value };

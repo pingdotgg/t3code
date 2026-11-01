@@ -158,6 +158,7 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
       [
         "<picture>",
         '  <source media="(prefers-color-scheme: dark)" srcset="docs/dark.webp 1x, docs/dark@2x.webp 2x">',
+        '  <source media="(prefers-color-scheme: dark)" srcset="docs/dark-unused.webp">',
         '  <source media="(min-width: 600px)" srcset="docs/wide.webp">',
         '  <img src="docs/light.webp" alt="Studio">',
         "</picture>",
