@@ -20,12 +20,8 @@ export function withoutEnvironmentThemes(config: ServerConfig): ServerConfig {
 }
 
 /**
- * Returns `next` with every part deep-equal to `previous` replaced by the
- * previous object. A provider status push re-sends every provider even when
- * only one field (often just `checkedAt`) changed, so this keeps unchanged
- * providers, models and skills identical and lets memoized UI skip them.
- * A reconnect snapshot re-sends the whole config the same way.
- * A settings write re-sends the whole settings document for one changed field.
+ * Provider pushes, reconnects, and settings writes resend unchanged data.
+ * Reuse deep-equal objects so memoized UI can skip unchanged providers, models, and skills.
  */
 export function reuseUnchanged<T>(previous: unknown, next: T): T {
   if (Object.is(previous, next)) return next;
@@ -69,17 +65,13 @@ export function applyServerConfigProjection(
   switch (event.type) {
     case "snapshot": {
       // Wire snapshots never contain published themes. Keep the previous set
-      // until a capable server sends its authoritative theme event. A legacy
-      // server cannot send a later removal, so a downgrade must clear the set.
-      const capabilities = event.config.environment.capabilities;
-      const carriedThemes =
-        capabilities.environmentThemes === true && Option.isSome(current)
-          ? current.value.config.environmentThemes
-          : undefined;
-      const carriedSources =
-        capabilities.usageLimitSources === true && Option.isSome(current)
-          ? current.value.config.usageLimitSources
-          : undefined;
+      // until the server sends its authoritative theme event.
+      const carriedThemes = Option.isSome(current)
+        ? current.value.config.environmentThemes
+        : undefined;
+      const carriedSources = Option.isSome(current)
+        ? current.value.config.usageLimitSources
+        : undefined;
       const config: ServerConfig = {
         ...event.config,
         ...(carriedThemes === undefined ? {} : { environmentThemes: carriedThemes }),

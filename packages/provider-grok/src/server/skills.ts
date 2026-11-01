@@ -1,20 +1,28 @@
-/**
- * Asking the CLI beats scanning the filesystem because the catalog honors Grok's own skill
- * config (ignore lists, disabled skills) and includes plugin skills, which live three levels
- * deep under `~/.grok/installed-plugins/` where a flat scan cannot see them.
- */
+// The CLI catalog honors ignored/disabled skills and nested plugin skills that flat scans miss.
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import type { GrokSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
+import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { grokProbeEnvironment } from "./probeEnvironment.ts";
 
 const GROK_SKILLS_PROBE_TIMEOUT_MS = 4_000;
+// The composer's chip rule, anchored to the message start, so `$25` never names a skill.
+const LEADING_SKILL_MENTION = new RegExp(`^\\s*${SKILL_MENTION_PATTERN.source}`, "u");
+
+/** A message opening with a mention, such as `deploy` and ` ship it` for `$deploy ship it`. */
+export function leadingGrokSkillMention(
+  text: string,
+): { readonly name: string; readonly rest: string } | undefined {
+  const match = LEADING_SKILL_MENTION.exec(text);
+  if (match?.[2] === undefined) return undefined;
+  return { name: match[2], rest: text.slice(match[0].length) };
+}
 
 class GrokSkillsProbeError extends Schema.TaggedError<GrokSkillsProbeError>()(
   "GrokSkillsProbeError",

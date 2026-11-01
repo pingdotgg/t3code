@@ -1,3 +1,4 @@
+import { trimOptionalString as trimmed } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as Result from "effect/Result";
@@ -22,10 +23,7 @@ import { TrimmedNonEmptyString } from "@t3tools/contracts";
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
-/**
- * GitLab's REST enums are decoded as plain strings and normalized here: a GitLab release that
- * adds a pipeline status or a merge status must not fail the whole payload.
- */
+/** Unknown pipeline or merge status values must not fail the whole payload. */
 const RawUserSchema = Schema.Struct({
   id: Schema.optional(Schema.Int),
   username: Schema.String,
@@ -34,9 +32,17 @@ const RawUserSchema = Schema.Struct({
 });
 
 const RawPipelineSchema = Schema.Struct({
+  id: Schema.optional(Schema.NullOr(Schema.Int)),
+  project_id: Schema.optional(Schema.NullOr(Schema.Int)),
   status: Schema.optional(Schema.NullOr(Schema.String)),
   web_url: Schema.optional(Schema.NullOr(Schema.String)),
   source: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+const RawTriggerJobSchema = Schema.Struct({
+  name: Schema.String,
+  allow_failure: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  downstream_pipeline: Schema.optional(Schema.NullOr(RawPipelineSchema)),
 });
 
 const RawMergeRequestSchema = Schema.Struct({
@@ -59,7 +65,7 @@ const RawMergeRequestSchema = Schema.Struct({
   closed_at: Schema.optional(Schema.NullOr(Schema.String)),
   reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawUserSchema))),
   labels: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
-  // A string, and "1000+" past GitLab's counting limit, so it is parsed rather than decoded.
+  // GitLab reports "1000+" past its counting limit.
   changes_count: Schema.optional(Schema.NullOr(Schema.String)),
   head_pipeline: Schema.optional(Schema.NullOr(RawPipelineSchema)),
   user: Schema.optional(
@@ -69,11 +75,7 @@ const RawMergeRequestSchema = Schema.Struct({
   auto_merge_enabled: Schema.optional(Schema.NullOr(Schema.Boolean)),
   squash_on_merge: Schema.optional(Schema.NullOr(Schema.Boolean)),
   squash: Schema.optional(Schema.NullOr(Schema.Boolean)),
-  /**
-   * It costs a walk of the two branches, so GitLab withholds it unless
-   * `include_diverged_commits_count` asks for it, and answers it only for a single merge
-   * request — a list never carries it, however it is asked for.
-   */
+  /** Only detail reads with include_diverged_commits_count return this expensive count. */
   diverged_commits_count: Schema.optional(Schema.NullOr(Schema.Int)),
 });
 
@@ -201,17 +203,11 @@ export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
   readonly reviewerIds: ReadonlyArray<number>;
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
-  /**
-   * Absent where GitLab did not count, which is not the same as a branch that has nothing behind
-   * it: an install too old to answer must not be read as saying the branch is current.
-   */
+  /** Absent means not counted, not up to date. */
   readonly divergedCommits?: number;
   readonly headSha?: string;
-}
-
-function trimmed(value: string | null | undefined): string | null {
-  const text = value?.trim() ?? "";
-  return text.length > 0 ? text : null;
+  /** On a fork the pipeline often belongs to the source project, not the target. */
+  readonly headPipeline?: { readonly id: number; readonly projectId: number };
 }
 
 function toActor(raw: Schema.Schema.Type<typeof RawUserSchema> | null | undefined) {
@@ -266,12 +262,11 @@ function toPipelineStatus(value: string | null | undefined): PullRequestCheckSta
     case "failed":
       return "failure";
     case "canceled":
-    case "cancelling":
+    case "canceling":
       return "cancelled";
     case "skipped":
       return "skipped";
     case "manual":
-    case "scheduled":
       return "neutral";
     default:
       return "pending";
@@ -346,12 +341,16 @@ function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLab
       : {}),
     ...(raw.diverged_commits_count == null ? {} : { divergedCommits: raw.diverged_commits_count }),
     ...(headSha === null ? {} : { headSha }),
+    ...(raw.head_pipeline?.id == null || raw.head_pipeline.project_id == null
+      ? {}
+      : { headPipeline: { id: raw.head_pipeline.id, projectId: raw.head_pipeline.project_id } }),
   };
 }
 
 const decodeUnknownList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeMergeRequestEntry = Schema.decodeUnknownExit(RawMergeRequestSchema);
 const decodeMergeRequest = decodeJsonResult(RawMergeRequestSchema);
+const decodeTriggerJobEntry = Schema.decodeUnknownExit(RawTriggerJobSchema);
 const decodeNoteEntry = Schema.decodeUnknownExit(RawNoteSchema);
 const decodeUserEntry = Schema.decodeUnknownExit(RawUserSchema);
 const decodeCommitEntry = Schema.decodeUnknownExit(RawCommitSchema);
@@ -373,7 +372,7 @@ type DecodeFailure = Cause.Cause<Schema.SchemaError>;
 
 export interface GitLabProjectUsers {
   readonly candidates: ReadonlyArray<PullRequestReviewerCandidate>;
-  /** Rows GitLab returned, counted before decoding, so a skipped row cannot hide a next page. */
+  /** Count before decoding to avoid ending pagination on skipped rows. */
   readonly rawCount: number;
 }
 
@@ -411,6 +410,42 @@ export function decodeMergeRequestDetailJson(
     : Result.fail(decoded.failure);
 }
 
+export interface GitLabTriggerJobChecks {
+  readonly checks: ReadonlyArray<PullRequestCheck>;
+  readonly rawCount: number;
+}
+
+/**
+ * Without `strategy: depend` a trigger job succeeds as soon as it starts its downstream
+ * pipeline, so the head pipeline stays green when that pipeline fails. Each row carries the
+ * downstream pipeline's own status instead of the trigger job's.
+ */
+export function decodeTriggerJobChecksJson(
+  raw: string,
+): Result.Result<GitLabTriggerJobChecks, DecodeFailure> {
+  const decoded = decodeUnknownList(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const checks: PullRequestCheck[] = [];
+  for (const entry of decoded.success) {
+    const job = decodeTriggerJobEntry(entry);
+    if (Exit.isFailure(job)) continue;
+    const name = trimmed(job.value.name);
+    const downstream = job.value.downstream_pipeline;
+    if (name === null || !downstream) continue;
+    const status = toPipelineStatus(downstream.status);
+    checks.push({
+      name,
+      // The same reading as `manual`: GitLab was told this failure does not fail the pipeline.
+      status: status === "failure" && job.value.allow_failure === true ? "neutral" : status,
+      description: "Downstream pipeline",
+      url: trimmed(downstream.web_url),
+    });
+  }
+  return Result.succeed({ checks, rawCount: decoded.success.length });
+}
+
 export function decodeViewerJson(raw: string): Result.Result<string | null, DecodeFailure> {
   const decoded = decodeViewer(raw);
   return Result.isSuccess(decoded)
@@ -439,6 +474,34 @@ export function decodeProjectUsersJson(
     });
   }
   return Result.succeed({ candidates, rawCount: decoded.success.length });
+}
+
+const RawLabelSchema = Schema.Struct({
+  name: Schema.String,
+  color: Schema.optional(Schema.NullOr(Schema.String)),
+});
+const decodeLabelEntry = Schema.decodeUnknownExit(RawLabelSchema);
+
+export interface GitLabProjectLabels {
+  readonly labels: ReadonlyArray<PullRequestLabel>;
+  readonly rawCount: number;
+}
+
+export function decodeProjectLabelsJson(
+  raw: string,
+): Result.Result<GitLabProjectLabels, DecodeFailure> {
+  const decoded = decodeUnknownList(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const labels: PullRequestLabel[] = [];
+  for (const entry of decoded.success) {
+    const label = decodeLabelEntry(entry);
+    if (Exit.isFailure(label)) continue;
+    const name = trimmed(label.value.name);
+    if (name !== null) labels.push({ name, color: trimmed(label.value.color) });
+  }
+  return Result.succeed({ labels, rawCount: decoded.success.length });
 }
 
 export function decodeProjectMergeCapabilitiesJson(
@@ -639,7 +702,6 @@ export function decodeMergeRequestChangesJson(
   });
 }
 
-/** Builds file patches, retaining raw counts and recording files whose contents are missing. */
 function mergeRequestPatch(entries: ReadonlyArray<unknown>): GitLabMergeRequestPatch {
   const sections: string[] = [];
   let truncated = false;
@@ -913,12 +975,7 @@ const RawRepositoryBlobsSchema = Schema.Struct({
 
 const decodeRepositoryBlobs = decodeJsonResult(RawRepositoryBlobsSchema);
 
-/**
- * Blob ids by path, or null where GitLab did not answer the query at all (a project the token
- * cannot see, or a repository with no blobs connection). That case must be told apart from an
- * empty answer: read as "the revision has none of these files", it would report every cleared
- * file as changed again.
- */
+/** Null means unknown, not deleted; preserve viewed marks. */
 export function decodeRepositoryBlobsJson(
   raw: string,
 ): Result.Result<ReadonlyMap<string, string> | null, DecodeFailure> {
@@ -930,13 +987,126 @@ export function decodeRepositoryBlobsJson(
   if (nodes === undefined || nodes === null) return Result.succeed(null);
   const blobs = new Map<string, string>();
   for (const node of nodes) {
-    // Not trimmed, unlike everything else read out of this payload: a leading or trailing space
-    // is a legal part of a file's name, and trimming it would key this map under a name the
-    // caller's asked-for path never matches.
+    // Preserve path whitespace so blob-map keys match the caller's exact filenames.
     const path = node?.path;
     const oid = trimmed(node?.oid);
     if (path === undefined || path === null || path.length === 0 || oid === null) continue;
     blobs.set(path, oid);
   }
   return Result.succeed(blobs);
+}
+
+/**
+ * Line counts for merge requests of one project. The REST listing carries no line counts, and
+ * reading each diff to count them would cost a request per row, so GraphQL's per-merge-request
+ * summary is asked for in one read instead.
+ */
+export const MERGE_REQUEST_STATS_GRAPHQL_QUERY = `query($fullPath: ID!, $iids: [String!]) {
+  project(fullPath: $fullPath) {
+    mergeRequests(iids: $iids, first: 100) {
+      nodes { iid diffStatsSummary { additions deletions } }
+    }
+  }
+}`;
+
+const LineCountsSchema = Schema.Struct({ additions: Schema.Int, deletions: Schema.Int });
+
+const RawMergeRequestStatsSchema = Schema.Struct({
+  data: Schema.Struct({
+    project: Schema.NullOr(
+      Schema.Struct({
+        mergeRequests: Schema.NullOr(
+          Schema.Struct({
+            nodes: Schema.Array(
+              Schema.NullOr(
+                Schema.Struct({
+                  iid: Schema.String,
+                  diffStatsSummary: Schema.NullOr(LineCountsSchema),
+                }),
+              ),
+            ),
+          }),
+        ),
+      }),
+    ),
+  }),
+});
+
+const decodeMergeRequestStats = decodeJsonResult(RawMergeRequestStatsSchema);
+
+/**
+ * The counts by merge request number. A merge request GitLab returned no summary for is left
+ * out rather than counted as zero, so its row keeps whatever it already showed.
+ */
+export function decodeMergeRequestStatsJson(
+  raw: string,
+): Result.Result<
+  ReadonlyMap<number, { readonly additions: number; readonly deletions: number }>,
+  DecodeFailure
+> {
+  const decoded = decodeMergeRequestStats(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const stats = new Map<number, { readonly additions: number; readonly deletions: number }>();
+  for (const node of decoded.success.data.project?.mergeRequests?.nodes ?? []) {
+    const iid = Number(node?.iid);
+    if (!Number.isSafeInteger(iid) || iid <= 0 || node?.diffStatsSummary == null) continue;
+    stats.set(iid, node.diffStatsSummary);
+  }
+  return Result.succeed(stats);
+}
+
+/** Per-file line counts for one merge request, which the code/tests/generated breakdown sorts. */
+export const MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
+  project(fullPath: $fullPath) {
+    mergeRequest(iid: $iid) {
+      diffStatsSummary { fileCount }
+      diffStats { path additions deletions }
+    }
+  }
+}`;
+
+const decodeMergeRequestFileStats = decodeJsonResult(
+  Schema.Struct({
+    data: Schema.Struct({
+      project: Schema.NullOr(
+        Schema.Struct({
+          mergeRequest: Schema.NullOr(
+            Schema.Struct({
+              diffStatsSummary: Schema.NullOr(Schema.Struct({ fileCount: Schema.Int })),
+              diffStats: Schema.NullOr(
+                Schema.Array(Schema.Struct({ path: Schema.String, ...LineCountsSchema.fields })),
+              ),
+            }),
+          ),
+        }),
+      ),
+    }),
+  }),
+);
+
+/**
+ * GitLab stops listing files past its diff limits while the summary still counts them all, so a
+ * shorter list is reported as truncated rather than as a breakdown that misses lines.
+ */
+export function decodeMergeRequestFileStatsJson(raw: string): Result.Result<
+  {
+    readonly files: ReadonlyArray<{
+      readonly path: string;
+      readonly additions: number;
+      readonly deletions: number;
+    }>;
+    readonly truncated: boolean;
+  },
+  DecodeFailure
+> {
+  const decoded = decodeMergeRequestFileStats(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const mergeRequest = decoded.success.data.project?.mergeRequest;
+  const files = mergeRequest?.diffStats ?? [];
+  const fileCount = mergeRequest?.diffStatsSummary?.fileCount;
+  return Result.succeed({ files, truncated: fileCount === undefined || files.length < fileCount });
 }
