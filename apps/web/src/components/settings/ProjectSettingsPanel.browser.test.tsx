@@ -24,6 +24,7 @@ import {
 } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -34,6 +35,7 @@ type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
 const state = vi.hoisted(() => ({
   sessions: new Map<EnvironmentId, Atom.Writable<SessionResult>>(),
   projects: [] as Project[],
+  projectListeners: new Set<() => void>(),
   update:
     vi.fn<
       (request: {
@@ -76,7 +78,14 @@ vi.mock(import("~/state/environments"), async (original) => ({
 }));
 vi.mock(import("~/state/entities"), async (original) => ({
   ...(await original()),
-  useProjects: (() => state.projects) as never,
+  useProjects: (() =>
+    useSyncExternalStore(
+      (listener) => {
+        state.projectListeners.add(listener);
+        return () => state.projectListeners.delete(listener);
+      },
+      () => state.projects,
+    )) as never,
   useThreadShells: () => [],
   useServerConfigs: (() =>
     new Map(
@@ -208,6 +217,7 @@ function setup() {
         ? { ...project, ...patch }
         : project,
     );
+    for (const listener of state.projectListeners) listener();
     return AsyncResult.success(undefined);
   });
   state.delete.mockResolvedValue(AsyncResult.success(undefined));
