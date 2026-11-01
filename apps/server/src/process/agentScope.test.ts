@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
-import { AgentScope } from "@t3tools/shared/AgentScope";
+import { AgentScope, agentScopeCommand } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -50,6 +50,9 @@ const withFakeSystemd = <A, E>(
     readonly calls: ReadonlyArray<ReadonlyArray<string>>;
     readonly stateDir: string;
     readonly cgroupRoot: string;
+    readonly agentPath: string;
+    /** systemd-run fails as it does when XDG_RUNTIME_DIR is full. */
+    readonly breakScopes: () => void;
   }) => Effect.Effect<A, E>,
   // A user manager older than systemd 253 rejects OOMPolicy on scopes.
   {
@@ -65,6 +68,7 @@ const withFakeSystemd = <A, E>(
     const cgroupRoot = NodePath.join(bin, "cgroup");
     const units = new Map<string, FakeUnit>();
     const calls: Array<ReadonlyArray<string>> = [];
+    let scopesBroken = false;
     const output = (stdout: string, code = 0): ProcessRunner.ProcessRunOutput => ({
       stdout,
       stderr: "",
@@ -76,9 +80,17 @@ const withFakeSystemd = <A, E>(
       stderrInvalidUtf8: false,
     });
     const runner = ProcessRunner.ProcessRunner.of({
-      run: ({ args }) =>
+      run: ({ command, args }) =>
         Effect.sync(() => {
           calls.push(args);
+          if (scopesBroken && NodePath.basename(command) === "systemd-run") {
+            return {
+              ...output(""),
+              stderr:
+                "Failed to start transient scope unit: Unit run-p402236-i4601228.scope not found.",
+              code: ChildProcessSpawner.ExitCode(1),
+            };
+          }
           if (!oomPolicy && args.some((arg) => arg.startsWith("--property=OOMPolicy="))) {
             return output("", 1);
           }
@@ -115,7 +127,11 @@ const withFakeSystemd = <A, E>(
       }),
     );
     const { stateDir } = yield* ServerConfig.ServerConfig;
-    return yield* body({ scope, units, calls, stateDir, cgroupRoot }).pipe(
+    const breakScopes = () => {
+      scopesBroken = true;
+    };
+    const agentPath = NodePath.join(bin, "agent");
+    return yield* body({ scope, units, calls, stateDir, cgroupRoot, agentPath, breakScopes }).pipe(
       Effect.ensuring(Effect.sync(() => NodeFS.rmSync(bin, { recursive: true, force: true }))),
     );
   }).pipe(
@@ -402,6 +418,19 @@ describe("AgentScope service", () => {
       { stopFails: true },
     );
   });
+
+  it.effect("launches agents unscoped once systemd can no longer create a scope", () =>
+    withFakeSystemd(({ scope, agentPath, breakScopes }) =>
+      Effect.gen(function* () {
+        const scoped = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        expect(scoped.args).toContain("--scope");
+
+        breakScopes();
+        const launch = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "b" });
+        expect(launch).toEqual(agentScopeCommand({ command: agentPath, args: [] }));
+      }),
+    ),
+  );
 
   it.effect("leaves a quiet slice alone", () =>
     withFakeSystemd(({ scope, calls }) =>
