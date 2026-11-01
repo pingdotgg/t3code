@@ -224,8 +224,8 @@ export const make = Effect.gen(function* () {
   const grantsSeen = yield* Ref.make<ReadonlyMap<string | null, number>>(new Map());
   const grantsSeenOn = (account: string | null) =>
     Ref.get(grantsSeen).pipe(Effect.map((counts) => counts.get(account) ?? 0));
-  // Bumped when a sign-in or the recheck sees a grant, before it knows the account: a scan
-  // already running then may not end on "no grants", as that grant may be this account's.
+  // Bumped when a sign-in, the recheck or a scan sees a grant, before it knows the account: a
+  // scan already running then may not end on "no grants", and a recheck pass runs again.
   const grantsInDoubt = yield* Ref.make(0);
   /** Counts a grant seen on `account`; true when it is the first there. */
   const countGrant = (account: string | null) =>
@@ -258,6 +258,7 @@ export const make = Effect.gen(function* () {
       const switchSeen = yield* Ref.make(false);
       const keepGrant = Effect.gen(function* () {
         if (yield* Ref.getAndSet(grantKept, true)) return;
+        yield* Ref.update(grantsInDoubt, (count) => count + 1);
         // An older "no grants" is dropped until a full scan, so a read cut short or failed
         // leaves nothing to fall back on. A switch fails the scan below, and the older result
         // stays dropped, as the grant may have been read on this account before it.

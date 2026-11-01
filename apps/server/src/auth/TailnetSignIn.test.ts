@@ -705,6 +705,15 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       AllowedIPs: [`${STRANGER_ADDRESS}/32`],
     });
     const strangerPeer = { ID: "nStranger", TailscaleIPs: [STRANGER_ADDRESS], UserID: "int64:999" };
+    // More of the owner's own devices.
+    const DESK_ADDRESS = "100.88.1.40";
+    const ownDevice = (id: string, address: string) =>
+      phoneNode({ StableID: id, Addresses: [`${address}/32`], AllowedIPs: [`${address}/32`] });
+    const ownPeer = (id: string, address: string) => ({
+      ID: id,
+      TailscaleIPs: [address],
+      UserID: `int64:${OWNER_ID}`,
+    });
     const signInLaptop = (key: ReturnType<typeof makeDpopKey>) =>
       signIn(key, { remoteAddress: LAPTOP_ADDRESS }).pipe(
         Effect.flatMap((grant) => exchange(grant.credential, key)),
@@ -1218,28 +1227,43 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       },
     );
 
-    it.effect("an owner-rule sign-in during the recheck that first sees a grant ends in it", () => {
-      const tailnet = withLaptop();
-      return Effect.gen(function* () {
-        const service = yield* TailnetSignIn.TailnetSignIn;
-        // The laptop signs in by the owner rule, then gets a grant.
-        yield* signInLaptop(makeDpopKey());
-        tailnet.devices = {
-          [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
+    it.effect.each([{ via: "its own lookup" }, { via: "a policy scan" }])(
+      "an owner-rule sign-in during the recheck that first sees a grant ($via) ends in it",
+      ({ via }) => {
+        const tailnet = withLaptop();
+        tailnet.status = hostStatus({ Peer: { ...peers, desk: ownPeer("nDesk", DESK_ADDRESS) } });
+        const desk = ownDevice("nDesk", DESK_ADDRESS);
+        tailnet.devices = { ...tailnet.devices, [DESK_ADDRESS]: { node: desk } };
+        const grant = (address: string, node: JsonObject) => {
+          tailnet.devices = {
+            ...tailnet.devices,
+            [address]: { node, capMap: granted({ scopes: ["read"] }) },
+          };
         };
-        // While the recheck looks the laptop up, the phone signs in by the owner rule.
-        const started = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        tailnet.hold = { address: LAPTOP_ADDRESS, started, release };
-        const recheck = yield* service.recheckSessions.pipe(Effect.forkChild);
-        yield* Deferred.await(started);
-        const phoneKey = makeDpopKey();
-        const phone = yield* exchange((yield* signIn(phoneKey)).credential, phoneKey);
-        yield* Deferred.succeed(release, undefined);
-        yield* Fiber.join(recheck);
-        expect(yield* revoked(phone.access_token)).toBe(true);
-      }).pipe(Effect.provide(layerTest(tailnet)));
-    });
+        return Effect.gen(function* () {
+          const service = yield* TailnetSignIn.TailnetSignIn;
+          yield* signInLaptop(makeDpopKey());
+          if (via === "its own lookup") grant(LAPTOP_ADDRESS, laptop);
+          // While the recheck looks the laptop up, the phone signs in by the owner rule.
+          const started = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          tailnet.hold = { address: LAPTOP_ADDRESS, started, release };
+          const recheck = yield* service.recheckSessions.pipe(Effect.forkChild);
+          yield* Deferred.await(started);
+          const phoneKey = makeDpopKey();
+          const phone = yield* exchange((yield* signIn(phoneKey)).credential, phoneKey);
+          if (via === "a policy scan") {
+            // The idle desk gets a grant, and the kept "no grants" expires, so the laptop's
+            // decision scans afresh.
+            grant(DESK_ADDRESS, desk);
+            yield* TestClock.adjust("61 seconds");
+          }
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(recheck);
+          expect(yield* revoked(phone.access_token)).toBe(true);
+        }).pipe(Effect.provide(layerTest(tailnet)));
+      },
+    );
 
     it.effect(
       "a grant the recheck reads after a profile switch is not counted for the old one",
@@ -1380,15 +1404,7 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
     it.effect(
       "a grant the recheck cannot tie to an account keeps a running scan from deciding",
       () => {
-        const DESK_ADDRESS = "100.88.1.40";
         const TABLET_ADDRESS = "100.88.1.9";
-        const ownDevice = (id: string, address: string) =>
-          phoneNode({ StableID: id, Addresses: [`${address}/32`], AllowedIPs: [`${address}/32`] });
-        const ownPeer = (id: string, address: string) => ({
-          ID: id,
-          TailscaleIPs: [address],
-          UserID: `int64:${OWNER_ID}`,
-        });
         const tailnet = withLaptop();
         tailnet.status = hostStatus({
           Peer: {
