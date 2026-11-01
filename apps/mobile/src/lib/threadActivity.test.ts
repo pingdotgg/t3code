@@ -348,6 +348,30 @@ function userMessage(updatedAt = "2026-06-20T00:00:01.000Z") {
   };
 }
 
+it("restores a retained queued prompt after startup fails", () => {
+  const pending = {
+    ...userMessage(),
+    inputIntent: "queued_turn" as const,
+    status: "pending" as const,
+    startedAt: null,
+    completedAt: null,
+  };
+  for (const visibility of ["local", "inherited"] as const) {
+    const cache = createThreadFeedCache();
+    expect(buildThreadFeed([projected(pending, 0, visibility)], { cache })).toEqual([]);
+    const failedAt = DateTime.makeUnsafe("2026-06-20T00:00:02.000Z");
+    const failed = {
+      ...pending,
+      status: "failed" as const,
+      completedAt: failedAt,
+      updatedAt: failedAt,
+    };
+    expect(buildThreadFeed([projected(failed, 0, visibility)], { cache })).toMatchObject([
+      { type: "message", message: { text: pending.text, inputIntent: "queued_turn" } },
+    ]);
+  }
+});
+
 function command(updatedAt = "2026-06-20T00:00:02.000Z") {
   return {
     ...base("item-command", updatedAt, 1),
