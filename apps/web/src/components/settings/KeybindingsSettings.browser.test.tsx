@@ -129,9 +129,9 @@ it("re-enables Save when a When editor closes on an expression it could not pars
 it("filters actions and keeps assigned commands disabled with their shortcuts", async () => {
   await using screen = await render(<KeybindingsSettingsPanel />);
   await screen.getByRole("button", { name: "Add keybinding" }).click();
-  await screen.getByRole("combobox", { name: "Command", exact: true }).click();
   const search = screen.getByRole("combobox", { name: "Search actions" });
-  await userEvent.type(search, "sidebar.toggle");
+  await expect.element(search).toHaveFocus();
+  await userEvent.keyboard("sidebar.toggle");
   const assigned = screen.getByRole("option", { name: /Sidebar: Toggle/ });
   await expect.element(assigned).toHaveAttribute("aria-disabled", "true");
   await expect.element(assigned.element().querySelector("kbd")!).toBeVisible();
