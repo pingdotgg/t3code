@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import {
   CommandId,
   EnvironmentId,
+  EventId,
   MessageId,
   type OrchestrationV2Command,
   type OrchestrationV2Run,
@@ -13,7 +14,9 @@ import {
   type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderInstanceId,
+  ProviderTurnId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -31,11 +34,17 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
+import * as EventStore from "./EventStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
 it("stamps authoritative provenance on commands that create threads or messages", () => {
@@ -599,6 +608,131 @@ it.effect.each([
   }),
 );
 
+it.effect("an auto send queues behind a turn waiting on the user's answer", () => {
+  const projectId = ProjectId.make("project:thread-management:auto-send");
+  const threadId = ThreadId.make("thread:thread-management:auto-send");
+  const instanceId = ProviderInstanceId.make("codex");
+  const layerDatabase = SqlitePersistence.layerMemory;
+  const adapter = {
+    instanceId,
+    driver: ProviderDriverKind.make("codex"),
+    getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+    planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+    openSession: () => Effect.die("Runs here never reach a provider"),
+  } as ProviderAdapter.ProviderAdapterV2["Service"];
+  const layerTest = ThreadManagementService.layer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        layerDatabase,
+        ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+        EventStore.layer.pipe(Layer.provide(layerDatabase)),
+        EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
+        ProviderReplayHarness.layerWithRegistry(
+          { name: "auto-send" },
+          ProviderAdapterRegistry.layerFromAdapters([adapter]),
+          { databaseLayer: layerDatabase, runEffectWorker: false },
+        ),
+      ),
+    ),
+    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provideMerge(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+  );
+
+  return Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("command:auto-send:create"),
+      threadId,
+      projectId,
+      title: "Auto send",
+      modelSelection: { instanceId, model: "gpt-5.1-codex" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("command:auto-send:first"),
+      threadId,
+      messageId: MessageId.make("message:auto-send:first"),
+      text: "Ask me a question",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const now = yield* DateTime.now;
+    const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+    const providerTurnId = ProviderTurnId.make("provider-turn:auto-send");
+    yield* projections.apply({
+      id: EventId.make("event:auto-send:running"),
+      type: "run.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: { ...run, status: "running", startedAt: now },
+    });
+    yield* projections.apply({
+      id: EventId.make("event:auto-send:turn"),
+      type: "provider-turn.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: providerTurnId,
+        providerThreadId: run.providerThreadId!,
+        nodeId: run.rootNodeId!,
+        runAttemptId: run.activeAttemptId!,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "running",
+        startedAt: now,
+        completedAt: null,
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make("event:auto-send:question"),
+      type: "runtime-request.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: {
+        id: RuntimeRequestId.make("request:auto-send"),
+        nodeId: run.rootNodeId!,
+        providerTurnId,
+        nativeRequestRef: null,
+        kind: "user_input",
+        status: "pending",
+        responseCapability: {
+          type: "live",
+          providerSessionId: ProviderSessionId.make("provider-session:auto-send"),
+        },
+        createdAt: now,
+        resolvedAt: null,
+      },
+    });
+
+    const sent = yield* threads.sendToThread({
+      projectId,
+      commandId: CommandId.make("command:auto-send:other-thread"),
+      threadId,
+      messageId: MessageId.make("message:auto-send:other-thread"),
+      text: "A message from another thread",
+      attachments: [],
+      mode: "auto",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+
+    expect(sent.delivery).toBe("queued");
+    expect(sent.run.status).toBe("queued");
+  }).pipe(Effect.provide(layerTest));
+});
 it.effect.each([
   {
     name: "kills the thread's own agent and ends its turn",

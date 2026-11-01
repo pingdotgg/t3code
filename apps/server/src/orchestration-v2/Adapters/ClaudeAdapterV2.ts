@@ -7233,6 +7233,42 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return { node, request, turnItem };
         });
 
+        // A steer offered with priority "now" aborts a pending permission
+        // callback, and Claude asks again as a new request. Left pending, the
+        // old card takes answers Claude no longer waits for.
+        const cancelAbandonedRequest = Effect.fnUntraced(function* (artifacts: {
+          readonly node: OrchestrationV2ExecutionNode;
+          readonly request: OrchestrationV2RuntimeRequest;
+          readonly turnItem: OrchestrationV2TurnItem;
+        }) {
+          const now = yield* DateTime.now;
+          yield* Effect.all(
+            [
+              emitProviderEvent({
+                type: "runtime_request.updated",
+                driver: CLAUDE_PROVIDER,
+                runtimeRequest: { ...artifacts.request, status: "cancelled", resolvedAt: now },
+              }),
+              emitProviderEvent({
+                type: "node.updated",
+                driver: CLAUDE_PROVIDER,
+                node: { ...artifacts.node, status: "cancelled", completedAt: now },
+              }),
+              emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: {
+                  ...artifacts.turnItem,
+                  status: "cancelled",
+                  completedAt: now,
+                  updatedAt: now,
+                },
+              }),
+            ],
+            { concurrency: 1 },
+          );
+        });
+
         const ensureReasoningBlock = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
           itemId: string,
@@ -9708,6 +9744,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
               ),
             );
+            if (callbackOptions.signal.aborted && !(yield* Deferred.isDone(answers))) {
+              yield* cancelAbandonedRequest(artifacts);
+            }
             return callbackOptions.signal.aborted
               ? ({
                   behavior: "deny",
@@ -9848,6 +9887,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }),
             ),
           );
+          if (callbackOptions.signal.aborted && !(yield* Deferred.isDone(decision))) {
+            yield* cancelAbandonedRequest(artifacts);
+          }
 
           return permissionResultFromDecision({
             toolName,

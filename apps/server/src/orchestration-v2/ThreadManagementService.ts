@@ -561,6 +561,26 @@ function latestSteerableRun(
     .toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
 
+// Steering into a turn blocked on the user's answer can abort the question,
+// and the provider asks it again with the user's typed answers gone.
+function runAwaitsUser(
+  projection: Pick<OrchestrationV2ThreadProjection, "providerTurns" | "runtimeRequests">,
+  run: OrchestrationV2Run,
+): boolean {
+  const turnIds = new Set(
+    projection.providerTurns
+      .filter((turn) => turn.runAttemptId === run.activeAttemptId)
+      .map((turn) => turn.id),
+  );
+  return projection.runtimeRequests.some(
+    (request) =>
+      request.status === "pending" &&
+      request.responseCapability.type === "live" &&
+      request.providerTurnId !== null &&
+      turnIds.has(request.providerTurnId),
+  );
+}
+
 const SETTLE_AFTER_RUN_WAIT_MS = 24 * 60 * 60 * 1_000;
 const FORCE_STOP_REASON = "Force stopped by user";
 const FORCE_STOP_RELEASE_WAIT = "10 seconds";
@@ -810,7 +830,11 @@ const make = Effect.gen(function* () {
   const sendToThread: ThreadManagementServiceShape["sendToThread"] = Effect.fn(
     "ThreadManagementService.sendToThread",
   )(function* (input) {
-    const target = yield* getProjectThreadRecords(input, ["runs", "providerTurns"]);
+    const target = yield* getProjectThreadRecords(input, [
+      "runs",
+      "providerTurns",
+      "runtimeRequests",
+    ]);
     if (target.thread.archivedAt !== null) {
       return yield* new ThreadManagementThreadArchivedError({
         threadId: input.threadId,
@@ -833,7 +857,9 @@ const make = Effect.gen(function* () {
         targetRunId: steerableRun.id,
       };
     } else if (input.mode === "auto" && steerableRun !== undefined) {
-      dispatchMode = { type: "steer_active", targetRunId: steerableRun.id };
+      dispatchMode = runAwaitsUser(target, steerableRun)
+        ? { type: "queue_after_active" }
+        : { type: "steer_active", targetRunId: steerableRun.id };
     } else {
       dispatchMode = {
         type: input.mode === "queue" ? "queue_after_active" : "start_immediately",
