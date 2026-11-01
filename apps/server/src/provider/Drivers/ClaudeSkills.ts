@@ -323,6 +323,14 @@ const decodeSyncedPlugin = Schema.decodeUnknownOption(
 );
 const ACCOUNT_UUID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
+/** Claude's folder for a synced row: reserved characters become `_`, trailing dots and spaces go. */
+function syncedPluginDirectoryName(name: string): string {
+  const replaced = name.replace(/[<>:"|?*\\/]/g, "_");
+  let end = replaced.length;
+  while (end > 0 && (replaced[end - 1] === "." || replaced[end - 1] === " ")) end--;
+  return replaced.slice(0, end);
+}
+
 function isInsideDirectory(path: Path.Path, directory: string, candidate: string): boolean {
   const relative = path.relative(directory, candidate);
   return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
@@ -395,10 +403,13 @@ const resolveSyncedPluginBucket = Effect.fn("resolveSyncedPluginBucket")(functio
   const account = yield* readClaudeOauthAccount(accountConfigPath);
   const organizationId = environment.CLAUDE_CODE_ORGANIZATION_UUID ?? account?.organizationUuid;
   // A stored claude.ai login names its own account; an injected token uses the env account.
+  const environmentAccountId = environment.CLAUDE_CODE_ACCOUNT_UUID;
   const accountId =
     account !== undefined && !environment.CLAUDE_CODE_OAUTH_TOKEN
       ? account.accountUuid
-      : (environment.CLAUDE_CODE_ACCOUNT_UUID ?? "unbound");
+      : environmentAccountId && ACCOUNT_UUID_PATTERN.test(environmentAccountId)
+        ? environmentAccountId
+        : "unbound";
   if (
     !organizationId ||
     !accountId ||
@@ -431,7 +442,7 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
       Effect.orElseSucceed(() => undefined),
     );
   const roots: Array<ClaudeSkillRoot> = [];
-  const installedPluginNames = new Set<string>();
+  const claimedPluginNames = new Set<string>();
   // The CLI's process.cwd() resolves symlinks; registry projectPath values remain lexical.
   const workspace =
     cwd === undefined
@@ -468,7 +479,7 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
     const manifest = yield* readPluginManifest(installPath);
     const prefix = manifest?.name ?? key.split("@")[0];
     if (!prefix) continue;
-    installedPluginNames.add(prefix);
+    claimedPluginNames.add(prefix);
     roots.push(...(yield* pluginSkillRoots(installPath, scope, prefix, manifest)));
   }
   if (syncedBucket === undefined) return roots;
@@ -485,27 +496,22 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
   );
   for (const row of synced?.plugins ?? []) {
     const plugin = Option.getOrUndefined(decodeSyncedPlugin(row));
-    if (
-      !plugin?.name ||
-      plugin.name.startsWith(".") ||
-      plugin.name.includes("..") ||
-      /[\\/]/.test(plugin.name)
-    ) {
-      continue;
-    }
+    const directoryName = plugin === undefined ? "" : syncedPluginDirectoryName(plugin.name);
+    if (!plugin || !directoryName || directoryName.startsWith(".")) continue;
     const generation = plugin.generation;
     const pluginPath = path.join(
       bucketPath,
       generation !== undefined && Number.isInteger(generation) && generation >= 2
-        ? `${plugin.name}~g${generation}`
-        : plugin.name,
+        ? `${directoryName}~g${generation}`
+        : directoryName,
     );
     const manifest = yield* readPluginManifest(pluginPath);
-    const prefix = manifest?.name ?? plugin.name;
-    // A plugin the user installed with the same name takes precedence over the synced copy.
-    if (installedPluginNames.has(prefix) || enabledPlugins.get(`${prefix}@synced`) === false) {
+    const prefix = manifest?.name ?? directoryName;
+    // An installed plugin of the same name, then the first synced row, holds the namespace.
+    if (claimedPluginNames.has(prefix) || enabledPlugins.get(`${prefix}@synced`) === false) {
       continue;
     }
+    claimedPluginNames.add(prefix);
     roots.push(...(yield* pluginSkillRoots(pluginPath, "user", prefix, manifest)));
   }
   return roots;
