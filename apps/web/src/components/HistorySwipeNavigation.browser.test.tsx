@@ -4,14 +4,14 @@ import { render, stubGlobal } from "../../test/render";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 
 type Scroller = "shadow" | "light" | "none" | "shadow-dialog";
-// Main stamps gesture IPCs with its own performance.now(), whose origin differs from the page's.
-const MAIN_CLOCK_AHEAD = 1_000_000;
-// "late-end": main saw the end this long before its IPC reached the page.
-const LATE_END_DELAY = 50;
+// The page's Date.now() minus its performance.now(); main stamps the end with Date.now().
+const WALL_CLOCK_AHEAD = 1_700_000_000_000;
+// Every gesture IPC reaches the page this long after main sees the native event.
+const IPC_LAG = 40;
 type Step = readonly [
-  // "stale": a 1px wheel created before the last end, delivered after its IPC.
-  // "fresh": a 1px wheel created after main saw a late end, before its IPC arrived.
-  event: number | "begin" | "end" | "late-end" | "zoom" | "stale" | "fresh",
+  // "stale": a 1px wheel created before main saw the last end, delivered after its IPC.
+  // "fresh": a 1px wheel created after main saw the last end, before its IPC arrived.
+  event: number | "begin" | "end" | "zoom" | "stale" | "fresh",
   after?: number | "remount" | "remove" | "close-dialog",
 ];
 
@@ -83,7 +83,7 @@ describe("HistorySwipeNavigation", () => {
       "a next-gesture wheel created while the previous end IPC was in flight",
       "shadow",
       400,
-      [["begin"], [130], ["late-end"], ["fresh", "remove"], ["begin"], [130]],
+      [["begin"], [130], ["end"], ["fresh", "remove"], ["begin"], [130]],
       null,
     ],
     [
@@ -112,9 +112,9 @@ describe("HistorySwipeNavigation", () => {
     ["swiping right over content without overflow", "none", 0, [[130]], "forward"],
   ])("%s", async (_name, scroller, scrollLeft, steps, navigates) => {
     type Listener = (at: number) => void;
-    const listeners = { begin: new Set<Listener>(), end: new Set<Listener>() };
+    const listeners = { begin: new Set<() => void>(), end: new Set<Listener>() };
     using _bridge = stubGlobal("desktopBridge", {
-      onTrackpadScrollBegin: (listener: Listener) => {
+      onTrackpadScrollBegin: (listener: () => void) => {
         listeners.begin.add(listener);
         return () => listeners.begin.delete(listener);
       },
@@ -129,17 +129,20 @@ describe("HistorySwipeNavigation", () => {
     using _canGoBack = vi.spyOn(window.navigation, "canGoBack", "get").mockReturnValue(true);
     using _canGoForward = vi.spyOn(window.navigation, "canGoForward", "get").mockReturnValue(true);
     let now = 1000;
-    let lateEndAt = 0;
+    let endSeenAt = 0;
     using _now = vi.spyOn(performance, "now").mockImplementation(() => now);
+    using _wallNow = vi.spyOn(Date, "now").mockImplementation(() => now + WALL_CLOCK_AHEAD);
     let { viewport, content } = mountPanel(screen.container, scroller, scrollLeft);
 
     for (const [event, after] of [...steps, [0] as const]) {
       now += 10;
-      if (event === "begin" || event === "end") {
-        for (const listener of listeners[event]) listener(now + MAIN_CLOCK_AHEAD);
-      } else if (event === "late-end") {
-        lateEndAt = now - LATE_END_DELAY;
-        for (const listener of listeners.end) listener(lateEndAt + MAIN_CLOCK_AHEAD);
+      if (event === "begin") {
+        now += IPC_LAG;
+        for (const listener of listeners.begin) listener();
+      } else if (event === "end") {
+        endSeenAt = now;
+        now += IPC_LAG;
+        for (const listener of listeners.end) listener(endSeenAt + WALL_CLOCK_AHEAD);
       } else {
         const wheel = new WheelEvent("wheel", {
           deltaX: typeof event === "number" ? event : event === "zoom" ? 0 : 1,
@@ -148,7 +151,7 @@ describe("HistorySwipeNavigation", () => {
           composed: true,
         });
         const timeStamp =
-          event === "stale" ? 0 : event === "fresh" ? lateEndAt + LATE_END_DELAY / 2 : now;
+          event === "stale" ? endSeenAt - 5 : event === "fresh" ? endSeenAt + IPC_LAG / 2 : now;
         Object.defineProperty(wheel, "timeStamp", { value: timeStamp });
         content.dispatchEvent(wheel);
       }

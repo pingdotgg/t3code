@@ -305,6 +305,7 @@ export const make = Effect.gen(function* () {
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const electronApp = yield* ElectronApp.ElectronApp;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
+  const clock = yield* Clock.Clock;
   const backendReadyRef = yield* Ref.make(false);
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
@@ -661,9 +662,9 @@ export const make = Effect.gen(function* () {
     });
     window.webContents.on("input-event", (_event, input) => {
       if (input.type === "gestureScrollBegin") {
-        window.webContents.send(TRACKPAD_SCROLL_BEGIN_CHANNEL, performance.now());
+        window.webContents.send(TRACKPAD_SCROLL_BEGIN_CHANNEL);
       } else if (input.type === "gestureScrollEnd") {
-        window.webContents.send(TRACKPAD_SCROLL_END_CHANNEL, performance.now());
+        window.webContents.send(TRACKPAD_SCROLL_END_CHANNEL, clock.currentTimeMillisUnsafe());
       }
     });
     // Ctrl+wheel bypasses menus; guest contents emit their own zoom-changed event.

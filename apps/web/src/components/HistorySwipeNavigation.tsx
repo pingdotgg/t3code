@@ -92,13 +92,6 @@ export function HistorySwipeNavigation() {
   useEffect(() => {
     let gesture: SwipeGesture | null = null;
     let endedAt = Number.NEGATIVE_INFINITY;
-    // Main's clock shares the page's monotonic rate but not its origin. The smallest receipt lag
-    // seen bounds the offset, so a converted stamp lands no later than its own IPC's arrival.
-    let mainClockOffset = Number.POSITIVE_INFINITY;
-    const fromMainClock = (at: number) => {
-      mainClockOffset = Math.min(mainClockOffset, performance.now() - at);
-      return at + mainClockOffset;
-    };
     const hideIndicator = () =>
       setSwipe((current) => (current === null ? null : { ...current, tracking: false }));
     // The fingers lifted: navigate if the swipe went far enough, then ignore its momentum.
@@ -110,18 +103,19 @@ export function HistorySwipeNavigation() {
       hideIndicator();
     };
     // Scroll-begin IPC can arrive after the first wheel already gave ownership to content.
-    const unsubscribeScrollBegin = window.desktopBridge?.onTrackpadScrollBegin((at) => {
-      fromMainClock(at);
+    const unsubscribeScrollBegin = window.desktopBridge?.onTrackpadScrollBegin(() => {
       if (gesture?.kind === "ignored" && !gesture.scrollerOwned) gesture = null;
     });
     const unsubscribeScrollEnd = window.desktopBridge?.onTrackpadScrollEnd((at) => {
       if (gesture?.kind === "tracking") release();
       gesture = null;
-      endedAt = fromMainClock(at);
+      // Wall time is the only clock main shares with the page. Converting on receipt keeps
+      // sleep and clock changes out of the offset, leaving Date.now()'s 1ms resolution.
+      endedAt = at - (Date.now() - performance.now());
     });
     const onWheel = (event: WheelEvent) => {
-      // End IPC can overtake its gesture's last wheels, and the next gesture's first wheel can
-      // be created before that IPC arrives. Their OS timestamps fall on either side of main's.
+      // End IPC can overtake its gesture's last wheels. Those were created before main saw the
+      // end; the next gesture's wheels usually come after, even when the IPC is slow.
       if (event.timeStamp < endedAt) return;
       if (gesture === null) {
         gesture =
