@@ -707,7 +707,7 @@ export default function ChatView(props: ChatViewProps) {
   ] = useState<Record<string, boolean>>({});
   const legendListRef = useRef<LegendListRef | null>(null);
   const conversationArea = workspaceAreaProps("conversation", 1, "Conversation");
-  const composerArea = workspaceAreaProps("composer", 2, "Message input");
+  const composerArea = workspaceAreaProps("composer", 2);
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
   const [composerTimelineInset, setComposerTimelineInset] = useState(0);
   const composerTimelineInsetRef = useRef(0);
