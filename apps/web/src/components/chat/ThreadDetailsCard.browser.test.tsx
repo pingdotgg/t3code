@@ -43,12 +43,15 @@ function Card({
   inline,
   fixture,
   rows = 1,
+  serverOverflowRows = 0,
 }: {
   threadRef: ScopedThreadRef;
   inline: boolean;
   fixture: ReturnType<typeof setup>;
   /** Rows of 100px shown at full density. Compact always takes 50px. */
   rows?: number;
+  /** Rows of 100px that expanded lists add, which density ignores. */
+  serverOverflowRows?: number;
 }) {
   return (
     // The web root renders in StrictMode, which re-runs ref callbacks on every mount.
@@ -73,9 +76,17 @@ function Card({
           contentKey={String(rows)}
         >
           {(density) => (
-            <p style={{ height: density === "full" ? rows * 100 : 50 }}>
-              Details for {threadRef.threadId}
-            </p>
+            <>
+              <p style={{ height: density === "full" ? rows * 100 : 50 }}>
+                Details for {threadRef.threadId}
+              </p>
+              {density === "full" && serverOverflowRows > 0 ? (
+                <div
+                  data-thread-details-server-overflow
+                  style={{ height: serverOverflowRows * 100 }}
+                />
+              ) : null}
+            </>
           )}
         </ThreadDetailsCard>
       </ChatCanvasContext>
@@ -157,4 +168,14 @@ it("returns to full density when hidden items make the content fit", async () =>
 
   await screen.rerender(<Card threadRef={threadB} inline fixture={fixture} rows={2} />);
   await expect.element(card).toHaveAttribute("data-density", "full");
+});
+
+it("stays full while expanded server rows overflow", async () => {
+  using fixture = setup();
+  await using _screen = await render(
+    <Card threadRef={threadB} inline fixture={fixture} rows={2} serverOverflowRows={4} />,
+  );
+  await expect
+    .element(page.getByRole("region", { name: "Thread details" }))
+    .toHaveAttribute("data-density", "full");
 });
