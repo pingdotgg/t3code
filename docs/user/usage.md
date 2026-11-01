@@ -87,6 +87,11 @@ the dialog.
 
 ## Track subscription limits
 
+On web and desktop, the conversation's subscription usage bar keeps the selected agent's
+remaining quotas visible while you work. Focus or hover a quota to see its reset time and
+last update, or choose **Usage** for details. Offline readings are marked as last known;
+providers that do not report limits show an unavailable message.
+
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
 or Claude accounts across your enabled environments and hubs you read one number per window rather than a
 list. Each window card shows how much of the pool is left and a bar with one segment per account,

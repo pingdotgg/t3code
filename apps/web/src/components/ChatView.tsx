@@ -257,6 +257,7 @@ import {
 } from "../state/entities";
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { UsageStatusBar } from "./chat/UsageStatusBar";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
 import {
@@ -3919,6 +3920,16 @@ export default function ChatView(props: ChatViewProps) {
             closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
             keybindings={keybindings}
             onAddTerminalContext={addTerminalContextToDraftStable}
+          />
+        )}
+        {embedded ? null : (
+          <UsageStatusBar
+            provider={activeProviderStatus}
+            connected={
+              (activeThread ? activeEnvironment : primaryEnvironment)?.connection.phase ===
+              "connected"
+            }
+            loading={serverConfig === null}
           />
         )}
       </div>
