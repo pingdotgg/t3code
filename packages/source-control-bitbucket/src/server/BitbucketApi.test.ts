@@ -443,6 +443,7 @@ it.effect("prefers an explicit repository and uses context when the repository i
     };
     for (const repository of [
       "pingdotgg/t3code",
+      "pingdotgg/t3code/",
       "https://bitbucket.org/pingdotgg/t3code.git",
       "pingdotgg/t3code.git/",
       "https://bitbucket.org/pingdotgg/t3code.git/",
@@ -451,27 +452,46 @@ it.effect("prefers an explicit repository and uses context when the repository i
       yield* bitbucket.getRepositoryCloneUrls({ cwd: "/repo", context, repository });
     }
     yield* bitbucket.getDefaultBranch({ cwd: "/repo", context });
-    yield* bitbucket.createRepository({
-      cwd: "/repo",
-      repository: "pingdotgg/created.git/",
-      visibility: "private",
-    });
 
     assert.deepStrictEqual(
-      execute.mock.calls.map(([request]) => `${request.method} ${request.url}`).toSorted(),
+      execute.mock.calls.map(([request]) => request.url).toSorted(),
       [
-        "GET https://api.test.local/2.0/repositories/pingdotgg/t3code",
-        "GET https://api.test.local/2.0/repositories/pingdotgg/t3code",
-        "GET https://api.test.local/2.0/repositories/pingdotgg/t3code",
-        "GET https://api.test.local/2.0/repositories/pingdotgg/t3code",
-        "GET https://api.test.local/2.0/repositories/pingdotgg/t3code.git",
-        "GET https://api.test.local/2.0/repositories/another/context",
-        "GET https://api.test.local/2.0/repositories/another/context/branching-model",
-        "POST https://api.test.local/2.0/repositories/pingdotgg/created",
+        "https://api.test.local/2.0/repositories/pingdotgg/t3code",
+        "https://api.test.local/2.0/repositories/pingdotgg/t3code",
+        "https://api.test.local/2.0/repositories/pingdotgg/t3code",
+        "https://api.test.local/2.0/repositories/pingdotgg/t3code",
+        "https://api.test.local/2.0/repositories/pingdotgg/t3code",
+        "https://api.test.local/2.0/repositories/pingdotgg/t3code.git",
+        "https://api.test.local/2.0/repositories/another/context",
+        "https://api.test.local/2.0/repositories/another/context/branching-model",
       ].toSorted(),
     );
     assert.strictEqual(resolve.mock.calls.length, 0);
     assert.strictEqual(listRemotes.mock.calls.length, 0);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("creates the same repository whether or not the name carries a clone suffix", () => {
+  const { execute, layer } = makeLayer({ response: () => Response.json(repositoryJson) });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    for (const repository of [
+      "pingdotgg/created",
+      "pingdotgg/created.git",
+      "pingdotgg/created.git/",
+    ]) {
+      yield* bitbucket.createRepository({ cwd: "/repo", repository, visibility: "private" });
+    }
+
+    assert.deepStrictEqual(
+      execute.mock.calls.map(([request]) => `${request.method} ${request.url}`),
+      [
+        "POST https://api.test.local/2.0/repositories/pingdotgg/created",
+        "POST https://api.test.local/2.0/repositories/pingdotgg/created",
+        "POST https://api.test.local/2.0/repositories/pingdotgg/created",
+      ],
+    );
   }).pipe(Effect.provide(layer));
 });
 
