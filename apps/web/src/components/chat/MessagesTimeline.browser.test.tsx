@@ -32,6 +32,8 @@ import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import "~/index.css";
 
 import { environmentThreadDetails } from "../../state/threads";
+import { useChatChapterStore } from "~/chatChapterStore";
+import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
@@ -625,6 +627,111 @@ describe("MessagesTimeline citations", () => {
     );
     await expect.element(screen.getByText("the cited answer")).toBeVisible();
     expect(toast).not.toHaveBeenCalled();
+  });
+});
+
+describe("MessagesTimeline chapters", () => {
+  it("scrolls the list to a chapter's row when the chapter is chosen", async () => {
+    setup();
+    const props = baseProps();
+    const threadRef = parseScopedThreadKey(props.routeThreadKey);
+    if (!threadRef) throw new Error("routeThreadKey must be a scoped thread key");
+    const entries = Array.from({ length: 60 }, (_, index) =>
+      index === 30
+        ? message("Chapter target", {}, "chapter")
+        : message(`Note ${index}`, { role: "assistant" }, `note-${index}`),
+    );
+    await using _screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={entries} />,
+    );
+    const list = props.listRef.current;
+    if (!list) throw new Error("the timeline list did not mount");
+    using scrollToIndex = vi.spyOn(list, "scrollToIndex");
+
+    await act(() =>
+      useChatChapterStore.getState().requestReveal(threadRef, MessageId.make("chapter")),
+    );
+    await vi.waitFor(() =>
+      expect(scrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ index: 30 })),
+    );
+  });
+
+  it("expands a collapsed superseded attempt to reveal a chapter folded inside it", async () => {
+    setup();
+    const props = baseProps();
+    const threadRef = parseScopedThreadKey(props.routeThreadKey);
+    if (!threadRef) throw new Error("routeThreadKey must be a scoped thread key");
+    const runId = RunId.make("run-steered");
+    const attempt = (id: string, ordinal: number, status: "superseded" | "running") => ({
+      id: RunAttemptId.make(id),
+      runId,
+      attemptOrdinal: ordinal,
+      rootNodeId: `node-${id}` as never,
+      status,
+      completedAt: null,
+    });
+    const superseded = attempt("attempt-1", 1, "superseded");
+    const active = attempt("attempt-2", 2, "running");
+    const inAttempt = (entry: Entry, entryAttempt: typeof superseded): Entry => ({
+      ...entry,
+      attempt: entryAttempt,
+    });
+    const entries = [
+      inAttempt(message("Build it", { runId }, "question"), superseded),
+      inAttempt(message("the folded chapter", { role: "assistant", runId }, "chapter"), superseded),
+      inAttempt(message("Change direction", { runId }, "steer"), active),
+      inAttempt(message("Current response", { role: "assistant", runId }, "current"), active),
+    ];
+    await using _screen = await renderElement(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={entries}
+        latestRun={{ runId, status: "running", startedAt: CREATED_AT, completedAt: null }}
+      />,
+    );
+    const list = props.listRef.current;
+    if (!list) throw new Error("the timeline list did not mount");
+    using scrollToIndex = vi.spyOn(list, "scrollToIndex");
+
+    await act(() =>
+      useChatChapterStore.getState().requestReveal(threadRef, MessageId.make("chapter")),
+    );
+    await vi.waitFor(() =>
+      expect(scrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ index: 2 })),
+    );
+  });
+
+  it("requests earlier history to reveal a chapter outside the current page", async () => {
+    setup();
+    const props = baseProps();
+    const threadRef = parseScopedThreadKey(props.routeThreadKey);
+    if (!threadRef) throw new Error("routeThreadKey must be a scoped thread key");
+    const onLoadEarlier = vi.fn();
+    const historyControls = {
+      hasMoreHistory: true,
+      loading: false,
+      error: null,
+      onLoadEarlier,
+    };
+    const entries = [message("Recent entry", {}, "recent")];
+    await using screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={entries} historyControls={historyControls} />,
+    );
+
+    await act(() =>
+      useChatChapterStore.getState().requestReveal(threadRef, MessageId.make("chapter-earlier")),
+    );
+    await vi.waitFor(() => expect(onLoadEarlier).toHaveBeenCalledWith("chapter-earlier"));
+
+    const earlierHiddenEntry = message("Earlier note", {}, "earlier");
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[earlierHiddenEntry, ...entries]}
+        historyControls={historyControls}
+      />,
+    );
+    await vi.waitFor(() => expect(onLoadEarlier).toHaveBeenCalledTimes(2));
   });
 });
 

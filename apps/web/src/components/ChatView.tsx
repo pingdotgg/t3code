@@ -275,6 +275,7 @@ import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
 import { useSideChat } from "./chat/useSideChat";
+import { ChatChaptersMenu } from "./chat/ChatChaptersMenu";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -3340,6 +3341,11 @@ export default function ChatView(props: ChatViewProps) {
                 ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
                 : {})}
               {...(threadFindEnabled ? { onFindInThread: openThreadFindStable } : {})}
+              chapters={
+                isServerThread && activeThreadRef ? (
+                  <ChatChaptersMenu threadRef={activeThreadRef} />
+                ) : null
+              }
             />
           </header>
         )}

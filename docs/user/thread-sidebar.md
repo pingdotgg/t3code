@@ -233,6 +233,13 @@ from its context menu, or **Copy thread** from its long-press menu on mobile.
 **Thread ID** copies the bare ID for scripts and the `t3` CLI. See
 [keybindings](./keybindings.md) for custom configuration.
 
+## Chapters
+
+On web and desktop, pin a message from its hover actions to make it a chapter. Open
+**Chapters** in the thread header to list them in conversation order, and choose one
+to scroll to that message. Chapters are kept on this device only, so other devices and
+environments do not show them.
+
 ## Inspect agent work
 
 **Limited** means the provider stopped on a usage or rate limit. The conversation

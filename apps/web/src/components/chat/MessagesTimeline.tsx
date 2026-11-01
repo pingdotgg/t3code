@@ -3,6 +3,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import { AudioPreviewUnmountContext } from "../files/AudioPreview";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
+import { useChatChapterStore } from "~/chatChapterStore";
 import { MarkdownFindContext } from "./markdownFindContext";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock } from "./WorkLog";
@@ -1208,6 +1209,105 @@ const ConversationTimeline = memo(function ConversationTimeline({
     listRef,
     contentInsetEndAdjustment,
   });
+
+  const chapterReveal = useChatChapterStore((state) => state.revealRequest);
+  const handledChapterRevealRef = useRef<number | null>(null);
+  const historyRequestedForChapterRef = useRef<{
+    nonce: number;
+    cursor: string | null;
+  } | null>(null);
+  // A chapter's message can be loaded but hidden inside a collapsed turn fold
+  // or a superseded attempt. Expand its fold here, during render like the
+  // citation reveal above, so the next render's `rows` includes its row
+  // before the effect below tries to scroll to it.
+  const [chapterFoldExpandedFor, setChapterFoldExpandedFor] = useState<number | null>(null);
+  if (!chapterReveal && chapterFoldExpandedFor !== null) setChapterFoldExpandedFor(null);
+  if (
+    chapterReveal &&
+    chapterReveal.threadKey === routeThreadKey &&
+    chapterFoldExpandedFor !== chapterReveal.nonce
+  ) {
+    const chapterEntry = timelineEntries.find(
+      (entry) => entry.kind === "message" && entry.message.id === chapterReveal.messageId,
+    );
+    if (chapterEntry) {
+      setChapterFoldExpandedFor(chapterReveal.nonce);
+      const owningRunId = (
+        findFoldRunIds ??
+        timelineTurnFoldRunIdsByEntryId({
+          timelineEntries,
+          latestRun,
+          runningRunId,
+          isWorking,
+          runlessWorkActive,
+        })
+      ).get(chapterEntry.id);
+      if (owningRunId) {
+        setExpandedRunIds((previous) =>
+          previous.has(owningRunId) ? previous : new Set(previous).add(owningRunId),
+        );
+      }
+      const chapterAttempt = chapterEntry.attempt;
+      if (chapterAttempt?.status === "superseded") {
+        setExpandedAttemptIds((previous) =>
+          previous.has(chapterAttempt.id) ? previous : new Set(previous).add(chapterAttempt.id),
+        );
+      }
+    }
+  }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the list to a chapter chosen from the chapters menu, loading earlier history while it is missing
+  useEffect(() => {
+    if (
+      !chapterReveal ||
+      chapterReveal.threadKey !== routeThreadKey ||
+      handledChapterRevealRef.current === chapterReveal.nonce
+    ) {
+      return;
+    }
+    const rowIndex = rows.findIndex(
+      (row) => row.kind === "message" && row.message.id === chapterReveal.messageId,
+    );
+    if (rowIndex < 0) {
+      const isAlreadyInHistory = timelineEntries.some(
+        (entry) => entry.kind === "message" && entry.message.id === chapterReveal.messageId,
+      );
+      if (isAlreadyInHistory) {
+        return;
+      }
+      const cursor = timelineEntries[0]?.id ?? null;
+      const requested = historyRequestedForChapterRef.current;
+      const alreadyRequested =
+        requested?.nonce === chapterReveal.nonce && requested.cursor === cursor;
+      if (
+        historyControls?.hasMoreHistory &&
+        !historyControls.loading &&
+        !historyControls.error &&
+        !alreadyRequested
+      ) {
+        historyRequestedForChapterRef.current = {
+          nonce: chapterReveal.nonce,
+          cursor,
+        };
+        historyControls.onLoadEarlier(chapterReveal.messageId);
+      }
+      return;
+    }
+    handledChapterRevealRef.current = chapterReveal.nonce;
+    navigateTimeline();
+    void listRef.current?.scrollToIndex({
+      index: rowIndex,
+      animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+      viewOffset: 96,
+    });
+  }, [
+    chapterReveal,
+    historyControls,
+    listRef,
+    navigateTimeline,
+    routeThreadKey,
+    rows,
+    timelineEntries,
+  ]);
 
   // LegendList moves rows one commit late; per-row providers prevent thread context leaks.
   const onAudioPlaybackChange = (rowId: string, event: SyntheticEvent) => {

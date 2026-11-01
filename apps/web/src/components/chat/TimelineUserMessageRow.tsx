@@ -52,6 +52,7 @@ import {
 } from "./SnapShotAttachmentDetails";
 import { GuestMessageName, guestBubbleClassName } from "./guestMessageStyle";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { ChatChapterPinButton } from "./ChatChapterPinButton";
 import { promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { formatBytes } from "../../lib/formatBytes";
@@ -804,6 +805,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             variant="ghost"
           />
         )}
+        {ctx.threadRef && row.message.text.trim().length > 0 ? (
+          <ChatChapterPinButton threadRef={ctx.threadRef} message={row.message} />
+        ) : null}
       </div>
     </div>
   );
