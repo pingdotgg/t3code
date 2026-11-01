@@ -1377,7 +1377,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           params.turnId !== wake?.nativeId
         ) {
           if (active && !active.compact) active.joined.add(params.turnId);
-          else if (!active && !wake) {
+          else if ((!active || active.compact) && !wake) {
             const held = { nativeId: params.turnId, events: [] };
             wake = held;
             const notification = backgroundWorkNotification(finishedBackground.splice(0));
@@ -1399,7 +1399,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }
         if (wake && active?.nativeId !== wake.nativeId) {
           const turnId = typeof params.turnId === "string" ? params.turnId : itemEvent?.turnId;
-          if (turnId === wake.nativeId) {
+          if (turnId === wake.nativeId && !(active?.compact && itemEvent?.kind === "compaction")) {
             wake.events.push([method, data]);
             return;
           }
@@ -2148,8 +2148,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             lastRunOrdinal: turnInput.runOrdinal,
           });
           yield* updateSession("running");
-          const held = wake;
-          wake = undefined;
+          const held = compact ? undefined : wake;
+          if (!compact) wake = undefined;
           if (continuation && !held) return yield* finish(turn, "completed");
           if (held && !continuation) turn.joined.add(held.nativeId);
           for (const [method, data] of held?.events ?? [])

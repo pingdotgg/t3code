@@ -1679,7 +1679,7 @@ describe("MuseAdapterV2", () => {
         yield* fake.emit("item/completed", {
           item: {
             itemId: "compaction-1",
-            turnId: "compaction-target-run",
+            turnId: "wake-1",
             kind: "compaction",
             status: "completed",
             outcome: "compacted",
@@ -1693,38 +1693,81 @@ describe("MuseAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect("stops a compaction waiting on a Muse run without closing the host", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakeMuse();
-      const harness = yield* makeHeldWakeHarness(fake);
-      fake.queueResponse(
-        "session/compact",
-        new MspError({
-          code: -32030,
-          message: "session/compact command rejected: run_active",
-          data: { kind: "commandRejected", reason: "run_active", retryable: false },
-        }),
-      );
-      yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread));
-      const running = yield* harness.takeEvent(
-        "provider_turn.updated",
-        (event) => event.providerTurn.status === "running",
-      );
-      yield* harness.runtime.interruptTurn({
-        providerThread: harness.providerThread,
-        providerTurnId: running.providerTurn.id,
-      });
-      const terminal = yield* harness.takeEvent("turn.terminal");
-      assert.strictEqual(terminal.status, "interrupted");
-      assert.strictEqual(terminal.threadDisposition, "reusable");
-      assert.strictEqual(fake.closeCount(), 0);
-      yield* fake.emit("turn/completed", { turnId: "wake-1", terminal: "completed" });
-      yield* startConversation(harness, fake, 2);
-      assert.lengthOf(
-        fake.calls.filter((call) => call.method === "session/compact"),
-        1,
-      );
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  it.effect.each(["before compaction", "during admission"] as const)(
+    "keeps a Muse wake that started $0 when stopping a waiting compaction",
+    (wakeStarted) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeMuse();
+        const offered = yield* Deferred.make<void>();
+        const harness = yield* makeHarness(
+          fake,
+          INSTANCE_ID,
+          undefined,
+          undefined,
+          undefined,
+          runtimePolicy,
+          { continuationRequests: { offer: () => Deferred.succeed(offered, undefined) } },
+        );
+        if (wakeStarted === "before compaction") {
+          yield* fake.emit("turn/started", { turnId: "wake-1" });
+          yield* Deferred.await(offered);
+        }
+        const admission = pendingPromise<Record<string, unknown>>();
+        fake.queueResponse("session/compact", admission.promise);
+        const compacting = yield* harness.runtime.compactThread!(
+          yield* turnInput(harness.providerThread),
+        ).pipe(Effect.forkScoped);
+        yield* fake.takeCall("session/compact");
+        if (wakeStarted === "during admission") {
+          yield* fake.emit("turn/started", { turnId: "wake-1" });
+          yield* Deferred.await(offered);
+        }
+        admission.reject(
+          new MspError({
+            code: -32030,
+            message: "session/compact command rejected: run_active",
+            data: { kind: "commandRejected", reason: "run_active", retryable: false },
+          }),
+        );
+        yield* Fiber.join(compacting);
+        const running = yield* harness.takeEvent(
+          "provider_turn.updated",
+          (event) => event.providerTurn.status === "running",
+        );
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: running.providerTurn.id,
+        });
+        const terminal = yield* harness.takeEvent("turn.terminal");
+        assert.strictEqual(terminal.status, "interrupted");
+        assert.strictEqual(terminal.threadDisposition, "reusable");
+        assert.strictEqual(fake.closeCount(), 0);
+        assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+        yield* fake.emit("item/completed", {
+          item: {
+            itemId: "wake-output",
+            turnId: "wake-1",
+            kind: "agentMessage",
+            revision: 1,
+            status: "completed",
+            text: "Background wake finished.",
+          },
+        });
+        yield* fake.emit("turn/completed", { turnId: "wake-1", terminal: "completed" });
+        const continuation = yield* turnInput(harness.providerThread, 2);
+        yield* harness.runtime.startTurn({
+          ...continuation,
+          message: { ...continuation.message, createdBy: "agent", creationSource: "provider" },
+        });
+        const output = yield* harness.takeEvent("message.updated");
+        assert.strictEqual(output.message.text, "Background wake finished.");
+        assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "completed");
+        yield* startConversation(harness, fake, 3);
+        assert.lengthOf(
+          fake.calls.filter((call) => call.method === "session/compact"),
+          1,
+        );
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
   it.effect("lets Muse admit compaction when a resumed session reports a stale active turn", () =>
