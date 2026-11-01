@@ -701,6 +701,15 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       }).pipe(Effect.provide(layerTest(tailnet)));
     });
 
+    it.effect("with no node ID for this host, the owner rule does not apply", () => {
+      const { ID: _, ...self } = hostStatus().Self;
+      const tailnet = withLaptop();
+      tailnet.status = hostStatus({ Peer: peers, Self: self });
+      return Effect.gen(function* () {
+        expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("policy_unknown");
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
     it.effect("a grant sign-in during a scan that finds no grants keeps the owner rule off", () => {
       const tailnet = withLaptop();
       return Effect.gen(function* () {

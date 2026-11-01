@@ -48,7 +48,7 @@ const tailscaleCommandForPlatform = (platform: NodeJS.Platform): "tailscale" | "
 
 const TailscaleCommandContext = {
   executable: Schema.Literals(["tailscale", "tailscale.exe"]),
-  subcommand: Schema.Literals(["status", "serve", "debug", "whois"]),
+  subcommand: Schema.Literals(["status", "serve", "debug", "whois", "switch"]),
   argumentCount: Schema.Number,
 };
 
@@ -683,6 +683,42 @@ export const readTailscaleWhois = Effect.fn("tailscale.readTailscaleWhois")(func
     "active",
   );
   return yield* parseTailscaleWhois(stdout);
+});
+
+const TailscaleProfilesJson = Schema.fromJsonString(
+  Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      tailnet: lenient(Schema.String),
+      account: lenient(Schema.String),
+      selected: lenient(Schema.Boolean),
+    }),
+  ),
+);
+const decodeTailscaleProfiles = Schema.decodeUnknownEffect(TailscaleProfilesJson);
+
+/**
+ * The login profile Tailscale is on now: one account on one tailnet. Tailscale keeps Serve
+ * config per profile. None when no profile is selected.
+ */
+export const readTailscaleProfile = Effect.fn("tailscale.readTailscaleProfile")(function* () {
+  const stdout = yield* runTailscale(
+    "switch",
+    ["switch", "--list", "--json"],
+    TAILSCALE_STATUS_TIMEOUT,
+    "active",
+  );
+  const profiles = yield* decodeTailscaleProfiles(stdout).pipe(
+    Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
+  );
+  const selected = profiles.find((profile) => profile.selected === true);
+  return selected === undefined
+    ? Option.none()
+    : Option.some({
+        id: selected.id,
+        tailnet: selected.tailnet ?? null,
+        account: selected.account ?? null,
+      });
 });
 
 export function buildTailscaleHttpsBaseUrl(input: {

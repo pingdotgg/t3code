@@ -19,6 +19,7 @@ import { afterEach, vi } from "vite-plus/test";
 vi.mock("@t3tools/tailscale", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/tailscale")>()),
   readTailscaleStatus: () => Effect.fail("Tailscale is not running in tests"),
+  readTailscaleProfile: () => Effect.fail("Tailscale is not running in tests"),
 }));
 
 import packageJson from "../../package.json" with { type: "json" };

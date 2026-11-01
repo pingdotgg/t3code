@@ -15,14 +15,22 @@ const WHOIS_JSON = JSON.stringify({
   Node: { StableID: "nStudio", User: 7, Addresses: ["100.88.1.2/32"], AllowedIPs: [] },
 });
 
-const layerTest = (whoisSpawns: { count: number }) =>
+const layerTest = (whoisSpawns: { count: number; account?: string }) =>
   TailscaleHost.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(
           ChildProcessSpawner.ChildProcessSpawner,
-          ChildProcessSpawner.make(() => {
-            whoisSpawns.count += 1;
+          ChildProcessSpawner.make((command) => {
+            const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
+            const isWhois = args[0] === "whois";
+            if (isWhois) whoisSpawns.count += 1;
+            const stdout = isWhois
+              ? WHOIS_JSON
+              : JSON.stringify({
+                  BackendState: "Running",
+                  Self: { ID: whoisSpawns.account ?? "nBox" },
+                });
             return Effect.succeed(
               ChildProcessSpawner.makeHandle({
                 pid: ChildProcessSpawner.ProcessId(1),
@@ -31,7 +39,7 @@ const layerTest = (whoisSpawns: { count: number }) =>
                 kill: () => Effect.void,
                 unref: Effect.succeed(Effect.void),
                 stdin: Sink.drain,
-                stdout: Stream.make(new TextEncoder().encode(WHOIS_JSON)),
+                stdout: Stream.make(new TextEncoder().encode(stdout)),
                 stderr: Stream.empty,
                 all: Stream.empty,
                 getInputFd: () => Sink.drain,
@@ -78,6 +86,22 @@ it.layer(NodeServices.layer)("TailscaleHost", (it) => {
       yield* TestClock.adjust("60 seconds");
       expect((yield* host.whois(address)).stableNodeId).toBe("nStudio");
       expect(whoisSpawns.count).toBe(12);
+    }).pipe(Effect.provide(layerTest(whoisSpawns)));
+  });
+
+  // Another account is another tailnet, where the same address names another device.
+  it.effect("never reuses a whois answer from another Tailscale account", () => {
+    const whoisSpawns: { count: number; account?: string } = { count: 0, account: "nBox" };
+    return Effect.gen(function* () {
+      const host = yield* TailscaleHost.TailscaleHost;
+      yield* host.status;
+      yield* TestClock.adjust("2500 millis");
+      yield* host.whois("100.88.1.2");
+      whoisSpawns.account = "nBoxAtWork";
+      // The status read expires and names the new account; the whois answer has not expired.
+      yield* TestClock.adjust("2600 millis");
+      yield* host.whois("100.88.1.2");
+      expect(whoisSpawns.count).toBe(2);
     }).pipe(Effect.provide(layerTest(whoisSpawns)));
   });
 });

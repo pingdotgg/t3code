@@ -1,5 +1,6 @@
 import {
   claimTailscaleServe,
+  readTailscaleProfile,
   readTailscaleStatus,
   releaseTailscaleServe,
 } from "@t3tools/tailscale";
@@ -7,6 +8,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
@@ -18,7 +20,7 @@ import { loopbackUrlHostForAddress } from "./startupAccess.ts";
 
 /** The Serve record cannot be used: it is unreadable, or Tailscale names no account here. */
 export class ServeRecordError extends Schema.TaggedError<ServeRecordError>()("ServeRecordError", {
-  reason: Schema.Literals(["unreadable", "no_account", "other_account"]),
+  reason: Schema.Literals(["unreadable", "no_account", "other_account", "switched"]),
   message: Schema.String,
 }) {}
 
@@ -121,6 +123,17 @@ const writeRecords = Effect.fn("TailscaleServe.writeRecords")(function* (
  * login profile, one user on one tailnet, which outlives a node ID when a device is re-added.
  */
 const currentAccount = Effect.fn("TailscaleServe.currentAccount")(function* () {
+  // The profile ID is the key Tailscale stores Serve config under. Tagging a host changes
+  // its user, not its profile.
+  const profile = yield* readTailscaleProfile().pipe(
+    Effect.map(Option.getOrNull),
+    Effect.orElseSucceed(() => null),
+  );
+  if (profile !== null) {
+    const label = [profile.account, profile.tailnet].filter((part) => part !== null).join(" on ");
+    return { key: profile.id, label: label || profile.id };
+  }
+  // Older Tailscale lists no profiles, so the profile's tailnet and user stand in.
   const status = yield* readTailscaleStatus("active");
   const login = status.users.find((user) => user.userId === status.selfUserId)?.loginName;
   const key =
@@ -187,6 +200,8 @@ export const layer = (options: {
             ),
           );
           if (released) yield* Effect.logInfo("Tailscale Serve disabled", logContext);
+          // A switch while removing it means the removal may have run on the other account.
+          if ((yield* currentAccount()).key !== recordedUnder) return;
           const { [recordedUnder]: _ours, ...rest } = yield* readRecords(options.stateDir);
           yield* writeRecords(options.stateDir, rest);
         }).pipe(
@@ -264,6 +279,13 @@ export const releaseRecorded = Effect.fn("TailscaleServe.releaseRecorded")(funct
   const now = yield* currentAccount();
   const { [now.key]: ours, ...rest } = records;
   const released = ours === undefined ? false : yield* releaseTailscaleServe(ours);
+  // A switch while removing it means the removal may have run on the other account.
+  if ((yield* currentAccount()).key !== now.key) {
+    return yield* new ServeRecordError({
+      reason: "switched",
+      message: "Tailscale switched accounts during cleanup. Run this again.",
+    });
+  }
   yield* writeRecords(stateDir, rest);
   return { released, otherAccounts: Object.values(rest).map((record) => record.label) };
 });

@@ -132,8 +132,11 @@ const make = Effect.gen(function* () {
     });
   });
 
+  // Keyed by this machine's node and the address, since a switch to another Tailscale
+  // account switches tailnets, and an address there names another device.
   const whoisCache = yield* Cache.makeWith(
-    Effect.fn("TailscaleHost.whoisLookup")(function* (address: string) {
+    Effect.fn("TailscaleHost.whoisLookup")(function* (key: string) {
+      const address = key.slice(key.indexOf(" ") + 1);
       if (!(yield* takeLookup(address))) {
         return yield* new TailscaleWhoisRateLimitedError({});
       }
@@ -149,7 +152,11 @@ const make = Effect.gen(function* () {
       ? readTailscaleWhois(address).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         )
-      : Cache.get(whoisCache, address);
+      : status.pipe(
+          Effect.map(({ selfNodeId }) => selfNodeId ?? ""),
+          Effect.orElseSucceed(() => ""),
+          Effect.flatMap((account) => Cache.get(whoisCache, `${account} ${address}`)),
+        );
 
   return TailscaleHost.of({ inUse, status, whois });
 });

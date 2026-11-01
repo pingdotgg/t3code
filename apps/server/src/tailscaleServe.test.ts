@@ -46,6 +46,10 @@ interface FakeOptions {
   readonly account?: string;
   /** The live account's tailnet and user, which name its login profile. */
   readonly profile?: { readonly tailnet: string; readonly userId: string };
+  /** The login profile ID `tailscale switch --list` names. Without it, the CLI is too old. */
+  readonly profileId?: string;
+  /** Tailscale switches to this account, whose Serve config is empty, on the next Serve read. */
+  readonly switchOnServeRead?: string;
 }
 
 // Stands in for the tailscale CLI and keeps the Serve root like the daemon does.
@@ -82,6 +86,21 @@ const makeFakeTailscale = (options: FakeOptions) => {
     args: ReadonlyArray<string>,
   ): { code: number; stdout?: string; stderr?: string; ackDelay?: Duration.Input } | undefined => {
     const command = args.join(" ");
+    if (command === "switch --list --json") {
+      return options.profileId === undefined
+        ? { code: 1, stderr: "flag provided but not defined: -json" }
+        : {
+            code: 0,
+            stdout: JSON.stringify([
+              {
+                id: options.profileId,
+                tailnet: "example.com",
+                account: "me@example.com",
+                selected: true,
+              },
+            ]),
+          };
+    }
     if (command === "status --json") {
       return {
         code: 0,
@@ -93,6 +112,10 @@ const makeFakeTailscale = (options: FakeOptions) => {
       };
     }
     if (command === "serve status --json") {
+      if (options.switchOnServeRead !== undefined && state.account !== options.switchOnServeRead) {
+        state.account = options.switchOnServeRead;
+        state.root = null;
+      }
       state.statusCalls += 1;
       if (state.statusCalls <= (options.statusFailures ?? 0) || state.statusFailurePending) {
         state.statusFailurePending = false;
@@ -408,6 +431,49 @@ describe("TailscaleServe", () => {
 
       assert.equal(fake.state.releases, 1);
       assert.isFalse(files.has(CLAIM_PATH));
+      yield* Scope.close(scope, Exit.void);
+    }),
+  );
+
+  it.effect("matches a record to its login profile after the host is tagged", () =>
+    Effect.gen(function* () {
+      // Tagging changes the host's user, and with it the tailnet-and-user key.
+      const fake = makeFakeTailscale({
+        heldBy: LOCAL_TARGET,
+        profileId: "prof1",
+        profile: { tailnet: "example.com", userId: "tagged-devices" },
+      });
+      const files = new Map([[CLAIM_PATH, record(18638, SERVE_PORT, "prof1")]]);
+      const scope = yield* Scope.make();
+      yield* Layer.buildWithScope(
+        TailscaleServe.layerReleaseLeftover({ stateDir: STATE_DIR }).pipe(
+          Layer.provide(fakeLayers(fake, files)),
+        ),
+        scope,
+      );
+      yield* TestClock.adjust("1 second");
+
+      assert.equal(fake.state.releases, 1);
+      assert.isFalse(files.has(CLAIM_PATH));
+      yield* Scope.close(scope, Exit.void);
+    }),
+  );
+
+  it.effect("keeps the record when Tailscale switches accounts during its removal", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeTailscale({ heldBy: LOCAL_TARGET, switchOnServeRead: "work" });
+      const files = new Map([[CLAIM_PATH, record(18638, SERVE_PORT)]]);
+      const scope = yield* Scope.make();
+      yield* Layer.buildWithScope(
+        TailscaleServe.layerReleaseLeftover({ stateDir: STATE_DIR }).pipe(
+          Layer.provide(fakeLayers(fake, files)),
+        ),
+        scope,
+      );
+      yield* TestClock.adjust("1 second");
+
+      assert.equal(fake.state.releases, 0);
+      assert.equal(files.get(CLAIM_PATH), record(18638, SERVE_PORT));
       yield* Scope.close(scope, Exit.void);
     }),
   );

@@ -271,6 +271,8 @@ export const make = Effect.gen(function* () {
     if (yield* fs.exists(requireGrantPath).pipe(Effect.orElseSucceed(() => true))) {
       return "no_grant" as const;
     }
+    // A host Tailscale names no node for cannot tell one account's scan from another's.
+    if (account === null) return "policy_unknown" as const;
     // Scanned first, so a scan that finds no grants can clear the sign-in count. A scan of
     // another account says nothing here, so it is redone; one that still differs is unknown.
     const scan = yield* scanPolicy.pipe(
