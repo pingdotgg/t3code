@@ -3,6 +3,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { ClientOs } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -32,6 +33,7 @@ interface BufferedAnalyticsEvent {
 interface DeliveryState {
   readonly failedBatch: ReadonlyArray<BufferedAnalyticsEvent>;
   readonly batchAttempts: number;
+  readonly firstFailedAt: number;
   readonly failures: number;
   readonly retryAt: number;
 }
@@ -40,7 +42,10 @@ interface DeliveryState {
 const FLUSH_INTERVAL_MS = 10_000;
 // A hung send would hold the flush lock, and with it the shutdown flush.
 const SEND_TIMEOUT = "10 seconds";
-const MAX_BATCH_ATTEMPTS = 5;
+// A failed batch is tried again until it has failed for this long. Ingest answers 503 when it
+// cannot store a batch, and a broken Cloudflare location can take about 5 minutes to fail over.
+// The waiting batch holds newer events back; `maxBufferedEvents` bounds them meanwhile.
+const MAX_BATCH_RETRY_MS = 30 * 60_000;
 const RETRY_BASE_DELAY_MS = 2_000;
 // Clients can report any number of owner ids; past this many per observer, new ones
 // are not sent. Each observer has its own cap, so client reports never crowd out the
@@ -91,20 +96,7 @@ export class AnalyticsService extends Context.Service<
       observedBy: "server" | "client",
     ) => Effect.Effect<void>;
   }
->()("t3/telemetry/AnalyticsService") {
-  static readonly layerTest = Layer.succeed(
-    AnalyticsService,
-    AnalyticsService.of({
-      record: Effect.fn("AnalyticsService.record")(function () {
-        return Effect.void;
-      }),
-      flush: Effect.void,
-      recordOwners: Effect.fn("AnalyticsService.recordOwners")(function () {
-        return Effect.void;
-      }),
-    }),
-  );
-}
+>()("t3/telemetry/AnalyticsService") {}
 
 function serverOsFromNodePlatform(platform: string): ClientOs {
   switch (platform) {
@@ -125,6 +117,26 @@ function serverOsFromNodePlatform(platform: string): ClientOs {
 /** @public */
 export const make = Effect.gen(function* () {
   const telemetryConfig = yield* TelemetryEnvConfig;
+  const hostEnvironment = yield* HostProcess.Environment;
+  const awaitingShellConsent = hostEnvironment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING === "1";
+  // A cached PATH does not establish consent from the current login shell.
+  const telemetryEnabled = Effect.suspend(() => {
+    if (!telemetryConfig.enabled) return Effect.succeed(false);
+    if (!awaitingShellConsent) return Effect.succeed(true);
+    if (hostEnvironment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING === "1")
+      return Effect.succeed(false);
+    const preference = hostEnvironment.T3CODE_TELEMETRY_ENABLED;
+    return Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(
+      Config.withDefault(true),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromEnv({
+          env: preference === undefined ? {} : { T3CODE_TELEMETRY_ENABLED: preference },
+        }),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
+  });
   const httpClient = yield* HttpClient.HttpClient;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const { distinctId, installId } = yield* getTelemetryIdentity;
@@ -133,6 +145,7 @@ export const make = Effect.gen(function* () {
   const deliveryRef = yield* Ref.make<DeliveryState>({
     failedBatch: [],
     batchAttempts: 0,
+    firstFailedAt: 0,
     failures: 0,
     retryAt: 0,
   });
@@ -180,7 +193,7 @@ export const make = Effect.gen(function* () {
   const sendBatch = Effect.fn("AnalyticsService.sendBatch")(function* (
     events: ReadonlyArray<BufferedAnalyticsEvent>,
   ) {
-    if (!telemetryConfig.enabled || !distinctId) return;
+    if (!(yield* telemetryEnabled) || !distinctId) return;
 
     const payload = {
       api_key: telemetryConfig.posthogKey,
@@ -232,27 +245,47 @@ export const make = Effect.gen(function* () {
 
       const sent = yield* Effect.result(sendBatch(batch));
       if (Result.isSuccess(sent)) {
-        yield* Ref.set(deliveryRef, { failedBatch: [], batchAttempts: 0, failures: 0, retryAt: 0 });
+        yield* Ref.set(deliveryRef, {
+          failedBatch: [],
+          batchAttempts: 0,
+          firstFailedAt: 0,
+          failures: 0,
+          retryAt: 0,
+        });
         continue;
       }
 
+      const now = yield* Clock.currentTimeMillis;
       const failures = delivery.failures + 1;
       const batchAttempts = delivery.batchAttempts + 1;
-      const retryAt = (yield* Clock.currentTimeMillis) + retryDelayMs(failures, yield* Random.next);
+      const firstFailedAt = delivery.batchAttempts === 0 ? now : delivery.firstFailedAt;
+      const retryAt = now + retryDelayMs(failures, yield* Random.next);
       const error = sent.failure;
       const rejected =
         error._tag === "HttpClientError" &&
         error.reason._tag === "StatusCodeError" &&
         REJECTED_BATCH_STATUSES.has(error.reason.response.status);
-      if (!rejected && batchAttempts < MAX_BATCH_ATTEMPTS) {
-        yield* Ref.set(deliveryRef, { failedBatch: batch, batchAttempts, failures, retryAt });
+      if (!rejected && now - firstFailedAt < MAX_BATCH_RETRY_MS) {
+        yield* Ref.set(deliveryRef, {
+          failedBatch: batch,
+          batchAttempts,
+          firstFailedAt,
+          failures,
+          retryAt,
+        });
         yield* Effect.logDebug("Failed to send telemetry batch; will retry", {
           attempt: batchAttempts,
           cause: error,
         });
         return;
       }
-      yield* Ref.set(deliveryRef, { failedBatch: [], batchAttempts: 0, failures, retryAt });
+      yield* Ref.set(deliveryRef, {
+        failedBatch: [],
+        batchAttempts: 0,
+        firstFailedAt: 0,
+        failures,
+        retryAt,
+      });
       yield* Effect.logWarning(
         rejected
           ? "Dropped telemetry batch the endpoint rejected"
@@ -272,7 +305,7 @@ export const make = Effect.gen(function* () {
 
   const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
     function* (event, properties) {
-      if (!telemetryConfig.enabled || !distinctId) return;
+      if (!(yield* telemetryEnabled) || !distinctId) return;
 
       // Catch Node UUID defects too; best-effort telemetry drops events without UUIDs.
       const uuid = yield* Effect.exit(crypto.randomUUIDv7());
