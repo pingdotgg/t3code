@@ -307,4 +307,40 @@ describe("claudeRateLimitEventToUpdate", () => {
       ],
     });
   });
+
+  it("keeps one row per window when a warning frame also carries unifiedWindows", () => {
+    expect(
+      claudeRateLimitEventToUpdate(
+        {
+          status: "allowed_warning",
+          rateLimitType: "seven_day",
+          utilization: 0.8,
+          ...({
+            unifiedWindows: {
+              seven_day: { utilization: 0.81 },
+              seven_day_overage_included: { utilization: 0.4 },
+            },
+          } as object),
+        },
+        { overageIncluded: "Fable" },
+      ),
+    ).toEqual({
+      windows: [
+        {
+          id: "seven_day",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 81,
+          windowDurationMins: 10080,
+        },
+        {
+          id: "seven_day_fable",
+          kind: "weekly",
+          label: "Weekly · Fable",
+          usedPercent: 40,
+          windowDurationMins: 10080,
+        },
+      ],
+    });
+  });
 });
