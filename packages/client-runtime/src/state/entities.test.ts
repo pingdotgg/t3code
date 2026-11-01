@@ -22,7 +22,7 @@ import { canSnooze, effectiveSnoozed } from "./threadSettled.ts";
 const environmentId = EnvironmentId.make("environment-v2");
 
 describe("V2 client presentation", () => {
-  it("keeps async questions in Working until the run completes", () => {
+  it("moves a running thread with an async question out of Working", () => {
     const runId = RunId.make("run-async-question");
     const running = {
       ...v2ThreadShell,
@@ -39,17 +39,9 @@ describe("V2 client presentation", () => {
       },
     };
     const active = presentThreadShell(environmentId, running);
-    expect(active.hasPendingUserInput).toBe(false);
-    expect(isThreadWorking(active)).toBe(true);
+    expect(active.hasPendingUserInput).toBe(true);
+    expect(isThreadWorking(active)).toBe(false);
     expect(canSnooze(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
-
-    const completed = presentThreadShell(environmentId, {
-      ...running,
-      activeRunId: null,
-      status: "completed",
-    });
-    expect(completed.hasPendingUserInput).toBe(true);
-    expect(isThreadWorking(completed)).toBe(false);
     expect(effectiveSnoozed(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
   });
 

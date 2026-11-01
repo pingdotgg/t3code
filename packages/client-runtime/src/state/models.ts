@@ -216,15 +216,9 @@ function terminalRunStatus(status: OrchestrationV2RunStatus): boolean {
   );
 }
 
-/** An async question waits for an answer only once its run stops working. */
+/** Any open question, async ones included, puts the thread in Input. */
 export function shellHasPendingUserInput(thread: OrchestrationV2ThreadShell): boolean {
-  const status = shellRuntime(thread)?.status;
-  // Waiting runs have ended their provider turn and are only draining effects.
-  const working = status === "preparing" || status === "starting" || status === "running";
-  return (
-    thread.pendingRuntimeRequest?.kind === "user_input" &&
-    (thread.pendingRuntimeRequest.blocking !== false || !working)
-  );
+  return thread.pendingRuntimeRequest?.kind === "user_input";
 }
 
 // Only work the agent waits on holds it: commands and monitors it left running
