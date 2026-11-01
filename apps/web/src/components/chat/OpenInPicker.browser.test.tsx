@@ -214,7 +214,9 @@ it("offers remote editors in web even when the host only has VS Code", async () 
     .not.toBeInTheDocument();
 
   await page.getByRole("menuitem", { name: "Zed", exact: true }).click();
+  using _timers = fakeTimers();
   await fixture.click(fixture.primaryButton());
+  await act(async () => vi.runAllTimers());
   expect(state.openUrl).toHaveBeenCalledWith("zed://ssh/test.local/work/project");
   expect(state.run).not.toHaveBeenCalled();
 });
@@ -226,7 +228,9 @@ describe("remote editor links", () => {
     state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } };
     await act(async () => screen.rerender(<FavoriteEditorFallback />));
 
+    using _timers = fakeTimers();
     expect((await pressOpenFavorite()).defaultPrevented).toBe(true);
+    await act(async () => vi.runAllTimers());
     expect(state.openUrl).toHaveBeenCalledWith(
       expect.stringContaining("cursor://vscode-remote/ssh-remote+sol"),
     );
@@ -242,6 +246,7 @@ describe("open in editor announcement", () => {
     await renderPicker();
     using _timers = fakeTimers();
     const regions = () => [...document.querySelectorAll('body > [aria-live="polite"]')];
+    for (const region of regions()) region.textContent = "";
     const spoken = async () => {
       await act(async () => vi.runAllTimers());
       return regions()
