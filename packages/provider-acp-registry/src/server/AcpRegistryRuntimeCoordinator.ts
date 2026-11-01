@@ -225,10 +225,13 @@ const make = Effect.gen(function* () {
       Ref.update(liveConfigurationByInstance, (current) =>
         new Map(current).set(instanceId, {
           latest: configuration,
-          modelOptions: recordAcpRegistryModelOptions(
-            current.get(instanceId)?.modelOptions ?? new Map(),
-            configuration,
-          ),
+          modelOptions:
+            configuration.models.length === 0 && configuration.configOptions.length === 0
+              ? (current.get(instanceId)?.modelOptions ?? new Map())
+              : recordAcpRegistryModelOptions(
+                  current.get(instanceId)?.modelOptions ?? new Map(),
+                  configuration,
+                ),
         }),
       ).pipe(Effect.andThen(PubSub.publish(liveConfigurationUpdates, instanceId)), Effect.asVoid);
 

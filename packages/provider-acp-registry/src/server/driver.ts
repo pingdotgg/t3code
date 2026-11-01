@@ -322,7 +322,7 @@ export function applyAcpRegistryLiveConfiguration(
     status: provider.enabled ? "ready" : provider.status,
     models:
       latest.models.length === 0 && latest.configOptions.length === 0
-        ? provider.models
+        ? withModelOptions(provider.models, configuration.modelOptions)
         : withModelOptions(
             modelsFromDiscovery(discovery, customModels),
             new Map([

@@ -6907,37 +6907,47 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           // The requested model owns the model picker. A saved option under the
           // picker's ID (an older descriptor set, or another model's option of
           // the same ID) must neither replace that model nor fail the open.
-          for (const selection of configSelections) {
-            const liveConfigOptions = yield* runtime.getConfigOptions;
-            const modelOptionId = findModelConfigOption(liveConfigOptions)?.id;
-            const option = liveConfigOptions.find((candidate) => candidate.id === selection.id);
-            if (option === undefined || selection.id === modelOptionId) continue;
-            // Secondary model choices fail on rejection rather than silently using another model.
-            if (option?.category === "model" && option.type === "select") {
-              yield* runtime.setConfigOption(selection.id, selection.value);
-              continue;
-            }
-            // Advertised tuning values union models; skip per-model rejections instead of failing open.
-            if (
-              option !== undefined &&
-              option.type === "select" &&
-              typeof selection.value === "string"
-            ) {
-              const advertisedValues = option.options.flatMap((entry) =>
-                "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
+          let pendingSelections = configSelections;
+          while (pendingSelections.length > 0) {
+            const deferredSelections: typeof configSelections = [];
+            for (const selection of pendingSelections) {
+              const liveConfigOptions = yield* runtime.getConfigOptions;
+              const modelOptionId = findModelConfigOption(liveConfigOptions)?.id;
+              const option = liveConfigOptions.find((candidate) => candidate.id === selection.id);
+              if (option === undefined) {
+                deferredSelections.push(selection);
+                continue;
+              }
+              if (selection.id === modelOptionId) continue;
+              // Secondary model choices fail on rejection rather than silently using another model.
+              if (option?.category === "model" && option.type === "select") {
+                yield* runtime.setConfigOption(selection.id, selection.value);
+                continue;
+              }
+              // Advertised tuning values union models; skip per-model rejections instead of failing open.
+              if (
+                option !== undefined &&
+                option.type === "select" &&
+                typeof selection.value === "string"
+              ) {
+                const advertisedValues = option.options.flatMap((entry) =>
+                  "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
+                );
+                if (!advertisedValues.includes(selection.value)) continue;
+              }
+              yield* runtime.setConfigOption(selection.id, selection.value).pipe(
+                Effect.catchTags({
+                  AcpRequestError: (error) =>
+                    Effect.logWarning("ACP session rejected a configuration option value", {
+                      optionId: selection.id,
+                      value: selection.value,
+                      detail: error.message,
+                    }),
+                }),
               );
-              if (!advertisedValues.includes(selection.value)) continue;
             }
-            yield* runtime.setConfigOption(selection.id, selection.value).pipe(
-              Effect.catchTags({
-                AcpRequestError: (error) =>
-                  Effect.logWarning("ACP session rejected a configuration option value", {
-                    optionId: selection.id,
-                    value: selection.value,
-                    detail: error.message,
-                  }),
-              }),
-            );
+            if (deferredSelections.length === pendingSelections.length) break;
+            pendingSelections = deferredSelections;
           }
           const policyMode = flavor.sessionModeForPolicy?.(runtimePolicy);
           if (policyMode !== undefined) {

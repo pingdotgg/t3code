@@ -1055,8 +1055,8 @@ describe("AcpRegistryAdapterV2", () => {
             }),
           ],
           storedOptions: [
-            { id: "model", value: "chosen-model" },
             { id: "agent", value: "plan" },
+            { id: "model", value: "chosen-model" },
           ],
           storedModel: model,
         });

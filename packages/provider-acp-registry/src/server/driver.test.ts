@@ -359,6 +359,30 @@ describe("acpRegistrySnapshotReadiness", () => {
       );
       expect(thinkingChoices(refreshed)).toEqual({ opus: WIDE_LEVELS, glm: NARROW_LEVELS });
 
+      yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+        models: [],
+        currentModelId: null,
+        configOptions: [],
+      });
+      const defaultProvider = {
+        ...probedSnapshot("opus", [wideThinking]),
+        models: probedSnapshot("opus", [wideThinking])
+          .models.slice(0, 1)
+          .map((model) => ({
+            ...model,
+            slug: "default",
+          })),
+      };
+      expect(
+        applyAcpRegistryLiveConfiguration(defaultProvider, yield* liveConfiguration(), []).models,
+      ).toEqual(defaultProvider.models);
+      const resumed = applyAcpRegistryLiveConfiguration(
+        probedSnapshot("opus", [wideThinking]),
+        yield* liveConfiguration(),
+        [],
+      );
+      expect(thinkingChoices(resumed)).toEqual({ opus: WIDE_LEVELS, glm: NARROW_LEVELS });
+
       // A session on an unlisted model adds nothing and removes nothing.
       yield* coordinator.publishLiveConfiguration(identity.instanceId, {
         models,
