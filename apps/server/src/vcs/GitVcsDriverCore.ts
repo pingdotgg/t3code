@@ -59,10 +59,13 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 /** T3's record of the branch, named as on the host, that a branch was cut from. */
 const branchBaseConfigKey = (branch: string) => `branch.${branch}.t3-merge-base`;
 /**
- * Where T3 kept that record before it had a key of its own, for every host alike: the GitHub
- * CLI's key, which branches cut before then still carry instead.
+ * T3's keys plus the GitHub CLI's `gh-merge-base`, where T3 kept the record for every host alike
+ * before it had a key of its own; branches cut before then still carry it instead.
  */
-const legacyBranchBaseConfigKey = (branch: string) => `branch.${branch}.gh-merge-base`;
+const branchBaseConfigPattern = (branch: string) => {
+  const escapedBranch = branch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return `^branch\\.${escapedBranch}\\.(t3-merge-base-ref|t3-merge-base|gh-merge-base)$`;
+};
 const gitProcesses = Semaphore.makeUnsafe(8);
 const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
@@ -1848,7 +1851,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       readonly knownOriginDefaultBranch?: string | null;
     },
   ) {
-    const configuredBaseRef = yield* readConfigValue(cwd, `branch.${refName}.t3-merge-base-ref`);
+    const { baseRef: configuredBaseRef, base: recordedBase } = yield* readBranchBaseConfig(
+      cwd,
+      refName,
+    );
     if (
       configuredBaseRef?.startsWith("refs/heads/") ||
       configuredBaseRef?.startsWith("refs/remotes/")
@@ -1863,7 +1869,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
     }
 
-    const configuredBaseBranch = (yield* readBranchBase(cwd, refName)) ?? "";
+    const configuredBaseBranch = recordedBase ?? "";
     const configuredBase = yield* resolveComparisonBaseRef(cwd, configuredBaseBranch);
     if (
       configuredBase !== null &&
@@ -3747,11 +3753,35 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     yield* createBranchAt("GitVcsDriver.createBranch", input, "git branch create failed");
   });
 
+  // The last value of a repeated key wins, as with `git config --get`.
+  const readBranchBaseConfig = Effect.fn("GitVcsDriver.readBranchBaseConfig")(function* (
+    cwd: string,
+    branch: string,
+  ) {
+    const stdout = yield* runGitStdout(
+      "GitVcsDriver.readBranchBaseConfig",
+      cwd,
+      ["config", "-z", "--get-regexp", branchBaseConfigPattern(branch)],
+      true,
+    );
+    const values = new Map<string, string | null>();
+    for (const entry of stdout.split("\0")) {
+      if (entry.length === 0) continue;
+      const newline = entry.indexOf("\n");
+      const key = newline < 0 ? entry : entry.slice(0, newline);
+      const value = newline < 0 ? "" : entry.slice(newline + 1).trim();
+      values.set(key.slice(key.lastIndexOf(".") + 1), value.length > 0 ? value : null);
+    }
+    return {
+      baseRef: values.get("t3-merge-base-ref") ?? null,
+      base: values.get("t3-merge-base") ?? values.get("gh-merge-base") ?? null,
+    };
+  });
+
   const readBranchBase: GitVcsDriver.GitVcsDriver["Service"]["readBranchBase"] = Effect.fn(
     "GitVcsDriver.readBranchBase",
   )(function* (cwd, branch) {
-    const base = yield* readConfigValue(cwd, branchBaseConfigKey(branch));
-    return base ?? (yield* readConfigValue(cwd, legacyBranchBaseConfigKey(branch)));
+    return (yield* readBranchBaseConfig(cwd, branch)).base;
   });
 
   const resolveBranchBase = Effect.fn("GitVcsDriver.resolveBranchBase")(function* (

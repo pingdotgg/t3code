@@ -5664,6 +5664,27 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("reads a recorded branch base as git config --get would", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const branch = "feature/a.b+";
+        yield* git(cwd, ["config", "branch.feature/aXbb.t3-merge-base", "regex-match"]);
+        assert.isNull(yield* driver.readBranchBase(cwd, branch));
+
+        yield* git(cwd, ["config", `branch.${branch}.gh-merge-base`, "legacy"]);
+        assert.equal(yield* driver.readBranchBase(cwd, branch), "legacy");
+
+        yield* git(cwd, ["config", `branch.${branch}.t3-merge-base`, "first"]);
+        yield* git(cwd, ["config", "--add", `branch.${branch}.t3-merge-base`, "last"]);
+        assert.equal(yield* driver.readBranchBase(cwd, branch), "last");
+
+        yield* git(cwd, ["config", "--add", `branch.${branch}.t3-merge-base`, ""]);
+        assert.equal(yield* driver.readBranchBase(cwd, branch), "legacy");
+      }),
+    );
+
     it.effect("keeps a recorded merge base when publishing a tracked branch", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
