@@ -131,18 +131,18 @@ export const make = Effect.gen(function* () {
   // consent from the current login shell.
   const variableEnabled = Effect.suspend((): Effect.Effect<Option.Option<boolean>> => {
     if (!policyAllows || Option.contains(telemetryConfig.enabled, false))
-      return Effect.succeed(Option.some(false));
+      return Effect.succeedSome(false);
     if (!awaitingShellConsent) return Effect.succeed(telemetryConfig.enabled);
     if (hostEnvironment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING === "1")
-      return Effect.succeed(Option.some(false));
+      return Effect.succeedSome(false);
     const preference = hostEnvironment.T3CODE_TELEMETRY_ENABLED;
-    if (preference === undefined) return Effect.succeed(Option.none());
+    if (preference === undefined) return Effect.succeedNone;
     return Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(
       Effect.provideService(
         ConfigProvider.ConfigProvider,
         ConfigProvider.fromEnv({ env: { T3CODE_TELEMETRY_ENABLED: preference } }),
       ),
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.orElseSucceed(() => Option.some(false)),
     );
   });
