@@ -25,6 +25,7 @@ import {
 } from "@t3tools/shared/cliRelease";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { readLinkText } from "@t3tools/shared/ownedLink";
 
 import * as ProcessRunner from "../processRunner.ts";
 import { isExactServiceVersion, parseServiceState, SERVICE_STATE_FILE } from "./serviceProtocol.ts";
@@ -411,13 +412,8 @@ export const directLinkTargets = Effect.fn("cloud.pinned_runtime.direct_link_tar
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const text = yield* fs.readLink(link).pipe(Effect.option);
+  const text = yield* readLinkText(link);
   if (Option.isNone(text)) return [];
-  // The text is decoded as UTF-8; bytes that are not would name another file than the link does.
-  const raw = yield* Effect.tryPromise(() => NodeFSP.readlink(link, { encoding: "buffer" })).pipe(
-    Effect.option,
-  );
-  if (Option.isNone(raw) || !raw.value.equals(Buffer.from(text.value))) return [];
   // `..` can mean another folder once a link is followed, and a target naming a folder (`t3/`,
   // `t3/.`) never runs the file it would resolve to. Other spellings resolve on disk below.
   const parts = text.value.split(/[\\/]/);
@@ -453,14 +449,15 @@ export function isVersionExecutable(
   path: Path.Path,
   versionsDir: string,
   candidate: string,
+  windows: boolean,
 ): boolean {
   const relative = path.relative(versionsDir, path.resolve(candidate));
-  // On another Windows drive, relative() returns the absolute path, like `D:\t3.exe`. On POSIX,
-  // `\` and case are part of a name, so only `/` separates and `t3` must match exactly.
+  // On another Windows drive, relative() returns the absolute path, like `D:\t3.exe`. Elsewhere
+  // `\` and case are part of a name, so only `/` separates and the name is exactly `t3`.
   if (path.isAbsolute(relative)) return false;
-  return path.sep === "/"
-    ? /^(?!\.\.)[^/\\]+\/t3(?:\.exe)?$/.test(relative)
-    : /^(?!\.\.)[^\\/]+[\\/]t3(?:\.exe)?$/i.test(relative);
+  return windows
+    ? /^(?!\.\.)[^\\/]+[\\/]t3(?:\.exe)?$/i.test(relative)
+    : /^(?!\.\.)[^/\\]+\/t3$/.test(relative);
 }
 
 /** The executable a `t3.cmd` shim written by the install script or `t3 update` runs. */

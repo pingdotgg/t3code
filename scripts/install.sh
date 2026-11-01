@@ -391,7 +391,8 @@ case "$kind" in
     trap '' INT TERM HUP
     mv "$public" "$aside" || { rmdir "$aside_dir"; fail "could not replace ${public}"; }
     if [ -n "$(link_kind "$aside")" ]; then
-      if ! ln -s "$command_link" "${bin_dir}/"; then
+      # Another install made the same link a moment ago: that is done, not failed.
+      if ! ln -s "$command_link" "${bin_dir}/" && [ "$(link_kind "$public")" != current ]; then
         # Keep the working old command when the name is still free; if it cannot go back, it stays.
         put_back ||
           fail "could not link ${public}; the old link is at ${aside}."

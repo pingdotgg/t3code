@@ -1,6 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { DESKTOP_CLI_LAUNCHER_MARKER } from "@t3tools/shared/desktopCliLauncher";
-import { replaceOwnedLink } from "@t3tools/shared/ownedLink";
+import { readLinkText, replaceOwnedLink } from "@t3tools/shared/ownedLink";
 import { pathSetupCommand } from "@t3tools/shared/shell";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
@@ -90,7 +90,16 @@ const classifyCommandLink = Effect.fn("cli.install.classify_command_link")(funct
     Option.isSome(linkFolder) &&
     Option.getOrUndefined(yield* folderId(commandLink)) === linkFolder.value
   ) {
-    return (yield* real(link)) === realCommandLink ? "current" : "foreign";
+    // Only through its real folder: a folder that is a link (a bin folder aliasing it) or a bind
+    // mount may be shared with other programs.
+    if (
+      Option.isSome(yield* fs.readLink(path.dirname(link)).pipe(Effect.option)) ||
+      (yield* real(link)) !== realCommandLink
+    ) {
+      return "foreign";
+    }
+    const self = yield* entryAt(link);
+    return self === "link" ? "current" : self === "missing" ? "missing" : "foreign";
   }
   const entry = yield* entryAt(link);
   if (entry !== "link") return entry === "missing" ? "missing" : "foreign";
@@ -115,7 +124,7 @@ const classifyCommandLink = Effect.fn("cli.install.classify_command_link")(funct
     Effect.orElseSucceed(() => false),
   );
   // The desktop app writes this exact path, also when the home's bin folder is a link.
-  const text = yield* fs.readLink(link).pipe(Effect.option);
+  const text = yield* readLinkText(link);
   if (
     Option.isSome(text) &&
     path.isAbsolute(text.value) &&
@@ -129,8 +138,8 @@ const classifyCommandLink = Effect.fn("cli.install.classify_command_link")(funct
   if (
     targets.some(
       (candidate) =>
-        isVersionExecutable(path, versionsDir, candidate) ||
-        isVersionExecutable(path, realVersionsDir, candidate),
+        isVersionExecutable(path, versionsDir, candidate, false) ||
+        isVersionExecutable(path, realVersionsDir, candidate, false),
     )
   ) {
     return "older";
@@ -269,8 +278,8 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
       !(
         Option.isSome(current) &&
         current.value !== undefined &&
-        (isVersionExecutable(path, versionsDir, current.value) ||
-          isVersionExecutable(path, realVersionsDir, current.value) ||
+        (isVersionExecutable(path, versionsDir, current.value, true) ||
+          isVersionExecutable(path, realVersionsDir, current.value, true) ||
           // This home's desktop launcher, which install.sh also replaces.
           current.value === path.join(path.dirname(runtimeDir), "bin", name))
       )

@@ -83,6 +83,17 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
         written.filter((file) => file.startsWith(path.dirname(launcher))),
         [],
       );
+      // A bin folder that is a link to the command link's folder may be shared, so update leaves
+      // it alone.
+      const aliasBin = path.join(root, "alias-bin");
+      yield* fs.symlink(path.dirname(commandLink), aliasBin);
+      const viaAlias = yield* repointLauncher({
+        launchedAs: path.join(aliasBin, "t3"),
+        versionsDir: path.join(root, "runtime/versions"),
+        targetEntryPath: newExe,
+      });
+      assert.isTrue(Option.isNone(viaAlias));
+      assert.equal(yield* fs.readLink(commandLink), newerExe);
       // A launcher removed while update ran stays removed.
       let removed = false;
       const vanishing = FileSystem.FileSystem.of({

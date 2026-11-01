@@ -8,6 +8,19 @@ import * as Path from "effect/Path";
 import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 
+/**
+ * The text of the link at `file`, only when it reads back as the same bytes. Text that is not
+ * UTF-8 decodes to another name than the one the OS follows, so it never counts as anyone's.
+ */
+export const readLinkText = Effect.fn("ownedLink.read_link_text")(function* (file: string) {
+  const raw = yield* Effect.tryPromise(() => NodeFSP.readlink(file, { encoding: "buffer" })).pipe(
+    Effect.option,
+  );
+  if (Option.isNone(raw)) return Option.none<string>();
+  const text = raw.value.toString("utf8");
+  return Buffer.from(text).equals(raw.value) ? Option.some(text) : Option.none<string>();
+});
+
 /** An entry moved aside could not go back; it is still at `path`. */
 export class OwnedLinkError extends Schema.TaggedError<OwnedLinkError>()("OwnedLinkError", {
   path: Schema.String,
@@ -74,16 +87,17 @@ export const replaceOwnedLink = Effect.fn("ownedLink.replace")(function* <E, R>(
           if (input.target !== undefined) {
             // On failure the old link goes back while the name is free, so the command keeps working;
             // if it cannot, it stays beside `link`.
-            yield* fs
-              .symlink(input.target, input.link)
-              .pipe(
-                Effect.catch((error) =>
-                  putBack.pipe(
-                    Effect.andThen(discard.pipe(Effect.ignore)),
-                    Effect.andThen(Effect.fail(error)),
-                  ),
-                ),
-              );
+            yield* fs.symlink(input.target, input.link).pipe(
+              Effect.catch((error) =>
+                Effect.gen(function* () {
+                  // Another install made the same link a moment ago: that is done, not failed.
+                  const now = yield* fs.readLink(input.link).pipe(Effect.option);
+                  if (Option.getOrUndefined(now) === input.target) return;
+                  yield* putBack.pipe(Effect.andThen(discard.pipe(Effect.ignore)));
+                  return yield* Effect.fail(error);
+                }),
+              ),
+            );
           }
           yield* discard.pipe(Effect.ignore);
           return true;

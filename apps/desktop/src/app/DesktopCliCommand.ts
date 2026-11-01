@@ -14,7 +14,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { replaceOwnedLink } from "@t3tools/shared/ownedLink";
+import { readLinkText, replaceOwnedLink } from "@t3tools/shared/ownedLink";
 import { pathSetup, readUserLoginShell } from "@t3tools/shared/shell";
 
 import * as DesktopCliShim from "./DesktopCliShim.ts";
@@ -101,7 +101,9 @@ export const make = Effect.gen(function* () {
     function* (link: string) {
       // Only a direct link: a chain through another tool's link is that tool's. Unnormalized,
       // so a target the OS would refuse (`t3/.`) fails here too.
-      const text = yield* fs.readLink(link);
+      const text = Option.getOrUndefined(yield* readLinkText(link));
+      // Text that is not UTF-8 names another file than the one the OS follows.
+      if (text === undefined) return false;
       const target = path.isAbsolute(text) ? text : `${path.dirname(link)}${path.sep}${text}`;
       if (Option.isSome(yield* fs.readLink(target).pipe(Effect.option))) return false;
       // The launcher is a few KB; never read a large binary another `t3` links to.

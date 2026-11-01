@@ -310,11 +310,23 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
 
 it("isVersionExecutable accepts only <version>/t3, never another drive or program", () => {
   const win32 = NodePath.win32 as unknown as Path.Path;
-  assert.isTrue(isVersionExecutable(win32, "C:\\t3\\versions", "C:\\t3\\versions\\1.0.0\\t3.exe"));
-  assert.isFalse(isVersionExecutable(win32, "C:\\t3\\versions", "D:\\t3.exe"));
-  assert.isFalse(
-    isVersionExecutable(win32, "C:\\t3\\versions", "C:\\t3\\versions\\1.0.0\\node.exe"),
+  assert.isTrue(
+    isVersionExecutable(win32, "C:\\t3\\versions", "C:\\t3\\versions\\1.0.0\\t3.exe", true),
   );
+  assert.isFalse(isVersionExecutable(win32, "C:\\t3\\versions", "D:\\t3.exe", true));
+  assert.isFalse(
+    isVersionExecutable(win32, "C:\\t3\\versions", "C:\\t3\\versions\\1.0.0\\node.exe", true),
+  );
+  // On POSIX the name is exactly `t3`, and `\\` is part of a name, not a separator.
+  const posix = NodePath.posix as unknown as Path.Path;
+  for (const [candidate, ours] of [
+    ["/t3/versions/1.0.0/t3", true],
+    ["/t3/versions/1.0.0/t3.exe", false],
+    ["/t3/versions/1.0.0/T3", false],
+    ["/t3/versions/manager\\t3", false],
+  ] as const) {
+    assert.equal(isVersionExecutable(posix, "/t3/versions", candidate, false), ours, candidate);
+  }
 });
 
 it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {

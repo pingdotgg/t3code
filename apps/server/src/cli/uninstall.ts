@@ -54,7 +54,7 @@ export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(functi
     if (shimPath === undefined) return undefined;
     const contents = yield* fs.readFileString(shimPath).pipe(Effect.option);
     const target = Option.isSome(contents) ? generatedWindowsShimTarget(contents.value) : undefined;
-    return target !== undefined && isVersionExecutable(path, input.versionsDir, target)
+    return target !== undefined && isVersionExecutable(path, input.versionsDir, target, true)
       ? shimPath
       : undefined;
   }
@@ -85,8 +85,8 @@ const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
   return targets.some(
     (target) =>
       target !== undefined &&
-      (isVersionExecutable(path, versionsDir, target) ||
-        isVersionExecutable(path, realVersionsDir, target)),
+      (isVersionExecutable(path, versionsDir, target, platform === "win32") ||
+        isVersionExecutable(path, realVersionsDir, target, platform === "win32")),
   );
 });
 

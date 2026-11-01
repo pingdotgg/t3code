@@ -162,9 +162,17 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
               : fs.symlink(target, to),
         }),
       );
-      yield* fs.remove(link);
-      yield* provide(concurrent);
-      assert.equal(yield* fs.readLink(link), commandLink);
+      // Also while moving an older link over: the other install's identical link wins.
+      for (const before of [undefined, older]) {
+        yield* fs.remove(link).pipe(Effect.ignore);
+        if (before !== undefined) yield* fs.symlink(before, link);
+        yield* provide(concurrent);
+        assert.equal(yield* fs.readLink(link), commandLink, before);
+        assert.deepStrictEqual(
+          (yield* fs.readDirectory(path.dirname(link))).filter((name) => name.startsWith(".t3.")),
+          [],
+        );
+      }
 
       // When the new link cannot be made, the old command keeps working.
       const failing = installCli().pipe(
