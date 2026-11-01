@@ -530,6 +530,9 @@ function parseGitRemoteVerboseOutput(
 const hasStderrLine = (stderr: string, prefixes: ReadonlyArray<string>) =>
   stderr.split("\n").some((line) => prefixes.some((prefix) => line.startsWith(prefix)));
 
+/** Operation of the error raised when Git cannot say whether a cwd is a work tree. */
+export const WORK_TREE_PROBE_OPERATION = "GitVcsDriver.probeWorkTree";
+
 const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
   (
     process: VcsProcess.VcsProcess["Service"],
@@ -601,7 +604,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       return null;
     }
     return yield* new VcsProcessExitError({
-      operation,
+      operation: WORK_TREE_PROBE_OPERATION,
       command: "git rev-parse",
       cwd,
       exitCode: result.exitCode,
