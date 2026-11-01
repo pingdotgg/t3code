@@ -122,7 +122,8 @@ export function HistorySwipeNavigation() {
         gesture.sumX += event.deltaX;
         gesture.sumY += event.deltaY;
         if (Math.abs(gesture.sumX) + Math.abs(gesture.sumY) < SWIPE_AXIS_LOCK_DISTANCE) return;
-        gesture = lockSwipeAxis(gesture);
+        // The first event's scroller may have been replaced; keep its path for dialog checks.
+        gesture = lockSwipeAxis({ ...gesture, path: [...gesture.path, ...event.composedPath()] });
         if (gesture.kind === "ignored") return;
       } else {
         const delta = gesture.direction === "back" ? -event.deltaX : event.deltaX;

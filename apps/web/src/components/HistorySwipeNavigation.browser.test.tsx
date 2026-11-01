@@ -4,8 +4,8 @@ import { render } from "../../test/render";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 
 type Scroller = "shadow" | "light" | "none" | "shadow-dialog";
-// Each step is one wheel event, optionally followed by the scroll it caused.
-type Step = readonly [deltaX: number, scrollLeftAfter?: number];
+// Each step is one wheel event, optionally followed by the scroll it caused or a remount.
+type Step = readonly [deltaX: number, after?: number | "remount"];
 
 function mountPanel(container: HTMLElement, scroller: Scroller, scrollLeft: number) {
   const panel = container.appendChild(document.createElement("div"));
@@ -35,6 +35,13 @@ describe("HistorySwipeNavigation", () => {
     ["a small first event that reaches the left edge", "shadow", 3, [[-3, 0], [-130]], null],
     ["a small first event that reaches the right edge", "light", 797, [[3, 800], [130]], null],
     ["a scroll that reaches the edge mid-gesture", "light", 100, [[-100, 0], [-130]], null],
+    [
+      "a scroller remounted after a small first event",
+      "shadow",
+      400,
+      [[1, "remount"], [130]],
+      null,
+    ],
     ["swiping inside a dialog in a shadow root", "shadow-dialog", 0, [[-130]], null],
     ["swiping left over content without overflow", "none", 0, [[-130]], "back"],
     ["swiping right over content without overflow", "none", 0, [[130]], "forward"],
@@ -44,11 +51,20 @@ describe("HistorySwipeNavigation", () => {
     using forward = vi.spyOn(window.history, "forward").mockImplementation(() => undefined);
     using _canGoBack = vi.spyOn(window.navigation, "canGoBack", "get").mockReturnValue(true);
     using _canGoForward = vi.spyOn(window.navigation, "canGoForward", "get").mockReturnValue(true);
-    const { viewport, content } = mountPanel(screen.container, scroller, scrollLeft);
+    let { viewport, content } = mountPanel(screen.container, scroller, scrollLeft);
 
-    for (const [deltaX, scrollLeftAfter] of [...steps, [0] as const]) {
+    for (const [deltaX, after] of [...steps, [0] as const]) {
       content.dispatchEvent(new WheelEvent("wheel", { deltaX, bubbles: true, composed: true }));
-      if (scrollLeftAfter !== undefined) viewport.scrollLeft = scrollLeftAfter;
+      if (after === "remount") {
+        const replacement = viewport.cloneNode(true) as HTMLDivElement;
+        const { scrollLeft: previous } = viewport;
+        viewport.replaceWith(replacement);
+        replacement.scrollLeft = previous;
+        viewport = replacement;
+        content = replacement.firstElementChild as HTMLDivElement;
+      } else if (after !== undefined) {
+        viewport.scrollLeft = after;
+      }
     }
 
     expect(back).toHaveBeenCalledTimes(navigates === "back" ? 1 : 0);
