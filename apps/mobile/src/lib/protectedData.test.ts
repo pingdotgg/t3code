@@ -1,22 +1,37 @@
 import * as Effect from "effect/Effect";
+import * as Socket from "effect/socket/Socket";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   appState: "background" as string | null,
   nativeCheckSupported: true,
   platform: "ios",
+  webSocketSupported: true,
   subscribed: Promise.withResolvers<void>(),
   listeners: new Set<(state: string) => void>(),
   isProtectedDataAvailable: vi.fn<() => Promise<boolean>>(),
   readStorage: vi.fn<() => Promise<void>>(),
+  webSocketConnect: vi.fn<(id: number, url: string, protocols: Array<string>) => void>(),
 }));
 
 vi.mock("expo", () => ({
-  requireOptionalNativeModule: () => ({
-    ...(mocks.nativeCheckSupported && {
-      isProtectedDataAvailable: mocks.isProtectedDataAvailable,
-    }),
-  }),
+  requireOptionalNativeModule: (name: string) => {
+    if (name === "T3NativeControls") {
+      return {
+        ...(mocks.nativeCheckSupported && {
+          isProtectedDataAvailable: mocks.isProtectedDataAvailable,
+        }),
+      };
+    }
+    if (name === "T3WebSocket" && mocks.webSocketSupported) {
+      return {
+        connect: mocks.webSocketConnect,
+        close: () => undefined,
+        addListener: () => ({ remove: () => undefined }),
+      };
+    }
+    return null;
+  },
 }));
 vi.mock("react-native", () => ({
   Platform: {
@@ -66,15 +81,18 @@ beforeEach(() => {
   mocks.appState = "background";
   mocks.nativeCheckSupported = true;
   mocks.platform = "ios";
+  mocks.webSocketSupported = true;
   mocks.subscribed = Promise.withResolvers<void>();
   mocks.listeners.clear();
   mocks.isProtectedDataAvailable.mockReset();
   mocks.readStorage.mockReset().mockResolvedValue(undefined);
+  mocks.webSocketConnect.mockReset();
 });
 
 afterEach(async () => {
   await runtime?.dispose();
   runtime = undefined;
+  vi.unstubAllGlobals();
 });
 
 describe("protected storage startup", () => {
@@ -118,4 +136,45 @@ describe("protected storage startup", () => {
       );
     },
   );
+});
+
+describe("runtime WebSocket", () => {
+  it.each([
+    { platform: "android", webSocketSupported: true },
+    { platform: "ios", webSocketSupported: false },
+  ])(
+    "keeps the global socket on $platform with native support $webSocketSupported",
+    async (scenario) => {
+      mocks.appState = "active";
+      mocks.platform = scenario.platform;
+      mocks.webSocketSupported = scenario.webSocketSupported;
+      const globalWebSocket = vi.fn(function () {});
+      vi.stubGlobal("WebSocket", globalWebSocket);
+      ({ runtime } = await import("./runtime"));
+
+      const makeWebSocket = await runtime.runPromise(Socket.WebSocketConstructor);
+      makeWebSocket("wss://host.test/ws");
+
+      expect(globalWebSocket).toHaveBeenCalledWith("wss://host.test/ws", undefined);
+      expect(mocks.webSocketConnect).not.toHaveBeenCalled();
+    },
+  );
+
+  it("dials iOS sockets through URLSession instead of React Native's WebSocket", async () => {
+    mocks.appState = "active";
+    // React Native's iOS WebSocket is SocketRocket, which never offers permessage-deflate.
+    const globalWebSocket = vi.fn();
+    vi.stubGlobal("WebSocket", globalWebSocket);
+    ({ runtime } = await import("./runtime"));
+
+    const makeWebSocket = await runtime.runPromise(Socket.WebSocketConstructor);
+    makeWebSocket("wss://host.test/ws");
+
+    expect(globalWebSocket).not.toHaveBeenCalled();
+    expect(mocks.webSocketConnect).toHaveBeenCalledWith(
+      expect.any(Number),
+      "wss://host.test/ws",
+      [],
+    );
+  });
 });
