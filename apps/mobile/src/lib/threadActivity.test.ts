@@ -1490,6 +1490,48 @@ describe("subagent continued by a later turn", () => {
       "closing-2",
     ]);
   });
+
+  it("times a turn to its answer when a delegated task resumes after it", () => {
+    const resumed: OrchestrationV2TurnItem[] = [
+      user("prompt-1", runId, 1_000_001, 0),
+      reasoning("reasoning-1", runId, 1_000_002, 1),
+      assistant("answer-1", runId, 1_000_003, 3),
+      {
+        ...item("resumed", runId, 1_000_004, 36),
+        completedAt: DateTime.makeUnsafe(at(40)),
+        updatedAt: DateTime.makeUnsafe(at(40)),
+        type: "subagent",
+        subagentId: NodeId.make("resumed"),
+        origin: "app_owned",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        childThreadId: sourceThreadId,
+        prompt: "Research the bug",
+        result: "Found it",
+      },
+      {
+        ...item("finished", run2, 2_000_001, 50),
+        type: "notification",
+        source: {
+          kind: "delegated_task",
+          taskIds: [NodeId.make("resumed")],
+          childThreadId: sourceThreadId,
+        },
+        outcome: "completed",
+        summary: 'Delegated task "Research the bug" finished',
+      },
+      reasoning("reasoning-2", run2, 2_000_002, 51),
+      assistant("answer-2", run2, 2_000_003, 52),
+    ];
+    const presented = deriveThreadFeedPresentation(
+      buildThreadFeed(resumed.map((entry, index) => projected(entry, index))),
+      { runId: run2, status: "completed", startedAt: at(50), completedAt: at(52) },
+      new Set(),
+    );
+    expect(presented.find((entry) => entry.id === `run-fold:${runId}`)).toMatchObject({
+      label: "Worked for 3.0s",
+    });
+  });
 });
 
 it("stops stranded thinking after a steer and follows the next thought or tool", () => {

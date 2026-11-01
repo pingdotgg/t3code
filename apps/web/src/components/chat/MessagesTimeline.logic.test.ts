@@ -4342,6 +4342,123 @@ describe("subagent continued by a later turn", () => {
       "closing-2",
     ]);
   });
+
+  it("folds a delegated task resumed after the turn's answer into that turn", () => {
+    const resumed: OrchestrationV2TurnItem[] = [
+      user("prompt-1", run1, 1_000_001, 0),
+      reasoning("reasoning-1", run1, 1_000_002, 1),
+      assistant("answer-1", run1, 1_000_003, 3),
+      {
+        ...base("resumed", run1, 1_000_004, 36),
+        completedAt: at(40),
+        updatedAt: at(40),
+        type: "subagent",
+        subagentId: NodeId.make("resumed"),
+        origin: "app_owned",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        childThreadId: ThreadId.make("child-thread"),
+        prompt: "Research the bug",
+        result: "Found it",
+      },
+      {
+        ...base("finished", run2, 2_000_001, 50),
+        type: "notification",
+        source: {
+          kind: "delegated_task",
+          taskIds: [NodeId.make("resumed")],
+          childThreadId: ThreadId.make("child-thread"),
+        },
+        outcome: "completed",
+        summary: 'Delegated task "Research the bug" finished',
+      },
+      reasoning("reasoning-2", run2, 2_000_002, 51),
+      assistant("answer-2", run2, 2_000_003, 52),
+    ];
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: resumed.map((item) => ({
+          position: item.ordinal,
+          visibility: "local",
+          sourceThreadId: threadId,
+          sourceItemId: item.id,
+          item,
+        })),
+        optimisticMessages: [],
+      }),
+      latestRun: {
+        runId: run2,
+        status: "completed",
+        startedAt: DateTime.formatIso(at(50)),
+        completedAt: DateTime.formatIso(at(52)),
+      },
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(
+      rows.map((row) => (row.kind === "turn-fold" ? `${row.id}: ${row.label}` : row.id)),
+    ).toEqual([
+      "prompt-1",
+      `turn-fold:${run1}: Worked for 3.0s`,
+      "answer-1",
+      "finished",
+      `turn-fold:${run2}: Worked for 2.0s`,
+      "answer-2",
+    ]);
+  });
+
+  it("times a steered turn's continuation to its answer when a delegated task resumes after it", () => {
+    const resumed: OrchestrationV2TurnItem[] = [
+      user("prompt-1", run1, 1_000_001, 0),
+      reasoning("reasoning-1", run1, 1_000_002, 1),
+      { ...user("steer-1", run1, 1_000_003, 2), inputIntent: "steer" },
+      reasoning("reasoning-steer", run1, 1_000_004, 3),
+      assistant("answer-1", run1, 1_000_005, 5),
+      {
+        ...base("resumed", run1, 1_000_006, 36),
+        completedAt: at(40),
+        updatedAt: at(40),
+        type: "subagent",
+        subagentId: NodeId.make("resumed"),
+        origin: "app_owned",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        childThreadId: ThreadId.make("child-thread"),
+        prompt: "Research the bug",
+        result: "Found it",
+      },
+      user("prompt-2", run2, 2_000_001, 50),
+      assistant("answer-2", run2, 2_000_002, 52),
+    ];
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: resumed.map((item) => ({
+          position: item.ordinal,
+          visibility: "local",
+          sourceThreadId: threadId,
+          sourceItemId: item.id,
+          item,
+        })),
+        optimisticMessages: [],
+      }),
+      latestRun: {
+        runId: run2,
+        status: "completed",
+        startedAt: DateTime.formatIso(at(50)),
+        completedAt: DateTime.formatIso(at(52)),
+      },
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(
+      rows.flatMap((row) => (row.kind === "turn-fold" ? [`${row.id}: ${row.label}`] : [])),
+    ).toEqual([
+      `turn-fold:${run1}: Worked for 5.0s`,
+      `turn-fold:${run1}:steer:steer-1: Continued for 3.0s`,
+    ]);
+  });
 });
 
 describe("shouldCollapseUserMessage", () => {
