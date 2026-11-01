@@ -673,12 +673,37 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("asks the server again after an HTTP miss, since the thread may not exist yet", () =>
+    Effect.gen(function* () {
+      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+        snapshot: undefined,
+        owner: undefined,
+      };
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const first = yield* makeHarness({ httpSnapshot: { _tag: "missing" }, resumeCache });
+          yield* awaitThreadState(first.observed, (value) => value.status === "deleted");
+        }),
+      );
+      const resumed = yield* makeHarness({
+        resumeCache,
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, projection: BASE_PROJECTION },
+        },
+      });
+      const state = yield* awaitThreadState(resumed.observed, (value) => value.status === "live");
+      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+      expect(yield* Ref.get(resumed.loaderCalls)).toBe(1);
+    }),
+  );
+
   it.effect("resumes a warm cache via afterSequence without an HTTP fetch", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_PROJECTION });
 
       yield* Queue.offer(harness.inputs, titleUpdated("Live title", CACHED_SNAPSHOT_SEQUENCE + 1));
-      yield* awaitThreadState(
+      const live = yield* awaitThreadState(
         harness.observed,
         (value) =>
           value.status === "live" &&
@@ -686,6 +711,8 @@ describe("EnvironmentThreads", () => {
           value.data.value.thread.title === "Live title",
       );
 
+      // Readers compare this to a command's commit sequence; it moves with the data it describes.
+      expect(live.sequence).toBe(CACHED_SNAPSHOT_SEQUENCE + 1);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE);
       expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
     }),
@@ -1288,6 +1315,7 @@ describe("EnvironmentThreads", () => {
               status: "cached",
               error: Option.none(),
               history: { ...EMPTY_THREAD_HISTORY_META, historyCursor: null, expanded: true },
+              sequence: CACHED_SNAPSHOT_SEQUENCE,
             },
             sequence: CACHED_SNAPSHOT_SEQUENCE,
             persisted: true,
