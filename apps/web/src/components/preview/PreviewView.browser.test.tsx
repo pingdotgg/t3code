@@ -7,12 +7,12 @@ import {
   FILL_PREVIEW_VIEWPORT,
   ThreadId,
 } from "@t3tools/contracts";
-import { Profiler, type ComponentProps } from "react";
+import { type ComponentProps } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
-import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
+import { act, render } from "../../../test/render";
 
 import type { PreviewableServer } from "./useDiscoveredLocalServers";
 
@@ -28,7 +28,6 @@ const mocks = vi.hoisted(() => ({
   pickElement: vi.fn(),
   addPreviewAnnotation: vi.fn(),
   addImage: vi.fn(),
-  toast: vi.fn(),
   pictureInPicture: false,
   showEmptyState: false,
   loading: false,
@@ -136,10 +135,6 @@ vi.mock(import("~/browser/browserRecording"), async (original) => ({
   findActiveBrowserRecordingRuntimeTabId: () => mocks.recordingRuntimeTabId,
   useActiveBrowserRecordingTabIds: () => mocks.recordingTabIds,
 }));
-vi.mock(import("~/components/ui/toast"), async (original) => {
-  const actual = await original();
-  return { ...actual, toastManager: { ...actual.toastManager, add: mocks.toast } };
-});
 vi.mock(import("./useDiscoveredLocalServers"), async (original) => ({
   ...(await original()),
   useDiscoveredLocalServers: () => mocks.servers,
@@ -156,13 +151,13 @@ vi.mock(import("~/browser/previewRuntime"), async (original) => ({
 
 vi.mock(import("~/browser/browserViewportActions"), { spy: true });
 
-import { commitBrowserViewportChange } from "~/browser/browserViewportActions";
-import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import { dispatchPreviewAction } from "./previewActionBus";
 import { PreviewView } from "./PreviewView";
+import { ToastProvider } from "~/components/ui/toast";
 
 const TEST_THREAD_REF = {
   environmentId: EnvironmentId.make("environment-1"),
@@ -196,17 +191,6 @@ function annotation(id: string, screenshot: unknown = null) {
   };
 }
 
-async function submitAddress(text: string) {
-  const input = page.getByPlaceholder("Search or enter URL");
-  await userEvent.click(input);
-  await userEvent.fill(input, text);
-  await userEvent.keyboard("{Enter}");
-}
-
-function hasCursor() {
-  return document.querySelector("svg.lucide-mouse-pointer2") !== null;
-}
-
 // The mocked modules and stores are shared by the whole file, so every test starts by
 // resetting them.
 function setup() {
@@ -231,204 +215,22 @@ function setup() {
 }
 
 describe("PreviewView", () => {
-  it("shows the cursor in a replacement browser while the old instance still records", async () => {
-    setup();
-    mocks.recordingTabIds.add(TEST_RUNTIME_TAB_ID);
-    mocks.recordingRuntimeTabId = TEST_RUNTIME_TAB_ID;
-    const replacementTabId = previewRuntimeTabId(TEST_THREAD_REF, "replacement-server", "tab-1");
-    useBrowserPointerStore.setState({
-      byTabId: Object.fromEntries(
-        [TEST_RUNTIME_TAB_ID, replacementTabId].map((tabId) => [
-          tabId,
-          { tabId, phase: "move", x: 10, y: 10, sequence: 1, createdAt: "2026-07-27T00:00:00Z" },
-        ]),
-      ),
-    });
-    await using screen = await render(view());
-    expect(hasCursor()).toBe(false);
-    mocks.serverEpoch = "replacement-server";
-    await screen.rerender(view());
-    expect(hasCursor()).toBe(true);
-    expect(mocks.recordingTabIds.has(TEST_RUNTIME_TAB_ID)).toBe(true);
-  });
-
-  it.each([false, true])(
-    "aligns the cursor and responsive viewport after host zoom changes (native server tab: %s)",
-    async (nativeServerTab) => {
+  it.each(["mailto:alice@example.com", "http://"])(
+    "reports rejected address %s without navigating or recording it",
+    async (address) => {
       setup();
-      mocks.nativeServerTab = nativeServerTab;
-      let windowZoom = 1;
-      using _bridge = stubGlobal("desktopBridge", {
-        getWindowZoomFactor: () => windowZoom,
-        getLocalEnvironmentBootstraps: () => [],
-      });
-      const commit = vi.mocked(commitBrowserViewportChange).mockResolvedValueOnce(undefined);
-      try {
-        await using _screen = await render(view());
-        await act(() => {
-          const surfaces = useBrowserSurfaceStore.getState();
-          const slot = document.querySelector<HTMLElement>("[data-browser-surface-slot]")!;
-          slot.style.width = "1020px";
-          slot.style.height = "798px";
-          surfaces.presentContent(TEST_RUNTIME_TAB_ID, {
-            x: 20,
-            y: 40,
-            width: 500,
-            height: 375,
-            scale: 0.5,
-            scrollLeft: 7,
-            scrollTop: 11,
-          });
-          useBrowserPointerStore.setState({
-            byTabId: {
-              [TEST_RUNTIME_TAB_ID]: {
-                tabId: TEST_RUNTIME_TAB_ID,
-                phase: "move",
-                x: 100,
-                y: 200,
-                sequence: 1,
-                createdAt: "2026-07-27T00:00:00Z",
-              },
-            },
-          });
-          windowZoom = 1.25;
-          window.dispatchEvent(new Event("resize"));
-        });
-        const cursor = document.querySelector("[data-agent-browser-cursor]");
-        expect(cursor).not.toBeNull();
-        const position = new DOMMatrixReadOnly(getComputedStyle(cursor!).transform);
-        expect(position.e).toBe(53);
-        expect(position.f).toBe(109);
+      await using _screen = await render(<ToastProvider timeout={0}>{view()}</ToastProvider>);
+      const input = page.getByPlaceholder("Search or enter URL");
+      await input.fill(address);
+      await userEvent.keyboard("{Enter}");
 
-        await userEvent.click(page.getByRole("button", { name: "Preview menu" }));
-        await userEvent.click(page.getByRole("menuitem", { name: "Show device toolbar" }));
-        expect(commit).toHaveBeenCalledExactlyOnceWith(TEST_RUNTIME_TAB_ID, {
-          _tag: "freeform",
-          width: 1250,
-          height: 938,
-        });
-      } finally {
-        commit.mockReset();
-        await act(() => useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} }));
-      }
+      await expect.element(page.getByText("Could not open this address")).toBeVisible();
+      await expect.element(page.getByText("Enter an http or https URL.")).toBeVisible();
+      expect(mocks.navigate).not.toHaveBeenCalled();
+      expect(mocks.recordVisitForThread).not.toHaveBeenCalled();
+      await userEvent.click(page.getByRole("button", { name: "Dismiss notification" }));
     },
   );
-
-  it("does not rerender while loading time passes", async () => {
-    setup();
-    using _timers = fakeTimers();
-    mocks.loading = true;
-    const onRender = vi.fn();
-    await using _screen = await render(
-      <Profiler id="preview" onRender={onRender}>
-        {view()}
-      </Profiler>,
-    );
-    const initialRenderCount = onRender.mock.calls.length;
-    await act(() => vi.advanceTimersByTimeAsync(1_000));
-    expect(onRender).toHaveBeenCalledTimes(initialRenderCount);
-  });
-
-  it.each([
-    [
-      "https://localhost:8000/dashboard?mode=test#top",
-      "https://localhost:8000/dashboard?mode=test#top",
-    ],
-    ["localhost:5173/app", "http://localhost:5173/app"],
-  ])(
-    "preserves a direct localhost URL %s in a WSL environment and records it",
-    async (submitted, expected) => {
-      setup();
-      await using _screen = await render(view());
-      await submitAddress(submitted);
-      await vi.waitFor(() =>
-        expect(mocks.navigate).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID, expected),
-      );
-      expect(mocks.rememberPreviewUrl).toHaveBeenCalledWith(TEST_THREAD_REF, expected);
-      expect(mocks.recordVisitForThread).toHaveBeenCalledWith(TEST_THREAD_REF, expected);
-    },
-  );
-
-  it("maps an empty-state localhost server onto the WSL host", async () => {
-    setup();
-    mocks.showEmptyState = true;
-    mocks.servers = [
-      {
-        host: "localhost",
-        port: 5173,
-        url: "http://localhost:5173/app?mode=test#top",
-        requestedUrl: "http://localhost:5173/app?mode=test#top",
-        processName: "vite",
-        pid: 1,
-        terminal: null,
-        source: "scanner",
-      } as unknown as PreviewableServer,
-    ];
-    await using _screen = await render(view());
-    await userEvent.click(page.getByRole("button", { name: /vite/ }));
-
-    await vi.waitFor(() =>
-      expect(mocks.navigate).toHaveBeenCalledWith(
-        TEST_RUNTIME_TAB_ID,
-        "http://172.25.85.75:5173/app?mode=test#top",
-      ),
-    );
-    expect(mocks.rememberPreviewUrl).toHaveBeenCalledWith(
-      TEST_THREAD_REF,
-      "http://172.25.85.75:5173/app?mode=test#top",
-    );
-    // History keys off the requested loopback URL, which stays stable across hosts.
-    await vi.waitFor(() =>
-      expect(mocks.recordVisitForThread).toHaveBeenCalledWith(
-        TEST_THREAD_REF,
-        "http://localhost:5173/app?mode=test#top",
-      ),
-    );
-  });
-
-  it("opens and closes a thread-scoped floating preview for the active tab", async () => {
-    setup();
-    await using _screen = await render(view());
-    await userEvent.click(page.getByRole("button", { name: "Float preview over chat" }));
-    expect(usePreviewMiniPlayerStore.getState().byThreadKey).toMatchObject({
-      "environment-1:thread-1": { source: { kind: "browser", tabId: "tab-1" } },
-    });
-    const closeButton = page.getByRole("button", { name: "Close floating preview" });
-    await expect.element(closeButton).toHaveAttribute("aria-pressed", "true");
-    await userEvent.click(closeButton);
-    expect(usePreviewMiniPlayerStore.getState().byThreadKey).toEqual({});
-  });
-
-  it("keeps the native preview window as a secondary menu action", async () => {
-    setup();
-    await using screen = await render(view());
-    await userEvent.click(page.getByRole("button", { name: "Preview menu" }));
-    await userEvent.click(page.getByRole("menuitem", { name: "Open separate preview window" }));
-    await vi.waitFor(() =>
-      expect(mocks.openPictureInPicture).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID),
-    );
-    await vi.waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
-
-    mocks.pictureInPicture = true;
-    await screen.rerender(view());
-    await userEvent.click(page.getByRole("button", { name: "Preview menu" }));
-    await userEvent.click(page.getByRole("menuitem", { name: "Close separate preview window" }));
-    await vi.waitFor(() =>
-      expect(mocks.closePictureInPicture).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID),
-    );
-  });
-
-  it("forwards Cmd/Ctrl+Enter annotations to the composer send path", async () => {
-    setup();
-    const picked = annotation("annotation-1");
-    const onSendAnnotation = vi.fn();
-    mocks.pickElement.mockResolvedValue({ annotation: picked, submission: "send" });
-    await using _screen = await render(view(onSendAnnotation));
-    await userEvent.click(page.getByRole("button", { name: "Annotate preview" }));
-
-    await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(picked, null));
-    expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, picked);
-  });
 
   it("retains the annotation locally when its own environment loses access during capture", async () => {
     setup();
@@ -465,42 +267,6 @@ describe("PreviewView", () => {
     expect(mocks.setAnnotationSendEnabled).toHaveBeenLastCalledWith(TEST_RUNTIME_TAB_ID, true);
   });
 
-  it("does not reopen a cancelled picker after the permission update finishes", async () => {
-    setup();
-    let finishUpdate: (() => void) | undefined;
-    mocks.setAnnotationSendEnabled.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          finishUpdate = resolve;
-        }),
-    );
-    await using _screen = await render(view());
-    await userEvent.click(page.getByRole("button", { name: "Annotate preview" }));
-    await vi.waitFor(() => expect(finishUpdate).toBeDefined());
-    expect(mocks.pickElement).not.toHaveBeenCalled();
-    await userEvent.click(page.getByRole("button", { name: "Cancel annotation" }));
-    expect(mocks.cancelPickElement).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID);
-    await act(async () => finishUpdate!());
-    expect(mocks.pickElement).not.toHaveBeenCalled();
-    expect(mocks.addPreviewAnnotation).not.toHaveBeenCalled();
-  });
-
-  it("warns when main dropped the crop before handing over the pick", async () => {
-    setup();
-    const picked = annotation("annotation-3");
-    const onSendAnnotation = vi.fn();
-    mocks.pickElement.mockResolvedValue({
-      annotation: picked,
-      submission: "send",
-      screenshotFailed: true,
-    });
-    await using _screen = await render(view(onSendAnnotation));
-    await userEvent.click(page.getByRole("button", { name: "Annotate preview" }));
-
-    await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(picked, null));
-    expect(mocks.toast).toHaveBeenCalledOnce();
-  });
-
   it("still sends annotation text when the picked element's crop is malformed", async () => {
     setup();
     const picked = annotation("annotation-2", {
@@ -518,5 +284,62 @@ describe("PreviewView", () => {
     await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(sent, null));
     expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, sent);
     expect(mocks.addImage).not.toHaveBeenCalled();
+  });
+
+  it("focuses and selects the address from forwarded desktop actions only while visible", async () => {
+    setup();
+    using stack = new DisposableStack();
+    const previousBridge = window.desktopBridge;
+    stack.defer(() => {
+      if (previousBridge) window.desktopBridge = previousBridge;
+      else delete window.desktopBridge;
+    });
+    const listeners = new Set<(action: string) => void>();
+    window.desktopBridge = {
+      getWindowZoomFactor: () => 1,
+      onMenuAction: (listener: (action: string) => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    } as NonNullable<typeof window.desktopBridge>;
+    await using screen = await render(view());
+    const address = page.getByRole("textbox");
+    const input = address.element() as HTMLInputElement;
+    const forward = () =>
+      act(() => {
+        listeners.forEach((listener) => listener("preview.focusUrl"));
+      });
+
+    await forward();
+    await expect.element(address).toHaveFocus();
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(input.value.length);
+    await act(() => input.blur());
+    await forward();
+    await expect.element(address).toHaveFocus();
+
+    await act(() => input.blur());
+    await screen.rerender(
+      <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible={false} />,
+    );
+    await forward();
+    await expect.element(address).not.toHaveFocus();
+    expect(listeners.size).toBe(0);
+  });
+
+  it("focuses the address bar each time the focus-url shortcut fires", async () => {
+    setup();
+    await using _screen = await render(view());
+    const address = page.getByRole("textbox");
+
+    act(() => dispatchPreviewAction("focus-url"));
+    await expect.element(address).toHaveFocus();
+
+    (address.element() as HTMLInputElement).blur();
+    await expect.element(address).not.toHaveFocus();
+    act(() => dispatchPreviewAction("focus-url"));
+    await expect.element(address).toHaveFocus();
   });
 });

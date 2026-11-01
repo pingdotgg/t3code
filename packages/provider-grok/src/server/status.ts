@@ -126,6 +126,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const GROK_EFFORT_RANK = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
 function grokReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
   readonly options: ReadonlyArray<{
     value: string;
@@ -183,6 +185,11 @@ function grokReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
   const selectedDefault =
     advertisedDefaults.find((option) => option.value === currentValue)?.value ??
     advertisedDefaults[0]?.value;
+  // Grok advertises its strongest level first; pickers and effort bars read lowest to highest.
+  const rank = (option: { value: string }) => GROK_EFFORT_RANK.indexOf(option.value);
+  if (options.every((option) => rank(option) >= 0)) {
+    options.sort((left, right) => rank(left) - rank(right));
+  }
   return {
     options: options.map(({ value, label, description }) => ({
       value,
@@ -216,7 +223,7 @@ export function buildGrokModelCapabilities(model: EffectAcpSchema.ModelInfo): Mo
     : EMPTY_CAPABILITIES;
 }
 
-export function buildGrokModelsFromSessionModelState(
+function buildGrokModelsFromSessionModelState(
   modelState: EffectAcpSchema.SessionModelState | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
   if (!modelState || modelState.availableModels.length === 0) {
@@ -247,10 +254,7 @@ export interface GrokModelsCliOutput {
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
 
-/**
- * The command exits 0 whether or not the user is logged in, so the text is the
- * only signal.
- */
+/** Exit status is always 0; only output text indicates login state. */
 export function parseGrokModelsCliOutput(output: string): GrokModelsCliOutput {
   const authenticated = /you are logged in/i.test(output)
     ? true
@@ -507,7 +511,6 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         ? { status: "unauthenticated" }
         : { status: "unknown" };
 
-  // Skill discovery applies the probe environment itself.
   const skills = yield* discoverGrokSkills(grokSettings, environment, cwd).pipe(
     Effect.tapError((cause) => Effect.logDebug("Grok skill discovery failed.", { cause })),
     Effect.orElseSucceed(() => []),
@@ -531,6 +534,12 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     discoveredModels.length > 0
       ? grokModelsFromSettings(grokSettings.customModels, discoveredModels)
       : fallbackModels;
+  // The registry replaces cached models on a ready probe, so a fallback-only list must not be ready.
+  const incompleteMessage = acpFailed
+    ? "Grok CLI is installed but ACP initialize failed. Model options may be incomplete."
+    : discoveredModels.length === 0
+      ? "Grok CLI did not list any models. Model options may be incomplete."
+      : undefined;
 
   if (auth.status === "unauthenticated") {
     return buildServerProvider({
@@ -559,14 +568,9 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     probe: {
       installed: true,
       version,
-      status: acpFailed ? "warning" : "ready",
+      status: incompleteMessage ? "warning" : "ready",
       auth,
-      ...(acpFailed
-        ? {
-            message:
-              "Grok CLI is installed but ACP initialize failed. Model options may be incomplete.",
-          }
-        : {}),
+      ...(incompleteMessage ? { message: incompleteMessage } : {}),
     },
   });
 });

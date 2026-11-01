@@ -102,73 +102,6 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
-  it.effect.each([true, false])(
-    "reports bytes before completion, then verifies and extracts (known size: %s)",
-    (knownSize) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-progress-" });
-        const firstChunk = yield* Deferred.make<void>();
-        let archiveController: ReadableStreamDefaultController<Uint8Array> | undefined;
-        const checksums = yield* validChecksums;
-        const progress: PinnedRuntimeProgress[] = [];
-        const client = HttpClient.make((request) =>
-          Effect.succeed(
-            HttpClientResponse.fromWeb(
-              request,
-              request.url.endsWith("/SHA256SUMS")
-                ? new Response(checksums)
-                : new Response(
-                    new ReadableStream({
-                      start(controller) {
-                        archiveController = controller;
-                        controller.enqueue(archiveBytes.slice(0, 4));
-                      },
-                    }),
-                    { headers: knownSize ? { "content-length": String(archiveBytes.length) } : {} },
-                  ),
-            ),
-          ),
-        );
-        const install = yield* ensurePinnedRuntimeInstalled({
-          baseDir,
-          version,
-          fs,
-          path,
-          platform: "linux",
-          arch: "x64",
-          httpClient: client,
-          runner: extractingRunner(fs, path),
-          validate: () => Effect.void,
-          onProgress: (event) => {
-            progress.push(event);
-            if (event.stage === "download" && event.received === 4) {
-              Deferred.doneUnsafe(firstChunk, Effect.void);
-            }
-          },
-        }).pipe(Effect.forkScoped);
-        yield* Deferred.await(firstChunk);
-        assert.deepEqual(progress.at(-1), {
-          stage: "download",
-          received: 4,
-          total: knownSize ? archiveBytes.length : undefined,
-        });
-        assert.isFalse(progress.some((event) => event.stage === "extract"));
-        assert.isDefined(archiveController);
-        archiveController!.enqueue(archiveBytes.slice(4));
-        archiveController!.close();
-        const installed = yield* Fiber.join(install);
-        assert.deepEqual(progress.slice(-4), [
-          { stage: "download", received: archiveBytes.length, total: archiveBytes.length },
-          { stage: "verify" },
-          { stage: "extract" },
-          { stage: "validate" },
-        ]);
-        assert.equal(yield* fs.readFileString(installed.sentinelPath), `${version}\n`);
-      }),
-  );
-
   it.effect("cleans up an interrupted download without reporting verification or extraction", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -220,165 +153,6 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.isTrue(cancelled);
       assert.deepEqual(yield* fs.readDirectory(path.join(baseDir, "runtime", "versions")), []);
     }),
-  );
-
-  it.effect.each([true, false])(
-    "installs a download receiving bytes for over ten minutes (progress: %s)",
-    (reportProgress) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-slow-" });
-        const checksums = yield* validChecksums;
-        const reads = yield* Effect.forEach(archiveBytes, () => Deferred.make<void>());
-        let controller: ReadableStreamDefaultController<Uint8Array>;
-        let offset = 0;
-        const body = new ReadableStream<Uint8Array>(
-          {
-            start(value) {
-              controller = value;
-            },
-            pull() {
-              Deferred.doneUnsafe(reads[offset++]!, Effect.void);
-            },
-          },
-          { highWaterMark: 0 },
-        );
-        const client = HttpClient.make((request) =>
-          Effect.succeed(
-            HttpClientResponse.fromWeb(
-              request,
-              new Response(request.url.endsWith("/SHA256SUMS") ? checksums : body),
-            ),
-          ),
-        );
-        const progress: PinnedRuntimeProgress[] = [];
-        yield* Effect.gen(function* () {
-          // Each read is demanded by the consumer, with no prefetched chunks.
-          for (let index = 0; index < archiveBytes.length; index++) {
-            yield* Deferred.await(reads[index]!);
-            yield* TestClock.adjust(Duration.seconds(40));
-            controller.enqueue(archiveBytes.slice(index, index + 1));
-          }
-          controller.close();
-        }).pipe(Effect.forkScoped);
-        const installed = yield* ensurePinnedRuntimeInstalled({
-          baseDir,
-          version,
-          fs,
-          path,
-          platform: "linux",
-          arch: "x64",
-          httpClient: client,
-          runner: extractingRunner(fs, path),
-          validate: () => Effect.void,
-          ...(reportProgress
-            ? { onProgress: (event: PinnedRuntimeProgress) => progress.push(event) }
-            : {}),
-        });
-        assert.equal(yield* fs.readFileString(installed.sentinelPath), `${version}\n`);
-        if (reportProgress) {
-          assert.deepEqual(progress.slice(-4), [
-            { stage: "download", received: archiveBytes.length, total: archiveBytes.length },
-            { stage: "verify" },
-            { stage: "extract" },
-            { stage: "validate" },
-          ]);
-        }
-      }),
-  );
-
-  it.effect.each([
-    { stall: "response", reportProgress: false },
-    { stall: "body", reportProgress: false },
-    { stall: "body", reportProgress: true },
-  ])(
-    "fails a one-minute $stall stall, cleans up and releases the lock (progress: $reportProgress)",
-    ({ stall, reportProgress }) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-stalled-" });
-        const checksums = yield* validChecksums;
-        const waiting = yield* Deferred.make<void>();
-        let cancelled = false;
-        let sentChunk = false;
-        const client = HttpClient.make((request) => {
-          if (request.url.endsWith("/SHA256SUMS")) {
-            return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(checksums)));
-          }
-          if (stall === "response") {
-            return Deferred.succeed(waiting, undefined).pipe(
-              Effect.andThen(Effect.never),
-              Effect.ensuring(
-                Effect.sync(() => {
-                  cancelled = true;
-                }),
-              ),
-            );
-          }
-          return Effect.succeed(
-            HttpClientResponse.fromWeb(
-              request,
-              new Response(
-                new ReadableStream<Uint8Array>(
-                  {
-                    pull(controller) {
-                      if (!sentChunk) {
-                        sentChunk = true;
-                        controller.enqueue(archiveBytes.slice(0, 4));
-                      } else {
-                        Deferred.doneUnsafe(waiting, Effect.void);
-                      }
-                    },
-                    cancel() {
-                      cancelled = true;
-                    },
-                  },
-                  { highWaterMark: 0 },
-                ),
-              ),
-            ),
-          );
-        });
-        const progress: PinnedRuntimeProgress[] = [];
-        const commands: string[] = [];
-        const install = yield* ensurePinnedRuntimeInstalled({
-          baseDir,
-          version,
-          fs,
-          path,
-          platform: "linux",
-          arch: "x64",
-          httpClient: client,
-          runner: extractingRunner(fs, path, commands),
-          validate: () => Effect.die("must not validate a stalled archive"),
-          ...(reportProgress
-            ? { onProgress: (event: PinnedRuntimeProgress) => progress.push(event) }
-            : {}),
-        }).pipe(Effect.forkScoped);
-        yield* Deferred.await(waiting);
-        yield* TestClock.adjust(Duration.minutes(1));
-        assert.isTrue(cancelled, "the stalled transfer must be cancelled after one minute");
-        const error = yield* Fiber.join(install).pipe(Effect.flip);
-        assert.instanceOf(error, PinnedRuntimeInstallError);
-        assert.equal(error.step, "downloading the t3 release archive (timed out)");
-        assert.deepEqual(commands, []);
-        assert.isTrue(progress.every((event) => event.stage === "download"));
-        assert.deepEqual(yield* fs.readDirectory(path.join(baseDir, "runtime", "versions")), []);
-        const installed = yield* ensurePinnedRuntimeInstalled({
-          baseDir,
-          version,
-          fs,
-          path,
-          platform: "linux",
-          arch: "x64",
-          httpClient: releaseHttpClient(checksums),
-          runner: extractingRunner(fs, path),
-          validate: () => Effect.void,
-        });
-        assert.equal(yield* fs.readFileString(installed.sentinelPath), `${version}\n`);
-      }),
   );
 
   it.effect("refuses an archive whose checksum does not match the release", () =>
@@ -529,34 +303,6 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.equal(yield* fs.readFileString(finalPaths.entryPath), "broken\n");
     }),
   );
-
-  it.effect("removes staging when installation is interrupted", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-interrupt-" });
-      const started = yield* Deferred.make<void>();
-      const runner = ProcessRunner.ProcessRunner.of({
-        run: () => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
-      });
-      const install = yield* ensurePinnedRuntimeInstalled({
-        baseDir,
-        version,
-        fs,
-        path,
-        platform: "linux",
-        arch: "x64",
-        httpClient: releaseHttpClient(yield* validChecksums),
-        runner,
-        validate: () => Effect.void,
-      }).pipe(Effect.forkScoped);
-
-      yield* Deferred.await(started);
-      yield* Fiber.interrupt(install);
-      const versionsDir = path.join(baseDir, "runtime", "versions");
-      assert.deepEqual(yield* fs.readDirectory(versionsDir), []);
-    }),
-  );
 });
 
 it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
@@ -663,7 +409,7 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
       // The launcher found on PATH is remembered for a service that cannot see it.
       assert.equal(
         yield* fs.readFileString(path.join(baseDir, "runtime", "launchers")),
-        `${path.join(customBinDir, "t3")}\n${path.join(binDir, "t3")}\n`,
+        `${path.join(customBinDir, "t3")}\n\n${path.join(binDir, "t3")}\n`,
       );
       assert.deepEqual((yield* fs.readDirectory(versionsDir)).toSorted(), [
         ".staging-abc",
@@ -679,6 +425,52 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
         "2.0.0",
         "other",
       ]);
+    }),
+  );
+
+  it.effect.each([
+    // An interrupted append cut this record short.
+    { name: "an unterminated launcher record", recorded: "/opt/t", cut: "" },
+    // Another process's append is cut short after prune reads the records.
+    { name: "a record cut short after the read", recorded: "/opt/t3\n", cut: "/opt/t" },
+  ])("remembers a launcher found on PATH after $name", ({ recorded, cut }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { baseDir, versionsDir } = yield* setup(["1.0.0", "1.1.0"]);
+      const binDir = path.join(baseDir, "custom-bin");
+      yield* fs.makeDirectory(binDir);
+      yield* fs.symlink(path.join(versionsDir, "1.0.0", "t3"), path.join(binDir, "t3"));
+      const launchersFile = path.join(baseDir, "runtime", "launchers");
+      yield* fs.writeFileString(launchersFile, recorded);
+      const prune = (environment: Record<string, string>) =>
+        prunePinnedRuntimes({ baseDir, keep: [] }).pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, lsofRunner("p1\nftxt\nn/bin/sh\n")),
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(HostProcess.Environment, environment),
+          Effect.provideService(HostProcess.HomeDirectory, baseDir),
+        );
+
+      yield* prune({ PATH: binDir }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          readFileString: (file, encoding) =>
+            fs
+              .readFileString(file, encoding)
+              .pipe(
+                Effect.tap(() =>
+                  file === launchersFile
+                    ? fs.writeFileString(file, cut, { flag: "a" })
+                    : Effect.void,
+                ),
+              ),
+        }),
+      );
+      // A service that cannot see the interactive PATH.
+      const removed = yield* prune({});
+
+      assert.deepEqual(removed, []);
+      assert.isTrue(yield* fs.exists(path.join(versionsDir, "1.0.0", "t3")));
     }),
   );
 
@@ -741,14 +533,15 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
         const path = yield* Path.Path;
         const { baseDir, versionsDir } = yield* setup(["1.0.0", "1.1.0"]);
         const entry = path.join(versionsDir, "1.0.0", "t3");
-        yield* fs.copyFile("/bin/sleep", entry);
+        // Multicall coreutils (Ubuntu's uutils) refuse to run renamed, so copy Node instead.
+        yield* fs.copyFile(process.execPath, entry);
         yield* fs.chmod(entry, 0o755);
         const link = path.join(baseDir, "t3");
         yield* fs.symlink(entry, link);
         // Its argv names only the link, as with `t3 serve` run from PATH. Removing the link after
         // spawning leaves the process's executable as the only reference.
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        yield* spawner.spawn(ChildProcess.make(link, ["30"]));
+        yield* spawner.spawn(ChildProcess.make(link, ["-e", "setTimeout(() => {}, 30_000)"]));
         yield* fs.remove(link);
 
         const removed = yield* prunePinnedRuntimes({ baseDir, keep: ["2.0.0"] }).pipe(

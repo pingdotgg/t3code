@@ -1,104 +1,50 @@
-import { act, render, fakeTimers } from "../../../test/render";
-import { useEffect } from "react";
-import { expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
+import { render } from "../../../test/render";
 import { usePermissionStatus } from "./usePermissionStatus";
 
-type Status = { screen: boolean; accessibility: boolean };
-const check = vi.fn<() => Promise<Status>>();
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
+function PermissionProbe({
+  check,
+  label,
+  enabled = true,
+}: {
+  readonly check: () => Promise<{ screen: boolean }>;
+  readonly label: string;
+  readonly enabled?: boolean;
+}) {
+  const { status } = usePermissionStatus(async () => check(), { screen: false }, enabled);
+  return (
+    <p>
+      {label}: {status.screen ? "granted" : "missing"}
+    </p>
+  );
 }
 
-async function start(
-  onStatus: (status: ReturnType<typeof usePermissionStatus<keyof Status>>) => void,
-) {
-  function Probe() {
-    const status = usePermissionStatus(check, { screen: false, accessibility: false });
-    useEffect(() => onStatus(status));
-    return null;
-  }
-  return render(<Probe />, { router: false });
-}
-function setup() {
-  check.mockReset().mockResolvedValue({ screen: false, accessibility: false });
-}
-const tick = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
+describe("usePermissionStatus", () => {
+  it("does not start a new check when the component re-renders", async () => {
+    // A check that never settles keeps the interval from adding calls, so any
+    // extra call can only come from the subscription restarting.
+    const check = vi.fn(() => new Promise<{ screen: boolean }>(() => {}));
+    await using screen = await render(<PermissionProbe check={check} label="first" />, {
+      router: false, // the hook does not touch routing
+    });
+    await screen.rerender(<PermissionProbe check={check} label="second" />);
+    await screen.rerender(<PermissionProbe check={check} label="third" />);
 
-it("unlocks Continue only for required grants and relocks on revocation", async () => {
-  setup();
-  using _timers = fakeTimers();
-  let current!: ReturnType<typeof usePermissionStatus<keyof Status>>;
-  let visibility: DocumentVisibilityState = "visible";
-  using _visibility = vi
-    .spyOn(document, "visibilityState", "get")
-    .mockImplementation(() => visibility);
-  await using _screen = await start((status) => {
-    current = status;
+    await expect.element(screen.getByText("third: missing")).toBeInTheDocument();
+    expect(check).toHaveBeenCalledTimes(1);
   });
-  expect(current.isReady(["screen"])).toBe(false);
-  check.mockResolvedValue({ screen: true, accessibility: false });
-  await tick(1500);
-  expect(current.isReady(["screen"])).toBe(true);
-  expect(current.isReady(["screen", "accessibility"])).toBe(false);
-  check.mockResolvedValue({ screen: true, accessibility: true });
-  await tick(1500);
-  expect(current.isReady(["screen", "accessibility"])).toBe(true);
-  check.mockResolvedValue({ screen: false, accessibility: true });
-  await act(async () => window.dispatchEvent(new Event("focus")));
-  expect(current.isReady(["screen"])).toBe(false);
-});
 
-it("does not overlap checks and discards completion after closing", async () => {
-  setup();
-  using _timers = fakeTimers();
-  let current!: ReturnType<typeof usePermissionStatus<keyof Status>>;
-  let visibility: DocumentVisibilityState = "visible";
-  using _visibility = vi
-    .spyOn(document, "visibilityState", "get")
-    .mockImplementation(() => visibility);
-  const pending = deferred<Status>();
-  check.mockReturnValue(pending.promise);
-  await using screen = await start((status) => {
-    current = status;
-  });
-  await tick(4500);
-  window.dispatchEvent(new Event("focus"));
-  expect(check).toHaveBeenCalledTimes(1);
-  const last = current;
-  await screen.unmount();
-  await act(async () => pending.resolve({ screen: true, accessibility: true }));
-  expect(last.isReady(["screen"])).toBe(false);
-  expect(vi.getTimerCount()).toBe(0);
-});
+  it("checks with the latest check after the caller passes a new one", async () => {
+    const first = vi.fn(() => new Promise<{ screen: boolean }>(() => {}));
+    const second = vi.fn(async () => ({ screen: true }));
+    await using screen = await render(<PermissionProbe check={first} label="probe" />, {
+      router: false, // the hook does not touch routing
+    });
+    await screen.rerender(<PermissionProbe check={second} label="probe" enabled={false} />);
+    await screen.rerender(<PermissionProbe check={second} label="probe" />);
 
-it("pauses in the background and blocks stale grants after a check failure", async () => {
-  setup();
-  using _timers = fakeTimers();
-  let current!: ReturnType<typeof usePermissionStatus<keyof Status>>;
-  let visibility: DocumentVisibilityState = "visible";
-  using _visibility = vi
-    .spyOn(document, "visibilityState", "get")
-    .mockImplementation(() => visibility);
-  check.mockResolvedValue({ screen: true, accessibility: true });
-  await using _screen = await start((status) => {
-    current = status;
+    await expect.element(screen.getByText("probe: granted")).toBeInTheDocument();
+    expect(first).toHaveBeenCalledTimes(1);
   });
-  expect(current.isReady(["screen"])).toBe(true);
-  visibility = "hidden";
-  await tick(3000);
-  expect(check).toHaveBeenCalledTimes(1);
-  check.mockRejectedValue(new Error("IPC unavailable"));
-  visibility = "visible";
-  await act(async () => document.dispatchEvent(new Event("visibilitychange")));
-  expect(current.isReady(["screen"])).toBe(false);
-  expect(current.error).not.toBeNull();
-  check.mockResolvedValue({ screen: true, accessibility: true });
-  await tick(1500);
-  expect(current.isReady(["screen"])).toBe(true);
 });

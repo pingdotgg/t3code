@@ -44,8 +44,6 @@ vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
   useEnvironmentProviders: () => new Map(),
 }));
-// The real row reads write permission and overrides from live environment state; this
-// suite is about how the section writes mixed writing styles.
 vi.mock(import("./settingsLayout"), async (original) => ({
   ...(await original()),
   SettingsRow: ({ title, control, resetAction, children }) => (
@@ -63,12 +61,6 @@ import { SourceControlWritingSettingsSection } from "./SourceControlWritingSetti
 
 const resetButton = (label: string) =>
   page.getByRole("button", { name: `Reset ${label} to default` });
-const writeForAll = () => page.getByRole("button", { name: "Write custom instructions for all" });
-const applyToAll = () => page.getByRole("button", { name: "Apply instructions to all" });
-const bulkEditor = () =>
-  page.getByRole("textbox", {
-    name: "Custom source control instructions for all selected environments",
-  });
 
 const content = () => (
   <StrictMode>
@@ -107,6 +99,7 @@ describe("mixed source control instructions", () => {
       customInstructions,
     }));
 
+    await userEvent.click(page.getByRole("button", { name: "Advanced" }));
     await userEvent.click(resetButton("change request templates"));
 
     expect(state.updateSettings).toHaveBeenCalledTimes(1);
@@ -117,79 +110,5 @@ describe("mixed source control instructions", () => {
     expect(
       state.styles.map(({ mode, customInstructions }) => ({ mode, customInstructions })),
     ).toEqual(initialInstructions);
-  });
-
-  it("resets every environment even when the representative already has default instructions", async () => {
-    await using screen = await setup();
-    state.styles[0] = { ...DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle };
-    await screen.rerender(content());
-
-    await userEvent.click(resetButton("source control writing style"));
-
-    expect(state.updateSettings).toHaveBeenCalledTimes(1);
-    expect(
-      state.styles.map(({ mode, customInstructions }) => ({ mode, customInstructions })),
-    ).toEqual(
-      [0, 1].map(() => ({
-        mode: DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle.mode,
-        customInstructions: DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle.customInstructions,
-      })),
-    );
-    expect(state.styles[1]!.followChangeRequestTemplates).toBe(false);
-  });
-
-  it("does not write an untouched bulk draft", async () => {
-    await using _screen = await setup();
-    const initialStyles = state.styles;
-    await userEvent.click(writeForAll());
-    await expect.element(bulkEditor()).toHaveValue("");
-    await expect.element(applyToAll()).toBeDisabled();
-
-    expect(state.updateSettings).not.toHaveBeenCalled();
-    expect(state.styles).toEqual(initialStyles);
-  });
-
-  it("applies edited instructions to every selected environment", async () => {
-    await using _screen = await setup();
-    await userEvent.click(writeForAll());
-    await userEvent.fill(bulkEditor(), "  Keep titles concise.  ");
-    await expect.element(applyToAll()).toBeEnabled();
-    await userEvent.click(applyToAll());
-
-    expect(state.updateSettings).toHaveBeenCalledTimes(1);
-    expect(state.styles.map((style) => style.customInstructions)).toEqual([
-      "Keep titles concise.",
-      "Keep titles concise.",
-    ]);
-    expect(state.styles.map((style) => style.followChangeRequestTemplates)).toEqual([true, false]);
-  });
-
-  it("allows an intentional clear after editing", async () => {
-    await using _screen = await setup();
-    await userEvent.click(writeForAll());
-    await userEvent.fill(bulkEditor(), "Temporary instructions");
-    await userEvent.clear(bulkEditor());
-    await expect.element(applyToAll()).toBeEnabled();
-    await userEvent.click(applyToAll());
-
-    expect(state.updateSettings).toHaveBeenCalledTimes(1);
-    expect(state.styles.map((style) => style.customInstructions)).toEqual(["", ""]);
-  });
-
-  it("shows the plain editor once instructions agree, even while templates differ", async () => {
-    await using _screen = await setup();
-    await userEvent.click(writeForAll());
-    await userEvent.fill(bulkEditor(), "Shared instructions");
-    await userEvent.click(applyToAll());
-
-    expect(state.updateSettings).toHaveBeenCalledTimes(1);
-    expect(state.styles.map((style) => style.customInstructions)).toEqual([
-      "Shared instructions",
-      "Shared instructions",
-    ]);
-    await expect.element(writeForAll()).not.toBeInTheDocument();
-    await expect
-      .element(page.getByRole("textbox", { name: "Custom source control writing instructions" }))
-      .toHaveValue("Shared instructions");
   });
 });

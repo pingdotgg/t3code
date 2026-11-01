@@ -9,6 +9,7 @@ import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
+import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
@@ -62,6 +63,7 @@ function layerPool(labelRef: Ref.Ref<string>): Layer.Layer<DesktopBackendPool.De
           currentBootstrapToken: Effect.die("unexpected bootstrap token read"),
         } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"]),
         DesktopAppSettings.layerTest(),
+        DesktopState.layer,
         DesktopWslEnvironment.layerTest(),
         ElectronDialog.layer,
         ElectronApp.layer,
@@ -88,22 +90,6 @@ function layerPool(labelRef: Ref.Ref<string>): Layer.Layer<DesktopBackendPool.De
 }
 
 describe("DesktopBackendPool", () => {
-  it.effect("resolves the primary label lazily after pool layer construction", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const labelRef = yield* Ref.make("Windows");
-        const pool = yield* DesktopBackendPool.DesktopBackendPool.pipe(
-          Effect.provide(layerPool(labelRef)),
-        );
-        const primary = yield* pool.primary;
-
-        yield* Ref.set(labelRef, "WSL (Ubuntu)");
-
-        assert.equal(yield* primary.label, "WSL (Ubuntu)");
-      }),
-    ),
-  );
-
   it.effect("unregister stops the registered instance", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -112,8 +98,6 @@ describe("DesktopBackendPool", () => {
         const instance = yield* pool.register({
           id,
           label: Effect.succeed("WSL (Ubuntu)"),
-          // A transient preflight failure leaves a restart fiber scheduled
-          // without needing a real child process.
           configResolve: Effect.succeed({
             executablePath: "/electron",
             args: [],

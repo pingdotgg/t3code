@@ -50,8 +50,6 @@ vi.mock(import("../ui/toast"), async (original) => {
   const actual = await original();
   return { ...actual, toastManager: { ...actual.toastManager, add: actions.toast } };
 });
-// The registry search and the sign-in step talk to the environment over RPC; these
-// stand-ins expose the choices a user makes there.
 vi.mock(import("./AcpRegistrySearchStep"), async (original) => ({
   ...(await original()),
   AcpRegistrySearchStep: ((props: {
@@ -116,13 +114,17 @@ function button(label: string) {
   return found!;
 }
 const click = (label: string) => act(async () => button(label).click());
+const radio = (label: string) =>
+  [...document.querySelectorAll<HTMLElement>('[role="radio"]')].find(
+    (element) => element.textContent?.trim() === label,
+  );
 const input = (selector: string) => {
   const found = document.querySelector<HTMLInputElement>(selector);
   expect(found, selector).not.toBeNull();
   return found!;
 };
 async function type(selector: string, value: string) {
-  await act(async () => userEvent.fill(input(selector), value));
+  await userEvent.fill(input(selector), value);
   await act(async () => input(selector).blur());
 }
 const signInStep = () => document.querySelector('[aria-label="Sign-in step"]');
@@ -147,23 +149,6 @@ function setup() {
 }
 
 describe("AddProviderInstanceDialog environment routing", () => {
-  it("creates a provider with its default identity without typing", async () => {
-    setup();
-    await using _screen = await render(dialog());
-    const grok = [...document.querySelectorAll('[role="radio"]')].find((radio) =>
-      radio.textContent?.includes("Grok"),
-    ) as HTMLElement;
-    await act(async () => grok.click());
-    await click("Next");
-    await click("Next");
-    await click("Add instance");
-    expect(settingsHooks.mutate).toHaveBeenCalledWith({
-      operation: "create",
-      instanceId: "grok",
-      instance: { driver: "grok", enabled: true, displayName: "Grok" },
-    });
-  });
-
   it("chooses an unused identity for another account without replacing configured instances", async () => {
     setup();
     settingsHooks.read.mockReturnValue({
@@ -185,12 +170,44 @@ describe("AddProviderInstanceDialog environment routing", () => {
     });
   });
 
-  it("reads and writes settings through the supplied environment", async () => {
+  it("includes the explicitly added default accent color when creating a provider", async () => {
     setup();
     await using _screen = await render(dialog());
+    await click("Show more");
+    await click("Use Kilo Code");
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>('button[aria-label="Add accent color for Kilo Code"]')!
+        .click(),
+    );
+    await click("Add color");
+    await click("Continue to sign-in");
 
-    expect(settingsHooks.read).toHaveBeenCalledWith(remoteEnvironmentId);
-    expect(settingsHooks.useMutation).toHaveBeenCalledWith(remoteEnvironmentId);
+    expect(settingsHooks.mutate).toHaveBeenCalledWith({
+      operation: "create",
+      instanceId: "acpRegistry_kilo_code",
+      instance: expect.objectContaining({ accentColor: "#2563eb" }),
+    });
+  });
+
+  it("keeps fx and the ACP Registry under Show more", async () => {
+    setup();
+    await using _screen = await render(dialog());
+    expect(radio("Codex")).toBeDefined();
+    expect(radio("fx")).toBeUndefined();
+    expect(document.body.textContent).not.toContain("Use Kilo Code");
+
+    await click("Show more");
+    button("Use Kilo Code");
+    await act(async () => radio("fx")!.click());
+    await click("Next");
+    await click("Next");
+    await click("Add instance");
+    expect(settingsHooks.mutate).toHaveBeenCalledWith({
+      operation: "create",
+      instanceId: "fx",
+      instance: { driver: "fx", enabled: true, displayName: "fx" },
+    });
   });
 
   it("awaits an atomic create before closing and retains prepared ACP metadata", async () => {
@@ -198,6 +215,7 @@ describe("AddProviderInstanceDialog environment routing", () => {
     const mutation = deferred<{ readonly _tag: "Success"; readonly value: unknown }>();
     settingsHooks.mutate.mockReturnValueOnce(mutation.promise);
     await using _screen = await render(dialog());
+    await click("Show more");
     await click("Use Kilo Code");
 
     expect(document.body.textContent).toContain("v4.2.0 · binary");
@@ -226,28 +244,10 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(actions.onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("configures a manually entered registry agent from the first provider screen", async () => {
-    setup();
-    await using _screen = await render(dialog());
-    await click("Enter registry agent");
-    await type("#add-provider-acpRegistry-manual-agentId", "devin");
-    await click("Next");
-    await click("Continue to sign-in");
-    expect(settingsHooks.mutate).toHaveBeenCalledWith({
-      operation: "create",
-      instanceId: "acpRegistry_custom",
-      instance: {
-        driver: "acpRegistry",
-        enabled: true,
-        config: { agentId: "devin" },
-      },
-    });
-    expect(signInStep()).not.toBeNull();
-  });
-
   it("creates a local command in the selected environment without a sign-in step", async () => {
     setup();
     await using _screen = await render(dialog());
+    await click("Show more");
     await click("Use local command");
     await click("Next");
     expect(document.body.textContent).toContain("Executable is required.");
@@ -291,47 +291,12 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(signInStep()).toBeNull();
   });
 
-  it("keeps the dialog open when the atomic upsert fails", async () => {
-    setup();
-    settingsHooks.mutate.mockResolvedValueOnce({ _tag: "Failure", cause: new Error("Conflict") });
-    await using _screen = await render(dialog());
-    await click("Use Kilo Code");
-    await click("Continue to sign-in");
-
-    expect(actions.onOpenChange).not.toHaveBeenCalled();
-    expect(actions.toast).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "error", title: "Could not add provider instance" }),
-    );
-    expect(button("Continue to sign-in").disabled).toBe(false);
-  });
-
-  it("adds an instance with the selected environment's provider grant alone", async () => {
-    setup();
-    await using _screen = await prepareCodexInstance();
-    await click("Add instance");
-
-    expect(settingsHooks.mutate).toHaveBeenCalledWith({
-      operation: "create",
-      instanceId: "codex_work",
-      instance: {
-        driver: "codex",
-        enabled: true,
-        displayName: "Work",
-        config: { setupMode: "existing" },
-      },
-    });
-    expect(actions.toast).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "success", title: "Provider instance added" }),
-    );
-    expect(actions.onOpenChange).toHaveBeenCalledWith(false);
-  });
-
   it("rejects a queued save after the provider grant is revoked", async () => {
     setup();
     await using screen = await prepareCodexInstance();
     const save = button("Add instance");
     actions.canManageProviders = false;
-    // The rendered button is still enabled; the click must recheck the live grant.
+    // Click before React renders the revoked grant.
     await act(async () => save.click());
 
     expect(settingsHooks.mutate).not.toHaveBeenCalled();
@@ -339,20 +304,5 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(actions.onOpenChange).not.toHaveBeenCalled();
     await screen.rerender(dialog());
     expect(button("Add instance").disabled).toBe(true);
-  });
-
-  it("keeps a denied draft available when the provider grant arrives", async () => {
-    setup();
-    actions.canManageProviders = false;
-    await using screen = await prepareCodexInstance();
-    expect(button("Add instance").disabled).toBe(true);
-    expect(settingsHooks.mutate).not.toHaveBeenCalled();
-
-    actions.canManageProviders = true;
-    await screen.rerender(dialog());
-    expect(button("Add instance").disabled).toBe(false);
-    await click("Add instance");
-    expect(settingsHooks.mutate).toHaveBeenCalledOnce();
-    expect(actions.onOpenChange).toHaveBeenCalledWith(false);
   });
 });

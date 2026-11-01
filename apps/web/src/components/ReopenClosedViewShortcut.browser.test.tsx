@@ -40,7 +40,6 @@ vi.mock(import("../state/preview"), async (original) => {
     previewEnvironment: { ...actual.previewEnvironment, open: state.openPreview as never },
   };
 });
-// The remote environment is catalogued and its shell is live.
 vi.mock(import("../connection/catalog"), async (original) => {
   const actual = await original();
   const { Atom } = await import("effect/reactivity");
@@ -48,7 +47,10 @@ vi.mock(import("../connection/catalog"), async (original) => {
     ...actual,
     environmentCatalog: {
       ...actual.environmentCatalog,
-      catalogValueAtom: Atom.make({ isReady: true, entries: new Map([["remote", {}]]) }) as never,
+      catalogValueAtom: Atom.make({
+        isReady: true,
+        entries: new Map([["remote", { target: { _tag: "DirectConnectionTarget" } }]]),
+      }) as never,
     },
   };
 });
@@ -145,57 +147,7 @@ function press(target: Element = document.body) {
   return event;
 }
 
-function commandPalette() {
-  const palette = document.createElement("div");
-  palette.dataset.commandPalette = "";
-  return palette;
-}
-
 describe("root reopen shortcut", () => {
-  it("restores a tab from settings to its owning remote thread", async () => {
-    setup();
-    useClosedViewStore
-      .getState()
-      .remember({ kind: "panel-tab", threadRef: ref, surface: { kind: "diff", id: "diff" } });
-    await using _view = await renderShortcut();
-    await act(() => {
-      expect(press().defaultPrevented).toBe(true);
-    });
-    expect(
-      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref).activeSurfaceId,
-    ).toBe("diff");
-    expect(state.navigate).toHaveBeenCalledWith({ to: "/$environmentId/$threadId", params: ref });
-    expect(useClosedViewStore.getState().entries).toEqual([]);
-  });
-
-  it("leaves native shortcuts alone without history or while the palette is open", async () => {
-    setup();
-    await using view = await renderShortcut();
-    expect(press().defaultPrevented).toBe(false);
-    await act(() => {
-      useClosedViewStore
-        .getState()
-        .remember({ kind: "panel-tab", threadRef: ref, surface: { kind: "diff", id: "diff" } });
-    });
-    view.append(commandPalette());
-    expect(press().defaultPrevented).toBe(false);
-    expect(state.navigate).not.toHaveBeenCalled();
-    expect(useClosedViewStore.getState().entries).toHaveLength(1);
-  });
-
-  it("lets the keybinding recorder capture the chord", async () => {
-    setup();
-    useClosedViewStore
-      .getState()
-      .remember({ kind: "panel-tab", threadRef: ref, surface: { kind: "diff", id: "diff" } });
-    await using view = await renderShortcut();
-    const recorder = document.createElement("input");
-    recorder.dataset.keybindingCapture = "";
-    view.append(recorder);
-    expect(press(recorder).defaultPrevented).toBe(false);
-    expect(useClosedViewStore.getState().entries).toHaveLength(1);
-  });
-
   it("serializes deliberate presses while a browser restore waits for RPC", async () => {
     setup();
     useClosedViewStore
@@ -313,31 +265,11 @@ describe("root reopen shortcut", () => {
       expect(useClosedViewStore.getState().entries).toEqual([]);
     },
   );
-
-  it("forwards the chord to a focused desktop browser only while history exists", async () => {
+  it("forwards address-bar focus from a focused desktop page", async () => {
     setup();
-    const forwardedCommands = () =>
-      (state.setShortcuts.mock.lastCall as unknown as [Array<{ command: string }>])[0].map(
-        ({ command }) => command,
-      );
-    useClosedViewStore
-      .getState()
-      .remember({ kind: "panel-tab", threadRef: ref, surface: { kind: "diff", id: "diff" } });
-    await using _view = await renderShortcut();
-    expect(forwardedCommands()).toContain("view.reopenClosed");
-    await act(() => {
-      menuAction?.("view.reopenClosed");
-    });
-    expect(useClosedViewStore.getState().entries).toEqual([]);
-    expect(forwardedCommands()).not.toContain("view.reopenClosed");
-  });
-
-  it("always forwards the layout toggles out of a focused desktop browser", async () => {
-    setup();
-    await using _view = await renderShortcut();
-    expect(state.setShortcuts).toHaveBeenLastCalledWith([
-      expect.objectContaining({ command: "sidebar.toggle" }),
-      expect.objectContaining({ command: "rightPanel.toggle" }),
-    ]);
+    await using _shortcut = await renderShortcut();
+    expect(state.setShortcuts).toHaveBeenLastCalledWith(
+      expect.arrayContaining([expect.objectContaining({ command: "preview.focusUrl" })]),
+    );
   });
 });

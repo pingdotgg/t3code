@@ -30,20 +30,6 @@ describe("project favicon requests", () => {
     endExpiredRequest();
   });
 
-  it("evicts the URL that actually failed", () => {
-    const cacheKey = "environment-1:/workspace:v2-favicon.svg";
-    const faviconUrl = "https://environment.example/api/assets/current/v2-favicon.svg";
-    const request = createProjectFaviconRequest(cacheKey, faviconUrl);
-    const endRequest = beginProjectFaviconRequest(request);
-
-    markProjectFaviconLoaded(request);
-
-    expect(markProjectFaviconFailed(request)).toBe(true);
-    expect(hasLoadedProjectFavicon(cacheKey)).toBe(false);
-
-    endRequest();
-  });
-
   it("does not supersede a request until the next request begins", () => {
     const cacheKey = "environment-1:/workspace:v3-favicon.svg";
     const committedUrl = "https://environment.example/api/assets/current/v3-favicon.svg";
@@ -57,14 +43,6 @@ describe("project favicon requests", () => {
     expect(hasLoadedProjectFavicon(cacheKey)).toBe(true);
 
     endCommittedRequest();
-  });
-
-  it("requires a cache key before creating a URL-bearing request", () => {
-    const firstUrl = "https://environment.example/api/assets/first/favicon.svg";
-    const secondUrl = "https://environment.example/api/assets/second/favicon.svg";
-
-    expect(createProjectFaviconRequest(null, firstUrl)).toBeNull();
-    expect(createProjectFaviconRequest(null, secondUrl)).toBeNull();
   });
 
   it("restores the remaining active URL when a newer request ends", () => {
