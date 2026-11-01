@@ -27,6 +27,7 @@ import { PullRequestStackLayers } from "./PullRequestStackLayers";
 import { PullRequestStackHeader } from "./PullRequestStackHeader";
 import { PullRequestStackLayerContent } from "./PullRequestStackLayerContent";
 import { PullRequestGlyph } from "./pullRequestIcons";
+import { readableFailure } from "./pullRequestDetail.logic";
 
 export function PullRequestStackMenu({
   hostLabel,
@@ -114,7 +115,12 @@ export function PullRequestStackMenu({
       toastManager.update(toastId, {
         type: "error",
         title: action === "merge" ? "Could not merge the stack" : "Could not rebase the stack",
-        description: String(squashAtomCommandFailure(result)),
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          action === "merge"
+            ? "The host refused the merge. Check that you have write access, that the checks it requires have passed, and that the branch is not conflicting."
+            : "The host refused the rebase. A rebase stops at the first commit that does not apply cleanly.",
+        ),
       });
     } else {
       toastManager.update(toastId, {
