@@ -23,7 +23,7 @@ import {
   type ThemeDefinition,
   type ThemeVariants,
 } from "@t3tools/shared/themePalettes";
-import { themeAccentWithContrast } from "@t3tools/shared/themeContrast";
+import { themeAccentWithContrast, themeColorContrastRatio } from "@t3tools/shared/themeContrast";
 import {
   CONTEXT_CHIP_ACCENTS,
   contextChipColorVariable,
@@ -1599,6 +1599,15 @@ export function withReadableThemeText(colors: ThemeColors): ThemeColors {
   };
 }
 
+function applyDestructiveFillForeground(root: HTMLElement, error: string): void {
+  root.style.setProperty(
+    "--app-theme-destructive-fill-foreground",
+    themeColorContrastRatio("#ffffff", error) >= themeColorContrastRatio("#000000", error)
+      ? "#ffffff"
+      : "#000000",
+  );
+}
+
 /** Callers must restore the stored theme with refreshTheme when the draft closes. */
 export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeAppearance): void {
   if (typeof document === "undefined") return;
@@ -1608,6 +1617,7 @@ export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeApp
   root.dataset.themeId = THEME_PREVIEW_ID;
   root.classList.toggle("dark", appearance === "dark");
   const readable = withReadableThemeText(colors);
+  applyDestructiveFillForeground(root, readable.error);
   for (const [role, value] of Object.entries(readable) as Array<[ThemeColorRole, string]>) {
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
@@ -1629,6 +1639,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
     const mode = appearance ?? legacyThemeMode(theme) ?? palette.appearance;
     const colors = getThemeColorsForMode(palette, mode) ?? palette.colors;
     const readable = withReadableThemeText(colors);
+    applyDestructiveFillForeground(root, readable.error);
     for (const [role, value] of Object.entries(readable) as Array<[ThemeColorRole, string]>) {
       root.style.setProperty(APP_THEME_VARIABLES[role], value);
     }
@@ -1637,6 +1648,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   }
 
   delete root.dataset.themeId;
+  root.style.removeProperty("--app-theme-destructive-fill-foreground");
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }

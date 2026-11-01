@@ -251,6 +251,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-guest-foreground: var(--guest-foreground);
   --color-guest-surface: var(--guest-surface);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-fill-foreground: var(--app-theme-destructive-fill-foreground, white);
   --color-ring: var(--ring);
   --color-input: var(--contrast-input);
   --color-border: var(--contrast-border);
