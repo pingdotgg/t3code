@@ -13,12 +13,14 @@ import { discoverMuseModels, museModelCapabilities } from "./modelCatalog.ts";
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
-  DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   providerModelsFromSettings,
   spawnAndCollect,
   type ProviderProbeResult,
 } from "@t3tools/provider-core/server/snapshotProbe";
+
+// Muse can take 4-9 seconds to start inside a Windows job object.
+const MUSE_VERSION_PROBE_TIMEOUT = "15 seconds";
 
 const MUSE_PRESENTATION = {
   displayName: "Muse Code",
@@ -81,7 +83,7 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
         ...(cwd ? { cwd } : {}),
       }),
     );
-  }).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+  }).pipe(Effect.timeoutOption(MUSE_VERSION_PROBE_TIMEOUT), Effect.result);
 
   if (Result.isFailure(versionResult)) {
     const missing = isCommandMissingCause(versionResult.failure);
