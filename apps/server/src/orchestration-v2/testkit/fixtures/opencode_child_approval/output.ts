@@ -33,6 +33,8 @@ export function assertOpenCodeChildApprovalOutput(
   assert.lengthOf(requests, 1);
   assert.equal(requests[0]?.kind, "command");
   assert.equal(requests[0]?.status, "resolved");
+  assert.equal(requests[0]?.decision, "accept");
+  assert.equal(projection.nodes.find((node) => node.id === approval.nodeId)?.status, "completed");
 
   assert.lengthOf(projection.subagents, 1);
   assert.equal(projection.subagents[0]?.status, "completed");
