@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { sanitizeStderrExcerpt } from "./stderrExcerpt.ts";
+import { appendStderrTail, sanitizeStderrExcerpt } from "./stderrExcerpt.ts";
 
 describe("stderrExcerpt", () => {
   it("redacts home paths, pairing URLs, and tokens from stderr excerpts", () => {
@@ -90,5 +90,37 @@ describe("stderrExcerpt", () => {
         "Unknown key: model-x",
       ].join("\n"),
     );
+  });
+
+  it("redacts whole header values and quoted values with embedded quotes", () => {
+    const excerpt = sanitizeStderrExcerpt(
+      [
+        "x-api-key: first-secret;second-secret",
+        "Authorization: Bearer first,second",
+        `{"password":"first'second-secret"}`,
+        String.raw`{"password":"a\"b-secret"}`,
+      ].join("\n"),
+      "/Users/ada",
+      {},
+    );
+
+    expect(excerpt).toBe(
+      [
+        "x-api-key: [REDACTED]",
+        "Authorization: [REDACTED]",
+        '{"password":"[REDACTED]"}',
+        '{"password":"[REDACTED]"}',
+      ].join("\n"),
+    );
+  });
+
+  it("drops the partial first line when the tail is truncated", () => {
+    let tail = "";
+    for (const chunk of ["API_", "KEY=super-secret\n", "x".repeat(4_080), "\nError: boom\n"]) {
+      tail = appendStderrTail(tail, chunk);
+    }
+
+    expect(tail.length).toBeLessThanOrEqual(4_096);
+    expect(sanitizeStderrExcerpt(tail, "/Users/ada", {})).toBe(`${"x".repeat(4_080)}\nError: boom`);
   });
 });
