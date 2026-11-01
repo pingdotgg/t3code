@@ -762,6 +762,7 @@ it.effect.each([
   }).pipe(
     Effect.provide(
       McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
