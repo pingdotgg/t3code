@@ -8759,6 +8759,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             userMessageUuid,
           }),
         );
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+          ),
+        );
         const active = harness.events.find(
           (event) =>
             event.type === "provider_turn.updated" && event.providerTurn.status === "running",
@@ -8804,6 +8810,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             text: "Work until stopped",
             attachments: [],
           }),
+        );
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+          ),
         );
         const active = harness.events.find(
           (event) =>
