@@ -1,4 +1,4 @@
-import { type VcsRef } from "@t3tools/contracts";
+import { EnvironmentId, type VcsRef } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import {
@@ -10,6 +10,7 @@ import {
   resolveLocalCheckoutBranchMismatch,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
+  isBranchHoldCurrent,
 } from "./BranchToolbar.logic";
 
 describe("resolveDraftEnvModeAfterBranchChange", () => {
@@ -232,6 +233,32 @@ describe("shouldIncludeBranchPickerItem", () => {
         checkoutPullRequestItemValue: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("isBranchHoldCurrent", () => {
+  const environmentId = EnvironmentId.make("env-a");
+  const hold = { branch: "feature", replaces: "main", environmentId, cwd: "/repo" };
+  const current = { canonicalBranch: "main", environmentId, cwd: "/repo" };
+
+  it("keeps showing the checked-out branch while status still reports the old one", () => {
+    expect(isBranchHoldCurrent(hold, current)).toBe(true);
+  });
+
+  it("lets go once status moves, even to a different branch than the checkout", () => {
+    for (const canonicalBranch of ["feature", "other", null]) {
+      expect(isBranchHoldCurrent(hold, { ...current, canonicalBranch })).toBe(false);
+    }
+  });
+
+  it("does not apply to another checkout that happens to be on the old branch", () => {
+    expect(isBranchHoldCurrent(hold, { ...current, cwd: "/other" })).toBe(false);
+  });
+
+  it("does not apply to the same path on another environment", () => {
+    expect(
+      isBranchHoldCurrent(hold, { ...current, environmentId: EnvironmentId.make("env-b") }),
+    ).toBe(false);
   });
 });
 

@@ -140,7 +140,11 @@ export class GitManager extends Context.Service<
     ) => Effect.Effect<GitBranchPullRequest | null, GitManagerServiceError>;
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
-    readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
+    /** keepPullRequestLookups is for changes that cannot affect a PR, such as a checkout. */
+    readonly invalidateStatus: (
+      cwd: string,
+      options?: { readonly keepPullRequestLookups?: boolean },
+    ) => Effect.Effect<void, never>;
     readonly resolvePullRequest: (
       input: GitPullRequestRefInput,
     ) => Effect.Effect<GitResolvePullRequestResult, GitManagerServiceError>;
@@ -1149,6 +1153,15 @@ export const make = Effect.gen(function* () {
     normalizeStatusCacheKey(cwd).pipe(
       Effect.map((cacheKey) => {
         prLookupEpochByCwd.set(cacheKey, prLookupEpoch(cacheKey) + 1);
+      }),
+    );
+  // Separate from the PR lookup epoch because a checkout keeps PR lookups but changes git state.
+  const prLookupGitStateEpochByCwd = new Map<string, number>();
+  const prLookupGitStateEpoch = (cwd: string) => prLookupGitStateEpochByCwd.get(cwd) ?? 0;
+  const bumpPrLookupGitStateEpoch = (cwd: string) =>
+    normalizeStatusCacheKey(cwd).pipe(
+      Effect.map((cacheKey) => {
+        prLookupGitStateEpochByCwd.set(cacheKey, prLookupGitStateEpoch(cacheKey) + 1);
       }),
     );
   const prLookupCacheKey = (
@@ -2403,10 +2416,13 @@ export const make = Effect.gen(function* () {
     }
     // invalidateStatus bumps the epoch. A read that started before a T3 git
     // action, or before a newer read finished, must not replace their state.
-    const epoch = prLookupEpoch(cwd);
+    const epoch = prLookupGitStateEpoch(cwd);
     const value = yield* read;
     const latest = prLookupGitStateByKey.get(entryKey);
-    if (prLookupEpoch(cwd) !== epoch || (latest !== undefined && latest.readAtMs > readAtMs)) {
+    if (
+      prLookupGitStateEpoch(cwd) !== epoch ||
+      (latest !== undefined && latest.readAtMs > readAtMs)
+    ) {
       return value;
     }
     prLookupGitStateByKey.delete(entryKey);
@@ -2665,10 +2681,11 @@ export const make = Effect.gen(function* () {
     yield* invalidateRemoteStatusResultCache(cwd);
   });
   const invalidateStatus: GitManager["Service"]["invalidateStatus"] = Effect.fn("invalidateStatus")(
-    function* (cwd) {
+    function* (cwd, options) {
       yield* invalidateLocalStatusResultCache(cwd);
       yield* invalidateRemoteStatusResultCache(cwd);
-      yield* bumpPrLookupEpoch(cwd);
+      if (!options?.keepPullRequestLookups) yield* bumpPrLookupEpoch(cwd);
+      yield* bumpPrLookupGitStateEpoch(cwd);
       yield* forgetPrLookupGitState(cwd);
     },
   );

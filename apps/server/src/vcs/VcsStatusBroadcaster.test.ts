@@ -23,6 +23,7 @@ import type {
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
 import { GitCommandError, GitManagerError } from "@t3tools/contracts";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 import * as VcsStatusBroadcaster from "./VcsStatusBroadcaster.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -72,6 +73,9 @@ function layerTestFor(state: {
   localInvalidationCalls: number;
   remoteInvalidationCalls: number;
   remoteStatusRefreshUpstreamValues?: Array<boolean | undefined>;
+  remoteStatusInteractiveValues?: Array<boolean>;
+  invalidateStatusKeepLookupValues?: Array<boolean | undefined>;
+  upstreamFetchCount?: number;
   remoteStatusError?: GitManagerError;
   backgroundWorkEnabled?: boolean;
   automaticFetchInterval?: Effect.Effect<Duration.Duration>;
@@ -114,6 +118,13 @@ function layerTestFor(state: {
                 }),
               ),
               Effect.tap(() =>
+                Effect.gen(function* () {
+                  state.remoteStatusInteractiveValues?.push(
+                    yield* SourceControlRateLimit.Interactive,
+                  );
+                }),
+              ),
+              Effect.tap(() =>
                 state.remoteStatusError ? Effect.fail(state.remoteStatusError) : Effect.void,
               ),
             );
@@ -126,11 +137,13 @@ function layerTestFor(state: {
           Effect.sync(() => {
             state.remoteInvalidationCalls += 1;
           }),
-        invalidateStatus: () =>
+        invalidateStatus: (_cwd, options) =>
           Effect.sync(() => {
             state.localInvalidationCalls += 1;
             state.remoteInvalidationCalls += 1;
+            state.invalidateStatusKeepLookupValues?.push(options?.keepPullRequestLookups);
           }),
+        statusUpstreamFetchCount: () => Effect.sync(() => state.upstreamFetchCount ?? 0),
         ...(state.pullCurrentBranch ? { pullCurrentBranch: state.pullCurrentBranch } : {}),
       }),
     ),
@@ -655,6 +668,161 @@ describe("VcsStatusBroadcaster", () => {
       }).pipe(Effect.provide(layerTest));
     },
   );
+
+  it.effect("publishes a checkout's branch before returning, ahead of the remote read", () => {
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+      const subscribed = yield* Deferred.make<void>();
+      const localPublished = yield* Deferred.make<VcsStatusLocalResult>();
+      const remotePublished = yield* Deferred.make<VcsStatusRemoteResult | null>();
+      yield* broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }).pipe(
+        Stream.runForEach((event) => {
+          if (event._tag === "snapshot") return Deferred.succeed(subscribed, undefined);
+          if (event._tag === "localUpdated") return Deferred.succeed(localPublished, event.local);
+          return event.remote === null
+            ? Effect.void
+            : Deferred.succeed(remotePublished, event.remote);
+        }),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(subscribed);
+
+      const releaseRemote = yield* Deferred.make<void>();
+      state.beforeRemoteStatus = Deferred.await(releaseRemote);
+      state.currentLocalStatus = { ...baseLocalStatus, refName: "main" };
+      state.currentRemoteStatus = remoteStatusWithPr;
+      yield* broadcaster.refreshAfterCheckout("/repo");
+
+      assert.equal((yield* Deferred.await(localPublished)).refName, "main");
+      assert.isFalse(yield* Deferred.isDone(remotePublished));
+
+      yield* Deferred.succeed(releaseRemote, undefined);
+      assert.deepStrictEqual(yield* Deferred.await(remotePublished), remoteStatusWithPr);
+      assert.equal((yield* broadcaster.getStatus({ cwd: "/repo" })).pr?.number, 2978);
+    }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+  });
+
+  it.effect("a checkout's PR lookup is a user action that reuses cached lookups", () => {
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      remoteStatusInteractiveValues: [],
+      invalidateStatusKeepLookupValues: [],
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const remotePublished = yield* Deferred.make<void>();
+      const subscribed = yield* Deferred.make<void>();
+      yield* broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }).pipe(
+        Stream.runForEach((event) => {
+          if (event._tag === "snapshot") return Deferred.succeed(subscribed, undefined);
+          return event._tag === "remoteUpdated" && event.remote !== null
+            ? Deferred.succeed(remotePublished, undefined)
+            : Effect.void;
+        }),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(subscribed);
+
+      yield* broadcaster.refreshAfterCheckout("/repo");
+      yield* Deferred.await(remotePublished);
+
+      assert.deepStrictEqual(state.remoteStatusInteractiveValues, [true]);
+      assert.deepStrictEqual(state.invalidateStatusKeepLookupValues, [true]);
+    }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+  });
+
+  it.effect("a checkout re-reads local status only when a fetch ran", () => {
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const subscribed = yield* Deferred.make<void>();
+      const firstRemote = yield* Deferred.make<void>();
+      const secondRemote = yield* Deferred.make<void>();
+      const thirdRemote = yield* Deferred.make<void>();
+      yield* broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }).pipe(
+        Stream.runForEach((event) => {
+          if (event._tag === "snapshot") return Deferred.succeed(subscribed, undefined);
+          if (event._tag !== "remoteUpdated" || event.remote === null) return Effect.void;
+          if (event.remote.pr === null) return Deferred.succeed(firstRemote, undefined);
+          return event.remote.pr.number === 2979
+            ? Deferred.succeed(thirdRemote, undefined)
+            : Deferred.succeed(secondRemote, undefined);
+        }),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(subscribed);
+      const readsBeforeCheckout = state.localStatusCalls;
+
+      yield* broadcaster.refreshAfterCheckout("/repo");
+      yield* Deferred.await(firstRemote);
+      assert.equal(state.localStatusCalls, readsBeforeCheckout + 1);
+
+      const fetchedLocal: VcsStatusLocalResult = {
+        ...baseLocalStatus,
+        branchChanges: { baseRef: "origin/main", insertions: 0, deletions: 0 },
+      };
+      state.currentRemoteStatus = remoteStatusWithPr;
+      state.beforeRemoteStatus = Effect.sync(() => {
+        state.upstreamFetchCount = (state.upstreamFetchCount ?? 0) + 1;
+        state.currentLocalStatus = fetchedLocal;
+      });
+      yield* broadcaster.refreshAfterCheckout("/repo");
+      yield* Deferred.await(secondRemote);
+
+      assert.equal(state.localStatusCalls, readsBeforeCheckout + 3);
+      assert.deepStrictEqual(
+        (yield* broadcaster.getStatus({ cwd: "/repo" })).branchChanges,
+        fetchedLocal.branchChanges,
+      );
+
+      // A fetch finishing after the first local read took its values still needs a re-read.
+      const lateFetchLocal: VcsStatusLocalResult = {
+        ...baseLocalStatus,
+        branchChanges: { baseRef: "origin/main", insertions: 7, deletions: 0 },
+      };
+      state.beforeRemoteStatus = Effect.void;
+      state.currentRemoteStatus = {
+        ...remoteStatusWithPr,
+        pr: remoteStatusWithPr.pr && { ...remoteStatusWithPr.pr, number: 2979 },
+      };
+      state.beforeLocalStatus = Effect.sync(() => {
+        state.beforeLocalStatus = Effect.void;
+        state.upstreamFetchCount = (state.upstreamFetchCount ?? 0) + 1;
+        state.currentLocalStatus = lateFetchLocal;
+      });
+      yield* broadcaster.refreshAfterCheckout("/repo");
+      yield* Deferred.await(thirdRemote);
+
+      assert.deepStrictEqual(
+        (yield* broadcaster.getStatus({ cwd: "/repo" })).branchChanges,
+        lateFetchLocal.branchChanges,
+      );
+    }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+  });
 
   it.effect("a remote poll refreshes Changes totals when divergence counts stay the same", () => {
     const state: Parameters<typeof layerTestFor>[0] = {
