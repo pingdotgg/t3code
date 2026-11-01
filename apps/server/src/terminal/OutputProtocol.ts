@@ -8,9 +8,64 @@ import type { RpcServer } from "effect/rpc";
 
 const MAX_PENDING_CHUNKS = 8;
 const MAX_PENDING_BYTES = 64 * 1024;
+// Charge an envelope so tiny events cannot bypass the byte budget.
+const EVENT_OVERHEAD = 128;
 const isFull = (sizes: number[]) =>
   sizes.length >= MAX_PENDING_CHUNKS ||
   sizes.reduce((total, size) => total + size, 0) >= MAX_PENDING_BYTES;
+
+const byteLengthOf = (value: unknown) => (typeof value === "string" ? Buffer.byteLength(value) : 0);
+
+// Charges every variable-size field a terminal event can carry, so the byte
+// budgets below cannot be bypassed by a large payload in an uncharged field.
+const queuedSize = (event: TerminalEvent | TerminalAttachStreamEvent) =>
+  EVENT_OVERHEAD +
+  ("threadId" in event ? byteLengthOf(event.threadId) + byteLengthOf(event.terminalId) : 0) +
+  (event.type === "output"
+    ? byteLengthOf(event.data)
+    : event.type === "error"
+      ? byteLengthOf(event.message)
+      : event.type === "activity"
+        ? byteLengthOf(event.label)
+        : "snapshot" in event
+          ? byteLengthOf(event.snapshot.threadId) +
+            byteLengthOf(event.snapshot.terminalId) +
+            byteLengthOf(event.snapshot.history) +
+            byteLengthOf(event.snapshot.cwd) +
+            byteLengthOf(event.snapshot.worktreePath) +
+            byteLengthOf(event.snapshot.label)
+          : 0);
+
+const TERMINAL_EVENT_TYPES = new Set([
+  "started",
+  "output",
+  "exited",
+  "closed",
+  "error",
+  "cleared",
+  "restarted",
+  "activity",
+  "snapshot",
+]);
+
+// Windowed chunks carry terminal events, so charge them the way the output
+// queue below does instead of serializing the frame a second time just to
+// measure it. Only the event shapes queuedSize measures take the fast path;
+// anything else keeps the exact JSON measurement.
+const chunkSize = (values: ReadonlyArray<unknown>) =>
+  values.reduce<number>((total, value) => {
+    if (typeof value === "string") return total + EVENT_OVERHEAD + Buffer.byteLength(value);
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "type" in value &&
+      typeof value.type === "string" &&
+      TERMINAL_EVENT_TYPES.has(value.type)
+    ) {
+      return total + queuedSize(value as TerminalEvent | TerminalAttachStreamEvent);
+    }
+    return total + Buffer.byteLength(JSON.stringify(value) ?? "");
+  }, EVENT_OVERHEAD);
 
 export function withTerminalOutputWindow(
   protocol: RpcServer.Protocol["Service"],
@@ -50,9 +105,7 @@ export function withTerminalOutputWindow(
         } else if (response._tag === "Chunk") {
           const window = windows.get(`${clientId}:${response.requestId}`);
           if (window) {
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
-            const size = Buffer.byteLength(JSON.stringify(response));
-            window.push(size);
+            window.push(chunkSize(response.values));
             if (!isFull(window)) {
               return send.pipe(
                 Effect.andThen(() =>
@@ -71,8 +124,6 @@ export function withTerminalOutputWindow(
 }
 
 const MAX_QUEUED_OUTPUT = 8 * 1024 * 1024;
-// Charge an envelope so tiny events cannot bypass the byte budget.
-const EVENT_OVERHEAD = 128;
 
 type Listener<A> = (event: A) => Effect.Effect<void>;
 // Acquisition must register cleanup synchronously with installing the listener.
@@ -80,14 +131,6 @@ type Subscribe<A, E> = (
   listener: Listener<A>,
   registerCleanup: (stop: () => void) => void,
 ) => Effect.Effect<() => void, E>;
-
-const queuedSize = (event: TerminalEvent | TerminalAttachStreamEvent) =>
-  EVENT_OVERHEAD +
-  (event.type === "output"
-    ? Buffer.byteLength(event.data)
-    : "snapshot" in event
-      ? Buffer.byteLength(event.snapshot.history)
-      : 0);
 
 export function terminalOutputStream<A extends TerminalEvent | TerminalAttachStreamEvent, E>(
   subscribe: Subscribe<A, E>,

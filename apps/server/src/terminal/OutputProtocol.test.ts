@@ -80,6 +80,78 @@ describe("terminal output window", () => {
       assert.equal((yield* Queue.take(responses))._tag, "Exit");
     }).pipe(Effect.provide(RpcSerialization.layerJson), Effect.scoped),
   );
+
+  const bigChunkEvents = [
+    {
+      name: "error messages",
+      event: {
+        threadId: "thread-1",
+        terminalId: "default",
+        type: "error" as const,
+        message: "e".repeat(64 * 1024),
+      },
+    },
+    {
+      name: "thread ids",
+      event: {
+        threadId: "t".repeat(64 * 1024),
+        terminalId: "default",
+        type: "output" as const,
+        data: "x",
+      },
+    },
+  ];
+
+  it.effect.each(bigChunkEvents)("charges $name against the pending-byte limit", ({ event }) =>
+    Effect.gen(function* () {
+      const tag = WS_METHODS.terminalAttach;
+      const group = RpcGroup.make(
+        Rpc.make(tag, { success: TerminalAttachStreamEventSchema, stream: true }),
+      );
+      const output =
+        yield* Queue.unbounded<Schema.Schema.Type<typeof TerminalAttachStreamEventSchema>>();
+      const responses = yield* Queue.unbounded<RpcMessage.FromServerEncoded>();
+      const receive = yield* Deferred.make<Parameters<RpcServer.Protocol["Service"]["run"]>[0]>();
+      const protocol = yield* RpcServer.Protocol.make((write) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(receive, write);
+          const serialization = yield* RpcSerialization.RpcSerialization;
+          return {
+            disconnects: yield* Queue.unbounded<number>(),
+            send: (_clientId, response) => Queue.offer(responses, response),
+            end: () => Effect.void,
+            clientIds: Effect.succeed(new Set([0])),
+            initialMessage: Effect.succeedNone,
+            supportsAck: true,
+            supportsTransferables: false,
+            supportsSpanPropagation: false,
+            supportsNotifications: true,
+            codecFor: serialization.codecFor,
+          };
+        }),
+      );
+      yield* RpcServer.make(group).pipe(
+        Effect.provide(group.toLayerHandler(tag, () => Stream.fromQueue(output))),
+        Effect.provideService(RpcServer.Protocol, withTerminalOutputWindow(protocol)),
+        Effect.forkScoped,
+      );
+      const write = yield* Deferred.await(receive);
+      yield* write(0, { _tag: "Request", id: "1", tag, payload: null, headers: [] });
+
+      yield* Queue.offer(output, event);
+      yield* TestClock.adjust(0);
+      assert.equal(yield* Queue.size(responses), 1);
+      yield* Queue.take(responses);
+      // One 64 KiB field fills the byte window on its own.
+      yield* Queue.offer(output, event);
+      yield* TestClock.adjust(0);
+      assert.equal(yield* Queue.size(responses), 0);
+      yield* write(0, { _tag: "Ack", requestId: "1" });
+      assert.equal((yield* Queue.take(responses))._tag, "Chunk");
+      yield* write(0, { _tag: "Interrupt", requestId: "1" });
+      assert.equal((yield* Queue.take(responses))._tag, "Exit");
+    }).pipe(Effect.provide(RpcSerialization.layerJson), Effect.scoped),
+  );
 });
 
 const output = (data: string): TerminalAttachStreamEvent => ({
