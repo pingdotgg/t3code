@@ -39,6 +39,11 @@ connection. Pull request diffs and provider settings keep working after the
 previous credential expires. A failed renewal affects that request; it does not
 disconnect an otherwise healthy conversation.
 
+Signing out of T3 Connect in the host's desktop app or locally hosted web app
+disconnects that host from the account before signing out. Signing out on a
+phone or remote browser disconnects only that client. Sign in and enable T3
+Connect again to reconnect a host.
+
 ### Scripts and agents
 
 `t3 up` asks nothing when you name a choice: `--connect`, `--lan`, or their
