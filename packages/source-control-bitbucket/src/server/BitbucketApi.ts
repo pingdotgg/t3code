@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import type * as Scope from "effect/Scope";
 import {
   NonNegativeInt,
   settingsSecretLiteral,
@@ -17,7 +18,14 @@ import {
   type SourceControlRepositoryCloneUrls,
   type SourceControlRepositoryVisibility,
 } from "@t3tools/contracts";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+  type HttpClientError,
+} from "effect/http";
+import type { SourceControlMediaRequest } from "@t3tools/source-control-core/server/driver";
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import { recognizeRemoteWith } from "@t3tools/source-control-core/shared/definition";
@@ -339,6 +347,14 @@ export class BitbucketApi extends Context.Service<
   BitbucketApi,
   {
     readonly probeAuth: Effect.Effect<SourceControlProviderAuth, never>;
+
+    readonly fetchMedia: (
+      input: SourceControlMediaRequest,
+    ) => Effect.Effect<
+      HttpClientResponse.HttpClientResponse | null,
+      HttpClientError.HttpClientError,
+      Scope.Scope
+    >;
 
     readonly request: (input: {
       readonly method: "GET" | "POST" | "PUT" | "DELETE";
@@ -1021,7 +1037,68 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const fetchMedia = Effect.fn("BitbucketApi.fetchMedia")(function* (
+    input: SourceControlMediaRequest,
+  ) {
+    const source = URL.parse(input.url);
+    const media = source === null ? null : definition.mediaUrl(source);
+
+    if (media === null) {
+      return null;
+    }
+
+    const client = HttpClient.withScope(httpClient);
+    const headers: Record<string, string> = { "accept-encoding": "identity" };
+
+    for (const name of ["range", "if-range"] as const) {
+      const value = input.headers[name];
+
+      if (value !== undefined) {
+        headers[name] = value;
+      }
+    }
+
+    let target = media.fetchUrl;
+
+    for (let hop = 0; ; hop += 1) {
+      const request = HttpClientRequest.get(target).pipe(HttpClientRequest.setHeaders(headers));
+      // A signed storage redirect authorizes itself. Only the configured API receives our token.
+      const authorized = originOf(target) === apiOrigin ? yield* withAuth(request) : request;
+      const response = yield* client
+        .execute(authorized)
+        .pipe(
+          Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+          Effect.timeoutOption(BITBUCKET_API_REQUEST_TIMEOUT),
+        );
+
+      if (Option.isNone(response)) {
+        return null;
+      }
+
+      const value = response.value;
+
+      if (value.status < 300 || value.status >= 400) {
+        return value;
+      }
+
+      const location = value.headers.location;
+
+      if (location === undefined || hop >= MAX_REDIRECTS) {
+        return null;
+      }
+
+      const next = URL.parse(location, target);
+
+      if (next === null || next.protocol !== "https:" || next.username || next.password) {
+        return null;
+      }
+
+      target = next.toString();
+    }
+  });
+
   return BitbucketApi.of({
+    fetchMedia,
     request,
     // Bitbucket answers anonymous /user with 401, so without a credential there is nothing to ask.
     probeAuth: currentCredential.pipe(
