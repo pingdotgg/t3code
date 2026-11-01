@@ -1177,19 +1177,30 @@ export class GhosttyTerminalSurface {
       this.pasteShortcutGesture = gesture;
       const clipboard = navigator.clipboard;
       if (typeof clipboard?.readText === "function") {
-        // Keep native paste available if the read is denied. The token drops
-        // a late read; the gesture drops a native duplicate when the read wins.
+        // Firefox and Safari lack clipboard-read permission and prompt even when
+        // native paste arrives later. Only permission-aware browsers use the fallback.
         const token = ++this.pasteShortcutToken;
-        void clipboard.readText().then(
-          (text) => {
-            if (this.disposed || this.pasteShortcutToken !== token) return;
-            this.pasteShortcutToken += 1;
-            if (text.length === 0) return;
-            if (this.pasteShortcutGesture === gesture) gesture.readText = text;
-            this.options.onData(this.core.encodePaste(text));
-          },
-          () => {},
-        );
+        window.setTimeout(async () => {
+          try {
+            const permission = await navigator.permissions.query({
+              name: "clipboard-read" as PermissionName,
+            });
+            if (permission.state === "denied") return;
+          } catch {
+            return;
+          }
+          if (this.disposed || this.pasteShortcutToken !== token) return;
+          void clipboard.readText().then(
+            (text) => {
+              if (this.disposed || this.pasteShortcutToken !== token) return;
+              this.pasteShortcutToken += 1;
+              if (text.length === 0) return;
+              if (this.pasteShortcutGesture === gesture) gesture.readText = text;
+              this.options.onData(this.core.encodePaste(text));
+            },
+            () => {},
+          );
+        }, 0);
       }
       return;
     }

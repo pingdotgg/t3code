@@ -401,22 +401,35 @@ describe("GhosttyTerminalSurface visibility", () => {
     );
   }
 
-  it.each(["native", "clipboard"])("pastes once when %s arrives first", async (first) => {
-    const harness = createHarness();
-    const read = Promise.resolve("echo hi");
-    vi.stubGlobal("navigator", {
-      platform: "MacIntel",
-      clipboard: { readText: () => read },
-    });
-    const surface = await harness.create({ beforeKey: () => true });
+  it.each(["native", "clipboard", "unsupported permission"])(
+    "pastes once when %s arrives first",
+    async (first) => {
+      const harness = createHarness();
+      const read = Promise.resolve("echo hi");
+      const readText = vi.fn(() => read);
+      vi.stubGlobal("navigator", {
+        platform: "MacIntel",
+        clipboard: { readText },
+        permissions: {
+          query: () =>
+            first === "unsupported permission"
+              ? Promise.reject(new TypeError("Unsupported permission"))
+              : Promise.resolve({ state: "granted" }),
+        },
+      });
+      const surface = await harness.create({ beforeKey: () => true });
 
-    key(surface, "v", "KeyV", { metaKey: true });
-    if (first === "native") paste(surface, "echo hi");
-    await read;
-    if (first === "clipboard") paste(surface, "echo hi");
+      key(surface, "v", "KeyV", { metaKey: true });
+      if (first === "native") paste(surface, "echo hi");
+      await vi.advanceTimersByTimeAsync(0);
+      await read;
+      if (first !== "native") paste(surface, "echo hi");
 
-    expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
-  });
+      expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
+      // Firefox and Safari answer a read with a focus-stealing Paste prompt.
+      expect(readText).toHaveBeenCalledTimes(first === "clipboard" ? 1 : 0);
+    },
+  );
 
   it.each(["V keyup", "blur", "Meta keyup without V keyup"])(
     "accepts a later identical menu paste after %s",
@@ -426,10 +439,12 @@ describe("GhosttyTerminalSurface visibility", () => {
       vi.stubGlobal("navigator", {
         platform: "MacIntel",
         clipboard: { readText: () => read },
+        permissions: { query: () => Promise.resolve({ state: "granted" }) },
       });
       const surface = await harness.create({ beforeKey: () => true });
 
       key(surface, "v", "KeyV", { metaKey: true });
+      await vi.advanceTimersByTimeAsync(0);
       await read;
       expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
       if (end === "blur") surface.input.dispatchEvent(new Event("blur"));
