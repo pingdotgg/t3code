@@ -786,6 +786,39 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect(ghost.unavailableReason).toMatch(/ghostDriver/);
       }).pipe(Effect.provide(layerTest)),
   );
+
+  it.live(
+    "rebuilds a proxied instance when the proxy changes and refuses one without a proxy",
+    () =>
+      Effect.gen(function* () {
+        const codexId = ProviderInstanceId.make("codex_proxied");
+        const entry = {
+          driver: ProviderDriverKind.make("codex"),
+          useProxy: true,
+          config: makeCodexConfig({ enabled: false }),
+        };
+        const { registry, mutator } = yield* makeProviderInstanceRegistry<CodexDriverEnv>({
+          drivers: [CodexDriver],
+          configMap: { [codexId]: { ...entry, proxy: { url: "http://a:8317", apiKey: "k" } } },
+        });
+        const first = yield* registry.getInstance(codexId);
+        expect(first).toBeDefined();
+
+        yield* mutator.reconcile({
+          [codexId]: { ...entry, proxy: { url: "http://b:8317", apiKey: "k" } },
+        });
+        const second = yield* registry.getInstance(codexId);
+        expect(second).toBeDefined();
+        expect(second).not.toBe(first);
+
+        // Running on the instance's own login instead would spend a different account.
+        yield* mutator.reconcile({ [codexId]: entry });
+        expect(yield* registry.getInstance(codexId)).toBeUndefined();
+        const [unavailable] = yield* registry.listUnavailable;
+        expect(unavailable?.instanceId).toBe(codexId);
+        expect(unavailable?.unavailableReason).toMatch(/no proxy/);
+      }).pipe(Effect.provide(layerTest)),
+  );
 });
 
 const DisabledByDefaultConfig = Schema.Struct({

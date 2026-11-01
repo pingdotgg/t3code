@@ -1,3 +1,5 @@
+import * as Scope from "effect/Scope";
+import type { ProviderProxyRoute } from "@t3tools/provider-core/server/providerProxy";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
@@ -153,6 +155,9 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import {
+  applyClaudeProxyEnvironment,
+  applyClaudeProxySettings,
+  writeClaudeProxySettingsFile,
   claudeSignedOutMessage,
   makeClaudeEnvironment,
   resolveClaudeHomePath,
@@ -4474,6 +4479,7 @@ function claudeProposedPlan(input: unknown): string | null {
 }
 
 export interface ClaudeAdapterV2Options {
+  readonly proxy?: ProviderProxyRoute | undefined;
   readonly instanceId: ProviderInstanceId;
   readonly settings: ClaudeSettings;
   readonly environment: NodeJS.ProcessEnv;
@@ -10240,9 +10246,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             cwd: turnInput.runtimePolicy.cwd,
             attachmentsDir,
             settings: adapterOptions.settings,
-            ...(launchArgSettings === undefined
+            ...(launchArgSettings === undefined && adapterOptions.proxy === undefined
               ? {}
-              : { sdkSettings: claudeSdkLaunchArgSettings(launchArgSettings) }),
+              : {
+                  sdkSettings: applyClaudeProxySettings(
+                    launchArgSettings === undefined
+                      ? {}
+                      : claudeSdkLaunchArgSettings(launchArgSettings),
+                    adapterOptions.proxy,
+                  ),
+                }),
             environment: claudeQueryEnvironment(
               adapterOptions.environment,
               turnInput.appThread,
@@ -10274,11 +10287,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")
             .pipe(Effect.orElseSucceed(() => turnInput.runtimePolicy.cwd));
+          const routedQueryOptions =
+            adapterOptions.proxy === undefined
+              ? queryOptions
+              : {
+                  ...queryOptions,
+                  settings: yield* writeClaudeProxySettingsFile(
+                    queryOptions.settings as ClaudeSdkSettings,
+                    adapterOptions.environment,
+                    turnInput.runtimePolicy.cwd,
+                  ).pipe(
+                    Effect.provideService(Scope.Scope, sessionScope),
+                    Effect.provideService(FileSystem.FileSystem, fileSystem),
+                    Effect.provideService(Path.Path, path),
+                  ),
+                };
           const querySession = yield* queryRunner
             .open({
               threadId: turnInput.threadId,
               providerSessionId: input.providerSessionId,
-              options: queryOptions,
+              options: routedQueryOptions,
             })
             .pipe(
               Effect.onError(() =>
@@ -11527,14 +11555,17 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
     hooks: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "onUsageLimits"> = {},
   ) {
-    const { instanceId, environment, enabled, config } = input;
+    const { instanceId, environment, enabled, config, proxy } = input;
     const fileSystem = yield* FileSystem.FileSystem;
     const hostEnvironment = yield* HostProcess.Environment;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const queryRunner = yield* ClaudeAgentSdkQueryRunner;
     const serverConfig = yield* ServerConfig.ServerConfig;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-    const baseEnvironment = yield* mergeProviderInstanceEnvironment(environment, hostEnvironment);
+    const baseEnvironment = applyClaudeProxyEnvironment(
+      yield* mergeProviderInstanceEnvironment(environment, hostEnvironment),
+      proxy,
+    );
     const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
@@ -11546,6 +11577,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       instanceId,
       settings: { ...config, enabled, binaryPath },
       environment: claudeEnvironment,
+      proxy,
       attachmentsDir: serverConfig.attachmentsDir,
       fileSystem,
       path,

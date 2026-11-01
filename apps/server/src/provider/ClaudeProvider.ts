@@ -36,10 +36,20 @@ import {
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
-import { hasClaudeManagedMcpConfig, makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
+import {
+  applyClaudeProxySettings,
+  writeClaudeProxySettingsFile,
+  hasClaudeManagedMcpConfig,
+  makeClaudeEnvironment,
+} from "./Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills, readClaudeSettingsBaseUrl } from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
+import {
+  type ProviderProxyRoute,
+  PROXY_AUTH_METADATA,
+  PROXY_LIMITS_MESSAGE,
+} from "@t3tools/provider-core/server/providerProxy";
 import {
   type ClaudeScopedLimitNames,
   claudeUsageResponseToLimits,
@@ -201,6 +211,7 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string | undefined;
   readonly managedMcpConfig: boolean;
+  readonly proxy?: ProviderProxyRoute | undefined;
 }): ClaudeQueryOptions {
   return {
     persistSession: false,
@@ -208,7 +219,7 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
     abortController: input.abortController,
     settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
     // Keep settings for slash-command discovery, but disable hooks so health checks do not run SessionStart repeatedly.
-    settings: { disableAllHooks: true },
+    settings: applyClaudeProxySettings({ disableAllHooks: true }, input.proxy),
     allowedTools: [],
     // Exclude filesystem MCP servers; omit strict mode when managed-mcp.json already excludes them and forbids the flag.
     mcpServers: {},
@@ -324,6 +335,7 @@ const probeClaudeCapabilities = (
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
   includeUsage = true,
+  proxy?: ProviderProxyRoute,
 ) => {
   const abort = new AbortController();
   return Effect.gen(function* () {
@@ -333,19 +345,29 @@ const probeClaudeCapabilities = (
       claudeEnvironment,
     );
     const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
+    const options = buildClaudeCapabilitiesProbeQueryOptions({
+      executablePath,
+      abortController: abort,
+      environment: claudeEnvironment,
+      cwd,
+      managedMcpConfig,
+      proxy,
+    });
+    const settings =
+      proxy === undefined
+        ? options.settings
+        : yield* writeClaudeProxySettingsFile(
+            options.settings as import("@anthropic-ai/claude-agent-sdk").Settings,
+            claudeEnvironment,
+            cwd,
+          );
     return yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
         // oxlint-disable-next-line require-yield -- never yields, so no prompt reaches the API
         prompt: (async function* (): AsyncGenerator<SDKUserMessage> {
           await waitForAbortSignal(abort.signal);
         })(),
-        options: buildClaudeCapabilitiesProbeQueryOptions({
-          executablePath,
-          abortController: abort,
-          environment: claudeEnvironment,
-          cwd,
-          managedMcpConfig,
-        }),
+        options: { ...options, ...(settings === undefined ? {} : { settings }) },
       });
       const init = await q.initializationResult();
       return { q, init };
@@ -398,6 +420,7 @@ const probeClaudeCapabilities = (
     Effect.tapError((error) =>
       Effect.logWarning("Claude capability probe failed.", { errorTag: error._tag }),
     ),
+    Effect.scoped,
   );
 };
 
@@ -426,6 +449,7 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   machineSnapshot: ServerProvider,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
+  proxy?: ProviderProxyRoute,
 ): Effect.fn.Return<ProviderWorkspaceSnapshot, never, FileSystem.FileSystem | Path.Path> {
   if (!claudeSettings.enabled) return machineSnapshot;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, environment);
@@ -433,7 +457,9 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   // A deleted worktree can never answer the probe. Pending would make clients rescan it forever.
   const cwdExists = yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true));
   const probeResult = cwdExists
-    ? yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false).pipe(Effect.result)
+    ? yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false, proxy).pipe(
+        Effect.result,
+      )
     : undefined;
   const capabilities =
     probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
@@ -459,6 +485,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   /** Shared with the adapter so turn events reuse the scoped-bucket names this probe saw. */
   scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>,
   resolveResetCredits?: (version: string) => Effect.Effect<ServerProviderResetCredits | undefined>,
+  routedThroughProxy = false,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -628,26 +655,32 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  // A proxy's ANTHROPIC_AUTH_TOKEN reads as an API key; the endpoint is what the token is for.
-  const authMetadata =
-    apiProviderAuthMetadata(capabilities.apiProvider) ??
-    (customApiEndpoint ? { type: "customEndpoint", label: "Custom API endpoint" } : undefined) ??
-    claudeAuthMetadata({
-      subscriptionType: capabilities.subscriptionType,
-      authMethod: capabilities.tokenSource,
-    });
+  const authMetadata = routedThroughProxy
+    ? PROXY_AUTH_METADATA
+    : (apiProviderAuthMetadata(capabilities.apiProvider) ??
+      (customApiEndpoint ? { type: "customEndpoint", label: "Custom API endpoint" } : undefined) ??
+      claudeAuthMetadata({
+        subscriptionType: capabilities.subscriptionType,
+        authMethod: capabilities.tokenSource,
+      }));
   const usageCheckedAt = capabilities.usageCheckedAt ?? checkedAt;
-  const usageLimits = !capabilities.usage
-    ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
-    : scopedLimitNames
-      ? yield* recordClaudeUsageResponse(scopedLimitNames, {
-          response: capabilities.usage,
-          checkedAt: usageCheckedAt,
-        })
-      : claudeUsageResponseToLimits({
-          response: capabilities.usage,
-          checkedAt: usageCheckedAt,
-        }).limits;
+  const usageLimits = routedThroughProxy
+    ? makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "unsupported",
+        message: PROXY_LIMITS_MESSAGE,
+      })
+    : !capabilities.usage
+      ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
+      : scopedLimitNames
+        ? yield* recordClaudeUsageResponse(scopedLimitNames, {
+            response: capabilities.usage,
+            checkedAt: usageCheckedAt,
+          })
+        : claudeUsageResponseToLimits({
+            response: capabilities.usage,
+            checkedAt: usageCheckedAt,
+          }).limits;
   const resetCredits =
     resolveResetCredits &&
     capabilities.subscriptionType &&

@@ -8,6 +8,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { type ClaudeSettings, TextGenerationError } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
+import type { ProviderProxyRoute } from "@t3tools/provider-core/server/providerProxy";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import {
   normalizeCliError,
@@ -30,6 +31,8 @@ import {
   scopeClaudeModelCatalog,
 } from "../provider/ClaudeModelCatalog.ts";
 import {
+  applyClaudeProxySettings,
+  writeClaudeProxySettingsFile,
   hasClaudeManagedMcpConfig,
   makeClaudeEnvironment,
 } from "../provider/Drivers/ClaudeHome.ts";
@@ -81,6 +84,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   modelCatalog: Effect.Effect<ClaudeModelCatalog> = Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
+  proxy?: ProviderProxyRoute,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -169,12 +173,15 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         : undefined;
     const fastMode =
       fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
-    const settings = {
-      disableAllHooks: true,
-      ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
-      ...(fastMode ? { fastMode: true } : {}),
-      ...(ultracode ? { ultracode: true } : {}),
-    };
+    const settings = applyClaudeProxySettings(
+      {
+        disableAllHooks: true,
+        ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
+        ...(fastMode ? { fastMode: true } : {}),
+        ...(ultracode ? { ultracode: true } : {}),
+      },
+      proxy,
+    );
     const settingsJson = yield* encodeJsonForOperation(
       operation,
       settings,
@@ -192,6 +199,14 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
                 ),
               )
           : cwd;
+      const settingsArgument =
+        proxy === undefined
+          ? settingsJson
+          : yield* writeClaudeProxySettingsFile(settings, claudeEnvironment, workingDirectory).pipe(
+              Effect.mapError((cause) =>
+                normalizeCliError("claude", operation, cause, "Failed to write proxy settings"),
+              ),
+            );
       const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
       const spawnCommand = yield* resolveSpawnCommand(
         claudeSettings.binaryPath || "claude",
@@ -205,7 +220,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection),
           ...(cliEffort ? ["--effort", cliEffort] : []),
           "--settings",
-          settingsJson,
+          settingsArgument,
           ...(investigate
             ? [
                 "--tools",

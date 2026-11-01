@@ -8,6 +8,7 @@ import {
   type UsageLimitSourceId,
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
+import { normalizeProviderProxyUrl } from "@t3tools/provider-core/server/providerProxy";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -44,6 +45,37 @@ function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   } catch {
     return fallback;
   }
+}
+
+export const PROVIDER_PROXY_SOURCE_ID = "provider-proxy" as UsageLimitSourceId;
+
+/** The routing proxy reports its accounts without a separate hub entry, unless one already points at it. */
+export function effectiveUsageLimitSources(
+  settings: ServerSettings,
+): Readonly<Record<string, UsageLimitSourceConfig>> {
+  const url = normalizeProviderProxyUrl(settings.providerProxy.url);
+  const { managementKey } = settings.providerProxy;
+  if (url === "" || managementKey === "") return settings.usageLimitSources;
+  const alreadyListed = Object.values(settings.usageLimitSources).some(
+    (source) =>
+      source.enabled &&
+      source.managementKey !== "" &&
+      normalizeProviderProxyUrl(source.url) === url,
+  );
+  // A hand-written source may already use the synthetic id; it keeps the slot.
+  if (alreadyListed || PROVIDER_PROXY_SOURCE_ID in settings.usageLimitSources) {
+    return settings.usageLimitSources;
+  }
+  return {
+    ...settings.usageLimitSources,
+    [PROVIDER_PROXY_SOURCE_ID]: {
+      kind: "cliproxy",
+      label: "Proxy",
+      url,
+      managementKey,
+      enabled: true,
+    },
+  };
 }
 
 /** @public */
@@ -89,9 +121,9 @@ export const make = Effect.gen(function* () {
     const settings = yield* settingsService.getSettings.pipe(
       Effect.orElseSucceed((): ServerSettings | null => null),
     );
-    const entries = Object.entries(settings?.usageLimitSources ?? {}).filter(
-      ([, config]) => config.enabled,
-    );
+    const entries = Object.entries(
+      settings === null ? {} : effectiveUsageLimitSources(settings),
+    ).filter(([, config]) => config.enabled);
     const snapshots = yield* Effect.forEach(
       entries,
       ([id, config]) => readSource(id as UsageLimitSourceId, config),
@@ -107,7 +139,7 @@ export const make = Effect.gen(function* () {
     const settings = yield* settingsService.getSettings.pipe(
       Effect.mapError(() => new UsageLimitSourceError({ detail: "Could not read hub settings." })),
     );
-    const config = settings.usageLimitSources[input.sourceId];
+    const config = effectiveUsageLimitSources(settings)[input.sourceId];
     if (!config?.enabled || !config.managementKey) {
       return yield* new UsageLimitSourceError({
         detail: "The usage limit source is missing or disabled.",
@@ -121,7 +153,7 @@ export const make = Effect.gen(function* () {
   }, refreshLock.withPermits(1));
 
   yield* settingsService.streamChanges.pipe(
-    Stream.map((settings) => settings.usageLimitSources),
+    Stream.map(effectiveUsageLimitSources),
     Stream.changes,
     Stream.runForEach(() => refresh),
     Effect.forkScoped,

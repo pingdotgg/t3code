@@ -56,6 +56,7 @@ import {
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
 import {
+  applyClaudeProxyEnvironment,
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
   resolveClaudeHomePath,
@@ -120,6 +121,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     environment,
     enabled,
     config,
+    proxy,
   }) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -134,7 +136,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     const modelCatalog = catalogService
       .current(DRIVER_KIND)
       .pipe(Effect.map(resolveClaudeModelCatalog));
-    const processEnv = yield* mergeProviderInstanceEnvironment(environment);
+    const processEnv = applyClaudeProxyEnvironment(
+      yield* mergeProviderInstanceEnvironment(environment),
+      proxy,
+    );
     const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER_KIND,
       instanceId,
@@ -178,6 +183,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         environment,
         enabled,
         config,
+        proxy,
       },
       { scopedLimitNames, onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
     ).pipe(
@@ -195,6 +201,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       effectiveConfig,
       processEnv,
       modelCatalog,
+      proxy,
     );
 
     // Per-instance capabilities cache: keyed on binary + resolved HOME so
@@ -203,7 +210,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     const lastGoodCapabilities = yield* Ref.make<ClaudeCapabilitiesProbe | undefined>(undefined);
     const capabilitiesProbeCache = yield* Cache.makeWith(
       () =>
-        probeClaudeCapabilities(effectiveConfig, processEnv, stateDir).pipe(
+        probeClaudeCapabilities(
+          effectiveConfig,
+          processEnv,
+          stateDir,
+          proxy === undefined,
+          proxy,
+        ).pipe(
           Effect.flatMap((capabilities) =>
             ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
               Effect.map((workspaceId) => ({
@@ -238,10 +251,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       {
         capacity: 1,
         timeToLive: (exit) =>
-          // Only fresh usage earns the TTL; failures, fallbacks and usage-less probes retry.
+          // Proxy probes skip native usage; successful initialization still earns the TTL.
           Exit.isSuccess(exit) &&
           exit.value._tag === "fresh" &&
-          exit.value.capabilities.usage !== undefined
+          (proxy !== undefined || exit.value.capabilities.usage !== undefined)
             ? CAPABILITIES_PROBE_TTL
             : Duration.zero,
       },
@@ -272,6 +285,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
                 ),
+              proxy !== undefined,
             ),
           ),
           Effect.tap((provider) =>
@@ -400,7 +414,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       snapshotForCwd: (cwd: string) =>
         snapshot.getSnapshot.pipe(
           Effect.flatMap((machineSnapshot) =>
-            probeClaudeWorkspaceSnapshot(effectiveConfig, machineSnapshot, cwd, processEnv),
+            probeClaudeWorkspaceSnapshot(effectiveConfig, machineSnapshot, cwd, processEnv, proxy),
           ),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),

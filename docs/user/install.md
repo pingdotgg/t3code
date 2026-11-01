@@ -196,6 +196,25 @@ instance can have its own environment variables, such as API keys or a custom
 base URL. Mark secret values as sensitive; after saving, T3 Code does not display
 their original values.
 
+### Route providers through a proxy
+
+A [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) server can serve Claude, Codex, and
+OpenCode from accounts it holds, and spread requests across several accounts. To use one, open
+**Settings → Providers → Proxy** on the environment that runs the agents. Enter the proxy's URL,
+and one of its API keys if it requires one. Add its management key to see its accounts under
+**Usage → Limits**. Then turn on **Use proxy** for each Claude, Codex, or OpenCode provider that
+should use it.
+
+A provider with **Use proxy** on never falls back to its own login. If the proxy is removed, the
+provider shows as unavailable until you add a proxy again or turn the switch off. Codex threads
+started through the proxy need it to continue. T3-managed ChatGPT sign-in and external OpenCode
+servers cannot use a proxy. While OpenCode uses the proxy, it offers only Anthropic and OpenAI
+models and runs without its plugins, because other providers and plugin logins such as ChatGPT
+would send requests around the proxy. This needs OpenCode 1.14.49 or newer, and any
+`OPENCODE_CONFIG_CONTENT` must be plain JSON. An OpenCode organization or managed config that
+points Anthropic or OpenAI elsewhere makes the provider unavailable. OpenCode 2 cannot use the
+proxy yet.
+
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
 [Antigravity](./providers-antigravity.md), [Pi](./providers-pi.md),

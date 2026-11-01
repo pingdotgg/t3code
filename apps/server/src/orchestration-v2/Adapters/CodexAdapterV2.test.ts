@@ -68,6 +68,7 @@ import * as Orchestrator from "../Orchestrator.ts";
 import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as CodexLaunchArgs from "../../provider/codexLaunchArgs.ts";
 import * as ModelManifest from "../../provider/ModelManifest.ts";
 import { resolveProviderCompatibility } from "../../provider/providerCompatibility.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
@@ -1142,6 +1143,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
     beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
+    modelProvider?: string,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1191,6 +1193,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_CODEX_SETTINGS,
         environment: {},
+        modelProvider,
         clientFactory,
         crypto: yield* Crypto.Crypto,
         fileSystem,
@@ -2410,6 +2413,80 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(resumed.nativeThreadRef?.nativeId, nativeThreadId);
         assert.equal(resumed.status, "idle");
         assert.equal(DateTime.toEpochMillis(resumed.updatedAt), 1782622450000);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("pins thread start and resume to the proxy provider when no model is resent", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "proxied-thread";
+        const modelProvider = CodexLaunchArgs.CODEX_PROXY_MODEL_PROVIDER;
+        const preamble = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId: "unused-turn",
+          prompt: "unused-prompt",
+        })
+          .slice(0, 5)
+          .map((entry) =>
+            entry.type === "expect_outbound" && entry.label === "thread/start"
+              ? {
+                  ...entry,
+                  frame: {
+                    id: 2,
+                    method: "thread/start",
+                    params: { modelProvider, config: CodexAdapterV2.CODEX_THREAD_CONFIG },
+                  },
+                }
+              : entry,
+          );
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "proxy-resume",
+            entries: [
+              ...preamble,
+              {
+                type: "expect_outbound",
+                label: "resume through the proxy",
+                frame: {
+                  id: 3,
+                  method: "thread/resume",
+                  params: {
+                    threadId: nativeThreadId,
+                    excludeTurns: true,
+                    modelProvider,
+                    config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "resume result",
+                frame: {
+                  id: 3,
+                  result: {
+                    thread: { id: nativeThreadId, updatedAt: 1782622450, turns: [] },
+                  },
+                },
+              },
+            ],
+          }),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          modelProvider,
+        );
+
+        const resumed = yield* harness.runtime.resumeThread({
+          providerThread: harness.providerThread,
+        });
+
+        assert.equal(resumed.nativeThreadRef?.nativeId, nativeThreadId);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

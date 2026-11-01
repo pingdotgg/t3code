@@ -185,6 +185,7 @@ export const OpenCodeDriver: ProviderDriver<
     environment,
     enabled,
     config,
+    proxy,
   }) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -194,7 +195,25 @@ export const OpenCodeDriver: ProviderDriver<
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const crypto = yield* Crypto.Crypto;
     const host = yield* ProviderHost.ProviderHost;
-    const processEnv = yield* mergeProviderInstanceEnvironment(environment);
+    // An external server owns its own provider config, so the proxy cannot apply there.
+    if (proxy !== undefined && config.serverUrl.trim() !== "") {
+      return yield* new ProviderDriverError({
+        driver: DRIVER_KIND,
+        instanceId,
+        detail: "An external OpenCode server cannot route through this environment's proxy.",
+      });
+    }
+    const mergedEnv = yield* mergeProviderInstanceEnvironment(environment);
+    // Dropping undecodable content would silently discard the user's agents and MCP servers.
+    if (proxy !== undefined && !OpenCodeRuntime.isPlainJsonOpenCodeConfig(mergedEnv)) {
+      return yield* new ProviderDriverError({
+        driver: DRIVER_KIND,
+        instanceId,
+        detail:
+          "OPENCODE_CONFIG_CONTENT must be plain JSON, without comments or trailing commas, to use the proxy.",
+      });
+    }
+    const processEnv = OpenCodeRuntime.applyOpenCodeProxyEnvironment(mergedEnv, proxy);
     const continuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER_KIND,
       instanceId,
@@ -252,6 +271,7 @@ export const OpenCodeDriver: ProviderDriver<
       environment,
       enabled,
       config,
+      proxy,
     }).pipe(
       Effect.mapError(
         (cause) =>
@@ -269,6 +289,7 @@ export const OpenCodeDriver: ProviderDriver<
       serverPassword: effectiveConfig.serverPassword,
       directory: host.paths.cwd,
       environment: processEnv,
+      proxied: proxy !== undefined,
     }).pipe(
       Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
       Effect.provideService(
@@ -339,6 +360,7 @@ export const OpenCodeDriver: ProviderDriver<
       enabled: effectiveConfig.enabled,
       serverUrl: effectiveConfig.serverUrl,
       environment: processEnv,
+      proxied: proxy !== undefined,
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, pathService),

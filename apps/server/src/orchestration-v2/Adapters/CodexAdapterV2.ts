@@ -118,7 +118,12 @@ import {
   shouldPersistProviderEvent,
 } from "../../provider/EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
+import {
+  applyCodexProxyRuntime,
+  CODEX_PROXY_MODEL_PROVIDER,
+  codexAppServerArgs,
+  resolveCodexLaunchArgs,
+} from "../../provider/codexLaunchArgs.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -1337,15 +1342,19 @@ function codexThreadRuntimeParams(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  readonly modelProvider?: string | undefined;
 }): {
   readonly cwd?: string;
   readonly model?: string;
+  readonly modelProvider?: string;
   readonly config: Readonly<Record<string, Schema.Json>>;
 } {
   const { mcpSession } = input;
   return {
     ...(input.runtimePolicy?.cwd == null ? {} : { cwd: input.runtimePolicy.cwd }),
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
+    // Without it, a resume reuses the provider stored in the rollout and bypasses the proxy.
+    ...(input.modelProvider === undefined ? {} : { modelProvider: input.modelProvider }),
     config: {
       ...CODEX_THREAD_CONFIG,
       ...(mcpSession === undefined
@@ -1562,7 +1571,13 @@ export type CodexAdapterV2DriverEnv =
   | ServerConfig;
 
 export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapterV2")(function* (
-  { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
+  {
+    instanceId,
+    environment,
+    enabled,
+    config,
+    proxy,
+  }: ProviderAdapterDriverCreateInput<CodexSettings>,
   hooks: Pick<CodexAdapterV2Options, "onUsageLimits" | "resolveRuntime" | "compatibility"> = {},
 ) {
   const clientFactory = yield* CodexAppServerClientFactory;
@@ -1586,8 +1601,13 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
     ),
   );
 
+  const routed = applyCodexProxyRuntime(
+    config,
+    yield* mergeProviderInstanceEnvironment(environment, hostEnvironment),
+    proxy,
+  );
   const settings = {
-    ...config,
+    ...routed.config,
     enabled,
     binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
     homePath: homeLayout.effectiveHomePath ?? "",
@@ -1596,7 +1616,8 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   return yield* makeCodexAdapterV2({
     instanceId,
     settings,
-    environment: yield* mergeProviderInstanceEnvironment(environment, hostEnvironment),
+    environment: routed.environment,
+    ...(proxy === undefined ? {} : { modelProvider: CODEX_PROXY_MODEL_PROVIDER }),
     clientFactory,
     crypto,
     fileSystem,
@@ -1613,6 +1634,8 @@ export interface CodexAdapterV2Options {
   readonly environment: NodeJS.ProcessEnv;
   readonly clientFactory: CodexAppServerClientFactoryShape;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
+  /** Pins thread start and resume to this Codex model provider. */
+  readonly modelProvider?: string | undefined;
   readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
   readonly compatibility?: (
     version: string,
@@ -3045,6 +3068,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         .request("thread/resume", {
                           threadId: input.nativeThreadId,
                           excludeTurns: true,
+                          ...(adapterOptions.modelProvider === undefined
+                            ? {}
+                            : { modelProvider: adapterOptions.modelProvider }),
                         })
                         .pipe(Effect.flatMap(decodeCodexChildModel)),
                   ),
@@ -6957,6 +6983,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 client.request(
                   "thread/start",
                   codexThreadRuntimeParams({
+                    modelProvider: adapterOptions.modelProvider,
                     mcpSession,
                     modelSelection: threadInput.modelSelection,
                     runtimePolicy: threadInput.runtimePolicy,
@@ -6989,6 +7016,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 threadId: nativeThreadId,
                 excludeTurns: true,
                 ...codexThreadRuntimeParams({
+                  modelProvider: adapterOptions.modelProvider,
                   mcpSession: yield* readMcpSession(
                     threadInput.threadId ?? threadInput.providerThread.appThreadId,
                   ),
@@ -7776,6 +7804,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   threadId,
                   excludeTurns: true,
                   ...codexThreadRuntimeParams({
+                    modelProvider: adapterOptions.modelProvider,
                     mcpSession: yield* readMcpSession(threadInput.providerThread.appThreadId),
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
@@ -7828,6 +7857,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       ? {}
                       : { lastTurnId: boundary.lastTurnId }),
                     ...codexThreadRuntimeParams({
+                      modelProvider: adapterOptions.modelProvider,
                       mcpSession: yield* mcpSessions.read(threadInput.targetThreadId),
                       ...(threadInput.modelSelection === undefined
                         ? {}

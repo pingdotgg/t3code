@@ -31,6 +31,11 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
+import {
+  providerProxyApiUrl,
+  providerProxyToken,
+  type ProviderProxyRoute,
+} from "@t3tools/provider-core/server/providerProxy";
 import { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshotProbe";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import { collectStreamAsString } from "@t3tools/provider-core/server/snapshotProbe";
@@ -40,9 +45,24 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
+const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
 
 export const MINIMUM_OPENCODE_VERSION = "1.14.19";
+// Older servers load built-in plugins despite OPENCODE_DISABLE_DEFAULT_PLUGINS, and a stored ChatGPT
+// login's plugin would send requests around the proxy.
+const MINIMUM_PROXIED_OPENCODE_VERSION = "1.14.49";
+
+// T3's own marker: OpenCode's flags may already be set by the user without a proxy.
+const PROXIED_MARKER = "T3CODE_OPENCODE_PROXIED";
+
+/** True only for an environment built by applyOpenCodeProxyEnvironment. */
+const isOpenCodeProxied = (environment: NodeJS.ProcessEnv | undefined): boolean =>
+  environment?.[PROXIED_MARKER] === "1";
+
+/** The oldest server a spawn may accept, given its environment. */
+export const minimumOpenCodeVersionFor = (environment: NodeJS.ProcessEnv | undefined): string =>
+  isOpenCodeProxied(environment) ? MINIMUM_PROXIED_OPENCODE_VERSION : MINIMUM_OPENCODE_VERSION;
 const OPENCODE_HEALTH_TIMEOUT = "5 seconds";
 
 const OpenCodeHealthSchema = Schema.Struct({
@@ -60,6 +80,92 @@ function resolveOpenCodeConfigContent(
     inheritedEnvironment.OPENCODE_CONFIG_CONTENT ??
     OPENCODE_EMPTY_CONFIG_CONTENT
   );
+}
+
+const decodeOpenCodeConfigObject = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+// OpenCode treats empty content as unset.
+const decodeRequestedOpenCodeConfig = (environment: NodeJS.ProcessEnv | undefined) => {
+  const content = resolveOpenCodeConfigContent(environment, {});
+  return decodeOpenCodeConfigObject(
+    content.trim() === "" ? OPENCODE_EMPTY_CONFIG_CONTENT : content,
+  );
+};
+const asRecord = (value: unknown): Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
+// The SDKs apply configured headers after the key, so a direct credential would reach the proxy.
+const AUTH_HEADER_PATTERN = /^(authorization|proxy-authorization|x-api-key|api-key)$/i;
+const withoutAuthHeaders = (headers: unknown) =>
+  Object.fromEntries(
+    Object.entries(asRecord(headers)).filter(([name]) => !AUTH_HEADER_PATTERN.test(name)),
+  );
+
+/** OpenCode accepts JSONC here, but the proxy override can only merge into plain JSON. */
+export const isPlainJsonOpenCodeConfig = (environment: NodeJS.ProcessEnv): boolean =>
+  Option.isSome(decodeRequestedOpenCodeConfig(environment));
+
+/**
+ * Points OpenCode's built-in Anthropic and OpenAI providers at the proxy. Their model catalogs
+ * stay intact, and the user's own config content survives around the override.
+ */
+export function applyOpenCodeProxyEnvironment(
+  environment: NodeJS.ProcessEnv,
+  proxy: ProviderProxyRoute | undefined,
+): NodeJS.ProcessEnv {
+  if (proxy === undefined) return environment;
+  const base: Readonly<Record<string, unknown>> = Option.getOrElse(
+    decodeRequestedOpenCodeConfig(environment),
+    () => ({}),
+  );
+  const providers = asRecord(base.provider);
+  const routed = (id: string) => {
+    const provider = asRecord(providers[id]);
+    // A configured authToken is a direct credential, and the Anthropic SDK rejects it next to apiKey.
+    const { authToken: _authToken, ...options } = asRecord(provider.options);
+    return {
+      ...provider,
+      options: {
+        ...options,
+        ...("headers" in options ? { headers: withoutAuthHeaders(options.headers) } : {}),
+        baseURL: providerProxyApiUrl(proxy),
+        apiKey: providerProxyToken(proxy),
+      },
+      ...("models" in provider
+        ? {
+            models: Object.fromEntries(
+              Object.entries(asRecord(provider.models)).map(([modelId, model]) => {
+                const entry = asRecord(model);
+                return [
+                  modelId,
+                  "headers" in entry
+                    ? { ...entry, headers: withoutAuthHeaders(entry.headers) }
+                    : model,
+                ];
+              }),
+            ),
+          }
+        : {}),
+    };
+  };
+  const content = encodeUnknownJsonString({
+    ...base,
+    // Any other configured provider would send turns, and spend, around the proxy.
+    enabled_providers: ["anthropic", "openai"],
+    provider: { ...providers, anthropic: routed("anthropic"), openai: routed("openai") },
+  });
+  // A stored ChatGPT login attaches the built-in Codex plugin, whose fetch rewrites requests to
+  // chatgpt.com after any config override; user plugins such as Claude OAuth do the same.
+  return {
+    ...environment,
+    OPENCODE_CONFIG_CONTENT: content,
+    OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
+    [PROXIED_MARKER]: "1",
+    OPENCODE_PURE: "1",
+  };
 }
 
 export function resolveOpenCodeServerPassword(
@@ -159,6 +265,7 @@ export const runOpenCodeSdk = <A>(
 
 export const verifyOpenCodeServerVersion = Effect.fn("verifyOpenCodeServerVersion")(function* (
   client: OpencodeClient,
+  minimumVersion: string = MINIMUM_OPENCODE_VERSION,
 ) {
   const healthOption = yield* runOpenCodeSdk("global.health", (signal) =>
     client.global.health({ signal }),
@@ -186,13 +293,79 @@ export const verifyOpenCodeServerVersion = Effect.fn("verifyOpenCodeServerVersio
       detail: `OpenCode server returned an invalid version. T3 Code requires OpenCode v${MINIMUM_OPENCODE_VERSION} or newer.`,
     });
   }
-  if (compareSemverVersions(health.version, MINIMUM_OPENCODE_VERSION) < 0) {
+  if (compareSemverVersions(health.version, minimumVersion) < 0) {
     return yield* new OpenCodeRuntimeError({
       operation: "global.health",
-      detail: `OpenCode v${health.version} is too old. Upgrade to v${MINIMUM_OPENCODE_VERSION} or newer.`,
+      detail: `OpenCode v${health.version} is too old. Upgrade to v${minimumVersion} or newer.`,
     });
   }
   return health.version;
+});
+
+const PROXY_ROUTED_OPENCODE_PROVIDERS = ["anthropic", "openai"] as const;
+
+const routedProvider = (config: unknown, providerId: string) =>
+  asRecord(asRecord(asRecord(config).provider)[providerId]);
+
+const hasAuthHeader = (headers: unknown) =>
+  Object.keys(asRecord(headers)).some((name) => AUTH_HEADER_PATTERN.test(name));
+
+/** The provider sends exactly the proxy's endpoint and token, with no other credential. */
+const routesOnlyToProxy = (effective: unknown, requested: unknown, providerId: string) => {
+  const provider = routedProvider(effective, providerId);
+  const options = asRecord(provider.options);
+  const wanted = asRecord(routedProvider(requested, providerId).options);
+  return (
+    options.baseURL === wanted.baseURL &&
+    options.apiKey === wanted.apiKey &&
+    !("authToken" in options) &&
+    !hasAuthHeader(options.headers) &&
+    Object.values(asRecord(provider.models)).every(
+      (model) => !hasAuthHeader(asRecord(model).headers),
+    )
+  );
+};
+
+/**
+ * Organization and managed configs merge after OPENCODE_CONFIG_CONTENT and can point a routed
+ * provider elsewhere, so a proxied server must prove its effective endpoints before use.
+ */
+export const verifyOpenCodeProxyRouting = Effect.fn("verifyOpenCodeProxyRouting")(function* (
+  client: OpencodeClient,
+  environment: NodeJS.ProcessEnv | undefined,
+) {
+  if (!isOpenCodeProxied(environment)) return;
+  const requested = Option.getOrElse(decodeRequestedOpenCodeConfig(environment), () => ({}));
+  const effectiveOption = yield* runOpenCodeSdk("config.get", (signal) =>
+    client.config.get(undefined, { signal }),
+  ).pipe(Effect.timeoutOption(OPENCODE_HEALTH_TIMEOUT));
+  if (Option.isNone(effectiveOption)) {
+    return yield* new OpenCodeRuntimeError({
+      operation: "config.get",
+      detail: "Timed out while checking that OpenCode routes through the proxy.",
+    });
+  }
+  const effective = effectiveOption.value;
+  const enabled = asRecord(effective.data).enabled_providers;
+  const routedOnly =
+    Array.isArray(enabled) &&
+    enabled.length > 0 &&
+    enabled.every((id) => (PROXY_ROUTED_OPENCODE_PROVIDERS as ReadonlyArray<unknown>).includes(id));
+  if (!routedOnly) {
+    return yield* new OpenCodeRuntimeError({
+      operation: "config.get",
+      detail:
+        "OpenCode enables providers the proxy does not route, likely from an organization or managed config. Remove that override or turn off Use proxy.",
+    });
+  }
+  for (const providerId of PROXY_ROUTED_OPENCODE_PROVIDERS) {
+    if (!routesOnlyToProxy(effective.data, requested, providerId)) {
+      return yield* new OpenCodeRuntimeError({
+        operation: "config.get",
+        detail: `OpenCode's ${providerId} provider uses an endpoint or credential other than the proxy's, likely from an organization or managed config. Remove that override or turn off Use proxy.`,
+      });
+    }
+  }
 });
 
 export interface OpenCodeCommandResult {
@@ -685,6 +858,18 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
             directory: input.directory,
             ...(serverPassword !== undefined ? { serverPassword } : {}),
           }),
+          minimumOpenCodeVersionFor(input.environment),
+        ).pipe(
+          Effect.tap(() =>
+            verifyOpenCodeProxyRouting(
+              createOpenCodeSdkClient({
+                baseUrl: url,
+                directory: input.directory,
+                ...(serverPassword !== undefined ? { serverPassword } : {}),
+              }),
+              input.environment,
+            ),
+          ),
         )
     );
 
