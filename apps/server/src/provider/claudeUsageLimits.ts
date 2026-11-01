@@ -47,8 +47,15 @@ export const makeClaudeScopedLimitNames = Ref.make<ClaudeScopedLimitNames>({
   overageIncluded: undefined,
 });
 
+const SCOPED_WINDOW_PREFIX = "seven_day_";
+
 function scopedWindowId(displayName: string): string {
-  return `seven_day_${displayName.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
+  return `${SCOPED_WINDOW_PREFIX}${displayName.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
+}
+
+/** Model-scoped allowances leave the account usable for other models. */
+export function isClaudeModelScopedWindow(window: Pick<ServerProviderUsageWindow, "id">): boolean {
+  return window.id.startsWith(SCOPED_WINDOW_PREFIX);
 }
 
 function scopedWindow(

@@ -35,6 +35,7 @@ import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3too
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import { UsageLimitResetFallback } from "../usage/UsageLimitSources.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -339,6 +340,7 @@ export const layer: Layer.Layer<
     const analytics = yield* ProviderTurnAnalytics;
     const agentScope = yield* AgentScope;
     const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+    const usageLimitResets = yield* UsageLimitResetFallback;
     const scope = yield* Effect.scope;
     const completedTurnAnalytics = new Set<string>();
 
@@ -711,9 +713,18 @@ export const layer: Layer.Layer<
                 return dismissed;
               }
               const occurredAt = yield* DateTime.now;
-              const failure = (yield* agentScope.oomKilled(input.threadId))
+              const reported = (yield* agentScope.oomKilled(input.threadId))
                 ? { ...input.event.failure, message: "Killed: out of memory.", code: "oom_kill" }
                 : input.event.failure;
+              const fallbackResetAt =
+                reported.class === "usage_limit" && reported.resetAt == null
+                  ? yield* usageLimitResets.resetAt({
+                      instanceId: input.providerInstanceId,
+                      driver: input.event.driver,
+                    })
+                  : null;
+              const failure =
+                fallbackResetAt === null ? reported : { ...reported, resetAt: fallbackResetAt };
               return [
                 ...dismissed,
                 yield* makeDomainEvent(input, {
