@@ -202,28 +202,26 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
         const body = object(parsed);
         if ("error" in body || "message" in body || "code" in body)
           return yield* invalid("Account usage error response");
+        // Cursor's JSON omits empty fields, so an idle slice answers `{}`.
+        const data = body.data ?? [];
         const pagination = body.pagination ?? {};
-        if (
-          !Array.isArray(body.data) ||
-          typeof pagination !== "object" ||
-          Array.isArray(pagination)
-        )
+        if (!Array.isArray(data) || typeof pagination !== "object" || Array.isArray(pagination))
           return yield* invalid("Invalid account usage page");
         const nextCursor = object(pagination).nextCursor ?? undefined;
         if (nextCursor !== undefined && (typeof nextCursor !== "string" || !nextCursor))
           return yield* invalid("Invalid account usage page");
-        return { items: body.data as unknown[], nextCursor };
+        return { items: data as unknown[], nextCursor };
       },
       Effect.timeoutOrElse({
         duration: Duration.seconds(10),
         orElse: () => invalid("Account usage request timed out"),
       }),
     );
+    let pageSize = PAGE_SIZE;
     const readSlice = Effect.fn("CursorAccountUsage.readSlice")(function* (startMs: number) {
       const endMs = Math.min(startMs + SLICE_MS, endDate);
       const items: unknown[] = [];
       const cursors = new Set<string>();
-      let pageSize = PAGE_SIZE;
       let cursor: string | undefined;
       for (;;) {
         const page = yield* readPage(startMs, endMs, pageSize, cursor);

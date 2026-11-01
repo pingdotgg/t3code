@@ -189,6 +189,7 @@ describe("Cursor account history", () => {
     Effect.gen(function* () {
       const { authPath } = yield* writeAuth(demoToken);
       for (const body of [
+        {},
         { data: [] },
         { data: [], pagination: {} },
         { data: [], pagination: { nextCursor: null } },
@@ -207,7 +208,6 @@ describe("Cursor account history", () => {
         assert.isFalse(result.missing);
       }
       for (const body of [
-        {},
         { error: "upstream error" },
         { data: [], error: "upstream error" },
         { message: "Unauthorized" },
@@ -452,15 +452,31 @@ describe("Cursor account billing items", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("does not present a billing response without items as empty history", () =>
+  it.effect("keeps the days around an idle day Cursor answers with an empty body", () =>
     Effect.gen(function* () {
       const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
       const { authPath } = yield* writeAuth(accessToken);
-      const result = yield* readAccountUsage(authPath, 0, 1781000000000, async () =>
-        Response.json({}),
+      const result = yield* readAccountUsage(
+        authPath,
+        Date.parse("2026-11-01T00:00:00Z"),
+        Date.parse("2026-11-04T00:00:00Z"),
+        async (request) => {
+          const params = billingItemsRequest(request);
+          // Cursor still answers the old usage-events endpoint, with an empty body.
+          if (params === null) return Response.json({});
+          const day = params.get("startTime")?.slice(0, 10);
+          return day === "2026-11-02"
+            ? Response.json({})
+            : Response.json({
+                data: [billingItem(`${day}T12:00:00.000Z`, { "completion-text-tokens": "5" })],
+              });
+        },
       );
-      assert.isNotNull(result.error, "a response without billing items read as empty history");
-      assert.deepStrictEqual(result.records, []);
+      assert.isNull(result.error);
+      assert.deepStrictEqual(
+        result.records.map((record) => record.timestampMs),
+        [Date.parse("2026-11-01T12:00:00.000Z"), Date.parse("2026-11-03T12:00:00.000Z")],
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
