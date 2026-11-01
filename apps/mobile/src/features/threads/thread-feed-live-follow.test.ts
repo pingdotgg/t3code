@@ -8,6 +8,7 @@ import {
   resolveThreadFeedSubmissionAnchor,
   resolveThreadWorkGroupInitialScroll,
   shouldFollowThreadWorkGroupAppend,
+  shouldShowThreadFeedScrollToEnd,
 } from "./thread-feed-live-follow";
 
 describe("tool-group scroll restoration", () => {
@@ -196,6 +197,17 @@ describe("resolveThreadFeedLiveFollow", () => {
         userScrollSessionActive: true,
       }),
     ).toBe(false);
+  });
+});
+
+describe("shouldShowThreadFeedScrollToEnd", () => {
+  it.each([
+    { endFollowEnabled: false, isAtEnd: false, expected: true },
+    { endFollowEnabled: false, isAtEnd: true, expected: false },
+    { endFollowEnabled: true, isAtEnd: false, expected: false },
+    { endFollowEnabled: true, isAtEnd: true, expected: false },
+  ])("shows only when follow is paused away from the end: %j", ({ expected, ...state }) => {
+    expect(shouldShowThreadFeedScrollToEnd(state)).toBe(expected);
   });
 });
 
