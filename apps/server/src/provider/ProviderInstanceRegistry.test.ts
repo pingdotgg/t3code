@@ -360,6 +360,24 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live("lists a blocked driver's instances as unavailable without running them", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex");
+      const reason = "Example Corp's policy does not allow the Codex provider.";
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [CodexDriver],
+        configMap: { [instanceId]: { driver: ProviderDriverKind.make("codex") } },
+        blockedReason: (driver) => (driver === "codex" ? reason : undefined),
+      });
+
+      expect(yield* registry.getInstance(instanceId)).toBeUndefined();
+      const [unavailable] = yield* registry.listUnavailable;
+      expect(unavailable?.instanceId).toBe(instanceId);
+      expect(unavailable?.availability).toBe("unavailable");
+      expect(unavailable?.unavailableReason).toBe(reason);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live("runs Codex and Claude readiness probes from configured tilde paths", () =>
     Effect.gen(function* () {
       if (yield* HostProcess.isWindows) return;

@@ -47,6 +47,7 @@ export const RelayClientInstallFailureReasonSchema = Schema.Literals([
   "download_failed",
   "invalid_checksum",
   "install_locked",
+  "managed_by_policy",
   "override_missing",
   "unsupported_platform",
   "validation_failed",

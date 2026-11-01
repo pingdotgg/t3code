@@ -17,8 +17,12 @@ and modes you choose in a draft keep their permissions.
 | **Auto**              | Uses the provider's automatic review to approve routine actions and ask about others. |
 | **Full access**       | Allows commands and edits without approval prompts.                                   |
 
+An administrator can cap the modes available on a machine with a
+[managed policy](./managed-policy.md#permission-modes); modes above the cap show who manages them.
+
 Approve or reject requests in the conversation to let the agent continue. Permission modes do
-not prevent the agent from asking questions about the task.
+not prevent the agent from asking questions about the task. Subagent approval requests appear in
+the parent conversation with the subagent's name, so you can respond without switching threads.
 
 ## Provider differences
 
@@ -41,7 +45,9 @@ ACP Registry agents run their own tools in their own mode; T3 Code answers their
 by the permission mode. See [ACP Registry permissions](./providers-acp.md#permissions-and-terminals).
 
 Claude can still ask in **Full access** when its settings disable bypass permissions or require
-approval for an action.
+approval for an action. Dangerous-removal safety checks in bypass mode reject the command with
+the original warning. Claude can use a safe rewrite when the warning supplies one; otherwise it
+continues without the removal and tells you what it skipped.
 While a Claude approval is pending, type a text reply to decline that request and give feedback
 directly to the agent that asked, including a subagent. Other pending requests stay unanswered.
 
