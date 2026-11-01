@@ -201,10 +201,10 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
       ),
     );
 
-  const swept = sweepStalePendingAttachments({
-    attachmentsDir: derivedPaths.attachmentsDir,
-    nowMs: yield* Clock.currentTimeMillis,
-  });
+  const nowMs = yield* Clock.currentTimeMillis;
+  const swept = yield* Effect.promise(() =>
+    sweepStalePendingAttachments({ attachmentsDir: derivedPaths.attachmentsDir, nowMs }),
+  );
   if (swept.deleted > 0) {
     yield* Effect.logInfo("Removed expired attachment uploads.", { deleted: swept.deleted });
   }

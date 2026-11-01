@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import type { ChatAttachment } from "@t3tools/contracts";
@@ -254,13 +255,13 @@ export function planAttachmentClaim(input: {
   };
 }
 
-export function sweepStalePendingAttachments(input: {
+export async function sweepStalePendingAttachments(input: {
   readonly attachmentsDir: string;
   readonly nowMs: number;
-}): { readonly deleted: number } {
+}): Promise<{ readonly deleted: number }> {
   let entries: string[];
   try {
-    entries = NodeFS.readdirSync(input.attachmentsDir);
+    entries = await NodeFSP.readdir(input.attachmentsDir);
   } catch {
     return { deleted: 0 };
   }
@@ -289,8 +290,8 @@ export function sweepStalePendingAttachments(input: {
     }
     try {
       const maxAgeMs = isPartial ? PARTIAL_UPLOAD_MAX_AGE_MS : PENDING_ATTACHMENT_MAX_AGE_MS;
-      if (input.nowMs - NodeFS.statSync(resolved).mtimeMs > maxAgeMs) {
-        NodeFS.unlinkSync(resolved);
+      if (input.nowMs - (await NodeFSP.stat(resolved)).mtimeMs > maxAgeMs) {
+        await NodeFSP.unlink(resolved);
         deleted += 1;
       }
     } catch {
