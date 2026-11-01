@@ -7,6 +7,7 @@ import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Switch } from "../ui/switch";
 import { SettingsRow } from "./settingsLayout";
+import { useOptionalSettingsScope } from "./SettingsScopeContext";
 
 export function ProductAnalyticsControl({
   environmentId,
@@ -21,9 +22,11 @@ export function ProductAnalyticsControl({
   const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: true });
   const [pending, setPending] = useState(false);
+  const scope = useOptionalSettingsScope()?.scope;
 
   return (
     <SettingsRow
+      serverScoped={scope?.kind === "project" || scope?.kind === "checkout"}
       title={`Share product analytics · ${label}`}
       description={
         supported
