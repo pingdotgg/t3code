@@ -88,6 +88,16 @@ describe("planClaudeAccountSave", () => {
         },
       },
     });
+    expect(
+      planClaudeAccountSave({
+        providerInstances: { [work]: { driver: claude, config: { homePath: "~/.claude-work" } } },
+        policy: undefined,
+        instanceId: work,
+        draft: { name: "", configDir: "" },
+      }),
+    ).toEqual({
+      mutation: { operation: "upsert", instanceId: work, instance: { driver: claude } },
+    });
   });
 
   it("refuses instances the managed policy pins", () => {
