@@ -10,6 +10,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as NodePath from "node:path";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
+import { parseGitRemoteEntries } from "@t3tools/shared/git";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
@@ -519,15 +520,13 @@ export const make = Effect.gen(function* () {
       if (input.host) {
         const matchingUrls = [
           ...new Set(
-            result.stdout.split("\n").flatMap((line) => {
-              // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
-              const url = /^\S+\s+(https?:\/\/\S+)\s+\(fetch\)(?:\s+\[[^\]]+\])?$/.exec(
-                line.trim(),
-              )?.[1];
-              return url && parseForgejoRemote(url)?.host === input.host?.toLowerCase()
+            parseGitRemoteEntries(result.stdout).flatMap(({ url, direction }) =>
+              direction === "fetch" &&
+              /^https?:\/\//.test(url) &&
+              parseForgejoRemote(url)?.host === input.host?.toLowerCase()
                 ? [url]
-                : [];
-            }),
+                : [],
+            ),
           ),
         ];
         const origins = [...new Set(matchingUrls.map((url) => new URL(url).origin))];

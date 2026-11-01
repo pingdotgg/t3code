@@ -36,6 +36,7 @@ import {
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
 import { isMissingExecutable } from "@t3tools/source-control-core/server/discovery";
+import { parseGitRemoteEntries } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   makeGitVcsDriverCore,
@@ -489,24 +490,7 @@ function parseGitRemoteVerboseOutput(
   output: string,
 ): Map<string, { url?: string; pushUrl?: string }> {
   const remotes = new Map<string, { url?: string; pushUrl?: string }>();
-  for (const line of output.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) {
-      continue;
-    }
-
-    // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
-    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(trimmed);
-    if (!match) {
-      continue;
-    }
-
-    const name = match[1];
-    const url = match[2];
-    const direction = match[3];
-    if (!name || !url || !direction) {
-      continue;
-    }
+  for (const { name, url, direction } of parseGitRemoteEntries(output)) {
     const remote = remotes.get(name) ?? {};
     if (direction === "fetch") {
       remote.url = url;
