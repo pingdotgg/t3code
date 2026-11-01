@@ -15,10 +15,12 @@ class TerminalInputConnectionTest {
   private val input = EditText(RuntimeEnvironment.getApplication())
   private val sentText = TerminalSentText()
   private val deletes = mutableListOf<Int>()
+  private var writable = true
   private val connection = TerminalInputConnection(
     input.onCreateInputConnection(EditorInfo())!!,
     sentText,
-  ) { deletes += it }
+    { writable },
+  ) { if (writable) deletes += it }
 
   private fun type(text: String) {
     connection.commitText(text, 1)
@@ -43,6 +45,22 @@ class TerminalInputConnectionTest {
     connection.deleteSurroundingText(1, 0)
 
     assertEquals(listOf(1, 1), deletes)
+
+    for (codePoints in listOf(false, true)) {
+      deletes.clear()
+      type("a😀")
+      writable = false
+      if (codePoints) {
+        connection.deleteSurroundingTextInCodePoints(1, 0)
+      } else {
+        connection.deleteSurroundingText(2, 0)
+      }
+      writable = true
+      connection.deleteSurroundingText(2, 0)
+      connection.deleteSurroundingText(1, 0)
+
+      assertEquals(listOf(1, 1), deletes)
+    }
 
     deletes.clear()
     type("a😀")

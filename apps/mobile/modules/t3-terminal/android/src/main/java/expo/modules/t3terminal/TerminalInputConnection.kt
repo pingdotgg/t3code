@@ -47,15 +47,20 @@ internal class TerminalSentText {
 internal class TerminalInputConnection(
   target: InputConnection,
   private val sentText: TerminalSentText,
+  private val canTrackDeletes: () -> Boolean,
   private val sendDeletes: (count: Int) -> Unit
 ) : InputConnectionWrapper(target, true) {
   override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
-    if (beforeLength > 0) forwardDeletes(sentText.removeUnits(beforeLength))
+    if (beforeLength > 0 && canTrackDeletes()) {
+      forwardDeletes(sentText.removeUnits(beforeLength))
+    }
     return super.deleteSurroundingText(beforeLength, afterLength)
   }
 
   override fun deleteSurroundingTextInCodePoints(beforeLength: Int, afterLength: Int): Boolean {
-    if (beforeLength > 0) forwardDeletes(sentText.removeCodePoints(beforeLength))
+    if (beforeLength > 0 && canTrackDeletes()) {
+      forwardDeletes(sentText.removeCodePoints(beforeLength))
+    }
     return super.deleteSurroundingTextInCodePoints(beforeLength, afterLength)
   }
 

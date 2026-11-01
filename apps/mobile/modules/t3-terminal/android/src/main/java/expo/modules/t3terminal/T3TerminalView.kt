@@ -31,7 +31,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? =
       super.onCreateInputConnection(outAttrs)?.let { connection ->
-        TerminalInputConnection(connection, sentText) { count ->
+        TerminalInputConnection(connection, sentText, { !readOnly }) { count ->
           if (!readOnly) onInput(mapOf("data" to "\u007F".repeat(count)))
         }
       }
