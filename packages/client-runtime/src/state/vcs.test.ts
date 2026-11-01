@@ -663,4 +663,18 @@ describe("resolveQuickAction", () => {
       ),
     ).toEqual(commit);
   });
+
+  it("offers Create PR for a pushed branch ahead of the default branch with no PR", () => {
+    const pushed = status({ aheadOfDefaultCount: 1 });
+    expect(resolveQuickAction(pushed, false)).toEqual({
+      label: "Create PR",
+      disabled: false,
+      kind: "run_action",
+      action: "create_pr",
+    });
+    expect(resolveQuickAction(pushed, false, true)).toMatchObject({
+      kind: "show_hint",
+      hint: "Branch is up to date. No action needed.",
+    });
+  });
 });
