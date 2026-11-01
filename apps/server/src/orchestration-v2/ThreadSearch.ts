@@ -48,6 +48,14 @@ const latestUserMessageAt = (sql: SqlClient.SqlClient) => sql`(
   LIMIT 1
 )`;
 
+// A foreign build may store the override as a JSON boolean, which json_extract reads as 1.
+const normalizedSettledOverride = (sql: SqlClient.SqlClient) => sql`(
+  CASE
+    WHEN json_type(threads.payload_json, '$.settledOverride') = 'true' THEN 'settled'
+    ELSE json_extract(threads.payload_json, '$.settledOverride')
+  END
+)`;
+
 export class ThreadSearchError extends Schema.TaggedError<ThreadSearchError>()(
   "ThreadSearchError",
   {
@@ -365,7 +373,7 @@ export const make = Effect.gen(function* () {
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
         AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1
-        AND json_extract(threads.payload_json, '$.settledOverride') = 'settled'
+        AND ${normalizedSettledOverride(sql)} = 'settled'
         AND json_extract(threads.payload_json, '$.settledAt') < ${before}
         AND (${projectIds} IS NULL
           OR threads.project_id IN (SELECT value FROM json_each(${projectIds})))
@@ -388,7 +396,7 @@ export const make = Effect.gen(function* () {
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
         AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1
-        AND json_extract(threads.payload_json, '$.settledOverride') = 'settled'
+        AND ${normalizedSettledOverride(sql)} = 'settled'
         AND json_extract(threads.payload_json, '$.settledAt') < ${before}
         AND (${projectIds} IS NULL
           OR threads.project_id IN (SELECT value FROM json_each(${projectIds})))
