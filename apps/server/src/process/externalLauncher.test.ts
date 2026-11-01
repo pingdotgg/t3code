@@ -1,5 +1,5 @@
-import { watch } from "node:fs";
 // @effect-diagnostics nodeBuiltinImport:off - the Windows launch smoke tests use filesystem notifications to observe real PowerShell launches.
+import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -1162,7 +1162,7 @@ it.live.skipIf(!process.env.T3CODE_TEST_DEFAULT_EDITOR)(
       const output = path.join(scratch, "observed.json");
       yield* fs.writeFileString(target, "first line\nsecond line\nthird line\n");
       const wrapper = path.join(scratch, "nvim");
-      const record = `autocmd VimEnter * call writefile([json_encode({'path': expand('%:p'), 'line': line('.'), 'column': col('.')})], [${JSON.stringify(output)}][0]) | qa!`;
+      const record = `autocmd VimEnter * call writefile([json_encode({'path': expand('%:p'), 'line': line('.'), 'column': col('.')})], [${JSON.stringify(output + ".tmp")}][0]) | call rename([${JSON.stringify(output + ".tmp")}][0], [${JSON.stringify(output)}][0]) | qa!`;
       const shellQuotedRecord = "'" + record.replaceAll("'", "'\\''") + "'";
       yield* fs.writeFileString(
         wrapper,
@@ -1173,8 +1173,9 @@ it.live.skipIf(!process.env.T3CODE_TEST_DEFAULT_EDITOR)(
         const launcher = yield* ExternalLauncher.ExternalLauncher;
         assert.include(yield* launcher.resolveAvailableEditors(), "default-editor");
         const observed = yield* Deferred.make<void>();
-        const watcher = watch(scratch, (_, filename) => {
-          if (filename === "observed.json") Deferred.doneUnsafe(observed, Exit.void);
+        const watcher = NodeFS.watch(scratch, (event, filename) => {
+          if (event === "rename" && filename === "observed.json")
+            Deferred.doneUnsafe(observed, Exit.void);
         });
         yield* Effect.addFinalizer(() => Effect.sync(() => watcher.close()));
         yield* launcher.launchEditor({ editor: "default-editor", cwd: `${target}:2:4` });

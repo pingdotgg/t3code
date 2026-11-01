@@ -630,9 +630,13 @@ function useChatMarkdownState({
     markdownServerConfigFieldsAtom(environmentId),
   );
   const projects = useProjects();
-  const [preferredEditor] = usePreferredEditor(availableEditors);
+  const preferredEditors =
+    remoteOpen.state.mode === "remote-links"
+      ? availableEditors.filter((editor) => editor !== "default-editor")
+      : availableEditors;
+  const [preferredEditor] = usePreferredEditor(preferredEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
-  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
+  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, preferredEditors);
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });

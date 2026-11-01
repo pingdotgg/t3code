@@ -260,8 +260,8 @@ its default terminal. For example, `EDITOR=nvim` opens Neovim in that terminal.
 The host must have a graphical desktop session. Changing the editor environment
 variables requires restarting the server.
 
-Only editors recognized by `env-editor` are offered, so an unknown terminal
-editor is not launched without a terminal. File links include line and column
+Unrecognized editors launch through `xdg-terminal-exec` and require a configured
+default terminal. File links include line and column
 positions for editors supported by `open-editor`. The existing
 Open-menu preference remembers **Default editor**. This option launches on the
 environment host and is not available in SSH deep-link mode or on macOS and Windows.
