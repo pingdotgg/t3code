@@ -182,6 +182,8 @@ it.effect("runs a one-time schedule once and rejects past times", () =>
 );
 
 const ONCE = { type: "once", runAt: "2026-11-01T08:00:00Z" } as const;
+/** A next run that only the simulated concurrent write produces. */
+const MOVED = "2030-01-01T00:00:00.000Z";
 
 const onceInput = {
   ...input,
@@ -190,13 +192,13 @@ const onceInput = {
 };
 
 it.effect.each([
-  { change: "a run completes", saved: ONCE, edited: ONCE, pause: false, expected: null },
+  { change: "a run completes", saved: ONCE, edited: ONCE, pause: false, expected: MOVED },
   {
     change: "a run completes during a padded-time edit",
     saved: { type: "fixed_time", timeOfDay: "9:00" },
     edited: { type: "fixed_time", timeOfDay: "09:00" },
     pause: false,
-    expected: null,
+    expected: MOVED,
   },
   {
     change: "another client pauses the task",
@@ -218,7 +220,7 @@ it.effect.each([
           return Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
             isScratchProject: () =>
-              sql`UPDATE scheduled_tasks SET next_run_at = NULL, enabled = ${pause ? 0 : 1}`.pipe(
+              sql`UPDATE scheduled_tasks SET next_run_at = ${MOVED}, enabled = ${pause ? 0 : 1}`.pipe(
                 Effect.as(false),
                 Effect.orDie,
               ),
