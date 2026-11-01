@@ -44,6 +44,25 @@ describe("chatGitStatusAtom", () => {
 
     registry.set(source, status({ refName: "feature" }));
     expect(notified).toHaveLength(1);
+
+    registry.set(source, status({ refName: "feature", hasWorkingTreeChanges: false }));
+    expect(notified).toHaveLength(2);
+
+    const pr = () => ({
+      number: 42,
+      title: "Feature PR",
+      url: "https://github.com/pingdotgg/t3code/pull/42",
+      baseRef: "main",
+      headRef: "feature",
+      state: "open" as const,
+    });
+    const linked = { refName: "feature", hasWorkingTreeChanges: false };
+    registry.set(source, status({ ...linked, pr: pr() }));
+    expect(notified).toHaveLength(3);
+
+    // A new object with the same data, as each remote status refresh sends.
+    registry.set(source, status({ ...linked, pr: pr() }));
+    expect(notified).toHaveLength(3);
     unsubscribe();
   });
 });
