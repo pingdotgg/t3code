@@ -74,30 +74,27 @@ glab auth login
 
 ### Bitbucket
 
-Open **Settings → Source control**, expand **Bitbucket**, and enter one of:
-
-- **Access token**: a token created for one repository, project, or workspace. It can only reach
-  what it was created for.
-- **Atlassian account email** and **API token**: an Atlassian API token for your account. It can
-  reach every repository you can. Give it read/write access to repositories and pull requests, plus
-  user read access (`read:user:bitbucket`).
-
-A field saves when you leave it, and applies right away. The access token wins when both are saved.
-Credentials are saved on the environment's server, so select a remote environment to configure
-it. Saved tokens can't be viewed again; enter a new one to replace it, or choose **Remove** to clear
-everything saved for Bitbucket.
-
-If no credentials are saved, T3 Code falls back to these variables in the server's environment.
-Restart the server after changing them:
+By default, T3 Code uses the `bkt` CLI installed on the environment's server. Sign in there and
+check its selected context:
 
 ```bash
-export T3CODE_BITBUCKET_ACCESS_TOKEN="your-access-token"
-# or
-export T3CODE_BITBUCKET_EMAIL="you@example.com"
-export T3CODE_BITBUCKET_API_TOKEN="your-token"
+bkt auth status
+bkt auth login https://bitbucket.org --kind cloud --web
 ```
 
-For a background service, put these `KEY=VALUE` entries in
+T3 runs `bkt` on that same server and uses its active context and stored login. Install and
+authenticate `bkt` separately on each remote environment that needs Bitbucket access. Git clone,
+fetch, and push still use the repository's configured SSH key or Git credential helper. If the
+server cannot find `bkt` on its `PATH`, set `T3CODE_BITBUCKET_CLI_PATH` to the executable path.
+
+To use T3's direct API integration instead, set `T3CODE_BITBUCKET_API_MODE=api` on the server.
+Then open **Settings → Source control**, expand **Bitbucket**, and enter one of:
+
+- **API access token**: a token created for one repository, project, or workspace.
+- **Atlassian account email** and **Legacy API token**: an API token for your Atlassian account.
+
+Credentials are stored on the environment's server. For a background service, configure
+`T3CODE_BITBUCKET_API_MODE=api` and the credential variables in
 [`service.env`](./background-service.md#configure-the-service-environment)
 under T3 home, then run `t3 service restart`. Service installation and updates
 preserve that file.
@@ -264,8 +261,8 @@ and their marks follow the same rules as on web and desktop.
 ## Troubleshooting
 
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
-  check the credentials saved in Settings → Source control, or confirm the running server received
-  the environment variables.
+  run `bkt auth status` on the server. If using direct API mode, check Settings → Source control
+  and the server's `T3CODE_BITBUCKET_*` environment variables.
 - **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0, or save a token in Settings → Source control.
 - **Push fails despite a connected account:** check the Git remote's credentials. SSH and HTTPS
   remotes can require separate setup from the hosting provider's API access.

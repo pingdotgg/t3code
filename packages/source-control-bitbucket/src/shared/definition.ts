@@ -50,19 +50,19 @@ const secret = (annotations: Schema.Annotations.Key<SettingsSecretValue>) =>
 export const settings = makeProviderSettingsSchema(
   {
     accessToken: secret({
-      title: "Access token",
+      title: "API access token",
       description:
-        "Scoped to one repository, project, or workspace. Create it in that item's Bitbucket settings.",
+        "Used only when the server is configured with T3CODE_BITBUCKET_API_MODE=api. By default, T3 uses your server's bkt login.",
     }),
     email: text({
       title: "Atlassian account email",
-      description: "With an API token instead of an access token.",
+      description: "Used with an API token only in API mode. Default mode uses bkt.",
       providerSettingsForm: { placeholder: "you@example.com" },
     }),
     apiToken: secret({
-      title: "API token",
+      title: "Legacy API token",
       description:
-        "Reaches every repository your Atlassian account can. Give it read and write access to repositories and pull requests, and read:user:bitbucket.",
+        "Used only when T3CODE_BITBUCKET_API_MODE=api. Default mode uses your server's bkt login.",
     }),
   },
   { order: ["accessToken", "email", "apiToken"] },

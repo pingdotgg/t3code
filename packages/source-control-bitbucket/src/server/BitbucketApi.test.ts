@@ -72,6 +72,7 @@ function makeLayer(input: {
   ) => HttpClientError.HttpClientError;
   readonly stall?: boolean;
   readonly git?: Partial<HostGit>;
+  readonly process?: SourceControlHost.SourceControlHost["Service"]["process"]["run"];
   readonly env?: Record<string, string>;
   readonly remoteUrl?: string;
 }) {
@@ -136,20 +137,55 @@ function makeLayer(input: {
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromEnv({
-          env: input.env ?? {
-            T3CODE_BITBUCKET_API_BASE_URL: "https://api.test.local/2.0",
-            T3CODE_BITBUCKET_EMAIL: "user@example.com",
-            T3CODE_BITBUCKET_API_TOKEN: "token",
+          env: {
+            T3CODE_BITBUCKET_API_MODE: "api",
+            ...(input.env ?? {
+              T3CODE_BITBUCKET_API_BASE_URL: "https://api.test.local/2.0",
+              T3CODE_BITBUCKET_EMAIL: "user@example.com",
+              T3CODE_BITBUCKET_API_TOKEN: "token",
+            }),
           },
         }),
       ),
     ),
-    Layer.provideMerge(TestSourceControlHost.layer({ git: { ...git, remotes: resolve } })),
+    Layer.provideMerge(
+      TestSourceControlHost.layer({
+        ...(input.process ? { process: { run: input.process } } : {}),
+        git: { ...git, remotes: resolve },
+      }),
+    ),
     Layer.provideMerge(NodeServices.layer),
   );
 
   return { execute, git: gitMock, resolve, listRemotes, layer };
 }
+
+it.effect("uses bkt for Bitbucket API requests without sending T3 credentials", () => {
+  const run = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>(() =>
+    Effect.succeed(TestSourceControlHost.processOutput('{"values":[]}')),
+  );
+  const { layer } = makeLayer({
+    response: () => Response.json({}),
+    process: run,
+    env: { T3CODE_BITBUCKET_API_MODE: "bkt" },
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const result = yield* bitbucket.request({
+      method: "GET",
+      url: "https://api.bitbucket.org/2.0/repositories/acme/demo/pullrequests?pagelen=5",
+    });
+    assert.strictEqual(result.body, '{"values":[]}');
+    assert.strictEqual(run.mock.calls[0]?.[0].command, "bkt");
+    assert.deepStrictEqual(run.mock.calls[0]?.[0].args, [
+      "api",
+      "/repositories/acme/demo/pullrequests?pagelen=5",
+      "--method",
+      "GET",
+    ]);
+  }).pipe(Effect.provide(layer));
+});
 
 it.effect("parses pull request responses from the Bitbucket REST API", () => {
   const { execute, layer } = makeLayer({
