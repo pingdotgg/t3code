@@ -1478,7 +1478,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
-  it.effect("adds the session MCP server without replacing launch-argument servers", () =>
+  it.effect("adds the session MCP server and thread id without replacing launch config", () =>
     Effect.gen(function* () {
       const scenario = "launch-mcp-servers";
       yield* (yield* McpProviderSessions.McpProviderSessions).set({
@@ -1513,6 +1513,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           config: {
             "tools.update_plan.enabled": true,
             mcp_optional_startup_grace_ms: 10_000,
+            "shell_environment_policy.set.T3CODE_THREAD_ID": "thread-launch-mcp-servers",
             "mcp_servers.t3-code": {
               url: "http://127.0.0.1:43123/mcp",
               tool_timeout_sec: 3_900,
@@ -7379,12 +7380,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ],
         });
         const outbound: Array<string> = [];
+        const forkRequests: Array<unknown> = [];
         const harness = yield* makeCodexReplayHarness(
           transcript,
           () => Effect.void,
-          (method) =>
+          (method, params) =>
             Effect.sync(() => {
               outbound.push(method);
+              if (method === "thread/fork") forkRequests.push(params);
             }),
         );
         const now = yield* DateTime.now;
@@ -7414,6 +7417,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.notEqual(forkedProviderThread.id, harness.providerThread.id);
         assert.equal(forkedProviderThread.forkedFrom?.providerTurnId, firstTurn.id);
         assert.deepEqual(outbound.slice(-2), ["thread/turns/list", "thread/revert"]);
+        assert.deepEqual(forkRequests, [
+          {
+            threadId: nativeThreadId,
+            config: {
+              ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+              "shell_environment_policy.set.T3CODE_THREAD_ID":
+                "thread-fork-paginated-fallback-target",
+            },
+          },
+        ]);
       }).pipe(
         Effect.scoped,
         Effect.provide(
