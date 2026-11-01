@@ -233,11 +233,15 @@ export const ComposerCodeExtension = Code.extend({
 function literalBackticksBefore($pos: ResolvedPos): number {
   let count = 0;
   $pos.parent.forEach((node, offset) => {
-    if (!node.isText || offset >= $pos.parentOffset) return;
+    if (offset >= $pos.parentOffset) return;
+    if (!node.isText) {
+      count = 0;
+      return;
+    }
     if (node.marks.some((mark) => mark.type.spec.code)) return;
 
     const text = node.text!.slice(0, $pos.parentOffset - offset);
-    count += text.split("`").length - 1;
+    count += [...text.matchAll(/(?<!`)`(?!`)/g)].length;
   });
   return count;
 }

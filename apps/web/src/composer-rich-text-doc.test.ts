@@ -1089,9 +1089,19 @@ describe("inline code entry", () => {
     type(editor, "`");
     expect(editor.state.doc.firstChild?.firstChild?.marks).toEqual([]);
     expect(editor.state.doc.textContent).toBe("`beforeafter`");
+
+    const local = editorFor();
+    type(local, "a ` ");
+    local.commands.insertContent({ type: nodeType });
+    type(local, "`local`");
+    expect(local.state.doc.firstChild?.lastChild?.toJSON()).toEqual({
+      type: "text",
+      marks: [{ type: "code" }],
+      text: "local",
+    });
   });
 
-  it.each(["", "prefix ", "@README.md"])(
+  it.each(["", "prefix ", "@README.md", "a ``` "])(
     "formats a filled pair after %j, leaves following text plain, and keeps the normal input rule",
     (prefix) => {
       const editor = editorFor();
