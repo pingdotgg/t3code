@@ -3239,9 +3239,16 @@ export const layerWsRpc = (
                 ),
               );
 
+              const remoteResult = yield* Effect.sync(() => remoteTargets.pollUnsafe());
+              const initialConfig =
+                remoteResult?._tag === "Success"
+                  ? { ...config, remoteOpenTargets: remoteResult.value }
+                  : config;
               return Stream.concat(
-                rpcInitialItems([{ version: 1 as const, type: "snapshot" as const, config }]),
-                withLateConfigDiscovery(config, liveUpdates, externalLauncher, {
+                rpcInitialItems([
+                  { version: 1 as const, type: "snapshot" as const, config: initialConfig },
+                ]),
+                withLateConfigDiscovery(initialConfig, liveUpdates, externalLauncher, {
                   resolveTargets: () => Fiber.join(remoteTargets),
                 }),
               );

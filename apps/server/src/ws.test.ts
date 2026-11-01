@@ -613,9 +613,9 @@ const layerConfigSources = Layer.mergeAll(
   Layer.provideMerge(NodeServices.layer),
 );
 
-it.effect(
-  "starts remote discovery alongside initial config and preserves updates through discovery and ACK",
-  () =>
+it.effect.each(["pending", "cached"] as const)(
+  "%s remote discovery preserves initial config and updates through discovery and ACK",
+  (discovery) =>
     Effect.gen(function* () {
       const keybindings = yield* Keybindings.Keybindings;
       const settings = yield* ServerSettings.ServerSettingsService;
@@ -653,7 +653,9 @@ it.effect(
         Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
           resolveTargets: () =>
             Deferred.succeed(remoteDiscoveryStarted, undefined).pipe(
-              Effect.andThen(Deferred.await(finishRemoteDiscovery)),
+              Effect.andThen(
+                discovery === "cached" ? Effect.void : Deferred.await(finishRemoteDiscovery),
+              ),
               Effect.as(targets),
             ),
         }),
@@ -737,7 +739,7 @@ it.effect(
       const snapshot = yield* Queue.take(responses);
       assert.equal(snapshot.type, "snapshot");
       if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
-      assert.deepEqual(snapshot.config.remoteOpenTargets, []);
+      assert.deepEqual(snapshot.config.remoteOpenTargets, discovery === "cached" ? targets : []);
       assert.isFalse(snapshot.config.settings.defaultAutoPull);
       assert.deepEqual(snapshot.config.keybindings, initialKeybindings);
       const duringAck = yield* keybindings.upsertKeybindingRule({
@@ -774,18 +776,20 @@ it.effect(
       }
       assert.isEmpty(expectedSettings);
       assert.isEmpty(expectedKeybindings);
-      yield* Deferred.await(remoteDiscoveryStarted);
-      yield* Deferred.succeed(finishRemoteDiscovery, undefined);
-      const resolved = yield* Queue.take(responses);
-      assert.equal(resolved.type, "snapshot");
-      if (resolved.type !== "snapshot") return yield* Effect.die("Missing remote targets");
-      assert.deepEqual(resolved.config.remoteOpenTargets, targets);
-      assert.deepEqual(
-        resolved.config.settings,
-        ServerSettings.redactServerSettingsForClient(latestSettings),
-      );
-      assert.deepEqual(resolved.config.keybindings, latestKeybindings);
-      yield* acknowledge;
+      if (discovery === "pending") {
+        yield* Deferred.await(remoteDiscoveryStarted);
+        yield* Deferred.succeed(finishRemoteDiscovery, undefined);
+        const resolved = yield* Queue.take(responses);
+        assert.equal(resolved.type, "snapshot");
+        if (resolved.type !== "snapshot") return yield* Effect.die("Missing remote targets");
+        assert.deepEqual(resolved.config.remoteOpenTargets, targets);
+        assert.deepEqual(
+          resolved.config.settings,
+          ServerSettings.redactServerSettingsForClient(latestSettings),
+        );
+        assert.deepEqual(resolved.config.keybindings, latestKeybindings);
+        yield* acknowledge;
+      }
       yield* server.write(0, { _tag: "Interrupt", requestId, interruptors: [] });
     }).pipe(
       Effect.provide(
