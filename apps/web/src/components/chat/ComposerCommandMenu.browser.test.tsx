@@ -1,5 +1,5 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
@@ -55,6 +55,15 @@ it("mounts only the rows near the visible window of a long skill list", async ()
 
   const mountedRows = screen.container.querySelectorAll("[data-composer-item-id]").length;
   expect(mountedRows, "rows mounted for 300 skills").toBeLessThan(50);
+});
+
+it("fades the bottom edge of an overflowing list before it is scrolled", async () => {
+  await using screen = await render(<Menu activeItemId={null} />);
+  await expect.element(page.getByRole("option", { name: /Demo Skill 000/ })).toBeVisible();
+
+  await vi.waitFor(() =>
+    expect(screen.container.querySelector(".virtualized-scroll-fade")).not.toBeNull(),
+  );
 });
 
 it("fills the visible list with rows in the first frame it paints", async () => {

@@ -162,6 +162,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
               estimatedItemSize={28}
               recycleItems
               onLayout={updateScrollFade}
+              onItemSizeChanged={updateScrollFade}
               onScroll={updateScrollFade}
               // LegendList sizes its first window from this element before its rows give it height;
               // reserving the rows' minimum height (1.75rem each, plus p-2) fills the first frame.
