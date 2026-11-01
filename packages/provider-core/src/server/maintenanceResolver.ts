@@ -524,10 +524,12 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
           : {}),
       })
     : manual;
-  // A native-looking launcher can still delegate to a mise-owned install.
+  const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
+  // A native-looking launcher can still delegate to a mise- or Homebrew-owned install.
   if (
     nativeUpdate?.isCommandPath &&
     commandPaths.some(nativeUpdate.isCommandPath) &&
+    !homebrew &&
     !commandPaths.some(isMiseCommandPath) &&
     !(yield* isMiseWrapperScript(context))
   ) {
@@ -623,7 +625,6 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     });
   }
 
-  const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
   if (
     commandPaths.some(isMiseCommandPath) ||
     // Mise shims resolve to the version manager's keg, not the provider's.
