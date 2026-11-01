@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import {
   MessageId,
   NodeId,
@@ -13,7 +13,11 @@ import {
 } from "@t3tools/contracts";
 import { ACP_PROTOCOL } from "@t3tools/provider-acp/server/adapter";
 import { FxSettings } from "@t3tools/provider-fx/settings";
-import { FX_DRIVER_KIND, makeFxAdapterV2 } from "@t3tools/provider-fx/testing";
+import {
+  FX_DRIVER_KIND,
+  FX_HOOKS_SESSION_META,
+  makeFxAdapterV2,
+} from "@t3tools/provider-fx/testing";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
@@ -115,6 +119,109 @@ const fxSession = (input: {
   modes: { currentModeId: "ask", availableModes: input.modes.map((id) => ({ id, name: id })) },
 });
 
+const update = (sessionId: string, sessionUpdate: Record<string, unknown>): Frame => ({
+  type: "emit_inbound",
+  label: `session/update:${String(sessionUpdate.sessionUpdate)}`,
+  frame: {
+    kind: "notification",
+    method: "session/update",
+    params: { sessionId, update: sessionUpdate },
+  },
+});
+/** A `libfx/hook` event as fx 0.0.15 sends it once a session opts in. */
+const hook = (sessionId: string, type: string, data: Record<string, unknown>): Frame => ({
+  type: "emit_inbound",
+  label: `libfx/hook:${type}`,
+  frame: {
+    kind: "notification",
+    method: "libfx/hook",
+    params: {
+      version: 1,
+      sessionId,
+      rootSessionId: SESSION_ID,
+      parentSessionId: sessionId === SESSION_ID ? null : SESSION_ID,
+      sourceSessionId: null,
+      workId: null,
+      turnId: "turn-1",
+      executionId: `execution-${sessionId}`,
+      stepIndex: 1,
+      timestamp: 1_793_283_383_907,
+      type,
+      data,
+      contentCaptured: true,
+      contentTruncated: false,
+    },
+  },
+});
+const subagentReply = (reply: string) =>
+  JSON.stringify({ ok: true, result: reply, error_code: null });
+const subagentCall = (callId: string, task: string) =>
+  update(SESSION_ID, {
+    sessionUpdate: "tool_call",
+    toolCallId: callId,
+    name: "subagent",
+    title: `Subagent · ${task}`,
+    kind: "other",
+    status: "pending",
+    rawInput: { action: "run", task },
+    _meta: { fx: { toolCall: { internal: false } } },
+  });
+/** fx's 200-byte ACP preview of a finished `subagent` call. */
+const subagentPreview = (callId: string, reply: string) =>
+  update(SESSION_ID, {
+    sessionUpdate: "tool_call_update",
+    toolCallId: callId,
+    status: "completed",
+    content: [
+      { type: "content", content: { type: "text", text: subagentReply(reply).slice(0, 199) } },
+    ],
+  });
+
+/** fx asks, and takes the answer, on the parent session; a sub-agent's request names its child. */
+const writeApproval = (toolCallId: string, subagentSessionId?: string): ReadonlyArray<Frame> => [
+  {
+    type: "emit_inbound",
+    label: `request:session/request_permission:${toolCallId}`,
+    frame: {
+      kind: "request",
+      method: "session/request_permission",
+      params: {
+        sessionId: SESSION_ID,
+        toolCall: {
+          toolCallId:
+            subagentSessionId === undefined ? toolCallId : `${subagentSessionId}/${toolCallId}`,
+          name: "write_file",
+          title: "Write notes.md",
+          kind: "edit",
+          status: "pending",
+          rawInput: { path: "notes.md", content: "notes" },
+        },
+        options: [
+          { optionId: "allow_once", name: "Allow once", kind: "allow_once" },
+          { optionId: "allow_always", name: "Allow for this session", kind: "allow_always" },
+          { optionId: "reject_once", name: "Reject", kind: "reject_once" },
+        ],
+        ...(subagentSessionId === undefined
+          ? {}
+          : {
+              _meta: {
+                fx: { subagent: { sessionId: subagentSessionId, workId: "work-1", toolCallId } },
+              },
+            }),
+      },
+    },
+  },
+  {
+    type: "expect_outbound",
+    label: `response:session/request_permission:${toolCallId}`,
+    frame: {
+      kind: "response",
+      method: "session/request_permission",
+      result: { outcome: { outcome: "selected", optionId: "allow_once" } },
+    },
+  },
+];
+
 const initialize: ReadonlyArray<Frame> = [
   outbound("initialize"),
   answer("initialize", {
@@ -184,6 +291,7 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
       ),
       childProcessSpawner,
       fileSystem,
+      sessionMeta: FX_HOOKS_SESSION_META,
     }),
   });
   const threadId = ThreadId.make(`thread-fx-${input.scenario}`);
@@ -199,7 +307,7 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
     interactionMode: "default",
     cwd: replayDir,
   });
-  yield* Effect.gen(function* () {
+  const events = yield* Effect.gen(function* () {
     const session = yield* adapter.openSession({
       threadId,
       providerSessionId: ProviderSessionId.make(`provider-session-fx-${input.scenario}`),
@@ -207,7 +315,7 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
       runtimePolicy,
       ...(input.loadSessionId === undefined ? {} : { initialNativeThreadId: input.loadSessionId }),
     });
-    if (input.turnModel === undefined) return;
+    if (input.turnModel === undefined) return [];
     const providerThread = yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
     const now = yield* DateTime.now;
     const turnSelection = selectionOn(input.turnModel);
@@ -252,12 +360,22 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
       modelSelection: turnSelection,
       runtimePolicy,
     });
-    yield* session.events.pipe(
+    return yield* session.events.pipe(
+      // Every approval is answered with Allow once.
+      Stream.tap((event) =>
+        event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
+          ? session.respondToRuntimeRequest({
+              requestId: event.runtimeRequest.id,
+              decision: "accept",
+            })
+          : Effect.void,
+      ),
       Stream.takeUntil((event) => event.type === "turn.terminal"),
-      Stream.runDrain,
+      Stream.runCollect,
     );
   }).pipe(Effect.scoped);
   yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
+  return events;
 });
 
 describe("FxAdapterV2", () => {
@@ -273,7 +391,11 @@ describe("FxAdapterV2", () => {
           runtimeMode: "auto",
           frames: [
             ...initialize,
-            outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
+            outbound("session/new", {
+              cwd: "<workspace>",
+              mcpServers: "<any>",
+              _meta: FX_HOOKS_SESSION_META,
+            }),
             answer("session/new", fxSession({ model: FX_DEFAULT_MODEL, modes })),
             ...setConfig(
               "mode",
@@ -363,6 +485,193 @@ describe("FxAdapterV2", () => {
         outbound("session/prompt"),
         answer("session/prompt", { stopReason: "end_turn" }),
       ],
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+  // A restart reloads the session: fx replays the finished call from history
+  // with its 200-byte preview and none of the child's steps, which T3 already
+  // holds. The reload confirms hooks, so the next sub-agent shows its steps.
+  it.effect("leaves a reloaded sub-agent's thread alone and follows the next one", () =>
+    Effect.gen(function* () {
+      const earlierReply = `package.json names fx-hooks-fixture. ${"It has five scripts. ".repeat(12)}`;
+      const reply = `tsconfig.json targets ES2023. ${"Strict mode is on. ".repeat(12)}`;
+      const childSessionId = "fx-session-04";
+      const events = yield* openFxSession({
+        scenario: "reload-subagent",
+        runtimeMode: "approval-required",
+        loadSessionId: SESSION_ID,
+        turnModel: "default",
+        frames: [
+          ...initialize,
+          outbound("session/load", {
+            sessionId: SESSION_ID,
+            cwd: "<workspace>",
+            mcpServers: "<any>",
+            _meta: FX_HOOKS_SESSION_META,
+          }),
+          update(SESSION_ID, {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: "Spawn a subagent to read package.json" },
+          }),
+          subagentCall("call_earlier", "Read package.json"),
+          subagentPreview("call_earlier", earlierReply),
+          update(SESSION_ID, {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "The subagent read package.json." },
+          }),
+          answer("session/load", {
+            ...fxSession({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES }),
+            _meta: { fx: { hooksVersion: 1 } },
+          }),
+          ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES })),
+          outbound("session/prompt"),
+          subagentCall("call_next", "Read tsconfig.json"),
+          hook(SESSION_ID, "delegation", {
+            callId: "call_next",
+            childSessionId,
+            workId: "work-1",
+            operationId: null,
+            phase: "dispatched",
+          }),
+          hook(childSessionId, "tool.start", {
+            call: {
+              callId: "call_read",
+              name: "read_file",
+              provenance: "fx_local",
+              argumentsJson: '{"path":"tsconfig.json"}',
+            },
+            rerun: false,
+          }),
+          hook(childSessionId, "tool.end", {
+            call: {
+              callId: "call_read",
+              name: "read_file",
+              provenance: "fx_local",
+              argumentsJson: '{"path":"tsconfig.json"}',
+            },
+            output: '{"compilerOptions":{"target":"ES2023"}}',
+            status: "success",
+            error: null,
+          }),
+          hook(SESSION_ID, "delegation", {
+            callId: "call_next",
+            childSessionId,
+            workId: "work-1",
+            operationId: null,
+            phase: "completed",
+          }),
+          subagentPreview("call_next", reply),
+          hook(SESSION_ID, "tool.end", {
+            call: { callId: "call_next", name: "subagent", provenance: "model" },
+            output: subagentReply(reply),
+            status: "success",
+            error: null,
+          }),
+          answer("session/prompt", { stopReason: "end_turn" }),
+        ],
+      });
+
+      const subagents = events.flatMap((event) =>
+        event.type === "subagent.updated" ? [event.subagent] : [],
+      );
+      assert.deepEqual(
+        [...new Set(subagents.map((subagent) => subagent.nativeTaskRef?.nativeId))],
+        ["call_next"],
+        "the reload projects nothing for the earlier sub-agent",
+      );
+      assert.lengthOf(
+        events.filter((event) => event.type === "app_thread.created"),
+        1,
+      );
+      const settled = subagents.at(-1);
+      assert.equal(settled?.status, "completed");
+      assert.equal(settled?.result, reply);
+      const childItems = events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.threadId === settled?.childThreadId
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepInclude(childItems.at(-1), { type: "assistant_message", text: reply });
+      assert.isTrue(
+        childItems.some(
+          (item) =>
+            item.type === "dynamic_tool" &&
+            item.status === "completed" &&
+            item.title === "Read tsconfig.json",
+        ),
+      );
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+  // vercel-labs/fx (unmerged): fx forwards a sub-agent's approval on the
+  // parent session and names the child in `_meta.fx.subagent`.
+  it.effect("labels a sub-agent's approval with that sub-agent on the parent", () =>
+    Effect.gen(function* () {
+      const childSessionId = "fx-session-02";
+      const events = yield* openFxSession({
+        scenario: "subagent-approval",
+        runtimeMode: "approval-required",
+        turnModel: "default",
+        frames: [
+          ...initialize,
+          outbound("session/new"),
+          answer("session/new", {
+            ...fxSession({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES }),
+            _meta: { fx: { hooksVersion: 1 } },
+          }),
+          ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES })),
+          outbound("session/prompt"),
+          subagentCall("call_sub", "Write notes.md for the release"),
+          hook(SESSION_ID, "delegation", {
+            callId: "call_sub",
+            childSessionId,
+            workId: "work-1",
+            operationId: null,
+            phase: "dispatched",
+          }),
+          ...writeApproval("call_child_write", childSessionId),
+          // No child is mapped yet, as without hooks.
+          ...writeApproval("call_unknown_write", "fx-session-09"),
+          ...writeApproval("call_parent_write"),
+          hook(SESSION_ID, "delegation", {
+            callId: "call_sub",
+            childSessionId,
+            workId: "work-1",
+            operationId: null,
+            phase: "completed",
+          }),
+          subagentPreview("call_sub", "Wrote notes.md."),
+          hook(SESSION_ID, "tool.end", {
+            call: { callId: "call_sub", name: "subagent", provenance: "model" },
+            output: subagentReply("Wrote notes.md."),
+            status: "success",
+            error: null,
+          }),
+          answer("session/prompt", { stopReason: "end_turn" }),
+        ],
+      });
+
+      const approvals = new Map(
+        events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "approval_request"
+            ? [[event.turnItem.nativeItemRef?.nativeId, event.turnItem] as const]
+            : [],
+        ),
+      );
+      assert.deepEqual(
+        [...approvals].map(([nativeId, item]) => [nativeId, item.threadId, item.reason]),
+        [
+          [
+            `${childSessionId}/call_child_write`,
+            ThreadId.make("thread-fx-subagent-approval"),
+            "Sub-agent: Write notes.md for the release",
+          ],
+          [
+            "fx-session-09/call_unknown_write",
+            ThreadId.make("thread-fx-subagent-approval"),
+            undefined,
+          ],
+          ["call_parent_write", ThreadId.make("thread-fx-subagent-approval"), undefined],
+        ],
+      );
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 });

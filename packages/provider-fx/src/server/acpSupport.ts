@@ -21,6 +21,7 @@ import {
   type AcpPermissionDisposition,
 } from "@t3tools/provider-acp/server/clientPolicy";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { FX_HOOKS_SESSION_META } from "./subagents.ts";
 
 export const FX_DRIVER_KIND = ProviderDriverKind.make("fx");
 /** T3's slug for "Default": the model `fx status` reports, never an fx model id. */
@@ -232,6 +233,7 @@ export const makeFxAcpRuntime = Effect.fn("makeFxAcpRuntime")(function* (
         env: { ...environment },
       },
       cancelBehavior: FX_ACP_CANCEL_BEHAVIOR,
+      sessionMeta: FX_HOOKS_SESSION_META,
     }),
   );
   return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(Effect.provide(context));

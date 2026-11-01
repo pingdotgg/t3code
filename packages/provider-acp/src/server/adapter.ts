@@ -355,6 +355,10 @@ export interface AcpAdapterV2Flavor {
   readonly approvalOptions?: (
     request: EffectAcpSchema.RequestPermissionRequest,
   ) => ReadonlyArray<ProviderApprovalOption>;
+  /** The sub-agent session behind a request the agent sends, and takes answers for, on the parent. */
+  readonly permissionSubagentSessionId?: (
+    request: EffectAcpSchema.RequestPermissionRequest,
+  ) => string | undefined;
   readonly onSessionEvent?: (
     event: AcpSessionRuntime.AcpSessionRuntimeEvent,
   ) => Effect.Effect<void>;
@@ -5216,6 +5220,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* closeTextStreams(context);
           const parsed = parsePermissionRequest(params);
           const approvalOptions = flavor.approvalOptions?.(params);
+          const subagentSessionId = flavor.permissionSubagentSessionId?.(params);
+          const subagent =
+            subagentSessionId === undefined
+              ? undefined
+              : context.subagentsBySessionId.get(subagentSessionId);
+          const reason =
+            subagent === undefined
+              ? undefined
+              : `Sub-agent: ${subagentThreadTitle({
+                  parentTitle: context.input.appThread.title,
+                  title: subagent.task.title,
+                  prompt: subagent.task.prompt,
+                  ordinal: [...context.subagents.values()].indexOf(subagent) + 1,
+                })}`;
           const nativeRequestId = params.toolCall.toolCallId;
           const requestId = yield* idAllocator.allocate.runtimeRequest({
             driver,
@@ -5290,6 +5308,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             requestId,
             requestKind,
             ...(parsed.detail === undefined ? {} : { prompt: parsed.detail }),
+            ...(reason === undefined ? {} : { reason }),
             ...(approvalOptions === undefined ? {} : { options: approvalOptions }),
           };
           yield* Ref.update(pendingRuntimeRequests, (current) => {

@@ -3,6 +3,7 @@ import { FxSettings } from "@t3tools/provider-fx/settings";
 import {
   FX_ACP_CANCEL_BEHAVIOR,
   FX_DRIVER_KIND,
+  FX_HOOKS_SESSION_META,
   makeFxAdapterV2,
 } from "@t3tools/provider-fx/testing";
 import { ProviderInstanceId } from "@t3tools/contracts";
@@ -64,6 +65,7 @@ function layerFxProviderAdapterRegistryReplay(
             childProcessSpawner,
             fileSystem,
             cancelBehavior: FX_ACP_CANCEL_BEHAVIOR,
+            sessionMeta: FX_HOOKS_SESSION_META,
             ...(replayGate === undefined ? {} : { replayGate }),
           })(runtimeInput),
         assertComplete: makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript),
