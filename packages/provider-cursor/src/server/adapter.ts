@@ -1309,7 +1309,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             | "completedAt"
             | "updatedAt"
           >;
-          const outputText = cursorToolOutputText(toolCall) || active.streamedOutput;
+          const outputText =
+            cursorToolOutputText(toolCall) ||
+            active.streamedOutput.slice(-MAX_CURSOR_STREAMED_OUTPUT_CHARS);
           let turnItem: OrchestrationV2TurnItem;
           switch (toolCall.type) {
             case "shell":
@@ -2055,9 +2057,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               const chunk = shellOutputText(update.event);
               if (chunk.length === 0) return;
               // Persist output once; live hub deltas avoid quadratic event-store growth.
-              shell.streamedOutput = (shell.streamedOutput + chunk).slice(
-                -MAX_CURSOR_STREAMED_OUTPUT_CHARS,
-              );
+              shell.streamedOutput += chunk;
+              // Trimming on every chunk would flatten and copy the whole tail each time.
+              if (shell.streamedOutput.length > 2 * MAX_CURSOR_STREAMED_OUTPUT_CHARS) {
+                shell.streamedOutput = shell.streamedOutput.slice(
+                  -MAX_CURSOR_STREAMED_OUTPUT_CHARS,
+                );
+              }
               yield* emitProviderEvent({
                 type: "command_output.delta",
                 driver: CursorAgentSdk.CURSOR_PROVIDER,
