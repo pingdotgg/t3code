@@ -46,6 +46,22 @@ Settings that are environment-wide stay read-only while a project is selected. W
 targets disagree, a control shows **Mixed** until you choose one value. Appearance, keyboard,
 and other phone-only settings ignore the filter.
 
+## Pin and archive projects
+
+Pinned projects come first in the project pickers: the project picker on a new thread, the
+new-thread list, the command palette, the sidebar project filter, and mobile. In the boring sidebar, pinned projects get the top
+folders, even with no active threads. Pin or unpin a project from its row in any of those lists,
+or press the thread pin shortcut (`mod+shift+p` by default) on the highlighted row. **Pin
+project** in the command palette and **Settings → Projects** work too. A list keeps its order
+while it is open, so a new pin moves up the next time you open it.
+
+Archive a project you are done with in **Settings → Projects**. It leaves the project pickers.
+Its threads, settings, and files stay as they are, and archived projects still show in the
+Settings project list, marked **Archived**. Choose one there and select **Unarchive** to bring it
+back. On mobile, both are in **Settings → Projects → Organize**.
+
+A project on several machines must have every machine connected to pin or archive it.
+
 ## Worktree branch names
 
 In **Settings → Worktrees → Worktree branch naming**, choose a static prefix,
@@ -121,7 +137,7 @@ compare as text, and a value that is an object or a list only passes
 **exists**. Separate **is one of** values with commas; a value can't contain
 a comma or start or end with a space.
 
-To suppress repeated deliveries, set a **Replay key** template, such as
+To suppress repeated deliveries, set a **Duplicate request key** template, such as
 `{{headers.delivery-id}}`. The same key is ignored for seven days per task.
 To combine a burst, set a **Coalesce key**, such as `{{body.id}}`, and a window
 of 10–3600 seconds (120 by default). One run uses the latest body, headers,
