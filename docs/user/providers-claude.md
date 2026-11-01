@@ -49,10 +49,14 @@ Set **Auto-compact after** in the Claude provider settings to an integer between
 window. Leave it empty for Claude Code's default.
 
 You can also send `/compact` in an existing conversation. Web and desktop offer
-**Compact context** from the context meter. When you return to a large thread
-after Claude's prompt cache expires, a **Compact** chip with the thread's token count shows
+**Compact context** from the context meter. The meter is off by default; see
+[commands and skills](./composer.md#commands-and-skills) to enable it. Claude Code
+compacts automatically whether the meter is on or off.
+
+When you return to a large thread after Claude's prompt cache expires, a
+**Compact** chip with the thread's token count shows
 next to the send button. While it is on, Enter summarizes the history first, then
-sends your message. Click the chip to switch it to **Full** and keep the full
+sends your message. Click the chip to switch it to **Keep** and keep the full
 history for that message. The cache lasts about an hour on a Claude
 subscription and 5 minutes with an API key, Bedrock, or Vertex. See [commands and skills](./composer.md#commands-and-skills) for using
 composer commands.
@@ -61,9 +65,12 @@ composer commands.
 over 200,000 tokens. Each Claude provider's settings can override it:
 
 - **When you return** shows the **Compact** chip described above. This is the default.
-- **Before the cache expires (beta)** compacts an idle thread shortly before its
-  prompt cache expires, so coming back does not reprocess the whole conversation.
+- **Before the cache expires (beta)** tries to compact an idle thread shortly before its
+  prompt cache expires, while the history is still cached.
   The compaction appears in the thread as a `/compact` turn sent by T3 Code.
+  If the window is missed, such as when you enable this mode after the cache has
+  expired or the server restarts before compaction runs, it falls back to
+  **When you return**. Switch the chip to **Keep** to keep the full history for that message.
 - **Never** skips idle compaction and Claude's resume prompt. **Auto-compact after**
   still applies, and you can still compact by hand.
 

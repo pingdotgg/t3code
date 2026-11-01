@@ -94,6 +94,34 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const hasOnlyRuntimeDirectories = Effect.fn(
+    "AntigravityTextGeneration.hasOnlyRuntimeDirectories",
+  )(function* (cwd: string) {
+    const root = yield* fs.realPath(cwd);
+    // ACP creates these empty skill directories before the first prompt.
+    const allowed = new Set([
+      path.join(root, ".agents"),
+      path.join(root, ".agents", "skills"),
+      path.join(root, ".gemini"),
+      path.join(root, ".gemini", "skills"),
+    ]);
+    const directories = [root];
+    for (const directory of directories) {
+      for (const name of yield* fs.readDirectory(directory)) {
+        const entry = path.join(directory, name);
+        if (
+          !allowed.has(entry) ||
+          (yield* fs.realPath(entry)) !== entry ||
+          (yield* fs.stat(entry)).type !== "Directory"
+        ) {
+          return false;
+        }
+        directories.push(entry);
+      }
+    }
+    return true;
+  });
+
   const available = isAntigravityTextGenerationAvailable(options.profileDirectory).pipe(
     Effect.provideService(FileSystem.FileSystem, fs),
     Effect.provideService(Path.Path, path),
@@ -253,7 +281,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
           );
         }).pipe(Effect.scoped);
 
-        if ((yield* fs.readDirectory(cwd)).length > 0) {
+        if (!(yield* hasOnlyRuntimeDirectories(cwd))) {
           return yield* new TextGenerationError({
             operation,
             detail: "Antigravity wrote files during text generation.",
