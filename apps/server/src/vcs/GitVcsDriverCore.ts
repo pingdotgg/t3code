@@ -2415,18 +2415,26 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           { env },
         );
       } else {
-        // Reset discards these, so reject partial commits that would lose their ancestry or author.
+        // Reset deletes these, so reject partial commits rather than lose the merge, pick or revert.
         for (const [stateRef, action] of [
           ["MERGE_HEAD", "merge"],
           ["CHERRY_PICK_HEAD", "cherry-pick"],
           ["REVERT_HEAD", "revert"],
         ] as const) {
-          // Reftable stores CHERRY_PICK_HEAD and REVERT_HEAD as refs, not files. The full name
-          // skips branches and tags that reuse the name.
+          // Reftable stores CHERRY_PICK_HEAD and REVERT_HEAD as refs, not files. A same-named
+          // branch or tag resolves to its full name, and an ambiguity warning would blank stdout.
           const state = yield* runGitStdout(
             "GitVcsDriver.commit.operationState",
             cwd,
-            ["rev-parse", "--verify", "--quiet", "--symbolic-full-name", stateRef],
+            [
+              "-c",
+              "core.warnAmbiguousRefs=false",
+              "rev-parse",
+              "--verify",
+              "--quiet",
+              "--symbolic-full-name",
+              stateRef,
+            ],
             true,
           );
           if (state.trim() === stateRef) {

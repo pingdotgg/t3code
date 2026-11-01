@@ -4993,6 +4993,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(cwd, ["add", "."]);
           yield* git(cwd, ["commit", "-m", "Main"]);
           const mainHead = yield* git(cwd, ["rev-parse", "HEAD"]);
+          yield* git(cwd, ["branch", "MERGE_HEAD"]);
           if (location === "worktree") {
             const worktree = path.join(yield* makeTmpDir(), "linked");
             yield* git(cwd, ["worktree", "add", "-b", "linked", worktree]);
@@ -5062,6 +5063,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const cwd = yield* makeTmpDir();
           const { initialBranch } = yield* initRepoWithCommit(cwd);
           const driver = yield* GitVcsDriver.GitVcsDriver;
+          const path = yield* Path.Path;
           yield* git(cwd, ["checkout", "-b", "feature"]);
           yield* writeTextFile(cwd, "README.md", "feature version\n");
           yield* writeTextFile(cwd, "picked.txt", "picked\n");
@@ -5072,6 +5074,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* writeTextFile(cwd, "README.md", "other version\n");
           yield* git(cwd, ["commit", "-am", "Other"]);
           const head = yield* git(cwd, ["rev-parse", "HEAD"]);
+          yield* git(cwd, ["branch", stateRef]);
           const started = yield* driver.execute({
             operation: "test.sequencer",
             cwd,
@@ -5082,28 +5085,21 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* writeTextFile(cwd, "README.md", "resolved version\n");
           const gitDir = yield* git(cwd, ["rev-parse", "--absolute-git-dir"]);
           const names = ["index", stateRef, "MERGE_MSG"];
-          const before = names.map((name) => NodeFS.readFileSync(`${gitDir}/${name}`));
+          const before = names.map((name) => NodeFS.readFileSync(path.join(gitDir, name)));
 
-          const result = yield* driver
+          const error = yield* driver
             .commit(cwd, "Partial", "", { stage: { filePaths: ["picked.txt"] } })
-            .pipe(Effect.result);
-          if (Result.isSuccess(result)) {
-            assert.fail(`Selected ${operation} commit succeeded`);
-          } else {
-            assert.include(
-              result.failure.detail,
-              `Cannot commit selected files during a ${operation}`,
-            );
-          }
+            .pipe(Effect.flip);
+          assert.include(error.detail, `Cannot commit selected files during a ${operation}`);
           assert.deepEqual(
-            names.map((name) => NodeFS.readFileSync(`${gitDir}/${name}`)),
+            names.map((name) => NodeFS.readFileSync(path.join(gitDir, name))),
             before,
           );
           assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), head);
 
           yield* driver.commit(cwd, "Finish", "", { stage: {} });
           assert.equal(yield* git(cwd, ["show", "-s", "--format=%an", "HEAD"]), author);
-          assert.isFalse(NodeFS.existsSync(`${gitDir}/${stateRef}`));
+          assert.isFalse(NodeFS.existsSync(path.join(gitDir, stateRef)));
         }),
     );
 
