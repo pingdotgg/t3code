@@ -524,10 +524,11 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
           : {}),
       })
     : manual;
-  // A native-looking launcher can still delegate to a mise-owned install.
+  // A native-looking launcher can still delegate to an npm- or mise-owned install.
   if (
     nativeUpdate?.isCommandPath &&
     commandPaths.some(nativeUpdate.isCommandPath) &&
+    !npmGlobalPrefixFromCommandPath(context.realCommandPath, packageName) &&
     !commandPaths.some(isMiseCommandPath) &&
     !(yield* isMiseWrapperScript(context))
   ) {
