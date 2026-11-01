@@ -4124,13 +4124,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         });
       }
       let directoryName = targetBranch.replace(/\//g, "-");
+      // Git refs already exclude Windows' other invalid characters and trailing dots or spaces.
+      const windowsSafeName = directoryName
+        .replace(/[<>"|]/g, "-")
+        .replace(/^(con|prn|aux|nul|com\d|lpt\d|conin\$|conout\$)(\.|$)/i, "$1-");
       // Leave room for files beneath the worktree on Windows, regardless of branch length.
-      if (directoryName.length > 40) {
+      // The digest also keeps branches that differ only in replaced characters apart.
+      if (directoryName.length > 40 || windowsSafeName !== directoryName) {
         const digest = yield* crypto
           .digest("SHA-256", new TextEncoder().encode(targetBranch))
           .pipe(Effect.orDie);
         // Avoid splitting a surrogate pair, which Git would list back as a different path.
-        const prefix = directoryName.slice(0, 23).replace(/[\uD800-\uDBFF]$/, "");
+        const prefix = windowsSafeName.slice(0, 23).replace(/[\uD800-\uDBFF]$/, "");
         directoryName = `${prefix}-${Hex.encode(digest).slice(0, 16)}`;
       }
       worktreePath = path.join(parentDir, repoName, directoryName);
