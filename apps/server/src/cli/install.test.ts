@@ -190,11 +190,15 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       assert.include((yield* provide(installCli()).pipe(Effect.flip)).message, "Another t3");
       assert.equal(yield* fs.readLink(link), climbing);
 
-      // This home's desktop launcher is replaced, as install.sh does.
+      // This home's desktop launcher is replaced, as install.sh does, also when its bin folder
+      // is a link.
+      yield* fs.makeDirectory(path.join(root, "desktop-bin"));
+      yield* fs.symlink(path.join(root, "desktop-bin"), path.join(root, ".t3/bin"));
       yield* fs.remove(link);
       yield* fs.symlink(path.join(root, ".t3/bin/t3"), link);
       yield* provide(installCli());
       assert.equal(yield* fs.readLink(link), commandLink);
+      yield* fs.remove(path.join(root, ".t3/bin"));
 
       // Another program may write its t3 at any moment, here once, at the first symlink this
       // install makes. Whether the spot was empty, held an older link, or the command link,

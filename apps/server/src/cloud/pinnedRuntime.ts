@@ -417,7 +417,13 @@ export const directLinkTargets = Effect.fn("cloud.pinned_runtime.direct_link_tar
   // `t3/.`) never runs the file it would resolve to. Other spellings resolve on disk below.
   const parts = text.value.split(/[\\/]/);
   if (parts.includes("..") || [".", ""].includes(parts.at(-1)!)) return [];
-  const target = path.resolve(path.dirname(link), text.value);
+  // A relative target starts from the link's real folder, as the OS follows it.
+  const base = path.isAbsolute(text.value)
+    ? path.dirname(link)
+    : yield* Effect.tryPromise(() => NodeFSP.realpath(path.dirname(link))).pipe(
+        Effect.orElseSucceed(() => path.dirname(link)),
+      );
+  const target = path.resolve(base, text.value);
   const folder = path.dirname(target);
   if (Option.isSome(yield* fs.readLink(folder).pipe(Effect.option))) return [];
   const physical = yield* Effect.tryPromise({

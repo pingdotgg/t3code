@@ -274,6 +274,18 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         cwd: root,
       });
       expect(relativeHome.code, relativeHome.output).toBe(0);
+      // A quoted ~ means the home folder, as the CLI reads it.
+      await NodeFSP.rm(link, { force: true });
+      const tilde = await installOver({
+        script: "install.sh",
+        home: "~/home",
+        binDir,
+        // The helper's own setup reads ~ as a folder name; keep that inside the temp folder.
+        cwd: root,
+        env: { HOME: root },
+      });
+      expect(tilde.code, tilde.output).toBe(0);
+      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/versions/current/t3"));
       // Resolved against the real working folder, as t3 itself resolves a relative T3 home.
       await NodeFSP.mkdir(NodePath.join(root, "a/b"), { recursive: true });
       await NodeFSP.symlink(NodePath.join(root, "a/b"), NodePath.join(root, "cwd"));

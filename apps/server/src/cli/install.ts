@@ -90,6 +90,15 @@ const classifyCommandLink = Effect.fn("cli.install.classify_command_link")(funct
     .pipe(Effect.orElseSucceed(() => versionsDir));
   const desktopLauncher = path.join(baseDir, "bin", "t3");
   const realDesktopLauncher = yield* real(desktopLauncher);
+  // The desktop app writes this exact path, also when the home's bin folder is a link.
+  const text = yield* fs.readLink(link).pipe(Effect.option);
+  if (
+    Option.isSome(text) &&
+    path.isAbsolute(text.value) &&
+    path.normalize(text.value) === desktopLauncher
+  ) {
+    return "older";
+  }
   const older = targets.some(
     (candidate) =>
       isVersionExecutable(path, versionsDir, candidate) ||

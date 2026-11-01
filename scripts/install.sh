@@ -204,6 +204,8 @@ resolve_path() (
   printf '%s' "${out:-/}"
 )
 # Spelled as every t3 spells its T3 home, so released t3 still owns the links made from it.
+# Like the CLI, a quoted ~ at the start means the home folder.
+case "$t3_home" in "~") t3_home="$HOME" ;; "~/"*) t3_home="${HOME}/${t3_home#"~/"}" ;; esac
 t3_home="$(resolve_path "$t3_home")"
 stem="t3-${version}-${platform}-${arch}"
 archive="${stem}.tar.gz"
@@ -280,6 +282,7 @@ real_desktop_launcher="$(CDPATH='' cd -P -- "$t3_home" && pwd)/bin/t3"
 if real_bin="$(CDPATH='' cd -P -- "${t3_home}/bin" 2>/dev/null && pwd)"; then
   real_desktop_launcher="${real_bin}/t3"
 fi
+real_bin_dir="$(CDPATH='' cd -P -- "$bin_dir" && pwd)"
 # Prints what the link at $1 is to this home: current (its command link), older (a version's t3
 # or the desktop app's launcher), or nothing. Anything that is not a symlink is someone else's.
 link_kind() {
@@ -292,8 +295,11 @@ link_kind() {
   # `t3/.`) never runs the file it would resolve to. `//` and `/./` collapse as text.
   case "/${existing}/" in */../*) return 0 ;; esac
   case "$existing" in */ | */. | . | *"$newline"*) return 0 ;; esac
-  case "$existing" in /*) ;; *) existing="${bin_dir}/${existing}" ;; esac
+  # A relative target starts from the bin folder's real path, as the OS follows it.
+  case "$existing" in /*) ;; *) existing="${real_bin_dir}/${existing}" ;; esac
   existing="$(resolve_path "$existing")"
+  # The desktop app writes this exact path, also when the home's bin folder is a link.
+  if [ "$existing" = "${t3_home}/bin/t3" ]; then echo older; return 0; fi
   # A folder that is itself a link (another versions/<name>) is not followed.
   folder="$(dirname -- "$existing")"
   [ ! -L "$folder" ] || return 0
