@@ -964,6 +964,31 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       refreshed.providers.map((entry) => [entry.workspaceSnapshots, entry.slashCommands]),
       [[[snapshotFor("/b", "2026-10-25T00:00:00.000Z")], []]],
     );
+    // A failed scan still gives a client without the machine catalog its commands.
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("refresh-failed-scan"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: {
+        instanceId,
+        cwd: "/c",
+        workspaceSnapshotsOnDemand: true,
+        providerCatalogsOnDemand: true,
+      },
+      headers: Headers.empty,
+    });
+    const fallback = (yield* Queue.take(responses)) as {
+      readonly providers: ReadonlyArray<ServerProvider>;
+    };
+    assert.deepEqual(fallback.providers[0]?.workspaceSnapshots, [
+      {
+        cwd: "/c",
+        checkedAt: provider.checkedAt,
+        slashCommands: provider.slashCommands,
+        slashCommandsPending: true,
+        skills: [],
+      },
+    ]);
     yield* server.write(0, { _tag: "Interrupt", requestId: configRequest, interruptors: [] });
   }).pipe(
     Effect.provide(
