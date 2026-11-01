@@ -1,3 +1,4 @@
+import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
 import {
   ProjectId,
@@ -7,6 +8,7 @@ import {
   type PullRequestListEntry,
   type PullRequestListInput,
   type PullRequestListResult,
+  type PullRequestListStatsInput,
 } from "@t3tools/contracts";
 import type { PullRequestListControls } from "../../persistence/mobile-preferences";
 
@@ -33,6 +35,34 @@ export function withoutScratchProjectScope(
     : controls;
 }
 
+type FilterProject = Parameters<typeof pullRequestFilterProjects>[0][number];
+
+export function pullRequestProjectChoices<
+  Project extends FilterProject & { readonly isScratch?: true },
+>(
+  projects: readonly Project[],
+  input: {
+    readonly environmentId: string | null;
+    readonly controls: PullRequestListControls;
+    readonly environmentLabels: ReadonlyMap<EnvironmentId, string>;
+    readonly servesPullRequests: (environmentId: EnvironmentId) => boolean;
+  },
+) {
+  const isSelected = (project: Project) =>
+    project.id === input.controls.projectId &&
+    project.environmentId === input.controls.projectEnvironmentId;
+  return pullRequestFilterProjects(
+    projects.filter(
+      (project) =>
+        !project.isScratch &&
+        (input.environmentId === null || project.environmentId === input.environmentId) &&
+        (input.servesPullRequests(project.environmentId) || isSelected(project)),
+    ),
+    input.environmentLabels,
+    projects.find(isSelected),
+  );
+}
+
 export function pullRequestListKey(
   item: Pick<PullRequestListEntry, "host" | "repository" | "number">,
 ) {
@@ -49,6 +79,71 @@ export const scopedPullRequestListKey = (entry: EnvironmentPullRequestListEntry)
 export const pullRequestStatKey = (
   row: Pick<PullRequestDiffStat, "projectId" | "repository" | "number">,
 ) => `${row.projectId}:${row.repository}:${row.number}`;
+
+/**
+ * Diff stats an environment has answered, the stats query that answered each, and each row's
+ * `updatedAt` as its list last answered it.
+ */
+export interface PullRequestStatsCache {
+  readonly stats: ReadonlyMap<string, PullRequestDiffStat>;
+  readonly answeredBy: ReadonlyMap<string, PullRequestListStatsInput>;
+  readonly updatedAt: ReadonlyMap<string, string>;
+}
+
+export const EMPTY_PULL_REQUEST_STATS_CACHE: PullRequestStatsCache = {
+  stats: new Map(),
+  answeredBy: new Map(),
+  updatedAt: new Map(),
+};
+
+/**
+ * Records the rows a list answered. Stats carry no head, so a row whose `updatedAt` moved (a push,
+ * among other changes) drops its cached stat, and the stats queries that answered it are returned
+ * to refresh: one can still be fresh and would otherwise answer the row's next read with the old
+ * counts.
+ */
+export function withListedPullRequests(
+  cache: PullRequestStatsCache,
+  entries: readonly Pick<
+    PullRequestListEntry,
+    "projectId" | "repository" | "number" | "updatedAt"
+  >[],
+): {
+  readonly cache: PullRequestStatsCache;
+  readonly refresh: readonly PullRequestListStatsInput[];
+} {
+  const moved = entries.filter(
+    (entry) => cache.updatedAt.get(pullRequestStatKey(entry)) !== entry.updatedAt,
+  );
+  if (!moved.length) return { cache, refresh: [] };
+  const stats = new Map(cache.stats);
+  const answeredBy = new Map(cache.answeredBy);
+  const updatedAt = new Map(cache.updatedAt);
+  const refresh = new Set<PullRequestListStatsInput>();
+  for (const entry of moved) {
+    const key = pullRequestStatKey(entry);
+    const query = answeredBy.get(key);
+    if (query) refresh.add(query);
+    stats.delete(key);
+    answeredBy.delete(key);
+    updatedAt.set(key, entry.updatedAt);
+  }
+  return { cache: { stats, answeredBy, updatedAt }, refresh: [...refresh] };
+}
+
+export function withAnsweredPullRequestStats(
+  cache: PullRequestStatsCache,
+  input: PullRequestListStatsInput,
+  answered: readonly PullRequestDiffStat[],
+): PullRequestStatsCache {
+  const stats = new Map(cache.stats);
+  const answeredBy = new Map(cache.answeredBy);
+  for (const row of answered) {
+    stats.set(pullRequestStatKey(row), row);
+    answeredBy.set(pullRequestStatKey(row), input);
+  }
+  return { ...cache, stats, answeredBy };
+}
 
 /**
  * Fills rows that have no diff stat yet from the stats answers on screen. Returns `entries`
