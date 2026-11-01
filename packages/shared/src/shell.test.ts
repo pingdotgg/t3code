@@ -1052,33 +1052,44 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
 });
 
 describe("desktop shell environment updates", () => {
-  it("decodes the update, replaces Windows PATH casing and removes withdrawn values", () => {
-    const message = decodeDesktopHostMessage({
-      version: 1,
-      type: "shellEnvironment",
-      discovered: true,
-      platform: "win32",
-      environment: {
+  it.each(["win32", "linux", "darwin"] as const)(
+    "applies shell updates with %s PATH semantics",
+    (platform) => {
+      const message = decodeDesktopHostMessage({
+        version: 1,
+        type: "shellEnvironment",
+        discovered: true,
+        platform,
+        environment: {
+          PATH: "C:\\fresh",
+          FNM_DIR: null,
+          __MISE_DIFF: null,
+          SSH_AUTH_SOCK: "/current.sock",
+          NODE_OPTIONS: "--bad",
+        },
+      });
+      expect(message.type).toBe("shellEnvironment");
+      if (message.type !== "shellEnvironment") throw new Error("Expected shell environment update");
+      const env: NodeJS.ProcessEnv = {
+        Path: "C:\\stale",
+        FNM_DIR: "stale",
+        __MISE_DIFF: "stale",
+        UNRELATED: "keep",
+      };
+      applyShellEnvironment(env, message.environment, platform);
+      expect(env).toEqual({
         PATH: "C:\\fresh",
-        FNM_DIR: null,
-        __MISE_DIFF: null,
+        ...(platform === "win32" ? {} : { Path: "C:\\stale" }),
         SSH_AUTH_SOCK: "/current.sock",
-        NODE_OPTIONS: "--bad",
-      },
-    });
-    expect(message.type).toBe("shellEnvironment");
-    if (message.type !== "shellEnvironment") throw new Error("Expected shell environment update");
-    const env: NodeJS.ProcessEnv = {
-      Path: "C:\\stale",
-      FNM_DIR: "stale",
-      __MISE_DIFF: "stale",
-      UNRELATED: "keep",
-    };
-    applyShellEnvironment(env, message.environment);
-    expect(env).toEqual({ PATH: "C:\\fresh", SSH_AUTH_SOCK: "/current.sock", UNRELATED: "keep" });
-    env.Path = "C:\\stale";
-    env.path = "C:\\other";
-    applyShellEnvironment(env, { PATH: null, SSH_AUTH_SOCK: null });
-    expect(env).toEqual({ UNRELATED: "keep" });
-  });
+        UNRELATED: "keep",
+      });
+      env.Path = "C:\\stale";
+      env.path = "C:\\other";
+      applyShellEnvironment(env, { PATH: null, SSH_AUTH_SOCK: null }, platform);
+      expect(env).toEqual({
+        ...(platform === "win32" ? {} : { Path: "C:\\stale", path: "C:\\other" }),
+        UNRELATED: "keep",
+      });
+    },
+  );
 });

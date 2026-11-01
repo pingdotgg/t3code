@@ -237,7 +237,7 @@ export function makeApplyDesktopShellEnvironmentSnapshot(
         return false;
       });
     }
-    applyShellEnvironment(environment, message.environment);
+    applyShellEnvironment(environment, message.environment, platform);
     if (message.environment.NODE_EXTRA_CA_CERTS !== undefined) {
       yield* Effect.gen(function* () {
         const certificates = baseCertificates;

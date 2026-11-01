@@ -967,9 +967,13 @@ export const resolveWindowsEnvironment = Effect.fn("shell.resolveWindowsEnvironm
     : baselinePatch;
 });
 
-export function applyShellEnvironment(env: NodeJS.ProcessEnv, patch: ShellEnvironmentPatch): void {
+export function applyShellEnvironment(
+  env: NodeJS.ProcessEnv,
+  patch: ShellEnvironmentPatch,
+  platform: NodeJS.Platform,
+): void {
   for (const [key, value] of Object.entries(patch)) {
-    if (key === "PATH") setWindowsPath(env, value);
+    if (key === "PATH" && platform === "win32") setWindowsPath(env, value);
     else if (value === null) delete env[key];
     else env[key] = value;
   }

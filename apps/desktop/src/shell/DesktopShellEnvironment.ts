@@ -577,7 +577,7 @@ export const make = Effect.gen(function* () {
     patch: ShellEnvironmentPatch,
     discovered = false,
   ) {
-    applyShellEnvironment(env, patch);
+    applyShellEnvironment(env, patch, environment.platform);
     const message: DesktopShellEnvironmentSnapshot = {
       version: 1,
       type: "shellEnvironment",
@@ -637,7 +637,7 @@ export const make = Effect.gen(function* () {
             () => cachedPath,
           );
         }
-        applyShellEnvironment(baseline, cached);
+        applyShellEnvironment(baseline, cached, environment.platform);
         yield* publish(
           Object.fromEntries(
             Object.keys(ShellEnvironmentPatch.fields).map((name) => [name, baseline[name] ?? null]),
