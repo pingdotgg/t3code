@@ -7,7 +7,7 @@ const V1_PREFIX = `${THREAD_LINK_PROTOCOL}://v1/`;
 const V2_PREFIX = `${THREAD_LINK_PROTOCOL}://v2/`;
 // Code comes first in the alternation so a link written inside a code span or fence is skipped.
 const THREAD_LINK_OUTSIDE_CODE =
-  /(?<fence>(`{3,}|~{3,})[\s\S]*?(?:\2|$))|(?<span>(`+)[^\n]*?\4)|\[(?<label>[^\]\n]*)\]\((?<href>t3-thread:\/\/v[12]\/[^\s)]+)\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+)>/g;
+  /(?<fence>(`{3,}|~{3,})[\s\S]*?(?:\2|$))|(?<span>(`+)[^\n]*?\4)|\[(?<label>[^\]\n]*)\]\((?:<(?<bracketedHref>t3-thread:\/\/v[12]\/[^\s<>]+)>|(?<href>t3-thread:\/\/v[12]\/[^\s)]+))\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+)>/g;
 
 const decodeThreadId = Schema.decodeUnknownOption(ThreadId);
 const decodeEnvironmentId = Schema.decodeUnknownOption(EnvironmentId);
@@ -98,7 +98,7 @@ export function threadLinkRefs(
 ): ReadonlyArray<ScopedThreadRef> {
   const refs = new Map<string, ScopedThreadRef>();
   for (const match of markdown.matchAll(THREAD_LINK_OUTSIDE_CODE)) {
-    const href = match.groups?.href ?? match.groups?.autolink;
+    const href = match.groups?.href ?? match.groups?.bracketedHref ?? match.groups?.autolink;
     const link = href === undefined ? null : parseThreadLinkHref(href);
     if (link === null) continue;
     for (const ref of threadLinkCandidates(link, messageEnvironmentId)) {
@@ -128,8 +128,13 @@ export function relabelThreadLinks(
 ): string {
   if (!hasThreadLinks(markdown)) return markdown;
   return markdown.replace(THREAD_LINK_OUTSIDE_CODE, (source, ...args) => {
-    const groups = args.at(-1) as { href?: string; autolink?: string; label?: string };
-    const href = groups.href ?? groups.autolink;
+    const groups = args.at(-1) as {
+      href?: string;
+      bracketedHref?: string;
+      autolink?: string;
+      label?: string;
+    };
+    const href = groups.href ?? groups.bracketedHref ?? groups.autolink;
     if (href === undefined) return source;
     const written = parseThreadLinkHref(href);
     if (written === null) return source;
@@ -143,7 +148,7 @@ export function relabelThreadLinks(
         : written.threadId;
     const current = title({ environmentId, threadId });
     if (current === undefined) {
-      if (groups.href !== undefined && written.environmentId === null) return source;
+      if (groups.label !== undefined && written.environmentId === null) return source;
       return groups.label?.trim() || unknownThreadLinkLabel(written, messageEnvironmentId);
     }
     return formatThreadLink(
