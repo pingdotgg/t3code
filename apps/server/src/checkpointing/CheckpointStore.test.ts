@@ -514,5 +514,77 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         );
       }),
     );
+
+    it.effect("leaves out commits of a branch the turn switched away from", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("checkpoint-authored-paths-branch-switch");
+        const switchRefs = {
+          cwd: tmp,
+          fromCheckpointRef: checkpointRefForThreadTurn(threadId, 0),
+          toCheckpointRef: checkpointRefForThreadTurn(threadId, 1),
+        };
+        const discardRefs = {
+          cwd: tmp,
+          fromCheckpointRef: checkpointRefForThreadTurn(threadId, 2),
+          toCheckpointRef: checkpointRefForThreadTurn(threadId, 3),
+        };
+        const renameRefs = {
+          cwd: tmp,
+          fromCheckpointRef: checkpointRefForThreadTurn(threadId, 4),
+          toCheckpointRef: checkpointRefForThreadTurn(threadId, 5),
+        };
+        const commitBeforeTurn = (contents: string) =>
+          Effect.gen(function* () {
+            yield* writeTextFile(NodePath.join(tmp, "x.txt"), contents);
+            yield* git(tmp, ["add", "."]);
+            yield* git(tmp, ["commit", "-m", contents], { committedAt: "2020-01-01T00:00:00Z" });
+          });
+
+        yield* commitBeforeTurn("base\n");
+        yield* git(tmp, ["branch", "b"]);
+        yield* git(tmp, ["checkout", "-b", "a"]);
+        yield* commitBeforeTurn("a\n");
+
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: switchRefs.fromCheckpointRef,
+        });
+        yield* git(tmp, ["checkout", "b"]);
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: switchRefs.toCheckpointRef,
+        });
+        expect(yield* checkpointStore.listAuthoredPaths(switchRefs)).toEqual(new Set());
+
+        yield* git(tmp, ["checkout", "a"]);
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: discardRefs.fromCheckpointRef,
+        });
+        yield* git(tmp, ["branch", "backup"]);
+        yield* git(tmp, ["reset", "--hard", "HEAD~1"]);
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: discardRefs.toCheckpointRef,
+        });
+        expect(yield* checkpointStore.listAuthoredPaths(discardRefs)).toEqual(new Set(["x.txt"]));
+
+        yield* git(tmp, ["reset", "--hard", "backup"]);
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: renameRefs.fromCheckpointRef,
+        });
+        yield* git(tmp, ["branch", "-m", "renamed"]);
+        yield* git(tmp, ["reset", "--hard", "HEAD~1"]);
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: renameRefs.toCheckpointRef,
+        });
+        expect(yield* checkpointStore.listAuthoredPaths(renameRefs)).toEqual(new Set(["x.txt"]));
+      }),
+    );
   });
 });
