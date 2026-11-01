@@ -56,6 +56,7 @@ import {
   formatUsageContractMismatch,
   formatUsd,
   makeWindow,
+  resolutionForWindow,
   usageSourceMessages,
 } from "@t3tools/shared/usageFormat";
 import { Button, InlineButton } from "../ui/button";
@@ -191,7 +192,7 @@ export function UsagePage() {
     window: makeWindow(
       preferences.windowDays,
       undefined,
-      preferences.windowDays === 1 ? "hour" : "day",
+      resolutionForWindow(preferences.windowDays),
     ),
   }));
   const metric = preferences.metric;
@@ -204,7 +205,6 @@ export function UsagePage() {
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const hiddenProviders = new Set(preferences.hiddenProviders);
   const { days: windowDays, window } = windowSelection;
-  const isPast24Hours = windowDays === 1;
   const {
     merged: answeredUsage,
     environments,
@@ -217,7 +217,7 @@ export function UsagePage() {
   const shownWindow = shown?.window ?? window;
   const shownHourly = shownWindow.resolution === "hour";
   const refreshingUsage = isRefreshing && !showingLimits;
-  const showingKept = shown !== null && shown.window !== window;
+  const showingKept = shown !== null && shown.merged !== answeredUsage;
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const presentationsWithProviders = useAtomValue(
     environmentPresentations.presentationsWithProvidersAtom,
@@ -243,7 +243,7 @@ export function UsagePage() {
     updatePreferences({ windowDays: days });
     setWindowSelection({
       days,
-      window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
+      window: makeWindow(days, undefined, resolutionForWindow(days)),
     });
   };
   const selectMetric = (nextMetric: UsageMetric) => {
@@ -309,7 +309,7 @@ export function UsagePage() {
       });
       return;
     }
-    const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
+    const nextWindow = makeWindow(windowDays, undefined, resolutionForWindow(windowDays));
     if (
       nextWindow.sinceDay !== window.sinceDay ||
       nextWindow.untilDay !== window.untilDay ||
@@ -1031,7 +1031,11 @@ function UsageOverview({
                     >
                       <td className="py-2 text-foreground">
                         {"hourStart" in period
-                          ? formatHourShort(period.hourStart, shownWindow.timeZone, hour12)
+                          ? (hours.length > 24 ? formatDateTimeShort : formatHourShort)(
+                              period.hourStart,
+                              shownWindow.timeZone,
+                              hour12,
+                            )
                           : formatDayShort(period.day)}
                       </td>
                       {activeProviders.map((provider) => (

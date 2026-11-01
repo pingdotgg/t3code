@@ -175,6 +175,21 @@ function formatHour(formatter: Intl.DateTimeFormat, date: Date, hour12: boolean)
  * Repeated wall-clock hours during a fall-back transition include their short zone name so the
  * two distinct buckets remain distinguishable.
  */
+function isRepeatedWallHour(instant: Date, timeZone?: string): boolean {
+  const wallHourFormat = dateTimeFormatter("en-CA", {
+    ...(timeZone === undefined ? {} : { timeZone }),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+  });
+  const wallHour = wallHourFormat.format(instant);
+  return [-HOUR_MS, HOUR_MS].some(
+    (offset) => wallHourFormat.format(new Date(instant.getTime() + offset)) === wallHour,
+  );
+}
+
 export function formatHourShort(hourStart: string, timeZone?: string, hour12 = true): string {
   const instant = new Date(hourStart);
   if (Number.isNaN(instant.getTime())) return hourStart;
@@ -183,18 +198,7 @@ export function formatHourShort(hourStart: string, timeZone?: string, hour12 = t
     ...options,
     ...hourOptions(hour12),
   });
-  const wallHourFormat = dateTimeFormatter("en-CA", {
-    ...options,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    hourCycle: "h23",
-  });
-  const wallHour = wallHourFormat.format(instant);
-  const isRepeatedHour = [-HOUR_MS, HOUR_MS].some(
-    (offset) => wallHourFormat.format(new Date(instant.getTime() + offset)) === wallHour,
-  );
+  const isRepeatedHour = isRepeatedWallHour(instant, timeZone);
 
   if (!isRepeatedHour) return formatHour(hourFormat, instant, hour12);
   const zonedHourFormat = dateTimeFormatter("en-US", {
@@ -213,6 +217,7 @@ export function formatDateTimeShort(instant: string, timeZone?: string, hour12 =
     month: "short",
     day: "numeric",
     ...hourOptions(hour12),
+    ...(isRepeatedWallHour(date, timeZone) ? { timeZoneName: "short" } : {}),
   });
   return formatHour(dateHourFormat, date, hour12);
 }
@@ -245,6 +250,10 @@ export function formatRelativeHourShort(
   return formatDateTimeShort(hourStart, timeZone, hour12);
 }
 
+export function resolutionForWindow(days: number): UsageResolution {
+  return days <= 7 ? "hour" : "day";
+}
+
 export function makeWindow(
   days: number,
   now = new Date(),
@@ -271,7 +280,7 @@ export function makeWindow(
   const untilDay = format.format(now);
   if (resolution === "hour") {
     const untilTimeMs = Math.floor(now.getTime() / 60_000) * 60_000;
-    const sinceTimeMs = untilTimeMs - 24 * HOUR_MS;
+    const sinceTimeMs = untilTimeMs - days * 24 * HOUR_MS;
     const sinceTime = new Date(sinceTimeMs);
     const untilTime = new Date(untilTimeMs);
     return {

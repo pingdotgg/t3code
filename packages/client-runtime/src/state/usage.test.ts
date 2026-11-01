@@ -3,6 +3,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   UsageDay,
+  UsageReadError,
   USAGE_CONTRACT_VERSION,
   type ServerProvider,
   type UsageSummary,
@@ -17,6 +18,7 @@ import {
   needsCursorKeychainAccess,
   refreshUsage,
   refreshUsageLimits,
+  usageFallbackWindow,
 } from "./usage.ts";
 
 const input = {
@@ -261,5 +263,34 @@ describe("needsCursorKeychainAccess", () => {
         { summary: account, needsCursorKeychainAccess: false },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("usageFallbackWindow", () => {
+  it("falls back only for unsupported seven-day hourly windows", () => {
+    const window = {
+      ...input,
+      sinceDay: UsageDay.make("2026-08-29"),
+      resolution: "hour" as const,
+      sinceTime: "2026-08-29T12:00:00Z",
+      untilTime: "2026-09-05T12:00:00Z",
+    };
+    const invalid = new UsageReadError({ reason: "invalidWindow", detail: "24 hours maximum" });
+    expect(usageFallbackWindow(window, invalid)).toEqual({
+      sinceDay: "2026-08-30",
+      untilDay: "2026-09-05",
+      timeZone: "UTC",
+      resolution: "day",
+    });
+    expect(
+      usageFallbackWindow(
+        window,
+        new UsageReadError({ reason: "scanFailed", detail: "scan failed" }),
+      ),
+    ).toBeNull();
+    expect(usageFallbackWindow({ ...window, resolution: "day" }, invalid)).toBeNull();
+    expect(
+      usageFallbackWindow({ ...window, sinceTime: "2026-09-04T12:00:00Z" }, invalid),
+    ).toBeNull();
   });
 });

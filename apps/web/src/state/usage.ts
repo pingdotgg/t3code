@@ -8,8 +8,14 @@ import {
   type UsageProviderKind,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
-import { needsCursorKeychainAccess, refreshUsage } from "@t3tools/client-runtime/state/usage";
+import {
+  needsCursorKeychainAccess,
+  refreshUsage,
+  usageFallbackWindow,
+  dailyUsageWindow,
+} from "@t3tools/client-runtime/state/usage";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
+import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
 
@@ -30,49 +36,65 @@ export interface EnvironmentUsageStatus {
   readonly needsCursorKeychainAccess: boolean;
 }
 
-const usageByWindowAtom = Atom.family((windowKey: string) =>
-  Atom.make((get): readonly EnvironmentUsageStatus[] => {
-    const input = JSON.parse(windowKey) as UsageSummaryInput;
-    const presentations = get(environmentPresentations.presentationsAtom);
+interface UsageWindowResult {
+  readonly environments: readonly EnvironmentUsageStatus[];
+  readonly window: UsageSummaryInput;
+}
 
-    const statuses: EnvironmentUsageStatus[] = [];
-    for (const [environmentId, presentation] of presentations) {
-      const isConnected = presentation.connection.phase === "connected";
-      const sessionResult = get(environmentSession.sessionStateAtom(environmentId));
-      const access = resolveUsageAccess({
-        connectionPhase: presentation.connection.phase,
-        session: AsyncResult.getOrElse(sessionResult, () => null),
-        hasSessionError: sessionResult._tag === "Failure",
-      });
-      if (!access.canReadDiagnostics) {
+const usageByWindowAtom: (key: string) => Atom.Atom<UsageWindowResult> = Atom.family(
+  (windowKey: string) =>
+    Atom.make((get): UsageWindowResult => {
+      const { selectedIds, ...input } = JSON.parse(windowKey) as UsageSummaryInput & {
+        selectedIds: readonly EnvironmentId[] | null;
+      };
+      const presentations = get(environmentPresentations.presentationsAtom);
+
+      const statuses: EnvironmentUsageStatus[] = [];
+      for (const [environmentId, presentation] of presentations) {
+        const isConnected = presentation.connection.phase === "connected";
+        const sessionResult = get(environmentSession.sessionStateAtom(environmentId));
+        const access = resolveUsageAccess({
+          connectionPhase: presentation.connection.phase,
+          session: AsyncResult.getOrElse(sessionResult, () => null),
+          hasSessionError: sessionResult._tag === "Failure",
+        });
+        if (!access.canReadDiagnostics) {
+          statuses.push({
+            environmentId,
+            label: presentation.entry.target.label,
+            isConnected,
+            ...access,
+            summary: null,
+            needsCursorKeychainAccess: false,
+          });
+          continue;
+        }
+        const result = get(serverEnvironment.usageSummary({ environmentId, input }));
+        if (
+          result._tag === "Failure" &&
+          (selectedIds === null || selectedIds.includes(environmentId))
+        ) {
+          const fallback = usageFallbackWindow(input, Cause.squash(result.cause));
+          if (fallback !== null)
+            return get(usageByWindowAtom(JSON.stringify({ ...fallback, selectedIds })));
+        }
+        const summary = AsyncResult.getOrElse(result, () => null);
         statuses.push({
           environmentId,
           label: presentation.entry.target.label,
+          isPending: result.waiting,
+          canReadDiagnostics: true,
           isConnected,
-          ...access,
-          summary: null,
-          needsCursorKeychainAccess: false,
-        });
-        continue;
-      }
-      const result = get(serverEnvironment.usageSummary({ environmentId, input }));
-      const summary = AsyncResult.getOrElse(result, () => null);
-      statuses.push({
-        environmentId,
-        label: presentation.entry.target.label,
-        isPending: result.waiting,
-        canReadDiagnostics: true,
-        isConnected,
-        error: result._tag === "Failure" ? "This environment could not report usage." : null,
-        summary,
-        needsCursorKeychainAccess: needsCursorKeychainAccess(
+          error: result._tag === "Failure" ? "This environment could not report usage." : null,
           summary,
-          get(serverEnvironment.providersValueAtom(environmentId)),
-        ),
-      });
-    }
-    return statuses;
-  }).pipe(Atom.withLabel(`web-usage:window:${windowKey}`)),
+          needsCursorKeychainAccess: needsCursorKeychainAccess(
+            summary,
+            get(serverEnvironment.providersValueAtom(environmentId)),
+          ),
+        });
+      }
+      return { environments: statuses, window: input };
+    }).pipe(Atom.withLabel(`web-usage:window:${windowKey}`)),
 );
 
 export interface UsageView {
@@ -155,6 +177,7 @@ export function useUsage(
   hiddenProviders: ReadonlySet<UsageProviderKind> = NO_HIDDEN_PROVIDERS,
 ): UsageView {
   const windowKey = JSON.stringify({
+    selectedIds: selectedEnvironmentIds === null ? null : [...selectedEnvironmentIds].sort(),
     sinceDay: input.sinceDay,
     untilDay: input.untilDay,
     timeZone: input.timeZone,
@@ -163,7 +186,7 @@ export function useUsage(
     untilTime: input.untilTime,
   });
   const atom = usageByWindowAtom(windowKey);
-  const environments = useAtomValue(atom);
+  const { environments, window: effectiveWindow } = useAtomValue(atom);
   // Identity-based render sync needs a derivation retained by inputs across renders.
   const [derived, setDerived] = useState(() =>
     deriveSelection(environments, selectedEnvironmentIds, hiddenProviders),
@@ -191,7 +214,14 @@ export function useUsage(
             readEnvironmentScope(environment.environmentId, AuthDiagnosticsReadScope),
         )
         .map(({ environmentId }) => environmentId),
-      input: nextInput ?? (JSON.parse(windowKey) as UsageSummaryInput),
+      input:
+        nextInput === undefined
+          ? effectiveWindow
+          : input.resolution === "hour" &&
+              effectiveWindow.resolution === "day" &&
+              nextInput.resolution === "hour"
+            ? dailyUsageWindow(nextInput)
+            : nextInput,
     });
 
   const answeredCount = selectedEnvironments.filter(
@@ -212,12 +242,12 @@ export function useUsage(
   if (
     answeredCount > 0 &&
     (lastAnswered?.merged !== merged ||
-      lastAnswered.window !== input ||
+      lastAnswered.window !== effectiveWindow ||
       lastAnswered.selection !== selectedEnvironmentIds ||
       lastAnswered.hidden !== hiddenProviders)
   ) {
     setLastAnswered({
-      window: input,
+      window: effectiveWindow,
       merged,
       selection: selectedEnvironmentIds,
       hidden: hiddenProviders,
@@ -229,8 +259,8 @@ export function useUsage(
       : null;
   const shown =
     answeredCount > 0
-      ? { window: input, merged }
-      : (kept ?? (isPending ? null : { window: input, merged }));
+      ? { window: effectiveWindow, merged }
+      : (kept ?? (isPending ? null : { window: effectiveWindow, merged }));
 
   return {
     merged,
