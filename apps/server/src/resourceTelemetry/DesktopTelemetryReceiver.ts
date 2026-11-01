@@ -225,21 +225,23 @@ export function makeApplyDesktopShellEnvironmentSnapshot(
     message: DesktopShellEnvironmentSnapshot,
   ) {
     if (message.platform !== platform) return;
+    // Node's first default-CA enumeration consults process.env, so capture it before the patch.
+    if (message.environment.NODE_EXTRA_CA_CERTS !== undefined && baseCertificates === undefined) {
+      // Remove only the startup extras, preserving duplicates from bundled or system trust.
+      const extras = [...NodeTls.getCACertificates("extra")];
+      baseCertificates = NodeTls.getCACertificates("default").filter((certificate) => {
+        const index = extras.indexOf(certificate);
+        if (index === -1) return true;
+        extras.splice(index, 1);
+        return false;
+      });
+    }
     applyShellEnvironment(environment, message.environment);
     if (message.environment.NODE_EXTRA_CA_CERTS !== undefined) {
       yield* Effect.gen(function* () {
-        if (baseCertificates === undefined) {
-          // Remove only the startup extras, preserving duplicates from bundled or system trust.
-          const extras = [...NodeTls.getCACertificates("extra")];
-          baseCertificates = NodeTls.getCACertificates("default").filter((certificate) => {
-            const index = extras.indexOf(certificate);
-            if (index === -1) return true;
-            extras.splice(index, 1);
-            return false;
-          });
-        }
+        const certificates = baseCertificates;
         // --use-openssl-ca roots are not enumerable; replacing the list would discard them.
-        if (baseCertificates.length === 0) {
+        if (certificates === undefined || certificates.length === 0) {
           yield* Effect.logWarning(
             "Preserving non-enumerable TLS trust. Restart to apply updated desktop shell certificates.",
           );
@@ -255,7 +257,7 @@ export function makeApplyDesktopShellEnvironmentSnapshot(
             if (bundle?.trim() && extras.length === 0) {
               throw new Error("No PEM certificates found.");
             }
-            NodeTls.setDefaultCACertificates([...baseCertificates!, ...extras]);
+            NodeTls.setDefaultCACertificates([...certificates, ...extras]);
           },
           catch: (cause) => new DesktopShellCertificatesUpdateFailed({ cause }),
         });

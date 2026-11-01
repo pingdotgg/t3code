@@ -7,6 +7,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { describe, expect } from "vite-plus/test";
 
 import {
@@ -15,6 +17,65 @@ import {
 } from "./DesktopTelemetryReceiver.ts";
 
 describe("DesktopTelemetryReceiver", () => {
+  it.live(
+    "preserves system and bundled roots when the first snapshot withdraws overlapping extras",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        const certificatePath = path.join(directory, "startup-extra-ca.pem");
+        yield* fs.writeFileString(
+          certificatePath,
+          [...NodeTls.getCACertificates("system"), ...NodeTls.rootCertificates].join("\n"),
+        );
+        const child = yield* spawner.spawn(
+          ChildProcess.make(
+            process.execPath,
+            [
+              "--use-bundled-ca",
+              "--use-system-ca",
+              "--input-type=module",
+              "--eval",
+              `
+import * as NodeAssert from "node:assert/strict";
+import * as NodeCrypto from "node:crypto";
+import * as NodeTls from "node:tls";
+import * as Effect from "effect/Effect";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { makeApplyDesktopShellEnvironmentSnapshot } from ${JSON.stringify(new URL("./DesktopTelemetryReceiver.ts", import.meta.url).href)};
+const fingerprints = (certificates) => [...new Set(certificates.map((pem) => new NodeCrypto.X509Certificate(pem).fingerprint256))].sort();
+const expected = fingerprints([...NodeTls.getCACertificates("bundled"), ...NodeTls.getCACertificates("system")]);
+const applySnapshot = makeApplyDesktopShellEnvironmentSnapshot(process.env, process.platform);
+await Effect.runPromise(applySnapshot({
+  version: 1,
+  type: "shellEnvironment",
+  platform: process.platform,
+  discovered: true,
+  environment: { NODE_EXTRA_CA_CERTS: null },
+}).pipe(Effect.provide(NodeServices.layer)));
+NodeAssert.equal(process.env.NODE_EXTRA_CA_CERTS, undefined);
+NodeAssert.deepEqual(fingerprints(NodeTls.getCACertificates("default")), expected);
+`,
+            ],
+            {
+              cwd: path.resolve(import.meta.dirname, "../.."),
+              env: { NODE_OPTIONS: "", NODE_EXTRA_CA_CERTS: certificatePath },
+            },
+          ),
+        );
+        const result = yield* Effect.all(
+          {
+            stderr: child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+            exitCode: child.exitCode.pipe(Effect.map(Number)),
+          },
+          { concurrency: "unbounded" },
+        );
+        expect(result.exitCode, result.stderr).toBe(0);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("updates live TLS trust when shell certificates arrive after startup", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
