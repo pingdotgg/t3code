@@ -29,10 +29,20 @@ vi.mock(import("../../state/query"), async (importOriginal) => ({
   })) as never,
 }));
 
-vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  useAtomCommand: (() => async () => undefined) as never,
+const commandMocks = vi.hoisted(() => ({
+  reorderQueuedRun: vi.fn(async () => undefined),
 }));
+
+vi.mock(import("../../state/use-atom-command"), async (importOriginal) => {
+  const { threadEnvironment } = await import("../../state/threads");
+  return {
+    ...(await importOriginal()),
+    useAtomCommand: ((command: unknown) =>
+      command === threadEnvironment.reorderQueuedRun
+        ? commandMocks.reorderQueuedRun
+        : async () => undefined) as never,
+  };
+});
 
 vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -172,6 +182,39 @@ it("shows who sent a queued message and folds automation and agent prompts", asy
 
   await expect.element(page.getByText("Sent by T3 Code")).toBeVisible();
   await expect.element(page.getByText("Continue where you left off.")).toBeVisible();
+});
+
+it("moves a queued message later with beforeRunId null at the end", async () => {
+  setup();
+  commandMocks.reorderQueuedRun.mockClear();
+  state.projection = { projection: { messages: [] } };
+  state.workflow = {
+    activeRun: { id: "run:active" },
+    canPromoteToSteer: true,
+    queuedRuns: [
+      {
+        run: { id: "run:first", userMessageId: "message:first" },
+        text: "First",
+        attachments: [],
+      },
+      {
+        run: { id: "run:second", userMessageId: "message:second" },
+        text: "Second",
+        attachments: [],
+      },
+    ],
+  };
+  await using _screen = await renderQueue();
+
+  await page.getByRole("button", { name: "Move queued message down" }).first().click();
+  expect(commandMocks.reorderQueuedRun).toHaveBeenCalledExactlyOnceWith({
+    environmentId: baseProps.environmentId,
+    input: {
+      threadId: baseProps.threadId,
+      runId: "run:first",
+      beforeRunId: null,
+    },
+  });
 });
 
 it("stays inside the timeline scroller instead of growing the chat column", async () => {
