@@ -32,9 +32,17 @@ const RawUserSchema = Schema.Struct({
 });
 
 const RawPipelineSchema = Schema.Struct({
+  id: Schema.optional(Schema.NullOr(Schema.Int)),
+  project_id: Schema.optional(Schema.NullOr(Schema.Int)),
   status: Schema.optional(Schema.NullOr(Schema.String)),
   web_url: Schema.optional(Schema.NullOr(Schema.String)),
   source: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+const RawTriggerJobSchema = Schema.Struct({
+  name: Schema.String,
+  allow_failure: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  downstream_pipeline: Schema.optional(Schema.NullOr(RawPipelineSchema)),
 });
 
 const RawMergeRequestSchema = Schema.Struct({
@@ -198,6 +206,8 @@ export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
   /** Absent means not counted, not up to date. */
   readonly divergedCommits?: number;
   readonly headSha?: string;
+  /** On a fork the pipeline often belongs to the source project, not the target. */
+  readonly headPipeline?: { readonly id: number; readonly projectId: number };
 }
 
 function toActor(raw: Schema.Schema.Type<typeof RawUserSchema> | null | undefined) {
@@ -257,7 +267,6 @@ function toPipelineStatus(value: string | null | undefined): PullRequestCheckSta
     case "skipped":
       return "skipped";
     case "manual":
-    case "scheduled":
       return "neutral";
     default:
       return "pending";
@@ -332,12 +341,16 @@ function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLab
       : {}),
     ...(raw.diverged_commits_count == null ? {} : { divergedCommits: raw.diverged_commits_count }),
     ...(headSha === null ? {} : { headSha }),
+    ...(raw.head_pipeline?.id == null || raw.head_pipeline.project_id == null
+      ? {}
+      : { headPipeline: { id: raw.head_pipeline.id, projectId: raw.head_pipeline.project_id } }),
   };
 }
 
 const decodeUnknownList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeMergeRequestEntry = Schema.decodeUnknownExit(RawMergeRequestSchema);
 const decodeMergeRequest = decodeJsonResult(RawMergeRequestSchema);
+const decodeTriggerJobEntry = Schema.decodeUnknownExit(RawTriggerJobSchema);
 const decodeNoteEntry = Schema.decodeUnknownExit(RawNoteSchema);
 const decodeUserEntry = Schema.decodeUnknownExit(RawUserSchema);
 const decodeCommitEntry = Schema.decodeUnknownExit(RawCommitSchema);
@@ -395,6 +408,42 @@ export function decodeMergeRequestDetailJson(
   return Result.isSuccess(decoded)
     ? Result.succeed(toDetail(decoded.success))
     : Result.fail(decoded.failure);
+}
+
+export interface GitLabTriggerJobChecks {
+  readonly checks: ReadonlyArray<PullRequestCheck>;
+  readonly rawCount: number;
+}
+
+/**
+ * Without `strategy: depend` a trigger job succeeds as soon as it starts its downstream
+ * pipeline, so the head pipeline stays green when that pipeline fails. Each row carries the
+ * downstream pipeline's own status instead of the trigger job's.
+ */
+export function decodeTriggerJobChecksJson(
+  raw: string,
+): Result.Result<GitLabTriggerJobChecks, DecodeFailure> {
+  const decoded = decodeUnknownList(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const checks: PullRequestCheck[] = [];
+  for (const entry of decoded.success) {
+    const job = decodeTriggerJobEntry(entry);
+    if (Exit.isFailure(job)) continue;
+    const name = trimmed(job.value.name);
+    const downstream = job.value.downstream_pipeline;
+    if (name === null || !downstream) continue;
+    const status = toPipelineStatus(downstream.status);
+    checks.push({
+      name,
+      // The same reading as `manual`: GitLab was told this failure does not fail the pipeline.
+      status: status === "failure" && job.value.allow_failure === true ? "neutral" : status,
+      description: "Downstream pipeline",
+      url: trimmed(downstream.web_url),
+    });
+  }
+  return Result.succeed({ checks, rawCount: decoded.success.length });
 }
 
 export function decodeViewerJson(raw: string): Result.Result<string | null, DecodeFailure> {
@@ -945,4 +994,119 @@ export function decodeRepositoryBlobsJson(
     blobs.set(path, oid);
   }
   return Result.succeed(blobs);
+}
+
+/**
+ * Line counts for merge requests of one project. The REST listing carries no line counts, and
+ * reading each diff to count them would cost a request per row, so GraphQL's per-merge-request
+ * summary is asked for in one read instead.
+ */
+export const MERGE_REQUEST_STATS_GRAPHQL_QUERY = `query($fullPath: ID!, $iids: [String!]) {
+  project(fullPath: $fullPath) {
+    mergeRequests(iids: $iids, first: 100) {
+      nodes { iid diffStatsSummary { additions deletions } }
+    }
+  }
+}`;
+
+const LineCountsSchema = Schema.Struct({ additions: Schema.Int, deletions: Schema.Int });
+
+const RawMergeRequestStatsSchema = Schema.Struct({
+  data: Schema.Struct({
+    project: Schema.NullOr(
+      Schema.Struct({
+        mergeRequests: Schema.NullOr(
+          Schema.Struct({
+            nodes: Schema.Array(
+              Schema.NullOr(
+                Schema.Struct({
+                  iid: Schema.String,
+                  diffStatsSummary: Schema.NullOr(LineCountsSchema),
+                }),
+              ),
+            ),
+          }),
+        ),
+      }),
+    ),
+  }),
+});
+
+const decodeMergeRequestStats = decodeJsonResult(RawMergeRequestStatsSchema);
+
+/**
+ * The counts by merge request number. A merge request GitLab returned no summary for is left
+ * out rather than counted as zero, so its row keeps whatever it already showed.
+ */
+export function decodeMergeRequestStatsJson(
+  raw: string,
+): Result.Result<
+  ReadonlyMap<number, { readonly additions: number; readonly deletions: number }>,
+  DecodeFailure
+> {
+  const decoded = decodeMergeRequestStats(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const stats = new Map<number, { readonly additions: number; readonly deletions: number }>();
+  for (const node of decoded.success.data.project?.mergeRequests?.nodes ?? []) {
+    const iid = Number(node?.iid);
+    if (!Number.isSafeInteger(iid) || iid <= 0 || node?.diffStatsSummary == null) continue;
+    stats.set(iid, node.diffStatsSummary);
+  }
+  return Result.succeed(stats);
+}
+
+/** Per-file line counts for one merge request, which the code/tests/generated breakdown sorts. */
+export const MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
+  project(fullPath: $fullPath) {
+    mergeRequest(iid: $iid) {
+      diffStatsSummary { fileCount }
+      diffStats { path additions deletions }
+    }
+  }
+}`;
+
+const decodeMergeRequestFileStats = decodeJsonResult(
+  Schema.Struct({
+    data: Schema.Struct({
+      project: Schema.NullOr(
+        Schema.Struct({
+          mergeRequest: Schema.NullOr(
+            Schema.Struct({
+              diffStatsSummary: Schema.NullOr(Schema.Struct({ fileCount: Schema.Int })),
+              diffStats: Schema.NullOr(
+                Schema.Array(Schema.Struct({ path: Schema.String, ...LineCountsSchema.fields })),
+              ),
+            }),
+          ),
+        }),
+      ),
+    }),
+  }),
+);
+
+/**
+ * GitLab stops listing files past its diff limits while the summary still counts them all, so a
+ * shorter list is reported as truncated rather than as a breakdown that misses lines.
+ */
+export function decodeMergeRequestFileStatsJson(raw: string): Result.Result<
+  {
+    readonly files: ReadonlyArray<{
+      readonly path: string;
+      readonly additions: number;
+      readonly deletions: number;
+    }>;
+    readonly truncated: boolean;
+  },
+  DecodeFailure
+> {
+  const decoded = decodeMergeRequestFileStats(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const mergeRequest = decoded.success.data.project?.mergeRequest;
+  const files = mergeRequest?.diffStats ?? [];
+  const fileCount = mergeRequest?.diffStatsSummary?.fileCount;
+  return Result.succeed({ files, truncated: fileCount === undefined || files.length < fileCount });
 }
