@@ -1078,6 +1078,148 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  // regression: #24371 Cursor lists only fixed effort presets unless asked for its picker
+  it.effect("opens Cursor on a plain model with the reasoning effort the thread picked", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("acp-registry-cursor");
+      const openCursor = Effect.fn("openCursor")(function* (stored: ModelSelection) {
+        let published: AcpRegistryLiveConfiguration | undefined;
+        const adapter = yield* makeAcpRegistryAdapterV2({
+          selfInvocation: yield* resolveSelfInvocation(),
+          instanceId,
+          settings: yield* decodeAcpRegistryAdapterSettings({ agentId: "cursor" }),
+          environment: {},
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({
+                resolve: (_settings, cwd) =>
+                  Effect.succeed({
+                    distribution: "local" as const,
+                    spawn: { command: process.execPath, args: [mockAgentPath], cwd },
+                  }),
+              }),
+              Layer.mock(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator)({
+                withForegroundStartup: (_startupKey, effect) => effect,
+                publishLiveConfiguration: (_instanceId, configuration) =>
+                  Effect.sync(() => {
+                    published = configuration;
+                  }),
+              }),
+            ),
+          ),
+        );
+        const threadId = ThreadId.make("thread-acp-registry-cursor");
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        yield* Effect.gen(function* () {
+          const runtime = yield* adapter.openSession({
+            threadId: ThreadId.make("thread-acp-registry-cursor"),
+            providerSessionId: ProviderSessionId.make("provider-session-acp-registry-cursor"),
+            modelSelection: stored,
+            runtimePolicy,
+          });
+          const providerThread = yield* runtime.ensureThread({
+            threadId,
+            modelSelection: stored,
+            runtimePolicy,
+          });
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: yield* DateTime.now,
+              ordinal: 1,
+              modelSelection: stored,
+            }),
+          );
+          yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runForEach((event) =>
+              Effect.sync(() => {
+                if (event.type === "turn.terminal") {
+                  assert.equal(event.status, "completed", event.failure?.message);
+                }
+              }),
+            ),
+          );
+        }).pipe(Effect.scoped);
+        return published;
+      });
+
+      const picked = yield* openCursor({
+        instanceId,
+        model: "gpt-5.4",
+        options: [{ id: "reasoning", value: "extra-high" }],
+      });
+      assert.equal(picked?.currentModelId, "gpt-5.4");
+      assert.deepInclude(
+        picked?.configOptions.find((option) => option.id === "reasoning"),
+        { currentValue: "extra-high" },
+      );
+      const saved = yield* openCursor({ instanceId, model: "composer-2[fast=true]" });
+      assert.equal(saved?.currentModelId, "composer-2");
+      assert.deepInclude(
+        saved?.configOptions.find((option) => option.id === "fast"),
+        { currentValue: "true" },
+      );
+      const preset = yield* openCursor({ instanceId, model: "gpt-5.4[reasoning=high,fast=false]" });
+      assert.deepInclude(
+        preset?.configOptions.find((option) => option.id === "reasoning"),
+        { currentValue: "high" },
+      );
+      for (const [model, id] of [
+        ["claude-opus-4-6", "effort"],
+        ["claude-sonnet-4-6", "reasoning_effort"],
+      ]) {
+        const native = yield* openCursor({ instanceId, model: `${model}[${id}=high]` });
+        assert.equal(native?.currentModelId, model);
+        assert.deepInclude(
+          native?.configOptions.find((option) => option.id === id),
+          {
+            currentValue: "high",
+          },
+        );
+        const overridden = yield* openCursor({
+          instanceId,
+          model: `${model}[${id}=high]`,
+          options: [{ id: id!, value: "low" }],
+        });
+        assert.deepInclude(
+          overridden?.configOptions.find((option) => option.id === id),
+          {
+            currentValue: "low",
+          },
+        );
+      }
+      const legacy = yield* openCursor({
+        instanceId,
+        model: "gpt-5.4[reasoning=high,context=1m,fast=true]",
+        options: [{ id: "reasoning", value: "extra-high" }],
+      });
+      assert.equal(legacy?.currentModelId, "gpt-5.4");
+      for (const [id, value] of [
+        ["reasoning", "extra-high"],
+        ["context", "1m"],
+        ["fast", "true"],
+      ]) {
+        assert.deepInclude(
+          legacy?.configOptions.find((option) => option.id === id),
+          { currentValue: value },
+        );
+      }
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   // regression: #26695 cancelling a Copilot prompt kills its background agents
   it.effect("never steers Copilot by cancelling its prompt", () =>
     Effect.gen(function* () {
