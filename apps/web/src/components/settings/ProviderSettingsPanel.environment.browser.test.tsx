@@ -8,6 +8,7 @@ import {
   type ServerProvider,
   type UnifiedSettings,
 } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import { AsyncResult, type Atom } from "effect/reactivity";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -355,5 +356,60 @@ describe("EnvironmentProviderSettings routing", () => {
       },
       {},
     );
+  });
+});
+
+describe("EnvironmentProviderSettings health check interval", () => {
+  it("commits interval drafts and allows retrying rejected edits", async () => {
+    await setup();
+    await using _screen = await render(panel());
+    const input = page.getByRole("textbox", { name: "Provider health check interval in seconds" });
+
+    await userEvent.type(input, "{ArrowUp}{ArrowDown}");
+    expect(
+      state.updateSettings.mock.calls.map(([patch]) =>
+        Duration.toSeconds(patch.backgroundActivity.overrides.providerHealthRefreshInterval),
+      ),
+    ).toEqual([330, 300]);
+    state.updateSettings.mockClear();
+
+    // Replacing 300 with 120 passes through 30, 3, an empty field, 1 and 12.
+    await userEvent.type(input, "{Backspace}{Backspace}{Backspace}120");
+    await expect.element(input).toHaveValue("120");
+    expect(state.updateSettings).not.toHaveBeenCalled();
+
+    await userEvent.tab();
+    expect(
+      state.updateSettings.mock.calls.map(([patch]) =>
+        Duration.toSeconds(patch.backgroundActivity.overrides.providerHealthRefreshInterval),
+      ),
+    ).toEqual([120]);
+
+    await act(() => state.updateSettings.mock.calls.at(-1)?.[1]?.onFailed?.());
+    await expect.element(input).toHaveValue("300");
+    await userEvent.type(input, "{Backspace}{Backspace}{Backspace}120");
+    await userEvent.tab();
+    expect(
+      state.updateSettings.mock.calls.map(([patch]) =>
+        Duration.toSeconds(patch.backgroundActivity.overrides.providerHealthRefreshInterval),
+      ),
+    ).toEqual([120, 120]);
+
+    const rejectPrevious = state.updateSettings.mock.calls.at(-1)?.[1]?.onFailed;
+    await userEvent.type(input, "{ArrowUp}");
+    await act(() => rejectPrevious?.());
+    await expect.element(input).toHaveValue("150");
+  });
+
+  it("restores the saved interval when a cleared field loses focus", async () => {
+    await setup();
+    await using _screen = await render(panel());
+    const input = page.getByRole("textbox", { name: "Provider health check interval in seconds" });
+
+    await userEvent.type(input, "{Backspace}{Backspace}{Backspace}");
+    await userEvent.tab();
+
+    await expect.element(input).toHaveValue("300");
+    expect(state.updateSettings).not.toHaveBeenCalled();
   });
 });
