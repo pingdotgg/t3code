@@ -42,8 +42,10 @@ interface FakeOptions {
   readonly recorded?: string;
   /** Writing the claim record fails, as on a read-only state dir. */
   readonly recordFails?: boolean;
-  /** The Tailscale account (node ID) that is live. */
+  /** This machine's node ID on the live Tailscale account. */
   readonly account?: string;
+  /** The live account's tailnet and user, which name its login profile. */
+  readonly profile?: { readonly tailnet: string; readonly userId: string };
 }
 
 // Stands in for the tailscale CLI and keeps the Serve root like the daemon does.
@@ -83,7 +85,11 @@ const makeFakeTailscale = (options: FakeOptions) => {
     if (command === "status --json") {
       return {
         code: 0,
-        stdout: JSON.stringify({ BackendState: "Running", Self: { ID: state.account } }),
+        stdout: JSON.stringify({
+          BackendState: "Running",
+          Self: { ID: state.account, UserID: options.profile?.userId },
+          CurrentTailnet: { Name: options.profile?.tailnet },
+        }),
       };
     }
     if (command === "serve status --json") {
@@ -148,7 +154,7 @@ const makeFakeTailscale = (options: FakeOptions) => {
 const STATE_DIR = "/state";
 const CLAIM_PATH = "/state/tailscale-serve-claim.json";
 const record = (localPort: number, servePort: number, account = "n1") =>
-  JSON.stringify({ [account]: { localPort, localHost: "127.0.0.1", servePort } });
+  JSON.stringify({ [account]: { localPort, localHost: "127.0.0.1", servePort, label: account } });
 
 // In memory, so writes land within the test clock's steps.
 const memoryFileSystem = (files: Map<string, string>, writeFails = false) => {
@@ -380,6 +386,29 @@ describe("TailscaleServe", () => {
 
       assert.equal(state.serveAttempts, 0);
       assert.equal(files.get(CLAIM_PATH), "{");
+    }),
+  );
+
+  it.effect("matches a record to its account after the device is re-added with a new node ID", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeTailscale({
+        heldBy: LOCAL_TARGET,
+        account: "nReAdded",
+        profile: { tailnet: "example.com", userId: "7" },
+      });
+      const files = new Map([[CLAIM_PATH, record(18638, SERVE_PORT, "example.com/7")]]);
+      const scope = yield* Scope.make();
+      yield* Layer.buildWithScope(
+        TailscaleServe.layerReleaseLeftover({ stateDir: STATE_DIR }).pipe(
+          Layer.provide(fakeLayers(fake, files)),
+        ),
+        scope,
+      );
+      yield* TestClock.adjust("1 second");
+
+      assert.equal(fake.state.releases, 1);
+      assert.isFalse(files.has(CLAIM_PATH));
+      yield* Scope.close(scope, Exit.void);
     }),
   );
 

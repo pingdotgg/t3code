@@ -215,7 +215,9 @@ const TailscaleStatusJson = Schema.Struct({
   User: lenient(Schema.Record(Schema.String, Schema.Struct({ LoginName: lenient(Schema.String) }))),
   Health: lenient(Schema.Array(Schema.String)),
   CertDomains: lenient(Schema.Array(Schema.String)),
-  CurrentTailnet: lenient(Schema.Struct({ MagicDNSEnabled: lenient(Schema.Boolean) })),
+  CurrentTailnet: lenient(
+    Schema.Struct({ Name: lenient(Schema.String), MagicDNSEnabled: lenient(Schema.Boolean) }),
+  ),
   Self: lenient(
     Schema.Struct({
       ...TailscaleStatusNodeFields,
@@ -284,6 +286,8 @@ export interface TailscaleStatus {
   readonly keyExpired: boolean;
   readonly health: readonly string[];
   readonly magicDnsEnabled: boolean | null;
+  /** The tailnet this node is on, such as `example.com` or `you@gmail.com`. */
+  readonly tailnetName: string | null;
   readonly certDomains: readonly string[];
   /**
    * Userspace networking hands tailnet connections to the server from
@@ -393,6 +397,7 @@ export const parseTailscaleStatus = (
         keyExpired: self?.Expired === true,
         health: parsed.Health ?? [],
         magicDnsEnabled: parsed.CurrentTailnet?.MagicDNSEnabled ?? null,
+        tailnetName: nonEmptyOrNull(parsed.CurrentTailnet?.Name),
         certDomains: parsed.CertDomains ?? [],
         userspaceNetworking: parsed.TUN === undefined ? null : !parsed.TUN,
         peers,

@@ -33,6 +33,7 @@ const running: TailscaleStatus = {
   keyExpired: false,
   health: [],
   magicDnsEnabled: true,
+  tailnetName: null,
   certDomains: ["studio.tail1234.ts.net"],
   userspaceNetworking: false,
   peers: [],

@@ -636,6 +636,8 @@ const setUp = Effect.fn("cli.up")(function* (
     // Nothing runs here to remove a Serve mapping a stopped server left, so do it now,
     // holding the T3 home's lock so no server starts meanwhile.
     if (yield* TailscaleServe.hasRecord(config.stateDir)) {
+      const record = yield* TailscaleServe.recordPath(config.stateDir);
+      const orDelete = `or delete ${record} if you no longer use Tailscale here.`;
       const leftover = yield* ServerOwnership.acquireServerOwnership(
         config.serverRuntimeStatePath,
       ).pipe(
@@ -643,23 +645,33 @@ const setUp = Effect.fn("cli.up")(function* (
         Effect.andThen(TailscaleServe.releaseRecorded(config.stateDir)),
         Effect.scoped,
         Effect.catchTags({ ServerAlreadyRunningError: () => Effect.succeed(null) }),
-        Effect.catch((error) =>
-          upError(
-            error._tag === "ServeRecordError" && error.reason === "unreadable"
-              ? error.message
-              : error._tag === "PlatformError"
-                ? `Could not update the Tailscale Serve record: ${error.message}`
-                : "Tailscale did not answer, so a Serve mapping an earlier run left may remain. Run this again once Tailscale runs.",
-          ),
-        ),
+        Effect.catch((error) => {
+          switch (error._tag) {
+            case "ServeRecordError":
+              return upError(
+                error.reason === "unreadable"
+                  ? error.message
+                  : `${error.message} Then run this again, ${orDelete}`,
+              );
+            case "PlatformError":
+              return upError(`Could not update the Tailscale Serve record: ${error.message}`);
+            case "ServerOwnershipError":
+            case "OlderBootServiceError":
+              return upError(error.message);
+            default:
+              return upError(
+                `Tailscale did not answer, so a Serve mapping an earlier run left may remain. Run this again once Tailscale runs, ${orDelete}`,
+              );
+          }
+        }),
       );
       if (leftover === null) return yield* Console.log(runningElsewhere);
       if (leftover.released) {
         yield* Console.log("Removed a Tailscale Serve mapping an earlier run left.");
       }
-      if (leftover.otherAccounts > 0) {
+      if (leftover.otherAccounts.length > 0) {
         return yield* upError(
-          "A Tailscale Serve mapping an earlier run left is on another Tailscale account. Switch Tailscale to it and run this again.",
+          `A Tailscale Serve mapping an earlier run left is on another Tailscale account: ${leftover.otherAccounts.join(", ")}. Switch Tailscale to it and run this again, or delete ${record} if that account is gone.`,
         );
       }
     }

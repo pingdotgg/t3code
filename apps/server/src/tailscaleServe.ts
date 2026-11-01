@@ -71,7 +71,9 @@ const ServeTarget = Schema.Struct({
   servePort: Schema.Number,
 });
 type ServeTarget = typeof ServeTarget.Type;
-const ServeRecords = Schema.fromJsonString(Schema.Record(Schema.String, ServeTarget));
+// Keyed by account; `label` names it for a person, such as `you@example.com on example.com`.
+const ServeRecord = Schema.Struct({ ...ServeTarget.fields, label: Schema.String });
+const ServeRecords = Schema.fromJsonString(Schema.Record(Schema.String, ServeRecord));
 type ServeRecords = typeof ServeRecords.Type;
 const NO_RECORDS: ServeRecords = {};
 const encodeRecords = Schema.encodeEffect(ServeRecords);
@@ -79,7 +81,8 @@ const decodeRecords = Schema.decodeUnknownEffect(ServeRecords);
 const sameTarget = (a: ServeTarget, b: ServeTarget) =>
   a.localPort === b.localPort && a.localHost === b.localHost && a.servePort === b.servePort;
 
-const recordPath = Effect.fn("TailscaleServe.recordPath")(function* (stateDir: string) {
+/** Where an earlier run's Serve mappings are recorded. */
+export const recordPath = Effect.fn("TailscaleServe.recordPath")(function* (stateDir: string) {
   return (yield* Path.Path).join(stateDir, RECORD_FILE);
 });
 
@@ -113,16 +116,25 @@ const writeRecords = Effect.fn("TailscaleServe.writeRecords")(function* (
   yield* fs.rename(`${path}.tmp`, path);
 });
 
-/** The Tailscale account (this machine's node) whose Serve config is live now. */
+/**
+ * The Tailscale account whose Serve config is live now. Tailscale keeps Serve config per
+ * login profile, one user on one tailnet, which outlives a node ID when a device is re-added.
+ */
 const currentAccount = Effect.fn("TailscaleServe.currentAccount")(function* () {
-  const { selfNodeId } = yield* readTailscaleStatus("active");
-  if (selfNodeId === null) {
+  const status = yield* readTailscaleStatus("active");
+  const login = status.users.find((user) => user.userId === status.selfUserId)?.loginName;
+  const key =
+    status.tailnetName !== null && status.selfUserId !== null
+      ? `${status.tailnetName}/${status.selfUserId}`
+      : status.selfNodeId;
+  if (key === null) {
     return yield* new ServeRecordError({
       reason: "no_account",
-      message: "Tailscale named no account here.",
+      message: "Tailscale is not signed in here. Run `tailscale up` to sign in.",
     });
   }
-  return selfNodeId;
+  const label = [login, status.tailnetName].filter((part) => part != null).join(" on ") || key;
+  return { key, label };
 });
 
 const failureKey = (cause: ClaimError) =>
@@ -168,7 +180,7 @@ export const layer = (options: {
           const recordedUnder = yield* Ref.get(account);
           if (recordedUnder === null) return;
           // After a switch to another account, the mapping is not visible, so its record stays.
-          if ((yield* currentAccount()) !== recordedUnder) return;
+          if ((yield* currentAccount()).key !== recordedUnder) return;
           const released = yield* releaseTailscaleServe(target).pipe(
             Effect.tapError((cause) =>
               Effect.logWarning("Failed to disable Tailscale Serve", { cause, ...logContext }),
@@ -193,17 +205,20 @@ export const layer = (options: {
         // Release removes only a root that points here, so it is safe when none landed.
         // Checked on every try, since Tailscale may have switched accounts since the last.
         const now = yield* currentAccount();
-        if ((yield* Ref.get(account)) !== now) {
+        if ((yield* Ref.get(account)) !== now.key) {
           // An unreadable record may name a mapping to remove, so Serve waits for it.
           const records = yield* readRecords(options.stateDir);
-          const earlier = records[now];
+          const earlier = records[now.key];
           if (earlier !== undefined && !sameTarget(earlier, target)) {
             yield* Ref.set(releasing, earlier);
             yield* releaseTailscaleServe(earlier);
             yield* Ref.set(releasing, null);
           }
-          yield* writeRecords(options.stateDir, { ...records, [now]: target });
-          yield* Ref.set(account, now);
+          yield* writeRecords(options.stateDir, {
+            ...records,
+            [now.key]: { ...target, label: now.label },
+          });
+          yield* Ref.set(account, now.key);
         }
         yield* claimTailscaleServe(target);
       }).pipe(
@@ -245,12 +260,12 @@ export const releaseRecorded = Effect.fn("TailscaleServe.releaseRecorded")(funct
   stateDir: string,
 ) {
   const records = yield* readRecords(stateDir);
-  if (Object.keys(records).length === 0) return { released: false, otherAccounts: 0 };
+  if (Object.keys(records).length === 0) return { released: false, otherAccounts: [] };
   const now = yield* currentAccount();
-  const { [now]: ours, ...rest } = records;
+  const { [now.key]: ours, ...rest } = records;
   const released = ours === undefined ? false : yield* releaseTailscaleServe(ours);
   yield* writeRecords(stateDir, rest);
-  return { released, otherAccounts: Object.keys(rest).length };
+  return { released, otherAccounts: Object.values(rest).map((record) => record.label) };
 });
 
 /**
@@ -266,7 +281,7 @@ export const layerReleaseLeftover = (options: { readonly stateDir: string }) =>
           : Effect.void,
       ),
       Effect.flatMap(({ otherAccounts }) =>
-        otherAccounts > 0
+        otherAccounts.length > 0
           ? Effect.fail(
               new ServeRecordError({
                 reason: "other_account",
