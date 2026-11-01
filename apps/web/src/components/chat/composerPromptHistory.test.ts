@@ -1,6 +1,8 @@
 import { ScheduledTaskId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { chatShellRunResultMessage } from "./chatShellRun";
+
 import {
   buildComposerPromptHistoryEntries,
   recallableComposerPrompt,
@@ -87,6 +89,18 @@ describe("recallableComposerPrompt", () => {
 });
 
 describe("buildComposerPromptHistoryEntries", () => {
+  it("skips hidden code block results", () => {
+    const history = buildComposerPromptHistoryEntries([
+      { id: "m1", role: "user", text: "first" },
+      {
+        id: "m2",
+        role: "user",
+        text: chatShellRunResultMessage("ls", { text: "a", exitCode: 0 }),
+      },
+    ]);
+    expect(history.map((entry) => entry.id)).toEqual(["m1"]);
+  });
+
   it("collapses consecutive duplicates onto the newest message id", () => {
     const collapsed = buildComposerPromptHistoryEntries([
       { id: "m1", role: "user", text: "same" },

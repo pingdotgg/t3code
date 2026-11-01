@@ -93,6 +93,7 @@ import { defaultUrlTransform } from "react-markdown";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import type { ChatShellCommandRunner } from "./chat/chatShellRun";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
 import { mathKind } from "@t3tools/shared/markdownMath";
@@ -237,7 +238,8 @@ interface ChatMarkdownProps {
   lineBreaks?: boolean;
   parseRawHtml?: boolean;
   onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
-  onRunShellCommand?: ((command: string) => void) | undefined;
+  onRunShellCommand?: ChatShellCommandRunner | undefined;
+  shellRunScope?: string | undefined;
   imageBaseDir?: string | undefined;
   workspaceMutationId?: string | null | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
@@ -498,6 +500,7 @@ function useChatMarkdownState({
   skills = EMPTY_MARKDOWN_SKILLS,
   onUseArtifactTemplate,
   onRunShellCommand,
+  shellRunScope,
   imageBaseDir,
   workspaceMutationId,
   onImageExpand,
@@ -914,6 +917,7 @@ function useChatMarkdownState({
     onTaskListChange,
     onUseArtifactTemplate,
     onRunShellCommand,
+    shellRunScope,
     openChangeRequestLink,
     openDeferredMarkdownLink,
     openExternalLinkInPreview,
@@ -1566,6 +1570,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       expandMedia,
       isStreaming,
       onRunShellCommand,
+      shellRunScope,
       inline,
       mathEnabled,
     } = use(ChatMarkdownRendererContext);
@@ -1630,6 +1635,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
           onRunShellCommand && !isStreaming && isClosedCodeFence(node, text, codeBlock.code)
             ? onRunShellCommand
             : undefined
+        }
+        // The source offset tells two fences with the same command apart.
+        shellRunScope={
+          shellRunScope === undefined
+            ? undefined
+            : `${shellRunScope}@${node?.position?.start.offset ?? 0}`
         }
         isStreaming={isStreaming}
       >

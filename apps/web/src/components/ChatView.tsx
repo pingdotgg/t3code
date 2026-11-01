@@ -186,7 +186,7 @@ import { shortcutLabelForCommand } from "../keybindings";
 import { cn } from "~/lib/utils";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
-import { toastManager } from "./ui/toast";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
 import { isInSideChatPane, type SideChatParentPanel } from "~/lib/sideChatPane";
@@ -277,6 +277,9 @@ import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
 import { useSideChat } from "./chat/useSideChat";
+import { ChatChaptersMenu } from "./chat/ChatChaptersMenu";
+import { chatShellRunResultMessage, type ChatShellCommandRunner } from "./chat/chatShellRun";
+import { watchChatShellRun } from "./chat/chatShellRunStore";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -1869,10 +1872,13 @@ export default function ChatView(props: ChatViewProps) {
     if (!isServerThread || activeThreadId === null) {
       throw new Error("Messages from apps need a started thread.");
     }
+    await sendThreadMessageStable(activeThreadId, text);
+  };
+  const sendThreadMessage = async (threadId: ThreadId, text: string) => {
     const result = await startThreadTurn({
       environmentId,
       input: {
-        threadId: activeThreadId,
+        threadId,
         message: { messageId: newMessageId(), role: "user", text, attachments: [] },
         runtimeMode,
         interactionMode,
@@ -1884,6 +1890,7 @@ export default function ChatView(props: ChatViewProps) {
       throw error instanceof Error ? error : new Error("Could not send the app's message.");
     }
   };
+  const sendThreadMessageStable = useStableCallback(sendThreadMessage);
   const sendAppMessageStable = useStableCallback(sendAppMessage);
   const queuedRunsControlRef = useRef<QueuedRunsControlHandle>(null);
 
@@ -2775,11 +2782,33 @@ export default function ChatView(props: ChatViewProps) {
       if (activeThread) setThreadError(activeThread.id, message);
     },
   });
-  // A maximized panel covers the terminal drawer the command runs in.
-  const runSideChatShellCommandStable = useStableCallback((command: string) => {
-    if (activeThreadRef) useRightPanelStore.getState().setMaximized(activeThreadRef, false);
-    runShellCommandStable(command);
-  });
+  const runCodeBlockCommand: ChatShellCommandRunner = (command, onStarted, terminalId) => {
+    const threadId = activeThreadId;
+    // Captured now: the output must go to the thread and mode that started the command.
+    const sendToOrigin = sendThreadMessage;
+    const runInTerminal = parentPanel?.runShellCommand ?? runShellCommandStable;
+    runInTerminal(
+      command,
+      (run) => {
+        onStarted(run);
+        if (threadId === null) return;
+        watchChatShellRun(run, (output) => {
+          void sendToOrigin(threadId, chatShellRunResultMessage(command, output)).catch((cause) => {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Couldn't send the output to Claude",
+                description:
+                  cause instanceof Error ? cause.message : "An unexpected error occurred.",
+              }),
+            );
+          });
+        });
+      },
+      terminalId,
+    );
+  };
+  const runCodeBlockCommandStable = useStableCallback(runCodeBlockCommand);
   // Main-thread surfaces show this reason; `/side` sent anyway gets it as a toast.
   const sideChatDisabledReason =
     activeThread?.lineage.sideChat === true
@@ -3207,7 +3236,7 @@ export default function ChatView(props: ChatViewProps) {
       onCloseSurface={closeRightPanelSurface}
       sideChatParentPanel={{
         openToolDiff: onOpenToolDiffStable,
-        runShellCommand: runSideChatShellCommandStable,
+        runShellCommand: runShellCommandStable,
       }}
       terminal={{
         launchContext: activeTerminalLaunchContext ?? null,
@@ -3346,6 +3375,11 @@ export default function ChatView(props: ChatViewProps) {
                 ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
                 : {})}
               {...(threadFindEnabled ? { onFindInThread: openThreadFindStable } : {})}
+              chapters={
+                isServerThread && activeThreadRef ? (
+                  <ChatChaptersMenu threadRef={activeThreadRef} />
+                ) : null
+              }
             />
           </header>
         )}
@@ -3407,9 +3441,7 @@ export default function ChatView(props: ChatViewProps) {
                 citationRequest={citationRequest}
                 citationHistory={citationHistory}
                 onCiteAssistantText={citeAssistantTextStable}
-                {...(activeProject
-                  ? { onRunShellCommand: parentPanel?.runShellCommand ?? runShellCommandStable }
-                  : {})}
+                {...(activeProject ? { onRunShellCommand: runCodeBlockCommandStable } : {})}
                 isWorking={isWorking}
                 runlessWorkActive={runlessWorkStartedAt !== null}
                 isCompacting={isCompacting}
