@@ -37,6 +37,11 @@ const words = (text: string) =>
 const identifierWords = (name: string) =>
   words(name.replace(/([a-z0-9])([A-Z])/gu, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/gu, "$1 $2"));
 
+const isDirectiveLine = (line = "") => {
+  const text = line.trimStart();
+  return text.startsWith("//") && DIRECTIVE_PATTERN.test(text.slice(2));
+};
+
 const commentLines = (comment: ESTree.Comment) =>
   comment.value
     .split("\n")
@@ -54,9 +59,10 @@ export default defineRule({
     const { sourceCode } = context;
     const isTypeScript = TS_FILE_PATTERN.test(context.filename);
 
-    // Consecutive `//` lines at one indent read as one comment.
+    // Consecutive `//` lines at one indent read as one comment; a directive splits it and is exempt.
     const groups: Array<{ comments: Array<ESTree.Comment>; lines: Array<string> }> = [];
     for (const comment of sourceCode.getAllComments()) {
+      if (DIRECTIVE_PATTERN.test(comment.value)) continue;
       const previous = groups.at(-1)?.comments.at(-1);
       const continues =
         comment.type === "Line" &&
@@ -73,7 +79,9 @@ export default defineRule({
 
     const restatesNextName = (lastLine: number, lines: ReadonlyArray<string>) => {
       if (lines.some((line) => line.startsWith("@"))) return false;
-      const name = DECLARATION_PATTERN.exec(sourceCode.lines[lastLine] ?? "")?.[1];
+      let next = lastLine;
+      while (isDirectiveLine(sourceCode.lines[next])) next += 1;
+      const name = DECLARATION_PATTERN.exec(sourceCode.lines[next] ?? "")?.[1];
       if (name === undefined) return false;
       const content = words(lines.join(" "));
       if (content.length === 0 || content.length > 6) return false;
@@ -83,9 +91,7 @@ export default defineRule({
 
     const problem = (comments: ReadonlyArray<ESTree.Comment>, lines: ReadonlyArray<string>) => {
       const text = comments.map((comment) => comment.value).join("\n");
-      if (lines.length === 0 || comments.some((comment) => DIRECTIVE_PATTERN.test(comment.value))) {
-        return undefined;
-      }
+      if (lines.length === 0) return undefined;
       const isLine = comments[0]!.type === "Line";
       if (lines.some((line) => DIVIDER_LINE_PATTERN.test(line))) {
         return "Drop the section divider; split the file or let the code's structure show the grouping.";
