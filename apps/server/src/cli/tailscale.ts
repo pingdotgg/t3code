@@ -105,7 +105,7 @@ const readPolicyGrantedPeers = Effect.gen(function* () {
   const read = yield* Effect.result(readTailscaleStatus("active"));
   if (Result.isFailure(read)) {
     const blocker = readFailure(read.failure, platform);
-    return { granted: [], unreadable: [], tagged: false, noNode: false, blocker };
+    return { granted: [], unreadable: [], tagged: false, noNode: false, blocker, readFailed: true };
   }
   const status = read.success;
   const facts = {
@@ -118,7 +118,8 @@ const readPolicyGrantedPeers = Effect.gen(function* () {
   const scan = yield* policyGrantedPeers(status, readTailscaleWhois);
   const read2 = yield* Effect.result(readTailscaleStatus("active"));
   if (Result.isFailure(read2)) {
-    return { granted: [], unreadable: [], ...facts, blocker: readFailure(read2.failure, platform) };
+    const blocker = readFailure(read2.failure, platform);
+    return { granted: [], unreadable: [], ...facts, blocker, readFailed: true };
   }
   const after = read2.success;
   return after.selfNodeId !== status.selfNodeId ||
@@ -170,7 +171,8 @@ const requireGrantCommand = Command.make("require-grant", {
       const lines =
         scan !== null && scan.blocker !== null
           ? [
-              `No device signs in here. ${scan.blocker}`,
+              // This shell may not read Tailscale as the server does, so it says only what it saw.
+              scan.readFailed === true ? scan.blocker : `No device signs in here. ${scan.blocker}`,
               since === null
                 ? "Grant required: not turned on."
                 : `Grant required: yes, turned on ${since}.`,
@@ -222,7 +224,7 @@ const requireGrantCommand = Command.make("require-grant", {
       yield* Console.log(
         [
           ...lines,
-          ...(scan?.blocker == null
+          ...(scan !== null && scan.blocker === null
             ? [
                 "Devices with a grant get the scopes it names: read, standard, admin, or single scopes.",
               ]

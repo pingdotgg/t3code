@@ -103,6 +103,12 @@ export function classifyTailscaleHealth(
   if (state === "running" && status.tailnetIpv4Addresses.length === 0) {
     issues.push({ cause: "no_ipv4", fix: NO_IPV4_FIX });
   }
+  if (state === "running" && status.userspaceNetworking === true) {
+    issues.push({
+      cause: "userspace_networking",
+      fix: "Run tailscaled with a TUN device, so T3 Code can see which device connects.",
+    });
+  }
 
   // NaN when the key never expires, which fails both comparisons.
   const expiresAt = status.keyExpiry === null ? Number.NaN : Date.parse(status.keyExpiry);
@@ -134,12 +140,6 @@ export function classifyTailscaleHealth(
     }
     if (status.magicDnsEnabled === false) {
       issues.push({ cause: "magic_dns_off", fix: `Turn on MagicDNS at ${ADMIN_DNS_URL}.` });
-    }
-    if (status.userspaceNetworking === true) {
-      issues.push({
-        cause: "userspace_networking",
-        fix: "Run tailscaled with a TUN device, so T3 Code can see which device connects.",
-      });
     }
   }
   return {

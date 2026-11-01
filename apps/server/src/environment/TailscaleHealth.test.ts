@@ -127,7 +127,7 @@ describe("classifyTailscaleHealth", () => {
         userspaceNetworking: true,
       }),
       "running",
-      ["health_warning", "https_off", "magic_dns_off", "userspace_networking"],
+      ["userspace_networking", "health_warning", "https_off", "magic_dns_off"],
     ],
     [
       "too old for sign-in",
