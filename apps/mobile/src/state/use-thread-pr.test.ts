@@ -61,6 +61,21 @@ describe("presentThreadLinkedPullRequests", () => {
       ])?.accessibilityLabel,
     ).toBe("#7 merge request open");
   });
+
+  it("renders unrelated pull requests in different states without an overall state", () => {
+    expect(
+      presentThreadLinkedPullRequests([
+        linkedPr(1, { snapshot: { ...linkedPr(1).snapshot!, state: "closed" } }),
+        linkedPr(2),
+      ]),
+    ).toMatchObject({
+      kind: "pull-request",
+      state: null,
+      label: "+2",
+      accessibilityLabel: "2 linked pull requests in different states",
+      textClassName: "text-foreground-muted",
+    });
+  });
 });
 
 describe("resolveThreadPrSource compatibility", () => {
