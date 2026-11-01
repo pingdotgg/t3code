@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Semaphore from "effect/Semaphore";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/reactivity";
 
@@ -35,28 +36,31 @@ describe("relay environment discovery refresh", () => {
       const state = yield* SubscriptionRef.make(
         RelayEnvironmentDiscovery.EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE,
       );
-      const refresh = Effect.gen(function* () {
-        const listed = relayEnvironments;
-        listings++;
-        if (listings === 1) {
-          yield* Deferred.succeed(firstListingStarted, undefined);
-          yield* firstListingHeld.await;
-        }
-        yield* SubscriptionRef.update(state, (current) => ({
-          ...current,
-          environments: new Map(
-            listed.map((environment) => [
-              environment.environmentId,
-              {
-                environment,
-                availability: "online" as const,
-                status: Option.none(),
-                error: Option.none(),
-              },
-            ]),
-          ),
-        }));
-      });
+      const refreshLock = yield* Semaphore.make(1);
+      const refresh = refreshLock.withPermits(1)(
+        Effect.gen(function* () {
+          const listed = relayEnvironments;
+          listings++;
+          if (listings === 1) {
+            yield* Deferred.succeed(firstListingStarted, undefined);
+            yield* firstListingHeld.await;
+          }
+          yield* SubscriptionRef.update(state, (current) => ({
+            ...current,
+            environments: new Map(
+              listed.map((environment) => [
+                environment.environmentId,
+                {
+                  environment,
+                  availability: "online" as const,
+                  status: Option.none(),
+                  error: Option.none(),
+                },
+              ]),
+            ),
+          }));
+        }),
+      );
       const discovery = createRelayEnvironmentDiscoveryAtoms(
         Atom.runtime(
           Layer.succeed(
@@ -73,7 +77,7 @@ describe("relay environment discovery refresh", () => {
       relayEnvironments = relayEnvironments.filter(
         (environment) => environment.environmentId !== "studio",
       );
-      const refreshAfterUnlink = discovery.refresh.run(registry, undefined);
+      const refreshAfterUnlink = discovery.refreshAfterMutation.run(registry, undefined);
       yield* firstListingHeld.open;
       yield* Effect.promise(() => Promise.all([staleRefresh, refreshAfterUnlink]));
 
