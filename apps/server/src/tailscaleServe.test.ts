@@ -476,7 +476,7 @@ describe("TailscaleServe", () => {
         profileId: "prof1",
         profile: { tailnet: "example.com", userId: "tagged-devices" },
       });
-      const files = new Map([[CLAIM_PATH, record(18638, SERVE_PORT, "prof1")]]);
+      const files = new Map([[CLAIM_PATH, profileRecord("prof1")]]);
       const scope = yield* Scope.make();
       yield* Layer.buildWithScope(
         TailscaleServe.layerReleaseLeftover({ stateDir: STATE_DIR }).pipe(
@@ -499,7 +499,9 @@ describe("TailscaleServe", () => {
         profileId: "prof1",
         profile: { tailnet: "example.com", userId: "7" },
       });
-      const files = new Map([[CLAIM_PATH, record(18638, SERVE_PORT, "example.com/7")]]);
+      const files = new Map([
+        [CLAIM_PATH, record(18638, SERVE_PORT, "example.com/7", undefined, "n1")],
+      ]);
       const scope = yield* Scope.make();
       yield* Layer.buildWithScope(
         TailscaleServe.layerReleaseLeftover({ stateDir: STATE_DIR }).pipe(
@@ -588,6 +590,15 @@ describe("TailscaleServe", () => {
           profileId: "profA",
           keys: ["profA", "example.com/7", "nA"],
           nodeId: "nA",
+        },
+        // With no node ID to compare, ownership is uncertain, so it stays too.
+        profC: {
+          localPort: 18638,
+          localHost: "127.0.0.1",
+          servePort: SERVE_PORT,
+          label: "me@example.com on example.com",
+          profileId: "profC",
+          keys: ["profC", "example.com/7"],
         },
       });
       const files = new Map([[CLAIM_PATH, recorded]]);

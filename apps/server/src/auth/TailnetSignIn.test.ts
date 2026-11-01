@@ -91,7 +91,13 @@ const granted = (...values: ReadonlyArray<unknown>): JsonObject => ({
 const withCaller = (tailnet: Tailnet, status: JsonObject): JsonObject => {
   const node = tailnet.node;
   const peers = (status.Peer ?? {}) as Record<string, JsonObject>;
-  if (node === null || Object.values(peers).some((peer) => peer.ID === node.StableID)) {
+  const self = status.Self as JsonObject | undefined;
+  // The host itself is listed under `Self`, not among the peers.
+  if (
+    node === null ||
+    node.StableID === self?.ID ||
+    Object.values(peers).some((peer) => peer.ID === node.StableID)
+  ) {
     return status;
   }
   const addresses = (node.Addresses as ReadonlyArray<string> | undefined) ?? [];
@@ -118,10 +124,8 @@ const layerTailscaleHost = (tailnet: Tailnet) =>
           tailscaleJson(withCaller(tailnet, tailnet.staleStatus ?? tailnet.status)),
         ),
       ),
-      // As on the host, a read now also replaces the kept one.
       freshStatus: Effect.suspend(() => {
         tailnet.freshReads = (tailnet.freshReads ?? 0) + 1;
-        delete tailnet.staleStatus;
         return parseTailscaleStatus(tailscaleJson(withCaller(tailnet, tailnet.status)));
       }),
       whois: (address, options) =>

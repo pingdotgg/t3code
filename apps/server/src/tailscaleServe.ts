@@ -179,13 +179,13 @@ interface AccountKeys {
   readonly nodeId: string | null;
 }
 // Two profiles can share a tailnet and user, as two Windows users signed in to one account.
-// So known profile IDs decide alone, and with one side's profile unknown, node IDs do; other
-// keys match only when neither side has a profile, as from a CLI too old to list them.
+// So known profile IDs decide alone, and with one side's profile unknown, node IDs do, or it
+// is not a match; other keys match only when neither side has a profile, as from an old CLI.
 const sameAccount = (a: AccountKeys, b: AccountKeys) =>
   a.profileId !== null && b.profileId !== null
     ? a.profileId === b.profileId
-    : (a.profileId !== null || b.profileId !== null) && a.nodeId !== null && b.nodeId !== null
-      ? a.nodeId === b.nodeId
+    : a.profileId !== null || b.profileId !== null
+      ? a.nodeId !== null && a.nodeId === b.nodeId
       : a.keys.some((key) => b.keys.includes(key));
 const recordAccount = (key: string, record: ServeRecord): AccountKeys => ({
   keys: [key, ...(record.keys ?? [])],

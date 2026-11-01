@@ -109,14 +109,11 @@ const make = Effect.gen(function* () {
           entries?.some((entry) => !entry.internal && isTailscaleIpv4Address(entry.address)),
         ),
       );
-  const [status, forgetStatus] = yield* Effect.cachedInvalidateWithTTL(
-    readTailscaleStatus(featureOn ? "active" : "passive").pipe(
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    ),
-    STATUS_TTL,
+  // Its own read every time: joining one already running could answer from before a switch.
+  const freshStatus = readTailscaleStatus(featureOn ? "active" : "passive").pipe(
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
   );
-  // Kept too, so a reader right after it shares the answer rather than reading again.
-  const freshStatus = forgetStatus.pipe(Effect.andThen(status));
+  const status = yield* Effect.cachedWithTTL(freshStatus, STATUS_TTL);
 
   const lookupsByAddress = yield* Ref.make(new Map<string, ReadonlyArray<number>>());
   const takeLookup = Effect.fnUntraced(function* (address: string) {

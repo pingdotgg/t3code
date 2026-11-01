@@ -230,11 +230,13 @@ export const make = Effect.gen(function* () {
     readonly granted: boolean;
     readonly at: number;
   } | null>(null);
+  // The status the decision that needs a scan just read, so the scan reads no other first.
+  const scanFrom = yield* Ref.make<TailscaleStatus | null>(null);
   const [scanPolicy, rescanPolicy] = yield* Effect.cachedInvalidateWithTTL(
     Effect.gen(function* () {
       const signInsBefore = yield* Ref.get(grantSignIns);
-      // The status a sign-in just read, or a recheck's; a switch after it is caught below.
-      const status = yield* host.status;
+      // A switch after this status is caught below.
+      const status = (yield* Ref.get(scanFrom)) ?? (yield* host.status);
       const account = status.selfNodeId;
       const { granted, unreadable } = yield* policyGrantedPeers(status, (address) =>
         host.whois(address, { fromServer: true }),
@@ -271,12 +273,14 @@ export const make = Effect.gen(function* () {
    * Why the owner rule is off, or null while it applies. It is off once the policy grants
    * T3 Code here or the operator says so, and while the policy cannot be read.
    */
-  const ownerRuleOff = Effect.fn("TailnetSignIn.ownerRuleOff")(function* (account: string | null) {
+  const ownerRuleOff = Effect.fn("TailnetSignIn.ownerRuleOff")(function* (status: TailscaleStatus) {
+    const account = status.selfNodeId;
     if (yield* fs.exists(requireGrantPath).pipe(Effect.orElseSucceed(() => true))) {
       return "no_grant" as const;
     }
     // A host Tailscale names no node for cannot tell one account's scan from another's.
     if (account === null) return "policy_unknown" as const;
+    yield* Ref.set(scanFrom, status);
     // Scanned first, so a scan that finds no grants can clear the sign-in count. A scan of
     // another account says nothing here, so it is redone; one that still differs is unknown.
     const scan = yield* scanPolicy.pipe(
@@ -305,7 +309,7 @@ export const make = Effect.gen(function* () {
         ? refused("grant_unusable")
         : ({ _tag: "Allowed", scopes: granted, via: "grant" } satisfies AccessDecision);
     }
-    const off = yield* ownerRuleOff(status.selfNodeId);
+    const off = yield* ownerRuleOff(status);
     if (off !== null) return refused(off);
     const ownerUserId = TailscaleHost.tailnetOwnerUserId(status, config.tailscaleOwnerUserId);
     if (ownerUserId === null) return refused("owner_unknown");
@@ -395,6 +399,7 @@ export const make = Effect.gen(function* () {
       // The caller must be the peer this status names at its address, as the recheck asks,
       // so a whois answered before an account switch is not judged by the new account.
       if (
+        node.stableNodeId !== status.selfNodeId &&
         !status.peers.some(
           (peer) =>
             peer.stableNodeId === node.stableNodeId &&
