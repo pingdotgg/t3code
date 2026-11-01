@@ -11557,6 +11557,195 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // Issue #16355: a nested subagent launched while the root was idle and
+  // finished during a later user turn stayed running after a sibling's wake.
+  it.effect("keeps an idle-launched nested subagent completed through a sibling's wake", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const OUTER_TASK_ID = "task-16355-outer";
+        const OUTER_TOOL_USE_ID = "toolu-16355-outer";
+        const NESTED_TASK_ID = "task-16355-nested";
+        const NESTED_TOOL_USE_ID = "toolu-16355-nested";
+        const SIBLING_TASK_ID = "task-16355-sibling";
+        const SIBLING_TOOL_USE_ID = "toolu-16355-sibling";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const nestedStatuses = () =>
+          harness.events.flatMap((event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.nativeTaskRef?.nativeId === NESTED_TASK_ID
+              ? [event.subagent.status]
+              : [],
+          );
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-16355-1"),
+            text: "Run two audits in the background.",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          makeSubagentTaskStartedFrame({
+            taskId: OUTER_TASK_ID,
+            toolUseId: OUTER_TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000016301",
+          }),
+          makeSubagentTaskStartedFrame({
+            taskId: SIBLING_TASK_ID,
+            toolUseId: SIBLING_TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000016302",
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000016303",
+            result: "Both audits run in the background.",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* harness.awaitTerminal(1);
+
+        // The background subagent launches a foreground nested one while the root is idle.
+        for (const frame of [
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: "msg_16355_nested_launch",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: NESTED_TOOL_USE_ID,
+                  name: "Agent",
+                  input: { description: "Nested check", prompt: "Sleep, then reply NESTED_OK" },
+                },
+              ],
+            },
+            parent_tool_use_id: OUTER_TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000016304",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: NESTED_TASK_ID,
+            tool_use_id: NESTED_TOOL_USE_ID,
+            description: "Nested check",
+            subagent_type: "general-purpose",
+            is_backgrounded: false,
+            spawn_depth: 2,
+            task_type: "local_agent",
+            prompt: "Sleep, then reply NESTED_OK",
+            uuid: "00000000-0000-4000-8000-000000016305",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: NESTED_TASK_ID,
+            description: "Sleeping",
+            uuid: "00000000-0000-4000-8000-000000016306",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        ]) {
+          yield* harness.offerAndWait(frame);
+        }
+
+        // A user turn runs while the nested and then the outer subagent finish.
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-16355-2"),
+            text: "Sleep for a while.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+          }),
+        );
+        yield* harness.until(() => harness.offeredMessages.length === 2);
+        for (const frame of [
+          makeSubagentNotificationFrame({
+            taskId: NESTED_TASK_ID,
+            toolUseId: NESTED_TOOL_USE_ID,
+            summary: "NESTED_OK",
+            uuid: "00000000-0000-4000-8000-000000016307",
+          }),
+          makeSubagentToolResultFrame({
+            parentToolUseId: OUTER_TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000016308",
+            toolUseId: NESTED_TOOL_USE_ID,
+          }),
+          ...makeSubagentAssistantFrames({
+            parentToolUseId: OUTER_TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000016309",
+            text: "OUTER_DONE",
+          }),
+          makeSubagentNotificationFrame({
+            taskId: OUTER_TASK_ID,
+            toolUseId: OUTER_TOOL_USE_ID,
+            summary: "OUTER_DONE",
+            uuid: "00000000-0000-4000-8000-000000016310",
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000016311",
+            result: "Slept.",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* harness.awaitTerminal(2);
+
+        // The sibling's completion wakes a continuation while the root is idle.
+        for (const frame of [
+          makeSubagentNotificationFrame({
+            taskId: SIBLING_TASK_ID,
+            toolUseId: SIBLING_TOOL_USE_ID,
+            summary: "SIBLING_DONE",
+            uuid: "00000000-0000-4000-8000-000000016312",
+          }),
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000016313",
+            text: "Both audits finished.",
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000016314",
+            result: "Both audits finished.",
+            origin: { kind: "task-notification" },
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* harness.awaitContinuation(1);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-16355-3"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 3,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        yield* harness.awaitTerminal(3);
+
+        assert.equal(nestedStatuses().at(-1), "completed");
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["exit", "Stop"] as const)(
     "settles a plain background subagent and its open call on %s after the root turn completes",
     (reason) =>
