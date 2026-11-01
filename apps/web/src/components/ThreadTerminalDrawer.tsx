@@ -56,6 +56,7 @@ import {
   GhosttyTerminalSurface,
   type GhosttyTerminalSurfaceOptions,
 } from "~/terminal/ghostty/surface";
+import { isEditableFocused } from "~/lib/editableFocus";
 import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
@@ -63,10 +64,13 @@ import { isTerminalUrl } from "../terminal-links";
 import {
   isDiffToggleShortcut,
   isTerminalClearShortcut,
+  isTerminalCopyShortcut,
   isTerminalNewShortcut,
+  isTerminalPasteShortcut,
   isTerminalSplitShortcut,
   isTerminalSplitVerticalShortcut,
   isTerminalToggleShortcut,
+  resolveShortcutCommand,
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
 } from "../keybindings";
@@ -954,7 +958,13 @@ function TerminalSessionViewport({
 
       function handleBeforeKey(event: KeyboardEvent): boolean {
         const currentKeybindings = readKeybindings();
-        const options = { context: { terminalFocus: true, terminalOpen: true } };
+        const options = {
+          context: {
+            terminalFocus: true,
+            terminalOpen: true,
+            editableFocus: isEditableFocused(event.target),
+          },
+        };
         if (preventTerminalCloseShortcut(event, currentKeybindings)) {
           return false;
         }
@@ -965,6 +975,28 @@ function TerminalSessionViewport({
           isTerminalNewShortcut(event, currentKeybindings, options) ||
           isDiffToggleShortcut(event, currentKeybindings, options)
         ) {
+          return false;
+        }
+
+        const clipboardCommand = resolveShortcutCommand(event, currentKeybindings, options);
+        if (clipboardCommand === "terminal.copy" || clipboardCommand === "terminal.paste") {
+          if (clipboardCommand === "terminal.paste" && isTerminalPasteShortcut(event)) return true;
+          if (
+            clipboardCommand === "terminal.copy" &&
+            terminalRef.current?.hasSelection() &&
+            isTerminalCopyShortcut(event)
+          )
+            return true;
+          event.preventDefault();
+          event.stopPropagation();
+          clearSelectionAction();
+          const requestId = selectionActionRequestIdRef.current;
+          if (clipboardCommand === "terminal.copy") {
+            const selection = terminalRef.current?.getSelection();
+            if (selection) void copySelection(selection, requestId);
+          } else {
+            void pasteFromClipboard(requestId);
+          }
           return false;
         }
 

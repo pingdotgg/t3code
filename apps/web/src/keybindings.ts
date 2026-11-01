@@ -390,6 +390,30 @@ export function isRichTextBoldShortcut(
   );
 }
 
+export function isTerminalCopyShortcut(
+  event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+  platform = navigator.platform,
+) {
+  const key = event.key.toLowerCase();
+  if (key === "insert" && !isMacPlatform(platform)) {
+    return event.ctrlKey && !event.shiftKey && !event.metaKey;
+  }
+  if (key !== "c") return false;
+  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey;
+}
+
+export function isTerminalPasteShortcut(
+  event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+  platform = navigator.platform,
+) {
+  const key = event.key.toLowerCase();
+  if (key === "insert" && !isMacPlatform(platform)) {
+    return event.shiftKey && !event.ctrlKey && !event.metaKey;
+  }
+  if (key !== "v") return false;
+  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
+}
+
 export function isTerminalClearShortcut(
   event: ShortcutEventLike,
   platform = navigator.platform,
