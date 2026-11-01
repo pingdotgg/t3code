@@ -152,6 +152,8 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
     .readFileString(gitFile)
     .pipe(Effect.mapError(() => notAWorktree));
   yield* fileSystem.remove(worktreePath, { recursive: true, force: true }).pipe(
+    // Node cannot cancel fs.rm; wait for its callback before restoring `.git`.
+    Effect.uninterruptible,
     Effect.retry({
       times: input.force ? OPEN_FILE_RETRIES : 0,
       schedule: Schedule.spaced(OPEN_FILE_RETRY_DELAY),
