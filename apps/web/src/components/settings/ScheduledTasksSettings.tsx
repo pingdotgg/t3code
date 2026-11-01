@@ -69,7 +69,13 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ConnectionStatusDot, connectionPhaseDotClassName } from "../ConnectionStatusDot";
-import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  clampManagedRuntimeMode,
+  managedCapabilityDenial,
+} from "@t3tools/contracts";
+import { useManagedPolicy } from "~/state/managedPolicy";
+import { ManagedNotice } from "../ManagedPolicy";
 import { readEnvironmentScope } from "~/state/session";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
@@ -77,7 +83,8 @@ import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
-  webhookDraftErrors,
+  scheduleDraftErrors,
+  toDateTimeLocalValue,
   webhookDeliveryLabel,
   defaultScheduledTaskProjectId,
   matchesScheduledTaskScope,
@@ -136,6 +143,8 @@ const EMPTY_DRAFT: DraftState = {
   scheduleMode: "fixed",
   intervalMinutes: "15",
   timeOfDay: "09:00",
+  runAt: "",
+  savedRunAt: "",
   weekdays: new Set([1, 2, 3, 4, 5]),
   projectId: "",
   threadId: "",
@@ -284,8 +293,14 @@ function splitModelKey(value: string): ModelSelection | null {
   };
 }
 
+const ONCE_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+
 export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
   if (schedule.type === "webhook") return "On webhook";
+  if (schedule.type === "once") return `Once, ${ONCE_FORMATTER.format(new Date(schedule.runAt))}`;
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / 60_000;
     return Number.isInteger(minutes)
@@ -575,7 +590,7 @@ function ScheduledTaskEnvironmentList({
       {taskId && linkedState?.tasks && linkedState.error === null && !linkedTask ? (
         <SettingsRow
           title="Task unavailable"
-          description="This task no longer exists or is outside the selected project scope."
+          description="This task was deleted or belongs to a different project. Check your project filter."
           role="status"
         />
       ) : null}
@@ -675,7 +690,7 @@ function ScheduledTaskEnvironmentSection({
           {taskId && !linkedTask ? (
             <SettingsRow
               title="Task unavailable"
-              description="This task no longer exists or is outside the selected project scope."
+              description="This task was deleted or belongs to a different project. Check your project filter."
               role="status"
             />
           ) : null}
@@ -752,7 +767,9 @@ function ScheduledTaskRow({
         <div className="flex flex-wrap items-center gap-2">
           <span>
             {scheduleLabel(task.schedule)} ·{" "}
-            {!task.enabled ? (
+            {task.blockedByPolicy !== undefined ? (
+              task.blockedByPolicy
+            ) : !task.enabled ? (
               "Paused"
             ) : isWebhook ? (
               "Listening"
@@ -1171,6 +1188,10 @@ function ScheduledTaskEditorForm({
   const { scope, connectedEnvironments } = useSettingsScope();
   const [environmentId, setEnvironmentId] = useState(initialEnvironmentId);
   const environment = useEnvironment(environmentId);
+  // Older servers reject one-time schedules, so offer Once only where it can save.
+  const offersOnce =
+    environment?.serverConfig?.environment.capabilities.oneTimeSchedules === true ||
+    task?.schedule.type === "once";
   const connected =
     environment?.connection.phase === "connected" && environment.serverConfig !== null;
   const tasksQuery = useEnvironmentQuery(
@@ -1191,6 +1212,7 @@ function ScheduledTaskEditorForm({
   const upsertTask = useAtomCommand(serverEnvironment.upsertScheduledTask, {
     label: "scheduled task upsert",
   });
+  const webhookDenial = managedCapabilityDenial(useManagedPolicy(environmentId), "webhookTasks");
   const [draft, setDraft] = useState<DraftState>(() =>
     task
       ? taskToDraft(task)
@@ -1278,7 +1300,7 @@ function ScheduledTaskEditorForm({
     }
     const schedule = scheduleFromDraft(draft);
     if (schedule === null) {
-      for (const error of webhookDraftErrors(draft)) reportFailure(error.title, error.description);
+      for (const error of scheduleDraftErrors(draft)) reportFailure(error.title, error.description);
       return;
     }
     if (
@@ -1296,6 +1318,13 @@ function ScheduledTaskEditorForm({
       (!Number.isSafeInteger(schedule.everyMs) || schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS)
     ) {
       reportFailure("Invalid interval", "Enter an interval of at least one minute.");
+      return;
+    }
+    if (schedule.type === "once" && !offersOnce) {
+      reportFailure(
+        "Once is not available here",
+        "This environment runs an older T3 Code. Update it to schedule a one-time task, or pick another schedule.",
+      );
       return;
     }
     if (draft.workspaceMode === "existing_worktree" && !draft.existingWorktreePath.trim()) {
@@ -1328,7 +1357,10 @@ function ScheduledTaskEditorForm({
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
       workspaceStrategy,
       modelSelection,
-      runtimeMode: draft.runtimeMode,
+      // Tasks have no mode picker; a mode above the administrator's ceiling would fail every run.
+      runtimeMode:
+        clampManagedRuntimeMode(environment?.serverConfig?.managedPolicy, draft.runtimeMode) ??
+        draft.runtimeMode,
       interactionMode: draft.interactionMode,
       creationSource: "web",
     };
@@ -1352,7 +1384,8 @@ function ScheduledTaskEditorForm({
       <DialogHeader>
         <DialogTitle>{draft.editingId ? "Edit task" : "New task"}</DialogTitle>
         <DialogDescription>
-          Run a prompt automatically on an interval, at a fixed time, or when a webhook is called.
+          Run a prompt automatically on an interval, at a fixed time, once at a set date, or when a
+          webhook is called.
         </DialogDescription>
       </DialogHeader>
 
@@ -1580,24 +1613,60 @@ function ScheduledTaskEditorForm({
                 value={[draft.scheduleMode]}
                 onValueChange={(values) => {
                   const mode = values[0] as ScheduleMode | undefined;
-                  if (mode === "fixed" || mode === "interval" || mode === "webhook")
-                    setDraft((current) => ({
-                      ...current,
-                      scheduleMode: mode,
-                      prompt:
-                        mode === "webhook" && !current.prompt.trim()
-                          ? DEFAULT_WEBHOOK_PROMPT
-                          : current.prompt,
-                    }));
+                  if (
+                    mode === "fixed" ||
+                    mode === "once" ||
+                    mode === "interval" ||
+                    mode === "webhook"
+                  )
+                    setDraft((current) => {
+                      const suggested =
+                        mode === "once" && !current.runAt
+                          ? new Date(Math.ceil(Date.now() / 3_600_000) * 3_600_000)
+                          : null;
+                      return {
+                        ...current,
+                        scheduleMode: mode,
+                        // Keep the instant too, so an hour that repeats when clocks go back stays exact.
+                        ...(suggested === null
+                          ? {}
+                          : {
+                              runAt: toDateTimeLocalValue(suggested),
+                              savedRunAt: suggested.toISOString(),
+                            }),
+                        prompt:
+                          mode === "webhook" && !current.prompt.trim()
+                            ? DEFAULT_WEBHOOK_PROMPT
+                            : current.prompt,
+                      };
+                    });
                 }}
               >
                 <Toggle value="fixed">At a time</Toggle>
+                {offersOnce || draft.scheduleMode === "once" ? (
+                  <Toggle value="once">Once</Toggle>
+                ) : null}
                 <Toggle value="interval">Every interval</Toggle>
-                <Toggle value="webhook">On webhook</Toggle>
+                <Toggle
+                  value="webhook"
+                  disabled={webhookDenial !== undefined && draft.scheduleMode !== "webhook"}
+                >
+                  On webhook
+                </Toggle>
               </ToggleGroup>
             </div>
 
-            {draft.scheduleMode === "webhook" ? (
+            {webhookDenial !== undefined ? (
+              <ManagedNotice>
+                {draft.scheduleMode === "webhook"
+                  ? `${webhookDenial} Switch this task to a time or an interval, or turn it off, to save it.`
+                  : webhookDenial}
+              </ManagedNotice>
+            ) : null}
+            {/* A disabled task still saves, so keep its fields reachable for fixing. */}
+            {draft.scheduleMode === "webhook" &&
+            webhookDenial !== undefined &&
+            draft.enabled ? null : draft.scheduleMode === "webhook" ? (
               <div className="space-y-4">
                 <WebhookEndpointField environmentId={environmentId} task={liveTask} />
                 <p className="text-xs text-muted-foreground">
@@ -1631,7 +1700,7 @@ function ScheduledTaskEditorForm({
                   onChange={(filters) => setDraft((current) => ({ ...current, filters }))}
                 />
                 <Field
-                  label="Replay key"
+                  label="Duplicate request key"
                   hint="template, optional"
                   htmlFor="scheduled-task-replay-key"
                 >
@@ -1644,6 +1713,9 @@ function ScheduledTaskEditorForm({
                     }
                   />
                 </Field>
+                <p className="text-xs text-muted-foreground">
+                  Requests with the same key run only once within 7 days.
+                </p>
                 <Field
                   label="Coalesce key"
                   hint="template, optional"
@@ -1680,9 +1752,8 @@ function ScheduledTaskEditorForm({
                   />
                 </Field>
                 <p className="text-xs text-muted-foreground">
-                  Replay keys suppress repeat deliveries for 7 days. Coalescing runs the latest
-                  payload once when the window from the first delivery closes. Empty keys run
-                  normally.
+                  Coalescing runs the latest payload once when the window from the first delivery
+                  closes. Empty keys run normally.
                 </p>
                 <div className="flex items-center justify-between gap-4">
                   <div className="min-w-0 space-y-1">
@@ -1767,6 +1838,20 @@ function ScheduledTaskEditorForm({
                   </div>
                 ) : null}
               </div>
+            ) : draft.scheduleMode === "once" ? (
+              <div className="flex items-center gap-2">
+                <Label htmlFor="scheduled-task-run-at">Run on</Label>
+                <Input
+                  type="datetime-local"
+                  id="scheduled-task-run-at"
+                  nativeInput
+                  className="w-56"
+                  value={draft.runAt}
+                  onChange={(event) =>
+                    setDraft((current) => ({ ...current, runAt: event.target.value }))
+                  }
+                />
+              </div>
             ) : draft.scheduleMode === "fixed" ? (
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-2">
@@ -1847,7 +1932,14 @@ function ScheduledTaskEditorForm({
         </DialogClose>
         <Button
           size="sm"
-          disabled={!canOperate || saving || editingTaskMissing || !connected || !tasksQuery.data}
+          disabled={
+            !canOperate ||
+            saving ||
+            editingTaskMissing ||
+            !connected ||
+            !tasksQuery.data ||
+            (draft.enabled && draft.scheduleMode === "webhook" && webhookDenial !== undefined)
+          }
           onClick={() => void submit()}
         >
           {draft.editingId ? "Save task" : "Create task"}
