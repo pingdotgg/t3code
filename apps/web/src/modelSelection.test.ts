@@ -1,11 +1,17 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL,
+  DEFAULT_SERVER_SETTINGS,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_UNIFIED_SETTINGS,
+  type UnifiedSettings,
+} from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection } from "@t3tools/shared/model";
 import { deriveEffectiveComposerModelState } from "./composerDraftStore";
@@ -17,6 +23,7 @@ import {
   providerInstanceEntriesFor,
 } from "./providerInstances";
 import {
+  defaultModelSelectionsAreMixed,
   getAppModelOptionsForInstance,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
@@ -72,6 +79,142 @@ function settingsWithProviderInstances(): UnifiedSettings {
     },
   };
 }
+
+describe("scoped default model selections", () => {
+  // regression: #27997 equal automatic defaults can resolve to different providers
+  it("compares automatic defaults using each environment's models", () => {
+    const codex = {
+      projectId: null,
+      settings: DEFAULT_UNIFIED_SETTINGS,
+      providers: [provider({ instanceId: "codex", models: ["gpt-6-astra"] })],
+    };
+    const claude = {
+      projectId: null,
+      settings: DEFAULT_UNIFIED_SETTINGS,
+      providers: [
+        provider({
+          instanceId: "claudeAgent",
+          provider: ProviderDriverKind.make("claudeAgent"),
+          models: ["claude-sonnet-4-6"],
+        }),
+      ],
+    };
+
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [codex, claude])).toBe(true);
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [claude, codex])).toBe(true);
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [codex, codex])).toBe(false);
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [claude])).toBe(false);
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [])).toBe(false);
+    expect(
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [codex, { ...codex, providers: [] }]),
+    ).toBe(true);
+    expect(
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [
+        codex,
+        { ...codex, providers: [provider({ instanceId: "codex", models: ["gpt-6-sol"] })] },
+      ]),
+    ).toBe(true);
+
+    const projectId = ProjectId.make("claude-only");
+    const project = {
+      projectId,
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: {
+          [projectId]: {
+            providerInstances: { [ProviderInstanceId.make("codex")]: { enabled: false } },
+          },
+        },
+      },
+      providers: [...codex.providers, ...claude.providers],
+    };
+    const remoteProject = { ...claude, projectId: ProjectId.make("remote-project") };
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [project, remoteProject])).toBe(
+      false,
+    );
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [remoteProject, project])).toBe(
+      false,
+    );
+    expect(
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [
+        project,
+        { ...project, projectId: ProjectId.make("other-project") },
+      ]),
+    ).toBe(true);
+
+    const configured = {
+      projectId: null,
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerModelPreferences: {
+          [ProviderInstanceId.make("codex")]: {
+            hiddenModels: ["gpt-6-astra"],
+            modelOrder: [],
+          },
+        },
+      },
+      providers: [provider({ instanceId: "codex", models: ["gpt-6-astra", "gpt-6-sol"] })],
+    };
+    const inherited = { ...configured, settings: DEFAULT_SERVER_SETTINGS };
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [configured, inherited])).toBe(
+      true,
+    );
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [inherited, configured])).toBe(
+      true,
+    );
+    const clientSettings = {
+      ...DEFAULT_CLIENT_SETTINGS,
+      providerModelPreferences: configured.settings.providerModelPreferences,
+    };
+    expect(defaultModelSelectionsAreMixed(clientSettings, [configured, inherited])).toBe(false);
+    expect(defaultModelSelectionsAreMixed(clientSettings, [inherited, configured])).toBe(false);
+    expect(
+      defaultModelSelectionsAreMixed(clientSettings, [
+        { ...inherited, settings: { ...DEFAULT_SERVER_SETTINGS, providerModelPreferences: {} } },
+        inherited,
+      ]),
+    ).toBe(true);
+  });
+
+  it("keeps automatic, explicit, and different saved options distinct", () => {
+    const providers = [provider({ instanceId: "codex", models: ["gpt-6-astra"] })];
+    const selected = {
+      projectId: null,
+      providers,
+      settings: {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        defaultModelSelection: createModelSelection(
+          ProviderInstanceId.make("codex"),
+          "gpt-6-astra",
+        ),
+      },
+    };
+    expect(
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [selected, { ...selected }]),
+    ).toBe(false);
+    expect(
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [
+        selected,
+        { projectId: null, providers, settings: DEFAULT_UNIFIED_SETTINGS },
+      ]),
+    ).toBe(true);
+    expect(
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [
+        selected,
+        {
+          ...selected,
+          settings: {
+            ...selected.settings,
+            defaultModelSelection: {
+              ...selected.settings.defaultModelSelection,
+              options: [{ id: "reasoningEffort", value: "xhigh" }],
+            },
+          },
+        },
+      ]),
+    ).toBe(true);
+  });
+});
 
 describe("instance-scoped model selection", () => {
   it("keeps custom models on the provider instance that declared them", () => {
