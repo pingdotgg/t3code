@@ -2604,7 +2604,10 @@ const make = Effect.gen(function* () {
           reportLiveTabs();
         }),
     );
-    yield* Effect.promise(() => show(tab));
+    yield* Effect.tryPromise({
+      try: () => show(tab),
+      catch: (cause) => new ServerBrowserLaunchError({ cause }),
+    });
     if (input.canOperate && tab.control.agentId === null && tab.control.controller === null) {
       yield* Effect.promise(() => tab.control.take(viewer.id));
     }

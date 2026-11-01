@@ -2113,7 +2113,7 @@ it.live("visibility failures retry hiding and prevent actions until restoration 
   Effect.scoped(
     Effect.gen(function* () {
       yield* useFakeTimers;
-      const { broker, tabId } = yield* ready;
+      const { browser, broker, tabId } = yield* ready;
       const cdp = contexts[0]!.sessions[0]!;
       const events = recordWindowEvents(cdp);
       const send = cdp.send.getMockImplementation()!;
@@ -2134,6 +2134,14 @@ it.live("visibility failures retry hiding and prevent actions until restoration 
       expect(events).toEqual([]);
       yield* advanceTime(60_000);
       expect(events).toEqual(["minimized"]);
+      const failedViewer = yield* browser
+        .attachViewer(viewerInput(tabId, false))
+        .pipe(Effect.scoped, Effect.flip);
+      expect(failedViewer).toMatchObject({
+        _tag: "ServerBrowserLaunchError",
+        cause: new Error("window transition failed"),
+      });
+      failRestore = true;
       const evaluate = () =>
         broker.invoke({ scope, tabId, operation: "evaluate", input: { expression: "1" } });
       const failed = yield* evaluate().pipe(Effect.exit);
