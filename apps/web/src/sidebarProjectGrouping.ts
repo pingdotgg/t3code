@@ -91,10 +91,18 @@ export function resolveSidebarProjectScopeKeys(input: {
   readonly keys: ReadonlyArray<string>;
   readonly settings?: ProjectGroupingSettings;
   readonly canClearMissingScope?: boolean;
+  readonly disabledEnvironmentIds?: ReadonlySet<EnvironmentId>;
 }): string[] {
   return [
     ...new Set(input.keys.flatMap((key) => resolveSidebarProjectScopeKey({ ...input, key }) ?? [])),
-  ];
+  ].filter((key) => {
+    if (!input.disabledEnvironmentIds?.size) return true;
+    const group = input.groups.find((candidate) => candidate.projectKey === key);
+    return (
+      group === undefined ||
+      group.memberProjectRefs.some((ref) => !input.disabledEnvironmentIds?.has(ref.environmentId))
+    );
+  });
 }
 
 export function buildPhysicalToLogicalProjectKeyMap(input: {

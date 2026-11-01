@@ -55,6 +55,24 @@ in a new thread's model picker to add or remove them. A regular click returns to
 single model. Choose a base branch and send. Each selection starts a separate thread
 and worktree while you stay in the new thread composer. This requires a Git project.
 
+## Filter the thread list
+
+On web and desktop, use the project picker above the thread list to focus on one
+or more projects. Choose **All projects** in that picker to clear the project filter.
+
+When more than one environment is listed, open **Environments** beside the
+project picker and select the environments whose threads you want to see. At
+least one environment must stay selected. Choose **All environments** to clear
+this filter. The app remembers your project choice, but the environment
+selection resets to all environments when you reload or reopen it.
+
+The filters work together: the list shows threads from the selected projects in
+the selected environments. If you hide every environment a selected project
+lives in, that project leaves the project filter. If no selected projects remain,
+the filter returns to **All projects**. Clear both filters to see threads across
+all projects and environments again. Opening a thread from history, a link, or
+the command palette reveals its environment and widens the project filter if needed.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.
