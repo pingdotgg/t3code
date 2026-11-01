@@ -34,6 +34,7 @@ import {
 } from "@t3tools/shared/backgroundActivitySettings";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
+import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
 import { PlusIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
@@ -127,6 +128,7 @@ import {
   buildProviderEnvironmentOptions,
   buildProviderInstanceOverridePatch,
   classifyProviderEnvironmentAccess,
+  defaultInstanceResetBaseline,
   isProviderSettingsEnvironmentAvailable,
   type ProviderEnvironmentAccess,
   type ProviderOperateAccess,
@@ -736,7 +738,9 @@ export function EnvironmentProviderSettings({
     const driver = providerSettings.provider;
     const defaultInstanceId = defaultInstanceIdForDriver(driver);
     const explicitInstance = settings.providerInstances?.[defaultInstanceId];
-    const isDirty = explicitInstance !== undefined;
+    const isDirty =
+      explicitInstance !== undefined &&
+      !Equal.equals(explicitInstance, defaultInstanceResetBaseline(explicitInstance));
     const hasDefaultSlot = providerSettings.hasDefaultInstance || explicitInstance !== undefined;
     if (
       hasDefaultSlot &&
@@ -872,20 +876,25 @@ export function EnvironmentProviderSettings({
     },
   );
 
-  const resetDefaultInstance = useStableCallback(async (driverKind: ProviderDriverKind) => {
-    const result = await persistProviderInstance({
-      operation: "remove",
-      instanceId: defaultInstanceIdForDriver(driverKind),
-    });
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add({
-        type: "error",
-        title: "Could not reset provider instance",
-        description: error instanceof Error ? error.message : "The settings update failed.",
-      });
-    }
-  });
+  const resetDefaultInstance = useStableCallback(
+    async (driverKind: ProviderDriverKind, instance: ProviderInstanceConfig | undefined) => {
+      const instanceId = defaultInstanceIdForDriver(driverKind);
+      const baseline = defaultInstanceResetBaseline(instance);
+      const result = await persistProviderInstance(
+        baseline === undefined
+          ? { operation: "remove", instanceId }
+          : { operation: "upsert", instanceId, instance: baseline },
+      );
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: "Could not reset provider instance",
+          description: error instanceof Error ? error.message : "The settings update failed.",
+        });
+      }
+    },
+  );
 
   const writeProjectOverride = useStableCallback(
     (instanceId: ProviderInstanceId, next: boolean | undefined) => {
@@ -1196,7 +1205,10 @@ interface ProviderInstanceRowActions {
     instanceId: ProviderInstanceId,
     instance: ProviderInstanceConfig,
   ) => Promise<void>;
-  readonly resetDefaultInstance: (driverKind: ProviderDriverKind) => Promise<void>;
+  readonly resetDefaultInstance: (
+    driverKind: ProviderDriverKind,
+    instance: ProviderInstanceConfig | undefined,
+  ) => Promise<void>;
   readonly writeProjectOverride: (
     instanceId: ProviderInstanceId,
     next: boolean | undefined,
@@ -1384,7 +1396,7 @@ function ProviderInstanceRow({
         mode === "editor" && isDefault && isDirty ? (
           <SettingResetButton
             label={`${resetLabel} provider settings`}
-            onClick={() => actions.resetDefaultInstance(driver)}
+            onClick={() => actions.resetDefaultInstance(driver, explicitInstance)}
           />
         ) : null
       }
