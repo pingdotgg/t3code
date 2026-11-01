@@ -1,3 +1,4 @@
+import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { Spinner } from "~/components/ui/spinner";
 
 import {
@@ -883,7 +884,9 @@ export function ProviderInstanceCard({
         instance.iconUrl ??
         (readConfigString(instance.config, "source") === "local"
           ? undefined
-          : (readConfigString(instance.config, "registryIconUrl") ?? undefined))
+          : (resolveOfficialAcpRegistryIconUrl(
+              readConfigString(instance.config, "registryIconUrl"),
+            ) ?? undefined))
       }
       showBadge={Boolean(accentColor)}
       className="size-5"

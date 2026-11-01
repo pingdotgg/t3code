@@ -80,7 +80,6 @@ export function shouldShowInstanceBadge(
   let sharedProviderCount = 0;
   for (const candidate of entries) {
     if (candidate.driverKind !== entry.driverKind) continue;
-    if (candidate.iconUrl !== entry.iconUrl) continue;
     // Historical threads still need to distinguish accounts that are all disabled.
     if (entry.enabled && !candidate.enabled) continue;
     if (

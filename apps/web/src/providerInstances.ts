@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   resolveProjectProviderInstanceEnabled,
+  resolveOfficialAcpRegistryIconUrl,
   type ModelSelection,
   type ProjectId,
   type ProviderDriverKind,
@@ -142,7 +143,11 @@ function applyProviderInstanceBranding(
     return { ...entry, acpRegistryAgentId: undefined, iconUrl: explicitInstance.iconUrl };
   }
   const agentId = config?.agentId;
-  const iconUrl = explicitInstance.iconUrl ?? config?.registryIconUrl;
+  const iconUrl =
+    explicitInstance.iconUrl ??
+    resolveOfficialAcpRegistryIconUrl(
+      typeof config?.registryIconUrl === "string" ? config.registryIconUrl : null,
+    );
   return {
     ...entry,
     ...(typeof agentId === "string" && agentId.trim()
