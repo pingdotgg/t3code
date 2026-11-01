@@ -143,6 +143,11 @@ export function DevicePanel(props: {
   const closeSurface = () => {
     const store = useRightPanelStore.getState();
     const { activeSurfaceId } = selectThreadRightPanelState(store.byThreadKey, props.threadRef);
+    if (props.surface.target) {
+      usePreviewMiniPlayerStore
+        .getState()
+        .close(props.threadRef, { kind: "device", ...props.surface.target });
+    }
     store.closeSurface(props.threadRef, props.surface.id);
     focusPanelTerminalAfterClose(props.threadRef, activeSurfaceId);
   };
