@@ -15,7 +15,7 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { PlusIcon } from "lucide-react";
-import { useId, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
 import { mintPairingCodeOn } from "~/state/peerPairingCode";
@@ -59,6 +59,13 @@ export function LinkedEnvironmentsSettings({
   readonly isSearchTarget: boolean;
 }) {
   const links = useEnvironmentQuery(peerLinkEnvironment.list({ environmentId, input: {} }));
+  const askAgain = useEffectEvent(() => {
+    if (!links.isPending) links.refresh();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- links change outside this client, and the shared list only revalidates when built
+  useEffect(() => {
+    askAgain();
+  }, []);
   const canLink = useAtomValue(peerLinkEnvironment.link.permissionAtom(environmentId));
   const search = searchableSetting("linked-environments");
   return (

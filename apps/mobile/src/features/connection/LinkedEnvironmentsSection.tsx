@@ -23,6 +23,9 @@ export function LinkedEnvironmentsSection(props: {
   const links = useEnvironmentQuery(
     supported ? peerLinkEnvironment.list({ environmentId: props.environmentId, input: {} }) : null,
   );
+  // Links change outside this client, and the shared list only revalidates when built.
+  const { refresh: refreshLinks } = links;
+  useFocusEffect(refreshLinks);
   const [nowMs, setNowMs] = useState(Date.now);
   const hasLinks = supported && (links.data?.links.length ?? 0) > 0;
   useFocusEffect(
