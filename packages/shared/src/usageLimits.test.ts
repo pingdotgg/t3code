@@ -989,7 +989,7 @@ describe("pooled account columns", () => {
     });
   });
 
-  it("preserves gaps without counting missing windows toward pooled quota", () => {
+  it("fills each row with only accounts reporting that window", () => {
     const [pool] = collectLimitPools(
       [
         account("a", [window]),
@@ -1002,12 +1002,33 @@ describe("pooled account columns", () => {
       now,
     );
     expect(keys(pool!)).toEqual([
-      ["a", "b", null],
-      [null, "b", "c"],
+      ["a", "b"],
+      ["b", "c"],
     ]);
     expect(pool!.windows[1]!.members.map((member) => member.account.key)).toEqual(["b", "c"]);
     expect(pool!.windows[1]!.remainingPercent).toBe(40);
     expect(pool!.windows[1]!.resets.map((reset) => reset.restoresPercent)).toEqual([40, 20]);
+  });
+
+  it("gives two Codex session accounts equal slots and a monthly-only account its own full row", () => {
+    const codex = (key: string, windows: LimitAccount["limits"]["windows"]) => ({
+      ...account(key, windows),
+      driver: ProviderDriverKind.make("codex"),
+    });
+    const [pool] = collectLimitPools(
+      [
+        codex("a", [window, { ...weekly, usedPercent: 90 }]),
+        codex("b", [window, { ...weekly, usedPercent: 100 }]),
+        codex("monthly", [{ ...window, kind: "monthly", usedPercent: 2 }]),
+      ],
+      now,
+    );
+    expect(keys(pool!)).toEqual([["a", "b"], ["a", "b"], ["monthly"]]);
+    expect(pool!.windows[1]!.remainingPercent).toBe(5);
+    expect(pool!.windows[1]!.members.map((member) => 100 - member.window.usedPercent)).toEqual([
+      10, 0,
+    ]);
+    expect(pool!.windows[2]!.remainingPercent).toBe(98);
   });
 
   it("falls back to weekly resets when no account reports a session", () => {
