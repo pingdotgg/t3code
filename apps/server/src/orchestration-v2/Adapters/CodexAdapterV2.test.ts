@@ -5664,6 +5664,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     content: [{ type: "text", text: "An interactive form is being shown to the user." }],
     structuredContent: { status: "awaiting_user_submission" },
   };
+  // Codex reports a tool's `isError` result, which a write that defers to its
+  // form returns, as a failed call.
   const mcpAppDeferredTranscript = makeCodexReplayTranscript({
     scenario: MCP_APP_SCENARIO,
     entries: mcpAppTranscript.entries.map((entry) =>

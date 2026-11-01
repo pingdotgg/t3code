@@ -3,6 +3,7 @@ import {
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2TurnItem,
   OrchestrationV2StoredEvent,
   ProviderThreadId,
   RunAttemptId,
@@ -17,15 +18,17 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as PubSub from "effect/PubSub";
 import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { MCP_APP_CALL_OUTPUT_KEY, MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
-import { projectDomainEventForWire } from "./WireProjection.ts";
+import { projectDomainEventForWire, toolOutputFitsDetail } from "./WireProjection.ts";
 import { makeRunOutcomeRecorder, type RunOutcome } from "./RunMetrics.ts";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -329,7 +332,35 @@ const layerBase: Layer.Layer<
         });
       });
 
-    const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
+    // Merge against the latest item inside the write transaction; either writer may hold a stale copy.
+    const mergeMcpAppCall =
+      /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
+      Effect.fnUntraced(function* (item: OrchestrationV2TurnItem, recorded: boolean) {
+        if (item.type !== "dynamic_tool") return item;
+        const output = Predicate.isObject(item.output) ? item.output : undefined;
+        if (output === undefined || !(MCP_APP_OUTPUT_KEY in output)) return item;
+        const stored = yield* projectionStore.getTurnItem({
+          threadId: item.threadId,
+          itemId: item.id,
+        });
+        if (stored?.type !== "dynamic_tool" || !Predicate.isObject(stored.output)) return item;
+        const call = (recorded ? output : stored.output)[MCP_APP_CALL_OUTPUT_KEY];
+        if (call === undefined) return item;
+        const base = recorded ? { ...stored, updatedAt: item.updatedAt } : item;
+        const merged = {
+          ...(Predicate.isObject(base.output) ? base.output : {}),
+          [MCP_APP_CALL_OUTPUT_KEY]: call,
+        };
+        // Past the detail limit clients would read both results as truncated
+        // text, so the provider's output wins over the call.
+        if (!toolOutputFitsDetail(merged)) return recorded ? stored : item;
+        return { ...base, output: merged };
+      });
+
+    const normalizeEvents = (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+      recorded = false,
+    ) => {
       const runOrdinals = new Map(
         events.flatMap((event) =>
           event.type === "run.created" || event.type === "run.updated"
@@ -346,7 +377,10 @@ const layerBase: Layer.Layer<
                   event.payload,
                   event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
                 )
-                .pipe(Effect.map((payload) => ({ ...event, payload })))
+                .pipe(
+                  Effect.flatMap((item) => mergeMcpAppCall(item, recorded)),
+                  Effect.map((payload) => ({ ...event, payload })),
+                )
             : Effect.succeed(event),
         { concurrency: 1 },
       );
@@ -656,6 +690,7 @@ const layerBase: Layer.Layer<
             runId === undefined
               ? input.events
               : yield* updateDelegatedCompletionOnly(input.events, (id) => id === runId),
+            input.commandType === "mcp_app.call.record",
           );
           const storedEvents = yield* eventStore.append({
             commandId: input.commandId,

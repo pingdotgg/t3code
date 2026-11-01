@@ -220,6 +220,11 @@ function boundDynamicValue(value: unknown): unknown {
     : truncateDetail(json, MAX_ON_DEMAND_BYTES);
 }
 
+export function toolOutputFitsDetail(output: unknown): boolean {
+  const omitted = omitToolOutputImageData(output);
+  return boundDynamicValue(omitted) === omitted;
+}
+
 /** Preserve ordered image markers in truncated output so clients can load images by index. */
 function boundToolOutput(output: unknown): unknown {
   const omitted = omitToolOutputImageData(output);

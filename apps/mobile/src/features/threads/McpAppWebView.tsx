@@ -18,6 +18,7 @@ import {
   mcpAppAllowAttribute,
   mcpAppFileName,
   mcpAppReferencesEqual,
+  mcpAppToolCall,
   type McpAppReference,
 } from "@t3tools/shared/mcpApp";
 import * as Predicate from "effect/Predicate";
@@ -95,10 +96,9 @@ function storedToolCall(
   item: { readonly type: string; readonly input?: unknown; readonly output?: unknown } | null,
 ) {
   if (item?.type !== "dynamic_tool") return undefined;
-  const output = item.output as { readonly result?: unknown } | undefined;
-  return {
-    arguments: item.input,
-    result: output?.result as McpAppCallToolResult | undefined,
+  return mcpAppToolCall({ input: item.input, output: item.output }) as {
+    readonly arguments: unknown;
+    readonly result: McpAppCallToolResult | undefined;
   };
 }
 

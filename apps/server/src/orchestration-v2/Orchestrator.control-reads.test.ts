@@ -1488,6 +1488,103 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("keeps an MCP App's recorded call beside the tool's own result", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:mcp-app-call");
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-mcp-app-call"),
+      threadId,
+      projectId: ProjectId.make("project:mcp-app-call"),
+      title: "MCP App call",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const deferred = { content: [{ type: "text", text: "Form shown" }], isError: true };
+    const toolItem = (id: TurnItemId, output: unknown) => ({
+      id,
+      threadId,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "failed" as const,
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "dynamic_tool" as const,
+      toolName: "github.issue_write",
+      input: { title: "Draft" },
+      output,
+    });
+    const appItemId = TurnItemId.make("turn-item:mcp-app-call:app");
+    const plainItemId = TurnItemId.make("turn-item:mcp-app-call:plain");
+    for (const item of [
+      toolItem(appItemId, {
+        t3McpApp: {
+          attachmentId: "thread-mcp-app-call-html",
+          server: "github",
+          tool: "issue_write",
+          resourceUri: "ui://github/issue-write",
+        },
+        result: deferred,
+      }),
+      toolItem(plainItemId, { result: deferred }),
+    ]) {
+      yield* projections.apply({
+        id: EventId.make(`mcp-app-call:${item.id}`),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: item,
+      });
+    }
+    const submitted = {
+      arguments: { title: "Shipped", _ui_submitted: true },
+      result: { content: [{ type: "text", text: "Created issue #1" }] },
+    };
+    const record = (turnItemId: TurnItemId, call = submitted) =>
+      orchestrator.dispatch({
+        type: "mcp_app.call.record",
+        commandId: CommandId.make(`record:${turnItemId}:${call.arguments.title}`),
+        threadId,
+        turnItemId,
+        ...call,
+      });
+
+    // Clients refetch an item's detail when its update time moves.
+    yield* TestClock.adjust("1 second");
+    yield* record(appItemId);
+    const recorded = yield* projections.getTurnItem({ threadId, itemId: appItemId });
+    assert(recorded?.type === "dynamic_tool");
+    assert.deepInclude(recorded.output, { result: deferred, t3McpAppCall: submitted });
+    assert.isTrue(DateTime.isGreaterThan(recorded.updatedAt, now));
+    // Only a call that shows an app has an app to keep a call for.
+    assert.isTrue(Result.isFailure(yield* record(plainItemId).pipe(Effect.result)));
+    // Clients would read an output this large as truncated text, losing both results.
+    const oversized = {
+      arguments: { title: "Oversized", _ui_submitted: true },
+      result: { content: [{ type: "text", text: "x".repeat(300 * 1024) }] },
+    };
+    assert.isTrue(Result.isFailure(yield* record(appItemId, oversized).pipe(Effect.result)));
+    const kept = yield* projections.getTurnItem({ threadId, itemId: appItemId });
+    assert(kept?.type === "dynamic_tool");
+    assert.deepInclude(kept.output, { t3McpAppCall: submitted });
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("dispatch records the command outcome and its duration", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
