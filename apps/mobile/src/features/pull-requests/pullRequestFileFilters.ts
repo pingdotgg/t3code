@@ -19,3 +19,17 @@ export function filterPullRequestTestFiles(
     deletions: files.reduce((total, file) => total + file.deletions, 0),
   };
 }
+
+/** Patches to load around `index` (or from the top): the next three files the review will show. */
+export function shownPatchIndices(
+  files: ReadonlyArray<{ readonly path: string }>,
+  hideTestFiles: boolean,
+  index: number | null,
+): ReadonlyArray<number> {
+  const shown = files.flatMap((file, position) =>
+    hideTestFiles && isTestChangedFile(file.path) ? [] : [position],
+  );
+  if (index === null) return shown.slice(0, 3);
+  const position = shown.indexOf(index);
+  return position < 0 ? [index] : shown.slice(position, position + 3);
+}
