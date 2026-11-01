@@ -1934,7 +1934,13 @@ export const layerWsRpc = (
                         ThreadManagementService.withCreationProvenance(command, {
                           createdBy: "user",
                           creationSource:
-                            "creationSource" in command ? command.creationSource : "web",
+                            command.type === "queued-run.edit"
+                              ? command.editor?.creationSource === "mobile"
+                                ? "mobile"
+                                : "web"
+                              : "creationSource" in command
+                                ? command.creationSource
+                                : "web",
                         }),
                       )
                   ).pipe(Effect.provide(intakeContext)),

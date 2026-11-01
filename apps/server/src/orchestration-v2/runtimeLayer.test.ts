@@ -6423,6 +6423,51 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         "an edit without attachments must leave the stored attachments untouched",
       );
 
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make("runtime-layer-queued-edit-agent"),
+        threadId,
+        runId: queuedRun.id,
+        text: "Agent-authored replacement.",
+        editor: { createdBy: "agent", creationSource: "mcp" },
+      });
+      const afterAgentEdit = yield* orchestrator.getThreadProjection(threadId);
+      const agentEditedMessage = afterAgentEdit.messages.find(
+        (message) => message.id === queuedRun.userMessageId,
+      );
+      assert.equal(agentEditedMessage?.createdBy, "agent");
+      assert.equal(agentEditedMessage?.creationSource, "mcp");
+      assert.equal(agentEditedMessage?.text, "Agent-authored replacement.");
+
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make("runtime-layer-queued-edit-legacy"),
+        threadId,
+        runId: queuedRun.id,
+        text: "An unattributed edit must not restore human provenance.",
+      });
+      const afterLegacyEdit = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        afterLegacyEdit.messages.find((message) => message.id === queuedRun.userMessageId)
+          ?.createdBy,
+        "agent",
+      );
+
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make("runtime-layer-queued-edit-human"),
+        threadId,
+        runId: queuedRun.id,
+        text: "Human-authored replacement.",
+        editor: { createdBy: "user", creationSource: "mobile" },
+      });
+      const afterHumanEdit = yield* orchestrator.getThreadProjection(threadId);
+      const humanEditedMessage = afterHumanEdit.messages.find(
+        (message) => message.id === queuedRun.userMessageId,
+      );
+      assert.equal(humanEditedMessage?.createdBy, "user");
+      assert.equal(humanEditedMessage?.creationSource, "mobile");
+
       const emptyEditError = yield* orchestrator
         .dispatch({
           type: "queued-run.edit",
