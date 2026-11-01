@@ -132,7 +132,7 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
                   Predicate.hasProperty(cause, "code") &&
                   cause.code === "UNKNOWN";
                 const reason = blockedOnWindows
-                  ? "Windows blocked it from starting (spawn UNKNOWN). Smart App Control or an application control policy may be blocking this executable."
+                  ? "Windows could not start it (spawn UNKNOWN). Smart App Control or an application control policy may be blocking this executable."
                   : cause instanceof Error
                     ? cause.message
                     : String(cause);

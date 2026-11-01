@@ -998,7 +998,7 @@ describe("providerMaintenanceRunner", () => {
       const message = updateState?.message ?? "";
       assert.notStrictEqual(message, "spawn UNKNOWN");
       assert.include(message, "vp");
-      assert.include(message, "Windows blocked it from starting");
+      assert.include(message, "Windows could not start it");
       assert.include(message, "Smart App Control");
     }).pipe(
       Effect.provide(
