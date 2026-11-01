@@ -5,7 +5,7 @@ import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 
 type Scroller = "shadow" | "light" | "none" | "shadow-dialog";
 // Each step is one wheel event, optionally followed by the scroll it caused or a remount.
-type Step = readonly [deltaX: number, after?: number | "remount"];
+type Step = readonly [deltaX: number, after?: number | "remount" | "remove"];
 
 function mountPanel(container: HTMLElement, scroller: Scroller, scrollLeft: number) {
   const panel = container.appendChild(document.createElement("div"));
@@ -42,6 +42,7 @@ describe("HistorySwipeNavigation", () => {
       [[1, "remount"], [130]],
       null,
     ],
+    ["a scroller removed after a small first event", "shadow", 400, [[1, "remove"], [130]], null],
     ["swiping inside a dialog in a shadow root", "shadow-dialog", 0, [[-130]], null],
     ["swiping left over content without overflow", "none", 0, [[-130]], "back"],
     ["swiping right over content without overflow", "none", 0, [[130]], "forward"],
@@ -62,6 +63,9 @@ describe("HistorySwipeNavigation", () => {
         replacement.scrollLeft = previous;
         viewport = replacement;
         content = replacement.firstElementChild as HTMLDivElement;
+      } else if (after === "remove") {
+        viewport.remove();
+        ({ viewport, content } = mountPanel(screen.container, "none", 0));
       } else if (after !== undefined) {
         viewport.scrollLeft = after;
       }

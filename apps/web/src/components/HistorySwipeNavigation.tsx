@@ -57,7 +57,6 @@ function lockSwipeAxis(
   if (path.some((node) => node instanceof Element && node.matches('[role="dialog"]'))) {
     return { kind: "ignored" };
   }
-  if (isInHorizontalScroller(path)) return { kind: "ignored" };
   const direction = sumX < 0 ? "back" : "forward";
   if (!canNavigateHistory(direction)) return { kind: "ignored" };
   return {
@@ -119,11 +118,16 @@ export function HistorySwipeNavigation() {
       }
       if (gesture.kind === "ignored") return;
       if (gesture.kind === "pending") {
+        const path = event.composedPath();
+        // Claim content scrolling while its layout still exists, before a possible remount.
+        if (isInHorizontalScroller(path)) {
+          gesture = { kind: "ignored" };
+          return;
+        }
         gesture.sumX += event.deltaX;
         gesture.sumY += event.deltaY;
         if (Math.abs(gesture.sumX) + Math.abs(gesture.sumY) < SWIPE_AXIS_LOCK_DISTANCE) return;
-        // The first event's scroller may have been replaced; keep its path for dialog checks.
-        gesture = lockSwipeAxis({ ...gesture, path: [...gesture.path, ...event.composedPath()] });
+        gesture = lockSwipeAxis({ ...gesture, path: [...gesture.path, ...path] });
         if (gesture.kind === "ignored") return;
       } else {
         const delta = gesture.direction === "back" ? -event.deltaX : event.deltaX;
