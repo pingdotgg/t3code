@@ -142,43 +142,6 @@ function message(
   };
 }
 
-function work(id: string, entry: Record<string, unknown>): Entry {
-  return {
-    id,
-    kind: "work",
-    createdAt: CREATED_AT,
-    entry: { id, createdAt: CREATED_AT, ...entry },
-  } as Entry;
-}
-
-function v2Item(type: string, fields: Record<string, unknown>) {
-  const id = (fields.id as string | undefined) ?? type;
-  return {
-    position: 0,
-    visibility: "local",
-    sourceThreadId: "thread-1",
-    sourceItemId: id,
-    item: {
-      id,
-      threadId: "thread-1",
-      runId: "run-1",
-      nodeId: null,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal: 0,
-      status: "completed",
-      title: null,
-      startedAt: null,
-      completedAt: null,
-      updatedAt: {},
-      type,
-      ...fields,
-    },
-  } as never;
-}
-
 async function renderElement(element: ReactElement, options: { router?: false } = {}) {
   const container = document.createElement("div");
   container.style.cssText = "height: 1200px; width: 900px; display: flex; flex-direction: column;";
@@ -1129,6 +1092,97 @@ describe("compact reasoning math", () => {
       "x^2",
     ]);
   });
+});
+
+function work(id: string, entry: Record<string, unknown>): Entry {
+  return {
+    id,
+    kind: "work",
+    createdAt: CREATED_AT,
+    entry: { id, createdAt: CREATED_AT, ...entry },
+  } as Entry;
+}
+
+function v2Item(type: string, fields: Record<string, unknown>) {
+  const id = (fields.id as string | undefined) ?? type;
+  return {
+    position: 0,
+    visibility: "local",
+    sourceThreadId: "thread-1",
+    sourceItemId: id,
+    item: {
+      id,
+      threadId: "thread-1",
+      runId: "run-1",
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed",
+      title: null,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: {},
+      type,
+      ...fields,
+    },
+  } as never;
+}
+
+describe("MessagesTimeline plugin context", () => {
+  it.each([
+    {
+      status: "completed",
+      title: "Added context from Context fixture",
+      output: {
+        context: [{ title: "Project codename", text: "The project codename is PERIWINKLE-42." }],
+      },
+      detail: ["Project codename", "The project codename is PERIWINKLE-42."],
+    },
+    {
+      status: "failed",
+      title: "Context from Context fixture not added",
+      output: { reason: "the notes index is offline" },
+      detail: ["Not added", "the notes index is offline"],
+    },
+  ])(
+    "shows plugin context detail for a $status call after expansion",
+    async ({ status, title, output, detail }) => {
+      const item = {
+        status,
+        title,
+        toolName: "plugin_context",
+        toolSource: { key: "plugin:test.context", name: "Context fixture", kind: "integration" },
+        input: {
+          plugin: {
+            id: "test.context",
+            name: "Context fixture",
+            installationId: "INSTALLATION_INPUT",
+            generation: 3,
+          },
+        },
+        output,
+      };
+      await using screen = await renderTimeline([
+        work(`plugin-context-${status}`, {
+          label: title,
+          tone: "tool",
+          itemType: "dynamic_tool",
+          toolLifecycleStatus: status,
+          structuredPayload: { type: "dynamic_tool", ...item },
+          projectedItem: v2Item("dynamic_tool", item),
+        }),
+      ]);
+      for (const value of detail) expect(screen.text()).not.toContain(value);
+      const accessibleTitle = status === "failed" ? `${title}, tool call failed` : title;
+      await click(screen.button(accessibleTitle));
+      expect(screen.text()).toContain("From Context fixture (test.context)");
+      for (const value of detail) expect(screen.text()).toContain(value);
+      expect(screen.text()).not.toContain("INSTALLATION_INPUT");
+    },
+  );
 });
 
 it("renders automatic compaction as one live divider that finishes with its reason and token delta", async () => {

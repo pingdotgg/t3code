@@ -1,6 +1,7 @@
 import type { PluggableList } from "unified";
 import type { Root, RootContent } from "mdast";
 import {
+  pluginContextInspection,
   resolveWorkEntryToolPresentation,
   toolGroupAction,
 } from "@t3tools/client-runtime/work-log/presentation";
@@ -104,7 +105,14 @@ export function buildToolCallExpandedBody(
     seen.add(text);
     blocks.push(text);
   };
-  if (workEntry.itemType === "dynamic_tool" && workEntry.toolData !== undefined) {
+  const pluginContext =
+    workEntry.structuredPayload === undefined
+      ? null
+      : pluginContextInspection(workEntry.structuredPayload);
+  if (pluginContext !== null) {
+    addBlock(`From ${pluginContext.source}`);
+    for (const block of pluginContext.blocks) addBlock(`${block.label}\n${block.text}`);
+  } else if (workEntry.itemType === "dynamic_tool" && workEntry.toolData !== undefined) {
     const input =
       workEntry.structuredPayload?.type === "dynamic_tool"
         ? workEntry.structuredPayload.input

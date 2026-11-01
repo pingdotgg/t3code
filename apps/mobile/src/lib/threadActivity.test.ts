@@ -23,6 +23,7 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  expandedWorkRowCall,
   buildThreadFeed,
   workEntryRowLabel,
   threadFeedCompactionLabels,
@@ -1841,6 +1842,69 @@ describe("streamed feed updates", () => {
     expect(showsDelegation(steps[2]!)).toBe(true);
     expect(showsDelegation(steps[3]!)).toBe(false);
   });
+});
+
+it("shows plugin context, or why it was not added, in the expanded detail", () => {
+  const record = (
+    id: string,
+    ordinal: number,
+    fields: Partial<Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }>>,
+  ) =>
+    ({
+      ...base(id, `2026-06-20T00:00:0${ordinal}.000Z`, ordinal),
+      type: "dynamic_tool",
+      title: "Added context from Context fixture",
+      toolName: "plugin_context",
+      toolSource: { key: "plugin:test.context", name: "Context fixture", kind: "integration" },
+      input: {
+        plugin: {
+          id: "test.context",
+          name: "Context fixture",
+          installationId: "i-1",
+          generation: 3,
+        },
+      },
+      ...fields,
+    }) satisfies OrchestrationV2TurnItem;
+  const details = buildThreadFeed([
+    projected(
+      record("added", 1, {
+        output: {
+          context: [{ title: "Project codename", text: "The project codename is PERIWINKLE-42." }],
+        },
+      }),
+      0,
+    ),
+    projected(
+      record("failed", 2, {
+        status: "failed",
+        title: "Context from Context fixture not added",
+        output: {
+          reason: 'Plugin test.context failed "t3.transform.enrich": the notes index is offline',
+        },
+      }),
+      1,
+    ),
+    projected(
+      record("interrupted", 3, {
+        status: "interrupted",
+        title: "Context from Context fixture not added",
+        output: { reason: "The run was interrupted before the plugin answered." },
+      }),
+      2,
+    ),
+  ])
+    .flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []))
+    .map((activity) => activity.getFullDetail());
+
+  // Expanded, the row shows that detail rather than the plugin input as a tool call.
+  expect(expandedWorkRowCall(record("expanded", 4, { output: { context: [] } }), false)).toBeNull();
+  expect(expandedWorkRowCall(record("tool", 5, { toolName: "lookup" }), false)?.args).toBeTruthy();
+  expect(details).toEqual([
+    "From Context fixture (test.context)\n\nProject codename\nThe project codename is PERIWINKLE-42.",
+    'From Context fixture (test.context)\n\nNot added\nPlugin test.context failed "t3.transform.enrich": the notes index is offline',
+    "From Context fixture (test.context)\n\nNot added\nThe run was interrupted before the plugin answered.",
+  ]);
 });
 
 it.each([false, true])(

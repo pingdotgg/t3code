@@ -1,8 +1,10 @@
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  ProviderInstanceId,
   RunId,
   ThreadId,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -12,8 +14,67 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RunFinalization from "./RunFinalizationService.ts";
+
+it.effect("refreshes workspace after checkpoint capture, then records finalization", () => {
+  const threadId = ThreadId.make("thread_finalize");
+  const runId = RunId.make("run_finalize");
+  const scopeId = CheckpointScopeId.make("scope_finalize");
+  const steps: Array<string> = [];
+  const capture = vi.fn(() => Effect.sync(() => steps.push("capture")));
+  const refresh = vi.fn(() => Effect.sync(() => steps.push("refresh")));
+  const write = vi.fn(() => Effect.sync(() => (steps.push("record"), [])));
+  const checkpointContext = {
+    runs: [],
+    checkpointScopes: [{ id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" }],
+    checkpoints: [],
+  };
+  const layer = RunFinalization.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({ execute: capture }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadProjection: () =>
+            Effect.die("workspace refresh must not load transcript history"),
+          getCheckpointContext: () => Effect.succeed(checkpointContext),
+          getCheckpointCaptureContext: () =>
+            Effect.succeed({
+              run: {
+                id: runId,
+                threadId,
+                rootNodeId: null,
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                status: "completed",
+                checkpointId: null,
+              } as OrchestrationV2Run,
+              rootNode: undefined,
+              scope: undefined,
+              providerThread: undefined,
+              readyCheckpointOrdinals: [],
+              sideChat: false,
+            }),
+        }),
+        Layer.mock(EventSink.EventSinkV2)({
+          write,
+          hasRunFinalization: () => Effect.succeed(false),
+        }),
+        Layer.succeed(RunFinalization.RunFinalizationObserver, {
+          refresh,
+          refreshAfterTurn: () => Effect.void,
+        }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const service = yield* RunFinalization.RunFinalizationService;
+    yield* service.finalize({ threadId, runId, scopeId });
+    assert.equal(capture.mock.calls.length, 1);
+    assert.deepEqual(refresh.mock.calls[0], [{ cwd: "/repo", threadId, runId }]);
+    assert.deepEqual(steps, ["capture", "refresh", "record"]);
+  }).pipe(Effect.provide(layer));
+});
 
 it.effect("completes finalization when the post-checkpoint workspace refresh fails", () => {
   const threadId = ThreadId.make("thread_refresh_failure");
@@ -23,6 +84,10 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
   const layer = RunFinalization.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.mock(EventSink.EventSinkV2)({
+          hasRunFinalization: () => Effect.succeed(false),
+          write: () => Effect.sync(() => (captured.push("finalized"), [])),
+        }),
         Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({
           execute: () =>
             Effect.sync(() => {
@@ -35,6 +100,22 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
               runs: [],
               checkpointScopes: [{ id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" }],
               checkpoints: [],
+            }),
+          getCheckpointCaptureContext: () =>
+            Effect.succeed({
+              run: {
+                id: runId,
+                threadId,
+                rootNodeId: null,
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                status: "completed",
+                checkpointId: null,
+              } as OrchestrationV2Run,
+              rootNode: undefined,
+              scope: undefined,
+              providerThread: undefined,
+              readyCheckpointOrdinals: [],
+              sideChat: false,
             }),
         }),
         Layer.succeed(RunFinalization.RunFinalizationObserver, {
@@ -54,7 +135,81 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
   return Effect.gen(function* () {
     const service = yield* RunFinalization.RunFinalizationService;
     yield* service.finalize({ threadId, runId, scopeId });
-    assert.deepEqual(captured, ["checkpoint", "refresh"]);
+    assert.deepEqual(captured, ["checkpoint", "refresh", "finalized"]);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("preserves checkpoint failures without refreshing the workspace", () => {
+  const threadId = ThreadId.make("thread_capture_failure");
+  const runId = RunId.make("run_capture_failure");
+  const scopeId = CheckpointScopeId.make("scope_capture_failure");
+  const captureError = new CheckpointCapture.CheckpointCaptureExecutionError({
+    threadId,
+    runId,
+    scopeId,
+    cause: new Error("Checkpoint capture failed"),
+  });
+  const refresh = vi.fn(() => Effect.void);
+  const layer = RunFinalization.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(EventSink.EventSinkV2)({
+          hasRunFinalization: () => Effect.succeed(false),
+        }),
+        Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({
+          execute: () => Effect.fail(captureError),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getCheckpointContext: () => Effect.die("capture failed before context lookup"),
+        }),
+        Layer.succeed(RunFinalization.RunFinalizationObserver, {
+          refresh,
+          refreshAfterTurn: () => Effect.void,
+        }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const service = yield* RunFinalization.RunFinalizationService;
+    const error = yield* service.finalize({ threadId, runId, scopeId }).pipe(Effect.flip);
+    assert.equal(error.operation, "capture-checkpoint");
+    assert.strictEqual(error.cause, captureError);
+    assert.equal(refresh.mock.calls.length, 0);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("preserves checkpoint context read failures without refreshing the workspace", () => {
+  const threadId = ThreadId.make("thread_context_failure");
+  const runId = RunId.make("run_context_failure");
+  const scopeId = CheckpointScopeId.make("scope_context_failure");
+  const contextError = new ProjectionStore.ProjectionStoreReadError({
+    threadId,
+    cause: new Error("Checkpoint context read failed"),
+  });
+  const refresh = vi.fn(() => Effect.void);
+  const layer = RunFinalization.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(EventSink.EventSinkV2)({
+          hasRunFinalization: () => Effect.succeed(false),
+        }),
+        Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({ execute: () => Effect.void }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getCheckpointContext: () => Effect.fail(contextError),
+        }),
+        Layer.succeed(RunFinalization.RunFinalizationObserver, {
+          refresh,
+          refreshAfterTurn: () => Effect.void,
+        }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const service = yield* RunFinalization.RunFinalizationService;
+    const error = yield* service.finalize({ threadId, runId, scopeId }).pipe(Effect.flip);
+    assert.equal(error.operation, "refresh-workspace");
+    assert.strictEqual(error.cause, contextError);
+    assert.equal(refresh.mock.calls.length, 0);
   }).pipe(Effect.provide(layer));
 });
 
