@@ -4266,6 +4266,58 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("gives generated worktrees that map to one folder their own folders", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const worktreesDirectory = yield* makeTmpDir("custom-worktrees-");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const repos: Array<{ readonly cwd: string; readonly initialBranch: string }> = [];
+        for (const prefix of ["git-one-", "git-two-"]) {
+          const cwd = pathService.join(yield* makeTmpDir(prefix), "api");
+          yield* fileSystem.makeDirectory(cwd);
+          repos.push({ cwd, ...(yield* initRepoWithCommit(cwd)) });
+        }
+        const [one, two] = repos as [(typeof repos)[0], (typeof repos)[0]];
+        const projectFolder = pathService.join(worktreesDirectory, "api");
+        yield* writeTextFile(projectFolder, "taken/notes.txt", "keep\n");
+
+        const requests = [
+          { repo: one, branch: "feature/foo" },
+          { repo: one, branch: "feature-foo" },
+          { repo: two, branch: "feature/foo" },
+          { repo: two, branch: "taken" },
+        ];
+        const created = yield* Effect.forEach(
+          requests,
+          ({ repo, branch }) =>
+            driver.createWorktree(
+              { cwd: repo.cwd, path: null, refName: repo.initialBranch, newRefName: branch },
+              { worktreesDirectory },
+            ),
+          { concurrency: "unbounded" },
+        );
+
+        assert.deepEqual(
+          created.map(({ worktree }) => pathService.basename(worktree.path)).toSorted(),
+          ["feature-foo", "feature-foo-2", "feature-foo-3", "taken-2"],
+        );
+        for (const [index, { repo, branch }] of requests.entries()) {
+          const worktreePath = created[index]!.worktree.path;
+          assert.equal(pathService.dirname(worktreePath), projectFolder);
+          assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), branch);
+          assert.include(
+            yield* git(repo.cwd, ["worktree", "list", "--porcelain"]),
+            `worktree ${worktreePath}`,
+          );
+        }
+        assert.equal(
+          yield* fileSystem.readFileString(pathService.join(projectFolder, "taken", "notes.txt")),
+          "keep\n",
+        );
+      }),
+    );
+
     it.effect("resolves the submodule mode from the option, then t3.json", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;

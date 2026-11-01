@@ -4133,7 +4133,34 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const prefix = directoryName.slice(0, 23).replace(/[\uD800-\uDBFF]$/, "");
         directoryName = `${prefix}-${Hex.encode(digest).slice(0, 16)}`;
       }
-      worktreePath = path.join(parentDir, repoName, directoryName);
+      const projectDirectory = path.join(parentDir, repoName);
+      const toCommandError = (error: PlatformError.PlatformError) =>
+        new GitCommandError({
+          operation: "GitVcsDriver.createWorktree",
+          command: "git worktree add",
+          cwd: input.cwd,
+          detail: `Could not create a worktree folder in ${projectDirectory}.`,
+          cause: error,
+        });
+      yield* fileSystem
+        .makeDirectory(projectDirectory, { recursive: true })
+        .pipe(Effect.mapError(toCommandError));
+      // Same-basename projects and branches that differ only by "/" and "-" share a name, so
+      // claim a folder nobody holds; Git still checks out into the empty folder it is given.
+      for (let attempt = 1; worktreePath == null; attempt += 1) {
+        const candidate = path.join(
+          projectDirectory,
+          attempt === 1 ? directoryName : `${directoryName}-${attempt}`,
+        );
+        worktreePath = yield* fileSystem.makeDirectory(candidate).pipe(
+          Effect.as(candidate),
+          Effect.catchIf(
+            (error) => error.reason._tag === "AlreadyExists",
+            () => Effect.succeed(null),
+          ),
+          Effect.mapError(toCommandError),
+        );
+      }
     }
     if (input.newRefName) {
       // Kept apart from the checkout so the shared-config lock only covers the tracking write.
