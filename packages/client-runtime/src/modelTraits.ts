@@ -120,12 +120,29 @@ export function buildTraitsTriggerDisplay(input: {
   label: string;
   /** "Fast" or "Ultrafast" when a speed option is on. */
   speedLabel: string | null;
+  thinkingOff: boolean;
 } {
+  const thinkingOff = input.descriptors.some(
+    (descriptor) =>
+      descriptor.id === "thinking" &&
+      descriptor.type === "boolean" &&
+      descriptor.currentValue === false,
+  );
   let fastModeFallbackLabel: string | null = null;
   let speedLabel: string | null = null;
   let reasoningLabelIndex = -1;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
+    if (descriptor.id === "thinking" && descriptor.type === "boolean") {
+      if (thinkingOff) {
+        reasoningLabelIndex = labels.length;
+        labels.push("Off");
+      }
+      continue;
+    }
+    if (thinkingOff && isReasoningSelect(descriptor)) {
+      continue;
+    }
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
       speedLabel = descriptor.currentValue === true ? "Fast" : null;
       fastModeFallbackLabel = speedLabel ?? "Normal";
@@ -174,7 +191,7 @@ export function buildTraitsTriggerDisplay(input: {
   }
 
   if (labels.length === 0 && fastModeFallbackLabel !== null) {
-    return { label: fastModeFallbackLabel, speedLabel };
+    return { label: fastModeFallbackLabel, speedLabel, thinkingOff };
   }
   if (speedLabel) {
     if (reasoningLabelIndex >= 0) {
@@ -183,5 +200,5 @@ export function buildTraitsTriggerDisplay(input: {
       labels.push(speedLabel);
     }
   }
-  return { label: labels.join(" · "), speedLabel };
+  return { label: labels.join(" · "), speedLabel, thinkingOff };
 }

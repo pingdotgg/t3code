@@ -108,7 +108,7 @@ export function describeComposerEffort(
       .effort?.descriptor ?? null;
   const ultrathink = visibility.ultrathinkPromptControlled && reasoning === primary;
   const glyph =
-    reasoning?.type === "select"
+    !display.thinkingOff && reasoning?.type === "select"
       ? resolveEffortGlyph(
           reasoning,
           ultrathink
@@ -117,15 +117,25 @@ export function describeComposerEffort(
         )
       : null;
   // Workflow levels such as Ultracode always show their name; the setting names every level.
-  const word = glyph
-    ? (glyph.special ?? (effortDisplay === "label" ? glyph.label : null))
-    : !reasoning
-      ? null
-      : reasoning.type === "boolean"
-        ? `${reasoning.label} ${reasoning.currentValue === true ? "On" : "Off"}`
-        : ultrathink
-          ? "Ultrathink"
-          : getProviderOptionCurrentLabel(reasoning, modelSelection, traits.reportedModelSelection);
+  const word = display.thinkingOff
+    ? "Off"
+    : glyph
+      ? (glyph.special ?? (effortDisplay === "label" ? glyph.label : null))
+      : !reasoning
+        ? null
+        : reasoning.type === "boolean"
+          ? reasoning.id === "thinking"
+            ? reasoning.currentValue === true
+              ? "Thinking"
+              : "Off"
+            : `${reasoning.label} ${reasoning.currentValue === true ? "On" : "Off"}`
+          : ultrathink
+            ? "Ultrathink"
+            : getProviderOptionCurrentLabel(
+                reasoning,
+                modelSelection,
+                traits.reportedModelSelection,
+              );
   const fast = display.speedLabel === "Fast" || display.speedLabel === "Ultrafast";
   // Agent options such as modes live in the picker; the trigger adds only the context window.
   const contextWindow =
