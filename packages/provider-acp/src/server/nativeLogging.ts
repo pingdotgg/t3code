@@ -5,6 +5,8 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+
 import type * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   structuralProtocolMethod,
@@ -22,6 +24,9 @@ function formatRequestLogPayload(event: AcpSessionRuntime.AcpSessionRequestLogEv
       ? {
           errorTag: causeErrorTag(event.cause),
           reasonCount: event.cause.reasons.length,
+          ...(causeErrorTag(event.cause) === "AcpProcessExitedError"
+            ? { failure: makeProviderFailure({ cause: event.cause, class: "provider_error" }) }
+            : {}),
         }
       : {}),
   };

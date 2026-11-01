@@ -47,6 +47,42 @@ nodeServicesIt("ACP native logging", (it) => {
     }),
   );
 
+  it.effect("records the sanitized exit diagnostic for a crashed ACP request", () =>
+    Effect.gen(function* () {
+      const records: Array<unknown> = [];
+      const makeLogger = yield* makeAcpNativeLoggerFactory();
+      const logger = makeLogger({
+        nativeEventLogger: {
+          filePath: "synthetic-native.ndjson",
+          write: (event) => Effect.sync(() => void records.push(event)),
+          close: () => Effect.void,
+        },
+        provider: ProviderDriverKind.make("antigravity"),
+        threadId: ThreadId.make("synthetic-crash-thread"),
+      });
+      const requestLogger = logger.requestLogger;
+      assert.exists(requestLogger);
+      if (!requestLogger) return;
+      yield* requestLogger({
+        method: "session/prompt",
+        payload: { prompt: "synthetic prompt" },
+        status: "failed",
+        cause: Cause.fail(
+          new AcpErrors.AcpProcessExitedError({
+            code: 23,
+            stderr: "Synthetic configuration failed.\napi_key=fixture-only-key",
+          }),
+        ),
+      });
+      const serialized = encodeUnknownJson(records);
+      assert.include(serialized, "ACP process exited with code 23");
+      assert.include(serialized, "Synthetic configuration failed.");
+      assert.include(serialized, '"code":"23"');
+      assert.notInclude(serialized, "fixture-only-key");
+      assert.notInclude(serialized, "synthetic prompt");
+    }),
+  );
+
   it.effect("preserves native writer interruption", () =>
     Effect.gen(function* () {
       const makeLogger = yield* makeAcpNativeLoggerFactory();

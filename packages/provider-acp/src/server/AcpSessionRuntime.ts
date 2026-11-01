@@ -32,7 +32,11 @@ import { AgentScope, AgentScopeThreadId, RAISE_OOM_SCORE_LINE } from "@t3tools/s
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
-import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./stderr.ts";
+import {
+  ACP_STDERR_TAIL_MAX_CHARS,
+  appendAcpStderrTail,
+  sanitizeAcpStderrExcerpt,
+} from "./stderr.ts";
 import {
   collectSessionConfigOptionValues,
   decideToolCallUpdateEmission,
@@ -1296,7 +1300,11 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           Effect.ignore,
           Effect.andThen(Ref.get(stderrTailRef)),
           Effect.map((tail) => {
-            const stderr = sanitizeAcpStderrExcerpt(tail, homeDirectory);
+            // A capped tail can start inside a multiline credential whose header was discarded.
+            const stderr =
+              tail.length < ACP_STDERR_TAIL_MAX_CHARS
+                ? sanitizeAcpStderrExcerpt(tail, homeDirectory)
+                : "";
             return stderr.length === 0
               ? error
               : new EffectAcpErrors.AcpProcessExitedError({

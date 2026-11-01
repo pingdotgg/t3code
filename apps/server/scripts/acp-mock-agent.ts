@@ -929,6 +929,17 @@ const program = Effect.gen(function* () {
         );
         return {};
       }
+      if (
+        process.env.T3_ACP_CRASH_PROMPT === "1" &&
+        request.prompt.some(
+          (part) =>
+            part.type === "text" &&
+            typeof part.text === "string" &&
+            part.text.includes("crash now"),
+        )
+      ) {
+        return yield* Effect.sync(() => process.exit(23));
+      }
 
       if (clientFsProbePath !== undefined && clientFsProbeLogPath !== undefined) {
         const probes = [
