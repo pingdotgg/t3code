@@ -904,6 +904,36 @@ describe("pullCurrentBranch", () => {
       }).pipe(Effect.scoped, Effect.provide(layerServerConfig.pipe(Layer.provideMerge(layerTest)))),
   );
 
+  it.effect("lets a pull with no deadline run past the default command timeout", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const { cwd, remoteHead } = yield* cloneBehindRemote;
+      const pullStarted = yield* Deferred.make<void>();
+      const slowPullSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (ChildProcess.isStandardCommand(command) && command.args[0] === "pull") {
+            yield* Deferred.succeed(pullStarted, undefined);
+            yield* Effect.sleep("31 seconds");
+          }
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, slowPullSpawner),
+      );
+
+      const pulling = yield* driver
+        .pullCurrentBranch(cwd, { timeoutMs: null })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(pullStarted);
+      yield* TestClock.adjust("31 seconds");
+      const result = yield* Fiber.join(pulling);
+
+      assert.equal(result.status, "pulled");
+      assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), remoteHead);
+    }).pipe(Effect.scoped, Effect.provide(layerServerConfig.pipe(Layer.provideMerge(layerTest)))),
+  );
+
   it.effect.each(["stdout", "stderr"] as const)(
     "reports a fast-forward whose %s passes the cap as pulled",
     (stream) =>

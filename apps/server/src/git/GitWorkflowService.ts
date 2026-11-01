@@ -18,7 +18,6 @@ import {
   type GitPreparePullRequestThreadInput,
   type GitPreparePullRequestThreadResult,
   type GitPullRequestRefInput,
-  type VcsPullResult,
   type VcsRemoveWorktreeInput,
   type GitResolvePullRequestResult,
   type GitRunStackedActionInput,
@@ -60,7 +59,7 @@ export class GitWorkflowService extends Context.Service<
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
-    readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
+    readonly pullCurrentBranch: GitVcsDriver.GitVcsDriver["Service"]["pullCurrentBranch"];
     readonly runStackedAction: (
       input: GitRunStackedActionInput,
       options?: GitManager.GitRunStackedActionOptions,
@@ -369,9 +368,9 @@ export const make = Effect.gen(function* () {
     invalidateLocalStatus: gitManager.invalidateLocalStatus,
     invalidateRemoteStatus: gitManager.invalidateRemoteStatus,
     invalidateStatus: gitManager.invalidateStatus,
-    pullCurrentBranch: Effect.fn("GitWorkflowService.pullCurrentBranch")(function (cwd) {
+    pullCurrentBranch: Effect.fn("GitWorkflowService.pullCurrentBranch")(function (cwd, options) {
       return ensureGitCommand("GitWorkflowService.pullCurrentBranch", cwd).pipe(
-        Effect.andThen(git.pullCurrentBranch(cwd)),
+        Effect.andThen(git.pullCurrentBranch(cwd, options)),
       );
     }),
     runStackedAction: Effect.fn("GitWorkflowService.runStackedAction")(function (input, options) {

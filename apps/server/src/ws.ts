@@ -2990,7 +2990,8 @@ export const layerWsRpc = (
         [WS_METHODS.vcsRefreshStatus]: (input) =>
           vcsStatusBroadcaster.refreshStatus(input.cwd, { localOnly: input.localOnly ?? false }),
         [WS_METHODS.vcsPull]: (input) =>
-          gitWorkflow.pullCurrentBranch(input.cwd).pipe(
+          // Like push, a pull the user starts has no deadline: a large fetch can take minutes.
+          gitWorkflow.pullCurrentBranch(input.cwd, { timeoutMs: null }).pipe(
             Effect.matchCauseEffect({
               onFailure: (cause) => Effect.failCause(cause),
               onSuccess: (result) =>
