@@ -9,7 +9,7 @@ import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import "../../index.css";
 
-it("reorders providers with the keyboard and cancels an uncommitted move", async () => {
+it("reorders visible providers without moving hidden ones and cancels an uncommitted move", async () => {
   const now = Date.parse("2026-10-28T01:00:00.000Z");
   const checkedAt = new Date(now).toISOString();
   const presentations: LimitPresentations = new Map([
@@ -47,15 +47,21 @@ it("reorders providers with the keyboard and cancels an uncommitted move", async
       },
     ],
   ]);
+  const onOrderChange = vi.fn();
   function Demo() {
-    const [order, setOrder] = useState<readonly ProviderDriverKind[]>([]);
+    const [order, setOrder] = useState<readonly ProviderDriverKind[]>(
+      ["codex", "cursor", "claudeAgent", "grok"].map((driver) => ProviderDriverKind.make(driver)),
+    );
     return (
       <AppAtomRegistryProvider>
         <UsageLimitsPooled
           presentations={presentations}
           now={now}
           providerOrder={order}
-          onProviderOrderChange={setOrder}
+          onProviderOrderChange={(next) => {
+            onOrderChange(next);
+            setOrder(next);
+          }}
         />
       </AppAtomRegistryProvider>
     );
@@ -71,8 +77,10 @@ it("reorders providers with the keyboard and cancels an uncommitted move", async
   await userEvent.keyboard("{ArrowUp}");
   await userEvent.keyboard(" ");
   await vi.waitFor(() => expect(headings()).toEqual(["Claude", "Codex"]));
+  expect(onOrderChange).toHaveBeenCalledExactlyOnceWith(["claudeAgent", "cursor", "codex", "grok"]);
   await userEvent.keyboard(" ");
   await userEvent.keyboard("{ArrowDown}");
   await userEvent.keyboard("{Escape}");
   await vi.waitFor(() => expect(headings()).toEqual(["Claude", "Codex"]));
+  expect(onOrderChange).toHaveBeenCalledTimes(1);
 });

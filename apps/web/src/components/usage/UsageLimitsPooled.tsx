@@ -700,10 +700,16 @@ export function UsageLimitsPooled({
           modifiers={[restrictToVerticalAxis]}
           onDragEnd={({ active, over }) => {
             if (!over || active.id === over.id) return;
-            const from = order.findIndex((driver) => driver === active.id);
-            const to = order.findIndex((driver) => driver === over.id);
+            const visibleOrder = pools.map((pool) => pool.driver);
+            const from = visibleOrder.findIndex((driver) => driver === active.id);
+            const to = visibleOrder.findIndex((driver) => driver === over.id);
             if (from < 0 || to < 0) return;
-            onProviderOrderChange(arrayMove(order, from, to));
+            const reordered = arrayMove(visibleOrder, from, to);
+            onProviderOrderChange(
+              order.map((driver) =>
+                visibleOrder.includes(driver) ? (reordered.shift() ?? driver) : driver,
+              ),
+            );
           }}
         >
           <SortableContext
