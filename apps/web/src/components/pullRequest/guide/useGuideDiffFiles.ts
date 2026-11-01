@@ -1,6 +1,8 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
-import { useState } from "react";
+import { RegistryContext } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
+import { useContext, useState } from "react";
 
 import { getRenderablePatch, resolveFileDiffPath } from "~/lib/diffRendering";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -39,35 +41,33 @@ export function useGuideDiffFiles({
   });
   const current: LoadedDiff =
     loaded.key === key ? loaded : { key, cursor: null, done: false, files: NO_FILES, folded: null };
-  const missing = wantedPaths.some((path) => !current.files.has(path));
-  const loading = missing && !current.done;
-  const query = useEnvironmentQuery(
-    loading
-      ? pullRequestEnvironment.diff({
-          environmentId,
-          input: { ...reference, ...(current.cursor === null ? {} : { cursor: current.cursor }) },
-        })
-      : null,
-  );
+  const registry = useContext(RegistryContext);
+  const isMissing = (diff: LoadedDiff) => wantedPaths.some((path) => !diff.files.has(path));
+  const pageAtom = (cursor: string | null) =>
+    pullRequestEnvironment.diff({
+      environmentId,
+      input: { ...reference, ...(cursor === null ? {} : { cursor }) },
+    });
+  const loading = isMissing(current) && !current.done;
+  const query = useEnvironmentQuery(loading ? pageAtom(current.cursor) : null);
 
-  const data = query.data;
-  if (data !== null && !query.isPending && !current.done && current.folded !== data) {
+  // One update for every settled page: an update per page trips React's re-render limit.
+  let next = current;
+  let data = query.isPending ? null : query.data;
+  while (data !== null && !next.done && next.folded !== data && isMissing(next)) {
     const parsed = getRenderablePatch(
       data.patch,
-      `pull-request-guide:${key}:${current.cursor ?? "first"}`,
+      `pull-request-guide:${key}:${next.cursor ?? "first"}`,
     );
-    const files = new Map(current.files);
+    const files = new Map(next.files);
     if (parsed?.kind === "files") {
       for (const file of parsed.files) files.set(resolveFileDiffPath(file), file);
     }
-    setLoaded({
-      key,
-      cursor: data.nextCursor,
-      done: data.nextCursor === null,
-      files,
-      folded: data,
-    });
+    next = { key, cursor: data.nextCursor, done: data.nextCursor === null, files, folded: data };
+    const result = next.done || !isMissing(next) ? null : registry.get(pageAtom(next.cursor));
+    data = result === null || result.waiting ? null : AsyncResult.getOrElse(result, () => null);
   }
+  if (next !== current) setLoaded(next);
 
   return {
     files: current.files,
