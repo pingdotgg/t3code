@@ -231,6 +231,7 @@ it.effect(
           getPlan: () => Effect.die("unused"),
           hasUnpairedRunInterruptRequest: () => Effect.die("unused interrupt read"),
           getThreadAttachmentIds: () => Effect.die("Unused attachment lookup"),
+          getThreadAttachmentIdsForDeletion: () => Effect.die("Unused attachment cleanup lookup"),
           searchThread: () => Effect.die("unused"),
           searchThreadStream: () => Stream.empty,
           getThreadHistoryPage: () => Effect.die("unused"),

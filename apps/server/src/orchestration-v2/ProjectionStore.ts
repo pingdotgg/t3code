@@ -439,6 +439,9 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadAttachmentIds: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
+  readonly getThreadAttachmentIdsForDeletion: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
   readonly getThreadHistoryPage: (
     threadId: ThreadId,
     cursor: string,
@@ -5474,6 +5477,77 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
       );
 
+    // Fork projections reuse source items, so retain their attachment owners while descendants survive.
+    const getThreadAttachmentIdsForDeletion: ProjectionStoreV2Shape["getThreadAttachmentIdsForDeletion"] =
+      Effect.fn("ProjectionStore.getThreadAttachmentIdsForDeletion")(
+        function* (threadId) {
+          return yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const owners = yield* sql<{ readonly thread_id: string }>`
+                WITH RECURSIVE ancestors(thread_id, payload_json, path) AS (
+                  SELECT thread_id, payload_json, json_array(thread_id)
+                  FROM orchestration_v2_projection_threads
+                  WHERE thread_id = ${threadId}
+                  UNION ALL
+                  SELECT parent.thread_id, parent.payload_json,
+                    json_insert(current.path, '$[#]', parent.thread_id)
+                  FROM ancestors AS current
+                  JOIN orchestration_v2_projection_threads AS parent
+                    ON parent.thread_id = json_extract(current.payload_json, '$.forkedFrom.threadId')
+                  WHERE json_extract(current.payload_json, '$.forkedFrom.type') = 'run'
+                    AND COALESCE(json_extract(current.payload_json, '$.lineage.sideChat'), 0) = 0
+                    AND NOT EXISTS (
+                      SELECT 1 FROM json_each(current.path) AS visited
+                      WHERE visited.value = parent.thread_id
+                    )
+                ), descendants(owner_thread_id, thread_id, payload_json, path) AS (
+                  SELECT thread_id, thread_id, payload_json, json_array(thread_id)
+                  FROM ancestors
+                  UNION ALL
+                  SELECT descendants.owner_thread_id, child.thread_id, child.payload_json,
+                    json_insert(descendants.path, '$[#]', child.thread_id)
+                  FROM descendants
+                  JOIN orchestration_v2_projection_threads AS child
+                    ON json_extract(child.payload_json, '$.forkedFrom.threadId') = descendants.thread_id
+                  WHERE json_extract(child.payload_json, '$.forkedFrom.type') = 'run'
+                    AND COALESCE(json_extract(child.payload_json, '$.lineage.sideChat'), 0) = 0
+                    AND NOT EXISTS (
+                      SELECT 1 FROM json_each(descendants.path) AS visited
+                      WHERE visited.value = child.thread_id
+                    )
+                )
+                SELECT ancestors.thread_id
+                FROM ancestors
+                WHERE (
+                  ancestors.thread_id = ${threadId}
+                  OR json_extract(ancestors.payload_json, '$.deletedAt') IS NOT NULL
+                )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM descendants
+                    WHERE descendants.owner_thread_id = ancestors.thread_id
+                      AND descendants.thread_id <> ${threadId}
+                      AND json_extract(descendants.payload_json, '$.deletedAt') IS NULL
+                  )
+              `;
+              const attachmentGroups = yield* Effect.forEach(
+                owners,
+                (owner) => getThreadAttachmentIds(ThreadId.make(owner.thread_id)),
+                { concurrency: 1 },
+              );
+              return [...new Set(attachmentGroups.flat())];
+            }),
+          );
+        },
+        (effect, threadId) =>
+          effect.pipe(
+            Effect.mapError((cause) =>
+              isProjectionStoreReadError(cause)
+                ? cause
+                : new ProjectionStoreReadError({ threadId, cause }),
+            ),
+          ),
+      );
+
     const getThreadRecords: ProjectionStoreV2Shape["getThreadRecords"] = (
       threadId,
       fields,
@@ -7149,6 +7223,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       searchThread: readOnReader(searchThread),
       searchThreadStream,
       getThreadAttachmentIds: readOnReader(getThreadAttachmentIds),
+      getThreadAttachmentIdsForDeletion: readOnReader(getThreadAttachmentIdsForDeletion),
     } satisfies ProjectionStoreV2Shape;
   }),
 );

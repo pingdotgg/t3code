@@ -11,6 +11,7 @@ import {
   CheckpointRef,
   CommandId,
   ContextTransferId,
+  EnvironmentId,
   EventId,
   MessageId,
   NodeId,
@@ -53,6 +54,7 @@ import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -376,6 +378,254 @@ const layerProjectDeletionTest = Layer.mergeAll(
 );
 
 it.layer(layerProjectDeletionTest)("project deletion during thread commands", (it) => {
+  it.effect("keeps source content readable through a fork until its last fork is deleted", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const projects = yield* ProjectService.ProjectService;
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const now = yield* DateTime.now;
+      const sourceThreadId = ThreadId.make("fork-content-source");
+      const forkThreadId = ThreadId.make("fork-content-child");
+      const grandchildThreadId = ThreadId.make("fork-content-grandchild");
+      const projectId = ProjectId.make("fork-content-project");
+      const runId = RunId.make("fork-content-source-run");
+      const forkRunId = RunId.make("fork-content-child-run");
+      const itemId = TurnItemId.make("fork-content-source-command");
+      const output = `large command output:${"x".repeat(70_000)}`;
+      const transcript = (threadId: ThreadId) =>
+        threads.getThreadTranscript(threadId).pipe(
+          Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
+            getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:fork-content-test")),
+          }),
+        );
+
+      yield* projects.create({
+        commandId: CommandId.make("fork-content-create-project"),
+        projectId,
+        title: "Fork content retention",
+        workspaceRoot: process.cwd(),
+      });
+      yield* threads.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("fork-content-create-source"),
+        threadId: sourceThreadId,
+        projectId,
+        title: "Fork content source",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("fork-content-source-run-event"),
+            type: "run.created",
+            threadId: sourceThreadId,
+            runId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: runId,
+              threadId: sourceThreadId,
+              ordinal: 1,
+              providerInstanceId: modelSelection.instanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: MessageId.make("fork-content-source-message"),
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "completed",
+              queuePosition: null,
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          },
+          {
+            id: EventId.make("fork-content-source-item-event"),
+            type: "turn-item.updated",
+            threadId: sourceThreadId,
+            runId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: itemId,
+              threadId: sourceThreadId,
+              runId,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "completed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "command_execution",
+              input: "print large output",
+              output,
+            },
+          },
+        ],
+      });
+      const sourceProjection = yield* orchestrator.getThreadProjection(sourceThreadId);
+      const storedItem = sourceProjection.turnItems.find((item) => item.id === itemId);
+      assert.equal(storedItem?.type, "command_execution");
+      assert.isDefined(
+        storedItem?.type === "command_execution" ? storedItem.contentRef : undefined,
+      );
+
+      yield* threads.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("fork-content-create-child"),
+        sourceThreadId,
+        targetThreadId: forkThreadId,
+        sourcePoint: { type: "run", runId },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("fork-content-child-run-event"),
+            type: "run.created",
+            threadId: forkThreadId,
+            runId: forkRunId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: forkRunId,
+              threadId: forkThreadId,
+              ordinal: 1,
+              providerInstanceId: modelSelection.instanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: MessageId.make("fork-content-child-message"),
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "completed",
+              queuePosition: null,
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          },
+        ],
+      });
+      yield* threads.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("fork-content-create-grandchild"),
+        sourceThreadId: forkThreadId,
+        targetThreadId: grandchildThreadId,
+        sourcePoint: { type: "run", runId: forkRunId },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const forkSnapshot = yield* threads.getThreadSnapshot(forkThreadId);
+      const inherited = forkSnapshot.projection.visibleTurnItems.find(
+        (row) => row.sourceItemId === itemId,
+      );
+      assert.equal(inherited?.visibility, "inherited");
+      assert.equal(inherited?.sourceThreadId, sourceThreadId);
+      assert.isNull(yield* orchestrator.getTurnItem({ threadId: forkThreadId, itemId }));
+      const grandchildSnapshot = yield* threads.getThreadSnapshot(grandchildThreadId);
+      const inheritedGrandchild = grandchildSnapshot.projection.visibleTurnItems.find(
+        (row) => row.sourceItemId === itemId,
+      );
+      assert.equal(inheritedGrandchild?.visibility, "inherited");
+      assert.equal(inheritedGrandchild?.sourceThreadId, sourceThreadId);
+      assert.isNull(yield* orchestrator.getTurnItem({ threadId: grandchildThreadId, itemId }));
+
+      yield* threads.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("fork-content-delete-source"),
+        threadId: sourceThreadId,
+      });
+      yield* worker.drain();
+      const forkDeletedSource = yield* threads
+        .dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("fork-content-fork-deleted-source"),
+          sourceThreadId,
+          targetThreadId: ThreadId.make("fork-content-after-delete"),
+          sourcePoint: { type: "run", runId },
+          createdBy: "user",
+          creationSource: "web",
+        })
+        .pipe(Effect.flip);
+      assert.equal(forkDeletedSource._tag, "OrchestratorDispatchError");
+
+      const exported = yield* transcript(forkThreadId);
+      const exportedItem = exported.items.find((row) => row.sourceItemId === itemId)?.item;
+      assert.equal(exportedItem?.type, "command_execution");
+      assert.equal(
+        exportedItem?.type === "command_execution" ? exportedItem.output : undefined,
+        output,
+      );
+      const grandchildExport = yield* transcript(grandchildThreadId);
+      const grandchildExportedItem = grandchildExport.items.find(
+        (row) => row.sourceItemId === itemId,
+      )?.item;
+      assert.equal(
+        grandchildExportedItem?.type === "command_execution"
+          ? grandchildExportedItem.output
+          : undefined,
+        output,
+      );
+
+      yield* threads.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("fork-content-delete-child"),
+        threadId: forkThreadId,
+      });
+      yield* worker.drain();
+      const sourceAfterFirstFork = yield* orchestrator.getTurnItem({
+        threadId: sourceThreadId,
+        itemId,
+      });
+      assert.equal(
+        sourceAfterFirstFork?.type === "command_execution"
+          ? sourceAfterFirstFork.output
+          : undefined,
+        output,
+      );
+      const grandchildAfterParentDelete = yield* transcript(grandchildThreadId);
+      const grandchildItem = grandchildAfterParentDelete.items.find(
+        (row) => row.sourceItemId === itemId,
+      )?.item;
+      assert.equal(
+        grandchildItem?.type === "command_execution" ? grandchildItem.output : undefined,
+        output,
+      );
+
+      yield* threads.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("fork-content-delete-grandchild"),
+        threadId: grandchildThreadId,
+      });
+      yield* worker.drain();
+      const missingAfterLastFork = yield* orchestrator
+        .getTurnItem({ threadId: sourceThreadId, itemId })
+        .pipe(Effect.flip);
+      if (missingAfterLastFork._tag !== "TurnItemContentStoreError") {
+        throw new Error("Expected the last fork to release the source attachment.");
+      }
+      assert.equal(missingAfterLastFork.reason, "content-missing");
+    }),
+  );
+
   it.effect.each(["thread", "project"] as const)(
     "deleting a %s removes its thread-bound automations through the effect worker",
     (deletion) =>
