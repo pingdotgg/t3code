@@ -53,6 +53,11 @@ export class TailscaleHost extends Context.Service<
     /** `tailscale status`, single-flight and kept for a few seconds. */
     readonly status: Effect.Effect<TailscaleStatus, TailscaleStatusError>;
     /**
+     * `tailscale status` read now. Sign-in decides with it, since a status kept from before
+     * a switch to another Tailscale account names the old tailnet's policy and owner.
+     */
+    readonly freshStatus: Effect.Effect<TailscaleStatus, TailscaleStatusError>;
+    /**
      * Who owns a tailnet address. Single-flight per address, kept for a few
      * seconds at most, and rate limited per address. Policy scans and rechecks
      * (`fromServer`) skip the cache and the limit; their callers bound how often they run.
@@ -105,12 +110,10 @@ const make = Effect.gen(function* () {
           entries?.some((entry) => !entry.internal && isTailscaleIpv4Address(entry.address)),
         ),
       );
-  const status = yield* Effect.cachedWithTTL(
-    readTailscaleStatus(featureOn ? "active" : "passive").pipe(
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    ),
-    STATUS_TTL,
+  const freshStatus = readTailscaleStatus(featureOn ? "active" : "passive").pipe(
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
   );
+  const status = yield* Effect.cachedWithTTL(freshStatus, STATUS_TTL);
 
   const lookupsByAddress = yield* Ref.make(new Map<string, ReadonlyArray<number>>());
   const takeLookup = Effect.fnUntraced(function* (address: string) {
@@ -141,7 +144,7 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return TailscaleHost.of({ inUse, status, whois });
+  return TailscaleHost.of({ inUse, status, freshStatus, whois });
 });
 
 export const layer = Layer.effect(TailscaleHost, make);

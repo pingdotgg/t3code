@@ -421,6 +421,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
     },
     {
+      // The record names a profile, but Tailscale did not list its profiles to tell whose.
+      label: "a Serve record whose profile Tailscale cannot list says so",
+      prints: "Tailscale did not list its accounts",
+      fails: true,
+      installed: false,
+      tailscale: TAGGED_HOST,
+      serveRecord: `{"prof1":{"localPort":3773,"localHost":"127.0.0.1","servePort":443,"label":"me@example.com on example.com","profileId":"prof1"}}`,
+      env: "",
+      args: ["--no-tailscale"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_TAILSCALE_SIGN_IN=false\nT3CODE_TAILSCALE_SERVE=false\n",
+    },
+    {
       label: "an unreadable Serve record is reported, not called off",
       prints: "could not be read",
       fails: true,

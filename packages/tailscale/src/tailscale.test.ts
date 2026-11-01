@@ -267,6 +267,26 @@ describe("tailscale", () => {
     }),
   );
 
+  // A policy scan must still count it, or a granted peer beside it would be hidden.
+  it.effect("keeps the other peers when one cannot be read, and counts it unreadable", () =>
+    Effect.gen(function* () {
+      const status = yield* parseTailscaleStatus(
+        JSON.stringify({
+          BackendState: "Running",
+          Peer: {
+            "nodekey:a": { ID: "nLaptop", TailscaleIPs: ["100.88.1.3"] },
+            "nodekey:b": null,
+          },
+        }),
+      );
+      assert.deepEqual(
+        status.peers.map((peer) => peer.stableNodeId),
+        ["nLaptop"],
+      );
+      assert.deepEqual(status.unidentifiedPeerAddresses, [null]);
+    }),
+  );
+
   it.effect("parses host facts and peers, keeping user IDs past 2^53 exact", () =>
     Effect.gen(function* () {
       const status = yield* parseTailscaleStatus(fullStatusJson);

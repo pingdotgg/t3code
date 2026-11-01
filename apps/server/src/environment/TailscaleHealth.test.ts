@@ -162,6 +162,7 @@ describe("TailscaleHealth", () => {
               TailscaleHost.TailscaleHost.of({
                 inUse: Effect.succeed(false),
                 status: Effect.die("must not read Tailscale"),
+                freshStatus: Effect.die("must not read Tailscale"),
                 whois: () => Effect.die("must not read Tailscale"),
               }),
             ),

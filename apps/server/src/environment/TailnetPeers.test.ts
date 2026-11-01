@@ -42,6 +42,7 @@ const layerTest = (
       TailscaleHost.TailscaleHost.of({
         inUse: Effect.succeed(true),
         status,
+        freshStatus: status,
         whois: () => Effect.die("whois is not used for discovery"),
       }),
     ),

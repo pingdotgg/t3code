@@ -233,7 +233,7 @@ export const make = Effect.gen(function* () {
   const [scanPolicy, rescanPolicy] = yield* Effect.cachedInvalidateWithTTL(
     Effect.gen(function* () {
       const signInsBefore = yield* Ref.get(grantSignIns);
-      const status = yield* host.status;
+      const status = yield* host.freshStatus;
       const account = status.selfNodeId;
       const { granted, unreadable } = yield* policyGrantedPeers(status, (address) =>
         host.whois(address, { fromServer: true }),
@@ -338,7 +338,7 @@ export const make = Effect.gen(function* () {
       // A hard 403: production CORS allows any origin and the `dpop` header.
       if (!isTrustedOrigin(request.headers.origin)) return yield* refuse("browser_request");
 
-      const status = yield* host.status.pipe(
+      const status = yield* host.freshStatus.pipe(
         Effect.catch((cause) => refuse("tailscale_unavailable", cause)),
       );
       if (status.backendState !== "Running" || status.userspaceNetworking === true) {
@@ -541,7 +541,7 @@ export const make = Effect.gen(function* () {
     }
     // A daemon that is starting or logged out lists no peers, which proves nothing for a
     // while. Past the grace period nothing vouches for these devices, so their access ends.
-    const status = yield* host.status.pipe(Effect.option);
+    const status = yield* host.freshStatus.pipe(Effect.option);
     if (status._tag === "None" || status.value.backendState !== "Running") {
       const nowMs = DateTime.toEpochMillis(now);
       statusFailingSince ??= nowMs;

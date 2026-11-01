@@ -28,6 +28,7 @@ const layerTailscaleHost = (statusJson: string) =>
     TailscaleHost.TailscaleHost.of({
       inUse: Effect.succeed(true),
       status: parseTailscaleStatus(statusJson),
+      freshStatus: parseTailscaleStatus(statusJson),
       whois: () => Effect.die("whois is not read by the descriptor"),
     }),
   );

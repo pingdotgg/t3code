@@ -42,8 +42,11 @@ interface FakeOptions {
   readonly recorded?: string;
   /** Writing the claim record fails, as on a read-only state dir. */
   readonly recordFails?: boolean;
-  /** This machine's node ID on the live Tailscale account. */
-  readonly account?: string;
+  /** This machine's node ID on the live Tailscale account; null when signed out. */
+  readonly account?: string | null;
+  /** Every profile `tailscale switch --list` names, instead of just `profileId`. */
+  readonly profileList?: ReadonlyArray<{ readonly id: string; readonly selected: boolean }>;
+  readonly platform?: "linux" | "win32";
   /** The live account's tailnet and user, which name its login profile. */
   readonly profile?: { readonly tailnet: string; readonly userId: string };
   /** The login profile ID `tailscale switch --list` names. Without it, the CLI is too old. */
@@ -61,7 +64,7 @@ const makeFakeTailscale = (options: FakeOptions) => {
     root: options.heldBy ?? null,
     otherRoot: options.heldOnOtherPort ?? null,
     statusFailurePending: false,
-    account: options.account ?? "n1",
+    account: options.account === undefined ? "n1" : options.account,
   };
   // Completes when the daemon takes the mapping, before the CLI exits.
   const mappingApplied = Deferred.makeUnsafe<void>();
@@ -86,6 +89,9 @@ const makeFakeTailscale = (options: FakeOptions) => {
     args: ReadonlyArray<string>,
   ): { code: number; stdout?: string; stderr?: string; ackDelay?: Duration.Input } | undefined => {
     const command = args.join(" ");
+    if (command === "switch --list --json" && options.profileList !== undefined) {
+      return { code: 0, stdout: JSON.stringify(options.profileList) };
+    }
     if (command === "switch --list --json") {
       return options.profileId === undefined
         ? { code: 1, stderr: "flag provided but not defined: -json" }
@@ -106,7 +112,7 @@ const makeFakeTailscale = (options: FakeOptions) => {
         code: 0,
         stdout: JSON.stringify({
           BackendState: "Running",
-          Self: { ID: state.account, UserID: options.profile?.userId },
+          Self: { ID: state.account ?? undefined, UserID: options.profile?.userId },
           CurrentTailnet: { Name: options.profile?.tailnet },
         }),
       };
@@ -171,11 +177,22 @@ const makeFakeTailscale = (options: FakeOptions) => {
       }),
     );
   });
-  return { state, spawner, mappingApplied };
+  return { state, spawner, mappingApplied, platform: options.platform ?? "linux" };
 };
 
 const STATE_DIR = "/state";
 const CLAIM_PATH = "/state/tailscale-serve-claim.json";
+// A record made on login profile `id`, as a CLI that lists profiles writes it.
+const profileRecord = (id: string) =>
+  JSON.stringify({
+    [id]: {
+      localPort: 18638,
+      localHost: "127.0.0.1",
+      servePort: SERVE_PORT,
+      label: "me@example.com on example.com",
+      profileId: id,
+    },
+  });
 const record = (localPort: number, servePort: number, account = "n1") =>
   JSON.stringify({ [account]: { localPort, localHost: "127.0.0.1", servePort, label: account } });
 
@@ -210,7 +227,7 @@ const fakeLayers = (
 ) =>
   Layer.mergeAll(
     Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, fake.spawner),
-    Layer.succeed(HostProcess.Platform, "linux"),
+    Layer.succeed(HostProcess.Platform, fake.platform),
     Layer.succeed(FileSystem.FileSystem, memoryFileSystem(files, writeFails)),
     Path.layer,
   );
@@ -485,20 +502,44 @@ describe("TailscaleServe", () => {
   it.effect("drops the record of a login profile that `tailscale logout` deleted", () =>
     Effect.gen(function* () {
       const fake = makeFakeTailscale({ profileId: "prof2" });
-      const files = new Map([
-        [
-          CLAIM_PATH,
-          JSON.stringify({
-            prof1: {
-              localPort: 18638,
-              localHost: "127.0.0.1",
-              servePort: SERVE_PORT,
-              label: "me@example.com on example.com",
-              profileId: "prof1",
-            },
-          }),
-        ],
-      ]);
+      const files = new Map([[CLAIM_PATH, profileRecord("prof1")]]);
+      const scope = yield* Scope.make();
+      yield* Layer.buildWithScope(
+        TailscaleServe.layerReleaseLeftover({ stateDir: STATE_DIR }).pipe(
+          Layer.provide(fakeLayers(fake, files)),
+        ),
+        scope,
+      );
+      yield* TestClock.adjust("1 second");
+
+      assert.isFalse(files.has(CLAIM_PATH));
+      yield* Scope.close(scope, Exit.void);
+    }),
+  );
+
+  it.effect("on Windows, keeps the record of a profile Tailscale does not list", () =>
+    Effect.gen(function* () {
+      // Windows lists only the signed-in Windows user's profiles, so the profile may exist.
+      const fake = makeFakeTailscale({ profileId: "prof2", platform: "win32" });
+      const files = new Map([[CLAIM_PATH, profileRecord("prof1")]]);
+      const scope = yield* Scope.make();
+      yield* Layer.buildWithScope(
+        TailscaleServe.layerReleaseLeftover({ stateDir: STATE_DIR }).pipe(
+          Layer.provide(fakeLayers(fake, files)),
+        ),
+        scope,
+      );
+      yield* TestClock.adjust("1 second");
+
+      assert.equal(files.get(CLAIM_PATH), profileRecord("prof1"));
+      yield* Scope.close(scope, Exit.void);
+    }),
+  );
+
+  it.effect("signed out of the last profile, drops its record", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeTailscale({ account: null, profileList: [] });
+      const files = new Map([[CLAIM_PATH, profileRecord("prof1")]]);
       const scope = yield* Scope.make();
       yield* Layer.buildWithScope(
         TailscaleServe.layerReleaseLeftover({ stateDir: STATE_DIR }).pipe(

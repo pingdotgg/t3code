@@ -61,6 +61,8 @@ const phoneNode = (overrides: JsonObject = {}): JsonObject => ({
 /** What `tailscale status` and `tailscale whois` print; a test may change it between calls. */
 interface Tailnet {
   status: JsonObject;
+  /** What the host's kept status read still says, as for a few seconds after a change. */
+  staleStatus?: JsonObject;
   node: JsonObject | null;
   /** The whois `CapMap`: the app capabilities grants give the device. */
   capMap?: JsonObject;
@@ -86,7 +88,10 @@ const layerTailscaleHost = (tailnet: Tailnet) =>
     TailscaleHost.TailscaleHost,
     TailscaleHost.TailscaleHost.of({
       inUse: Effect.succeed(true),
-      status: Effect.suspend(() => parseTailscaleStatus(tailscaleJson(tailnet.status))),
+      status: Effect.suspend(() =>
+        parseTailscaleStatus(tailscaleJson(tailnet.staleStatus ?? tailnet.status)),
+      ),
+      freshStatus: Effect.suspend(() => parseTailscaleStatus(tailscaleJson(tailnet.status))),
       whois: (address) =>
         Effect.gen(function* () {
           const device = tailnet.devices?.[address] ?? {
@@ -690,6 +695,8 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       const tailnet = withLaptop();
       return Effect.gen(function* () {
         yield* signIn(makeDpopKey());
+        // The kept status read still names the old account, with the same address and owner.
+        tailnet.staleStatus = tailnet.status;
         tailnet.status = hostStatus({
           Peer: peers,
           Self: { ...hostStatus().Self, ID: "nBoxAtWork" },

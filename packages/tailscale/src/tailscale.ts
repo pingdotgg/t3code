@@ -207,6 +207,19 @@ const TailscaleStatusNodeFields = {
   Expired: lenient(Schema.Boolean),
 };
 
+const TailscaleStatusPeerJson = Schema.Struct({
+  ...TailscaleStatusNodeFields,
+  Online: lenient(Schema.Boolean),
+  LastSeen: lenient(Schema.String),
+  AltSharerUserID: lenient(Schema.String),
+  ShareeNode: lenient(Schema.Boolean),
+  CurAddr: lenient(Schema.String),
+  Relay: lenient(Schema.String),
+  PeerRelay: lenient(Schema.String),
+  Active: lenient(Schema.Boolean),
+});
+const decodeTailscaleStatusPeer = Schema.decodeUnknownOption(TailscaleStatusPeerJson);
+
 const TailscaleStatusJson = Schema.Struct({
   Version: lenient(Schema.String),
   BackendState: lenient(Schema.String),
@@ -224,22 +237,8 @@ const TailscaleStatusJson = Schema.Struct({
       CapMap: lenient(Schema.Record(Schema.String, Schema.Unknown)),
     }),
   ),
-  Peer: lenient(
-    Schema.Record(
-      Schema.String,
-      Schema.Struct({
-        ...TailscaleStatusNodeFields,
-        Online: lenient(Schema.Boolean),
-        LastSeen: lenient(Schema.String),
-        AltSharerUserID: lenient(Schema.String),
-        ShareeNode: lenient(Schema.Boolean),
-        CurAddr: lenient(Schema.String),
-        Relay: lenient(Schema.String),
-        PeerRelay: lenient(Schema.String),
-        Active: lenient(Schema.Boolean),
-      }),
-    ),
-  ),
+  // Read per peer below, so one malformed peer cannot hide the rest.
+  Peer: Schema.optional(Schema.Unknown),
 });
 
 export interface TailscalePeer {
@@ -349,15 +348,26 @@ export const parseTailscaleStatus = (
   decodeTailscaleStatusJson(rawStatusJson).pipe(
     Effect.map((parsed): TailscaleStatus => {
       const self = parsed.Self;
-      const peerEntries = Object.values(parsed.Peer ?? {});
-      const unidentifiedPeerAddresses = peerEntries
-        .filter((peer) => nonEmptyOrNull(peer.ID) === null)
-        .map(
-          (peer) =>
-            tailnetIpv4AddressesOf(peer.TailscaleIPs)[0] ??
-            tailnetIpv6AddressesOf(peer.TailscaleIPs)[0] ??
-            null,
-        );
+      const rawPeers =
+        parsed.Peer === undefined || parsed.Peer === null
+          ? []
+          : typeof parsed.Peer === "object" && !Array.isArray(parsed.Peer)
+            ? Object.values(parsed.Peer)
+            : [parsed.Peer];
+      const decodedPeers = rawPeers.map((peer) => decodeTailscaleStatusPeer(peer));
+      const peerEntries = decodedPeers.flatMap(Option.toArray);
+      const unidentifiedPeerAddresses = [
+        ...peerEntries
+          .filter((peer) => nonEmptyOrNull(peer.ID) === null)
+          .map(
+            (peer) =>
+              tailnetIpv4AddressesOf(peer.TailscaleIPs)[0] ??
+              tailnetIpv6AddressesOf(peer.TailscaleIPs)[0] ??
+              null,
+          ),
+        // A peer that cannot be read has no ID or address to look up, so a scan counts it unreadable.
+        ...decodedPeers.filter(Option.isNone).map(() => null),
+      ];
       const peers = peerEntries.flatMap((peer): TailscalePeer[] => {
         const stableNodeId = nonEmptyOrNull(peer.ID);
         if (stableNodeId === null) return [];
