@@ -251,6 +251,7 @@ export function ComposerActionButton(props: {
   readonly variant?: "primary" | "danger";
   // Menu injects onLongPress on Android and onTouchStart/onPress on iOS.
   readonly onLongPress?: PressableProps["onLongPress"];
+  readonly delayLongPress?: PressableProps["delayLongPress"];
   readonly onTouchStart?: PressableProps["onTouchStart"];
 }) {
   const { scale, smallIconSize } = useAndroidControlSizing();
@@ -265,6 +266,7 @@ export function ComposerActionButton(props: {
       disabled={props.disabled}
       onPress={props.onPress}
       onLongPress={props.onLongPress}
+      delayLongPress={props.delayLongPress}
       onTouchStart={props.onTouchStart}
     >
       <View
