@@ -7,6 +7,7 @@ import {
   DesktopHostTelemetryMessage,
   type DesktopHostTelemetryMessage as DesktopHostTelemetryMessageValue,
   type DesktopHostTelemetrySnapshot,
+  type DesktopShellEnvironmentSnapshot,
   DesktopTelemetryControlMessage,
   type DesktopUpdateChannel,
   type DesktopUpdateStatusReport,
@@ -203,6 +204,16 @@ export class DesktopTelemetryReceiver extends Context.Service<
     >;
   }
 >()("t3/resourceTelemetry/DesktopTelemetryReceiver") {}
+
+export function applyDesktopShellEnvironmentSnapshot(
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  message: DesktopShellEnvironmentSnapshot,
+): void {
+  if (message.platform !== platform) return;
+  applyShellEnvironment(environment, message.environment);
+  if (message.discovered) delete environment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING;
+}
 
 const decodeMessage = Schema.decodeUnknownEffect(DesktopHostTelemetryMessage);
 const encodeControlMessage = Schema.encodeEffect(
@@ -531,10 +542,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
           return recordContact.pipe(
             Effect.andThen(
               Effect.sync(() => {
-                if (message.platform === platform) {
-                  applyShellEnvironment(environment, message.environment);
-                  if (message.discovered) delete environment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING;
-                }
+                applyDesktopShellEnvironmentSnapshot(environment, platform, message);
               }),
             ),
           );
