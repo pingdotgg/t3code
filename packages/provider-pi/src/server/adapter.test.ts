@@ -3354,6 +3354,11 @@ describe("PiAdapterV2", () => {
       question: "Where should this run?\n1&#46; Current branch\n2&#46; New worktree",
     },
     { placeholder: "1,3; custom answer", title: "Enter a value", question: "Enter a value" },
+    {
+      placeholder: "",
+      title: "Optional release note\n===",
+      question: "Optional release note\n&#61;&#61;&#61;",
+    },
   ])(
     "maps native text input without turning its placeholder into an answer, placeholder=%s",
     ({ placeholder, title, question: expectedQuestion }) =>

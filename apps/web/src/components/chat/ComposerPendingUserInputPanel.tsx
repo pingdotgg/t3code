@@ -1,4 +1,5 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
+import { decodeHTMLStrict } from "entities";
 import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -204,7 +205,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             <>
               <ComposerBanner.Separator />
               <span className="min-w-0 flex-1 truncate text-secondary-label">
-                {activeQuestion.question}
+                {decodeHTMLStrict(activeQuestion.question)}
               </span>
             </>
           ) : null}
