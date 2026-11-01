@@ -29,13 +29,14 @@ const isVersionedBundle = (entry: string, name: string) => {
  * The program a Toolbox script line runs: its first word, or the operand of `exec`, `open -na` or
  * `start`. Other paths on the line, such as `> /dev/null` or `JAVA_HOME="/opt/jdk"`, say nothing
  * about whether the IDE is still installed. */
+const scriptWords = (line: string) =>
+  [...line.replace(/^\s*\(/, "").matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map((match) => ({
+    text: match[1] ?? match[2] ?? match[3] ?? "",
+    quoted: match[3] === undefined,
+  }));
+
 const launchedProgram = (line: string) => {
-  const words = [...line.replace(/^\s*\(/, "").matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map(
-    (match) => ({
-      text: match[1] ?? match[2] ?? match[3] ?? "",
-      quoted: match[3] === undefined,
-    }),
-  );
+  const words = scriptWords(line);
   const launcher = words.shift();
   if (!launcher) return undefined;
   const name = launcher.text.toLowerCase();
@@ -84,20 +85,27 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   // behind by a removed IDE names only missing paths. The script is read, never run.
   const launchTargetStatus = Effect.fn("editor.launchTargetStatus")(function* (script: string) {
     const text = yield* fs.readFileString(script).pipe(Effect.orElseSucceed(() => ""));
-    const programs = text
-      .split(/\r?\n/)
-      .flatMap((line) => launchedProgram(line) ?? [])
-      .map((program) =>
-        home ? program.replace(/^\$(?:HOME|\{HOME\})(?=\/)/, () => home) : program,
-      );
+    const lines = text.split(/\r?\n/);
+    const expand = (word: string) =>
+      home ? word.replace(/^\$(?:HOME|\{HOME\})(?=\/)/, () => home) : word;
+    const exists = (target: string) => fs.exists(target).pipe(Effect.orElseSucceed(() => false));
+    const programs = lines.flatMap((line) => launchedProgram(line) ?? []).map(expand);
     const targets = programs.filter((program) => path.isAbsolute(program));
     for (const target of targets) {
-      if (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false))) return "found";
+      if (yield* exists(target)) return "found";
     }
     // A program still holding a variable, such as `"$IDE_HOME"` or `%IDE%\idea64.exe`, could reach
     // an installed IDE. Assignments like `IDE_HOME="..."` are not launches.
-    const ambiguous = programs.some((program) => /[$%]/.test(program) && !/^\w+=/.test(program));
-    return targets.length > 0 && !ambiguous ? "missing" : "unknown";
+    if (targets.length === 0 || programs.some((p) => /[$%]/.test(p) && !/^\w+=/.test(p))) {
+      return "unknown";
+    }
+    // Any other existing path, as in `env "/opt/idea/bin/idea"`, may be the IDE behind a launcher
+    // this parser does not know.
+    for (const { text: word } of lines.flatMap(scriptWords)) {
+      const target = expand(word);
+      if (path.isAbsolute(target) && (yield* exists(target))) return "unknown";
+    }
+    return "missing";
   });
   // Toolbox names a launch script `idea1`, `idea2`, ... when another installed version already
   // has `idea`. The canonical script stays unless its IDE is positively gone; a numbered one needs
