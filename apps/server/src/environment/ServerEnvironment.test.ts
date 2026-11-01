@@ -77,7 +77,10 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
   it.effect("publishes proven install ownership only for manually updated servers", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const baseDir = yield* fs.makeTempDirectoryScoped();
+      const baseDir = (yield* fs.realPath(yield* fs.makeTempDirectoryScoped())).replaceAll(
+        "\\",
+        "/",
+      );
       const prefix = `${baseDir}/node`;
       const entry = `${prefix}/lib/node_modules/t3/dist/bin.mjs`;
       yield* fs.makeDirectory(`${prefix}/lib/node_modules/t3/dist`, { recursive: true });
@@ -102,6 +105,11 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
             ),
           ),
           Effect.provideService(HostProcess.Arguments, ["node", entry]),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            realPath: (file) =>
+              fs.realPath(file).pipe(Effect.map((resolved) => resolved.replaceAll("\\", "/"))),
+          }),
           Effect.provideService(HostProcess.IsExecutable, false),
           Effect.provideService(HostProcess.Platform, "linux"),
           Effect.provideService(HostProcess.Environment, {}),
