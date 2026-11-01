@@ -969,7 +969,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("a git read in flight during a T3 git action does not outlive it", () =>
+  it.effect.each([
+    { action: "a T3 git action", options: undefined },
+    { action: "a checkout", options: { keepPullRequestLookups: true } },
+  ])("a git read in flight during $action does not outlive it", ({ options }) =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -1012,58 +1015,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const inFlight = yield* Effect.forkChild(lookup);
       yield* Deferred.await(gate.reached);
       yield* runGit(repoDir, ["branch", "--set-upstream-to=origin/feature/raced-head"]);
-      yield* manager.invalidateStatus(repoDir);
-      yield* Deferred.succeed(gate.release, undefined);
-      yield* Fiber.join(inFlight);
-
-      expect((yield* lookup)?.number).toBe(238);
-    }),
-  );
-
-  it.effect("a git read in flight during a checkout does not outlive it", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/racing-upstream"]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/racing-upstream"]);
-      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/heads/feature/raced-head"]);
-      const pullRequest = (number: number, headRefName: string): FakeChangeRequest[] => [
-        {
-          number,
-          title: headRefName,
-          url: `https://github.com/pingdotgg/codething-mvp/pull/${number}`,
-          baseRefName: "main",
-          headRefName,
-          state: "open",
-          updatedAt: "2026-04-07T15:00:00Z",
-        },
-      ];
-      const gate = {
-        matches: (args: ReadonlyArray<string>) =>
-          args[0] === "for-each-ref" && args.at(-1) === "refs/heads/feature/racing-upstream",
-        reached: yield* Deferred.make<void>(),
-        release: yield* Deferred.make<void>(),
-      };
-      const { manager } = yield* makeManager({
-        gitSpawnGate: gate,
-        providerScenario: {
-          prListByHeadSelector: {
-            "feature/racing-upstream": pullRequest(237, "feature/racing-upstream"),
-            "feature/raced-head": pullRequest(238, "feature/raced-head"),
-          },
-        },
-      });
-      const lookup = manager.branchPullRequest({
-        cwd: repoDir,
-        branch: "feature/racing-upstream",
-      });
-
-      const inFlight = yield* Effect.forkChild(lookup);
-      yield* Deferred.await(gate.reached);
-      yield* runGit(repoDir, ["branch", "--set-upstream-to=origin/feature/raced-head"]);
-      yield* manager.invalidateStatus(repoDir, { keepPullRequestLookups: true });
+      yield* manager.invalidateStatus(repoDir, options);
       yield* Deferred.succeed(gate.release, undefined);
       yield* Fiber.join(inFlight);
 
