@@ -499,7 +499,10 @@ function PendingUserInputOption(props: {
       accessibilityRole={props.multiSelect ? "checkbox" : "radio"}
       accessibilityLabel={content.map((item) => item.label).join(". ")}
       accessibilityState={{ checked: props.selected, disabled: props.disabled }}
-      accessibilityActions={targets.map(({ name, label }) => ({ name, label: `Open ${label}` }))}
+      accessibilityActions={targets.map(({ name, label }, index) => ({
+        name,
+        label: `Open ${label}${targets.length > 1 ? ` (${index + 1})` : ""}`,
+      }))}
       onAccessibilityAction={(event) => {
         const target = targets.find((target) => target.name === event.nativeEvent.actionName);
         if (target) props.onOpenTarget(target.href, target.image);
