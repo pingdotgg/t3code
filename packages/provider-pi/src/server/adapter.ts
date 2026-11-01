@@ -2013,11 +2013,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             const responseTurn =
               pendingPrompt?.providerTurnId === turn?.providerTurn.id ? turn : null;
             if (event["success"] === true) {
-              // Command-only prompts emit no agent_settled; probe idle and re-queue behind preceding native events.
+              // Consumed input may emit no agent_settled; probe idle behind preceding native events.
               if (
                 pendingPrompt?.kind === "turn_start" &&
                 responseTurn !== null &&
-                ((responseTurn.promptMayBeCommandOnly && !responseTurn.sawAgentActivity) ||
+                (((responseTurn.promptMayBeCommandOnly ||
+                  recordString(event["data"], "disposition") === "handled") &&
+                  !responseTurn.sawAgentActivity) ||
                   (responseTurn.adoptedWake &&
                     (responseTurn.settleWhenIdle || responseTurn.promptMayBeCommandOnly)))
               ) {

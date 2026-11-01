@@ -2959,7 +2959,10 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("settles a command-only prompt from its deferred ack and idle probe", () =>
+  it.effect.each([
+    { text: "/command-only", data: undefined },
+    { text: "Plain input consumed by an extension", data: { disposition: "handled" } },
+  ])("settles consumed input from its deferred ack and idle probe: $text", ({ text, data }) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -2968,7 +2971,7 @@ describe("PiAdapterV2", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
-      yield* startTurn(runtime, providerThread, "default", [], "/command-only");
+      yield* startTurn(runtime, providerThread, "default", [], text);
       yield* fake.takeRequest("prompt");
       yield* fake.emit({
         type: "extension_ui_request",
@@ -2977,7 +2980,7 @@ describe("PiAdapterV2", () => {
         message: "Command finished\nwith details",
         notifyType: "info",
       });
-      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      yield* fake.emit({ type: "response", command: "prompt", success: true, data });
       const notice = yield* takeEvent(
         (event) =>
           (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") ||
@@ -4216,7 +4219,7 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("ignores an idle snapshot made stale by a steer", () =>
+  it.effect.each([false, true])("ignores stale idle probes, handled=%s", (handled) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -4235,10 +4238,19 @@ describe("PiAdapterV2", () => {
       const providerTurnId =
         running.type === "provider_turn.updated" ? running.providerTurn.id : undefined;
       assert.isDefined(providerTurnId);
-      yield* fake.emit({ type: "agent_start" });
+      if (!handled) yield* fake.emit({ type: "agent_start" });
 
       fake.deferNextState();
-      yield* fake.emit({ type: "agent_settled" });
+      yield* fake.emit(
+        handled
+          ? {
+              type: "response",
+              command: "prompt",
+              success: true,
+              data: { disposition: "handled" },
+            }
+          : { type: "agent_settled" },
+      );
       yield* fake.takeRequest("get_state");
       yield* runtime.steerTurn({
         threadId: THREAD_ID,
