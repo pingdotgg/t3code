@@ -913,6 +913,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
+                  reconnectMcpServer: () => Effect.void,
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -1030,6 +1031,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
               applyFlagSettings: () => Effect.void,
               setPermissionMode: () => Effect.void,
               backgroundTasks: () => Effect.succeed(false),
+              reconnectMcpServer: () => Effect.void,
               stopTask: () => Effect.void,
               interrupt: Effect.void,
               close: Effect.void,
@@ -1324,6 +1326,7 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
             applyFlagSettings: () => Effect.void,
             setPermissionMode: () => Effect.void,
             backgroundTasks: () => Effect.succeed(false),
+            reconnectMcpServer: () => Effect.void,
             stopTask: () => Effect.void,
             interrupt: Effect.void,
             close: Effect.void,
@@ -1501,6 +1504,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
+                  reconnectMcpServer: () => Effect.void,
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -1882,6 +1886,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                     applyFlagSettings: () => Effect.void,
                     setPermissionMode: () => Effect.void,
                     backgroundTasks: () => Effect.succeed(false),
+                    reconnectMcpServer: () => Effect.void,
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(messages),
@@ -2384,6 +2389,7 @@ describe("ClaudeAdapterV2 native fork", () => {
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
+                  reconnectMcpServer: () => Effect.void,
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -2693,6 +2699,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
+                  reconnectMcpServer: () => Effect.void,
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -2968,6 +2975,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly backgroundTasks?: (
       toolUseId: string,
     ) => Effect.Effect<boolean, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
+    readonly reconnectMcpServer?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["reconnectMcpServer"];
     readonly environment?: NodeJS.ProcessEnv;
     readonly subagentLaunchToolUseId?: string;
     readonly nativeSessionId?: string;
@@ -3090,6 +3098,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                       Effect.andThen(() => options?.setPermissionMode?.(mode) ?? Effect.void),
                     ),
                   backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
+                  reconnectMcpServer: options?.reconnectMcpServer ?? (() => Effect.void),
                   stopTask: options?.stopTask ?? (() => Effect.void),
                   interrupt: Effect.void,
                   close: Queue.shutdown(processMessages),
@@ -3117,6 +3126,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     permissionModeChanges.push(mode);
                   }).pipe(Effect.andThen(() => options?.setPermissionMode?.(mode) ?? Effect.void)),
                 backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
+                reconnectMcpServer: options?.reconnectMcpServer ?? (() => Effect.void),
                 stopTask: options?.stopTask ?? (() => Effect.void),
                 interrupt: options?.interrupt ?? Effect.void,
                 close: options?.close?.(sdkMessages) ?? Effect.void,
@@ -4303,6 +4313,94 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
   });
+
+  it.effect(
+    "reconnects claude.ai connectors needing auth when a Claude process starts, at most once per cooldown",
+    () =>
+      Effect.gen(function* () {
+        const reconnected = yield* Queue.unbounded<string>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: Queue.shutdown,
+          freshQueueOnReopen: true,
+          reconnectMcpServer: (serverName) =>
+            Queue.offer(reconnected, serverName).pipe(Effect.asVoid),
+        });
+        let ordinal = 0;
+        // A turn under another runtime mode starts a new Claude process.
+        const startProcess = Effect.fn("startProcess")(function* (
+          runtimeMode: "full-access" | "auto",
+        ) {
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`attempt-connector-${++ordinal}`),
+              providerTurnOrdinal: ordinal,
+              text: "Pull the Sentry issues.",
+              attachments: [],
+              runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+                runtimeMode,
+                interactionMode: "default",
+                cwd: "/workspace",
+              }),
+            }),
+          );
+          assert.equal(harness.processQueues.length, ordinal);
+        });
+        const finish = harness
+          .offerAndWait(makeResultFrame({ uuid: `connector-result-${ordinal}`, result: "Done." }))
+          .pipe(Effect.andThen(Queue.take(harness.terminalReceipts)));
+        const init = (uuid: string, extra: ReadonlyArray<object> = []) =>
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+            mcp_servers: [
+              { name: "claude.ai Sentry", status: "needs-auth", source: "claudeai" },
+              { name: "claude.ai Linear", status: "connected", source: "claudeai" },
+              { name: "claude.ai Figma", status: "needs-auth", source: "claudeai" },
+              { name: "local-oauth", status: "needs-auth", source: "user" },
+              { name: "claude.ai Legacy", status: "needs-auth" },
+              ...extra,
+            ],
+          });
+        const takeReconnected = (count: number) =>
+          Queue.takeN(reconnected, count).pipe(Effect.map((names) => [...names].sort()));
+
+        yield* startProcess("full-access");
+        yield* harness.offerAndWait(init("connector-init-1"));
+        assert.deepEqual(yield* takeReconnected(2), ["claude.ai Figma", "claude.ai Sentry"]);
+        // Reconnecting mid-session is out of scope; later turns of the same process leave it alone.
+        yield* harness.offerAndWait(
+          init("connector-init-1-later", [
+            { name: "claude.ai Granola", status: "needs-auth", source: "claudeai" },
+          ]),
+        );
+        yield* finish;
+
+        // Reconnects run in the background, so a connector first seen here marks where the batch ends.
+        yield* startProcess("auto");
+        yield* harness.offerAndWait(
+          init("connector-init-2", [
+            { name: "claude.ai Zite", status: "needs-auth", source: "claudeai" },
+          ]),
+        );
+        assert.deepEqual(yield* takeReconnected(1), ["claude.ai Zite"]);
+        yield* finish;
+
+        yield* TestClock.adjust("1 minute");
+        yield* startProcess("full-access");
+        yield* harness.offerAndWait(init("connector-init-3"));
+        assert.deepEqual(yield* takeReconnected(2), ["claude.ai Figma", "claude.ai Sentry"]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
 
   describe("Plan-mode tool approval", () => {
     const openPlanTurn = Effect.fn("openPlanTurn")(function* (
@@ -9079,6 +9177,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
+                  reconnectMcpServer: () => Effect.void,
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: isFirstProcess
@@ -9271,6 +9370,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     applyFlagSettings: () => Effect.void,
                     setPermissionMode: () => Effect.void,
                     backgroundTasks: () => Effect.succeed(false),
+                    reconnectMcpServer: () => Effect.void,
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(queue),
@@ -13341,6 +13441,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
+                  reconnectMcpServer: () => Effect.void,
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(sdkMessages),
@@ -13510,6 +13611,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     applyFlagSettings: () => Effect.void,
                     setPermissionMode: () => Effect.void,
                     backgroundTasks: () => Effect.succeed(false),
+                    reconnectMcpServer: () => Effect.void,
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),
@@ -13682,6 +13784,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
+                  reconnectMcpServer: () => Effect.void,
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(sdkMessages),
@@ -13872,6 +13975,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
+                  reconnectMcpServer: () => Effect.void,
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.sync(() => {
@@ -14010,6 +14114,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     applyFlagSettings: () => Effect.void,
                     setPermissionMode: () => Effect.void,
                     backgroundTasks: () => Effect.succeed(false),
+                    reconnectMcpServer: () => Effect.void,
                     stopTask: () => Effect.void,
                     interrupt: Effect.void,
                     close: Queue.shutdown(sdkMessages),
