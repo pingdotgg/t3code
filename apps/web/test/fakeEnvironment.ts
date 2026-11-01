@@ -44,7 +44,7 @@ import * as Stream from "effect/Stream";
 import { RpcSchema } from "effect/rpc";
 
 export const ENVIRONMENT_ID = EnvironmentId.make("environment-render");
-const PROJECT_ID = ProjectId.make("project-render");
+export const PROJECT_ID = ProjectId.make("project-render");
 const CODEX = ProviderInstanceId.make("codex");
 const MODEL = { instanceId: CODEX, model: "gpt-5.4" };
 const AT = DateTime.makeUnsafe("2026-03-17T19:12:28.000Z");
@@ -397,7 +397,6 @@ export const fakeDriver = {
       },
       session,
     }),
-  checkRoute: () => Effect.succeed<RouteCheck>("answered"),
   preflight: () => Effect.succeed(true),
   checkHost: () => Effect.succeed<RouteCheck>("unchecked"),
 };

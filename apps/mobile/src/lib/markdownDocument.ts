@@ -2,9 +2,10 @@ import type { Root, RootContent } from "mdast";
 import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import { remarkKeepWindowsProsePaths } from "@t3tools/shared/markdownWindowsPaths";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
-const parser = unified().use(remarkParse).use(remarkGfm);
+const parser = unified().use(remarkParse).use(remarkGfm).use(remarkKeepWindowsProsePaths);
 export type MarkdownNode = Root | RootContent;
 
 interface MarkdownEdit {
@@ -33,7 +34,7 @@ function decodeCodePoint(codePoint: number, entity: string): string {
   return String.fromCodePoint(codePoint);
 }
 
-function decodeHtmlEntities(value: string): string {
+export function decodeHtmlEntities(value: string): string {
   return value.replace(
     /&(?:#(\d+)|#x([0-9a-f]+)|amp|apos|gt|lt|nbsp|quot);/gi,
     (entity, decimal: string | undefined, hexadecimal: string | undefined) => {
@@ -124,7 +125,7 @@ function anchorMarkdown(tags: readonly string[]): AnchorState {
   return { pending: replacements, open: 0 };
 }
 
-function markdownHtmlTags(content: string): RegExpExecArray[] {
+export function markdownHtmlTags(content: string): RegExpExecArray[] {
   // An HTML block such as <details> can also contain Markdown fences and code spans.
   const codeRanges: Array<{ start: number; end: number }> = [];
   const tags = [...content.matchAll(HTML_TAG)];
@@ -162,8 +163,10 @@ function markdownHtmlTags(content: string): RegExpExecArray[] {
       }
     }
     if (closingIndex === -1) {
-      if (fenced) codeRanges.push({ start: opening.index, end: content.length });
-      continue;
+      if (!fenced) continue;
+      // An unclosed fence runs to the end of the content, so no later opener matters.
+      codeRanges.push({ start: opening.index, end: content.length });
+      break;
     }
     const closing = delimiters[closingIndex]!;
     codeRanges.push({ start: opening.index, end: closing.index + closing[0].length });

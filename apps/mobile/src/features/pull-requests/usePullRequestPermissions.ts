@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   canEditPullRequestChangeRequest,
   canEditPullRequestComment,
+  canEditPullRequestMaintainerEdits,
 } from "@t3tools/client-runtime/pull-request-editing";
 import type { PullRequestComment, PullRequestDetail } from "@t3tools/contracts";
 import { usePullRequestConnected } from "./usePullRequestConnected";
@@ -49,6 +50,8 @@ export function usePullRequestPermissions(params: PullRequestParams, pr: PullReq
     canWrite: connected && canWrite,
     canEditChangeRequest:
       connected && canUpdate && pr !== null && canEditPullRequestChangeRequest(pr),
+    canEditMaintainerEdits:
+      connected && canUpdate && pr !== null && canEditPullRequestMaintainerEdits(pr),
     canEditComment: (comment: Pick<PullRequestComment, "author" | "canEdit" | "kind">) =>
       connected && canUpdateComment && pr !== null && canEditPullRequestComment(pr, comment),
     canReact: connected && canSetReaction && pr?.capabilities.reactions === true,
