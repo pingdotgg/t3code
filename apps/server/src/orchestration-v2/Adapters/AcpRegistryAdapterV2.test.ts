@@ -20,6 +20,7 @@ import * as DateTime from "effect/DateTime";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as Effect from "effect/Effect";
+import { TestClock } from "effect/testing";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -416,6 +417,230 @@ const claudeUnrelatedChildren = [
 ];
 
 describe("AcpRegistryAdapterV2", () => {
+  it.effect.each([
+    { name: "enabled", source: "local", enablePostSettleContinuation: true, continues: true },
+    { name: "disabled", source: "local", enablePostSettleContinuation: false, continues: false },
+    { name: "default", source: "local", continues: false },
+    { name: "registry", source: "registry", enablePostSettleContinuation: true, continues: false },
+  ])("handles post-settle output with continuation $name", (testCase) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const replayDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-local-acp-late-" });
+      const transcript = yield* decodeAcpReplayTranscript(
+        {
+          provider: ACP_REGISTRY_PROVIDER,
+          protocol: "acp.ndjson-jsonrpc",
+          version: "1",
+          scenario: "local-post-settle",
+          entries: [
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "initialize", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "initialize",
+                result: {
+                  protocolVersion: 1,
+                  agentCapabilities: { loadSession: false },
+                  authMethods: [],
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/new", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/new",
+                result: { sessionId: "late-session" },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/prompt", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "notification",
+                method: "session/update",
+                params: {
+                  sessionId: "late-session",
+                  update: {
+                    sessionUpdate: "agent_message_chunk",
+                    content: { type: "text", text: "Foreground completed." },
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                result: { stopReason: "end_turn" },
+              },
+            },
+          ],
+        },
+        ACP_REGISTRY_PROVIDER,
+      );
+      const replayRuntime = makeAcpReplayRuntime({
+        transcript,
+        statusPath: path.join(replayDir, "status.json"),
+        scriptPath: yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+        ),
+        childProcessSpawner,
+        fileSystem,
+      });
+      let sessionUpdate: Parameters<
+        AcpSessionRuntime.AcpSessionRuntime["Service"]["handleSessionUpdate"]
+      >[0] = () => Effect.die("Session update handler is not installed");
+      const offers: Array<ProviderContinuationRequest> = [];
+      const instanceId = ProviderInstanceId.make("local-post-settle");
+      const adapter = yield* makeAcpRegistryAdapterV2({
+        instanceId,
+        settings: yield* decodeAcpRegistryAdapterSettings({
+          source: testCase.source,
+          agentId: "fixture-agent",
+          commandPath: "local-agent",
+          ...("enablePostSettleContinuation" in testCase
+            ? { enablePostSettleContinuation: testCase.enablePostSettleContinuation }
+            : {}),
+        }),
+        environment: {},
+        selfInvocation: yield* resolveSelfInvocation(),
+        continuationRequests: {
+          offer: (request) =>
+            Effect.sync(() => {
+              offers.push(request);
+            }),
+        },
+        makeRuntime: (input) =>
+          replayRuntime(input).pipe(
+            Effect.map((runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdate = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+            })),
+          ),
+      }).pipe(Effect.provide(layerInjectedRuntimeCatalog));
+      const threadId = ThreadId.make("thread-local-post-settle");
+      const modelSelection = { instanceId, model: "default" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: replayDir,
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("session-local-post-settle"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const projected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            projected.push(event);
+          }).pipe(Effect.andThen(Queue.offer(events, event))),
+        ),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
+      );
+      while (true) {
+        const event = yield* Queue.take(events);
+        if (event.type === "turn.terminal") {
+          assert.equal(event.status, "completed");
+          break;
+        }
+      }
+      const foreground = yield* runtime.readThreadSnapshot({ providerThread });
+      assert.deepEqual(
+        foreground.providerTurns.map((turn) => turn.status),
+        ["completed"],
+      );
+      assert.isTrue(
+        foreground.messages.some(
+          (message) => message.role === "assistant" && message.text === "Foreground completed.",
+        ),
+      );
+      const lateText = "Worker tests passed after the previous turn completed.";
+      yield* sessionUpdate({
+        sessionId: "late-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: lateText },
+        },
+      });
+      assert.lengthOf(offers, testCase.continues ? 1 : 0);
+      if (testCase.continues) {
+        assert.equal(offers[0]?.threadId, threadId);
+        assert.isDefined(offers[0]?.dispatchIfCurrent);
+        yield* offers[0]!.dispatchIfCurrent!(Effect.void);
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now,
+            ordinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+            messageText: "Background output is ready.",
+          }),
+        );
+      }
+      yield* TestClock.adjust("3 seconds");
+      const snapshot = yield* runtime.readThreadSnapshot({ providerThread });
+      assert.deepEqual(
+        snapshot.providerTurns.map((turn) => turn.status),
+        testCase.continues ? ["completed", "completed"] : ["completed"],
+      );
+      if (testCase.continues) {
+        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+        assert.isTrue(
+          snapshot.messages.some(
+            (message) =>
+              message.threadId === threadId &&
+              message.role === "assistant" &&
+              message.text === lateText,
+          ),
+        );
+      }
+      assert.equal(
+        projected.some(
+          (event) =>
+            event.type === "message.updated" &&
+            event.message.role === "assistant" &&
+            event.message.text === lateText,
+        ),
+        testCase.continues,
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it("preserves and sanitizes structured ACP errors without exposing arbitrary defects", () => {
     const limit = new EffectAcpErrors.AcpRequestError({
       code: -31001,
