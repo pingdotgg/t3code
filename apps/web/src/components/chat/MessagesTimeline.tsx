@@ -490,7 +490,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const revealExpandedDisclosure = () => {
     const pending = disclosureRevealRef.current;
     if (!pending || pending.identity !== listIdentityKey) return;
-    if (pending.ready) disclosureRevealRef.current = null;
     const anchorKey = pending.key;
     const state = listRef.current?.getState();
     const element = listRef.current?.getScrollableNode();
@@ -512,6 +511,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
       composerOverlayHeight: contentInsetEndAdjustment,
       anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
     });
+    // Nested lists can finish measuring before their height reaches the outer scroller.
+    if (pending.ready && element.scrollTop + delta <= element.scrollHeight - element.clientHeight) {
+      disclosureRevealRef.current = null;
+    }
     if (delta > 0) {
       element.scrollBy({ top: delta, behavior: prefersReducedMotion ? "auto" : "smooth" });
     }
@@ -1226,6 +1229,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       contentSizeFrame = requestAnimationFrame(() => {
         contentSizeFrame = null;
         handleContentSizeChanged(laidOutData);
+        if (disclosureRevealRef.current?.ready) scheduleDisclosureSettle();
       });
     };
     const stopListeningToContentSize = list

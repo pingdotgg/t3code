@@ -526,12 +526,19 @@ describe("MessagesTimeline messages", () => {
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
   });
 
-  it.each(["inline", "delayed", "grouped-delayed"])("reveals %s output", async (mode) => {
+  const revealModes = ["inline", "delayed", "grouped-delayed", "grouped-end"];
+  it.each(revealModes)("reveals %s output", async (mode) => {
     setup();
-    environmentQuery.data = null;
+    environmentQuery.data =
+      mode === "grouped-end"
+        ? {
+            output: { text: `${"output line\n".repeat(10)}TOOL_INPUT_END`, truncated: false },
+            running: false,
+          }
+        : null;
     environmentQuery.error = null;
     const props = baseProps();
-    const composerOverlayHeight = 200;
+    const composerOverlayHeight = mode === "grouped-end" ? 140 : 200;
     const tallEntries = Array.from({ length: 12 }, (_, index) =>
       message(
         `Message ${index}\n\n${"Long paragraph. ".repeat(80)}`,
@@ -580,7 +587,7 @@ describe("MessagesTimeline messages", () => {
                   }),
             },
           },
-          ...(mode === "grouped-delayed"
+          ...(mode.startsWith("grouped-")
             ? [
                 {
                   id: "another-tool",
@@ -598,14 +605,17 @@ describe("MessagesTimeline messages", () => {
                 },
               ]
             : []),
-          ...tallEntries.slice(6),
+          ...(mode === "grouped-end"
+            ? [message("Completed.", { role: "assistant" }, "final-message")]
+            : tallEntries.slice(6)),
         ]}
       />
     );
     await using screen = await renderElement(timeline());
+    if (mode === "grouped-end") screen.container.style.height = "648px";
     await vi.waitFor(() => expect(props.listRef.current?.getScrollableNode()).toBeTruthy());
     const viewport = props.listRef.current!.getScrollableNode()!;
-    if (mode === "grouped-delayed") {
+    if (mode.startsWith("grouped-")) {
       await act(() => {
         void props.listRef.current!.scrollToIndex({ index: 6, animated: false });
       });
@@ -624,13 +634,19 @@ describe("MessagesTimeline messages", () => {
           screen.container.querySelector('[data-work-entry-id="tool-near-composer"]'),
         ).not.toBeNull(),
       );
-      await click(
-        screen.container.querySelector<HTMLElement>('[data-work-entry-id="tool-near-composer"]')!,
-      );
-      await vi.waitFor(() => expect(screen.text()).toContain("Loading output"));
-      await click(group());
+      if (mode === "grouped-delayed") {
+        await click(
+          screen.container.querySelector<HTMLElement>('[data-work-entry-id="tool-near-composer"]')!,
+        );
+        await vi.waitFor(() => expect(screen.text()).toContain("Loading output"));
+        await click(group());
+      }
     }
     const header = () => {
+      if (mode === "grouped-end")
+        return screen.container.querySelector<HTMLElement>(
+          '[data-work-entry-id="tool-near-composer"]',
+        )!;
       if (mode === "grouped-delayed")
         return screen.container.querySelector<HTMLElement>(
           '[data-timeline-row-kind="work-toggle"] button',
@@ -661,7 +677,7 @@ describe("MessagesTimeline messages", () => {
     if (mode === "grouped-delayed") {
       await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(collapsedScrollTop));
     }
-    if (mode !== "inline") {
+    if (mode !== "inline" && mode !== "grouped-end") {
       await vi.waitFor(() =>
         expect(header().getBoundingClientRect().bottom).toBeLessThanOrEqual(visibleBottom() + 1),
       );
@@ -679,8 +695,10 @@ describe("MessagesTimeline messages", () => {
     await vi.waitFor(() =>
       expect(inputEnd().getBoundingClientRect().bottom).toBeLessThanOrEqual(visibleBottom() + 1),
     );
-    expect(header().getBoundingClientRect().top).toBeGreaterThanOrEqual(
-      viewport.getBoundingClientRect().top,
+    await vi.waitFor(() =>
+      expect(header().getBoundingClientRect().top).toBeGreaterThanOrEqual(
+        viewport.getBoundingClientRect().top,
+      ),
     );
   });
 });
