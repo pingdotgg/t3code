@@ -5,7 +5,7 @@ import type { toastManager } from "./ui/toast";
 
 const { add, starred } = vi.hoisted(() => ({
   add: vi.fn<typeof toastManager.add>(),
-  starred: { value: false, duringCheck: () => {} },
+  starred: { value: false, failed: false, duringCheck: () => {} },
 }));
 vi.mock("./ui/toast", () => ({ toastManager: { add, close: vi.fn() } }));
 vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
@@ -13,7 +13,7 @@ vi.mock("../state/sourceControl", () => ({ sourceControlEnvironment: { checkStar
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
   runAtomCommand: async () => {
     starred.duringCheck();
-    return { _tag: "Success", value: starred.value };
+    return starred.failed ? { _tag: "Failure" } : { _tag: "Success", value: starred.value };
   },
 }));
 
@@ -22,6 +22,7 @@ const environmentId = EnvironmentId.make("environment-1");
 function setup({ sent = 0, writable = true, alreadyStarred = false } = {}) {
   add.mockReset();
   starred.value = alreadyStarred;
+  starred.failed = false;
   starred.duringCheck = () => {};
   const store = new Map([["t3code:github-star-prompt:sent", String(sent)]]);
   vi.stubGlobal("window", {
@@ -78,6 +79,18 @@ describe("recordPromptSent", () => {
     starred.value = false;
     await (await startSession()).send();
     expect(add).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("skips an unavailable server check without permanently dismissing", async () => {
+    const store = setup({ sent: 5 });
+    starred.failed = true;
+    await (await startSession()).send();
+    expect(add).not.toHaveBeenCalled();
+    expect(store.has("t3code:github-star-prompt:dismissed")).toBe(false);
+    starred.failed = false;
+    await (await startSession()).send();
+    expect(add).toHaveBeenCalledOnce();
     vi.unstubAllGlobals();
   });
 
