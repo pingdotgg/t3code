@@ -284,6 +284,19 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
+  it.effect("passes the same-account review opt-in to the durable watch command", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.call("watch_pull_request", {
+        url: "https://github.com/t3tools/t3code/pull/9",
+        includeOwnRemarks: true,
+      });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.watch", number: 9, includeOwnRemarks: true },
+      ]);
+    }),
+  );
+
   it.effect("refuses to watch a merged pull request and stops an existing watch", () =>
     Effect.gen(function* () {
       const watch = {

@@ -264,6 +264,10 @@ export type UnlinkPullRequestsResult = typeof UnlinkPullRequestsResult.Type;
 
 export const WatchPullRequestResult = Schema.Struct({
   ...PullRequestIdentity,
+  includeOwnRemarks: Schema.Boolean.annotate({
+    description:
+      "Whether the active watch includes comments and reviews from the authenticated account. False by default.",
+  }),
   watching: Schema.Boolean,
   wasWatching: Schema.Boolean,
 });
@@ -385,7 +389,15 @@ const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
 const WatchPullRequestTool = Tool.make("watch_pull_request", {
   description:
     "Watch an open PR for this thread, linking it first if needed. T3 wakes you on failed checks, passed required checks, new comments or reviews, or conflicts. Handle old comments first. Only later ones wake you. After this call, end your turn. The watch stays on after each wake, so do not call this again on a wake. A wake is not a merge decision. Check readiness yourself.",
-  parameters: PullRequestTargetInput,
+  parameters: Schema.Struct({
+    ...PullRequestTargetInput.fields,
+    includeOwnRemarks: Schema.optional(
+      Schema.Boolean.annotate({
+        description:
+          "Include comments and reviews from the authenticated account when several people or agents share it. Defaults to false for a new watch; omit to keep an existing watch's setting. Changing this setting starts a new comment window now. The comment-only wake limit still applies.",
+      }),
+    ),
+  }),
   success: WatchPullRequestResult,
   failure: PullRequestToolError,
   dependencies,
