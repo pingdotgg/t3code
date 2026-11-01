@@ -56,7 +56,7 @@ compacts automatically whether the meter is on or off.
 When you return to a large thread after Claude's prompt cache expires, a
 **Compact** chip with the thread's token count shows
 next to the send button. While it is on, Enter summarizes the history first, then
-sends your message. Click the chip to switch it to **Full** and keep the full
+sends your message. Click the chip to switch it to **Keep** and keep the full
 history for that message. The cache lasts about an hour on a Claude
 subscription and 5 minutes with an API key, Bedrock, or Vertex. See [commands and skills](./composer.md#commands-and-skills) for using
 composer commands.
@@ -70,7 +70,7 @@ over 200,000 tokens. Each Claude provider's settings can override it:
   The compaction appears in the thread as a `/compact` turn sent by T3 Code.
   If the window is missed, such as when you enable this mode after the cache has
   expired or the server restarts before compaction runs, it falls back to
-  **When you return**. Switch the chip to **Full** to keep the full history for that message.
+  **When you return**. Switch the chip to **Keep** to keep the full history for that message.
 - **Never** skips idle compaction and Claude's resume prompt. **Auto-compact after**
   still applies, and you can still compact by hand.
 
