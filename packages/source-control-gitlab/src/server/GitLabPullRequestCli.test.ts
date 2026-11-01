@@ -1,4 +1,4 @@
-import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+import { afterEach, assert, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
@@ -965,39 +965,42 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
   it.effect("shows a failed child pipeline that left the head pipeline green", () =>
     Effect.gen(function* () {
-      mockedExecute
-        .mockReturnValueOnce(
-          Effect.succeed(
-            output(
-              mergeRequestJson({
-                // A fork's pipeline runs in the source project, so its id is not the target's.
-                head_pipeline: {
-                  id: 31,
-                  project_id: 12,
-                  status: "success",
-                  web_url: "https://gitlab.com/bilal/web/-/pipelines/31",
-                },
-              }),
-            ),
-          ),
-        )
-        .mockReturnValueOnce(
-          Effect.succeed(
-            output(
-              JSON.stringify([
-                {
-                  name: "deploy",
-                  status: "success",
-                  downstream_pipeline: {
-                    status: "failed",
-                    web_url: "https://gitlab.com/bilal/web/-/pipelines/32",
+      mockedExecute.mockImplementation((request) => {
+        switch (request.args[1]) {
+          case "graphql":
+            return Effect.succeed(output("{}"));
+          case "projects/12/pipelines/31/bridges?per_page=100":
+            return Effect.succeed(
+              output(
+                JSON.stringify([
+                  {
+                    name: "deploy",
+                    status: "success",
+                    downstream_pipeline: {
+                      status: "failed",
+                      web_url: "https://gitlab.com/bilal/web/-/pipelines/32",
+                    },
                   },
-                },
-                { name: "docs", status: "created", downstream_pipeline: null },
-              ]),
-            ),
-          ),
-        );
+                  { name: "docs", status: "created", downstream_pipeline: null },
+                ]),
+              ),
+            );
+          default:
+            return Effect.succeed(
+              output(
+                mergeRequestJson({
+                  // A fork's pipeline runs in the source project, so its id is not the target's.
+                  head_pipeline: {
+                    id: 31,
+                    project_id: 12,
+                    status: "success",
+                    web_url: "https://gitlab.com/bilal/web/-/pipelines/31",
+                  },
+                }),
+              ),
+            );
+        }
+      });
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
       const detail = yield* cli.getMergeRequestDetail({
@@ -1010,7 +1013,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
         ["Pipeline", "success", "https://gitlab.com/bilal/web/-/pipelines/31"],
         ["deploy", "failure", "https://gitlab.com/bilal/web/-/pipelines/32"],
       ]);
-      expect(argsOfCall(1)[1]).toBe("projects/12/pipelines/31/bridges?per_page=100");
     }),
   );
 
@@ -1020,9 +1022,11 @@ layer("GitLabPullRequestCli.layer", (it) => {
         mergeRequestJson({ head_pipeline: { id: 31, project_id: 12, status: "success" } }),
       );
       const failedChild = { name: "deploy", downstream_pipeline: { status: "failed" } };
-      mockedExecute
-        .mockReturnValueOnce(Effect.succeed(detailOutput))
-        .mockReturnValueOnce(
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      for (const [scenario, bridges] of [
+        [
+          "read fails",
           Effect.fail(
             new GitLabCli.GitLabCliCommandError({
               operation: "execute",
@@ -1031,15 +1035,20 @@ layer("GitLabPullRequestCli.layer", (it) => {
               cause: new Error("403 Forbidden"),
             }),
           ),
-        )
-        .mockReturnValueOnce(Effect.succeed(detailOutput))
+        ],
         // A full page may have left out the trigger job whose pipeline failed.
-        .mockReturnValueOnce(
+        [
+          "page is full",
           Effect.succeed(output(JSON.stringify(Array.from({ length: 100 }, () => failedChild)))),
+        ],
+      ] as const) {
+        mockedExecute.mockImplementation((request) =>
+          request.args[1] === "graphql"
+            ? Effect.succeed(output("{}"))
+            : request.args[1]?.includes("/bridges")
+              ? bridges
+              : Effect.succeed(detailOutput),
         );
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      for (const scenario of ["read fails", "page is full"]) {
         const detail = yield* cli.getMergeRequestDetail({
           cwd: "/w",
           repository: "acme/web",
@@ -1388,4 +1397,124 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expect(result).toMatchObject({ _tag: "Failure", failure: error });
     }),
   );
+  describe("the head pipeline's stages", () => {
+    const pipeline = {
+      id: 9,
+      project_id: 12,
+      status: "failed",
+      web_url: "https://gitlab.com/acme/web/-/pipelines/9",
+      source: "merge_request_event",
+    };
+    const stages = JSON.stringify({
+      data: {
+        project: {
+          mergeRequest: {
+            headPipeline: {
+              path: "/acme/web/-/pipelines/9",
+              stages: {
+                nodes: [
+                  { name: "build", status: "success", detailedStatus: { label: "passed" } },
+                  {
+                    name: "test",
+                    status: "failed",
+                    jobs: {
+                      nodes: [{ name: "unit", status: "FAILED", webPath: "/acme/web/-/jobs/3" }],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+    });
+
+    function answer(graphql: Effect.Effect<ReturnType<typeof output>, GitLabCli.GitLabCliError>) {
+      mockedExecute.mockImplementation((request) =>
+        request.args[1] === "graphql"
+          ? graphql
+          : request.args[1]?.includes("/bridges")
+            ? Effect.succeed(output("[]"))
+            : Effect.succeed(output(mergeRequestJson({ head_pipeline: pipeline }))),
+      );
+    }
+
+    const read = (downstreamChecks: boolean) =>
+      GitLabPullRequestCli.GitLabPullRequestCli.pipe(
+        Effect.flatMap((cli) =>
+          cli.getMergeRequestDetail({
+            cwd: "/w",
+            repository: "group/acme/web",
+            number: 7,
+            downstreamChecks,
+          }),
+        ),
+      );
+
+    it.effect("shows the stages, and the failed stage as its failed job", () =>
+      Effect.gen(function* () {
+        answer(Effect.succeed(output(stages)));
+
+        const detail = yield* read(true);
+
+        const graphql = mockedExecute.mock.calls.find(([call]) => call.args[1] === "graphql");
+        assert.isDefined(graphql);
+        expect(JSON.parse(graphql[0].stdin ?? "").variables).toEqual({
+          fullPath: "group/acme/web",
+          iid: "7",
+        });
+        expect(detail.checks).toEqual([
+          {
+            name: "build",
+            status: "success",
+            description: "passed",
+            url: "https://gitlab.com/acme/web/-/pipelines/9",
+          },
+          {
+            name: "test / unit",
+            status: "failure",
+            description: null,
+            url: "https://gitlab.com/acme/web/-/jobs/3",
+          },
+        ]);
+      }),
+    );
+
+    it.effect("keeps the pipeline check where the stages cannot be read", () =>
+      Effect.gen(function* () {
+        answer(
+          Effect.fail(
+            new GitLabCli.GitLabCliCommandError({
+              operation: "execute",
+              command: "glab",
+              cwd: "/w",
+              cause: new Error("graphql unavailable"),
+            }),
+          ),
+        );
+
+        const detail = yield* read(true);
+
+        expect(detail.checks).toEqual([
+          {
+            name: "Pipeline",
+            status: "failure",
+            description: "merge_request_event",
+            url: "https://gitlab.com/acme/web/-/pipelines/9",
+          },
+        ]);
+      }),
+    );
+
+    it.effect("asks for no stages when the caller only needs the merge request", () =>
+      Effect.gen(function* () {
+        answer(Effect.succeed(output(stages)));
+
+        const detail = yield* read(false);
+
+        expect(mockedExecute).toHaveBeenCalledTimes(1);
+        expect(detail.checks.map((check) => check.name)).toEqual(["Pipeline"]);
+      }),
+    );
+  });
 });
