@@ -21,6 +21,7 @@ import { splitPullRequestBody } from "./pullRequestMarkdown.logic";
 export const PullRequestMarkdownContext = createContext<{
   /** Stable per repository, so comments share one renderer and its parse cache. */
   remarkPlugins: PluggableList;
+  repositoryUrl?: string | undefined;
   lineBreaks: boolean;
   threadRef: ScopedThreadRef | null;
 } | null>(null);
@@ -30,13 +31,20 @@ function PullRequestHostVideo({
   cwd,
   url,
   fetchUrl,
+  repositoryUrl,
 }: {
   environmentId: EnvironmentId;
   cwd: string;
   url: string;
   fetchUrl: string;
+  repositoryUrl?: string | undefined;
 }) {
-  const resource: AssetResource = { _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd, url: fetchUrl };
+  const resource: AssetResource = {
+    _tag: SOURCE_CONTROL_MEDIA_ASSET,
+    cwd,
+    url: fetchUrl,
+    ...(repositoryUrl ? { repositoryUrl } : {}),
+  };
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
   const src =
@@ -92,6 +100,7 @@ export function PullRequestMarkdown({
               {...(context ? { extraRemarkPlugins: context.remarkPlugins } : {})}
               lineBreaks={lineBreaks ?? context?.lineBreaks ?? false}
               sourceControlMedia
+              sourceControlMediaRepositoryUrl={context?.repositoryUrl}
             />
           );
         }
@@ -104,6 +113,7 @@ export function PullRequestMarkdown({
               cwd={cwd}
               url={segment.url}
               fetchUrl={hostMedia.fetchUrl}
+              repositoryUrl={context?.repositoryUrl}
             />
           );
         }

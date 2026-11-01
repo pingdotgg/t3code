@@ -28,6 +28,7 @@ export const PullRequestMediaVisibleContext = createContext(true);
 export const PullRequestMediaContext = createContext<{
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
+  readonly repositoryUrl?: string;
 } | null>(null);
 
 export function usePullRequestMediaUrl(url: string) {
@@ -35,7 +36,12 @@ export function usePullRequestMediaUrl(url: string) {
   const fetchUrl = sourceControlClients.mediaUrl(url)?.fetchUrl;
   const resource: AssetResource | null =
     context && fetchUrl
-      ? { _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd: context.cwd, url: fetchUrl }
+      ? {
+          _tag: SOURCE_CONTROL_MEDIA_ASSET,
+          cwd: context.cwd,
+          url: fetchUrl,
+          ...(context.repositoryUrl === undefined ? {} : { repositoryUrl: context.repositoryUrl }),
+        }
       : null;
   const asset = useAssetUrlState(context?.environmentId ?? null, resource);
   const refresh = useRefreshAssetUrl(context?.environmentId ?? null, resource);

@@ -3,7 +3,11 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
 import { pullRequestImageSource } from "./pullRequestMediaSource";
 
-const location = { environmentId: EnvironmentId.make("test"), cwd: "/repo" };
+const location = {
+  environmentId: EnvironmentId.make("test"),
+  cwd: "/repo",
+  repositoryUrl: "https://github.com/owner/repo",
+};
 const url = "https://github.com/user-attachments/assets/abc-123";
 
 describe("PR media previews", () => {
@@ -12,6 +16,7 @@ describe("PR media previews", () => {
     const second = pullRequestImageSource(`${url}-second`, location);
     const selected = { ...second, sourceIdentifier: "tapped" };
     const gallery = filePreviewGallery(selected, [first, second]);
+    expect(first).toMatchObject({ resource: { repositoryUrl: location.repositoryUrl } });
     expect(gallery).toEqual([first, selected]);
     expect(gallery.every((item) => "resource" in item)).toBe(true);
   });

@@ -55,7 +55,12 @@ export function PullRequestMarkdownRepository(props: {
     projectId: target.input.projectId,
   });
   const cwd = project?.workspaceRoot;
-  const media = cwd ? { environmentId: target.environmentId, cwd } : null;
+  const repositoryUrl = url
+    ? sourceControlClients.parseChangeRequestUrl(url)?.link.repositoryUrl
+    : undefined;
+  const media = cwd
+    ? { environmentId: target.environmentId, cwd, ...(repositoryUrl ? { repositoryUrl } : {}) }
+    : null;
   return (
     <AutolinksContext value={autolinks}>
       <LineBreaksContext value={lineBreaks}>

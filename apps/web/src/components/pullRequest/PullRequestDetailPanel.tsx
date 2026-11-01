@@ -241,6 +241,9 @@ function pullRequestMarkdownContext(
 ) {
   return {
     remarkPlugins: pullRequestAutolinkPlugins(detail),
+    repositoryUrl: detail
+      ? sourceControlClients.parseChangeRequestUrl(detail.url)?.link.repositoryUrl
+      : undefined,
     lineBreaks: sourceControlClients.find(detail?.provider ?? "")?.hardLineBreaks ?? false,
     threadRef,
   };

@@ -58,6 +58,7 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct(SOURCE_CONTROL_MEDIA_ASSET, {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+    repositoryUrl: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(2048))),
   }),
 ]);
 export type AssetResource = typeof AssetResource.Type;
