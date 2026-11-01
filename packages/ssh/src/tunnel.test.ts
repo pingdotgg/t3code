@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off - executes the generated POSIX launcher against an isolated filesystem fixture.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
@@ -82,6 +87,90 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
 const ARCHIVE = { archiveVersion: "1.2.3-preview.20260911.4" } as const;
 
 describe("ssh tunnel scripts", () => {
+  it.each([
+    "unavailable",
+    "recovering",
+    "discovered",
+    "missing-port",
+    "fresh",
+    "managed-recovering",
+  ] as const)("handles SSH launch with %s external service state", async (scenario) => {
+    const managed =
+      scenario === "managed-recovering" ? NodeChildProcess.spawn("sleep", ["60"]) : undefined;
+    const exited = managed
+      ? new Promise((resolve) => managed.once("exit", (_code, signal) => resolve(signal)))
+      : undefined;
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-owner-"));
+    try {
+      const state = NodePath.join(home, ".t3/ssh-launch/test");
+      const runtime = NodePath.join(home, ".t3/runtime/versions", ARCHIVE.archiveVersion);
+      NodeFS.mkdirSync(state, { recursive: true });
+      NodeFS.mkdirSync(runtime, { recursive: true });
+      if (scenario !== "discovered" && scenario !== "fresh") {
+        NodeFS.writeFileSync(
+          NodePath.join(state, "managed"),
+          scenario === "managed-recovering" ? "managed\n" : "external\n",
+        );
+        if (managed) NodeFS.writeFileSync(NodePath.join(state, "pid"), String(managed.pid));
+        if (scenario !== "missing-port")
+          NodeFS.writeFileSync(NodePath.join(state, "port"), "3773\n");
+      }
+      NodeFS.writeFileSync(NodePath.join(runtime, ".install-complete"), ARCHIVE.archiveVersion);
+      NodeFS.writeFileSync(
+        NodePath.join(runtime, "t3"),
+        `#!/bin/sh
+case "$1 $2" in
+  '--version ') exit 0 ;;
+  '__ssh-helper runtime-port')
+    ${scenario === "discovered" || scenario === "managed-recovering" ? `printf '${process.pid} 3773'` : "exit 1"} ;;
+  '__ssh-helper wait-ready')
+    printf '%s\\n' "$4" >> "$HOME/probes"
+    ${scenario === "fresh" ? "exit 0" : scenario === "recovering" || scenario === "managed-recovering" ? '[ "$4" -gt 2000 ]' : "exit 1"} ;;
+  '__ssh-helper pick-port') printf 'pick-port\\n' >> "$HOME/spawns"; printf '3774' ;;
+  'serve --host') printf 'serve\\n' >> "$HOME/spawns" ;;
+  *) exit 2 ;;
+esac
+`,
+        { mode: 0o700 },
+      );
+      const result = NodeChildProcess.spawnSync("sh", ["-s", "--", "test"], {
+        input: SshTunnel.buildRemoteLaunchScript(ARCHIVE),
+        env: { ...process.env, HOME: home },
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+      assert.isUndefined(result.error);
+      if (scenario === "fresh") {
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(JSON.parse(result.stdout), { remotePort: 3774, serverKind: "managed" });
+        return;
+      }
+      assert.isFalse(NodeFS.existsSync(NodePath.join(home, "spawns")), result.stderr);
+      if (scenario === "discovered") {
+        assert.isFalse(NodeFS.existsSync(NodePath.join(state, "managed")));
+      } else {
+        assert.equal(
+          NodeFS.readFileSync(NodePath.join(state, "managed"), "utf8").trim(),
+          "external",
+        );
+      }
+      if (scenario === "recovering" || scenario === "managed-recovering") {
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(JSON.parse(result.stdout), { remotePort: 3773, serverKind: "external" });
+      } else {
+        assert.equal(result.status, 1);
+        assert.include(result.stderr, "external T3 server");
+      }
+      if (managed) {
+        assert.isFalse(NodeFS.existsSync(NodePath.join(state, "pid")));
+        assert.equal(await exited, "SIGTERM");
+      }
+    } finally {
+      managed?.kill();
+      NodeFS.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("rejects archive versions that are not a single exact version segment", () => {
     for (const archiveVersion of [
       "../other",
