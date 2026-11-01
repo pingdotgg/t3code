@@ -145,6 +145,9 @@ or endpoint configurations do not report subscription limits.
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
+Claude accounts signed in with a `claude setup-token` token (`CLAUDE_CODE_OAUTH_TOKEN`) show their
+limits after their first turn, and keep the last reading between turns.
+
 ## Connect a CLIProxyAPI hub
 
 To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the
