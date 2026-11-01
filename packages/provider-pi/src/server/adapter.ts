@@ -534,11 +534,20 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         void,
         ProviderAdapter.ProviderAdapterProtocolError
       > | null = null;
+      let pendingPromptResponsesDrained: Deferred.Deferred<
+        void,
+        ProviderAdapter.ProviderAdapterProtocolError
+      > | null = null;
       let closed = false;
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
           closed = true;
           pendingWake = null;
+          if (pendingPromptResponsesDrained !== null)
+            yield* Deferred.fail(
+              pendingPromptResponsesDrained,
+              protocolError("Pi session closed while awaiting prompt acknowledgment"),
+            );
           if (rollbackBarrier !== null)
             yield* Deferred.fail(
               rollbackBarrier,
@@ -2024,6 +2033,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   : pendingPromptResponses.findIndex((pending) => pending.id === responseId);
             const pendingPrompt =
               promptIndex < 0 ? undefined : pendingPromptResponses.splice(promptIndex, 1)[0];
+            if (
+              pendingPrompt !== undefined &&
+              pendingPromptResponses.length === 0 &&
+              pendingPromptResponsesDrained !== null
+            ) {
+              yield* Deferred.succeed(pendingPromptResponsesDrained, undefined);
+              pendingPromptResponsesDrained = null;
+            }
             const responseTurn =
               pendingPrompt?.providerTurnId === turn?.providerTurn.id ? turn : null;
             if (
@@ -2176,6 +2193,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           sessionEventPermit.withPermits(1)(
             Effect.gen(function* () {
               const state = threadState;
+              closed = true;
+              if (pendingPromptResponsesDrained !== null)
+                yield* Deferred.fail(
+                  pendingPromptResponsesDrained,
+                  protocolError("Pi transport closed while awaiting prompt acknowledgment"),
+                );
               if (rollbackBarrier !== null)
                 yield* Deferred.fail(
                   rollbackBarrier,
@@ -2495,12 +2518,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (state === null) {
               return yield* protocolError("Pi session has no registered thread");
             }
-            if (state.activeTurn !== null || pendingPromptResponses.length > 0) {
-              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                driver: PI_PROVIDER,
-                detail: `Pi provider thread ${turnInput.providerThread.id} already has an active turn`,
-                reason: "previous_turn_active",
-              });
+            while (true) {
+              if (state.activeTurn !== null) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: PI_PROVIDER,
+                  detail: `Pi provider thread ${turnInput.providerThread.id} already has an active turn`,
+                  reason: "previous_turn_active",
+                });
+              }
+              if (closed || stopRequested)
+                return yield* protocolError("Cannot start a Pi turn after session closure");
+              if (pendingPromptResponsesDrained === null) break;
+              yield* Deferred.await(pendingPromptResponsesDrained);
             }
             if (
               state.providerThread.nativeThreadRef?.nativeId !==
@@ -2577,83 +2606,93 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               rejectedPromptFailure: null,
             };
             // Lock only install/send/start events; correlated setup must leave the pump free for dialogs.
-            yield* Effect.gen(function* () {
-              if (
-                threadState !== state ||
-                state.activeTurn !== null ||
-                pendingPromptResponses.length > 0 ||
-                closed ||
-                stopRequested ||
-                rollbackBarrier !== null ||
-                state.providerThread.nativeThreadRef?.nativeId !==
-                  turnInput.providerThread.nativeThreadRef?.nativeId
-              ) {
-                return yield* protocolError("Pi turn ownership changed before it could start");
-              }
-              const wake = pendingWake?.state === state ? pendingWake : null;
-              if (wake !== null && wake.state.providerThread.appThreadId !== turnInput.threadId) {
-                return yield* protocolError("Pi native wake belongs to a different app thread");
-              }
-              pendingWake = null;
-              state.providerThread = turnInput.providerThread;
-              state.activeTurn = activeTurn;
-              activeTurn.adoptedWake = wake !== null && !continuation;
-              if (compactCommand !== null) {
-                yield* connection.send(compactRpcRecord(compactCommand));
-                pendingCompactResponses.push({
-                  providerTurnId: providerTurn.id,
-                  kind: "turn_start",
-                });
-              } else if (payload !== null) {
-                const id = `t3-prompt-${nextPromptId++}`;
-                yield* connection.send({
-                  id,
-                  type: "prompt",
-                  message: payload.message,
-                  streamingBehavior: "steer",
-                  ...(payload.images.length === 0 ? {} : { images: payload.images }),
-                });
-                pendingPromptResponses.push({
-                  id,
-                  providerTurnId: providerTurn.id,
-                  kind: "turn_start",
-                });
-              }
-              yield* emit({
-                type: "provider_turn.updated",
-                driver: PI_PROVIDER,
-                threadId: turnInput.threadId,
-                providerTurn,
-              });
-              yield* updateProviderThread(state, {
-                status: "active",
-                firstRunOrdinal: state.providerThread.firstRunOrdinal ?? turnInput.runOrdinal,
-                lastRunOrdinal: turnInput.runOrdinal,
-              });
-              yield* updateProviderSession("running", null);
-              if (wake !== null) {
-                for (const event of wake.events) {
-                  if (!continuation && event["type"] === "agent_settled") {
-                    activeTurn.nativeAborted = event["aborted"] === true;
-                    activeTurn.settleWhenIdle = true;
-                    continue;
-                  }
-                  yield* handleSessionEvent(event);
+            while (true) {
+              const pendingAck = yield* Effect.gen(function* () {
+                if (
+                  threadState !== state ||
+                  state.activeTurn !== null ||
+                  closed ||
+                  stopRequested ||
+                  rollbackBarrier !== null ||
+                  state.providerThread.nativeThreadRef?.nativeId !==
+                    turnInput.providerThread.nativeThreadRef?.nativeId
+                ) {
+                  return yield* protocolError("Pi turn ownership changed before it could start");
                 }
-              } else if (continuation) {
-                yield* finalizeTurn(state);
-              }
-              if (outOfTurnExtensionErrors.length > 0) {
-                yield* Queue.offer(connection.events, { type: "t3.flush_extension_errors" });
-              }
-            }).pipe(
-              sessionEventPermit.withPermits(1),
-              Effect.tapError(() =>
-                Effect.sync(() => {
-                  if (state.activeTurn === activeTurn) state.activeTurn = null;
-                }),
-              ),
-            );
+                if (pendingPromptResponsesDrained !== null) return pendingPromptResponsesDrained;
+                const wake = pendingWake?.state === state ? pendingWake : null;
+                if (wake !== null && wake.state.providerThread.appThreadId !== turnInput.threadId) {
+                  return yield* protocolError("Pi native wake belongs to a different app thread");
+                }
+                pendingWake = null;
+                state.providerThread = turnInput.providerThread;
+                state.activeTurn = activeTurn;
+                activeTurn.adoptedWake = wake !== null && !continuation;
+                if (compactCommand !== null) {
+                  yield* connection.send(compactRpcRecord(compactCommand));
+                  pendingCompactResponses.push({
+                    providerTurnId: providerTurn.id,
+                    kind: "turn_start",
+                  });
+                } else if (payload !== null) {
+                  const id = `t3-prompt-${nextPromptId++}`;
+                  yield* connection.send({
+                    id,
+                    type: "prompt",
+                    message: payload.message,
+                    streamingBehavior: "steer",
+                    ...(payload.images.length === 0 ? {} : { images: payload.images }),
+                  });
+                  pendingPromptResponsesDrained ??= yield* Deferred.make<
+                    void,
+                    ProviderAdapter.ProviderAdapterProtocolError
+                  >();
+                  pendingPromptResponses.push({
+                    id,
+                    providerTurnId: providerTurn.id,
+                    kind: "turn_start",
+                  });
+                }
+                yield* emit({
+                  type: "provider_turn.updated",
+                  driver: PI_PROVIDER,
+                  threadId: turnInput.threadId,
+                  providerTurn,
+                });
+                yield* updateProviderThread(state, {
+                  status: "active",
+                  firstRunOrdinal: state.providerThread.firstRunOrdinal ?? turnInput.runOrdinal,
+                  lastRunOrdinal: turnInput.runOrdinal,
+                });
+                yield* updateProviderSession("running", null);
+                if (wake !== null) {
+                  for (const event of wake.events) {
+                    if (!continuation && event["type"] === "agent_settled") {
+                      activeTurn.nativeAborted = event["aborted"] === true;
+                      activeTurn.settleWhenIdle = true;
+                      continue;
+                    }
+                    yield* handleSessionEvent(event);
+                  }
+                } else if (continuation) {
+                  yield* finalizeTurn(state);
+                }
+                if (outOfTurnExtensionErrors.length > 0) {
+                  yield* Queue.offer(connection.events, { type: "t3.flush_extension_errors" });
+                }
+                return null;
+              }).pipe(
+                sessionEventPermit.withPermits(1),
+                Effect.tapError(() =>
+                  Effect.sync(() => {
+                    if (state.activeTurn === activeTurn) state.activeTurn = null;
+                  }),
+                ),
+              );
+              if (pendingAck === null) break;
+              // The native event pump needs the permit to consume the actual ACK.
+              yield* Deferred.await(pendingAck);
+            }
             // Pi acks `prompt` only after slash-command expansion completes,
             // and extension commands may block on user dialogs indefinitely.
             // Correlated responses therefore return later through the event pump.
@@ -2709,6 +2748,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     streamingBehavior: "steer",
                     ...(payload.images.length === 0 ? {} : { images: payload.images }),
                   });
+                  pendingPromptResponsesDrained ??= yield* Deferred.make<
+                    void,
+                    ProviderAdapter.ProviderAdapterProtocolError
+                  >();
                   pendingPromptResponses.push({
                     id,
                     providerTurnId: turn.providerTurn.id,
