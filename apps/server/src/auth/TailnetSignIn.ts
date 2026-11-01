@@ -241,6 +241,12 @@ export const make = Effect.gen(function* () {
       const { granted, unreadable } = yield* policyGrantedPeers(status, (address) =>
         host.whois(address, { fromServer: true }),
       );
+      // A grant seen is kept at once, so if the checks below cannot finish, a later scan that
+      // cannot read every peer falls back to it, never to an older "no grants".
+      if (granted.length > 0) {
+        const seenAt = yield* Clock.currentTimeMillis;
+        yield* Ref.set(lastCleanScan, { account, granted: true, at: seenAt });
+      }
       // Lookups that ran after a switch read another tailnet, so the scan says nothing. A
       // device that joined since the scanned list was not looked up, so "no grants" is
       // unproven; a grant found still stands, as it only turns the owner rule off.

@@ -67,6 +67,8 @@ interface Tailnet {
   freshReads?: number;
   /** The caller's address is over its whois limit. */
   rateLimited?: boolean;
+  /** The read now with this count (1 is the first) fails, as when tailscaled stalls. */
+  failFreshReadAt?: number;
   node: JsonObject | null;
   /** The whois `CapMap`: the app capabilities grants give the device. */
   capMap?: JsonObject;
@@ -126,7 +128,9 @@ const layerTailscaleHost = (tailnet: Tailnet) =>
       ),
       freshStatus: Effect.suspend(() => {
         tailnet.freshReads = (tailnet.freshReads ?? 0) + 1;
-        return parseTailscaleStatus(tailscaleJson(withCaller(tailnet, tailnet.status)));
+        return tailnet.freshReads === tailnet.failFreshReadAt
+          ? parseTailscaleStatus("not json")
+          : parseTailscaleStatus(tailscaleJson(withCaller(tailnet, tailnet.status)));
       }),
       whois: (address, options) =>
         Effect.gen(function* () {
@@ -838,11 +842,30 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
       const tabletDevice = {
         node: phoneNode({ StableID: "nTablet", Addresses: [`${TABLET_ADDRESS}/32`] }),
       };
+      const STRANGER_ADDRESS = "100.88.1.30";
+      const stranger = phoneNode({
+        StableID: "nStranger",
+        User: "int64:999",
+        Addresses: [`${STRANGER_ADDRESS}/32`],
+        AllowedIPs: [`${STRANGER_ADDRESS}/32`],
+      });
+      const strangerPeer = {
+        ID: "nStranger",
+        TailscaleIPs: [STRANGER_ADDRESS],
+        UserID: "int64:999",
+      };
       const tailnet = withLaptop();
+      tailnet.status = hostStatus({ Peer: { ...peers, stranger: strangerPeer } });
+      tailnet.devices = { ...tailnet.devices, [STRANGER_ADDRESS]: { node: stranger } };
       return Effect.gen(function* () {
-        // A scan finds no grants, then the laptop gets one and the next scan reads it.
-        yield* signIn(makeDpopKey());
+        // Another user's device is refused after a scan that finds no grants. Being refused,
+        // it leaves no sign-in code for the background recheck to scan on.
+        expect(yield* refusalOf(signIn(makeDpopKey(), { remoteAddress: STRANGER_ADDRESS }))).toBe(
+          "other_user",
+        );
+        // The laptop gets a grant, and the next scan reads it.
         tailnet.devices = {
+          ...tailnet.devices,
           [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
         };
         yield* TestClock.adjust("1 minute");
@@ -852,12 +875,50 @@ it.layer(NodeServices.layer)("TailnetSignIn", (it) => {
         const phone = yield* refusalOf(signIn(makeDpopKey())).pipe(Effect.forkChild);
         yield* Deferred.await(started);
         // A tablet joins while that scan runs.
-        tailnet.status = hostStatus({ Peer: { ...peers, tablet } });
+        tailnet.status = hostStatus({ Peer: { ...peers, stranger: strangerPeer, tablet } });
         tailnet.devices = { ...tailnet.devices, [TABLET_ADDRESS]: tabletDevice };
         yield* Deferred.succeed(release, undefined);
         expect(yield* Fiber.join(phone)).toBe("no_grant");
         // The laptop can no longer be read; the grant found stands, not the older "no grants".
-        tailnet.devices = { [LAPTOP_ADDRESS]: { node: null }, [TABLET_ADDRESS]: tabletDevice };
+        tailnet.devices = {
+          [LAPTOP_ADDRESS]: { node: null },
+          [STRANGER_ADDRESS]: { node: stranger },
+          [TABLET_ADDRESS]: tabletDevice,
+        };
+        yield* TestClock.adjust("11 seconds");
+        expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("no_grant");
+      }).pipe(Effect.provide(layerTest(tailnet)));
+    });
+
+    it.effect("a grant a scan saw stands when the scan cannot finish its checks", () => {
+      const STRANGER_ADDRESS = "100.88.1.30";
+      const stranger = phoneNode({
+        StableID: "nStranger",
+        User: "int64:999",
+        Addresses: [`${STRANGER_ADDRESS}/32`],
+        AllowedIPs: [`${STRANGER_ADDRESS}/32`],
+      });
+      const tailnet = withLaptop();
+      tailnet.status = hostStatus({
+        Peer: {
+          ...peers,
+          stranger: { ID: "nStranger", TailscaleIPs: [STRANGER_ADDRESS], UserID: "int64:999" },
+        },
+      });
+      tailnet.devices = { ...tailnet.devices, [STRANGER_ADDRESS]: { node: stranger } };
+      return Effect.gen(function* () {
+        // A refused device leaves no sign-in code, so no background recheck scans meanwhile.
+        yield* refusalOf(signIn(makeDpopKey(), { remoteAddress: STRANGER_ADDRESS }));
+        tailnet.devices = {
+          ...tailnet.devices,
+          [LAPTOP_ADDRESS]: { node: laptop, capMap: granted({ scopes: ["read"] }) },
+        };
+        yield* TestClock.adjust("1 minute");
+        // The scan sees the laptop's grant, then its account check cannot read Tailscale.
+        tailnet.failFreshReadAt = (tailnet.freshReads ?? 0) + 2;
+        expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("policy_unknown");
+        // The laptop can no longer be read; the grant seen stands, not the older "no grants".
+        tailnet.devices = { ...tailnet.devices, [LAPTOP_ADDRESS]: { node: null } };
         yield* TestClock.adjust("11 seconds");
         expect(yield* refusalOf(signIn(makeDpopKey()))).toBe("no_grant");
       }).pipe(Effect.provide(layerTest(tailnet)));

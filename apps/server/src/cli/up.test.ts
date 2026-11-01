@@ -46,7 +46,7 @@ const TAGGED_HOST: Tailscale.TailscaleStatus = {
   certDomains: [],
   userspaceNetworking: false,
   peers: [],
-  unidentifiedPeerAddresses: [],
+  unidentifiedPeers: [],
   users: [{ userId: "123", loginName: "me@example.com" }],
 };
 

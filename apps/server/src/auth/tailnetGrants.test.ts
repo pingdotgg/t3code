@@ -2,9 +2,13 @@ import { expect, it } from "@effect/vitest";
 
 import { peersJoined } from "./tailnetGrants.ts";
 
-const list = (ids: ReadonlyArray<string>, unidentified: ReadonlyArray<string | null> = []) => ({
+// Peers with no ID as `key@address`, or a bare key for one with no address.
+const list = (ids: ReadonlyArray<string>, unidentified: ReadonlyArray<string> = []) => ({
   peers: ids.map((stableNodeId) => ({ stableNodeId })),
-  unidentifiedPeerAddresses: unidentified,
+  unidentifiedPeers: unidentified.map((peer) => {
+    const [key = "", address] = peer.split("@");
+    return { key, address: address ?? null };
+  }),
 });
 
 it.each([
@@ -13,20 +17,20 @@ it.each([
   { name: "a device joined", before: list(["a"]), after: list(["a", "b"]), joined: true },
   {
     name: "a peer with no ID replaced another",
-    before: list(["a"], ["100.88.1.21"]),
-    after: list(["a"], ["100.88.1.22"]),
+    before: list(["a"], ["k1@100.88.1.21"]),
+    after: list(["a"], ["k2@100.88.1.22"]),
     joined: true,
   },
   {
-    name: "a second peer with no ID at the same address",
-    before: list([], ["100.88.1.21"]),
-    after: list([], ["100.88.1.21", "100.88.1.21"]),
+    name: "another node with no ID took the same address",
+    before: list([], ["k1@100.88.1.21"]),
+    after: list([], ["k2@100.88.1.21"]),
     joined: true,
   },
   {
     name: "the same peers with no ID, one with no address",
-    before: list([], [null, "100.88.1.21"]),
-    after: list([], ["100.88.1.21", null]),
+    before: list([], ["k1", "k2@100.88.1.21"]),
+    after: list([], ["k2@100.88.1.21", "k1"]),
     joined: false,
   },
 ])(

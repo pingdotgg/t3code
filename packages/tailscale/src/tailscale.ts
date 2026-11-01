@@ -295,10 +295,13 @@ export interface TailscaleStatus {
   readonly userspaceNetworking: boolean | null;
   readonly peers: readonly TailscalePeer[];
   /**
-   * The first tailnet address of each peer with no ID, or null with none. It cannot be
-   * tracked, but a scan of the tailnet policy must still read it.
+   * Each peer with no ID: its key in the status (its node key) and first tailnet address, or
+   * null with none. It cannot be tracked, but a scan of the tailnet policy must still read it.
    */
-  readonly unidentifiedPeerAddresses: ReadonlyArray<string | null>;
+  readonly unidentifiedPeers: ReadonlyArray<{
+    readonly key: string;
+    readonly address: string | null;
+  }>;
   /** Users this node can see, by user ID. */
   readonly users: ReadonlyArray<{ readonly userId: string; readonly loginName: string | null }>;
 }
@@ -348,26 +351,32 @@ export const parseTailscaleStatus = (
   decodeTailscaleStatusJson(rawStatusJson).pipe(
     Effect.map((parsed): TailscaleStatus => {
       const self = parsed.Self;
-      const rawPeers =
+      const rawPeers: ReadonlyArray<readonly [string, unknown]> =
         parsed.Peer === undefined || parsed.Peer === null
           ? []
           : typeof parsed.Peer === "object" && !Array.isArray(parsed.Peer)
-            ? Object.values(parsed.Peer)
-            : [parsed.Peer];
-      const decodedPeers = rawPeers.map((peer) => decodeTailscaleStatusPeer(peer));
-      const peerEntries = decodedPeers.flatMap(Option.toArray);
-      const unidentifiedPeerAddresses = [
-        ...peerEntries
-          .filter((peer) => nonEmptyOrNull(peer.ID) === null)
-          .map(
-            (peer) =>
-              tailnetIpv4AddressesOf(peer.TailscaleIPs)[0] ??
-              tailnetIpv6AddressesOf(peer.TailscaleIPs)[0] ??
-              null,
-          ),
+            ? Object.entries(parsed.Peer)
+            : [["", parsed.Peer]];
+      const decodedPeers = rawPeers.map(
+        ([key, peer]) => [key, decodeTailscaleStatusPeer(peer)] as const,
+      );
+      const peerEntries = decodedPeers.flatMap(([, peer]) => Option.toArray(peer));
+      const unidentifiedPeers = decodedPeers.flatMap(([key, peer]) =>
         // A peer that cannot be read has no ID or address to look up, so a scan counts it unreadable.
-        ...decodedPeers.filter(Option.isNone).map(() => null),
-      ];
+        Option.isNone(peer)
+          ? [{ key, address: null }]
+          : nonEmptyOrNull(peer.value.ID) === null
+            ? [
+                {
+                  key,
+                  address:
+                    tailnetIpv4AddressesOf(peer.value.TailscaleIPs)[0] ??
+                    tailnetIpv6AddressesOf(peer.value.TailscaleIPs)[0] ??
+                    null,
+                },
+              ]
+            : [],
+      );
       const peers = peerEntries.flatMap((peer): TailscalePeer[] => {
         const stableNodeId = nonEmptyOrNull(peer.ID);
         if (stableNodeId === null) return [];
@@ -411,7 +420,7 @@ export const parseTailscaleStatus = (
         certDomains: parsed.CertDomains ?? [],
         userspaceNetworking: parsed.TUN === undefined ? null : !parsed.TUN,
         peers,
-        unidentifiedPeerAddresses,
+        unidentifiedPeers,
         users: Object.entries(parsed.User ?? {}).map(([userId, user]) => ({
           userId,
           loginName: nonEmptyOrNull(user.LoginName),

@@ -31,24 +31,28 @@ export const tailnetGrantScopes = (
   return [...scopes];
 };
 
-/**
- * Whether `after` lists a device `before` did not, so a scan of `before` never looked it up.
- * Peers with no ID are compared by address, so one replacing another still counts.
- */
-type PeerList = Pick<TailscaleStatus, "unidentifiedPeerAddresses"> & {
+type PeerList = Pick<TailscaleStatus, "unidentifiedPeers"> & {
   readonly peers: ReadonlyArray<{ readonly stableNodeId: string }>;
 };
+
+/**
+ * Whether `after` lists a device `before` did not, so a scan of `before` never looked it up.
+ * Peers with no ID are compared by node key and address, so one replacing another counts.
+ */
 
 export const peersJoined = (before: PeerList, after: PeerList): boolean => {
   const known = new Set(before.peers.map((peer) => peer.stableNodeId));
   if (after.peers.some((peer) => !known.has(peer.stableNodeId))) return true;
-  const unidentified = new Map<string | null, number>();
-  for (const address of before.unidentifiedPeerAddresses) {
-    unidentified.set(address, (unidentified.get(address) ?? 0) + 1);
+  // By node key and address, so neither a new node at an old address nor a moved one hides.
+  const keyOf = (peer: TailscaleStatus["unidentifiedPeers"][number]) =>
+    `${peer.key} ${peer.address ?? ""}`;
+  const unidentified = new Map<string, number>();
+  for (const peer of before.unidentifiedPeers) {
+    unidentified.set(keyOf(peer), (unidentified.get(keyOf(peer)) ?? 0) + 1);
   }
-  return after.unidentifiedPeerAddresses.some((address) => {
-    const left = unidentified.get(address) ?? 0;
-    unidentified.set(address, left - 1);
+  return after.unidentifiedPeers.some((peer) => {
+    const left = unidentified.get(keyOf(peer)) ?? 0;
+    unidentified.set(keyOf(peer), left - 1);
     return left === 0;
   });
 };
@@ -75,7 +79,7 @@ export const policyGrantedPeers = Effect.fn("tailnetGrants.policyGrantedPeers")(
         stableNodeId: peer.stableNodeId,
       };
     }),
-    ...status.unidentifiedPeerAddresses.map((address) => ({
+    ...status.unidentifiedPeers.map(({ address }) => ({
       address: address ?? undefined,
       name: address ?? "a peer with no ID",
       stableNodeId: null,

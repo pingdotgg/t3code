@@ -233,7 +233,7 @@ describe("tailscale", () => {
         certDomains: [],
         userspaceNetworking: null,
         peers: [],
-        unidentifiedPeerAddresses: [],
+        unidentifiedPeers: [],
         users: [],
       });
     }),
@@ -283,7 +283,7 @@ describe("tailscale", () => {
         status.peers.map((peer) => peer.stableNodeId),
         ["nLaptop"],
       );
-      assert.deepEqual(status.unidentifiedPeerAddresses, [null]);
+      assert.deepEqual(status.unidentifiedPeers, [{ key: "nodekey:b", address: null }]);
     }),
   );
 
