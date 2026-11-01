@@ -1691,11 +1691,32 @@ effectIt.effect("does not mistake a failed state read for a superseded run", () 
   }),
 );
 
-effectIt.effect(
-  "signs out the existing native provider before opening the newly selected provider",
-  () =>
+effectIt.effect.each(["not_loaded", "error"] as const)(
+  "signs out the existing native provider before opening the newly selected provider with status %s",
+  (providerThreadStatus) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({ text: "/logout", previousNativeSession: true });
+      const initial = harness.projection();
+      const target = initial.providerThreads.find((thread) => thread.id === "new-provider-thread")!;
+      harness.setProjection({
+        ...initial,
+        providerThreads: initial.providerThreads.map((thread) =>
+          thread.id === target.id
+            ? {
+                ...thread,
+                status: providerThreadStatus,
+                nativeThreadRef:
+                  providerThreadStatus === "error"
+                    ? {
+                        driver: thread.driver,
+                        nativeId: "poisoned-native-history",
+                        strength: "strong" as const,
+                      }
+                    : thread.nativeThreadRef,
+              }
+            : thread,
+        ),
+      });
 
       yield* harness.start;
       yield* harness.start;
@@ -1721,6 +1742,9 @@ effectIt.effect(
       ]);
       expect(projection.providerTurns).toEqual([]);
       expect(projection.checkpoints).toEqual([]);
+      expect(projection.providerThreads.find((thread) => thread.id === target.id)?.status).toBe(
+        providerThreadStatus,
+      );
     }),
 );
 
