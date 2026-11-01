@@ -32,9 +32,13 @@ import { useCheckpointDiff, useTurnItemDetail } from "~/state/queries";
 import { revisionedQuery } from "~/state/revisionedQuery";
 import { cn } from "~/lib/utils";
 import {
+  EMPTY_DIFF_FILE_FOLD_STATE,
+  isDiffFileFoldCollapsed,
+  resolveDiffFileFoldOverride,
   resolveToolCallDiffTarget,
   selectThreadBranchBaseRef,
   selectThreadDiffPanelSelection,
+  toggleDiffFileFoldKey,
   useDiffPanelSessionStore,
   useDiffPanelStore,
 } from "../diffPanelStore";
@@ -52,7 +56,7 @@ import {
   resolveFileDiffPath,
 } from "../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
-import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
+import { areAllDiffFilesCollapsed } from "../lib/diffCollapse";
 import { LIVE_REFRESH_MIN_INTERVAL_MS, useLiveRefresh } from "../hooks/useLiveRefresh";
 import {
   useProject,
@@ -127,8 +131,6 @@ function getCachedFileEntry(fileDiff: FileDiffMetadata) {
   fileEntryCache.set(fileDiff, entry);
   return entry;
 }
-
-const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
 
 function DiffFileCollapseToggle({
   filePath,
@@ -616,21 +618,20 @@ export default function DiffPanel({
   };
   const shownFileEntries = renderableFileEntries.filter(({ fileDiff }) => isFileShown(fileDiff));
   const shownFileKeys = shownFileEntries.map((file) => file.fileKey);
-  const defaultCollapsedDiffFileKeys = settings.diffFilesCollapsed
-    ? new Set(diffFileKeys)
-    : EMPTY_COLLAPSED_DIFF_FILE_KEYS;
-  const storedCollapsedDiffFileKeys = useDiffPanelSessionStore((state) =>
-    collapseScopeKey ? state.collapsedFileKeysByScopeKey[collapseScopeKey] : undefined,
+  const storedFoldState = useDiffPanelSessionStore((state) =>
+    collapseScopeKey ? state.foldStateByScopeKey[collapseScopeKey] : undefined,
   );
-  const collapsedDiffFileKeys = storedCollapsedDiffFileKeys ?? defaultCollapsedDiffFileKeys;
-  const updateCollapsedDiffFiles = (
-    update: (current: ReadonlySet<string>) => ReadonlySet<string>,
-  ) => {
+  const foldState = storedFoldState ?? EMPTY_DIFF_FILE_FOLD_STATE;
+  const effectiveFoldOverride = resolveDiffFileFoldOverride(
+    foldState.foldOverride,
+    settings.diffFilesCollapsed,
+  );
+  const updateDiffFoldState = (update: (current: typeof foldState) => typeof foldState) => {
     if (!collapseScopeKey) return;
-    useDiffPanelSessionStore
-      .getState()
-      .updateCollapsedFileKeys(collapseScopeKey, defaultCollapsedDiffFileKeys, update);
+    useDiffPanelSessionStore.getState().updateFoldState(collapseScopeKey, update);
   };
+  const isDiffFileCollapsed = (fileKey: string) =>
+    isDiffFileFoldCollapsed(fileKey, effectiveFoldOverride, foldState.toggledFileKeys);
   const renderLoadingBoundary = () =>
     settledFileCount < renderableFiles.length ? (
       <DiffFileLoadingBoundary
@@ -648,12 +649,12 @@ export default function DiffPanel({
       filePath: resolveFileDiffPath(fileDiff),
       fileKey,
       fileVersion,
-      collapsed:
-        collapsedDiffFileKeys.has(fileKey) || fileDiff.cacheKey?.endsWith(":pending") === true,
+      collapsed: isDiffFileCollapsed(fileKey) || fileDiff.cacheKey?.endsWith(":pending") === true,
     }));
   const pendingFiles = renderableFiles.filter(
     (file) => file.cacheKey?.endsWith(":pending") && isFileShown(file),
   );
+  const collapsedDiffFileKeys = new Set(shownFileKeys.filter(isDiffFileCollapsed));
   const allDiffFilesCollapsed = areAllDiffFilesCollapsed(shownFileKeys, collapsedDiffFileKeys);
   const diffLineStat = sourceLineStat ?? getDiffLineStat(renderableFiles);
   const fileTreeEntries = diffFileTreeEntries(renderableFiles.filter(isFileShown));
@@ -664,10 +665,18 @@ export default function DiffPanel({
     );
     const file = renderableFileEntries[index];
     if (!file) return false;
-    updateCollapsedDiffFiles((current) => {
-      const next = new Set(current);
-      next.delete(file.fileKey);
-      return next;
+    updateDiffFoldState((current) => {
+      const effective = resolveDiffFileFoldOverride(
+        current.foldOverride,
+        settings.diffFilesCollapsed,
+      );
+      if (!isDiffFileFoldCollapsed(file.fileKey, effective, current.toggledFileKeys)) {
+        return current;
+      }
+      return {
+        ...current,
+        toggledFileKeys: toggleDiffFileFoldKey(file.fileKey, current.toggledFileKeys),
+      };
     });
     if (lazySource && index >= settledFileCount) {
       requestFile(index);
@@ -718,29 +727,32 @@ export default function DiffPanel({
     });
   };
   const toggleDiffFileCollapsed = useStableCallback((fileKey: string) => {
-    updateCollapsedDiffFiles((current) => {
-      const next = new Set(current);
-      if (next.has(fileKey)) {
-        next.delete(fileKey);
-      } else {
-        next.add(fileKey);
-      }
-      return next;
-    });
+    updateDiffFoldState((current) => ({
+      ...current,
+      toggledFileKeys: toggleDiffFileFoldKey(fileKey, current.toggledFileKeys),
+    }));
   });
   // Find can ask again before the unfolded file reaches the viewer, so this must never fold.
   const unfoldDiffFile = useStableCallback((fileKey: string) => {
-    updateCollapsedDiffFiles((current) => {
-      if (!current.has(fileKey)) return current;
-      const next = new Set(current);
-      next.delete(fileKey);
-      return next;
+    updateDiffFoldState((current) => {
+      const effective = resolveDiffFileFoldOverride(
+        current.foldOverride,
+        settings.diffFilesCollapsed,
+      );
+      if (!isDiffFileFoldCollapsed(fileKey, effective, current.toggledFileKeys)) return current;
+      return {
+        ...current,
+        toggledFileKeys: toggleDiffFileFoldKey(fileKey, current.toggledFileKeys),
+      };
     });
   });
 
   const toggleDiffFileCollapse = () => {
     setCodeViewRevision((current) => current + 1);
-    updateCollapsedDiffFiles((current) => toggleAllDiffFiles(shownFileKeys, current));
+    updateDiffFoldState(() => ({
+      foldOverride: allDiffFilesCollapsed ? "expanded" : "folded",
+      toggledFileKeys: EMPTY_DIFF_FILE_FOLD_STATE.toggledFileKeys,
+    }));
   };
 
   const selectTurn = (runId: RunId) => {
@@ -1429,7 +1441,7 @@ export default function DiffPanel({
                         <DiffFileCollapseToggle
                           filePath={resolveFileDiffPath(fileDiff)}
                           fileKey={fileKey}
-                          collapsed={unavailable || collapsedDiffFileKeys.has(fileKey)}
+                          collapsed={unavailable || isDiffFileCollapsed(fileKey)}
                           unavailable={unavailable}
                           onToggle={toggleDiffFileCollapsed}
                         />

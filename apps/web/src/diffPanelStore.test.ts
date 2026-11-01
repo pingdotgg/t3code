@@ -4,6 +4,8 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  isDiffFileFoldCollapsed,
+  resolveDiffFileFoldOverride,
   resolveToolCallDiffTarget,
   useDiffPanelSessionStore,
   useDiffPanelStore,
@@ -15,7 +17,7 @@ describe("diffPanelStore", () => {
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
     });
-    useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
+    useDiffPanelSessionStore.setState({ foldStateByScopeKey: {} });
   });
 
   it("keeps a tool call selection independent of checkpoints and allows returning to Git changes", () => {
@@ -85,34 +87,29 @@ describe("diffPanelStore", () => {
     expect(resolveToolCallDiffTarget(target, [])).toBe(target);
   });
 
-  it("retains fold choices when a panel consumer returns with fresh defaults", () => {
+  it("retains fold choices when a panel consumer returns", () => {
     const scopeKey = "environment-1:thread-1:branch";
-    const defaults = new Set(["src/app.ts", "src/index.ts"]);
-    useDiffPanelSessionStore.getState().updateCollapsedFileKeys(scopeKey, defaults, (current) => {
-      const next = new Set(current);
-      next.delete("src/app.ts");
-      return next;
+    useDiffPanelSessionStore.getState().updateFoldState(scopeKey, (current) => ({
+      ...current,
+      foldOverride: "folded",
+      toggledFileKeys: new Set(["src/app.ts"]),
+    }));
+
+    expect(useDiffPanelSessionStore.getState().foldStateByScopeKey[scopeKey]).toEqual({
+      foldOverride: "folded",
+      toggledFileKeys: new Set(["src/app.ts"]),
     });
 
-    expect(useDiffPanelSessionStore.getState().collapsedFileKeysByScopeKey[scopeKey]).toEqual(
-      new Set(["src/index.ts"]),
-    );
-
-    useDiffPanelSessionStore.getState().updateCollapsedFileKeys(scopeKey, new Set(), (current) => {
-      const next = new Set(current);
-      next.delete("src/index.ts");
-      return next;
+    useDiffPanelSessionStore.getState().updateFoldState(scopeKey, (current) => current);
+    expect(useDiffPanelSessionStore.getState().foldStateByScopeKey[scopeKey]).toEqual({
+      foldOverride: "folded",
+      toggledFileKeys: new Set(["src/app.ts"]),
     });
-    expect(useDiffPanelSessionStore.getState().collapsedFileKeysByScopeKey[scopeKey]).toEqual(
-      new Set(),
-    );
+  });
 
-    useDiffPanelSessionStore
-      .getState()
-      .updateCollapsedFileKeys(scopeKey, defaults, (current) => current);
-    expect(useDiffPanelSessionStore.getState().collapsedFileKeysByScopeKey[scopeKey]).toEqual(
-      new Set(),
-    );
-    expect(defaults).toEqual(new Set(["src/app.ts", "src/index.ts"]));
+  it("keeps files that arrive after collapse-all folded", () => {
+    const foldOverride = resolveDiffFileFoldOverride("folded", false);
+    expect(isDiffFileFoldCollapsed("a.ts", foldOverride, new Set())).toBe(true);
+    expect(isDiffFileFoldCollapsed("new.ts", foldOverride, new Set())).toBe(true);
   });
 });
