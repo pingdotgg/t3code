@@ -25,10 +25,12 @@ internal object DpopSigner {
       require(scalar.signum() > 0 && scalar < parameters.order) { "Invalid P-256 private key." }
       val factory = KeyFactory.getInstance("EC")
       val privateKey = factory.generatePrivate(ECPrivateKeySpec(scalar, parameters))
-      val publicKey = factory.generatePublic(ECPublicKeySpec(
-        ECPoint(BigInteger(1, publicX), BigInteger(1, publicY)),
-        parameters
-      ))
+      val publicKey = factory.generatePublic(
+        ECPublicKeySpec(
+          ECPoint(BigInteger(1, publicX), BigInteger(1, publicY)),
+          parameters
+        )
+      )
       val data = input.toByteArray(Charsets.UTF_8)
       val signature = Signature.getInstance("SHA256withECDSA").run {
         initSign(privateKey)
