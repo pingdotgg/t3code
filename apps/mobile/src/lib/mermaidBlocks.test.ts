@@ -20,6 +20,10 @@ describe("splitMarkdownWithMermaid", () => {
   it("leaves unclosed fences as markdown for streaming", () => {
     const markdown = "Before\n\n```mermaid\nflowchart TD\n  A --> B";
     expect(splitMarkdownWithMermaid(markdown)).toMatchObject([{ kind: "markdown", markdown }]);
+    const example = "````md\n```mermaid\nflowchart TD\nA --> B\n```";
+    expect(splitMarkdownWithMermaid(example)).toMatchObject([
+      { kind: "markdown", markdown: example },
+    ]);
   });
 
   it("supports tilde fences and ignores non-mermaid fences", () => {
@@ -83,6 +87,13 @@ describe("splitMarkdownWithMermaid", () => {
       expect(tail.markdown).toMatch(/^\[guide\]: https:\/\/example\.com\n/);
       expect(tail.markdown).toContain("[Open][guide]");
     }
+    const multiline = splitMarkdownWithMermaid(
+      "[guide]:\n  https://example.com\n\n```mermaid\nA --> B\n```\n[Open][guide]",
+    );
+    expect(multiline.at(-1)).toMatchObject({
+      kind: "markdown",
+      markdown: "[guide]:\n  https://example.com\n[Open][guide]",
+    });
   });
 
   it("renders a mermaid fence inside a blockquote", () => {
@@ -100,6 +111,10 @@ describe("splitMarkdownWithMermaid", () => {
     const segments = splitMarkdownWithMermaid(markdown);
     expect(segments.map((segment) => segment.kind)).toEqual(["markdown"]);
     expect(segments[0]).toMatchObject({ kind: "markdown", markdown });
+    const separateQuote = "> ```mermaid\n> A --> B\nOutside\n> ```ts\n> const x = 1;\n> ```";
+    expect(splitMarkdownWithMermaid(separateQuote)).toMatchObject([
+      { kind: "markdown", markdown: separateQuote },
+    ]);
   });
 
   it("ignores link definitions inside fenced code", () => {

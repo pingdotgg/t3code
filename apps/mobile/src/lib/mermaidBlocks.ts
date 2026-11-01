@@ -12,6 +12,7 @@ export type MermaidMarkdownSegment =
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^\n]*)\n?/;
 const QUOTE_RE = /^(?: {0,3}>[ \t]?)+/;
 const DEFINITION_RE = /^ {0,3}\[[^\]\n]+\]:[ \t]*\S.*$/;
+const DEFINITION_LABEL_RE = /^ {0,3}\[[^\]\n]+\]:[ \t]*$/;
 
 function stripQuote(line: string): string {
   return line.replace(QUOTE_RE, "");
@@ -45,9 +46,8 @@ function closerIndex(
   const char = fence[0] === "`" ? "`" : "~";
   const closeRe = new RegExp(`^ {0,3}${char}{${fence.length},}[ \\t]*$`);
   for (let scan = from; scan < lines.length; scan += 1) {
-    // A fenced block ends when its blockquote ends, so only a fence at the
-    // opener's quote depth or deeper can close it.
-    if ((depths[scan] ?? 0) >= minDepth && closeRe.test(lines[scan] ?? "")) return scan;
+    if ((depths[scan] ?? 0) < minDepth) return -1;
+    if (closeRe.test(lines[scan] ?? "")) return scan;
   }
   return -1;
 }
@@ -79,6 +79,15 @@ function collectDefinitions(markdown: string): string[] {
       continue;
     }
     if (DEFINITION_RE.test(line)) found.push(line);
+    else if (
+      DEFINITION_LABEL_RE.test(line) &&
+      (depths[index + 1] ?? 0) === (depths[index] ?? 0) &&
+      /^[ \t]*\S/.test(lines[index + 1] ?? "") &&
+      !FENCE_RE.test(lines[index + 1] ?? "")
+    ) {
+      found.push(`${line}\n${lines[index + 1]}`);
+      index += 1;
+    }
     index += 1;
   }
   return [...new Set(found)];
@@ -121,6 +130,7 @@ export function splitMarkdownWithMermaid(markdown: string): MermaidMarkdownSegme
     const close = closerIndex(text, depths, index + 1, fence, depth);
     if (close === -1) {
       index += 1;
+      while (index < lines.length && (depths[index] ?? 0) >= depth) index += 1;
       continue;
     }
     // A non-mermaid fence may document a mermaid example; keep it whole.
