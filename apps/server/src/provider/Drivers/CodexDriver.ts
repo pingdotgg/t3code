@@ -150,7 +150,10 @@ export const CodexDriver: ProviderDriver<
     const installation = yield* CodexInstallation.CodexInstallation;
     const modelCatalog = yield* ModelCatalog.ModelCatalog;
     const currentCatalog = modelCatalog.current(DRIVER_KIND);
-    const processEnv = yield* mergeProviderInstanceEnvironment(environment);
+    const processEnv = yield* mergeProviderInstanceEnvironment(
+      environment,
+      yield* HostProcess.Environment,
+    );
     const environmentHome = processEnv.CODEX_HOME;
     const homeLayout = yield* resolveCodexHomeLayout(
       !config.homePath.trim() && !config.shadowHomePath.trim() && environmentHome?.trim()

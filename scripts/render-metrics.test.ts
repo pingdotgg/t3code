@@ -1,6 +1,45 @@
-import { describe, expect, it } from "vite-plus/test";
+// @effect-diagnostics nodeBuiltinImport:off - runOnce is a synchronous script, tested on a real temp dir.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
-import { nondeterministic, renderComparison } from "./render-metrics.ts";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { nondeterministic, renderComparison, runOnce } from "./render-metrics.ts";
+
+const mountReport = { commits: 2, renders: 10, components: { Row: 10 } };
+
+vi.mock("node:child_process", () => ({
+  spawnSync: (
+    _command: string,
+    _args: string[],
+    options: { env: { T3CODE_RENDER_REPORT_DIR: string } },
+  ) => {
+    NodeFS.writeFileSync(
+      NodePath.join(options.env.T3CODE_RENDER_REPORT_DIR, "mount.json"),
+      JSON.stringify(mountReport),
+    );
+    return { status: 0 };
+  },
+}));
+
+describe("runOnce", () => {
+  it("collects the scenario reports when HOME has no .cache, then removes its report dir", () => {
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-render-metrics-"));
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("TMPDIR", home);
+    vi.stubEnv("USERPROFILE", home);
+    vi.stubEnv("TEMP", home);
+    vi.stubEnv("TMP", home);
+    try {
+      expect(runOnce()).toEqual({ mount: mountReport });
+      expect(NodeFS.readdirSync(home)).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+      NodeFS.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("nondeterministic", () => {
   it("names only the scenarios whose counts differ between runs", () => {

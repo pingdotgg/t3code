@@ -16,6 +16,7 @@ import {
   type ThreadSearchShell,
 } from "@t3tools/client-runtime/state/thread-search";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   isListedThreadLineage,
   type ContextMenuItem,
@@ -182,6 +183,29 @@ export function resolveSidebarThreadSection(input: {
   if (input.settled) return "settled";
   if (input.pinned) return "pinned";
   return "active";
+}
+
+// Keep cached placement on the first connection attempt, matching mobile's threadRouteIsHydrating.
+export function isSidebarEnvironmentDisconnected(
+  phase: EnvironmentConnectionPhase,
+  shellIsLive: boolean,
+): boolean {
+  return phase !== "connecting" && (phase !== "connected" || !shellIsLive);
+}
+
+export function belongsInSidebarWorkingShelf<T extends { readonly environmentId: EnvironmentId }>(
+  thread: T,
+  input: {
+    readonly enabled: boolean;
+    readonly disconnectedEnvironmentIds: ReadonlySet<EnvironmentId>;
+    readonly isWorking: (thread: T) => boolean;
+  },
+): boolean {
+  return (
+    input.enabled &&
+    !input.disconnectedEnvironmentIds.has(thread.environmentId) &&
+    input.isWorking(thread)
+  );
 }
 
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
@@ -782,11 +806,13 @@ export function isSidebarNestedLinkClick(target: EventTarget | null): boolean {
   return nodeClosest(parent, "a[href]") !== null;
 }
 
+/** The "New thread in" picker opens unless there is one open project or none; then the current context decides. */
 export function shouldCreateNewThreadInCurrentProject(
   shiftKey: boolean,
+  openProjectGroupCount: number,
   projectGroupCount: number,
 ): boolean {
-  return shiftKey || projectGroupCount <= 1;
+  return shiftKey || openProjectGroupCount === 1 || projectGroupCount === 0;
 }
 
 export function orderItemsByPreferredIds<TItem, TId>(input: {
@@ -973,7 +999,7 @@ export function sidebarFolderExpansionKeys(group: {
 
 /**
  * Boring sidebar folders. Folders follow `groups` order and threads keep their
- * input order. A project with no threads gets a folder only with `keepEmpty`.
+ * input order. A project with no threads gets a folder only when `keepEmpty` says so.
  * A thread whose project is in no group has no folder and is left out.
  */
 export function groupSidebarThreadsByProject<
@@ -987,7 +1013,7 @@ export function groupSidebarThreadsByProject<
 >(
   groups: readonly TGroup[],
   threads: readonly TThread[],
-  keepEmpty: boolean,
+  keepEmpty: (group: TGroup) => boolean,
 ): Array<{ group: TGroup; threads: TThread[] }> {
   const folders = groups.map((group) => ({ group, threads: [] as TThread[] }));
   const folderByProject = new Map<string, (typeof folders)[number]>();
@@ -999,7 +1025,7 @@ export function groupSidebarThreadsByProject<
   for (const thread of threads) {
     folderByProject.get(`${thread.environmentId}:${thread.projectId}`)?.threads.push(thread);
   }
-  return keepEmpty ? folders : folders.filter((folder) => folder.threads.length > 0);
+  return folders.filter((folder) => folder.threads.length > 0 || keepEmpty(folder.group));
 }
 
 export type SidebarV2TopStatusKind =
