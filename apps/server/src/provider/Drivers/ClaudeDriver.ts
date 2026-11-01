@@ -6,6 +6,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
+import * as UsageLimitSources from "../../usage/UsageLimitSources.ts";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
@@ -170,6 +172,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     });
 
     const scopedLimitNames = yield* makeClaudeScopedLimitNames;
+    const usageLimitSources = yield* Effect.serviceOption(UsageLimitSources.UsageLimitSources);
     const orchestrationAdapter = yield* createClaudeAdapterV2(
       {
         instanceId,
@@ -179,7 +182,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         enabled,
         config,
       },
-      { scopedLimitNames, onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
+      {
+        scopedLimitNames,
+        onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+        ...(Option.isSome(usageLimitSources) && processEnv.ANTHROPIC_BASE_URL
+          ? {
+              usageLimitResetFallback: (model: string) =>
+                usageLimitSources.value.poolResetAt({
+                  baseUrl: processEnv.ANTHROPIC_BASE_URL!,
+                  apiKey: processEnv.ANTHROPIC_AUTH_TOKEN || processEnv.ANTHROPIC_API_KEY || "",
+                  model,
+                }),
+            }
+          : {}),
+      },
     ).pipe(
       Effect.mapError(
         (cause) =>

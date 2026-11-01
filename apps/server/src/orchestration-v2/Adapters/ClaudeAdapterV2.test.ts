@@ -2932,6 +2932,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
 
   const makeWakeHarnessWithOptions = (options?: {
+    readonly usageLimitResetFallback?: ClaudeAdapterV2.ClaudeAdapterV2Options["usageLimitResetFallback"];
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void>;
     readonly setPermissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setPermissionMode"];
@@ -3004,6 +3005,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
       const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+        ...(options?.usageLimitResetFallback
+          ? { usageLimitResetFallback: options.usageLimitResetFallback }
+          : {}),
         settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
         environment: options?.environment ?? {},
         attachmentsDir,
@@ -5658,6 +5662,54 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect(
+    "classifies the screenshot's exact Claude 429 cooling-down message without a reset time",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-screenshot-429"),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        // Exact visible text from the user-supplied screenshot. The SDK envelope
+        // is synthetic; the screenshot does not establish the original SDK fields.
+        const text =
+          "API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down (last error: rate_limit_error: This request would exceed your account's rate limit. Please try again later.)";
+        yield* Queue.offerAll(harness.sdkMessages, [
+          makeAssistantErrorFrame({
+            uuid: "00000000-0000-4000-8000-000000009429",
+            error: "rate_limit",
+            text,
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000009430",
+            result: text,
+            isError: true,
+            terminalReason: "api_error",
+            apiErrorStatus: 429,
+          }),
+        ]);
+
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        if (terminal.status !== "failed") return;
+        assert.equal(terminal.failure.class, "usage_limit");
+        assert.equal(terminal.failure.retryable, true);
+        assert.isNull(terminal.failure.resetAt);
+        assert.equal(terminal.failure.code, "api_error_429");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
   it.effect("names an expired Claude login instead of the terminal API error", () =>
     Effect.gen(function* () {
       const configDir = "/synthetic/Claude config";
@@ -6431,6 +6483,154 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ? "Claude usage limit reached. Send the message again once the limit resets."
           : "Claude gave up after repeated API errors.",
       );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("honors a stop while the proxy reset lookup is in flight", () =>
+    Effect.gen(function* () {
+      const lookupStarted = yield* Deferred.make<void>();
+      const releaseLookup = yield* Deferred.make<void>();
+      const interruptCalled = yield* Deferred.make<void>();
+      const harness = yield* makeWakeHarnessWithOptions({
+        usageLimitResetFallback: () =>
+          Deferred.succeed(lookupStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseLookup)),
+            Effect.as("2099-10-20T12:10:00.000Z"),
+          ),
+        interrupt: Deferred.succeed(interruptCalled, undefined).pipe(Effect.asVoid),
+        close: Queue.shutdown,
+      });
+      const attemptId = RunAttemptId.make("attempt-stop-during-management");
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId,
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000697",
+          result: "API Error: 429 rate limit",
+          isError: true,
+          apiErrorStatus: 429,
+        }),
+      );
+      yield* Deferred.await(lookupStarted);
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const stopping = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          }),
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(interruptCalled);
+      yield* Deferred.succeed(releaseLookup, undefined);
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+      yield* Fiber.join(stopping);
+      assert.lengthOf(harness.terminalEvents(), 1);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    "fallback",
+    "native",
+    "native-unknown",
+    "native-mixed-unknown",
+    "unknown",
+    "failure",
+  ])("propagates proxy reset fallback with native precedence: %s", (scenario) =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const reset = "2099-10-20T12:10:00.000Z";
+      const harness = yield* makeWakeHarnessWithOptions({
+        usageLimitResetFallback: (model) =>
+          Effect.sync(() => {
+            calls.push(model);
+            return scenario === "unknown" ? null : reset;
+          }).pipe(
+            Effect.filterOrFail(
+              () => scenario !== "failure",
+              () => "refresh failed",
+            ),
+            Effect.orElseSucceed(() => null),
+          ),
+      });
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make(`attempt-fallback-${scenario}`),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      if (scenario === "native-mixed-unknown")
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "rate_limit_event",
+            rate_limit_info: {
+              status: "rejected",
+              rateLimitType: "seven_day",
+              resetsAt: 1790298600,
+            },
+            uuid: "00000000-0000-4000-8000-000000000696",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+      if (scenario.startsWith("native"))
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantErrorFrame({
+            uuid: "00000000-0000-4000-8000-000000000699",
+            error: "rate_limit",
+            parentToolUseId: null,
+            apiErrorParams: {
+              rate_limit_info: {
+                status: "rejected",
+                rateLimitType: "five_hour",
+                ...(scenario === "native" ? { resetsAt: 1790298600 } : {}),
+              },
+            },
+          }),
+        );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000698",
+          result:
+            'API Error: 429 {"error":{"type":"rate_limit_error","message":"Please try again later."}}',
+          isError: true,
+          apiErrorStatus: 429,
+        }),
+      );
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.equal(terminal.failure.class, "usage_limit");
+      assert.equal(
+        terminal.failure.resetAt,
+        scenario === "native" ? "2026-09-25T01:10:00.000Z" : scenario === "fallback" ? reset : null,
+      );
+      assert.equal(calls.length, scenario.startsWith("native") ? 0 : 1);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

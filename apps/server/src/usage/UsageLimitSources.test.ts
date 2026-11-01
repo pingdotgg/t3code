@@ -4,7 +4,7 @@ import { ServerConfigStreamEvent, UsageLimitSourceId } from "@t3tools/contracts"
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -82,4 +82,77 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
     ]),
     Effect.scoped,
   ),
+);
+
+it.effect.each(["matched", "other-origin", "path", "duplicate", "disabled", "refresh-failed"])(
+  "resolves only a fresh unambiguous managed pool: %s",
+  (scenario) =>
+    Effect.gen(function* () {
+      const config = {
+        kind: "cliproxy" as const,
+        url: "http://hub.test",
+        managementKey: "management",
+        enabled: scenario !== "disabled",
+      };
+      const sources = yield* UsageLimitSources.make.pipe(
+        Effect.provide([
+          ServerSettings.layerTest({
+            usageLimitSources: {
+              [UsageLimitSourceId.make("hub")]: config,
+              ...(scenario === "duplicate" ? { [UsageLimitSourceId.make("second")]: config } : {}),
+            },
+          }),
+          Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+            shouldRunScopeWork: () => Effect.succeed(false),
+          }),
+          Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.sync(() => {
+                const path = new URL(request.url).pathname;
+                const body = path.endsWith("/config")
+                  ? { "api-keys": ["global"] }
+                  : path.endsWith("/models")
+                    ? { models: [{ id: "claude-opus-5-5" }] }
+                    : {
+                        files: [
+                          {
+                            id: "a",
+                            auth_index: "a",
+                            provider: "claude",
+                            disabled: false,
+                            cooldowns: [
+                              {
+                                scope: "model",
+                                model_key: "claude-opus-5-5",
+                                reason: "quota",
+                                retry_at: "2099-01-01T00:00:00Z",
+                              },
+                            ],
+                          },
+                        ],
+                      };
+                return HttpClientResponse.fromWeb(
+                  request,
+                  Response.json(body, { status: scenario === "refresh-failed" ? 503 : 200 }),
+                );
+              }),
+            ),
+          ),
+          NodeCrypto.layer,
+        ]),
+      );
+      expect(
+        yield* sources.poolResetAt({
+          baseUrl:
+            scenario === "other-origin"
+              ? "http://other.test"
+              : scenario === "path"
+                ? "http://hub.test/proxy"
+                : config.url,
+          apiKey: "global",
+          model: "claude-opus-5-5",
+        }),
+      ).toBe(scenario === "matched" ? "2099-01-01T00:00:00.000Z" : null);
+    }).pipe(Effect.scoped),
 );

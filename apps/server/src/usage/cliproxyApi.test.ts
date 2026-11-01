@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 
-import { makeCliproxyApi } from "./cliproxyApi.ts";
+import { makeCliproxyApi, poolCooldownResetAt } from "./cliproxyApi.ts";
 
 const config = {
   kind: "cliproxy",
@@ -489,5 +489,145 @@ describe("CLIProxyAPI built-in management API", () => {
       expect(result._tag).toBe("Failure");
       expect(test.requests).toHaveLength(1);
     }),
+  );
+});
+
+describe("pool cooldown routing", () => {
+  const model = "claude-opus-5-5";
+  const now = Date.parse("2026-10-20T12:00:00Z");
+  const cooldown = (scope: string, minute: number, model_key?: string) => ({
+    scope,
+    model_key,
+    reason: "quota",
+    retry_at: `2026-10-20T12:${String(minute).padStart(2, "0")}:00Z`,
+  });
+  const account = (
+    id: string,
+    cooldowns: Parameters<typeof poolCooldownResetAt>[0][number]["cooldowns"],
+  ) => ({
+    id,
+    provider: "claude",
+    disabled: false,
+    cooldowns,
+  });
+  it("takes max applicable restrictions per account then min across accounts", () => {
+    expect(
+      poolCooldownResetAt(
+        [
+          account("a", [
+            cooldown("credential", 5),
+            cooldown("model", 10, model),
+            cooldown("model", 50, "claude-sonnet-4-6"),
+          ]),
+          account("b", [cooldown("credential", 20), cooldown("model", 7, model)]),
+        ],
+        model,
+        now,
+      ),
+    ).toBe("2026-10-20T12:10:00.000Z");
+  });
+  it.each([
+    undefined,
+    null,
+    [],
+    [{ scope: "credential", reason: "quota" }],
+    [{ scope: "credential", reason: "quota", retry_at: "invalid" }],
+    [{ scope: "model", reason: "quota", retry_at: "2026-10-20T12:10:00Z" }],
+    [cooldown("other", 10)],
+    [cooldown("credential", 0)],
+    [cooldown("model", 10, "claude-sonnet-4-6")],
+  ])("retains manual retry for unknown or unexplained pool state %j", (cooldowns) => {
+    expect(
+      poolCooldownResetAt(
+        [account("a", [cooldown("credential", 5)]), account("b", cooldowns)],
+        model,
+        now,
+      ),
+    ).toBeNull();
+  });
+  it.each([
+    "2099-02-30T12:00:00Z",
+    "2099-02-29T12:00:00Z",
+    "2100-02-29T12:00:00+01:00",
+    "2099-04-31T12:00:00Z",
+    "2099-01-01T24:00:00Z",
+    "2099-01-01T12:60:00Z",
+    "2099-01-01T12:00:60Z",
+    "2099-01-01T12:00:00+24:00",
+  ])("rejects invalid calendar timestamp %s", (retry_at) => {
+    expect(
+      poolCooldownResetAt(
+        [account("a", [{ scope: "credential", reason: "quota", retry_at }])],
+        model,
+        now,
+      ),
+    ).toBeNull();
+  });
+  it.each([
+    ["2096-02-29T12:00:00Z", "2096-02-29T12:00:00.000Z"],
+    ["2000-02-29T12:00:00.123+01:30", "2000-02-29T10:30:00.123Z"],
+  ])("accepts valid calendar timestamp %s", (retry_at, expected) => {
+    expect(
+      poolCooldownResetAt(
+        [account("a", [{ scope: "credential", reason: "quota", retry_at }])],
+        model,
+        0,
+      ),
+    ).toBe(expected);
+  });
+  it.effect.each([
+    "valid",
+    "wrong-key",
+    "alias",
+    "excluded",
+    "alternative",
+    "unsupported-model",
+    "failed-refresh",
+    "missing-cooldowns",
+  ])("reads fresh managed routing and model membership: %s", (scenario) =>
+    Effect.gen(function* () {
+      const paths: string[] = [];
+      const http = HttpClient.make((request) =>
+        Effect.sync(() => {
+          const url = new URL(request.url);
+          paths.push(url.pathname);
+          let body: unknown;
+          let status = 200;
+          if (url.pathname.endsWith("/config"))
+            body = {
+              "api-keys": ["global-key"],
+              ...(scenario === "alias"
+                ? { "oauth-model-alias": { claude: [{ name: "alias" }] } }
+                : {}),
+              ...(scenario === "excluded" ? { "oauth-excluded-models": { claude: [model] } } : {}),
+              ...(scenario === "alternative" ? { "claude-api-key": [{}] } : {}),
+            };
+          else if (url.pathname.endsWith("/models")) {
+            expect(url.searchParams.get("name")).toBe("a");
+            body = { models: [{ id: scenario === "unsupported-model" ? "other" : model }] };
+          } else {
+            body = {
+              files: [
+                account(
+                  "a",
+                  scenario === "missing-cooldowns" ? undefined : [cooldown("credential", 10)],
+                ),
+                { id: "disabled", provider: "claude", disabled: true },
+              ],
+            };
+            if (scenario === "failed-refresh") status = 503;
+          }
+          return HttpClientResponse.fromWeb(request, Response.json(body, { status }));
+        }),
+      );
+      const api = yield* makeCliproxyApi.pipe(Effect.provideService(HttpClient.HttpClient, http));
+      yield* TestClock.setTime(now);
+      const read = api
+        .poolResetAt(config, { apiKey: scenario === "wrong-key" ? "wrong" : "global-key", model })
+        .pipe(Effect.orElseSucceed(() => null));
+      expect(yield* read).toBe(scenario === "valid" ? "2026-10-20T12:10:00.000Z" : null);
+      expect(yield* read).toBe(scenario === "valid" ? "2026-10-20T12:10:00.000Z" : null);
+      expect(paths.filter((path) => path.endsWith("/config"))).toHaveLength(2);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });
