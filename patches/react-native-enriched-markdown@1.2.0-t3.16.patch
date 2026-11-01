@@ -1,0 +1,12 @@
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/spans/LinkPillSpan.kt b/android/src/main/java/com/swmansion/enriched/markdown/spans/LinkPillSpan.kt
+--- a/android/src/main/java/com/swmansion/enriched/markdown/spans/LinkPillSpan.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/spans/LinkPillSpan.kt
+@@ -227,6 +227,8 @@
+         if (style == base.style) base else Typeface.create(base, style)
+       }
+     textSize = fontSize
++    // Link labels must not inherit a run's horizontal scaling.
++    textScaleX = 1f
+     color = variant.color
+     bgColor = 0
+     isUnderlineText = variant.underline
