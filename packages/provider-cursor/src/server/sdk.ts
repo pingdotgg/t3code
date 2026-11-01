@@ -11,6 +11,7 @@ export const {
   createAgentPlatform,
   Cursor,
   CursorSdkError,
+  getDefaultSdkStateRoot,
   InMemoryCredentialStore,
 } = requireCursorSdk("@cursor/sdk") as typeof import("@cursor/sdk");
 if (process.env.T3CODE_STARTUP_PROFILE_DIR) {
