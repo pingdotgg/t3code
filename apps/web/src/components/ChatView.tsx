@@ -3265,6 +3265,7 @@ export default function ChatView(props: ChatViewProps) {
       showMaximizeControl={!shouldUsePlanSidebarSheet}
       rightPanelOpen={rightPanelOpen}
       animationsActive={panelAnimationsActive}
+      animationDurationMs={panelAnimationDurationMs}
       maximized={rightPanelMaximized}
       onToggleMaximized={toggleRightPanelMaximizedStable}
     >

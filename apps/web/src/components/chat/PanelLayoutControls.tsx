@@ -1,7 +1,7 @@
 import { PanelBottomIcon, PanelRightIcon, SquareMenuIcon } from "lucide-react";
 import { Maximize2, Minimize2 } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
-import { memo, type ReactNode } from "react";
+import { memo, type ReactNode, useLayoutEffect, useRef } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -9,6 +9,9 @@ import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
+/** Matches the right inset of `ThreadPanelHeaderControl`. */
+const THREAD_PANEL_HEADER_INSET_PX = 12;
 
 export interface PanelLayoutControlsProps {
   showThreadPanelControl?: boolean;
@@ -63,7 +66,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   );
   const threadPanelControl = (
     <Tooltip>
-      <TooltipTrigger render={<span className="flex shrink-0" />}>
+      <TooltipTrigger render={<span className="flex shrink-0" data-thread-panel-toggle />}>
         {threadPanelPresentation === "popover" ? (
           <PopoverTrigger handle={threadPanelPopoverHandle} render={threadPanelToggle} />
         ) : (
@@ -178,12 +181,37 @@ export function WorkspaceTitlebarControls(props: {
   readonly showMaximizeControl: boolean;
   readonly rightPanelOpen: boolean;
   readonly animationsActive: boolean;
+  readonly animationDurationMs: number;
   readonly maximized: boolean;
   readonly onToggleMaximized: () => void;
   readonly children: ReactNode;
 }) {
+  const { rightPanelOpen, animationsActive, animationDurationMs, maximized } = props;
+  const controlsRef = useRef<HTMLDivElement | null>(null);
+  const previous = useRef({ rightPanelOpen, maximized });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the toggle's slide before the commit that swapped it in paints; the animation is cancelled on change or unmount.
+  useLayoutEffect(() => {
+    const closed = previous.current.rightPanelOpen && !rightPanelOpen;
+    const wasMaximized = previous.current.maximized;
+    previous.current = { rightPanelOpen, maximized };
+    if (!closed || wasMaximized || !animationsActive) return;
+    const controls = controlsRef.current;
+    const toggle = controls?.querySelector("[data-thread-panel-toggle]");
+    const panel = controls?.ownerDocument.querySelector("[data-preview-panel-mode='inline']");
+    if (!toggle || !panel) return;
+    // The header's toggle was just removed, so slide this one in from where it sat.
+    const toggleRect = toggle.getBoundingClientRect();
+    const headerRight = panel.getBoundingClientRect().left - THREAD_PANEL_HEADER_INSET_PX;
+    const animation = toggle.animate(
+      [{ transform: `translateX(${headerRight - toggleRect.right}px)` }, { transform: "none" }],
+      { duration: animationDurationMs, easing: getComputedStyle(panel).transitionTimingFunction },
+    );
+    return () => animation.cancel();
+  }, [rightPanelOpen, maximized, animationsActive, animationDurationMs]);
+
   return (
     <div
+      ref={controlsRef}
       className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
