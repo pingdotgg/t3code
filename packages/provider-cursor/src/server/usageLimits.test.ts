@@ -97,7 +97,7 @@ describe("Cursor usage limits", () => {
       unavailable: {
         reason: "unsupported",
         message:
-          "Cursor doesn't report usage limits for this account. Open Cursor's dashboard with the same account to see its spend.",
+          "Cursor doesn't report usage limits for this account. Open Cursor's dashboard with the same account to see its usage.",
       },
       externalUsage: { label: "Cursor usage", url: "https://cursor.com/dashboard?tab=usage" },
     };
