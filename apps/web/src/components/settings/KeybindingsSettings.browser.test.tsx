@@ -140,6 +140,11 @@ it("filters actions and allows additional shortcuts for assigned commands", asyn
   const command = screen.getByRole("combobox", { name: "Command", exact: true });
   await expect.element(command).toHaveTextContent("Sidebar: Toggle");
   await command.click();
+  await search.fill("Opposite Queue");
+  await expect
+    .element(screen.getByRole("option", { name: /Composer: Opposite Queue or Steer Action/ }))
+    .toBeVisible();
+  expect(screen.getByRole("option").elements()).toHaveLength(1);
   await search.fill("no-such-action");
   await expect.element(screen.getByText("No actions found.")).toBeVisible();
   await search.fill("composer.cycleHost");

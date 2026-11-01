@@ -59,6 +59,32 @@ describe("KeybindingsSettings.logic", () => {
     );
   });
 
+  it("marks only bindings shadowed by later unconditional or matching conditions", () => {
+    const bindings = compileResolvedKeybindingsConfig([
+      { command: "sidebar.toggle", key: "mod+b" },
+      { command: "terminal.toggle", key: "meta+b" },
+      { command: "chat.new", key: "mod+n", when: "terminalFocus" },
+      { command: "terminal.new", key: "mod+n", when: "(terminalFocus)" },
+      { command: "chat.new", key: "mod+j" },
+      { command: "terminal.toggle", key: "mod+j", when: "terminalFocus" },
+      { command: "chat.new", key: "mod+k", when: "!terminalFocus" },
+      { command: "terminal.toggle", key: "mod+k", when: "terminalFocus" },
+      { command: "chat.new", key: "mod+l", when: "terminalFocus" },
+      { command: "terminal.toggle", key: "mod+l" },
+    ]);
+    const rows = buildKeybindingRows(bindings, "MacIntel");
+    expect(rows.filter((row) => row.isShadowed).map((row) => row.binding)).toEqual([
+      bindings[8],
+      bindings[2],
+      bindings[0],
+    ]);
+    expect(rows.filter((row) => !row.isShadowed)).toHaveLength(7);
+    expect(
+      buildKeybindingRows(bindings, "Win32").find((row) => row.command === "sidebar.toggle")
+        ?.isShadowed,
+    ).toBe(false);
+  });
+
   it("captures platform-specific mod shortcuts", () => {
     expect(
       keybindingFromKeyboardEvent(

@@ -1165,7 +1165,7 @@ function NewKeybindingCommandSelect({
         <ComboboxEmpty>No actions found.</ComboboxEmpty>
         <ComboboxList>
           {(command: KeybindingCommandOption) => {
-            const bindings = allRows.filter((row) => row.command === command);
+            const bindings = allRows.filter((row) => row.command === command && !row.isShadowed);
             return (
               <ComboboxItem key={command} value={command}>
                 <div className="flex min-w-0 flex-1 items-center justify-between gap-3">

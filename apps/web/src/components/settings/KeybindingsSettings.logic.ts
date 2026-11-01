@@ -52,6 +52,7 @@ export interface KeybindingRow {
   readonly defaultWhen: string;
   readonly binding: ResolvedKeybindingRule;
   readonly conflicts: ReadonlyArray<string>;
+  readonly isShadowed: boolean;
 }
 
 export type WhenVariableOption = string;
@@ -250,12 +251,22 @@ export function buildKeybindingRows(
   keybindings: ResolvedKeybindingsConfig,
   platform = navigator.platform,
 ): ReadonlyArray<KeybindingRow> {
+  const lastBindingIndex = new Map<string, number>();
+  for (const [index, binding] of keybindings.entries()) {
+    const key = shortcutConflictKey(binding.shortcut, platform);
+    lastBindingIndex.set(`${key}:${whenAstToExpression(binding.whenAst)}`, index);
+  }
   const rowsById = new Map<string, KeybindingRow>();
-  for (const binding of keybindings) {
+  for (const [index, binding] of keybindings.entries()) {
     const defaultBinding = defaultBindingForBinding(binding);
     const key = shortcutToKeybindingInput(binding.shortcut);
     const when = whenAstToExpression(binding.whenAst);
     const id = keybindingRowId(binding.command, key, when);
+    const conflictKey = shortcutConflictKey(binding.shortcut, platform);
+    // Only discard proven shadows; distinct conditions may apply in other focus contexts.
+    const isShadowed =
+      (lastBindingIndex.get(`${conflictKey}:`) ?? -1) > index ||
+      (lastBindingIndex.get(`${conflictKey}:${when}`) ?? -1) > index;
     rowsById.set(id, {
       id,
       command: binding.command,
@@ -266,6 +277,7 @@ export function buildKeybindingRows(
       defaultWhen: whenAstToExpression(defaultBinding?.whenAst),
       binding,
       conflicts: [],
+      isShadowed,
     });
   }
   const rows = [...rowsById.values()];
