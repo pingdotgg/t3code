@@ -13,6 +13,8 @@ export interface TestProviderHostOptions {
   readonly cwd?: string;
   readonly settings?: ServerSettings;
   readonly runBackgroundWork?: boolean;
+  /** File names in the attachments directory each thread's agent may read. */
+  readonly readableAttachments?: Readonly<Record<string, ReadonlyArray<string>>>;
 }
 
 export class TestProviderHostSettings extends Context.Service<
@@ -60,6 +62,13 @@ export const layer = (
           return Effect.succeed(options.runBackgroundWork ?? true);
         }),
         resolveAttachmentPath: (attachment) => path.join(attachmentsDir, attachment.id),
+        readableAttachmentPaths: Effect.fn("ProviderHost.readableAttachmentPaths")(
+          function* (threadId) {
+            return (options.readableAttachments?.[threadId] ?? []).map((name) =>
+              path.join(attachmentsDir, name),
+            );
+          },
+        ),
         credentials: Effect.fn("ProviderHost.credentials")(function (namespace, bindingId) {
           return Effect.sync(() => {
             const key = `${namespace}:${bindingId}`;

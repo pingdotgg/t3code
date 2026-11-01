@@ -19,6 +19,7 @@ import {
   mergeToolCallState,
   parseSessionUpdateEvent,
 } from "@t3tools/provider-acp/server/runtimeModel";
+import { acpToolCallDiffPatch } from "@t3tools/provider-acp/server/adapter";
 
 const isSessionNotification = Schema.is(AcpWireSchema.SessionNotification);
 
@@ -289,6 +290,117 @@ describe("Antigravity tool results", () => {
     });
     expect(toolCall.data.rawOutput).not.toHaveProperty("formatted_output");
     expect(commandCompleted.update.rawOutput.formatted_output).toBe("after\n");
+  });
+
+  it("keeps the captured edit location through approval and completion", () => {
+    const path = "/workspace/app.ts";
+    const replace = {
+      TargetContent: "const target = 10;",
+      ReplacementContent: "const target = 100;",
+      TargetFile: path,
+    };
+    const frame = (rawInput: Record<string, unknown>, line?: number) =>
+      ({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "edit-1",
+          title: "Run edit_file?",
+          kind: "edit",
+          status: "pending",
+          content: [
+            {
+              type: "diff",
+              path,
+              oldText: replace.TargetContent,
+              newText: replace.ReplacementContent,
+            },
+          ],
+          locations: [line === undefined ? { path } : { path, line }],
+          rawInput,
+        },
+      }) satisfies EffectAcpSchema.SessionNotification;
+    const running = parseToolUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "edit-1",
+        kind: "edit",
+        status: "in_progress",
+        title: "Running edit_file",
+        locations: [{ path }],
+        rawInput: { file_path: path },
+      },
+    }).toolCall;
+    const completed = parseToolUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "edit-1",
+        status: "completed",
+        rawOutput: "Tool execution",
+      },
+    }).toolCall;
+    const preEdit = Array.from({ length: 12 }, (_, i) =>
+      i === 9 ? replace.TargetContent : `line ${i + 1}`,
+    ).join("\n");
+    const postEdit = preEdit.replace(replace.TargetContent, replace.ReplacementContent);
+    for (const [pending, readFile] of [
+      [frame({ ...replace, StartLine: 10, EndLine: 10 }, 10), () => postEdit],
+      [frame(replace), () => preEdit],
+    ] as const) {
+      let toolCall = normalizeAntigravityToolCall(parseToolUpdate(pending).toolCall, readFile);
+      for (const next of [running, completed]) {
+        toolCall = normalizeAntigravityToolCall(mergeToolCallState(toolCall, next), () => postEdit);
+      }
+      expect(toolCall.status).toBe("completed");
+      expect(acpToolCallDiffPatch(toolCall.data.content)).toBe(
+        `--- ${path}\n+++ ${path}\n@@ -10,1 +10,1 @@\n-const target = 10;\n+const target = 100;\n`,
+      );
+    }
+    // Full-access edits arrive path-only; no hunk is offered instead of the tool's status text.
+    let pathOnly = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "edit-2",
+          kind: "edit",
+          status: "in_progress",
+          title: "Running edit_file",
+          locations: [{ path }],
+          rawInput: { file_path: path },
+        },
+      }).toolCall,
+    );
+    pathOnly = normalizeAntigravityToolCall(mergeToolCallState(pathOnly, completed));
+    expect(pathOnly.data.content).toEqual([{ type: "diff", patch: { format: "omitted" } }]);
+    expect(acpToolCallDiffPatch(pathOnly.data.content)).toBeUndefined();
+    // A captured patch that a later update's shared text budget cut or dropped is omitted.
+    for (const patch of [{ text: "[Earlier output truncated]\n\n@@ -80,1 +80,1 @@" }, {}]) {
+      const kept = normalizeAntigravityToolCall({
+        toolCallId: "edit-cut",
+        kind: "edit",
+        status: "completed",
+        data: { content: [{ type: "diff", path, patch }] },
+      });
+      expect(kept.data.content).toEqual([{ type: "diff", path, patch: { format: "omitted" } }]);
+    }
+    // A patch too long to keep, or input cut to its tail, must not fall back to line-1 snippets.
+    for (const width of [60, 120]) {
+      const block = (value: string) =>
+        Array.from({ length: 120 }, (_, i) => `${value} ${i} `.padEnd(width, "x")).join("\n");
+      const long = {
+        TargetContent: block("old"),
+        ReplacementContent: block("new"),
+        TargetFile: path,
+      };
+      const toolCall = normalizeAntigravityToolCall(
+        parseToolUpdate(frame({ ...long, StartLine: 80, EndLine: 199 }, 80)).toolCall,
+      );
+      expect(toolCall.data.content).toMatchObject([{ patch: { format: "omitted" } }]);
+      expect(acpToolCallDiffPatch(toolCall.data.content)).toBeUndefined();
+    }
   });
 
   it.each([

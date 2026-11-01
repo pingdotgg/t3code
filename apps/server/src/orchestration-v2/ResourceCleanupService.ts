@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import { removeAntigravityThreadUploads } from "../provider/acp/AntigravityThreadUploads.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
@@ -15,7 +16,13 @@ import * as TerminalManager from "../terminal/Manager.ts";
 export class ResourceCleanupError extends Schema.TaggedError<ResourceCleanupError>()(
   "ResourceCleanupError",
   {
-    operation: Schema.Literals(["terminal", "preview", "attachment", "scheduled-tasks"]),
+    operation: Schema.Literals([
+      "terminal",
+      "preview",
+      "attachment",
+      "scheduled-tasks",
+      "provider-uploads",
+    ]),
     threadId: Schema.optional(Schema.String),
     attachmentId: Schema.optional(Schema.String),
     cause: Schema.Defect(),
@@ -29,12 +36,16 @@ export class ResourceCleanupService extends Context.Reference<{
   readonly cleanupAttachments: (
     attachmentIds: ReadonlyArray<string>,
   ) => Effect.Effect<void, ResourceCleanupError>;
+  readonly cleanupProviderUploads: (
+    threadId: ThreadId,
+  ) => Effect.Effect<void, ResourceCleanupError>;
 }>("t3/orchestration-v2/ResourceCleanupService", {
   defaultValue: () => ({
     cleanupScheduledTasks: () => Effect.void,
     cleanupTerminals: () => Effect.void,
     cleanupPreviews: () => Effect.void,
     cleanupAttachments: () => Effect.void,
+    cleanupProviderUploads: () => Effect.void,
   }),
 }) {}
 
@@ -80,6 +91,15 @@ export const layer = Layer.effect(
               (cause) => new ResourceCleanupError({ operation: "preview", threadId, cause }),
             ),
           );
+      }),
+      cleanupProviderUploads: Effect.fn("ResourceCleanupService.cleanupProviderUploads")(function (
+        threadId: ThreadId,
+      ) {
+        return removeAntigravityThreadUploads({ stateDir: config.stateDir, threadId }).pipe(
+          Effect.mapError(
+            (cause) => new ResourceCleanupError({ operation: "provider-uploads", threadId, cause }),
+          ),
+        );
       }),
       cleanupAttachments: Effect.fn("ResourceCleanupService.cleanupAttachments")(function (
         attachmentIds: ReadonlyArray<string>,

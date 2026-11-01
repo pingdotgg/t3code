@@ -244,6 +244,7 @@ export const AntigravityDriver: ProviderDriver<
       );
       const runtime = yield* makeAntigravityAcpRuntime({
         ...input,
+        runtimeVersion: executable.version,
         authMethod: auth.authMethod,
         childProcessSpawner: spawner,
         spawn: buildAntigravityAcpSpawnInput({
@@ -347,7 +348,11 @@ export const AntigravityDriver: ProviderDriver<
     const authFlow: AntigravityAuth = yield* makeAntigravityAuth({
       instanceId,
       makeRuntime: makeDisposableRuntime,
-      onAuthenticated: publishCatalog,
+      // A new sign-in may be another account; drop any in-flight quota read first.
+      onAuthenticated: (started, runtime) =>
+        Effect.suspend(() => provider.onSignedIn).pipe(
+          Effect.andThen(publishCatalog(started, runtime)),
+        ),
       onSignedOut: Effect.suspend(() => provider.onSignedOut),
       usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
     });
@@ -429,6 +434,7 @@ export const AntigravityDriver: ProviderDriver<
       makeRuntime,
       withProcess: authFlow.withProcess,
       defaultModel,
+      profileDirectory,
       onSessionStarted: provider.onSessionStarted,
       onSessionEvent: (event) => {
         if (event._tag === "ConfigOptionsUpdated") {
