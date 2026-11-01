@@ -298,7 +298,9 @@ export const PullRequestCoreRepositoryPullRequestLabelsNodesLabel = Schema.Struc
   /** Identifies the label name. */
   name: Schema.String,
   /** Identifies the label color. */
-  color: Schema.String
+  color: Schema.String,
+  /** A brief description of this label. */
+  description: Schema.NullOr(Schema.String)
 })
 export interface PullRequestCoreRepositoryPullRequestLabelsNodesLabel extends Schema.Struct.Type<typeof PullRequestCoreRepositoryPullRequestLabelsNodesLabel.fields> {}
 
@@ -459,7 +461,7 @@ export const PullRequestCore = GraphQL.query("PullRequestCore", {
       { name: "requestedReviewers", body: "Int!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission pullRequest(number:$", "number", "){number title url body state isDraft mergeable mergeStateStatus reviewDecision additions deletions changedFiles createdAt updatedAt mergedAt closedAt headRefName baseRefName headRefOid isCrossRepository maintainerCanModify headRepositoryOwner{__typename login}headRepository{nameWithOwner viewerPermission}headRef{id}author{__typename login avatarUrl...on User{id name}}autoMergeRequest{mergeMethod}viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch baseRef{compare(headRef:$", "headRef", "){behindBy}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name}...on Bot{login}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}labels(first:100){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename...", "CheckContext", "}pageInfo{hasNextPage}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission pullRequest(number:$", "number", "){number title url body state isDraft mergeable mergeStateStatus reviewDecision additions deletions changedFiles createdAt updatedAt mergedAt closedAt headRefName baseRefName headRefOid isCrossRepository maintainerCanModify headRepositoryOwner{__typename login}headRepository{nameWithOwner viewerPermission}headRef{id}author{__typename login avatarUrl...on User{id name}}autoMergeRequest{mergeMethod}viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch baseRef{compare(headRef:$", "headRef", "){behindBy}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name}...on Bot{login}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}labels(first:100){nodes{name color description}}commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename...", "CheckContext", "}pageInfo{hasNextPage}}}}}}}}"] }
     ],
     fragments: [
       { name: "CheckContext", body: ["on StatusCheckRollupContext{__typename...on StatusContext{context state targetUrl createdAt description isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")}...on CheckRun{name status conclusion startedAt completedAt detailsUrl isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")checkSuite{workflowRun{workflow{name}}}}}"] }
@@ -1216,23 +1218,12 @@ export declare namespace ReviewerCandidates {
   export type Result = typeof ReviewerCandidates.result.Type
 }
 
-/** A label for categorizing Issues, Pull Requests, Milestones, or Discussions with a given Repository. */
-export const RepositoryLabelsNodesLabel = Schema.Struct({
-  /** Identifies the label name. */
-  name: Schema.String,
-  /** Identifies the label color. */
-  color: Schema.String,
-  /** A brief description of this label. */
-  description: Schema.NullOr(Schema.String)
-})
-export interface RepositoryLabelsNodesLabel extends Schema.Struct.Type<typeof RepositoryLabelsNodesLabel.fields> {}
-
 /** The connection type for Label. */
 export const LabelCandidatesRepositoryLabelsLabelConnection = Schema.Struct({
   /** Information to aid in pagination. */
   pageInfo: PullRequestCoreRepositoryPullRequestCommitsNodesCommitStatusCheckRollupContextsPageInfoPageInfo,
   /** A list of nodes. */
-  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(RepositoryLabelsNodesLabel)))
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PullRequestCoreRepositoryPullRequestLabelsNodesLabel)))
 })
 export interface LabelCandidatesRepositoryLabelsLabelConnection extends Schema.Struct.Type<typeof LabelCandidatesRepositoryLabelsLabelConnection.fields> {}
 
@@ -1294,12 +1285,21 @@ export declare namespace LabelCandidates {
   export type Result = typeof LabelCandidates.result.Type
 }
 
+/** A label for categorizing Issues, Pull Requests, Milestones, or Discussions with a given Repository. */
+export const RepositoryLabelsNodesLabel = Schema.Struct({
+  /** Identifies the label name. */
+  name: Schema.String,
+  /** Identifies the label color. */
+  color: Schema.String
+})
+export interface RepositoryLabelsNodesLabel extends Schema.Struct.Type<typeof RepositoryLabelsNodesLabel.fields> {}
+
 /** The connection type for Label. */
 export const RepositoryLabelsRepositoryLabelsLabelConnection = Schema.Struct({
   /** Information to aid in pagination. */
   pageInfo: PullRequestCoreRepositoryPullRequestCommitsNodesCommitStatusCheckRollupContextsPageInfoPageInfo,
   /** A list of nodes. */
-  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PullRequestCoreRepositoryPullRequestLabelsNodesLabel)))
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(RepositoryLabelsNodesLabel)))
 })
 export interface RepositoryLabelsRepositoryLabelsLabelConnection extends Schema.Struct.Type<typeof RepositoryLabelsRepositoryLabelsLabelConnection.fields> {}
 
