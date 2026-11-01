@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   ProjectId,
+  ThreadId,
   ProviderInstanceId,
   ProviderDriverKind,
   type ServerProvider,
@@ -35,6 +36,7 @@ import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import * as ProjectHandlers from "./handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
 
@@ -45,6 +47,7 @@ const clientLaunchHarness = (input: {
   readonly providers?: readonly ServerProvider[];
   /** Where Settings saves a project's model; the legacy project field stays null. */
   readonly overrideModel?: ModelSelection;
+  readonly callerSelection?: ModelSelection;
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly workspaceRoot?: string;
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
@@ -81,7 +84,13 @@ const clientLaunchHarness = (input: {
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId: EnvironmentId.make("environment"),
       requestNamespace: "client:session-1",
-      thread: undefined,
+      thread: input.callerSelection
+        ? {
+            threadId: ThreadId.make("caller"),
+            providerInstanceId: input.callerSelection.instanceId,
+            providerSessionId: "caller-session",
+          }
+        : undefined,
       client: {
         sessionId: "session-1",
         label: "Claude Code",
@@ -94,6 +103,13 @@ const clientLaunchHarness = (input: {
     Layer.mock(ThreadManagement.ThreadManagementService)({
       // A thread exists once a launch started it.
       getThreadShell: (threadId) => {
+        if (input.callerSelection && threadId === "caller")
+          return Effect.succeed({
+            ...liveThreadShell(threadId, { runtimeMode: "auto" }),
+            projectId,
+            modelSelection: input.callerSelection,
+            providerInstanceId: input.callerSelection.instanceId,
+          });
         const launch = input.launched.find((candidate) => candidate.threadId === threadId);
         return Effect.succeed(
           launch === undefined
@@ -365,6 +381,49 @@ it.effect("a launch key of any length or content gives a short id and never a de
     expect(Exit.isFailure(loneSurrogate) && Cause.hasDies(loneSurrogate.cause)).toBe(false);
     expect(launched).toHaveLength(1);
   }),
+);
+
+it.effect(
+  "launches scope inherited Ultracode to the caller but keep explicit picks and replays",
+  () =>
+    Effect.gen(function* () {
+      const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const selection = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-opus",
+        options: [{ id: "effort", value: "ultracode" }],
+      };
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "auto",
+        callerSelection: selection,
+        launched,
+      });
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      for (const explicit of [false, true]) {
+        const input = {
+          title: "Fix",
+          projectId,
+          clientRequestId: `ultracode-${explicit}`,
+          ...(explicit ? { modelSelection: selection } : {}),
+        };
+        const launch = toolkit
+          .handle("t3_thread_launch", input)
+          .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+        const first = yield* launch;
+        expect(first.at(-1)?.isFailure, JSON.stringify(first)).toBe(false);
+        yield* launch;
+        expect(launched.at(-1)?.modelSelection).toEqual({
+          ...selection,
+          options: [{ id: "effort", value: explicit ? "ultracode" : "xhigh" }],
+        });
+      }
+    }),
 );
 
 it.effect("a retried launch replays after the project loses its default model", () =>

@@ -4481,6 +4481,45 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     );
   });
 
+  it.effect("skips skill discovery for a prompt that names no skill", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homePath = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skill-scan-" });
+      const skillsRoot = path.join(homePath, "skills");
+      yield* fs.makeDirectory(path.join(skillsRoot, "review"), { recursive: true });
+      yield* fs.writeFileString(path.join(skillsRoot, "review", "SKILL.md"), "Review it.\n");
+      let skillRootReads = 0;
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath },
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          readDirectory: (directory, options) => {
+            if (directory === skillsRoot) skillRootReads++;
+            return fs.readDirectory(directory, options);
+          },
+        }),
+      );
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("skill-scan"),
+          text: "fix the build",
+          attachments: [],
+          runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd: homePath },
+        }),
+      );
+      assert.equal(skillRootReads, 0);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect(
     "carries earlier user-only skill instructions on sends and steering with attachments",
     () =>

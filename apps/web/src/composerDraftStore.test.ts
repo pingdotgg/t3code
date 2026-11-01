@@ -1804,6 +1804,27 @@ describe("composerDraftStore per-model sticky options", () => {
     );
   });
 
+  it("keeps Ultracode on the thread but remembers xhigh for new threads", () => {
+    useComposerDraftStore
+      .getState()
+      .setProviderModelOptions(
+        threadRef,
+        CLAUDE_AGENT_DRIVER,
+        toSelections({ effort: "ultracode" }),
+        { instanceId: CLAUDE_AGENT_INSTANCE, model: "claude-opus-5-5", persistSticky: true },
+      );
+
+    const state = useComposerDraftStore.getState();
+    expect(
+      state.draftsByThreadKey[scopedThreadKey(threadRef)]?.modelSelectionByProvider[
+        CLAUDE_AGENT_INSTANCE
+      ]?.options,
+    ).toEqual(toSelections({ effort: "ultracode" }));
+    expect(state.stickyOptionsByModelByProvider[CLAUDE_AGENT_INSTANCE]).toEqual({
+      "claude-opus-5-5": toSelections({ effort: "xhigh" }),
+    });
+  });
+
   it("seeds per-model memory from a persisted sticky selection on upgrade", () => {
     const persistApi = useComposerDraftStore.persist as unknown as {
       getOptions: () => {

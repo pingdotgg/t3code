@@ -1,8 +1,10 @@
 import { CheckpointScopeId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
@@ -52,6 +54,8 @@ const make = Effect.gen(function* () {
   const checkpointCapture = yield* CheckpointCapture.CheckpointCaptureServiceV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const observer = yield* RunFinalizationObserver;
+  const refreshes = yield* FiberSet.make<void>();
+  const refreshLocks = yield* KeyedLock.make<string>();
 
   const finalize: RunFinalizationService["Service"]["finalize"] = Effect.fn(
     "RunFinalizationService.finalize",
@@ -72,16 +76,20 @@ const make = Effect.gen(function* () {
       );
     const cwd = projection.checkpointScopes.find((scope) => scope.id === input.scopeId)?.cwd;
     if (cwd !== undefined) {
-      // Retrying a display refresh after the checkpoint is durable blocks the next turn.
-      yield* observer.refresh({ cwd, threadId: input.threadId, runId: input.runId }).pipe(
-        Effect.catchTags({
-          RunFinalizationRefreshError: (cause) =>
-            Effect.logWarning("Failed to refresh workspace after checkpoint capture", {
-              ...input,
-              cause,
-            }),
-        }),
-      );
+      // The refresh only updates the display; awaiting it holds the thread's next turn in the outbox.
+      // Serialized per cwd so an older status read cannot publish after a newer one.
+      yield* refreshLocks
+        .withLock(cwd, observer.refresh({ cwd, threadId: input.threadId, runId: input.runId }))
+        .pipe(
+          Effect.catchTags({
+            RunFinalizationRefreshError: (cause) =>
+              Effect.logWarning("Failed to refresh workspace after checkpoint capture", {
+                ...input,
+                cause,
+              }),
+          }),
+          FiberSet.run(refreshes),
+        );
     }
   });
   return RunFinalizationService.of({ finalize });

@@ -319,6 +319,15 @@ export function buildExplicitProviderOptionSelectionsFromDescriptors(
   return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
+// Claude Code scopes Ultracode's standing workflows to one session; carried selections keep its xhigh effort.
+export function withoutSessionScopedOptions(
+  options: ReadonlyArray<ProviderOptionSelection>,
+): ReadonlyArray<ProviderOptionSelection> {
+  return options.map((option) =>
+    option.id === "effort" && option.value === "ultracode" ? { ...option, value: "xhigh" } : option,
+  );
+}
+
 export function isClaudeUltrathinkPrompt(text: string | null | undefined): boolean {
   return typeof text === "string" && /\bultrathink\b/i.test(text);
 }

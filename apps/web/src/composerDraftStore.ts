@@ -43,6 +43,7 @@ import {
   createModelSelection,
   draftModelPickMatchesThread,
   normalizeModelSlug,
+  withoutSessionScopedOptions,
 } from "@t3tools/shared/model";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import * as Option from "effect/Option";
@@ -687,7 +688,7 @@ function compactStickyOptionsByModel(
     for (const [modelSlug, options] of Object.entries(optionsByModel ?? {})) {
       if (options === undefined || options.length === 0) continue;
       result[instanceId] ??= {};
-      result[instanceId][modelSlug] = options;
+      result[instanceId][modelSlug] = withoutSessionScopedOptions(options);
     }
   }
   return result as NonNullable<PersistedComposerDraftStoreState["stickyOptionsByModelByProvider"]>;
@@ -2242,6 +2243,13 @@ function normalizeCurrentPersistedComposerDraftStoreState(
     );
     stickyActiveProvider = normalizeProviderInstanceId(normalizedPersistedState.stickyProvider);
   }
+  for (const [instanceId, selection] of Object.entries(stickyModelSelectionByProvider)) {
+    if (selection?.options === undefined) continue;
+    stickyModelSelectionByProvider = {
+      ...stickyModelSelectionByProvider,
+      [instanceId]: { ...selection, options: withoutSessionScopedOptions(selection.options) },
+    };
+  }
 
   return {
     draftsByThreadKey: normalizePersistedDraftsByThreadId(
@@ -2886,7 +2894,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             // Model-only updates omit options; preserve sticky traits across model switches and new chats.
             const nextSelection =
               normalized.options !== undefined
-                ? normalized
+                ? createModelSelection(
+                    normalized.instanceId,
+                    normalized.model,
+                    withoutSessionScopedOptions(normalized.options),
+                  )
                 : createModelSelection(normalized.instanceId, normalized.model, current?.options);
             const nextMap: Partial<Record<ProviderInstanceId, ModelSelection>> = {
               ...state.stickyModelSelectionByProvider,
@@ -3086,16 +3098,17 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               const rememberedModel =
                 normalizeModelSlug(options?.model, normalizedProvider) ?? stickyBase.model;
               if (providerOpts) {
+                const stickyOpts = withoutSessionScopedOptions(providerOpts);
                 nextStickyMap[instanceKey] = createModelSelection(
                   instanceKey,
                   stickyBase.model,
-                  providerOpts,
+                  stickyOpts,
                 );
                 nextOptionsByModel = {
                   ...state.stickyOptionsByModelByProvider,
                   [instanceKey]: {
                     ...state.stickyOptionsByModelByProvider[instanceKey],
-                    [rememberedModel]: providerOpts,
+                    [rememberedModel]: stickyOpts,
                   },
                 };
               } else if ((stickyBase.options?.length ?? 0) > 0) {
