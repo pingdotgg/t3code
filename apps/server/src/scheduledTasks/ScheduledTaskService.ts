@@ -786,20 +786,7 @@ export const layer = Layer.effect(
       // Read before reserving: nothing between the reservation and its release may fail.
       const startedAt = yield* localNow;
       const startedAtIso = iso(startedAt);
-      const reserved = yield* Ref.modify(activeRuns, (active) => {
-        if (active.has(task.id)) return [false, active] as const;
-        const next = new Set(active);
-        next.add(task.id);
-        return [true, next] as const;
-      });
-      if (!reserved) {
-        if (trigger !== "scheduled") {
-          return yield* taskError("Schedule task is already running.", { taskId: task.id });
-        }
-        return { task, threadId: null, dispatchFailed: false };
-      }
-
-      return yield* Effect.gen(function* () {
+      const run = Effect.gen(function* () {
         // Re-read stale poll snapshots so deleted, paused or postponed tasks cannot fire.
         const active = yield* findTask(task.id);
         if (active === null) {
@@ -1018,13 +1005,30 @@ export const layer = Layer.effect(
         Effect.onError((cause) =>
           releaseStuckRun(task, startedAtIso, errorMessage(cause), webhook?.deliveryId),
         ),
-        Effect.ensuring(
-          Ref.update(activeRuns, (active) => {
-            const next = new Set(active);
-            next.delete(task.id);
-            return next;
-          }),
-        ),
+      );
+
+      // Reserve and release as one bracket so an interrupt cannot leave the task marked busy.
+      return yield* Effect.acquireUseRelease(
+        Ref.modify(activeRuns, (active) => {
+          if (active.has(task.id)) return [false, active] as const;
+          const next = new Set(active);
+          next.add(task.id);
+          return [true, next] as const;
+        }),
+        (reserved) =>
+          reserved
+            ? run
+            : trigger !== "scheduled"
+              ? Effect.fail(taskError("Schedule task is already running.", { taskId: task.id }))
+              : Effect.succeed({ task, threadId: null, dispatchFailed: false }),
+        (reserved) =>
+          reserved
+            ? Ref.update(activeRuns, (active) => {
+                const next = new Set(active);
+                next.delete(task.id);
+                return next;
+              })
+            : Effect.void,
       );
     });
 
@@ -2243,83 +2247,87 @@ export const layer = Layer.effect(
       }
       yield* Effect.forEach(
         tasks,
-        ({ task_id: taskId }) =>
-          Effect.gen(function* () {
-            const reserved = yield* Ref.modify(pendingInFlight, (active) =>
-              active.has(taskId)
-                ? ([false, active] as const)
-                : ([true, new Set(active).add(taskId)] as const),
-            );
-            if (!reserved) return;
-            const permit = yield* webhookPermit(taskId);
-            // One worker per task waits on its permit, then drains persisted rows in order.
-            // Other tasks remain independent and ticks never reload an active task's payloads.
-            const dispatch = Effect.gen(function* () {
-              while (true) {
-                const [entry] = yield* sql<{
-                  delivery_id: string;
-                  task_json: string;
-                  request_json: string;
-                  state: string;
-                }>`
+        ({ task_id: taskId }) => {
+          // One worker per task waits on its permit, then drains persisted rows in order.
+          // Other tasks remain independent and ticks never reload an active task's payloads.
+          const dispatch = Effect.gen(function* () {
+            while (true) {
+              const [entry] = yield* sql<{
+                delivery_id: string;
+                task_json: string;
+                request_json: string;
+                state: string;
+              }>`
               SELECT delivery_id, task_json, request_json, state FROM scheduled_task_webhook_pending
               WHERE task_id = ${taskId} AND state IN ('dispatching', 'running', 'completed', 'failed') ORDER BY due_at, rowid LIMIT 1
             `.pipe(NodeSqliteClient.readOnly);
-                if (entry === undefined) return;
-                const remove = sql`DELETE FROM scheduled_task_webhook_pending WHERE delivery_id = ${entry.delivery_id}`;
-                if (entry.state === "completed" || entry.state === "failed") {
-                  if (entry.state === "failed") {
-                    yield* markDeliveryFailed(entry.delivery_id, "The run failed to start.");
-                    yield* releaseFailedDelivery(entry.delivery_id);
-                  }
-                  yield* remove;
-                  continue;
-                }
-                const prepared = yield* Effect.gen(function* () {
-                  const task = yield* decodePendingTask(entry.task_json);
-                  const request = yield* decodePendingRequest(entry.request_json);
-                  const frameId = Buffer.from(yield* crypto.randomBytes(6)).toString("hex");
-                  return { task, rendered: renderWebhookPrompt(task.prompt, request, frameId) };
-                }).pipe(Effect.exit);
-                if (Exit.isFailure(prepared)) {
-                  if (Cause.hasInterruptsOnly(prepared.cause))
-                    return yield* Effect.failCause(prepared.cause);
-                  yield* markDeliveryFailed(
-                    entry.delivery_id,
-                    "The pending webhook payload could not be prepared.",
-                  );
+              if (entry === undefined) return;
+              const remove = sql`DELETE FROM scheduled_task_webhook_pending WHERE delivery_id = ${entry.delivery_id}`;
+              if (entry.state === "completed" || entry.state === "failed") {
+                if (entry.state === "failed") {
+                  yield* markDeliveryFailed(entry.delivery_id, "The run failed to start.");
                   yield* releaseFailedDelivery(entry.delivery_id);
-                  yield* remove;
-                  continue;
-                }
-                const { task, rendered } = prepared.value;
-                if (rendered.prompt.trim().length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
-                  yield* markDeliveryFailed(entry.delivery_id, PROMPT_TOO_LONG);
-                  yield* releaseFailedDelivery(entry.delivery_id);
-                } else {
-                  yield* sql`UPDATE scheduled_task_webhook_deliveries SET outcome = 'accepted', error = NULL, rendered_prompt = ${rendered.prompt.slice(0, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT)}, missing_fields_json = ${encodeMissingFieldsJson(rendered.missing)} WHERE delivery_id = ${entry.delivery_id}`;
-                  if (!(yield* runWebhookDelivery(task, entry.delivery_id, rendered.prompt)))
-                    return;
                 }
                 yield* remove;
+                continue;
               }
-            });
-            yield* dispatch.pipe(
-              permit.withPermits(1),
-              Effect.catch((cause) =>
-                Effect.logWarning("Pending webhook dispatch failed", { cause }),
-              ),
-              Effect.ensuring(
-                Ref.update(pendingInFlight, (active) => {
-                  const next = new Set(active);
-                  next.delete(taskId);
-                  return next;
-                }),
-              ),
-              Effect.withSpan("ScheduledTaskService.dispatchPendingWebhook", { root: true }),
-              Effect.forkIn(serviceScope),
-            );
-          }),
+              const prepared = yield* Effect.gen(function* () {
+                const task = yield* decodePendingTask(entry.task_json);
+                const request = yield* decodePendingRequest(entry.request_json);
+                const frameId = Buffer.from(yield* crypto.randomBytes(6)).toString("hex");
+                return { task, rendered: renderWebhookPrompt(task.prompt, request, frameId) };
+              }).pipe(Effect.exit);
+              if (Exit.isFailure(prepared)) {
+                if (Cause.hasInterruptsOnly(prepared.cause))
+                  return yield* Effect.failCause(prepared.cause);
+                yield* markDeliveryFailed(
+                  entry.delivery_id,
+                  "The pending webhook payload could not be prepared.",
+                );
+                yield* releaseFailedDelivery(entry.delivery_id);
+                yield* remove;
+                continue;
+              }
+              const { task, rendered } = prepared.value;
+              if (rendered.prompt.trim().length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+                yield* markDeliveryFailed(entry.delivery_id, PROMPT_TOO_LONG);
+                yield* releaseFailedDelivery(entry.delivery_id);
+              } else {
+                yield* sql`UPDATE scheduled_task_webhook_deliveries SET outcome = 'accepted', error = NULL, rendered_prompt = ${rendered.prompt.slice(0, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT)}, missing_fields_json = ${encodeMissingFieldsJson(rendered.missing)} WHERE delivery_id = ${entry.delivery_id}`;
+                if (!(yield* runWebhookDelivery(task, entry.delivery_id, rendered.prompt))) return;
+              }
+              yield* remove;
+            }
+          });
+          // The worker owns its reservation, so an interrupt anywhere still releases it.
+          return Effect.acquireUseRelease(
+            Ref.modify(pendingInFlight, (active) =>
+              active.has(taskId)
+                ? ([false, active] as const)
+                : ([true, new Set(active).add(taskId)] as const),
+            ),
+            (reserved) =>
+              reserved
+                ? webhookPermit(taskId).pipe(
+                    Effect.flatMap((permit) => dispatch.pipe(permit.withPermits(1))),
+                    Effect.catch((cause) =>
+                      Effect.logWarning("Pending webhook dispatch failed", { cause }),
+                    ),
+                    Effect.withSpan("ScheduledTaskService.dispatchPendingWebhook", {
+                      root: true,
+                    }),
+                  )
+                : Effect.void,
+            (reserved) =>
+              reserved
+                ? Ref.update(pendingInFlight, (active) => {
+                    const next = new Set(active);
+                    next.delete(taskId);
+                    return next;
+                  })
+                : Effect.void,
+          ).pipe(Effect.forkIn(serviceScope));
+        },
         { discard: true },
       );
     });
