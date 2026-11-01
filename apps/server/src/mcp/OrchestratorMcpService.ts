@@ -64,6 +64,8 @@ import {
   isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
+import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
@@ -336,6 +338,14 @@ function capabilityModelOption(descriptor: ProviderOptionDescriptor): Orchestrat
       descriptor.type === "boolean" ? [false, true] : descriptor.options.map((choice) => choice.id),
     ...(defaultValue === undefined ? {} : { default: defaultValue }),
   };
+}
+
+function namesNoModel(target: OrchestratorMcpTarget | undefined): boolean {
+  return (
+    target?.providerInstanceId === undefined &&
+    target?.driverKind === undefined &&
+    target?.model === undefined
+  );
 }
 
 function providerConstraints(
@@ -1279,21 +1289,45 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError(threadManagementFailure));
 
+  const resolveInheritedSelection = (input: {
+    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+    readonly target: OrchestratorMcpTarget | undefined;
+    readonly providers: ReadonlyArray<ServerProvider>;
+    readonly committedSelection?: ModelSelection | undefined;
+  }) => {
+    const parentSelection = input.parent.thread.modelSelection;
+    if (!namesNoModel(input.target)) return Effect.succeed(parentSelection);
+    if (input.committedSelection !== undefined) return Effect.succeed(input.committedSelection);
+    return Effect.gen(function* () {
+      const settings = yield* serverSettings.getSettings;
+      return (
+        resolveNewThreadModelSelection({
+          defaultSelection: parentSelection,
+          fallbackSelection: settings.fallbackModelSelection,
+          providers: input.providers,
+          now: DateTime.toEpochMillis(yield* DateTime.now),
+          settings,
+          projectId: input.parent.thread.projectId,
+        }).selection ?? parentSelection
+      );
+    }).pipe(Effect.orElseSucceed(() => parentSelection));
+  };
+
   const resolveTargetRechecking = (input: Parameters<typeof resolveTarget>[0]) => {
-    const instanceId =
-      input.target?.providerInstanceId ??
-      (input.target?.driverKind === undefined
-        ? input.parent.thread.modelSelection.instanceId
-        : undefined);
-    const resolved = resolveTarget(input);
-    if (instanceId === undefined) return resolved;
-    return resolved.pipe(
+    if (input.target?.providerInstanceId === undefined && input.target?.driverKind !== undefined) {
+      return resolveTarget(input);
+    }
+    return resolveTarget(input).pipe(
       Effect.catchIf(
         (error) => error.code === "provider_unavailable",
         () =>
-          providerRegistry
-            .refreshInstance(instanceId)
-            .pipe(Effect.flatMap((providers) => resolveTarget({ ...input, providers }))),
+          Effect.gen(function* () {
+            const instanceId =
+              input.target?.providerInstanceId ??
+              (yield* resolveInheritedSelection(input)).instanceId;
+            const providers = yield* providerRegistry.refreshInstance(instanceId);
+            return yield* resolveTarget({ ...input, providers });
+          }),
       ),
     );
   };
@@ -1304,9 +1338,12 @@ const make = Effect.gen(function* () {
     readonly providers: ReadonlyArray<ServerProvider>;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
     readonly skipProjectEnablementFilter?: boolean;
+    /** An implicit replay inherits what the accepted request committed, since the usage fallback can differ by now. */
+    readonly committedSelection?: ModelSelection | undefined;
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
     const requestedInstanceId = input.target?.providerInstanceId;
     const requestedDriver = input.target?.driverKind;
+    const inheritedSelection = yield* resolveInheritedSelection(input);
     const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
     let instanceId = requestedInstanceId;
 
@@ -1353,7 +1390,7 @@ const make = Effect.gen(function* () {
         );
       }
     }
-    instanceId ??= input.parent.thread.modelSelection.instanceId;
+    instanceId ??= inheritedSelection.instanceId;
 
     const provider = input.providers.find((candidate) => candidate.instanceId === instanceId);
     if (provider === undefined) {
@@ -1379,7 +1416,6 @@ const make = Effect.gen(function* () {
       );
     }
 
-    const inheritedSelection = input.parent.thread.modelSelection;
     const requestedModel = input.target?.model;
     const model =
       requestedModel ??
@@ -2349,11 +2385,18 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
+      const committedChild =
+        isRetryOfAcceptedDelegation && namesNoModel(input.target)
+          ? yield* threadManagement
+              .getThreadShell(IdAllocator.derive.delegatedTaskThread({ commandId }))
+              .pipe(Effect.orElseSucceed(() => null))
+          : null;
       const target = yield* resolveTargetRechecking({
         parent,
         target: input.target,
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
+        committedSelection: committedChild?.modelSelection,
       });
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,
@@ -2761,7 +2804,7 @@ const make = Effect.gen(function* () {
               const target = yield* resolveTargetRechecking({
                 parent,
                 target:
-                  committedThread === null
+                  committedThread === null || namesNoModel(request.target)
                     ? request.target
                     : {
                         ...request.target,
@@ -2769,6 +2812,7 @@ const make = Effect.gen(function* () {
                       },
                 providers,
                 skipProjectEnablementFilter: isRetryOfAcceptedCreation,
+                committedSelection: committedThread?.modelSelection,
               });
               const runtimeMode = yield* resolveRuntimeMode(
                 parent.thread.runtimeMode,
