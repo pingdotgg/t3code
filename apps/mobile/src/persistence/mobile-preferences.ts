@@ -367,6 +367,8 @@ const make = Effect.fn("MobilePreferencesStore.make")(function* () {
   const secureStorage = yield* MobileSecureStorage.MobileSecureStorage;
   const lock = yield* Semaphore.make(1);
   const lastUpdatedAt = yield* Ref.make(0);
+  // This store is the only writer, so a complete load or a save stays current until an update fails.
+  const cachedPreferences = yield* Ref.make<Preferences | undefined>(undefined);
 
   const parsePayload = (raw: string | null): Preferences | null => {
     if (raw === null || !raw.trim()) return null;
@@ -452,7 +454,7 @@ const make = Effect.fn("MobilePreferencesStore.make")(function* () {
           ),
         ),
       );
-  });
+  }, Effect.uninterruptible);
 
   const loadUnlocked = Effect.gen(function* () {
     const databaseResult = yield* Effect.result(database.loadPreferencesJson);
@@ -526,7 +528,10 @@ const make = Effect.fn("MobilePreferencesStore.make")(function* () {
       }
     }
 
-    return parsed === null ? {} : sanitizePreferences(parsed);
+    const preferences = parsed === null ? {} : sanitizePreferences(parsed);
+    if (databaseAvailable && fallbackResult._tag === "Success")
+      yield* Ref.set(cachedPreferences, preferences);
+    return preferences;
   });
 
   const load = lock
@@ -537,7 +542,7 @@ const make = Effect.fn("MobilePreferencesStore.make")(function* () {
     lock
       .withPermits(1)(
         Effect.gen(function* () {
-          const current = yield* loadUnlocked;
+          const current = (yield* Ref.get(cachedPreferences)) ?? (yield* loadUnlocked);
           const patch = yield* Effect.try({
             try: () => transform(current),
             catch: (cause) => new MobilePreferencesSaveError({ cause }),
@@ -545,8 +550,9 @@ const make = Effect.fn("MobilePreferencesStore.make")(function* () {
           const next: Preferences = { ...current, ...patch };
           const payload = yield* encode(PREFERENCES_KEY, next);
           yield* saveJson(payload);
+          yield* Ref.set(cachedPreferences, sanitizePreferences(parsePayload(payload) ?? {}));
           return next;
-        }),
+        }).pipe(Effect.onError(() => Ref.set(cachedPreferences, undefined))),
       )
       .pipe(
         Effect.mapError((cause) =>
