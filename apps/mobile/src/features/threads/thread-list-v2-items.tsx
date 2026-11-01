@@ -1083,7 +1083,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               : rowAppearance.foregroundClassName,
             isRegeneratingTitle && "opacity-55",
           )}
-          numberOfLines={2}
+          numberOfLines={1}
           onTextLayout={
             Platform.OS === "android"
               ? ({ nativeEvent }) => {
