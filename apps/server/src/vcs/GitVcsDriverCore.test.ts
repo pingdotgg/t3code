@@ -12,6 +12,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
@@ -1067,6 +1068,51 @@ it.effect("marks the current branch when worktree metadata is unavailable", () =
 
       assert.isTrue(refs.isRepo);
       assert.isTrue(refs.refs.find((ref) => ref.name === initialBranch)?.current);
+    }),
+  ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it.effect("still creates the worktree when the index refresh fails", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      let refreshAttempts = 0;
+      const failingRefreshSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.die("expected a standard Git command");
+          }
+          if (command.args.includes("update-index")) {
+            refreshAttempts++;
+            return makeNonRepositoryHandle();
+          }
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, failingRefreshSpawner),
+      );
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+      );
+      const worktreePath = pathService.join(
+        yield* makeTmpDir("git-worktrees-"),
+        "refresh-fails-worktree",
+      );
+
+      const created = yield* driver.createWorktree({
+        cwd,
+        path: worktreePath,
+        refName: initialBranch,
+        newRefName: "feature/refresh-fails",
+      });
+
+      assert.equal(refreshAttempts, 1);
+      assert.equal(created.worktree.path, worktreePath);
+      assert.isTrue(yield* fileSystem.exists(pathService.join(worktreePath, "README.md")));
     }),
   ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
@@ -4188,6 +4234,50 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         assert.equal(created.worktree.path, worktreePath);
         assert.equal(yield* fileSystem.exists(worktreePath), true);
+      }),
+    );
+
+    it.effect("leaves no racily clean entries in a new worktree's index", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        for (let index = 0; index < 20; index++) {
+          yield* writeTextFile(cwd, `src/file-${index}.txt`, `file ${index}\n`);
+        }
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add files"]);
+
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-"),
+          "fresh-worktree",
+        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/racy-index",
+        });
+
+        // Git re-hashes every entry whose mtime second is not before the index file's own second.
+        const indexPath = pathService.resolve(
+          worktreePath,
+          yield* git(worktreePath, ["rev-parse", "--git-path", "index"]),
+        );
+        const { mtime } = yield* fileSystem.stat(indexPath);
+        const indexSecond = Math.floor(Option.getOrThrow(mtime).getTime() / 1000);
+        const entries = yield* git(worktreePath, ["ls-files", "--debug"]);
+        const entrySeconds = Array.from(entries.matchAll(/^\s+mtime: (\d+):/gm), (match) =>
+          Number(match[1]),
+        );
+
+        assert.equal(entrySeconds.length, 21);
+        assert.deepEqual(
+          entrySeconds.filter((second) => second >= indexSecond),
+          [],
+        );
       }),
     );
 
