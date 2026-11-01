@@ -842,13 +842,14 @@ export const make = Effect.gen(function* () {
 
   const listWorkspaceProjects = (
     filter: Pick<PullRequestListInput, "projectId" | "projectIds" | "host">,
+    deduplicate = true,
   ): Effect.Effect<WorkspaceProjects, PullRequestError> =>
     Effect.flatMap(sharedProjectReads, (shared) => {
-      if (shared === null || !shared.open) return readWorkspaceProjects(filter);
-      const key = JSON.stringify([filter.projectId, filter.projectIds, filter.host]);
+      if (shared === null || !shared.open) return readWorkspaceProjects(filter, deduplicate);
+      const key = JSON.stringify([filter.projectId, filter.projectIds, filter.host, deduplicate]);
       const existing = shared.reads.get(key);
       if (existing !== undefined) return existing;
-      return Effect.cached(readWorkspaceProjects(filter)).pipe(
+      return Effect.cached(readWorkspaceProjects(filter, deduplicate)).pipe(
         Effect.tap((read) => Effect.sync(() => shared.reads.set(key, read))),
         Effect.flatten,
       );
@@ -870,6 +871,7 @@ export const make = Effect.gen(function* () {
 
   const readWorkspaceProjects = (
     filter: Pick<PullRequestListInput, "projectId" | "projectIds" | "host">,
+    deduplicate: boolean,
   ): Effect.Effect<WorkspaceProjects, PullRequestError> =>
     (filter.projectId === undefined
       ? projects.listShells(
@@ -945,8 +947,9 @@ export const make = Effect.gen(function* () {
           const repositoryKey =
             api?.repositoryKey?.({ canonicalKey: identity.canonicalKey }) ?? null;
           const key = listCursorKey(host, repositoryKey ?? repository);
-          if (seen.has(key)) continue;
-          seen.add(key);
+          const deduplicationKey = deduplicate ? key : `${project.id} ${key}`;
+          if (seen.has(deduplicationKey)) continue;
+          seen.add(deduplicationKey);
           if (api === null) {
             const counted = unimplemented.get(host);
             if (counted === undefined) unimplemented.set(host, { kind, projectCount: 1 });
@@ -978,8 +981,9 @@ export const make = Effect.gen(function* () {
           const project = withoutRepository.find((project) => project.id === link.projectId);
           if (project === undefined) continue;
           const key = listCursorKey(link.host, link.repository);
-          if (seen.has(key)) continue;
-          seen.add(key);
+          const deduplicationKey = deduplicate ? key : `${project.id} ${key}`;
+          if (seen.has(deduplicationKey)) continue;
+          seen.add(deduplicationKey);
           const roots = viewerRoots.get(link.host);
           if (roots === undefined) viewerRoots.set(link.host, [project.workspaceRoot]);
           else if (!roots.includes(project.workspaceRoot)) roots.push(project.workspaceRoot);
@@ -2658,9 +2662,10 @@ export const make = Effect.gen(function* () {
     "PullRequestService.listStatsUncached",
   )(function* (input) {
     if (input.refs.length === 0) return { stats: [] };
-    const { supported } = yield* listWorkspaceProjects({
-      projectIds: [...new Set(input.refs.map((ref) => ref.projectId))],
-    });
+    const { supported } = yield* listWorkspaceProjects(
+      { projectIds: [...new Set(input.refs.map((ref) => ref.projectId))] },
+      false,
+    );
     const wanted = new Map<
       string,
       { readonly project: SupportedProject; readonly number: number }
@@ -2675,7 +2680,10 @@ export const make = Effect.gen(function* () {
       if (project === undefined || project.api.listChangeRequestStats === undefined) {
         continue;
       }
-      wanted.set(`${project.cursorKey} ${ref.number}`, { project, number: ref.number });
+      wanted.set(`${project.project.id} ${project.cursorKey} ${ref.number}`, {
+        project,
+        number: ref.number,
+      });
     }
     const byHost = new Map<string, Array<{ project: SupportedProject; number: number }>>();
     for (const entry of wanted.values()) {
@@ -2689,36 +2697,32 @@ export const make = Effect.gen(function* () {
         const first = entries[0]!;
         const readStats = first.project.api.listChangeRequestStats;
         if (readStats === undefined) return Effect.succeed<ReadonlyArray<PullRequestDiffStat>>([]);
-        const projectsByRepository = new Map(
-          entries.map((entry) => [
-            `${entry.project.repository.toLowerCase()} ${entry.number}`,
-            entry.project,
-          ]),
+        const projectsByRepository = Map.groupBy(
+          entries,
+          (entry) => `${entry.project.repository.toLowerCase()} ${entry.number}`,
         );
         return readStats({
           cwd: first.project.project.workspaceRoot,
           host: first.project.host,
-          changeRequests: entries.map((entry) => ({
-            repository: entry.project.repository,
-            number: entry.number,
+          changeRequests: [...projectsByRepository.values()].map(([entry]) => ({
+            repository: entry!.project.repository,
+            number: entry!.number,
           })),
         }).pipe(
           Effect.map((read) =>
             read.flatMap((stat): ReadonlyArray<PullRequestDiffStat> => {
-              const project = projectsByRepository.get(
+              const projects = projectsByRepository.get(
                 `${stat.repository.toLowerCase()} ${stat.number}`,
               );
-              return project === undefined
-                ? []
-                : [
-                    {
-                      projectId: project.project.id,
-                      repository: project.repository,
-                      number: stat.number,
-                      additions: stat.additions,
-                      deletions: stat.deletions,
-                    },
-                  ];
+              return (
+                projects?.map(({ project }) => ({
+                  projectId: project.project.id,
+                  repository: project.repository,
+                  number: stat.number,
+                  additions: stat.additions,
+                  deletions: stat.deletions,
+                })) ?? []
+              );
             }),
           ),
           Effect.orElseSucceed((): ReadonlyArray<PullRequestDiffStat> => []),

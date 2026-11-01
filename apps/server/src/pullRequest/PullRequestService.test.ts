@@ -391,8 +391,16 @@ it.effect("browses linked repositories in a non-Git project alongside matching c
       number: 1,
     }));
     assert.deepStrictEqual(
-      (yield* service.listStats({ refs })).stats.map((stat) => stat.repository).sort(),
-      ["acme/skills", "acme/web"],
+      (yield* service.listStats({
+        refs: [...refs, { ...refs[0]!, projectId: "checkout" as ProjectId }],
+      })).stats
+        .map((stat) => [stat.projectId, stat.repository, stat.additions, stat.deletions])
+        .sort(),
+      [
+        ["checkout", "acme/web", 12, 3],
+        [selected, "acme/skills", 12, 3],
+        [selected, "acme/web", 12, 3],
+      ],
     );
     assert.strictEqual((yield* service.summary(refs[1]!)).title, "acme/skills");
   }),
