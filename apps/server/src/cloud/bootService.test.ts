@@ -110,6 +110,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     linger: string;
     enabled: boolean;
     active: boolean;
+    handoffRunning?: boolean;
   } = {
     failCommand: undefined,
     linger: "yes",
@@ -148,7 +149,10 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                 ? control.enabled
                   ? "enabled\n"
                   : "disabled\n"
-                : "",
+                : control.handoffRunning === true &&
+                    command === "launchctl print gui/501/com.t3tools.t3code.service.handoff"
+                  ? "gui/501/com.t3tools.t3code.service.handoff = {\n\tstate = running\n}\n"
+                  : "",
         stderr: "",
         code: ChildProcessSpawner.ExitCode(
           failed ||
@@ -965,6 +969,24 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       );
       expect(handoff).not.toContain("T3_BOOT_SERVICE_UNIT");
       expect(handoff).not.toContain("KeepAlive");
+    }),
+  );
+
+  it.effect("leaves an earlier macOS handoff that is still running to finish its work", () =>
+    Effect.gen(function* () {
+      const { service, fs, commands, control, makeService } = yield* makeHarness("darwin");
+      const plan = yield* service.install();
+      const inside = yield* makeService(undefined, "1.2.3", undefined, true);
+      control.handoffRunning = true;
+      commands.length = 0;
+
+      const error = yield* inside.restart.pipe(Effect.flip);
+
+      expect(error.message).toContain("earlier service handoff");
+      expect(commands.filter((command) => /bootout|bootstrap/.test(command))).toEqual([]);
+      expect(
+        yield* fs.exists(`${plan.baseDir}/runtime/com.t3tools.t3code.service.handoff.plist`),
+      ).toBe(false);
     }),
   );
 });

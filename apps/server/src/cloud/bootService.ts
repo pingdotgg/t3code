@@ -262,6 +262,8 @@ type BootServiceCommand = readonly [executable: string, ...args: ReadonlyArray<s
 interface BootServiceHandoff {
   /** Written before the steps run. */
   readonly file?: { readonly path: string; readonly contents: string };
+  /** Prints an earlier handoff, which reports `state = running` until it finishes. */
+  readonly earlier?: { readonly command: string; readonly args: ReadonlyArray<string> };
   readonly steps: ReadonlyArray<BootServiceStep>;
 }
 
@@ -381,6 +383,7 @@ function launchdManager(input: {
   );
   const domainTarget = `gui/${input.uid}`;
   const serviceTarget = `${domainTarget}/${BOOT_SERVICE_LAUNCHD_LABEL}`;
+  const handoffTarget = `${domainTarget}/${BOOT_SERVICE_HANDOFF_LABEL}`;
   // `bootout` clears a finished earlier handoff, which stays loaded; bootstrapping a loaded label fails.
   // Kept out of LaunchAgents so it never runs at login.
   const handoff = (command: BootServiceCommand, plan: BootServicePlan): BootServiceHandoff => {
@@ -398,11 +401,12 @@ function launchdManager(input: {
           logPath: plan.logPath,
         }),
       },
+      earlier: { command: "launchctl", args: ["print", handoffTarget] },
       steps: [
         {
           step: "clearing an earlier handoff job",
           command: "launchctl",
-          args: ["bootout", `${domainTarget}/${BOOT_SERVICE_HANDOFF_LABEL}`],
+          args: ["bootout", handoffTarget],
           optional: true,
         },
         {
@@ -775,9 +779,27 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       { discard: true },
     );
 
+  const probe = (command: string, args: ReadonlyArray<string>) =>
+    runner.run({ command, args, timeout: Duration.seconds(5) }).pipe(Effect.option);
+  const succeeded = (result: Option.Option<ProcessRunner.ProcessRunOutput>) =>
+    Option.isSome(result) && result.value.code === 0;
+
   const runHandoff = Effect.fn("cloud.boot_service.run_handoff")(function* (
     handoff: BootServiceHandoff,
   ) {
+    if (handoff.earlier !== undefined) {
+      const earlier = yield* probe(handoff.earlier.command, handoff.earlier.args);
+      // Booting out a running handoff would kill the job that brings the service back.
+      if (
+        succeeded(earlier) &&
+        Option.isSome(earlier) &&
+        earlier.value.stdout.split("\n").some((line) => line.trim() === "state = running")
+      ) {
+        return yield* new BootServiceCommandError({
+          step: "waiting for an earlier service handoff to finish",
+        }).pipe(Effect.tapError(logFailure));
+      }
+    }
     if (handoff.file !== undefined) {
       yield* writeDurably(handoff.file.path, handoff.file.contents).pipe(
         Effect.tapError(logFailure),
@@ -786,10 +808,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     yield* runSteps(handoff.steps);
   });
 
-  const probe = (command: string, args: ReadonlyArray<string>) =>
-    runner.run({ command, args, timeout: Duration.seconds(5) }).pipe(Effect.option);
-  const succeeded = (result: Option.Option<ProcessRunner.ProcessRunOutput>) =>
-    Option.isSome(result) && result.value.code === 0;
   const lingerArgs = [
     "show-user",
     ...(uid === undefined ? [] : [String(uid)]),
