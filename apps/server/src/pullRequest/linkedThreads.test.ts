@@ -47,6 +47,13 @@ it.effect(
           source: "manual",
         },
         { id: "settled", host: "github.com", repository: "acme/web", number: 7, source: "manual" },
+        {
+          id: "auto-settled",
+          host: "github.com",
+          repository: "acme/web",
+          number: 7,
+          source: "manual",
+        },
         { id: "active", host: "github.com", repository: "acme/web", number: 7, source: "manual" },
         {
           id: "archived",
@@ -96,6 +103,7 @@ it.effect(
         const payload = yield* encodePayload({
           linkedPullRequest: null,
           settledOverride: ["settled", "archived"].includes(fixture.id) ? "settled" : null,
+          settledAt: fixture.id === "auto-settled" ? archivedAt : null,
           ...(fixture.id === "side-chat" ? { lineage: { sideChat: true } } : {}),
           pullRequests: [{ ...fixture, linkedAt: createdAt, snapshot: null, stack: null }],
         });
@@ -174,6 +182,13 @@ it.effect(
             title: "active",
             archivedAt: null,
             settled: false,
+          },
+          {
+            id: "auto-settled",
+            projectId: "project-1",
+            title: "auto-settled",
+            archivedAt: null,
+            settled: true,
           },
           {
             id: "settled",

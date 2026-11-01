@@ -31,7 +31,8 @@ export const listLinkedPullRequestThreads = Effect.fn("listLinkedPullRequestThre
     }>`
       SELECT t.thread_id AS id, t.project_id AS "projectId", t.title,
         t.archived_at AS "archivedAt",
-        (json_extract(t.payload_json, '$.settledOverride') IS 'settled') AS settled,
+        (json_extract(t.payload_json, '$.settledAt') IS NOT NULL
+          OR json_extract(t.payload_json, '$.settledOverride') IS 'settled') AS settled,
         json_extract(link.value, '$.host') AS host,
         json_extract(link.value, '$.repository') AS repository,
         json_extract(link.value, '$.number') AS number,
