@@ -457,14 +457,22 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       ),
   );
   // Sub-provider groups start collapsed, except the one holding the active model.
+  const activeSubProviderGroupKey = activeModel?.subProvider
+    ? modelPickerSubProviderGroupKey(props.activeInstanceId, activeModel.subProvider)
+    : null;
+  const [previousActiveSubProviderGroupKey, setPreviousActiveSubProviderGroupKey] =
+    useState(activeSubProviderGroupKey);
   const [expandedSubProviderGroupKeys, setExpandedSubProviderGroupKeys] = useState(
-    () =>
-      new Set<string>(
-        activeModel?.subProvider
-          ? [modelPickerSubProviderGroupKey(props.activeInstanceId, activeModel.subProvider)]
-          : [],
-      ),
+    () => new Set<string>(activeSubProviderGroupKey ? [activeSubProviderGroupKey] : []),
   );
+  if (previousActiveSubProviderGroupKey !== activeSubProviderGroupKey) {
+    setPreviousActiveSubProviderGroupKey(activeSubProviderGroupKey);
+    if (activeSubProviderGroupKey) {
+      setExpandedSubProviderGroupKeys((expanded) =>
+        new Set(expanded).add(activeSubProviderGroupKey),
+      );
+    }
+  }
   const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindings = providedKeybindings ?? serverKeybindings;
   const [searchHeight, setSearchHeight] = useState(0);
