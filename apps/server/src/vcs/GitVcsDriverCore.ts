@@ -1531,17 +1531,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const path = yield* Path.Path;
         const fetchCwd =
           path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
-        return yield* executeGit(
-          "GitVcsDriver.statusDetails.defaultBranch",
-          fetchCwd,
-          ["--git-dir", gitCommonDir, "symbolic-ref", "refs/remotes/origin/HEAD"],
-          { allowNonZeroExit: true },
-        ).pipe(
-          Effect.map((result) => {
-            if (result.exitCode !== 0) return null;
-            return parseDefaultBranchFromRemoteHeadRef(result.stdout, "origin");
-          }),
-        );
+        return yield* resolvePrimaryDefaultBranchName(fetchCwd, ["--git-dir", gitCommonDir]);
       }),
     {
       capacity: 2_048,
@@ -1658,11 +1648,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const resolveDefaultBranchName = (
     cwd: string,
     remoteName: string,
+    gitDirArgs: ReadonlyArray<string> = [],
   ): Effect.Effect<string | null, GitCommandError> =>
     executeGit(
       "GitVcsDriver.resolveDefaultBranchName",
       cwd,
-      ["symbolic-ref", `refs/remotes/${remoteName}/HEAD`],
+      [...gitDirArgs, "symbolic-ref", `refs/remotes/${remoteName}/HEAD`],
       { allowNonZeroExit: true },
     ).pipe(
       Effect.map((result) => {
@@ -1696,8 +1687,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const originRemoteExists = (cwd: string): Effect.Effect<boolean, GitCommandError> =>
     remoteExists({ cwd, remoteName: "origin" });
 
-  const listRemoteNames = (cwd: string): Effect.Effect<ReadonlyArray<string>, GitCommandError> =>
-    runGitStdout("GitVcsDriver.listRemoteNames", cwd, ["remote"]).pipe(
+  const listRemoteNames = (
+    cwd: string,
+    gitDirArgs: ReadonlyArray<string> = [],
+  ): Effect.Effect<ReadonlyArray<string>, GitCommandError> =>
+    runGitStdout("GitVcsDriver.listRemoteNames", cwd, [...gitDirArgs, "remote"]).pipe(
       Effect.map(parseRemoteNamesInGitOrder),
     );
 
@@ -1728,6 +1722,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       detail: "No git remote is configured for this repository.",
     });
   });
+
+  const resolvePrimaryDefaultBranchName = Effect.fn("GitVcsDriver.resolvePrimaryDefaultBranchName")(
+    function* (cwd: string, gitDirArgs: ReadonlyArray<string> = []) {
+      const originDefault = yield* resolveDefaultBranchName(cwd, "origin", gitDirArgs);
+      if (originDefault !== null) return originDefault;
+      const remoteNames = yield* listRemoteNames(cwd, gitDirArgs);
+      const [firstRemote] = remoteNames;
+      return firstRemote === undefined || remoteNames.includes("origin")
+        ? null
+        : yield* resolveDefaultBranchName(cwd, firstRemote, gitDirArgs);
+    },
+  );
 
   const resolvePushRemoteName = Effect.fn("resolvePushRemoteName")(function* (
     cwd: string,
@@ -2048,7 +2054,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     }
 
-    const defaultBranch = yield* resolveDefaultBranchName(cwd, "origin");
+    const defaultBranch = yield* resolvePrimaryDefaultBranchName(cwd);
     const isDefaultBranch =
       branch !== null &&
       (branch === defaultBranch ||
@@ -2194,7 +2200,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ),
         statusCacheKey
           ? Cache.get(defaultBranchCache, statusCacheKey).pipe(Effect.orElseSucceed(() => null))
-          : resolveDefaultBranchName(cwd, "origin").pipe(Effect.orElseSucceed(() => null)),
+          : resolvePrimaryDefaultBranchName(cwd).pipe(Effect.orElseSucceed(() => null)),
         statusCacheKey
           ? Cache.get(originExistsCache, statusCacheKey).pipe(Effect.orElseSucceed(() => false))
           : originRemoteExists(cwd).pipe(Effect.orElseSucceed(() => false)),
