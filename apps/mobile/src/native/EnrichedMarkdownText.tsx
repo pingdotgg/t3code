@@ -315,7 +315,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         <EnrichedMarkdownText
           markdown={markdown}
           markdownStyle={markdownStyle}
-          writingDirection={props.writingDirection}
+          writingDirection={props.writingDirection ?? "word-majority"}
           onLinksChange={onLinksChange}
           renderers={renderers}
           resolveImageSource={resolveNativeImageSource}
@@ -327,7 +327,6 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
           linkRecognition={linkRecognition}
           containerStyle={{ flexShrink: 1, minWidth: 0 }}
           flavor="github"
-          writingDirection="word-majority"
           selectable
           selectionClipboard={selectionClipboard}
           selectionColor={props.textStyle.selectionColor}
