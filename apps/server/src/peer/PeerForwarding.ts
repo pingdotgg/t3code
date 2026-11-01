@@ -31,7 +31,7 @@ import * as PeerMcpClient from "./PeerMcpClient.ts";
  * forwarded wait goes out in pieces no longer than this.
  */
 export const FORWARDED_WAIT_CHUNK_MS = 50_000;
-const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
+const DEFAULT_WAIT_TIMEOUT_MS = 50_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
 
 type Scope = McpInvocationContext.McpInvocationScope;

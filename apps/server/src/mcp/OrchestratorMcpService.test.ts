@@ -3234,6 +3234,69 @@ describe("OrchestratorMcpService thread lookup", () => {
   );
 });
 
+describe("OrchestratorMcpService.waitForThread", () => {
+  it.effect("waits under the common 60-second tool-call limit unless timeoutMs is given", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread:mcp-wait");
+      const shell = liveThreadShell(threadId);
+      const requestedTimeouts = yield* Ref.make<ReadonlyArray<number>>([]);
+      const scope: McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:mcp-wait"),
+        requestNamespace: "provider-session:mcp-wait",
+        thread: {
+          threadId,
+          providerSessionId: "provider-session:mcp-wait",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const defaulted = yield* service.waitForThread(scope, { threadId });
+        yield* service.waitForThread(scope, { threadId, timeoutMs: 5_000 });
+        assert.deepStrictEqual(defaulted, {
+          threadId,
+          runId: null,
+          status: "idle",
+          timedOut: false,
+        });
+        assert.deepStrictEqual(yield* Ref.get(requestedTimeouts), [50_000, 5_000]);
+      }).pipe(
+        Effect.provide(
+          layerOrchestratorService.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                NodeServices.layer,
+                Layer.mock(ThreadManagementService.ThreadManagementService)({
+                  getThreadShell: () => Effect.succeed(shell),
+                  getThreadRecords: () => Effect.succeed(idleThreadProjection(shell)),
+                  waitForThread: (input) =>
+                    Ref.update(requestedTimeouts, (timeouts) => [
+                      ...timeouts,
+                      input.timeoutMs,
+                    ]).pipe(Effect.as({ threadId, run: null, timedOut: false })),
+                }),
+                ServerSettings.layerTest(),
+                Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+                Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+                  list: () => Effect.succeed([]),
+                }),
+                Layer.mock(ProjectService.ProjectService)({}),
+                Layer.mock(SecretRequests.SecretRequests)({}),
+                Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+                Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+              ),
+            ),
+          ),
+        ),
+      );
+    }),
+  );
+});
+
 describe("OrchestratorMcpService thread list", () => {
   const client: McpInvocationScope = {
     environmentId: EnvironmentId.make("environment:thread-list"),
