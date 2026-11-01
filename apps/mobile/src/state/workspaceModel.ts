@@ -103,4 +103,12 @@ export function projectWorkspaceState(input: {
   };
 }
 
+// Reconnecting environments keep their last failure, so an error alone does not end the wait.
+export function isWorkspaceCatalogPending(state: WorkspaceState): boolean {
+  return (
+    state.networkStatus !== "offline" &&
+    (state.hasConnectingEnvironment || state.hasSyncingConnectedEnvironment)
+  );
+}
+
 export type ServerConfigByEnvironmentId = ReadonlyMap<EnvironmentId, ServerConfig>;
