@@ -174,6 +174,98 @@ describe("compressed transcripts", () => {
 });
 
 describe("readTranscriptRecords resume", () => {
+  it("takes a Claude session's folder from a record without usage", async () => {
+    const path = NodePath.join(dir, "claude.jsonl");
+    const user = JSON.stringify({ type: "user", cwd: "/work/app", message: { role: "user" } });
+    // The usage line itself names no folder.
+    await NodeFSP.writeFile(path, `${user}\n${claudeLine(1, 5)}`);
+    const read = await readTranscriptRecords(path, TEST_FORMATS.claude);
+    assert.isNotNull(read);
+    assert.strictEqual(read.cwd, "/work/app");
+    assert.strictEqual(read.records.length, 1);
+  });
+
+  it("takes a Codex rollout's folder from its own session meta, not a fork's ancestors", async () => {
+    const path = NodePath.join(dir, "codex.jsonl");
+    const meta = (id: string, cwd: string) =>
+      `${JSON.stringify({
+        type: "session_meta",
+        timestamp: "2026-08-01T10:00:00Z",
+        payload: { type: "session_meta", id, cwd },
+      })}\n`;
+    await NodeFSP.writeFile(
+      path,
+      meta("child", "/work/child") +
+        meta("parent", "/work/parent") +
+        codexModelLine("gpt-6-astra") +
+        codexUsageLine(5, 10),
+    );
+    const read = await readTranscriptRecords(path, TEST_FORMATS.codex);
+    assert.isNotNull(read);
+    assert.strictEqual(read.cwd, "/work/child");
+    assert.strictEqual(read.records.length, 1);
+  });
+
+  it.each([1, 8 * 1024 * 1024])(
+    "leaves a child without cwd unlocated across ancestor metadata (stream threshold %s)",
+    async (streamingThresholdBytes) => {
+      const path = NodePath.join(dir, "codex-no-cwd.jsonl");
+      const ancestor = `${JSON.stringify({ type: "session_meta", payload: { id: "ancestor", cwd: "/work/ancestor" } })}\n`;
+      await NodeFSP.writeFile(
+        path,
+        codexMetaLine() + ancestor + codexModelLine("gpt-6-astra") + codexUsageLine(5, 10),
+      );
+      const read = await readTranscriptRecords(path, TEST_FORMATS.codex, undefined, {
+        streamingThresholdBytes,
+      });
+      assert.isNotNull(read);
+      assert.isNull(read.cwd);
+      assert.strictEqual(read.records[0]?.sessionId, "codex-session-1");
+      await NodeFSP.appendFile(path, ancestor + codexUsageLine(7, 20));
+      const resumed = await readTranscriptRecords(path, TEST_FORMATS.codex, read.position, {
+        streamingThresholdBytes,
+      });
+      assert.isNotNull(resumed);
+      assert.isNull(resumed.cwd);
+      assert.strictEqual(resumed.records[0]?.sessionId, "codex-session-1");
+    },
+  );
+
+  it("takes a Pi session's folder from its header", async () => {
+    const path = NodePath.join(dir, "pi.jsonl");
+    await NodeFSP.writeFile(
+      path,
+      `${JSON.stringify({ type: "session", id: "pi-1", cwd: "/work/pi" })}\n`,
+    );
+    const read = await readTranscriptRecords(path, TEST_FORMATS.pi);
+    assert.isNotNull(read);
+    assert.strictEqual(read.cwd, "/work/pi");
+  });
+
+  it("reports no folder when the transcript names none", async () => {
+    const path = NodePath.join(dir, "claude.jsonl");
+    await NodeFSP.writeFile(path, claudeLine(1, 5));
+    const read = await readTranscriptRecords(path, TEST_FORMATS.claude);
+    assert.isNotNull(read);
+    assert.isNull(read.cwd);
+  });
+
+  it("takes the folder from a record too large to parse whole", async () => {
+    const path = NodePath.join(dir, "claude.jsonl");
+    const large = JSON.stringify({
+      type: "user",
+      cwd: "/work/large",
+      message: { role: "user", content: "x".repeat(4096) },
+    });
+    await NodeFSP.writeFile(path, `${large}\n${claudeLine(1, 5)}`);
+    const read = await readTranscriptRecords(path, TEST_FORMATS.claude, undefined, {
+      streamingThresholdBytes: 1024,
+    });
+    assert.isNotNull(read);
+    assert.strictEqual(read.cwd, "/work/large");
+    assert.strictEqual(read.records.length, 1);
+  });
+
   it.each([
     { mode: "buffered", streamingThresholdBytes: Infinity },
     { mode: "streaming", streamingThresholdBytes: 0 },

@@ -14,8 +14,10 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import {
   EnvironmentId,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ThreadId,
   UsageDay,
   type UsageSource,
   type UsageSummary,
@@ -48,7 +50,9 @@ import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
 import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
 import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
+import * as UsageAttribution from "./UsageAttribution.ts";
 import * as UsageService from "./UsageService.ts";
+import { EMPTY_ATTRIBUTION, type UsageAttributionIndex } from "./usageThreadIndex.ts";
 import * as MuseSdk from "../../../../packages/provider-muse/src/server/sdk.ts";
 import { MuseUsageHome } from "@t3tools/provider-muse/server";
 import { makeScanCacheWriter, SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
@@ -143,6 +147,7 @@ const layerService = (input: {
   ) => Effect.Effect<Response, HttpClientError.HttpClientError>;
   readonly environment?: NodeJS.ProcessEnv;
   readonly platform?: NodeJS.Platform;
+  readonly attribution?: UsageAttributionIndex;
   readonly hostname?: string;
 }) =>
   layerCursorUsageAccounts(
@@ -158,6 +163,14 @@ const layerService = (input: {
       ServerConfig.layerTest(process.cwd(), NodePath.join(input.home, input.prefix)),
     ),
     Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(
+      Layer.succeed(
+        UsageAttribution.UsageAttribution,
+        UsageAttribution.UsageAttribution.of({
+          read: Effect.succeed(input.attribution ?? EMPTY_ATTRIBUTION),
+        }),
+      ),
+    ),
     Layer.provideMerge(Layer.succeed(HostProcess.Platform, input.platform ?? "linux")),
     Layer.provideMerge(Layer.succeed(HostProcess.Hostname, input.hostname ?? "usage-test-host")),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),
@@ -1306,6 +1319,160 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("groups usage by account, project and thread when asked", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const projects = NodePath.join(home, "claude", "projects", "proj");
+      const line = (
+        sessionId: string,
+        cwd: string,
+        id: number,
+        outputTokens: number,
+        timestamp = "2026-08-01T10:00:00Z",
+      ) =>
+        encodeUnknownJsonString({
+          type: "assistant",
+          timestamp,
+          requestId: `req_${id}`,
+          sessionId,
+          cwd,
+          message: {
+            id: `msg_${id}`,
+            model: "claude-fable-5",
+            usage: { input_tokens: 10, output_tokens: outputTokens },
+          },
+        }) + "\n";
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.join(projects, "s-t3", "subagents"), { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(projects, "s-t3.jsonl"),
+          line("s-t3", "/work/orbit/.wt/feature", 1, 100),
+        );
+        await NodeFSP.writeFile(
+          NodePath.join(projects, "s-t3", "subagents", "agent-a1.jsonl"),
+          line("s-t3", "/work/orbit/.wt/feature", 2, 20),
+        );
+        await NodeFSP.writeFile(
+          NodePath.join(projects, "s-t3", "subagents", "agent-a1.meta.json"),
+          encodeUnknownJsonString({ agentType: "Explore", description: "Map the API" }),
+        );
+        await NodeFSP.writeFile(
+          NodePath.join(projects, "s-cli.jsonl"),
+          line("s-cli", "/work/atlas", 3, 7),
+        );
+        await NodeFSP.writeFile(
+          NodePath.join(projects, "s-none.jsonl"),
+          line("s-none", "/tmp/x", 4, 3),
+        );
+        // Outside the window: it must not add a thread to the summary.
+        await NodeFSP.writeFile(
+          NodePath.join(projects, "s-old.jsonl"),
+          line("s-old", "/work/atlas", 5, 9, "2026-06-01T10:00:00Z"),
+        );
+      });
+      const threadId = ThreadId.make("thread-1");
+      const orbit = ProjectId.make("project-orbit");
+      const atlas = ProjectId.make("project-atlas");
+      const { grouped, plain, relabeled } = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const grouped = yield* service.readSummary({ ...WINDOW, groupByThread: true });
+        const plain = yield* service.readSummary(WINDOW);
+        // The description is edited while the sub-agent keeps working.
+        yield* Effect.promise(async () => {
+          const agent = NodePath.join(projects, "s-t3", "subagents", "agent-a1");
+          await NodeFSP.writeFile(
+            `${agent}.meta.json`,
+            encodeUnknownJsonString({ agentType: "Explore", description: "Map the REST API" }),
+          );
+          await NodeFSP.appendFile(`${agent}.jsonl`, line("s-t3", "/work/orbit/.wt/feature", 6, 1));
+          // A later record from another folder must not move a session placed by folder.
+          await NodeFSP.appendFile(
+            NodePath.join(projects, "s-cli.jsonl"),
+            line("s-cli", "/tmp/elsewhere", 7, 1),
+          );
+        });
+        const relabeled = yield* service.readSummary({ ...WINDOW, groupByThread: true });
+        return { grouped, plain, relabeled };
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-group-by-thread",
+            home,
+            settings,
+            attribution: {
+              nativeThreads: new Map([
+                ["claudeAgent\u0000s-t3", [{ threadId, instanceId: "claude-work" }]],
+              ]),
+              nativeSubagents: new Map(),
+              threads: new Map([
+                [threadId, { projectId: orbit, title: "Fix sync", parentThreadId: null }],
+              ]),
+              projects: [
+                { projectId: orbit, title: "orbit", workspaceRoot: "/work/orbit", deleted: false },
+                { projectId: atlas, title: "atlas", workspaceRoot: "/work/atlas/", deleted: false },
+              ],
+            },
+          }),
+        ),
+      );
+
+      const threads = grouped.threads ?? [];
+      const outputByThread = new Map<string, { output: number; instanceId?: string }>();
+      for (const bucket of grouped.buckets) {
+        const thread = bucket.thread === undefined ? undefined : threads[bucket.thread];
+        const key = thread?.threadId ?? thread?.title ?? thread?.projectId ?? "outside";
+        outputByThread.set(key, {
+          output: bucket.totals.outputTokens,
+          ...(bucket.instanceId === undefined ? {} : { instanceId: bucket.instanceId }),
+        });
+      }
+      assert.deepStrictEqual(Object.fromEntries(outputByThread), {
+        [threadId]: { output: 100, instanceId: "claude-work" },
+        "Map the API": { output: 20, instanceId: "claude-work" },
+        [atlas]: { output: 7, instanceId: "claudeAgent" },
+        outside: { output: 3, instanceId: "claudeAgent" },
+      });
+      assert.isFalse(threads.some((thread) => thread.key === "session:claude:s-old"));
+      const t3Index = threads.findIndex((thread) => thread.threadId === threadId);
+      assert.deepStrictEqual(
+        threads.find((thread) => thread.subagent),
+        {
+          key: "agent:claude:s-t3:a1",
+          title: "Map the API",
+          projectId: orbit,
+          parent: t3Index,
+          subagent: true,
+          located: true,
+        },
+      );
+      assert.deepStrictEqual(
+        threads.find((thread) => thread.projectId === undefined),
+        { key: "session:claude:s-none", located: true },
+      );
+      assert.deepStrictEqual(
+        [...(grouped.projects ?? [])].sort((a, b) => a.title.localeCompare(b.title)),
+        [
+          { projectId: atlas, title: "atlas" },
+          { projectId: orbit, title: "orbit" },
+        ],
+      );
+      assert.strictEqual(
+        relabeled.threads?.find((thread) => thread.subagent)?.title,
+        "Map the REST API",
+      );
+      assert.strictEqual(
+        relabeled.threads?.find((thread) => thread.key === "session:claude:s-cli")?.projectId,
+        atlas,
+      );
+      // Without the option the summary keeps its original shape.
+      assert.strictEqual(plain.threads, undefined);
+      assert.isTrue(
+        plain.buckets.every((b) => b.thread === undefined && b.instanceId === undefined),
+      );
+      assert.strictEqual(totalOutputTokens(plain), 130);
+    }),
+  );
+
   it.live("reads shared managed default and disabled extra account history once", () =>
     Effect.gen(function* () {
       const { home, settings } = yield* setup;
@@ -2299,7 +2466,7 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live.each([4, 5, 6, 7, 8])(
+  it.live.each([4, 5, 6, 7, 8, 9])(
     "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts and the old file",
     (version) =>
       Effect.gen(function* () {
@@ -2375,8 +2542,9 @@ describe("UsageService", () => {
             const text = encodeUnknownJsonString({ ...document, version });
             await NodeFSP.rm(cachePath);
             await NodeFSP.writeFile(legacyPath, text);
-            if (version === 6) {
+            if (version >= 6) {
               for (const [name, olderVersion] of [
+                ...(version === 7 ? [["usage-scan-cache-v6.json", 6] as const] : []),
                 ["usage-scan-cache-v5.json", 5],
                 ["usage-scan-cache.json", 4],
               ] as const) {
@@ -2398,7 +2566,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v10.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v11.json");
           assert.strictEqual(
             yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
             legacy,
@@ -2614,6 +2782,8 @@ describe("UsageService", () => {
                 records: [],
                 tailRecords: [],
                 malformedRecords: 2,
+                cwd: null,
+                label: null,
                 position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
               },
             ],

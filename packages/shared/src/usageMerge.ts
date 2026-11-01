@@ -2,10 +2,12 @@ import {
   USAGE_MERGE_COMPATIBLE_SINCE,
   type EnvironmentId,
   type UsageBucket,
+  type UsageProject,
   type UsageProviderKind,
   type UsageSource,
   type UsageSourceFingerprint,
   type UsageSummary,
+  type UsageThread,
   type UsageTokenTotals,
 } from "@t3tools/contracts";
 
@@ -106,6 +108,18 @@ export interface MergedUsage {
   readonly duplicateSources: readonly string[];
   readonly contributingEnvironments: readonly EnvironmentId[];
   readonly contractMismatches: readonly UsageContractMismatch[];
+  /**
+   * Each environment's buckets after source ownership, with the threads and
+   * projects they point at. Thread indexes are local to their environment.
+   */
+  readonly contributions: readonly UsageContribution[];
+}
+
+export interface UsageContribution {
+  readonly environmentId: EnvironmentId;
+  readonly buckets: readonly UsageBucket[];
+  readonly threads: readonly UsageThread[];
+  readonly projects: readonly UsageProject[];
 }
 
 // volumeId distinguishes machines sharing a hostname and home path.
@@ -130,10 +144,72 @@ function bucketsForSource(summary: UsageSummary, source: UsageSource): readonly 
   );
 }
 
+/**
+ * The overlap cell for partial-scan supplements. Thread and account stay out
+ * of it on purpose: thread indexes are local to each summary, so the same
+ * usage carries a different index in each scan.
+ */
 function bucketKey(bucket: UsageBucket): string {
   return JSON.stringify([bucket.day, bucket.hourStart ?? null, bucket.provider, bucket.model]);
 }
 
+/**
+ * Cells already counted for one transcript directory. An hourly and a daily
+ * summary of the same directory can only be compared by day, so a bucket
+ * overlaps when its own cell, or its day at the other resolution, is counted.
+ */
+class SeenCells {
+  readonly #cells = new Set<string>();
+  readonly #hourlyDays = new Set<string>();
+  readonly #dailyDays = new Set<string>();
+
+  constructor(buckets: readonly UsageBucket[]) {
+    this.addAll(buckets);
+  }
+
+  overlaps(bucket: UsageBucket): boolean {
+    const day = dayKey(bucket);
+    return (
+      this.#cells.has(bucketKey(bucket)) ||
+      (bucket.hourStart === undefined ? this.#hourlyDays.has(day) : this.#dailyDays.has(day))
+    );
+  }
+
+  addAll(buckets: readonly UsageBucket[]): void {
+    for (const bucket of buckets) {
+      this.#cells.add(bucketKey(bucket));
+      (bucket.hourStart === undefined ? this.#dailyDays : this.#hourlyDays).add(dayKey(bucket));
+    }
+  }
+}
+
+function dayKey(bucket: UsageBucket): string {
+  return JSON.stringify([bucket.day, bucket.provider, bucket.model]);
+}
+
+/** How much older than the newest scan of a folder its owner may be. */
+const ATTRIBUTION_MAX_AGE_MS = 10 * 60 * 1000;
+
+/**
+ * How well an environment can attribute a source: -1 when its server cannot
+ * split usage by thread at all, otherwise the records it placed in its own T3
+ * threads.
+ */
+function recordsInT3Threads(summary: UsageSummary, source: UsageSource): number {
+  const threads = summary.threads;
+  if (threads === undefined) return -1;
+  let records = 0;
+  for (const bucket of bucketsForSource(summary, source)) {
+    if (bucket.thread !== undefined && threads[bucket.thread]?.threadId !== undefined) {
+      records += bucket.records;
+    }
+  }
+  return records;
+}
+
+/** Claim shared physical folders once; prefer complete, attributed scans within the freshness bound.
+ * Claim whole summaries before narrowing buckets so slices retain the full merge's owners.
+ */
 function claimSources(environments: readonly EnvironmentUsage[]): {
   readonly ownerByFingerprint: ReadonlyMap<string, EnvironmentId>;
   readonly supplementalBucketsByEnvironment: ReadonlyMap<EnvironmentId, ReadonlySet<UsageBucket>>;
@@ -145,7 +221,7 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
     string,
     { environment: EnvironmentUsage; source: UsageSource }
   >();
-  const seenBucketKeysByFingerprint = new Map<string, Set<string>>();
+  const seenBucketKeysByFingerprint = new Map<string, SeenCells>();
   const supplementalBucketsByEnvironment = new Map<EnvironmentId, Set<UsageBucket>>();
   const sessionsByFingerprint = new Map<string, number>();
   const duplicates: string[] = [];
@@ -157,6 +233,10 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
   );
 
   for (const status of ["ok", "partial", "failed"] as const) {
+    const candidates = new Map<
+      string,
+      { environment: EnvironmentUsage; source: UsageSource; inThreads: number }[]
+    >();
     for (const environment of ordered) {
       for (const source of environment.summary.sources) {
         if (source.status !== status) continue;
@@ -165,9 +245,33 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
           duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
           continue;
         }
-        ownerByFingerprint.set(key, environment.environmentId);
-        ownerScanByFingerprint.set(key, { environment, source });
-        sessionsByFingerprint.set(key, source.distinctSessions);
+        const list = candidates.get(key) ?? [];
+        list.push({ environment, source, inThreads: 0 });
+        candidates.set(key, list);
+      }
+    }
+    for (const [key, list] of candidates) {
+      if (list.length > 1) {
+        // `list` is newest first. A scan far older than the newest, such as a
+        // summary kept after a failed refresh, never wins on attribution.
+        const newest = Date.parse(list[0]!.environment.summary.readAt) || 0;
+        for (const entry of list) {
+          const readAt = Date.parse(entry.environment.summary.readAt) || 0;
+          entry.inThreads =
+            newest - readAt > ATTRIBUTION_MAX_AGE_MS
+              ? -2
+              : recordsInT3Threads(entry.environment.summary, entry.source);
+        }
+      }
+      // A stable sort keeps the read-time order among equals. A copy, not
+      // `toSorted`: this also runs on Hermes.
+      const [owner, ...rest] = [...list].sort((a, b) => b.inThreads - a.inThreads);
+      if (owner === undefined) continue;
+      ownerByFingerprint.set(key, owner.environment.environmentId);
+      ownerScanByFingerprint.set(key, owner);
+      sessionsByFingerprint.set(key, owner.source.distinctSessions);
+      for (const { environment, source } of rest) {
+        duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
       }
     }
   }
@@ -186,20 +290,19 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
       }
       let seen = seenBucketKeysByFingerprint.get(key);
       if (seen === undefined) {
-        seen = new Set(bucketsForSource(owner.environment.summary, owner.source).map(bucketKey));
+        seen = new SeenCells(bucketsForSource(owner.environment.summary, owner.source));
         seenBucketKeysByFingerprint.set(key, seen);
       }
       const supplemental =
         supplementalBucketsByEnvironment.get(environment.environmentId) ?? new Set<UsageBucket>();
-      let added = false;
-      for (const bucket of bucketsForSource(environment.summary, source)) {
-        const cell = bucketKey(bucket);
-        if (seen.has(cell)) continue;
-        seen.add(cell);
-        supplemental.add(bucket);
-        added = true;
-      }
-      if (!added) continue;
+      // Every bucket of a new cell counts: one cell holds a bucket per thread.
+      // Cells are marked seen only after the whole source, so siblings stay.
+      const admitted = bucketsForSource(environment.summary, source).filter(
+        (bucket) => !seen.overlaps(bucket),
+      );
+      for (const bucket of admitted) supplemental.add(bucket);
+      seen.addAll(admitted);
+      if (admitted.length === 0) continue;
       supplementalBucketsByEnvironment.set(environment.environmentId, supplemental);
       sessionsByFingerprint.set(
         key,
@@ -221,6 +324,7 @@ function ownedContribution(
   ownerByFingerprint: ReadonlyMap<string, EnvironmentId>,
   supplementalBuckets: ReadonlySet<UsageBucket>,
   sessionsByFingerprint: ReadonlyMap<string, number>,
+  keepBucket: ((bucket: UsageBucket) => boolean) | undefined,
 ): {
   readonly buckets: readonly UsageBucket[];
   readonly sessionsByProvider: ReadonlyMap<UsageProviderKind, number>;
@@ -246,10 +350,11 @@ function ownedContribution(
   return {
     buckets: environment.summary.buckets.filter(
       (bucket) =>
-        supplementalBuckets.has(bucket) ||
-        (bucket.sourcePath === undefined
-          ? ownedProviders.has(bucket.provider)
-          : ownedSources.has(`${bucket.provider}\u0000${bucket.sourcePath}`)),
+        (supplementalBuckets.has(bucket) ||
+          (bucket.sourcePath === undefined
+            ? ownedProviders.has(bucket.provider)
+            : ownedSources.has(`${bucket.provider}\u0000${bucket.sourcePath}`))) &&
+        (keepBucket === undefined || keepBucket(bucket)),
     ),
     sessionsByProvider,
   };
@@ -294,11 +399,16 @@ const EMPTY_MERGED: MergedUsage = {
   duplicateSources: [],
   contributingEnvironments: [],
   contractMismatches: [],
+  contributions: [],
 };
 
+/** Exclude incompatible contracts while merging additive provider versions.
+ * Filter buckets only after folder ownership is decided, so slices match the full merge.
+ */
 export function mergeUsage(
   environments: readonly EnvironmentUsage[],
   expectedContractVersion: number,
+  keepBucket?: (bucket: UsageBucket) => boolean,
 ): MergedUsage {
   if (environments.length === 0) return EMPTY_MERGED;
 
@@ -377,6 +487,7 @@ export function mergeUsage(
     }
   >();
   const contributingEnvironments: EnvironmentId[] = [];
+  const contributions: UsageContribution[] = [];
 
   for (const environment of current) {
     const { buckets, sessionsByProvider } = ownedContribution(
@@ -384,8 +495,17 @@ export function mergeUsage(
       ownerByFingerprint,
       supplementalBucketsByEnvironment.get(environment.environmentId) ?? new Set(),
       sessionsByFingerprint,
+      keepBucket,
     );
-    if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
+    if (buckets.length > 0) {
+      contributingEnvironments.push(environment.environmentId);
+      contributions.push({
+        environmentId: environment.environmentId,
+        buckets,
+        threads: environment.summary.threads ?? [],
+        projects: environment.summary.projects ?? [],
+      });
+    }
 
     for (const [providerKind, providerSessions] of sessionsByProvider) {
       sessions += providerSessions;
@@ -582,5 +702,6 @@ export function mergeUsage(
     duplicateSources: duplicates,
     contributingEnvironments,
     contractMismatches,
+    contributions,
   };
 }
