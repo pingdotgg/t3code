@@ -53,12 +53,21 @@ export function applyUsageLimitsUpdate(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits | undefined {
   const { previous, update } = input;
-  if (update.windows.length === 0 || previous?.unavailable?.reason === "unsupported") {
+  // Recorded even without a grant, so a probe that started before the block cannot grant over it.
+  const revokesCredits =
+    update.continuesOnCredits === false &&
+    previous !== undefined &&
+    previous.continuesOnCredits !== false;
+  if (
+    (update.windows.length === 0 && !revokesCredits) ||
+    previous?.unavailable?.reason === "unsupported"
+  ) {
     return previous;
   }
+  const continuesOnCredits = revokesCredits ? false : previous?.continuesOnCredits;
   const merged = new Map(previous?.windows.map((window) => [window.id, window] as const));
   // Codex repeats unchanged limits on token ticks; avoid allocating snapshots for no-ops.
-  let changed = false;
+  let changed = revokesCredits;
   for (const window of update.windows) {
     const existing = merged.get(window.id);
     const next: ServerProviderUsageWindow = {
@@ -84,6 +93,7 @@ export function applyUsageLimitsUpdate(input: {
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
+    ...(continuesOnCredits !== undefined ? { continuesOnCredits } : {}),
     ...(unavailable !== undefined ? { unavailable } : {}),
   };
 }
@@ -114,7 +124,13 @@ export function resolveUsageLimitsAfterProbe(input: {
     !probed.unavailable &&
     Date.parse(published.checkedAt) > Date.parse(probed.checkedAt)
   ) {
-    return { ...probed, checkedAt: published.checkedAt, windows: published.windows };
+    return {
+      ...probed,
+      checkedAt: published.checkedAt,
+      windows: published.windows,
+      // A revocation published after the probe started outranks that probe's grant.
+      ...(published.continuesOnCredits === false ? { continuesOnCredits: false } : {}),
+    };
   }
   return probed;
 }
