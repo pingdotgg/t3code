@@ -454,7 +454,6 @@ export function routeProviderEvent(
       const adopted =
         ownsRun(coordinator.runId) &&
         !state.rootTurnEnded &&
-        isOrchestrationV2WorkActive(coordinator.status) &&
         coordinator.origin === "provider_native" &&
         coordinator.childThreadId !== null &&
         !ownsThread(coordinator.childThreadId)
