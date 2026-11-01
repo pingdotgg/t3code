@@ -44,6 +44,7 @@ const CLAUDE_MODEL_SELECTION = {
 const PRIOR_TURN_TRANSCRIPT_PATH = `${import.meta.dirname}/fixtures/thread_fork_native_prior_turn/codex_transcript.ndjson`;
 const CLAUDE_TRANSCRIPT_PATH = `${import.meta.dirname}/fixtures/thread_fork_native/claude_transcript.ndjson`;
 const CLAUDE_PRIOR_TURN_TRANSCRIPT_PATH = `${import.meta.dirname}/fixtures/thread_fork_native_prior_turn/claude_transcript.ndjson`;
+const CLAUDE_MID_TURN_CLEAR_TRANSCRIPT_PATH = `${import.meta.dirname}/fixtures/thread_fork_native_mid_turn_clear/claude_transcript.ndjson`;
 const CLAUDE_FORK_LOCAL_ROLLBACK_TRANSCRIPT_PATH = `${import.meta.dirname}/fixtures/thread_fork_native_fork_local_rollback/claude_transcript.ndjson`;
 const CODEX_READ_ONLY_NEVER_POLICY = {
   approvalPolicy: "never",
@@ -658,6 +659,156 @@ describe("orchestration V2 thread fork", () => {
         "source rollback must not cause the fork target to inherit turns past its fork point",
       );
       assert.equal(targetProjection.contextTransfers[0]?.resolution?.strategy, "native_fork");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  // regression: #24153 a run whose `/clear` adopted a new native session mid-turn kept the
+  // session it started in, so forking it asked that session for a message only the new one has.
+  it.effect("forks a Claude run from the session it adopted mid-turn", () =>
+    Effect.gen(function* () {
+      const rawTranscript = yield* readTranscript(CLAUDE_MID_TURN_CLEAR_TRANSCRIPT_PATH);
+      const transcript = yield* ClaudeOrchestratorReplayHarness.decodeTranscript(rawTranscript);
+      const cwd = yield* Effect.acquireRelease(makeCheckpointWorkspace, (directory) =>
+        Effect.service(FileSystem.FileSystem).pipe(
+          Effect.flatMap((fs) => fs.remove(directory, { recursive: true, force: true })),
+          Effect.orDie,
+        ),
+      );
+
+      const materialized = yield* Effect.gen(function* () {
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const fixtureName = "thread-fork-native-mid-turn-clear";
+        const projectId = yield* ids.allocate.project({ fixtureName });
+        const sourceThreadId = yield* ids.allocate.thread({
+          fixtureName: `${fixtureName}-source`,
+          projectId,
+        });
+        const targetThreadId = ThreadId.make(`${fixtureName}-target`);
+        const sourceMessage = (commandName: string, text: string) =>
+          Effect.map(
+            ids.allocate.command({ fixtureName, commandName }),
+            (commandId) =>
+              ({
+                type: "message.dispatch",
+                createdBy: "user",
+                creationSource: "web",
+                commandId,
+                threadId: sourceThreadId,
+                messageId: MessageId.make(`message-${fixtureName}-${commandName}`),
+                text,
+                attachments: [],
+                modelSelection: CLAUDE_MODEL_SELECTION,
+                dispatchMode: { type: "start_immediately" },
+              }) satisfies OrchestrationV2Command,
+          );
+        const commands = [
+          {
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: yield* ids.allocate.command({
+              fixtureName,
+              commandName: "thread-create-source",
+            }),
+            threadId: sourceThreadId,
+            projectId,
+            title: "Source thread",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          },
+          yield* sourceMessage("source-message-alpha", THREAD_FORK_NATIVE_PRIOR_TURN_ALPHA_PROMPT),
+          // The provider reports a new native session inside this run, as Claude does for `/clear`.
+          yield* sourceMessage("source-message-beta", THREAD_FORK_NATIVE_PRIOR_TURN_BETA_PROMPT),
+          {
+            type: "thread.fork",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command-${fixtureName}`),
+            sourceThreadId,
+            targetThreadId,
+            sourcePoint: {
+              type: "run",
+              runId: ids.derive.run({ threadId: sourceThreadId, ordinal: 2 }),
+            },
+            title: "Forked from the cleared run",
+          },
+          {
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: yield* ids.allocate.command({
+              fixtureName,
+              commandName: "target-message-repeat",
+            }),
+            threadId: targetThreadId,
+            messageId: MessageId.make(`message-${fixtureName}-repeat`),
+            text: THREAD_FORK_NATIVE_PRIOR_TURN_REPEAT_PROMPT,
+            attachments: [],
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          },
+        ] satisfies ReadonlyArray<OrchestrationV2Command>;
+
+        return { sourceThreadId, targetThreadId, commands };
+      }).pipe(Effect.provide(IdAllocator.layer), provideDeterministicTestRuntime);
+
+      // The transcript expects `session.fork` against the adopted session, so forking the
+      // session the run started in fails the replay.
+      const result = yield* runOrchestratorV2ProviderReplayScenario(
+        {
+          name: "thread_fork_native_mid_turn_clear/claude",
+          transcript,
+          commands: materialized.commands,
+          steps: [
+            { type: "dispatch", command: materialized.commands[0]!, await: true },
+            { type: "advance_clock", duration: "1 millis" },
+            { type: "dispatch", command: materialized.commands[1]!, await: true },
+            { type: "await_thread_idle", threadId: materialized.sourceThreadId },
+            { type: "dispatch", command: materialized.commands[2]!, await: true },
+            { type: "await_thread_idle", threadId: materialized.sourceThreadId },
+            { type: "dispatch", command: materialized.commands[3]!, await: true },
+            { type: "dispatch", command: materialized.commands[4]!, await: true },
+            { type: "await_thread_idle", threadId: materialized.targetThreadId },
+          ],
+          projectionThreadIds: [materialized.sourceThreadId, materialized.targetThreadId],
+          runtimePolicyOverride: { cwd },
+        },
+        ClaudeOrchestratorReplayHarness,
+      ).pipe(provideDeterministicTestRuntime);
+
+      const sourceProjection = result.projections.get(materialized.sourceThreadId);
+      const targetProjection = result.projections.get(materialized.targetThreadId);
+      assert.isDefined(sourceProjection);
+      assert.isDefined(targetProjection);
+      assert.equal(
+        sourceProjection.providerThreads[0]?.nativeThreadRef?.nativeId,
+        metadataString(transcript, "clearedNativeSessionId"),
+      );
+      assert.equal(
+        targetProjection.providerThreads[0]?.nativeThreadRef?.nativeId,
+        metadataString(transcript, "forkedNativeSessionId"),
+      );
+      assert.equal(targetProjection.contextTransfers[0]?.resolution?.strategy, "native_fork");
+      const targetAssistantText = targetProjection.turnItems
+        .filter((item) => item.type === "assistant_message")
+        .map((item) => item.text)
+        .join("\n");
+      assert.include(targetAssistantText, "**Assistant:** fork boundary beta");
+      assert.notInclude(
+        targetAssistantText,
+        "fork boundary alpha",
+        "the cleared native session must not recover pre-clear conversation context",
+      );
+      const visibleText = targetProjection.visibleTurnItems
+        .map((row) => row.item)
+        .filter((item) => item.type === "user_message" || item.type === "assistant_message")
+        .map((item) => item.text)
+        .join("\n");
+      assert.include(visibleText, "fork boundary alpha");
+      assert.include(visibleText, "fork boundary beta");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

@@ -3249,6 +3249,549 @@ it.effect("ProviderSessionManagerV2 persists session-scoped runtime requests wit
   }),
 );
 
+it.effect("ProviderSessionManagerV2 persists a provider thread update without a run", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const projectId = yield* idAllocator.allocate.project({
+        fixtureName: "provider-session-manager-idle-thread-update",
+      });
+      const threadId = yield* idAllocator.allocate.thread({
+        fixtureName: "provider-session-manager-idle-thread-update",
+        projectId,
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const providerThread = makeProviderThread({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        now,
+      });
+
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const afterSequence = yield* eventSink.latestSequence({ threadId });
+      const persistedFiber = yield* eventSink.stream({ threadId, afterSequence }).pipe(
+        Stream.filter((stored) => stored.event.type === "provider-thread.updated"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const adapterEvents = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+      assert.isDefined(adapterEvents);
+      yield* Queue.offer(adapterEvents!, {
+        type: "provider_thread.updated",
+        driver: CODEX_DRIVER,
+        providerThread: {
+          ...providerThread,
+          nativeThreadRef: {
+            driver: CODEX_DRIVER,
+            nativeId: "cleared-session",
+            strength: "strong",
+          },
+        },
+      });
+      yield* Fiber.join(persistedFiber);
+
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      assert.deepEqual(
+        projection.providerThreads.map((candidate) => candidate.nativeThreadRef?.nativeId),
+        ["cleared-session"],
+      );
+    });
+
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+  }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps the event pump alive when a runless thread update fails",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const beforeUnchangedWrite = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const projectId = yield* idAllocator.allocate.project({
+          fixtureName: "provider-session-manager-runless-update-failure",
+        });
+        const threadId = yield* idAllocator.allocate.thread({
+          fixtureName: "provider-session-manager-runless-update-failure",
+          projectId,
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const afterOpen = yield* eventSink.latestSequence({ threadId });
+        const persistedFiber = yield* eventSink.stream({ threadId, afterSequence: afterOpen }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "provider-thread.updated" &&
+              stored.event.payload.nativeThreadRef?.nativeId === "next-session",
+          ),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const adapterEvents = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.isDefined(adapterEvents);
+        // Fail the first unread-snapshot write, then let later writes through.
+        yield* Ref.set(
+          beforeUnchangedWrite,
+          Effect.die(new Error("simulated unread snapshot write failure")),
+        );
+        yield* Queue.offer(adapterEvents!, {
+          type: "provider_thread.updated",
+          driver: CODEX_DRIVER,
+          providerThread: {
+            ...providerThread,
+            nativeThreadRef: {
+              driver: CODEX_DRIVER,
+              nativeId: "cleared-session",
+              strength: "strong",
+            },
+          },
+        });
+        // The pump must keep processing after the failed fallback write.
+        yield* Queue.offer(adapterEvents!, {
+          type: "provider_thread.updated",
+          driver: CODEX_DRIVER,
+          providerThread: {
+            ...providerThread,
+            nativeThreadRef: {
+              driver: CODEX_DRIVER,
+              nativeId: "next-session",
+              strength: "strong",
+            },
+          },
+        });
+        yield* Fiber.join(persistedFiber);
+
+        assert.equal(
+          (yield* projectionStore.getThreadProjection(threadId)).providerThreads[0]?.nativeThreadRef
+            ?.nativeId,
+          "next-session",
+        );
+      });
+
+      yield* effect.pipe(
+        Effect.provide(layerTest({ state, idleTimeoutMs: 1000, beforeUnchangedWrite })),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 persists a provider thread update queued behind a closing run",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const projectId = yield* idAllocator.allocate.project({
+          fixtureName: "provider-session-manager-thread-update-behind-terminal",
+        });
+        const threadId = yield* idAllocator.allocate.thread({
+          fixtureName: "provider-session-manager-thread-update-behind-terminal",
+          projectId,
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        // The run consumer is still subscribed while it finalizes the terminal.
+        const runSubscription = yield* runtime.subscribeEvents!;
+        const afterSequence = yield* eventSink.latestSequence({ threadId });
+        const sessionUpdates = yield* Queue.unbounded<void>();
+        yield* eventSink.stream({ threadId, afterSequence }).pipe(
+          Stream.filter((stored) => stored.event.type === "provider-session.updated"),
+          Stream.runForEach(() => Queue.offer(sessionUpdates, undefined)),
+          Effect.forkScoped,
+        );
+        const adapterEvents = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.isDefined(adapterEvents);
+        yield* Queue.offer(adapterEvents!, {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: providerThread.id,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "turn-before-clear",
+          }),
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        // Claude's root init for the cleared session lands before the run closes.
+        yield* Queue.offer(adapterEvents!, {
+          type: "provider_thread.updated",
+          driver: CODEX_DRIVER,
+          providerThread: {
+            ...providerThread,
+            nativeThreadRef: {
+              driver: CODEX_DRIVER,
+              nativeId: "cleared-session",
+              strength: "strong",
+            },
+          },
+        });
+        // The event pump handles events in order, so once this sentinel is
+        // persisted the thread update has already been routed.
+        yield* Queue.offer(adapterEvents!, {
+          type: "provider_session.updated",
+          driver: CODEX_DRIVER,
+          providerSession: runtime.providerSession,
+        });
+        yield* Queue.take(sessionUpdates);
+
+        const consumed = yield* runSubscription.events.pipe(Stream.take(1), Stream.runCollect);
+        assert.deepEqual(
+          Array.from(consumed).map((event) => event.type),
+          ["turn.terminal"],
+        );
+        yield* runSubscription.close;
+        yield* Queue.offer(adapterEvents!, {
+          type: "provider_session.updated",
+          driver: CODEX_DRIVER,
+          providerSession: runtime.providerSession,
+        });
+        yield* Queue.take(sessionUpdates);
+
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        assert.deepEqual(
+          projection.providerThreads.map((candidate) => candidate.nativeThreadRef?.nativeId),
+          ["cleared-session"],
+        );
+      });
+
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+    }),
+);
+
+it.effect.each([
+  "late subscriber",
+  "last recipient",
+  "runtime failure",
+  "newer received update",
+  "unrelated reader",
+  "coalesced updates",
+  "rejected write",
+  "released rewind",
+  "replacement owner",
+  "concurrent owner switch",
+  "replacement insert",
+  "same-owner write",
+] as const)("ProviderSessionManagerV2 preserves unread thread updates with %s", (scenario) =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const beforeUnchangedWrite = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = yield* idAllocator.allocate.thread({
+        fixtureName: `unread-update-${scenario}`,
+        projectId: yield* idAllocator.allocate.project({ fixtureName: "unread-updates" }),
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const providerThread = makeProviderThread({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        now,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const first = yield* runtime.subscribeEvents!;
+      const secondBefore =
+        scenario === "last recipient" || scenario === "unrelated reader"
+          ? yield* runtime.subscribeEvents!
+          : undefined;
+      const adapterEvents = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
+      const sessionUpdates = yield* Queue.unbounded<void>();
+      if (
+        scenario === "replacement owner" ||
+        scenario === "concurrent owner switch" ||
+        scenario === "same-owner write"
+      ) {
+        yield* eventSink.write({
+          events: [
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "provider-thread.updated",
+              threadId,
+              occurredAt: now,
+              payload: providerThread,
+            },
+          ],
+        });
+      }
+      const afterSequence = yield* eventSink.latestSequence({ threadId });
+      yield* eventSink.stream({ threadId, afterSequence }).pipe(
+        Stream.filter((stored) => stored.event.type === "provider-session.updated"),
+        Stream.runForEach(() => Queue.offer(sessionUpdates, undefined)),
+        Effect.forkScoped,
+      );
+      const update = (nativeId: string) => ({
+        type: "provider_thread.updated" as const,
+        driver: CODEX_DRIVER,
+        providerThread: {
+          ...providerThread,
+          nativeThreadRef: { driver: CODEX_DRIVER, nativeId, strength: "strong" as const },
+        },
+      });
+      const routed = Effect.gen(function* () {
+        yield* Queue.offer(adapterEvents, {
+          type: "provider_session.updated",
+          driver: CODEX_DRIVER,
+          providerSession: runtime.providerSession,
+        });
+        yield* Queue.take(sessionUpdates);
+      });
+      const persist =
+        (event: ProviderAdapter.ProviderAdapterV2Event) => (snapshotCurrent: boolean) =>
+          !snapshotCurrent || event.type !== "provider_thread.updated"
+            ? Effect.succeed([])
+            : eventSink.write({
+                events: [
+                  {
+                    id: yieldEventId,
+                    type: "provider-thread.updated",
+                    threadId,
+                    occurredAt: now,
+                    payload: event.providerThread,
+                  },
+                ],
+              });
+      const yieldEventId = yield* idAllocator.allocate.event({ threadId });
+      if (scenario === "runtime failure") {
+        yield* Queue.offer(adapterEvents, update("old-session"));
+        yield* Queue.offer(adapterEvents, {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: providerThread.id,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "release-terminal",
+          }),
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+      }
+      if (scenario === "released rewind")
+        yield* Queue.offer(adapterEvents, {
+          ...update("rewound-session"),
+          retainedNativeTurnIds: [],
+        });
+      yield* Queue.offer(adapterEvents, update("cleared-session"));
+      if (scenario === "coalesced updates")
+        yield* Queue.offer(adapterEvents, update("newer-session"));
+      yield* routed;
+      if (scenario === "runtime failure" || scenario === "released rewind") {
+        const released = yield* eventSink.stream({ threadId, afterSequence }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "provider-session.updated" &&
+              stored.event.payload.status === "error",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* Queue.end(adapterEvents);
+        yield* Fiber.join(released);
+        assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+        yield* first.events.pipe(
+          Stream.mapEffect((event) =>
+            first.persistEvent!(event, (snapshotCurrent) => {
+              assert.isFalse(
+                event.type === "provider_thread.updated" &&
+                  event.retainedNativeTurnIds !== undefined,
+                "A committed rewind must not run again after release",
+              );
+              return persist(event)(snapshotCurrent);
+            }),
+          ),
+          Stream.take(2),
+          Stream.runDrain,
+        );
+      } else if (scenario === "newer received update") {
+        const second = yield* runtime.subscribeEvents!;
+        const newer = update("newer-session");
+        yield* Queue.offer(adapterEvents, newer);
+        yield* routed;
+        yield* second.events.pipe(
+          Stream.mapEffect((event) => second.persistEvent!(event, persist(event))),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        yield* first.close;
+      } else if (scenario === "unrelated reader") {
+        const discarded = yield* Deferred.make<void>();
+        const reader = yield* secondBefore!.events.pipe(
+          Stream.tap((event) =>
+            secondBefore!.discardEvent!(event).pipe(
+              Effect.andThen(
+                event.type === "provider_thread.updated"
+                  ? Deferred.succeed(discarded, undefined)
+                  : Effect.void,
+              ),
+            ),
+          ),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(discarded);
+        yield* first.close;
+        assert.equal(
+          (yield* projectionStore.getThreadProjection(threadId)).providerThreads[0]?.nativeThreadRef
+            ?.nativeId,
+          "cleared-session",
+        );
+        yield* Fiber.interrupt(reader);
+      } else if (
+        scenario === "replacement owner" ||
+        scenario === "concurrent owner switch" ||
+        scenario === "replacement insert" ||
+        scenario === "same-owner write"
+      ) {
+        const replacement = {
+          ...update("newer-session").providerThread,
+          providerSessionId:
+            scenario === "same-owner write"
+              ? providerSessionId
+              : yield* idAllocator.allocate.providerSession({
+                  providerInstanceId: modelSelection.instanceId,
+                  threadId,
+                }),
+        };
+        const switchOwner = eventSink
+          .write({
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({ threadId }),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: now,
+                payload: replacement,
+              },
+            ],
+          })
+          .pipe(Effect.asVoid, Effect.orDie);
+        if (scenario !== "replacement owner") yield* Ref.set(beforeUnchangedWrite, switchOwner);
+        else yield* switchOwner;
+        yield* first.close;
+        assert.equal(
+          (yield* projectionStore.getThreadProjection(threadId)).providerThreads[0]
+            ?.providerSessionId,
+          replacement.providerSessionId,
+        );
+      } else if (scenario === "rejected write") {
+        yield* first.events.pipe(
+          Stream.mapEffect((event) => first.persistEvent!(event, () => Effect.succeed([]))),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+      } else {
+        const second = secondBefore ?? (yield* runtime.subscribeEvents!);
+        yield* first.close;
+        if (scenario === "last recipient") {
+          assert.isEmpty((yield* projectionStore.getThreadProjection(threadId)).providerThreads);
+        }
+        yield* second.close;
+      }
+      const eventStore = yield* EventStore.EventStoreV2;
+      const persistedUpdates = yield* eventStore
+        .read({ threadId, afterSequence, eventType: "provider-thread.updated" })
+        .pipe(Stream.runCollect);
+      assert.lengthOf(persistedUpdates, scenario === "same-owner write" ? 2 : 1);
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      assert.deepEqual(
+        projection.providerThreads.map((thread) => thread.nativeThreadRef?.nativeId),
+        [
+          scenario === "newer received update" ||
+          scenario === "coalesced updates" ||
+          scenario === "replacement owner" ||
+          scenario === "concurrent owner switch" ||
+          scenario === "replacement insert"
+            ? "newer-session"
+            : "cleared-session",
+        ],
+      );
+    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, beforeUnchangedWrite })));
+  }),
+);
+
 it.effect(
   "ProviderSessionManagerV2 opens one shared runtime, broadcasts events, and detaches threads independently",
   () =>

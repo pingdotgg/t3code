@@ -1,5 +1,7 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  ClaudeSettings,
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
@@ -17,20 +19,29 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Statement from "effect/sql/Statement";
 import * as TestClock from "effect/testing/TestClock";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as ClaudeAdapterV2 from "./Adapters/ClaudeAdapterV2.ts";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
+const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 const forkCases = (
   [
     ["codex", "interrupted"],
@@ -645,6 +656,199 @@ it.effect.each([
       ),
     );
   },
+);
+
+// regression: #24153 a fork across Claude's /clear asked the adopted session for a message
+// that only exists in the session the source turn ran in.
+it.effect("forks a Claude run from the session it ran in after /clear adopted another", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const forkCalls: Array<ClaudeAdapterV2.ClaudeAgentSdkSessionForkInput> = [];
+    const claude = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      settings: DEFAULT_CLAUDE_SETTINGS,
+      environment: {},
+      attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-fork-clear-" }),
+      fileSystem,
+      path: yield* Path.Path,
+      crypto: yield* Crypto.Crypto,
+      idAllocator: yield* IdAllocator.IdAllocatorV2,
+      queryRunner: {
+        allocateSessionId: Effect.succeed("unused-native-session"),
+        open: () => Effect.die("unused open"),
+        forkSession: (input) =>
+          Effect.sync(() => forkCalls.push(input)).pipe(
+            Effect.andThen(Effect.die("fork inspected")),
+          ),
+        subagentLaunchToolUseId: () => Effect.succeed(null),
+        assertComplete: Effect.void,
+      },
+    });
+    const driver = claude.driver;
+    const instanceId = claude.instanceId;
+    const modelSelection = { instanceId, model: "claude-sonnet-4-6" };
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const now = yield* DateTime.now;
+      const sourceThreadId = ThreadId.make("fork-clear-source");
+      const providerThreadId = ProviderThreadId.make("fork-clear-provider-thread");
+      const sourceRunId = RunId.make("fork-clear-source-run");
+      const attemptId = RunAttemptId.make("fork-clear-source-attempt");
+      const providerTurnId = ProviderTurnId.make("fork-clear-source-turn");
+      const rootNodeId = NodeId.make("fork-clear-source-node");
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("fork-clear-create-source"),
+        threadId: sourceThreadId,
+        projectId: ProjectId.make("fork-clear-project"),
+        title: "Fork across /clear",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* eventSink.write({
+        events: [
+          // A later run's `/clear` adopted a new native session for this provider thread.
+          {
+            id: EventId.make("fork-clear-provider-thread"),
+            type: "provider-thread.updated",
+            threadId: sourceThreadId,
+            occurredAt: now,
+            payload: {
+              id: providerThreadId,
+              driver,
+              providerInstanceId: instanceId,
+              providerSessionId: null,
+              appThreadId: sourceThreadId,
+              ownerNodeId: null,
+              nativeThreadRef: { driver, nativeId: "native-after-clear", strength: "strong" },
+              nativeConversationHeadRef: null,
+              status: "idle",
+              firstRunOrdinal: 1,
+              lastRunOrdinal: 2,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+          {
+            id: EventId.make("fork-clear-source-run"),
+            type: "run.created",
+            threadId: sourceThreadId,
+            runId: sourceRunId,
+            occurredAt: now,
+            payload: {
+              id: sourceRunId,
+              threadId: sourceThreadId,
+              ordinal: 1,
+              providerInstanceId: instanceId,
+              modelSelection,
+              providerThreadId,
+              userMessageId: MessageId.make("fork-clear-source-message"),
+              rootNodeId,
+              activeAttemptId: attemptId,
+              status: "completed",
+              queuePosition: null,
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          },
+          {
+            id: EventId.make("fork-clear-source-attempt"),
+            type: "run-attempt.created",
+            threadId: sourceThreadId,
+            runId: sourceRunId,
+            occurredAt: now,
+            payload: {
+              id: attemptId,
+              nativeThreadId: "native-before-clear",
+              runId: sourceRunId,
+              attemptOrdinal: 1,
+              rootNodeId,
+              providerInstanceId: instanceId,
+              providerThreadId,
+              providerTurnId,
+              reason: "initial",
+              status: "completed",
+              startedAt: now,
+              completedAt: now,
+            },
+          },
+          {
+            id: EventId.make("fork-clear-source-turn"),
+            type: "provider-turn.updated",
+            threadId: sourceThreadId,
+            occurredAt: now,
+            payload: {
+              id: providerTurnId,
+              providerThreadId,
+              nodeId: rootNodeId,
+              runAttemptId: attemptId,
+              nativeTurnRef: { driver, nativeId: "assistant-before-clear", strength: "weak" },
+              ordinal: 1,
+              status: "completed",
+              startedAt: now,
+              completedAt: now,
+            },
+          },
+        ],
+      });
+      const targetThreadId = ThreadId.make("fork-clear-target");
+      yield* orchestrator.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("fork-clear-fork"),
+        sourceThreadId,
+        targetThreadId,
+        sourcePoint: { type: "run", runId: sourceRunId },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("fork-clear-message"),
+        threadId: targetThreadId,
+        messageId: MessageId.make("fork-clear-message"),
+        text: "Continue from here",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* worker.drain();
+    }).pipe(
+      Effect.provide(
+        ProviderReplayHarness.layerWithRegistry(
+          { name: "fork-across-clear" },
+          ProviderAdapterRegistry.layerFromAdapters([claude]),
+        ),
+      ),
+    );
+
+    assert.deepEqual(
+      forkCalls.map((call) => ({
+        sessionId: call.sessionId,
+        upToMessageId: call.options.upToMessageId,
+      })),
+      [{ sessionId: "native-before-clear", upToMessageId: "assistant-before-clear" }],
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+    ),
+  ),
 );
 
 const writeParentRun = (input: {

@@ -144,8 +144,22 @@ export const layer: Layer.Layer<
       readonly restoreFiles?: boolean;
     }) {
       const context = yield* projections.getCheckpointRollbackContext(input.threadId, input);
-      const { providerThread, checkpoint, scope, targetAttempt, runsToRollback, staleCheckpoints } =
-        context;
+      const { checkpoint, scope, targetAttempt, runsToRollback, staleCheckpoints } = context;
+      // A provider can move its thread to another native session (Claude's `/clear`), so the
+      // target turn's messages live in the session its attempt ran in.
+      const providerThread =
+        context.providerThread?.nativeThreadRef == null ||
+        targetAttempt?.nativeThreadId === undefined ||
+        targetAttempt.nativeThreadId === context.providerThread.nativeThreadRef.nativeId
+          ? context.providerThread
+          : {
+              ...context.providerThread,
+              nativeThreadRef: {
+                ...context.providerThread.nativeThreadRef,
+                nativeId: targetAttempt.nativeThreadId,
+              },
+              nativeConversationHeadRef: null,
+            };
       if (
         providerThread === undefined ||
         providerThread.providerSessionId === null ||

@@ -125,10 +125,17 @@ export interface EventSinkV2Shape {
     EventSinkV2Error
   >;
   /** Commits only if the full provider row equals expected; some writers do not advance updatedAt. */
-  readonly writeIfProviderThreadUnchanged: (input: {
-    readonly expected: OrchestrationV2ProviderThread;
-    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
-  }) => Effect.Effect<
+  readonly writeIfProviderThreadUnchanged: (
+    input: {
+      readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+    } & (
+      | { readonly expected: OrchestrationV2ProviderThread }
+      | {
+          readonly expected: null;
+          readonly providerThreadId: ProviderThreadId;
+        }
+    ),
+  ) => Effect.Effect<
     {
       readonly committed: boolean;
       readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
@@ -583,18 +590,22 @@ const layerBase: Layer.Layer<
     const writeIfProviderThreadUnchangedEffect = Effect.fn(
       "orchestrationV2.EventSink.writeIfProviderThreadUnchanged",
     )(function* (input: Parameters<EventSinkV2Shape["writeIfProviderThreadUnchanged"]>[0]) {
+      const providerThreadId = input.expected === null ? input.providerThreadId : input.expected.id;
       yield* Effect.annotateCurrentSpan({
         "orchestration_v2.event_count": input.events.length,
-        "orchestration_v2.provider_thread_id": input.expected.id,
+        "orchestration_v2.provider_thread_id": providerThreadId,
       });
-      const expectedJson = yield* ProjectionStore.encodeProviderThreadPayload(input.expected);
+      const expectedJson =
+        input.expected === null
+          ? undefined
+          : yield* ProjectionStore.encodeProviderThreadPayload(input.expected);
 
       return yield* commitThenPublish(
         Effect.gen(function* () {
           const rows = yield* sql<{ readonly payload_json: string }>`
             SELECT payload_json
             FROM orchestration_v2_projection_provider_threads
-            WHERE provider_thread_id = ${input.expected.id}
+            WHERE provider_thread_id = ${providerThreadId}
             LIMIT 1
           `;
           if (rows[0]?.payload_json !== expectedJson) {

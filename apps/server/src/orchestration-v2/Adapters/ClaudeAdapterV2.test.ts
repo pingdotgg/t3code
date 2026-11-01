@@ -3214,6 +3214,372 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
 
+  it.effect.each(["active", "idle"] as const)(
+    "persists a session cleared while %s and resumes it after process replacement",
+    (phase) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          freshQueueOnReopen: true,
+          close: (queue) => Queue.shutdown(queue),
+        });
+        const turn = (ordinal: number, providerThread: OrchestrationV2ProviderThread) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread,
+            now: DateTime.makeUnsafe(0),
+            attemptId: RunAttemptId.make(`clear-session-${ordinal}`),
+            text: ordinal === 1 ? "/clear" : "Continue the cleared conversation",
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+          });
+        yield* harness.runtime.startTurn(turn(1, harness.providerThread));
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            session_id: "subagent-native-session",
+            parent_tool_use_id: "subagent-launch",
+            uuid: "00000000-0000-4000-8000-000000000500",
+          }),
+        );
+        if (phase === "idle") {
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+        }
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            session_id: "cleared-native-session",
+            uuid: "00000000-0000-4000-8000-000000000501",
+          }),
+        );
+        if (phase === "active") {
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+        } else {
+          yield* harness.until(() =>
+            harness.events.some(
+              (event) =>
+                event.type === "provider_thread.updated" &&
+                event.providerThread.nativeThreadRef?.nativeId === "cleared-native-session",
+            ),
+          );
+        }
+        assert.isFalse(
+          harness.events.some(
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.nativeThreadRef?.nativeId === "subagent-native-session",
+          ),
+        );
+        const completed = harness.events.findLast(
+          (event) => event.type === "provider_thread.updated",
+        );
+        assert.equal(completed?.type, "provider_thread.updated");
+        if (completed?.type !== "provider_thread.updated") return;
+        assert.equal(completed.providerThread.nativeThreadRef?.nativeId, "cleared-native-session");
+        assert.equal(completed.providerThread.id, harness.providerThread.id);
+        yield* harness.runtime.startTurn(turn(2, completed.providerThread));
+        assert.equal(harness.processQueues.length, 1);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.runtime.interruptTurn({
+          providerThread: completed.providerThread,
+          providerTurnId: lastProviderTurn(harness.events).id,
+          requestRuntimeRestart: true,
+        });
+        yield* harness.runtime.startTurn(turn(3, completed.providerThread));
+        assert.equal(harness.processQueues.length, 2);
+        assert.equal(harness.getOpenedOptions()?.resume, "cleared-native-session");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect(
+    "closes the cleared session's live query when rolling back into the pre-clear one",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          freshQueueOnReopen: true,
+          close: (queue) => Queue.shutdown(queue),
+        });
+        const preClearUuid = "00000000-0000-4000-8000-000000000521";
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: DateTime.makeUnsafe(0),
+            attemptId: RunAttemptId.make("rollback-across-clear-1"),
+            text: "Start the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({ uuid: preClearUuid, text: "Build started." }),
+        );
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        const preClearTurn = lastProviderTurn(harness.events);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            session_id: "cleared-native-session",
+            uuid: "00000000-0000-4000-8000-000000000522",
+          }),
+        );
+        const isClearedThreadUpdate = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+          event.type === "provider_thread.updated" &&
+          event.providerThread.nativeThreadRef?.nativeId === "cleared-native-session";
+        yield* harness.until(() => harness.events.some(isClearedThreadUpdate));
+
+        // History rollback hands the adapter the pre-clear session the turn ran in.
+        const rolledBack = yield* harness.runtime.rollbackThread({
+          providerThread: harness.providerThread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint-before-clear"),
+            appRunOrdinal: 1,
+            providerTurn: preClearTurn,
+          },
+          providerThreadTurns: [preClearTurn],
+        });
+        assert.equal(
+          rolledBack.providerThread.nativeThreadRef?.nativeId,
+          harness.providerThread.nativeThreadRef?.nativeId,
+        );
+        assert.equal(rolledBack.providerThread.nativeConversationHeadRef?.nativeId, preClearUuid);
+        const eventsAfterRollback = harness.events.length;
+
+        // The cleared session's process finishing its background task after the rollback.
+        const clearedQuery = harness.processQueues[0]!;
+        const clearedQueryStillLive = clearedQuery.state._tag === "Open";
+        if (clearedQueryStillLive) yield* harness.offerAndWait(wakeNotification);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: rolledBack.providerThread,
+            now: DateTime.makeUnsafe(0),
+            attemptId: RunAttemptId.make("rollback-across-clear-2"),
+            text: "Continue from before the clear.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+          }),
+        );
+        assert.deepEqual(
+          harness.events
+            .slice(eventsAfterRollback)
+            .filter(isClearedThreadUpdate)
+            .map((event) => event.type),
+          [],
+          "the cleared session overwrote the rolled-back provider thread",
+        );
+        assert.isFalse(clearedQueryStillLive, "rollback left the cleared session's query running");
+        assert.equal(
+          harness.getOpenedOptions()?.resume,
+          harness.providerThread.nativeThreadRef?.nativeId,
+        );
+        assert.equal(harness.getOpenedOptions()?.resumeSessionAt, preClearUuid);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect("keeps the cleared session when the next turn carries the pre-clear thread", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        freshQueueOnReopen: true,
+        close: (queue) => Queue.shutdown(queue),
+      });
+      const turn = (ordinal: number) =>
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: DateTime.makeUnsafe(0),
+          attemptId: RunAttemptId.make(`stale-clear-session-${ordinal}`),
+          text: ordinal === 1 ? "/clear" : "Continue the cleared conversation",
+          attachments: [],
+          providerTurnOrdinal: ordinal,
+        });
+      yield* harness.runtime.startTurn(turn(1));
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          session_id: "cleared-native-session",
+          uuid: "00000000-0000-4000-8000-000000000511",
+        }),
+      );
+      const resumed = yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+      });
+      assert.equal(resumed.nativeThreadRef?.nativeId, "cleared-native-session");
+      yield* harness.runtime.startTurn(turn(2));
+      assert.equal(harness.processQueues.length, 1);
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      assert.equal(lastProviderTurn(harness.events).providerThreadId, harness.providerThread.id);
+      const thread = harness.events.findLast((event) => event.type === "provider_thread.updated");
+      assert.equal(
+        thread?.type === "provider_thread.updated"
+          ? thread.providerThread.nativeThreadRef?.nativeId
+          : undefined,
+        "cleared-native-session",
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("keeps the session a /clear selects while the next turn reads its attachments", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const reading = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const attachment = ChatImageAttachment.make({
+        type: "image",
+        id: ChatAttachmentId.make("thread-claude-wake-12345678-1234-1234-1234-123456789abc"),
+        name: "diagram.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+      });
+      const attachmentPath = attachmentRelativePath(attachment)!;
+      const gatedFileSystem: FileSystem.FileSystem = {
+        ...fileSystem,
+        readFile: (filePath) =>
+          filePath.endsWith(attachmentPath)
+            ? Deferred.succeed(reading, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.andThen(fileSystem.readFile(filePath)),
+              )
+            : fileSystem.readFile(filePath),
+      };
+      const harness = yield* makeWakeHarnessWithOptions({
+        freshQueueOnReopen: true,
+        close: (queue) => Queue.shutdown(queue),
+      }).pipe(Effect.provideService(FileSystem.FileSystem, gatedFileSystem));
+      yield* fileSystem.writeFile(
+        NodePath.join(harness.attachmentsDir, attachmentPath),
+        Uint8Array.from([1, 2, 3, 4]),
+      );
+      const turn = (ordinal: number) =>
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: DateTime.makeUnsafe(0),
+          attemptId: RunAttemptId.make(`clear-during-prep-${ordinal}`),
+          text: ordinal === 1 ? "/clear" : "Continue the cleared conversation",
+          attachments: ordinal === 1 ? [] : [attachment],
+          providerTurnOrdinal: ordinal,
+        });
+      yield* harness.runtime.startTurn(turn(1));
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+
+      const started = yield* harness.runtime.startTurn(turn(2)).pipe(Effect.forkScoped);
+      yield* Deferred.await(reading);
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          session_id: "cleared-native-session",
+          uuid: "00000000-0000-4000-8000-000000000521",
+        }),
+      );
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(started);
+
+      assert.equal(harness.processQueues.length, 1);
+      assert.notEqual(harness.getOpenedOptions()?.resume, WAKE_NATIVE_SESSION);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect(
+    "resumes the session a /clear selects while a model change reads the system prompt file",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const reading = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let gateRead = false;
+        const gatedFileSystem: FileSystem.FileSystem = {
+          ...fileSystem,
+          readFileString: (filePath) =>
+            filePath.endsWith("rules.md")
+              ? gateRead
+                ? Deferred.succeed(reading, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                    Effect.as("Rules"),
+                  )
+                : Effect.succeed("Rules")
+              : fileSystem.readFileString(filePath),
+        };
+        const harness = yield* makeWakeHarnessWithOptions({
+          freshQueueOnReopen: true,
+          close: (queue) => Queue.shutdown(queue),
+          settings: {
+            ...DEFAULT_CLAUDE_SETTINGS,
+            launchArgs: "--append-system-prompt-file rules.md",
+          },
+        }).pipe(Effect.provideService(FileSystem.FileSystem, gatedFileSystem));
+        const turn = (ordinal: number) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: DateTime.makeUnsafe(0),
+            attemptId: RunAttemptId.make(`clear-during-prompt-file-${ordinal}`),
+            text: ordinal === 1 ? "/clear" : "Continue the cleared conversation",
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            ...(ordinal === 1 ? {} : { modelSelection: CLAUDE_TEST_RESTART_MODEL_SELECTION }),
+          });
+        yield* harness.runtime.startTurn(turn(1));
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+
+        gateRead = true;
+        const started = yield* harness.runtime.startTurn(turn(2)).pipe(Effect.forkScoped);
+        yield* Deferred.await(reading);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            session_id: "cleared-native-session",
+            uuid: "00000000-0000-4000-8000-000000000531",
+          }),
+        );
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(started);
+
+        assert.equal(harness.processQueues.length, 2);
+        assert.equal(harness.getOpenedOptions()?.resume, "cleared-native-session");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
   it.effect.each(["release-after", "cancel-after", "release-before", "resume-pending"] as const)(
     "keeps attachment reservations across compaction: %s boundary",
     (outcome) =>
@@ -7922,7 +8288,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             session_id: WAKE_NATIVE_SESSION,
           }),
         );
-      return { configDir, startTurn, call, launchSubagent, finishTurn, plans };
+      return {
+        configDir,
+        startTurn,
+        call,
+        launchSubagent,
+        finishTurn,
+        plans,
+        offer: harness.offerAndWait,
+        nextUuid,
+      };
     });
 
   const makeTaskToolHarness = makeTaskToolHarnessWithOptions();
@@ -8047,6 +8422,65 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           { id: "task-1", text: "Inspected", status: "completed" },
           { id: "task-2", text: "Implement", status: "pending" },
         ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect("starts a fresh task list when /clear selects a new native session", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeTaskToolHarness;
+      yield* harness.startTurn();
+      yield* harness.call(createTask("1", "Before clear"));
+      yield* harness.call(createTask("2", "Also before clear"));
+      yield* harness.offer(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          session_id: "cleared-native-session",
+          uuid: harness.nextUuid(),
+        }),
+      );
+      yield* harness.call(createTask("1", "After clear"));
+      yield* harness.finishTurn();
+      assert.deepEqual(harness.plans().at(-1)?.steps, [
+        { id: "task-1", text: "After clear", status: "pending" },
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    { listId: undefined, status: "superseded" },
+    { listId: "shared-list", status: "active" },
+  ] as const)(
+    "retires a session task list after an idle /clear (shared list: $listId)",
+    ({ listId, status }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeTaskToolHarnessWithOptions({ CLAUDE_CODE_TASK_LIST_ID: listId });
+        yield* harness.startTurn();
+        yield* harness.call(createTask("1", "Before clear"));
+        yield* harness.finishTurn();
+        yield* harness.offer(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            session_id: "cleared-native-session",
+            uuid: harness.nextUuid(),
+          }),
+        );
+        yield* harness.startTurn();
+        yield* harness.finishTurn();
+        const plans = harness.plans();
+        assert.equal(plans.at(-1)?.id, plans[0]?.id);
+        assert.equal(plans.at(-1)?.status, status);
       }).pipe(
         Effect.scoped,
         Effect.provide(
@@ -8584,6 +9018,79 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("keeps awaited background task marks when /clear adopts a new session", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-clear-awaited-task"),
+            text: "Wait for the background task.",
+            attachments: [],
+          }),
+        );
+        const nextThread = Effect.fn("nextAwaitedThread")(function* (
+          nativeId: string,
+          awaited?: boolean,
+        ) {
+          while (true) {
+            const { providerThread } = yield* Queue.take(harness.providerThreadReceipts);
+            const task = providerThread.pendingBackgroundTasks?.find(
+              (task) => task.taskId === WAKE_TASK_ID,
+            );
+            if (
+              providerThread.nativeThreadRef?.nativeId === nativeId &&
+              task !== undefined &&
+              (awaited === undefined || task.awaited === awaited)
+            )
+              return providerThread;
+          }
+        });
+        const roster = (sessionId: string, uuid: string) =>
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [{ task_id: WAKE_TASK_ID, task_type: "local_bash", description: "test task" }],
+            session_id: sessionId,
+            uuid,
+          });
+        yield* harness.offerAndWait(
+          roster(WAKE_NATIVE_SESSION, "00000000-0000-4000-8000-000000000610"),
+        );
+        yield* nextThread(WAKE_NATIVE_SESSION);
+        yield* harness.runtime.awaitBackgroundTasks!({
+          providerThread: harness.providerThread,
+          taskIds: [WAKE_TASK_ID],
+          awaited: true,
+        });
+        yield* nextThread(WAKE_NATIVE_SESSION, true);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            session_id: "cleared-awaited-session",
+            uuid: "00000000-0000-4000-8000-000000000611",
+          }),
+        );
+        yield* nextThread("cleared-awaited-session");
+        yield* harness.offerAndWait(
+          roster("cleared-awaited-session", "00000000-0000-4000-8000-000000000612"),
+        );
+        const updated = yield* nextThread("cleared-awaited-session");
+        assert.isTrue(
+          updated.pendingBackgroundTasks?.find((task) => task.taskId === WAKE_TASK_ID)?.awaited,
+        );
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
   );
 
   it.effect("holds only the background tasks the agent marks awaited, until they end", () =>

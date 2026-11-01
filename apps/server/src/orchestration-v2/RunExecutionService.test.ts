@@ -6,6 +6,7 @@ import {
   CommandId,
   MessageId,
   NodeId,
+  PlanId,
   type OrchestrationV2AppThread,
   type OrchestrationV2CheckpointScope,
   type OrchestrationV2DomainEvent,
@@ -173,6 +174,55 @@ it.effect("routes shared-runtime events only to their owning root run", () =>
     );
   }),
 );
+
+it("routes a superseded plan from an earlier run on the same thread", () => {
+  const threadId = ThreadId.make("thread:superseded-plan");
+  const identity: RunExecutionService.ProviderEventRouteIdentity = {
+    threadId,
+    runId: RunId.make("run:superseded-plan:current"),
+    attemptId: RunAttemptId.make("attempt:superseded-plan:current"),
+    providerThreadId: ProviderThreadId.make("provider-thread:superseded-plan"),
+  };
+  const state = RunExecutionService.makeProviderEventRoutingState({
+    identity,
+    providerTurnId: null,
+  });
+  const plan = {
+    id: PlanId.make("plan:superseded-plan"),
+    threadId,
+    runId: RunId.make("run:superseded-plan:earlier"),
+    nodeId: NodeId.make("node:superseded-plan"),
+    kind: "proposed_plan" as const,
+    status: "superseded" as const,
+    markdown: "# Earlier plan",
+  };
+
+  assert.isTrue(
+    RunExecutionService.routeProviderEvent(
+      { type: "plan.updated", driver, plan },
+      identity,
+      state,
+    )[0],
+  );
+  assert.isFalse(
+    RunExecutionService.routeProviderEvent(
+      { type: "plan.updated", driver, plan: { ...plan, status: "active" } },
+      identity,
+      state,
+    )[0],
+  );
+  assert.isFalse(
+    RunExecutionService.routeProviderEvent(
+      {
+        type: "plan.updated",
+        driver,
+        plan: { ...plan, threadId: ThreadId.make("thread:superseded-plan:other") },
+      },
+      identity,
+      state,
+    )[0],
+  );
+});
 
 it("routes only enrolled workflow members after the root turn ends", () => {
   const threadId = ThreadId.make("thread:late-child");
@@ -2504,6 +2554,23 @@ it.effect(
     }),
 );
 
+it.effect.each([undefined, "native-session-before-clear"])(
+  "records the reported native session when finalizing an attempt initialized with %s",
+  (nativeThreadId) =>
+    Effect.gen(function* () {
+      const { finalEvents } = yield* captureRootRunTermination({
+        key: "finalize-reported-native-session",
+        shouldFinalizeRun: () => Effect.succeed(true),
+        ...(nativeThreadId === undefined ? {} : { nativeThreadId }),
+        reportedNativeThreadId: "native-session-after-clear",
+      });
+      const attempt = finalEvents.find((event) => event.type === "run-attempt.updated");
+      assert.isDefined(attempt);
+      assert.equal(attempt.payload.nativeThreadId, "native-session-after-clear");
+      assert.equal(attempt.payload.status, "interrupted");
+    }),
+);
+
 it.effect("omits interrupt results and subagent cascade for a superseded attempt", () =>
   Effect.gen(function* () {
     const { written, observed } = yield* captureRootRunTermination({
@@ -3070,6 +3137,77 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
   }),
 );
 
+it.effect("finalizes with a provider snapshot already persisted by a skipped event write", () =>
+  Effect.gen(function* () {
+    const { finalEvents } = yield* captureRootRunTermination({
+      key: "skipped-provider-thread-persist",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.make(
+          {
+            type: "provider_thread.updated",
+            driver,
+            providerThread: {
+              id: ids.providerThreadId,
+              driver,
+              nativeThreadRef: { driver, nativeId: "adopted-session", strength: "strong" },
+            } as unknown as OrchestrationV2ProviderThread,
+          } as ProviderAdapter.ProviderAdapterV2Event,
+          rootTerminalEvent(ids, "completed"),
+        ),
+      persistEvent: (event, persist) =>
+        event.type === "provider_thread.updated"
+          ? Effect.succeed({
+              storedEvents: [],
+              persistedProviderThread: event.providerThread,
+            })
+          : persist(true).pipe(Effect.map((storedEvents) => ({ storedEvents }))),
+    });
+    assert.equal(
+      finalEvents.find((event) => event.type === "provider-thread.updated")?.payload.nativeThreadRef
+        ?.nativeId,
+      "adopted-session",
+    );
+  }),
+);
+
+it.effect("does not adopt a stale snapshot that only stored rewind events", () =>
+  Effect.gen(function* () {
+    const rewind = {
+      sequence: 1,
+      commandId: null,
+      event: { type: "turn-item.updated", payload: { id: "rewind" } },
+    } as unknown as ProviderAdapter.ProviderAdapterV2PersistEventResult["storedEvents"][number];
+    const { finalEvents } = yield* captureRootRunTermination({
+      key: "stale-provider-thread-persist",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      reportedNativeThreadId: "original-session",
+      events: (ids) =>
+        Stream.make(
+          {
+            type: "provider_thread.updated",
+            driver,
+            providerThread: {
+              id: ids.providerThreadId,
+              driver,
+              nativeThreadRef: { driver, nativeId: "stale-session", strength: "strong" },
+            } as unknown as OrchestrationV2ProviderThread,
+          } as ProviderAdapter.ProviderAdapterV2Event,
+          rootTerminalEvent(ids, "completed"),
+        ),
+      persistEvent: (event, persist) =>
+        event.type === "provider_thread.updated"
+          ? Effect.succeed({ storedEvents: [rewind] })
+          : persist(true).pipe(Effect.map((storedEvents) => ({ storedEvents }))),
+    });
+    assert.equal(
+      finalEvents.find((event) => event.type === "provider-thread.updated")?.payload.nativeThreadRef
+        ?.nativeId,
+      "original-session",
+    );
+  }),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
@@ -3078,6 +3216,7 @@ function captureRootRunTermination(input: {
   readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
   readonly hasPendingBackgroundWorkForThread?: ProviderAdapter.ProviderAdapterV2SessionRuntime["hasPendingBackgroundWorkForThread"];
   readonly seedOpenSubagent?: boolean;
+  readonly persistEvent?: ProviderAdapter.ProviderAdapterV2EventSubscription["persistEvent"];
   readonly events?: (
     ids: BackgroundScenarioIds,
   ) => Stream.Stream<
@@ -3087,6 +3226,8 @@ function captureRootRunTermination(input: {
   readonly startTurn?: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"];
   readonly interruptTurn?: ProviderAdapter.ProviderAdapterV2SessionRuntime["interruptTurn"];
   readonly initialProviderTurnId?: ProviderTurnId | null;
+  readonly nativeThreadId?: string;
+  readonly reportedNativeThreadId?: string;
   readonly onStartFailure?: (
     error: RunExecutionService.RunExecutionServiceV2Error,
   ) => Effect.Effect<void>;
@@ -3228,6 +3369,7 @@ function captureRootRunTermination(input: {
             close: Deferred.succeed(ingestionDone, undefined).pipe(
               Effect.andThen(input.onSubscriptionClose ?? Effect.void),
             ),
+            ...(input.persistEvent === undefined ? {} : { persistEvent: input.persistEvent }),
           }),
           startTurn: input.startTurn ?? (() => Effect.void),
           interruptTurn: input.interruptTurn ?? (() => Effect.void),
@@ -3249,9 +3391,15 @@ function captureRootRunTermination(input: {
         providerThread: {
           id: ids.providerThreadId,
           driver,
+          nativeThreadRef:
+            input.reportedNativeThreadId === undefined
+              ? null
+              : { driver, nativeId: input.reportedNativeThreadId, strength: "strong" },
         } as OrchestrationV2ProviderThread,
         attempt: {
           id: ids.attemptId,
+          providerThreadId: ids.providerThreadId,
+          ...(input.nativeThreadId === undefined ? {} : { nativeThreadId: input.nativeThreadId }),
           providerTurnId:
             input.initialProviderTurnId === undefined
               ? ids.rootProviderTurnId
