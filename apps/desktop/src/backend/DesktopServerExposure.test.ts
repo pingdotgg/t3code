@@ -7,12 +7,14 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
+import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
 import * as DesktopNetworkInterfaces from "./DesktopNetworkInterfaces.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -90,6 +92,7 @@ function layer(input: {
   readonly env?: Record<string, string | undefined>;
   readonly spawnerLayer?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
   readonly desktopSettingsLayer?: Layer.Layer<DesktopAppSettings.DesktopAppSettings>;
+  readonly managedPolicyLayer?: Layer.Layer<DesktopManagedPolicy.DesktopManagedPolicy>;
 }) {
   const env = { T3CODE_HOME: input.baseDir, ...input.env };
   const layerEnvironment = layerEnvironmentFor(input.baseDir, env);
@@ -99,6 +102,7 @@ function layer(input: {
 
   return DesktopServerExposure.layer.pipe(
     Layer.provideMerge(input.desktopSettingsLayer ?? DesktopAppSettings.layer),
+    Layer.provideMerge(input.managedPolicyLayer ?? DesktopManagedPolicy.layerTest()),
     Layer.provideMerge(NodeFileSystem.layer),
     Layer.provideMerge(NodeHttpClient.layerUndici),
     Layer.provideMerge(input.spawnerLayer ?? layerMockSpawner()),
@@ -122,6 +126,7 @@ const withHarness = <A, E, R>(
   env: Record<string, string | undefined> = {},
   spawnerLayer?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>,
   desktopSettingsLayer?: Layer.Layer<DesktopAppSettings.DesktopAppSettings>,
+  managedPolicyLayer?: Layer.Layer<DesktopManagedPolicy.DesktopManagedPolicy>,
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -136,6 +141,7 @@ const withHarness = <A, E, R>(
           env,
           ...(spawnerLayer ? { spawnerLayer } : {}),
           ...(desktopSettingsLayer ? { desktopSettingsLayer } : {}),
+          ...(managedPolicyLayer ? { managedPolicyLayer } : {}),
         }),
       ),
     );
@@ -187,6 +193,41 @@ describe("DesktopServerExposure", () => {
         const backendConfig = yield* serverExposure.backendConfig;
         assert.equal(backendConfig.bindHost, "127.0.0.1");
         assert.equal(backendConfig.httpBaseUrl.href, "http://127.0.0.1:4173/");
+      }),
+    ),
+  );
+
+  it.effect("starts local-only, Serve off, when a managed policy keeps clients local", () =>
+    withHarness(
+      lanNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.setServerExposureMode("network-accessible");
+        yield* settings.setTailscaleServe({ enabled: true, port: Option.none() });
+
+        const state = yield* serverExposure.configureFromSettings({ port: 4173 });
+        assert.equal(state.mode, "local-only");
+        const backendConfig = yield* serverExposure.backendConfig;
+        assert.equal(backendConfig.bindHost, "127.0.0.1");
+        assert.isFalse(backendConfig.tailscaleServeEnabled);
+        // Choosing them again while the policy applies does not widen the backend either.
+        yield* serverExposure.setMode("network-accessible");
+        yield* serverExposure.setTailscaleServeEnabled({ enabled: true });
+        assert.equal((yield* serverExposure.backendConfig).bindHost, "127.0.0.1");
+        assert.isFalse((yield* serverExposure.backendConfig).tailscaleServeEnabled);
+        // The saved choice returns once the policy allows it.
+        const saved = yield* settings.get;
+        assert.equal(saved.serverExposureMode, "network-accessible");
+        assert.isTrue(saved.tailscaleServeEnabled);
+      }),
+      {},
+      undefined,
+      undefined,
+      DesktopManagedPolicy.layerTest({
+        schemaVersion: 1,
+        organization: "Example Corp",
+        limits: { clients: ["desktop"] },
       }),
     ),
   );

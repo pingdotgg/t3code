@@ -1,4 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { normalizeHostname } from "@t3tools/shared/hostClassification";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -42,6 +43,7 @@ const TailscaleCommandContext = {
 export const TailscaleStderrDiagnostic = Schema.Literals([
   "no-existing-handler",
   "not-logged-in",
+  "not-running",
   "permission-denied",
   "unknown",
 ]);
@@ -52,6 +54,12 @@ const STDERR_DIAGNOSTIC_PATTERNS: ReadonlyArray<
 > = [
   [/handler does not exist/i, "no-existing-handler"],
   [/not logged in|logged out|needs? login/i, "not-logged-in"],
+  // Only answers that confirm no daemon; a dial can also fail for want of permission. Windows
+  // reports a missing service as its pipe not being found, without the usual prefix.
+  [
+    /doesn't appear to be running|tailscaled\.service not running|tailscale is stopped|tailscaled: the system cannot find the file specified|failed to connect to local tailscale[\s\S]*(connection refused|no such file or directory|cannot find the file)/i,
+    "not-running",
+  ],
   [/permission denied|access denied|must be root|operation not permitted/i, "permission-denied"],
 ];
 
@@ -222,7 +230,7 @@ export const parseTailscaleStatus = (
   );
 
 const readTailscaleOutput = Effect.fn("tailscale.readTailscaleOutput")(function* (
-  subcommand: "status" | "debug",
+  subcommand: "status" | "serve" | "debug",
   args: readonly string[],
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -438,17 +446,207 @@ export const ensureTailscaleServe = (input: {
   return runTailscaleCommand(args, TAILSCALE_SERVE_TIMEOUT);
 };
 
+/** A Serve route: a web handler at `mount` on `servePort`, or a TCP forward without one. */
+export interface TailscaleServeRoute {
+  readonly servePort: number;
+  readonly mount?: string;
+  /** The machine name a web route serves under. */
+  readonly host?: string;
+  /** A target, such as a name, that may dial this server or another service on the same port. */
+  readonly ambiguous?: string;
+  /** The Tailscale Service it belongs to, or `foreground` for a `tailscale serve` still running. */
+  readonly owner?: string;
+}
+
+/**
+ * The `tailscale` arguments that turn `route` off; a foreground route has none, since it ends with
+ * its command. A web route names its path: without one the CLI removes every handler on the port,
+ * and answers its own confirmation prompt with yes when nobody is there to answer.
+ */
+export const tailscaleServeOffArgs = (
+  route: TailscaleServeRoute,
+): ReadonlyArray<string> | undefined =>
+  route.owner === "foreground"
+    ? undefined
+    : [
+        "serve",
+        ...(route.owner === undefined ? [] : [`--service=${route.owner}`]),
+        ...(route.mount === undefined
+          ? [`--tcp=${route.servePort}`]
+          : [`--https=${route.servePort}`, `--set-path=${route.mount}`]),
+        "off",
+      ];
+
+/** Removes the web handler at `mount` on `servePort`, the root one `ensureTailscaleServe` adds by default. */
 export const disableTailscaleServe = Effect.fn("tailscale.disableTailscaleServe")(function* (
   input: {
     readonly servePort?: number;
+    readonly mount?: string;
   } = {},
 ): Effect.fn.Return<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> {
-  const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
   return yield* runTailscaleCommand(
-    ["serve", `--https=${servePort}`, "off"],
+    tailscaleServeOffArgs({
+      servePort: input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT,
+      mount: input.mount ?? "/",
+    })!,
     TAILSCALE_SERVE_TIMEOUT,
   );
 });
+
+/** Removes a TCP forward on `servePort`; one port holds one forward, so nothing else goes. */
+export const disableTailscaleServeTcp = (servePort: number) =>
+  runTailscaleCommand(tailscaleServeOffArgs({ servePort })!, TAILSCALE_SERVE_TIMEOUT);
+
+const TailscaleServeConfigJson = Schema.Struct({
+  TCP: Schema.optional(
+    Schema.Record(Schema.String, Schema.Struct({ TCPForward: Schema.optional(Schema.String) })),
+  ),
+  Web: Schema.optional(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        Handlers: Schema.optional(
+          Schema.Record(Schema.String, Schema.Struct({ Proxy: Schema.optional(Schema.String) })),
+        ),
+      }),
+    ),
+  ),
+});
+const TailscaleServeStatusJson = Schema.Struct({
+  ...TailscaleServeConfigJson.fields,
+  // A Tailscale Service's routes, and those of each `tailscale serve` still running in the foreground.
+  Services: Schema.optional(Schema.Record(Schema.String, TailscaleServeConfigJson)),
+  Foreground: Schema.optional(Schema.Record(Schema.String, TailscaleServeConfigJson)),
+});
+// A node without any Serve configuration prints `null`.
+const decodeTailscaleServeStatusJson = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.NullOr(TailscaleServeStatusJson)),
+);
+
+/**
+ * Whether a proxy to `hostname` dials `bindHost`. `0.0.0.0` reaches 127.0.0.1. `[::]` may reach
+ * either loopback, since Go dials `::` and then 0.0.0.0 (golang/go#18806), and a name such as
+ * `localhost` may resolve to whatever the server binds.
+ */
+const reaches = (hostname: string, bindHost: string): "exact" | "either" | undefined => {
+  let address = normalizeHostname(hostname);
+  // Compare IPv6 by value: 0:0:0:0:0:ffff:7f00:1 is ::ffff:7f00:1.
+  if (address.includes(":") && URL.canParse(`http://[${address}]`)) {
+    address = normalizeHostname(new URL(`http://[${address}]`).hostname);
+  }
+  // An IPv4-mapped address can be written as hex, such as ::ffff:7f00:1 for 127.0.0.1.
+  const mapped = /^::ffff:([\da-f]{1,4}):([\da-f]{1,4})$/u.exec(address);
+  if (mapped !== null) {
+    const high = Number.parseInt(mapped[1]!, 16);
+    const low = Number.parseInt(mapped[2]!, 16);
+    address = [high >>> 8, high & 0xff, low >>> 8, low & 0xff].join(".");
+  } else if (address.startsWith("::ffff:")) {
+    address = address.slice("::ffff:".length);
+  }
+  // Strict, as Go's ParseIP is; anything else, such as `127.1` or `box.1`, goes to the resolver.
+  const literal =
+    address.includes(":") ||
+    /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?!$)|$)){4}$/u.test(address);
+  if (!literal) return "either";
+  if (address === "::")
+    return bindHost === "127.0.0.1" || bindHost === "::1" ? "either" : undefined;
+  return (address === "0.0.0.0" ? "127.0.0.1" : address) === bindHost ? "exact" : undefined;
+};
+
+/** The URL Tailscale's proxy dials for a handler's `Proxy`, expanded as its `expandProxyArg` does. */
+const expandProxy = (proxy: string) =>
+  /^\d+$/u.test(proxy)
+    ? `http://127.0.0.1:${proxy}`
+    : proxy.startsWith("https+insecure://")
+      ? `https://${proxy.slice("https+insecure://".length)}`
+      : /^(?:https?:\/\/|unix:)/u.test(proxy)
+        ? proxy
+        : `http://${proxy}`;
+
+/**
+ * The host and port a proxy target dials, read as Go's url.Parse reads it rather than as a WHATWG
+ * URL, which rejects `box.1` and rewrites `127.1`; none for a Unix socket.
+ */
+const dialedHostPort = (url: string) => {
+  const match = /^(https?|tcp):\/\/(?:[^@/?#]*@)?(\[[^\]]*\]|[^/?#:]*)(?::(\d*))?/iu.exec(url);
+  if (match === null) return undefined;
+  const [, scheme = "", host = "", port] = match;
+  return { host, port: port || (scheme.toLowerCase() === "https" ? "443" : "80") };
+};
+
+const reachesTarget = (url: string, target: { readonly host: string; readonly port: number }) => {
+  const dialed = dialedHostPort(url);
+  // Go reads the port as a decimal number, so 03773 is 3773.
+  if (dialed === undefined || Number(dialed.port) !== target.port) return undefined;
+  const reach = reaches(dialed.host, target.host);
+  return reach === undefined ? undefined : { reach, hostname: dialed.host };
+};
+
+/**
+ * The Serve routes that forward to the server bound at `target`, or undefined when the status
+ * cannot be read.
+ */
+export const parseTailscaleServeRoutesTo = (
+  rawServeStatusJson: string,
+  target: { readonly host: string; readonly port: number },
+): ReadonlyArray<TailscaleServeRoute> | undefined => {
+  const status = decodeTailscaleServeStatusJson(rawServeStatusJson);
+  if (Option.isNone(status)) return undefined;
+  const routesIn = (
+    config: typeof TailscaleServeConfigJson.Type | undefined,
+    owner?: string,
+  ): ReadonlyArray<TailscaleServeRoute> => {
+    const scope = owner === undefined ? {} : { owner };
+    const reached = (url: string) => {
+      const found = reachesTarget(url, target);
+      if (found === undefined) return undefined;
+      return found.reach === "either" ? { ambiguous: found.hostname } : {};
+    };
+    const tcp = Object.entries(config?.TCP ?? {}).flatMap(([port, handler]) => {
+      const reach =
+        handler.TCPForward === undefined || handler.TCPForward.startsWith("unix:")
+          ? undefined
+          : reached(`tcp://${handler.TCPForward}`);
+      return reach !== undefined && Number.isInteger(Number(port))
+        ? [{ servePort: Number(port), ...reach, ...scope }]
+        : [];
+    });
+    const web = Object.entries(config?.Web ?? {}).flatMap(([hostPort, site]) => {
+      const separator = hostPort.lastIndexOf(":");
+      const servePort = Number(hostPort.slice(separator + 1));
+      if (!Number.isInteger(servePort)) return [];
+      const host = hostPort.slice(0, separator);
+      return Object.entries(site.Handlers ?? {}).flatMap(([mount, handler]) => {
+        const reach = handler.Proxy === undefined ? undefined : reached(expandProxy(handler.Proxy));
+        return reach === undefined ? [] : [{ servePort, mount, host, ...reach, ...scope }];
+      });
+    });
+    return [...tcp, ...web];
+  };
+  return [
+    ...routesIn(status.value ?? undefined),
+    ...Object.entries(status.value?.Services ?? {}).flatMap(([name, service]) =>
+      routesIn(service, name),
+    ),
+    ...Object.values(status.value?.Foreground ?? {}).flatMap((session) =>
+      routesIn(session, "foreground"),
+    ),
+  ];
+};
+
+/** The Serve routes that forward to the server bound at `target` on this machine. */
+export const readTailscaleServeRoutesTo = (target: {
+  readonly host: string;
+  readonly port: number;
+}) =>
+  readTailscaleOutput("serve", ["serve", "status", "--json"]).pipe(
+    Effect.flatMap((status) => {
+      const routes = parseTailscaleServeRoutesTo(status, target);
+      return routes === undefined
+        ? Effect.fail(new TailscaleStatusParseError({ cause: "unreadable serve status" }))
+        : Effect.succeed(routes);
+    }),
+  );
 
 export const probeTailscaleHttpsEndpoint = Effect.fn("tailscale.probeTailscaleHttpsEndpoint")(
   function* (input: { readonly baseUrl: string; readonly timeout?: Duration.Input }) {

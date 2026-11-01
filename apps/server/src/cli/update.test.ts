@@ -1,10 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import type { ManagedUpdatesPolicy } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
@@ -12,9 +14,11 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { afterEach, vi } from "vite-plus/test";
 
+import * as BootService from "../cloud/bootService.ts";
 import { prunePinnedRuntimes } from "../cloud/pinnedRuntime.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { repointLauncher, resolveLauncherPath, resolveNewestVersion } from "./update.ts";
+import { repointLauncher, resolveLauncherPath, resolveNewestVersion, runUpdate } from "./update.ts";
 
 // lsof listing one process, so prune sees a process list in which no runtime is running.
 const unrelatedLsof = ProcessRunner.ProcessRunner.of({
@@ -55,6 +59,66 @@ it.effect("authenticates each release page until the requested channel is found"
     assert.deepStrictEqual(pages, ["1", "2"]);
   }),
 );
+
+it.layer(NodeServices.layer)("t3 update under a managed policy", (it) => {
+  const runWithPolicy = (
+    updates: ManagedUpdatesPolicy,
+    input: { readonly channel?: "stable" | "nightly"; readonly requestedVersion?: string } = {},
+  ) =>
+    runUpdate({
+      baseDir: "/unused",
+      logsDir: "/unused",
+      serverRuntimeStatePath: "/unused",
+      channel: input.channel,
+      requestedVersion: input.requestedVersion,
+      allowDowngrade: false,
+      assumeYes: true,
+    }).pipe(
+      Effect.flip,
+      Effect.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest({
+            schemaVersion: 1,
+            organization: "Example Corp",
+            limits: { updates },
+          }),
+          // Refusals happen before the update touches the network, the service, or a process.
+          Layer.mock(BootService.BootService, {}),
+          Layer.mock(ProcessRunner.ProcessRunner, {}),
+          Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("unexpected release lookup")),
+          ),
+        ),
+      ),
+    );
+
+  it.effect("refuses to update when updates are off", () =>
+    Effect.gen(function* () {
+      const error = yield* runWithPolicy({ mode: "off" });
+      assert.equal(error.message, "Example Corp manages T3 Code updates.");
+    }),
+  );
+
+  it.effect("refuses nightly releases when the policy disallows them", () =>
+    Effect.gen(function* () {
+      const byChannel = yield* runWithPolicy(
+        { mode: "auto", allowNightly: false },
+        { channel: "nightly" },
+      );
+      const byVersion = yield* runWithPolicy(
+        { mode: "auto", allowNightly: false },
+        { channel: "stable", requestedVersion: "1.2.0-nightly.20261028.1" },
+      );
+      for (const error of [byChannel, byVersion]) {
+        assert.equal(
+          error.message,
+          "Example Corp manages T3 Code updates. Only stable releases can be installed.",
+        );
+      }
+    }),
+  );
+});
 
 it.layer(NodeServices.layer)("t3 update launcher", (it) => {
   it.effect("repoints a symlink that lives in a runtime versions tree", () =>

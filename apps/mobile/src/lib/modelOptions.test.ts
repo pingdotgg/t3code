@@ -802,4 +802,57 @@ describe("synchronized mobile model visibility", () => {
       buildModelOptions(cleared, null, provider, null).map((option) => option.selection.model),
     ).toEqual(["hidden", "first", "second", "custom"]);
   });
+
+  describe("managed provider policy", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "codex",
+          driver: "codex",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [{ slug: "gpt-5.6-sol", name: "GPT", isCustom: false, capabilities: null }],
+        },
+        {
+          instanceId: "claudeAgent",
+          driver: "claudeAgent",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            { slug: "claude-sonnet-5", name: "Sonnet", isCustom: false, capabilities: null },
+          ],
+        },
+      ],
+      managedPolicy: {
+        organization: "Example Corp",
+        lockedSettings: [],
+        limits: { providers: { allowedDrivers: [ProviderDriverKind.make("codex")] } },
+      },
+    } as unknown as ServerConfig;
+    const disallowed = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-sonnet-5",
+    };
+
+    it("leaves drivers the policy does not allow out of the picker", () => {
+      expect(
+        buildModelOptions(config, null, undefined, null).map((option) => option.providerKey),
+      ).toEqual(["codex"]);
+    });
+
+    it("marks a thread's selection on a disallowed driver unavailable with the policy reason", () => {
+      expect(
+        buildModelOptions(config, disallowed, undefined, null).find(
+          (option) => option.providerKey === "claudeAgent",
+        )?.isUnavailable,
+      ).toBe(true);
+      expect(isModelSelectionUnavailable(config, disallowed, null)).toBe(true);
+      expect(describeUnavailableModelSelection(config, disallowed, null)).toEqual({
+        title: "Provider not allowed",
+        detail: "Example Corp's policy does not allow the Claude provider. Choose another model.",
+      });
+    });
+  });
 });

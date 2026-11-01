@@ -17,7 +17,10 @@ import { useRef, useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { RUNTIME_MODE_CHOICES } from "../threads/thread-settings-options";
+import {
+  RUNTIME_MODE_CHOICES,
+  withManagedRuntimeModeLimits,
+} from "../threads/thread-settings-options";
 import { SettingsScreen } from "./components/SettingsScreen";
 import {
   AndroidSettingsEnvironmentFilter,
@@ -33,6 +36,7 @@ import { SettingsProjectOverridesSection } from "./components/SettingsProjectOve
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { useSettingsWriter } from "./useSettingsWriter";
 import {
+  managedSettingReason,
   planMobileScopedSettingsClear,
   planMobileScopedSettingsPatch,
   resolveMobileSettingsTargets,
@@ -260,8 +264,19 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     });
   };
   const disabled = !canWriteSettings || pendingWrites > 0 || !hasConnectedSelection;
+  const managed = (...keys: string[]) => managedSettingReason(targets, ...keys);
+  // A locked row keeps its explanation and says who manages it.
+  const managedSubtitle = (key: string, subtitle: string) => {
+    const reason = managed(key);
+    return reason === undefined ? subtitle : `${subtitle} ${reason}`;
+  };
+  const runtimeModeChoices = withManagedRuntimeModeLimits(
+    RUNTIME_MODE_CHOICES,
+    targets.map((target) => target.environment.serverConfig.managedPolicy),
+  );
   const disabledFor = (key: string) =>
     disabled ||
+    managed(key) !== undefined ||
     (projectSelected &&
       !PROJECT_SCOPED_SERVER_SETTING_KEYS.includes(
         key as (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number],
@@ -289,6 +304,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
             </Text>
           ) : (
             <>
+              <ManagedPolicyNotice targets={targets} />
               {projectSelected ? (
                 <SettingsProjectOverridesSection
                   projectLabel={selectedProject?.label ?? "Unavailable project"}
@@ -304,6 +320,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                 <>
                   <SettingsSection
                     title="Default workspace"
+                    footer={managed("defaultThreadEnvMode")}
                     trailing={
                       pendingWrites === 0 && isMixed("defaultThreadEnvMode") ? (
                         <MixedValuesLabel projectSelected={projectSelected} />
@@ -329,26 +346,30 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   </SettingsSection>
                   <SettingsSection
                     title="Default permissions"
+                    footer={managed("defaultRuntimeMode")}
                     trailing={
                       pendingWrites === 0 && uniform("defaultRuntimeMode") === null ? (
                         <MixedValuesLabel projectSelected={projectSelected} />
                       ) : null
                     }
                   >
-                    {RUNTIME_MODE_CHOICES.map((choice, index) => (
+                    {runtimeModeChoices.map((choice, index) => (
                       <SettingsChoiceRow
                         key={choice.mode}
                         label={choice.label}
-                        description={choice.description}
+                        description={choice.disabledReason ?? choice.description}
                         selected={uniform("defaultRuntimeMode") === choice.mode}
                         separated={index > 0}
-                        disabled={disabledFor("defaultRuntimeMode")}
+                        disabled={
+                          disabledFor("defaultRuntimeMode") || choice.disabledReason !== undefined
+                        }
                         onPress={() => write({ defaultRuntimeMode: choice.mode })}
                       />
                     ))}
                   </SettingsSection>
                   <SettingsSection
                     title="Response streaming"
+                    footer={managed("responseStreamingMode")}
                     trailing={
                       pendingWrites === 0 && uniform("responseStreamingMode") === null ? (
                         <MixedValuesLabel projectSelected={projectSelected} />
@@ -371,7 +392,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     <SettingsSwitchRow
                       icon="globe"
                       label="Agent browser access"
-                      subtitle="Allow agents to use the in-app preview browser."
+                      subtitle={managedSubtitle(
+                        "enableAgentBrowserAccess",
+                        "Allow agents to use the in-app preview browser.",
+                      )}
                       value={uniform("enableAgentBrowserAccess")}
                       disabled={disabledFor("enableAgentBrowserAccess")}
                       onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
@@ -393,7 +417,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     <SettingsSwitchRow
                       icon={PullRequestGlyph.merged}
                       label="Remove agent credits when merging"
-                      subtitle="Remove recognized agent credits from merge and squash messages on hosts that support it, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits."
+                      subtitle={managedSubtitle(
+                        "removeAgentCreditsOnMerge",
+                        "Remove recognized agent credits from merge and squash messages on hosts that support it, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits.",
+                      )}
                       value={uniform("removeAgentCreditsOnMerge")}
                       disabled={disabledFor("removeAgentCreditsOnMerge")}
                       onValueChange={(value) => write({ removeAgentCreditsOnMerge: value })}
@@ -403,7 +430,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     <SettingsSwitchRow
                       icon="arrow.down.circle"
                       label="Automatically pull"
-                      subtitle="Keep the default branch current when there are no local changes."
+                      subtitle={managedSubtitle(
+                        "defaultAutoPull",
+                        "Keep the default branch current when there are no local changes.",
+                      )}
                       value={uniform("defaultAutoPull")}
                       disabled={disabledFor("defaultAutoPull")}
                       onValueChange={(value) => write({ defaultAutoPull: value })}
@@ -418,7 +448,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     <SettingsSwitchRow
                       icon="arrow.triangle.branch"
                       label="Start from remote"
-                      subtitle="Uses the latest commit of the base branch’s tracked remote branch, even if its name differs. Otherwise uses the same-named branch on origin. Uses your local branch if that remote branch is missing."
+                      subtitle={managedSubtitle(
+                        "newWorktreesStartFromOrigin",
+                        "Uses the latest commit of the base branch’s tracked remote branch, even if its name differs. Otherwise uses the same-named branch on origin. Uses your local branch if that remote branch is missing.",
+                      )}
                       value={uniform("newWorktreesStartFromOrigin")}
                       disabled={disabledFor("newWorktreesStartFromOrigin")}
                       onValueChange={(value) => write({ newWorktreesStartFromOrigin: value })}
@@ -426,6 +459,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   </SettingsSection>
                   <SettingsSection
                     title="Worktree submodules"
+                    footer={managed("worktreeSubmodules")}
                     trailing={
                       pendingWrites === 0 && isMixed("worktreeSubmodules") ? (
                         <MixedValuesLabel projectSelected={projectSelected} />
@@ -454,7 +488,11 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     mode={uniform("branchNamingMode")}
                     prefix={uniform("branchNamePrefix")}
                     instructions={uniform("branchNameInstructions")}
-                    disabled={disabledFor("branchNamingMode")}
+                    disabled={{
+                      mode: disabledFor("branchNamingMode"),
+                      prefix: disabledFor("branchNamePrefix"),
+                      instructions: disabledFor("branchNameInstructions"),
+                    }}
                     onChange={write}
                   />
                 </>
@@ -491,11 +529,12 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     <SettingsSwitchRow
                       icon="arrow.clockwise"
                       label="Check provider updates"
-                      subtitle={
+                      subtitle={managedSubtitle(
+                        "enableProviderUpdateChecks",
                         projectSelected
                           ? "Environment-wide setting. Select All projects to change it."
-                          : "Check installed provider CLIs for newer versions and fetch model catalog updates. When off, new models may not appear."
-                      }
+                          : "Check installed provider CLIs for newer versions and fetch model catalog updates. When off, new models may not appear.",
+                      )}
                       value={uniform("enableProviderUpdateChecks")}
                       disabled={disabledFor("enableProviderUpdateChecks")}
                       onValueChange={(value) => write({ enableProviderUpdateChecks: value })}
@@ -504,7 +543,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       <SettingsSwitchRow
                         icon="arrow.uturn.forward"
                         label="Continue after restart"
-                        subtitle="Resume interrupted threads after an update or restart."
+                        subtitle={managedSubtitle(
+                          "continueThreadsAfterServerUpdate",
+                          "Resume interrupted threads after an update or restart.",
+                        )}
                         value={uniform("continueThreadsAfterServerUpdate")}
                         disabled={disabledFor("continueThreadsAfterServerUpdate")}
                         onValueChange={(value) =>
@@ -534,6 +576,26 @@ function MixedValuesLabel(props: { readonly projectSelected: boolean }) {
       className="px-2 text-sm text-foreground-muted android:px-4"
     >
       Mixed
+    </Text>
+  );
+}
+
+/** Locked settings are refused when saved; say so before the user tries. */
+function ManagedPolicyNotice(props: { readonly targets: readonly ScopedMobileSettingsTarget[] }) {
+  const organizations = [
+    ...new Set(
+      props.targets.flatMap((target) => {
+        const policy = target.environment.serverConfig.managedPolicy;
+        return policy !== undefined && policy.lockedSettings.length > 0
+          ? [policy.organization]
+          : [];
+      }),
+    ),
+  ];
+  if (organizations.length === 0) return null;
+  return (
+    <Text className="px-2 text-sm text-foreground-muted android:px-4">
+      Some settings are managed by {organizations.join(", ")} and cannot be changed here.
     </Text>
   );
 }

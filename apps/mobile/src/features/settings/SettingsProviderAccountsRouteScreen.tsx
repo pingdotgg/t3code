@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthProvidersManageScope,
+  isManagedDriverAllowed,
   type ProviderAuthResponse,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -64,7 +65,7 @@ export function SettingsProviderAccountsRouteScreen() {
                   </View>
                 ) : (
                   <>
-                    {(providersByEnvironment.get(environment.environmentId) ?? [])
+                    {managedProviders(environment, providersByEnvironment)
                       .filter(canManageProvider)
                       .map((provider, index) => (
                         <ProviderAccount
@@ -74,7 +75,7 @@ export function SettingsProviderAccountsRouteScreen() {
                           divider={index > 0}
                         />
                       ))}
-                    {!(providersByEnvironment.get(environment.environmentId) ?? []).some(
+                    {!managedProviders(environment, providersByEnvironment).some(
                       canManageProvider,
                     ) ? (
                       <Text className="p-4 text-foreground-muted">
@@ -89,6 +90,16 @@ export function SettingsProviderAccountsRouteScreen() {
         </ScreenScrollView>
       </SettingsScreen>
     </>
+  );
+}
+
+/** Providers the environment's managed policy allows; the rest cannot run or sign in. */
+function managedProviders(
+  environment: SettingsTarget,
+  providersByEnvironment: ReadonlyMap<string, ReadonlyArray<ServerProvider>>,
+) {
+  return (providersByEnvironment.get(environment.environmentId) ?? []).filter((provider) =>
+    isManagedDriverAllowed(environment.serverConfig.managedPolicy, provider.driver),
   );
 }
 

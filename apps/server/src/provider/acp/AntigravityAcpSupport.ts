@@ -92,6 +92,20 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
   }
 }
 
+/** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */
+export function antigravityRuntimeModeForSessionMode(modeId: string): RuntimeMode | undefined {
+  switch (modeId) {
+    case "yolo":
+      return "full-access";
+    case "auto_edit":
+      return "auto-accept-edits";
+    case "default":
+      return "approval-required";
+    default:
+      return undefined;
+  }
+}
+
 export function antigravityModelOptions(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
 ) {

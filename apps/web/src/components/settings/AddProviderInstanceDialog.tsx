@@ -13,6 +13,7 @@ import {
   type EnvironmentId,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
+  isManagedDriverAllowed,
 } from "@t3tools/contracts";
 
 import {
@@ -22,6 +23,7 @@ import {
 
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
+import { managedInstanceLocks, useManagedPolicy } from "../../state/managedPolicy";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { Button } from "../ui/button";
 import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
@@ -167,7 +169,20 @@ export function AddProviderInstanceDialog({
 
   const [wizardStep, setWizardStep] = useState(0);
   const [addingChatGptAccount, setAddingChatGptAccount] = useState(false);
-  const [driver, setDriver] = useState<ProviderDriverKind>(DEFAULT_DRIVER_KIND);
+  // Drivers the administrator's policy leaves out are not offered at all.
+  const managedPolicy = useManagedPolicy(environmentId);
+  const featuredDriverOptions = FEATURED_DRIVER_OPTIONS.filter((option) =>
+    isManagedDriverAllowed(managedPolicy, option.driverKind),
+  );
+  const moreDriverOptions = MORE_DRIVER_OPTIONS.filter((option) =>
+    isManagedDriverAllowed(managedPolicy, option.driverKind),
+  );
+  const acpRegistryAllowed = isManagedDriverAllowed(managedPolicy, ACP_REGISTRY_DRIVER_KIND);
+  const [driver, setDriver] = useState<ProviderDriverKind>(
+    () =>
+      (featuredDriverOptions[0] ?? moreDriverOptions[0])?.driverKind ??
+      (acpRegistryAllowed ? ACP_REGISTRY_DRIVER_KIND : DEFAULT_DRIVER_KIND),
+  );
   const [identityByDriver, setIdentityByDriver] = useState<Record<string, ProviderIdentityDraft>>(
     {},
   );
@@ -361,6 +376,9 @@ export function AddProviderInstanceDialog({
     setHasAttemptedSubmit(false);
   };
 
+  // A policy that owns this driver's launch settings also rules out ChatGPT's own runtime.
+  const driverLocks = managedInstanceLocks(managedPolicy, driver);
+
   const handleSave = async () => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     if (isSaving || createdInstanceId) return;
@@ -467,7 +485,7 @@ export function AddProviderInstanceDialog({
                   Provider
                 </div>
                 <ProviderOptionGrid
-                  options={FEATURED_DRIVER_OPTIONS}
+                  options={featuredDriverOptions}
                   value={driver}
                   disabled={isPreparingRegistryAgent}
                   onValueChange={selectDriver}
@@ -476,7 +494,7 @@ export function AddProviderInstanceDialog({
                 <MultipleAccountsNote environmentId={environmentId} driver={driver} />
               </div>
 
-              {wizardStep === 0 ? (
+              {wizardStep === 0 && (moreDriverOptions.length > 0 || acpRegistryAllowed) ? (
                 <Collapsible open={showMoreProviders} onOpenChange={setShowMoreProviders}>
                   <div className="flex pt-2">
                     <CollapsibleTrigger render={<Button variant="ghost-muted" size="xs" />}>
@@ -491,18 +509,20 @@ export function AddProviderInstanceDialog({
                   <CollapsiblePanel animate={false}>
                     <div className="space-y-4 pt-4">
                       <ProviderOptionGrid
-                        options={MORE_DRIVER_OPTIONS}
+                        options={moreDriverOptions}
                         value={driver}
                         disabled={isPreparingRegistryAgent}
                         onValueChange={selectDriver}
                         aria-label="More providers"
                       />
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                        <div aria-hidden className="flex-1 border-t border-border/70" />
-                        <span>Or choose from ACP Registry</span>
-                        <div aria-hidden className="flex-1 border-t border-border/70" />
-                      </div>
-                      {isAcpRegistry && isManualAcpConfiguration ? (
+                      {!acpRegistryAllowed ? null : (
+                        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                          <div aria-hidden className="flex-1 border-t border-border/70" />
+                          <span>Or choose from ACP Registry</span>
+                          <div aria-hidden className="flex-1 border-t border-border/70" />
+                        </div>
+                      )}
+                      {!acpRegistryAllowed ? null : isAcpRegistry && isManualAcpConfiguration ? (
                         <div className="grid gap-4">
                           <div className="flex items-start justify-between gap-3">
                             <div>
@@ -684,6 +704,9 @@ export function AddProviderInstanceDialog({
                     idPrefix={`add-provider-${driver}`}
                     variant="settings"
                     onChange={setConfigDraft}
+                    managed={
+                      driverLocks && { keys: driverLocks.configKeys, reason: driverLocks.reason }
+                    }
                     environmentId={environmentId}
                   />
                 </SettingsGroup>
@@ -716,10 +739,12 @@ export function AddProviderInstanceDialog({
                   <Button variant="outline" size="sm" onClick={() => navigateToStep(1)}>
                     Configure manually
                   </Button>
-                  <ChatGptConnectionButton
-                    size="sm"
-                    onClick={() => setAddingChatGptAccount(true)}
-                  />
+                  {driverLocks?.configKeys.has("setupMode") ? null : (
+                    <ChatGptConnectionButton
+                      size="sm"
+                      onClick={() => setAddingChatGptAccount(true)}
+                    />
+                  )}
                 </>
               ) : wizardStep < (isAcpRegistry ? 1 : 2) ? (
                 <Button
