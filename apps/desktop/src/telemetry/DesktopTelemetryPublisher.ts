@@ -24,6 +24,7 @@ import * as Stream from "effect/Stream";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 import * as DesktopRendererHistory from "./DesktopRendererHistory.ts";
+import * as LinuxHostPower from "./LinuxHostPower.ts";
 
 const LIVE_SAMPLE_INTERVAL = Duration.seconds(1);
 const BATTERY_SAMPLE_INTERVAL = Duration.seconds(5);
@@ -252,6 +253,17 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
           };
           return [next, next] as const;
         });
+        const linuxPower =
+          process.platform === "linux"
+            ? LinuxHostPower.fillElectronGaps(
+                observedPower.thermalState,
+                Option.getOrNull(observedPower.speedLimitPercent),
+                LinuxHostPower.sample(),
+              )
+            : {
+                thermalState: observedPower.thermalState,
+                speedLimitPercent: Option.getOrNull(observedPower.speedLimitPercent),
+              };
         const nextSequence = yield* Ref.modify(sequence, (current) => [current + 1, current + 1]);
         const snapshot: DesktopHostTelemetrySnapshot = {
           version: 1,
@@ -267,11 +279,14 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
             suspended: observedPower.suspended,
             onBattery: observedPower.onBattery,
             lowPowerMode: "unknown",
-            thermalState: observedPower.thermalState,
+            thermalState: linuxPower.thermalState,
             stale: false,
             updatedAt: sampledAt,
           },
-          speedLimitPercent: observedPower.speedLimitPercent,
+          speedLimitPercent:
+            linuxPower.speedLimitPercent === null
+              ? Option.none()
+              : Option.some(linuxPower.speedLimitPercent),
           electronProcesses: (demand ? metrics : []).map((metric) => ({
             pid: metric.pid,
             creationTimeMs: Math.max(0, Math.round(metric.creationTime)),
