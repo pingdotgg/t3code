@@ -77,6 +77,7 @@ function makeFakeBrowserWindow() {
     setZoomLevel: vi.fn((level: number) => {
       zoomLevel = level;
     }),
+    setVisualZoomLevelLimits: vi.fn((_minimum: number, _maximum: number) => Promise.resolve()),
     isLoadingMainFrame: vi.fn(() => false),
     navigationHistory: {
       canGoBack: vi.fn(() => true),
@@ -145,6 +146,7 @@ function makeFakeBrowserWindow() {
     navigationHistory: webContents.navigationHistory,
     send: webContents.send,
     setZoomLevel: webContents.setZoomLevel,
+    setVisualZoomLevelLimits: webContents.setVisualZoomLevelLimits,
     setWindowButtonPosition: window.setWindowButtonPosition,
     setBackgroundThrottling: webContents.setBackgroundThrottling,
     setAutoHideCursor: window.setAutoHideCursor,
@@ -620,11 +622,17 @@ describe("DesktopWindow", () => {
         yield* desktopWindow.zoomMain("out");
         yield* desktopWindow.zoomMain("in");
         yield* desktopWindow.zoomMain("reset");
+        // Actual Size also undoes a pinch magnification, then lets pinch magnify again.
+        yield* Effect.promise(() => fakeWindow.setVisualZoomLevelLimits.mock.results[0]!.value);
 
         assert.deepEqual(
           fakeWindow.setZoomLevel.mock.calls.map(([level]) => level),
           [-0.5, -1, -0.5, 0],
         );
+        assert.deepEqual(fakeWindow.setVisualZoomLevelLimits.mock.calls, [
+          [1, 1],
+          [1, 5],
+        ]);
         assert.deepEqual(previewZoomReapplies, [-0.5, -1, -0.5, 0]);
         assert.equal(popup.setZoomLevel.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
