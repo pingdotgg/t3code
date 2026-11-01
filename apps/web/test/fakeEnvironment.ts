@@ -45,6 +45,11 @@ import { RpcSchema } from "effect/rpc";
 
 export const ENVIRONMENT_ID = EnvironmentId.make("environment-render");
 export const PROJECT_ID = ProjectId.make("project-render");
+type FakeRpcHandlers = {
+  readonly [Method in keyof WsRpcProtocolClient]?: (
+    input: Parameters<WsRpcProtocolClient[Method]>[0],
+  ) => ReturnType<WsRpcProtocolClient[Method]>;
+};
 const CODEX = ProviderInstanceId.make("codex");
 const MODEL = { instanceId: CODEX, model: "gpt-5.4" };
 const AT = DateTime.makeUnsafe("2026-03-17T19:12:28.000Z");
@@ -100,6 +105,8 @@ const serverConfig: ServerConfig = {
   }),
   keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
 };
+let activeConfig = serverConfig;
+let rpcOverrides: FakeRpcHandlers = {};
 
 const project: OrchestrationProjectShell = {
   id: PROJECT_ID,
@@ -357,12 +364,13 @@ const handlers: Record<string, (input: never) => unknown> = {
     );
   },
   [WS_METHODS.subscribeServerConfig]: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig }]),
+    subscribe([{ version: 1 as const, type: "snapshot" as const, config: activeConfig }]),
 };
 
 // Unanswered calls stay pending, like a server that has not replied yet.
 const client = new Proxy(handlers, {
   get: (target, method: string) =>
+    rpcOverrides[method as keyof WsRpcProtocolClient] ??
     target[method] ??
     (() => {
       const rpc = WsRpcGroup.requests.get(method);
@@ -372,9 +380,9 @@ const client = new Proxy(handlers, {
 
 const session: EnvironmentConnectionLease["session"] = {
   client: client as unknown as WsRpcProtocolClient,
-  initialConfig: Effect.succeed(serverConfig),
+  initialConfig: Effect.sync(() => activeConfig),
   subscribeServerConfig: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig }]),
+    subscribe([{ version: 1 as const, type: "snapshot" as const, config: activeConfig }]),
   ready: Effect.void,
   probe: Effect.void,
   inboundFrames: Effect.succeed(0),
@@ -408,7 +416,17 @@ const encodedDescriptor = Schema.encodeSync(ExecutionEnvironmentDescriptor)(
 );
 
 /** Serves the environment's HTTP API and these threads until disposed. */
-export function installFakeEnvironment(fixtures: ReadonlyArray<FakeThread>): Disposable {
+export function installFakeEnvironment(
+  fixtures: ReadonlyArray<FakeThread>,
+  options: {
+    readonly config?: Partial<ServerConfig>;
+    readonly rpc?: FakeRpcHandlers;
+  } = {},
+): Disposable {
+  const previousConfig = activeConfig;
+  const previousRpc = rpcOverrides;
+  activeConfig = { ...serverConfig, ...options.config };
+  rpcOverrides = options.rpc ?? {};
   threads = fixtures;
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
@@ -429,6 +447,8 @@ export function installFakeEnvironment(fixtures: ReadonlyArray<FakeThread>): Dis
   };
   return {
     [Symbol.dispose]: () => {
+      activeConfig = previousConfig;
+      rpcOverrides = previousRpc;
       globalThis.fetch = realFetch;
       threads = [];
     },
