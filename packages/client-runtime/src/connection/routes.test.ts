@@ -18,6 +18,7 @@ import {
   entryWithRoutes,
   mergeLearnedRoutes,
   pendingRouteOrder,
+  relabelLearnedRoutes,
   removedWithRelay,
   routesAfterRemoving,
   sendsTokenInClear,
@@ -435,5 +436,36 @@ describe("learned routes", () => {
     });
     expect(moved).not.toBeNull();
     expect(profileOf(moved![0]!)).toMatchObject({ httpBaseUrl: "https://desk.local:3773/" });
+  });
+});
+
+describe("relabelLearnedRoutes", () => {
+  it("renames routes learned through the paired route and nothing else", () => {
+    const lanLearned = learned(
+      `learned:${ENVIRONMENT_ID}:http://192.168.1.10:3773@public`,
+      "http://192.168.1.10:3773/",
+    );
+    const otherLearned = learned(
+      `learned:${ENVIRONMENT_ID}:http://10.0.0.5:3773@lan`,
+      "http://10.0.0.5:3773/",
+    );
+    const connectLearned = learned(
+      `learned:${ENVIRONMENT_ID}:https://desk.tail1234.ts.net`,
+      "https://desk.tail1234.ts.net/",
+    );
+    const routes = relabelLearnedRoutes(
+      [lanLearned, otherLearned, connectLearned, PUBLIC, RELAY],
+      "public",
+      "Desk",
+    );
+    expect(routes.map((route) => route.target.label)).toEqual([
+      "Desk",
+      otherLearned.target.label,
+      connectLearned.target.label,
+      PUBLIC.target.label,
+      RELAY.target.label,
+    ]);
+    expect(Option.getOrNull(routes[0]!.profile)).toMatchObject({ label: "Desk", learned: true });
+    expect(routes.slice(1)).toEqual([otherLearned, connectLearned, PUBLIC, RELAY]);
   });
 });
