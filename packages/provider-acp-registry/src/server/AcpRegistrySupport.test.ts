@@ -8,8 +8,10 @@ import {
 import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Fiber from "effect/Fiber";
@@ -72,7 +74,7 @@ const makeFakeNpmToolchain = Effect.fn("AcpRegistrySupport.test.makeFakeNpmToolc
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const toolchainBin = path.join(rootDirectory, "fake-node", "bin");
-  const globalPrefix = path.join(rootDirectory, "tools", "example-agent", "1.2.3", "npm");
+  const globalPrefix = path.join(rootDirectory, "tools", "example-agent", "1.2.3", "npm-scripts");
   const globalBin = path.join(globalPrefix, "bin");
   const executablePath = path.join(globalBin, "example-agent");
   const npmPath = path.join(toolchainBin, "npm");
@@ -452,8 +454,81 @@ describe("AcpRegistrySupport", () => {
       });
       expect(second.spawn.command).toBe(toolchain.executablePath);
       const npmCommands = yield* fileSystem.readFileString(toolchain.logPath);
-      expect(npmCommands.match(/^install --global /gmu)).toHaveLength(1);
-      expect(npmCommands).toContain("install --global @example/acp@V1.2.3");
+      const installCommands = npmCommands.split("\n").filter((line) => line.startsWith("install "));
+      expect(installCommands).toHaveLength(1);
+      // npm 12 blocks dependency install scripts unless allowed, leaving native modules unbuilt.
+      expect(installCommands[0]?.split(" ")).toEqual(
+        expect.arrayContaining([
+          "--global",
+          "@example/acp@V1.2.3",
+          "--dangerously-allow-all-scripts",
+        ]),
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
+  it.effect("reinstalls a package installed before dependency scripts were allowed", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-old-prefix-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const oldPrefix = path.join(cacheDir, "tools", "example-agent", "1.2.3", "npm");
+      const oldPackageRoot = path.join(oldPrefix, "lib", "node_modules", "@example", "acp");
+      const oldCommand = path.join(oldPrefix, "bin", "example-agent");
+      yield* fileSystem.makeDirectory(oldPackageRoot, { recursive: true });
+      yield* fileSystem.makeDirectory(path.dirname(oldCommand), { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(oldPackageRoot, "package.json"),
+        toolchain.environment.FAKE_NPM_MANIFEST,
+      );
+      yield* fileSystem.writeFileString(oldCommand, "#!/bin/sh\n");
+      yield* fileSystem.chmod(oldCommand, 0o755);
+      const receiptsDirectory = path.join(cacheDir, "acp-registry", "package-installs");
+      const crypto = yield* Crypto.Crypto;
+      const receiptDigest = Hex.encode(
+        yield* crypto.digest("SHA-256", new TextEncoder().encode(`npx\0${toolchain.npmPath}`)),
+      ).slice(0, 16);
+      yield* fileSystem.makeDirectory(receiptsDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(receiptsDirectory, `example-agent-${receiptDigest}.json`),
+        encodeUnknownJson({
+          agentId: "example-agent",
+          agentVersion: "1.2.3",
+          distribution: "npx",
+          packageSpec: "@example/acp@1.2.3",
+          managerPath: toolchain.npmPath,
+          binDirectory: path.dirname(oldCommand),
+          executablePath: oldCommand,
+          packageRoot: oldPackageRoot,
+          packageVersion: "1.2.3",
+        }),
+      );
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcess.Environment, toolchain.environment));
+
+      const resolved = yield* resolver.resolve(settings(), "/workspace", toolchain.environment);
+
+      const npmCommands = yield* fileSystem.readFileString(toolchain.logPath);
+      const installCommands = npmCommands.split("\n").filter((line) => line.startsWith("install "));
+      expect(installCommands).toEqual([
+        "install --global --dangerously-allow-all-scripts @example/acp@1.2.3",
+      ]);
+      expect(resolved.spawn.command).toBe(toolchain.executablePath);
+      expect(resolved.spawn.command.startsWith(`${oldPrefix}${path.sep}`)).toBe(false);
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -1429,8 +1504,8 @@ describe("AcpRegistrySupport", () => {
       const versionRoot = `${cacheDir}/tools/example-agent/1.2.3`;
       yield* fileSystem.makeDirectory(`${versionRoot}/linux-x86_64`, { recursive: true });
       yield* fileSystem.writeFileString(`${versionRoot}/linux-x86_64/agent`, "binary");
-      yield* fileSystem.makeDirectory(`${versionRoot}/npm/bin`, { recursive: true });
-      yield* fileSystem.writeFileString(`${versionRoot}/npm/bin/agent`, "package command");
+      yield* fileSystem.makeDirectory(`${versionRoot}/npm-scripts/bin`, { recursive: true });
+      yield* fileSystem.writeFileString(`${versionRoot}/npm-scripts/bin/agent`, "package command");
       const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
@@ -1441,7 +1516,7 @@ describe("AcpRegistrySupport", () => {
         removed: true,
       });
       expect(yield* fileSystem.exists(`${versionRoot}/linux-x86_64`)).toBe(false);
-      expect(yield* fileSystem.readFileString(`${versionRoot}/npm/bin/agent`)).toBe(
+      expect(yield* fileSystem.readFileString(`${versionRoot}/npm-scripts/bin/agent`)).toBe(
         "package command",
       );
       expect(yield* resolver.uninstallManagedBinary({ agentId: "example-agent" })).toEqual({
@@ -1683,7 +1758,7 @@ describe("acpRegistryManagedBinaryDirectories", () => {
       yield* install("kimi", "1.50.0", "linux-x86_64", "cmd");
       yield* install("kimi", "1.50.0", "darwin-aarch64");
       yield* install("other-agent", "0.2.0", "darwin-aarch64");
-      const globalBin = path.join(cacheDir, "tools", "gemini", "0.56.0", "npm", "bin");
+      const globalBin = path.join(cacheDir, "tools", "gemini", "0.56.0", "npm-scripts", "bin");
       const geminiCommand = path.join(globalBin, "gemini");
       const receiptsDirectory = path.join(cacheDir, "acp-registry", "package-installs");
       yield* fileSystem.makeDirectory(globalBin, { recursive: true });
@@ -1705,7 +1780,7 @@ describe("acpRegistryManagedBinaryDirectories", () => {
             "tools",
             "gemini",
             "0.56.0",
-            "npm",
+            "npm-scripts",
             "lib",
             "node_modules",
             "@google",
