@@ -112,7 +112,7 @@ history a fork started from. Side chats do not inherit their parent's files.
 ### Subagents
 
 Antigravity groups subagent activity into batches. Open a batch and select
-**Subagent work** to read each child's role, prompt, and recent steps. This view
+**Subagent work** (**Work** on mobile) to read each child's role, prompt, and recent steps. This view
 is read only: you cannot message or control individual subagents, and an idle
 batch does not confirm that every child succeeded. If Antigravity did not record
 which children a batch started, the view says so. See
