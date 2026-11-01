@@ -56,6 +56,15 @@ describe("Cursor usage limits", () => {
         },
       ]),
     );
+    const withSpendLimit = cursorUsageResponseToLimits(
+      {
+        billingCycleEnd: "1789876386000",
+        planUsage: { totalPercentUsed: 72.4, autoPercentUsed: 69.5, apiPercentUsed: 100 },
+        spendLimitUsage: { individualLimit: 5000, individualUsed: 100 },
+      },
+      checkedAt,
+    );
+    expect(withSpendLimit.windows).toEqual(limits.windows);
   });
 
   it("does not invent unused allowance for absent buckets", () => {
@@ -65,7 +74,7 @@ describe("Cursor usage limits", () => {
       unavailable: {
         reason: "unsupported",
         message:
-          "Cursor doesn't report usage limits for this account. Open Cursor's dashboard with the same account to see its usage.",
+          "Cursor doesn't report a personal spend limit for this account. Open Cursor's dashboard with the same account to see its usage.",
       },
       externalUsage: { label: "Cursor usage", url: "https://cursor.com/dashboard?tab=usage" },
     };
@@ -74,6 +83,18 @@ describe("Cursor usage limits", () => {
     expect(cursorUsageResponseToLimits({ billingCycleEnd: "1793495876373" }, checkedAt)).toEqual(
       linkOnly,
     );
+    // Enterprise seat with only the team pool: zeroed percentages and no personal limit.
+    expect(
+      cursorUsageResponseToLimits(
+        {
+          billingCycleStart: "1793491200000",
+          billingCycleEnd: "1796083200000",
+          planUsage: { totalPercentUsed: 0, autoPercentUsed: 0, apiPercentUsed: 0 },
+          spendLimitUsage: {},
+        },
+        checkedAt,
+      ),
+    ).toEqual(linkOnly);
     expect(
       cursorUsageResponseToLimits({ planUsage: { totalPercentUsed: 0 } }, checkedAt).windows,
     ).toEqual([{ id: "totalPercentUsed", kind: "monthly", label: "Overall", usedPercent: 0 }]);
@@ -81,6 +102,67 @@ describe("Cursor usage limits", () => {
       cursorUsageResponseToLimits({ planUsage: { totalPercentUsed: 150 } }, checkedAt).windows,
     ).toEqual([{ id: "totalPercentUsed", kind: "monthly", label: "Overall", usedPercent: 100 }]);
   });
+
+  it.effect("shows Enterprise spend against the personal spend limit", () =>
+    Effect.gen(function* () {
+      const limits = yield* withNodeServices(
+        readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_AUTH_TOKEN: "token" }).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              expect(
+                request.body._tag === "Uint8Array" && new TextDecoder().decode(request.body.body),
+              ).toBe('{"includePooledUsage":true}');
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({
+                    billingCycleStart: "1793491200000",
+                    billingCycleEnd: "1796083200000",
+                    displayThreshold: 50,
+                    planUsage: { totalPercentUsed: 0, autoPercentUsed: 0, apiPercentUsed: 0 },
+                    spendLimitUsage: {
+                      limitType: "team",
+                      overallLimit: 50000,
+                      overallUsed: 3211,
+                      overallRemaining: 46789,
+                      pooledLimit: "3000000",
+                      pooledUsed: 0,
+                      pooledRemaining: "3000000",
+                    },
+                    displayMessage: "You've used 6% of your included usage",
+                  }),
+                ),
+              );
+            }),
+          ),
+        ),
+      );
+      expect(limits).toEqual({
+        checkedAt: expect.any(String),
+        windows: [
+          {
+            id: "spendLimit",
+            kind: "monthly",
+            label: "Spend",
+            usedPercent: 6.422,
+            resetsAt: "2026-12-01T00:00:00.000Z",
+          },
+        ],
+      });
+      // Without includePooledUsage, Cursor reports start = end = now instead of the cycle.
+      expect(
+        cursorUsageResponseToLimits(
+          {
+            billingCycleStart: "1793491200000",
+            billingCycleEnd: "1793491200000",
+            spendLimitUsage: { individualLimit: "2000", individualUsed: "500" },
+          },
+          checkedAt,
+        ).windows,
+      ).toEqual([{ id: "spendLimit", kind: "monthly", label: "Spend", usedPercent: 25 }]);
+    }),
+  );
 
   it.effect("reads the instance's credentials and endpoint even when usage enabled is false", () =>
     withNodeServices(
