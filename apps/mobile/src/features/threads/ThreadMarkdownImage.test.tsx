@@ -5,17 +5,24 @@ import { expect, it, vi } from "vite-plus/test";
 
 const harness = vi.hoisted(() => ({
   failImage: () => {},
+  loadImage: (_event: { source: { width: number; height: number } }) => {},
   Passthrough: ({ children }: { children?: unknown }) => children,
 }));
 
 vi.mock("react-native", () => ({
   Pressable: harness.Passthrough,
   StyleSheet: { absoluteFill: {} },
-  View: harness.Passthrough,
+  View: ({ children, style }: { children?: ReactNode; style?: unknown }) => (
+    <div data-style={JSON.stringify(style)}>{children}</div>
+  ),
 }));
 vi.mock("expo-image", () => ({
-  Image: (props: { onError: () => void }) => {
+  Image: (props: {
+    onError: () => void;
+    onLoad: (event: { source: { width: number; height: number } }) => void;
+  }) => {
     harness.failImage = props.onError;
+    harness.loadImage = props.onLoad;
     return <img alt="" />;
   },
 }));
@@ -41,7 +48,43 @@ import { AtomRegistry } from "effect/reactivity";
 import { fetch } from "expo/fetch";
 import { parse } from "react-native-svg";
 
-import { ThreadMarkdownImageView } from "./ThreadMarkdownImage";
+import { MarkdownImageAvailableWidthContext, ThreadMarkdownImageView } from "./ThreadMarkdownImage";
+
+it("keeps the frame size when the same image reports a different decoded width", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const frameSize = () =>
+    [...container.querySelectorAll<HTMLElement>("div[data-style]")]
+      .map((element) => JSON.parse(element.dataset.style ?? "null") as Record<string, unknown>)
+      .find((style) => typeof style?.width === "number");
+  try {
+    await act(async () =>
+      root.render(
+        <MarkdownImageAvailableWidthContext value={345}>
+          <ThreadMarkdownImageView
+            uri="https://example.test/hero.png"
+            sourceKey="workspace:hero.png"
+            unavailable={false}
+            alt={null}
+            knownSize={{ width: 1000, height: 585 }}
+            onPressPreview={() => {}}
+          />
+        </MarkdownImageAvailableWidthContext>,
+      ),
+    );
+    // Android reports the bitmap downsampled for the current frame, so the same file
+    // alternates between widths (969 and 970 of 1000) as the frame changes size.
+    await act(async () => harness.loadImage({ source: { width: 970, height: 567 } }));
+    const first = frameSize();
+    expect(first).toBeDefined();
+
+    await act(async () => harness.loadImage({ source: { width: 969, height: 567 } }));
+    expect(frameSize()).toEqual(first);
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
 
 it("retries a failed image once its URI comes back through null", async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
