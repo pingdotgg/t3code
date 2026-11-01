@@ -2871,6 +2871,19 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         ),
         rollbackThread: Effect.fn("PiAdapter.rollbackThread")(
           function* (rollbackInput) {
+            // A fresh runtime (restart or idle release) must load the persisted session before forking.
+            // Unpublished: the rollback service persists the returned snapshot.
+            if (threadState === null && rollbackInput.providerThread.nativeThreadRef != null) {
+              yield* registerThread(
+                {
+                  threadId: rollbackInput.providerThread.appThreadId ?? input.threadId,
+                  modelSelection: input.modelSelection,
+                  runtimePolicy: input.runtimePolicy,
+                  existingProviderThread: rollbackInput.providerThread,
+                },
+                false,
+              );
+            }
             const state = threadState;
             if (state === null) {
               return yield* protocolError("Pi session has no registered thread");
