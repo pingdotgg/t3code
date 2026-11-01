@@ -30,7 +30,7 @@ import { useProjects, useServerConfigs } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
-import { isWorkspaceCatalogPending, type WorkspaceState } from "../../state/workspaceModel";
+import type { WorkspaceState } from "../../state/workspaceModel";
 import { useWorkspaceState } from "../../state/workspace";
 
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
@@ -91,7 +91,11 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
     };
   }
 
-  if (isWorkspaceCatalogPending(catalogState)) {
+  if (
+    catalogState.hasConnectingEnvironment &&
+    !catalogState.hasLoadedShellSnapshot &&
+    catalogState.connectionError === null
+  ) {
     return {
       title: "Connecting to environment",
       detail: "Loading projects from the saved environment.",

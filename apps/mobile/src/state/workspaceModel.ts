@@ -1,4 +1,8 @@
-import { type EnvironmentShellSummary } from "@t3tools/client-runtime/state/shell";
+import {
+  EMPTY_SHELL_STATE,
+  type EnvironmentShellState,
+  type EnvironmentShellSummary,
+} from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
 
 import {
@@ -101,6 +105,10 @@ export function projectWorkspaceState(input: {
     hasSyncingConnectedEnvironment: input.hasSyncingConnectedEnvironment,
     shellSnapshotError: input.shellSummary.firstError,
   };
+}
+
+export function isEnvironmentShellPending(state: EnvironmentShellState): boolean {
+  return state === EMPTY_SHELL_STATE || state.status === "synchronizing";
 }
 
 // Reconnecting environments keep their last failure, so an error alone does not end the wait.
