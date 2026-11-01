@@ -142,6 +142,12 @@ describe("classifyTailscaleHealth", () => {
       ["no_ipv4"],
     ],
     [
+      "too old, ahead of a health warning",
+      Result.succeed({ ...running, version: "1.62.0", health: ["Some peers are unreachable"] }),
+      "running",
+      ["outdated", "health_warning"],
+    ],
+    [
       "an older CLI that reports no capabilities or TUN",
       Result.succeed({
         ...running,

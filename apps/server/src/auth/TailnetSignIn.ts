@@ -385,7 +385,7 @@ export const make = Effect.gen(function* () {
     (reason === "disabled" || reason === "browser_request" ? Effect.logDebug : Effect.logWarning)(
       "Refused Tailscale sign-in.",
     ).pipe(
-      Effect.annotateLogs({ reason }),
+      Effect.annotateLogs({ reason, ...(cause === undefined ? {} : { cause }) }),
       Effect.andThen(
         Effect.fail(
           new TailnetSignInRefusedError({
@@ -465,7 +465,7 @@ export const make = Effect.gen(function* () {
         );
         if (peer === undefined) return yield* refuse("tailscale_unavailable");
         // Off the tailnet until it logs in to Tailscale again, which only the device can do.
-        if (peer.keyExpired) return yield* refuse("not_direct_tailnet");
+        if (peer.keyExpired) return yield* refuse("not_direct_tailnet", "node key expired");
       }
       const decision = yield* decide(node, status);
       // The policy names this device, so it decides here now, even when the grant is refused

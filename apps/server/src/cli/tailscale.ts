@@ -25,6 +25,7 @@ import { SERVICE_ENV_FILE } from "../cloud/serviceProtocol.ts";
 import { peersJoined, policyGrantedPeers } from "../auth/tailnetGrants.ts";
 import {
   formatTailscaleHealth,
+  NO_IPV4_FIX,
   readErrorFacts,
   readTailscaleHealth,
   stateFix,
@@ -90,7 +91,7 @@ export const signInBlocker = (
     : !isSupportedTailscaleVersion(status.version)
       ? `Tailscale ${status.version ?? "(unknown version)"} is too old for Tailscale sign-in. Update to ${MINIMUM_TAILSCALE_VERSION} or newer.`
       : status.tailnetIpv4Addresses.length === 0
-        ? "Tailscale reported no IPv4 address for this host, and sign-in needs one."
+        ? issueLine({ cause: "no_ipv4", fix: NO_IPV4_FIX })
         : null;
 };
 
