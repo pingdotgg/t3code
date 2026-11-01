@@ -983,6 +983,7 @@ export function NewTaskDraftScreen(props: {
         onRemoveDraftImage={flow.removeAttachment}
         onStopThread={() => {}}
         onResumeQueue={null}
+        resumeBlocked={false}
         onSendMessage={handleStart}
         onReconnectEnvironment={() => onReconnectEnvironment(selectedProject.environmentId)}
         canSwitchThreadProvider
